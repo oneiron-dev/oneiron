@@ -201,13 +201,17 @@ pub(crate) fn asset_audio_in_lane(
 }
 
 /// The media type and bytes of the blob `asset` holds, read through `lane`
-/// in the snapshot that admitted the ASSET (FIX 9949): `None` when the lane
-/// withholds the asset, it is no ASSET, or it names no blob.
+/// in the snapshot that admitted the ASSET (FIX 9949), as the lane's reader
+/// is served them: `None` when the lane withholds the asset, it is no ASSET,
+/// it names no blob, or its reader is served none of the blob. A masked
+/// reader's marked image is served only rastered, through the image form, so
+/// it is none here.
 fn asset_blob_in_lane(
     lane: &ScopedRead<'_>,
     asset: EntityId,
 ) -> MemoryResult<ScopedReadResult<Option<(String, Vec<u8>)>>> {
     let vault = lane.vault();
+    let sight = lane.actor_key().secret_sight();
     lane.read_projected(&[PointRead::id(asset)], None, |txn, rows| {
         let body = rows
             .into_iter()
@@ -215,10 +219,14 @@ fn asset_blob_in_lane(
             .flatten()
             .filter(|row| row.entity_type == ENTITY_TYPE_ASSET)
             .and_then(|row| row.body);
-        match body {
-            Some(body) => super::blob::resolve_asset_blob_in_lane(vault, txn, &body),
-            None => Ok(None),
-        }
+        let Some(body) = body else {
+            return Ok(None);
+        };
+        Ok::<_, MemoryError>(
+            super::blob::resolve_asset_blob_in_lane(vault, txn, &body, sight)?.and_then(
+                |(media_type, bytes, mark)| mark.is_none().then_some((media_type, bytes)),
+            ),
+        )
     })
 }
 
@@ -236,6 +244,7 @@ pub(crate) fn asset_forms_in_lane(
     admits: &mut dyn FnMut(usize) -> bool,
 ) -> MemoryResult<ScopedReadResult<Option<AssetForms>>> {
     let vault = lane.vault();
+    let sight = lane.actor_key().secret_sight();
     let ScopedReadResult {
         value: (row, media, image, derived),
         mut receipt,
@@ -246,23 +255,21 @@ pub(crate) fn asset_forms_in_lane(
             .flatten()
             .filter(|row| row.entity_type == ENTITY_TYPE_ASSET)
             .and_then(|row| row.body);
-        // The bytes in the snapshot that admitted the row (FIX 9949).
-        let media = match &row {
-            Some(body) => super::blob::resolve_asset_blob_in_lane(vault, txn, body)?,
-            None => None,
+        // The bytes in the snapshot that admitted the row (FIX 9949), as
+        // this reader is served them, with a masked reader's image mark. A
+        // blob it is served none of leaves the asset no image and no audio.
+        let (media, mark) = match &row {
+            Some(body) => match super::blob::resolve_asset_blob_in_lane(vault, txn, body, sight)? {
+                Some((media_type, bytes, mark)) => (Some((media_type, bytes)), mark),
+                None => (None, None),
+            },
+            None => (None, None),
         };
         let image = match (row.as_deref(), media.as_ref().and_then(image_of)) {
             (Some(body), Some(pixels)) => {
                 let blob = super::blob::AssetBlobRef::of_body(body).ok_or_else(|| {
                     MemoryError::from(crate::error::Error::CorruptedIndex("asset blob"))
                 })?;
-                let mark = if lane.actor_key().secret_sight()
-                    == crate::file_secret_marks::SecretSight::Masked
-                {
-                    crate::secret_custody::masked_file_in_txn(&vault.store, txn, &blob.hash)?
-                } else {
-                    None
-                };
                 Some((
                     AssetImage {
                         content: blob.hash,
