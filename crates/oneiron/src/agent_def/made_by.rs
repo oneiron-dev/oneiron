@@ -7,9 +7,12 @@
 //! Switching an agent off does not cascade: what it made keeps running on
 //! its own records. This module only reads them. Each kind is attributed by
 //! its own record:
-//! - a definition it saved: an Active AGENT_DEF whose provenance names it as
-//!   `author` (`mark_agent_authored`); a proposed change to another row is
-//!   no agent of its own;
+//! - a definition it saved: an Active AGENT_DEF whose creating-agent stamp
+//!   names it (`creating_agent`), which the engine writes in the write that
+//!   creates the row, from the author its create door authenticated. The
+//!   body's `provenance` is not read: a caller supplies it, and a later put
+//!   may rewrite it (AGENT-DEF-PROVENANCE-AUTHOR-FORGEABLE). A proposed
+//!   change to another row has no stamp and is no agent of its own;
 //! - a branch: a live attempt under one of its runs in the run tree, or one
 //!   that realizes a TASK it owns, its own runs left out;
 //! - a watcher: a TASK it owns that still waits for its due tick (ARCH-0080
@@ -33,7 +36,6 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use super::doors::{grants_within, stands};
-use super::proposed_change::{AUTHOR_KEY, REPLACES_KEY, provenance_text};
 use super::types::AgentDefinition;
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
@@ -196,7 +198,8 @@ pub(crate) fn switches_off_or_narrows(prior: &AgentDefinition, updated: &AgentDe
 /// What one snapshot holds that an agent can have made, read once and filed
 /// by maker.
 struct Makings {
-    /// Each Active definition an agent saved, by the agent that saved it.
+    /// Each Active definition an agent saved, by the agent its creating-agent
+    /// stamp names.
     saved: BTreeMap<EntityId, Vec<(EntityId, AgentDefinition)>>,
     /// Each agent's runs, every state, by the agent they run as.
     runs: BTreeMap<EntityId, Vec<AttemptRecord>>,
@@ -409,7 +412,10 @@ impl Vault {
 
     /// Every saved definition, agent run, agent hook binding and live
     /// scheduled send `txn` holds, filed by maker. Every AGENT_DEF row is read (rule 5: past the
-    /// type's threshold the scan raises one scan check and reads on).
+    /// type's threshold the scan raises one scan check and reads on). A
+    /// definition is filed under the agent its creating-agent stamp names; one
+    /// with no stamp (the owner's, a seeded or imported row, a proposed
+    /// change) is no agent's.
     fn makings_in_txn(&self, txn: &heed::RoTxn<'_>, count: &mut ScanCount) -> Result<Makings> {
         let mut saved: BTreeMap<EntityId, Vec<(EntityId, AgentDefinition)>> = BTreeMap::new();
         for id in self
@@ -418,17 +424,14 @@ impl Vault {
         {
             count.row();
             let id = id?;
-            let definition = self.read_agent_definition_in_txn(txn, &id)?;
-            if definition.lifecycle_status != ClaimLifecycleStatus::Active
-                || provenance_text(&definition, REPLACES_KEY).is_some()
-            {
-                continue;
-            }
-            let Some(author) = provenance_text(&definition, AUTHOR_KEY)
-                .and_then(|hex| EntityId::from_hex(hex).ok())
+            let Some(author) = super::creating_agent::creating_agent_in_txn(&self.store, txn, &id)?
             else {
                 continue;
             };
+            let definition = self.read_agent_definition_in_txn(txn, &id)?;
+            if definition.lifecycle_status != ClaimLifecycleStatus::Active {
+                continue;
+            }
             saved.entry(author).or_default().push((id, definition));
         }
         let mut runs: BTreeMap<EntityId, Vec<AttemptRecord>> = BTreeMap::new();

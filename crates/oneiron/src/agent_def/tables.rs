@@ -11,6 +11,14 @@ crate::side_table::side_tables! {
     /// Empty marker: an agent's birth source has been retired. Key: id16.
     AGENT_DEF_BIRTH_RETIRED: VaultMeta b"agent_def/birth-retired/v1\0" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The agent that created a definition through an agent-authored create door, stamped in
+    /// that write from the author the door authenticated (AGENT-DEF-PROVENANCE-AUTHOR-FORGEABLE):
+    /// a proposed change, and an imported, replicated, seeded or owner-written row, has none. A
+    /// delete of the definition removes it. What an agent made and `vault.agents.pause_tree`
+    /// read it, never the body's provenance. Authority, so a restore keeps the live rows.
+    /// Key: id16 (definition); value: id16 (author).
+    AGENT_DEF_CREATING_AGENT: VaultMeta b"agent_def/creating-agent/v1\0" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// The owner who created a definition through the owner's create door, stamped in that
     /// write and in no other: an imported, replicated, seeded or agent-written row has none.
     /// A delete of the definition removes it. Authority, so a restore keeps the live rows.
