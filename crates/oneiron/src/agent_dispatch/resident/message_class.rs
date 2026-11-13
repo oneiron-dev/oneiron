@@ -65,9 +65,11 @@ const RESIDENT_MESSAGE_CLASSES: SideTable<[u8; 32], MessageClassRecord, Named> =
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum MessageClass {
-    /// It lands on the running wake first among its step's signals, its line
-    /// marked `interrupt` (Engine RULING 05:39 Fri 13 Nov, INTERRUPT-LANDING
-    /// = B). Nothing in flight is stopped.
+    /// It lands on the running wake, its line marked `interrupt` (Engine
+    /// RULING 05:39 Fri 13 Nov). The run's model turn reads it at once: a
+    /// request in flight is cut and asked again with the line
+    /// ([INTERRUPT-CUTS-MODEL-REQUEST-IN-FLIGHT]). A step boundary that finds
+    /// it still pending reads it first among its signals.
     Interrupt,
     /// It lands on the running wake, whose next step boundary reads it.
     Steer,

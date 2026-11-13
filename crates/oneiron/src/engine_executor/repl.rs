@@ -168,6 +168,7 @@ impl EngineNativeExecutor<'_> {
                 trailing_speak,
                 repairs,
                 correction,
+                interrupts,
             } = program;
             // One preparation per program (FIX 8276): a TypeScript program
             // runs as the JavaScript Oxc prints for it, kept beside the
@@ -526,10 +527,12 @@ impl EngineNativeExecutor<'_> {
             // AGM-2: the steers and messages that reached the run while this
             // step ran, kept beside it for the next step's request when the
             // run goes on; acknowledged once the checkpoint below commits.
-            let taken = match terminal_status {
+            // The interrupts its model turn took are acknowledged with them.
+            let mut taken = match terminal_status {
                 None => self.take_step_signals(&mut record, completed_steps),
                 Some(_) => super::run_signals::TakenSignals::default(),
             };
+            taken.join(interrupts);
             let (end, context) =
                 self.step_context(config, &record, bridge_start, host.context_capture)?;
             let checkpoint = CodeRunStepCheckpoint::new(

@@ -550,9 +550,11 @@ fn at(haystack: &str, needle: &str) -> TestResult<usize> {
 /// urgent message to the busy resident, which the classifier is sure of,
 /// lands on the running wake marked `interrupt` and asks no one. A calm
 /// steer that arrived before it, and an agent's digest that arrived before
-/// both, land with it. The next step reads the interrupt first, then the
-/// steer, then the digest folded into one count line. Each message is read
-/// once, on the local rung, from its envelope and first line.
+/// both, land with it. The run's first model turn reads the interrupt at
+/// once, before its turn instruction ([INTERRUPT-CUTS-MODEL-REQUEST-IN-FLIGHT]);
+/// the next step boundary reads the steer, then the digest folded into one
+/// count line, and the interrupt no second time. Each message is read once,
+/// on the local rung, from its envelope and first line.
 #[test]
 fn an_urgent_sure_message_interrupts_at_once() -> TestResult {
     let clock = FakeClock::default();
@@ -641,20 +643,38 @@ fn an_urgent_sure_message_interrupts_at_once() -> TestResult {
     let [first, second] = requests.as_slice() else {
         return Err(format!("two model requests, got {}", requests.len()).into());
     };
+    // The interrupt, at once: the first request reads it just before its
+    // turn instruction.
+    let at_once = &first[at(first, "Reached you before your reply to step 0")?..];
+    let interrupt = at(at_once, "interrupt: a message to your inbox")?;
+    let urgent = at(at_once, "evt-urgent-1")?;
+    let instruction = at(at_once, "Emit the source for durable step 0")?;
+    assert!(
+        interrupt < urgent && urgent < instruction,
+        "the interrupt is read before the turn instruction: {at_once}"
+    );
     assert!(
         !first.contains("Reached you while step"),
-        "the step that was running never sees them"
+        "the steer and the digest wait for the step boundary"
     );
     // The host's message of the step boundary, after anything the board
-    // shows of the inbox.
-    let delivered = &second[at(second, "Reached you while step")?..];
-    let interrupt = at(delivered, "interrupt: a message to your inbox")?;
-    let urgent = at(delivered, "evt-urgent-1")?;
+    // shows of the inbox, and after the interrupt where the first turn
+    // read it.
+    let boundary = at(second, "Reached you while step")?;
+    assert!(
+        second[..boundary].contains("Reached you before your reply to step 0"),
+        "the second request keeps the interrupt where the first turn read it: {second}"
+    );
+    let delivered = &second[boundary..];
     let calm = at(delivered, "evt-calm-1")?;
     let folded = at(delivered, "digest: 1 more messages wait in your INBOX")?;
     assert!(
-        interrupt < urgent && urgent < calm && calm < folded,
-        "the interrupt is read first, the digest folds last: {delivered}"
+        calm < folded,
+        "the steer is read, the digest folds last: {delivered}"
+    );
+    assert!(
+        !delivered.contains("evt-urgent-1"),
+        "the boundary reads the interrupt no second time: {delivered}"
     );
     assert!(
         delivered[folded..].contains("evt-digest-0"),
