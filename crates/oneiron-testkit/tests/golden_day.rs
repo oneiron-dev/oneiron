@@ -102,10 +102,10 @@ fn the_golden_day_lands_its_claims_ends_the_agents_reads_at_the_revoke_and_match
     }
     let golden = fs::read_to_string(&path).unwrap_or_default();
     let matches = golden == text;
-    if !matches {
-        for line in differing_lines(&golden, &text) {
-            println!("## GOLDEN-DAY DIFF {line}");
-        }
+    for line in differing_lines(&golden, &text) {
+        println!("## GOLDEN-DAY DIFF {line}");
+    }
+    if !matches || std::env::var(WRITE_GOLDEN).is_ok() {
         println!("## GOLDEN-DAY BEGIN");
         print!("{text}");
         println!("## GOLDEN-DAY END");

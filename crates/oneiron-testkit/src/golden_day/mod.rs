@@ -44,7 +44,7 @@ pub mod normalise;
 use std::fmt;
 
 use oneiron::memory::{Memory, MemoryResult};
-use oneiron::{EdgeActorClass, EntityId, Vault};
+use oneiron::{DreamerAttemptExecution, EdgeActorClass, EntityId, Vault};
 use serde_json::{Value, json};
 
 use crate::clock::FakeClock;
@@ -566,7 +566,7 @@ fn pass_answer(report: &DreamerPassReport) -> Value {
         .iter()
         .map(|attempt| {
             let execution = match &attempt.execution {
-                Ok(execution) => format!("{execution:?}"),
+                Ok(execution) => execution_summary(execution),
                 Err(error) => format!("error: {error}"),
             };
             let rejected: Vec<Value> = attempt
@@ -614,6 +614,51 @@ fn pass_answer(report: &DreamerPassReport) -> Value {
     })
 }
 
+/// What an attempt's execution came to, without its step bindings (attempt
+/// ids and step hashes as raw bytes) or a seat's bytes.
+fn execution_summary(execution: &DreamerAttemptExecution) -> String {
+    match execution {
+        DreamerAttemptExecution::Completed {
+            completed_units, ..
+        } => format!("completed units={completed_units}"),
+        DreamerAttemptExecution::Failed {
+            reason,
+            completed_units,
+            budget_refusal,
+            ..
+        } => format!(
+            "failed units={completed_units} budget_refusal={} reason={reason}",
+            budget_refusal.is_some()
+        ),
+        DreamerAttemptExecution::Park { reason, cause } => {
+            format!("park cause={cause:?} reason={reason}")
+        }
+        DreamerAttemptExecution::ParkWithSpend {
+            reason,
+            cause,
+            completed_units,
+            ..
+        } => format!("park units={completed_units} cause={cause:?} reason={reason}"),
+        DreamerAttemptExecution::ParkOnSeat {
+            reason, reset_at_s, ..
+        } => format!("park on a seat reset_at={reset_at_s:?} reason={reason}"),
+        DreamerAttemptExecution::Deferred {
+            completed_units,
+            retry_at,
+            ..
+        } => format!("deferred units={completed_units} retry_at={retry_at}"),
+        DreamerAttemptExecution::Landed {
+            completed_units,
+            reserve_units,
+            status,
+            hand_off,
+            ..
+        } => format!(
+            "landed units={completed_units} reserve={reserve_units} status={status:?} hand_off={hand_off}"
+        ),
+    }
+}
+
 /// One model call the backend saw, without its body: the digest stands for
 /// the prompt, and a scripted step matched it.
 fn seen_row(call: &SeenCall) -> Value {
@@ -654,9 +699,12 @@ fn receipt_stream(reader: &ReceiptReader<'_, '_>, kinds: &[&str]) -> Value {
     json!({"rows": rows, "page_count": MAX_PAGES, "undecodable": undecodable, "refused": "the cursor did not reach the end"})
 }
 
-/// Every page of `vault.authority.audit` as the owner, whole and in order
-/// (the log's own order: not sorted).
+/// Every page of `vault.authority.audit` as the owner: the rows of every
+/// page in read order (the log's own order follows entry hashes, which a run
+/// draws: [`GoldenDayRun::normalise`] sorts them), and each page without its
+/// rows.
 fn audit_stream(owner: &Memory<'_>) -> Value {
+    let mut rows = Vec::new();
     let mut pages = Vec::new();
     let mut after: Option<String> = None;
     for page_count in 1..=MAX_PAGES {
@@ -664,12 +712,15 @@ fn audit_stream(owner: &Memory<'_>) -> Value {
         if let Some(after) = &after {
             input["after"] = json!(after);
         }
-        let page = match door::invoke(owner, "vault.authority.audit", input) {
+        let mut page = match door::invoke(owner, "vault.authority.audit", input) {
             Ok(page) => page,
             Err(error) => {
-                return json!({"pages": pages, "page_count": page_count, "refused": error.to_string()});
+                return json!({"rows": rows, "pages": pages, "page_count": page_count, "refused": error.to_string()});
             }
         };
+        if let Some(Value::Array(found)) = page.as_object_mut().and_then(|map| map.remove("rows")) {
+            rows.extend(found);
+        }
         let next = page
             .get("next_after")
             .and_then(Value::as_str)
@@ -677,8 +728,8 @@ fn audit_stream(owner: &Memory<'_>) -> Value {
         pages.push(page);
         match next {
             Some(next) if after.as_deref() != Some(next.as_str()) => after = Some(next),
-            _ => return json!({"pages": pages, "page_count": page_count}),
+            _ => return json!({"rows": rows, "pages": pages, "page_count": page_count}),
         }
     }
-    json!({"pages": pages, "page_count": MAX_PAGES, "refused": "the cursor did not reach the end"})
+    json!({"rows": rows, "pages": pages, "page_count": MAX_PAGES, "refused": "the cursor did not reach the end"})
 }
