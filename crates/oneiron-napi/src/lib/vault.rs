@@ -23,7 +23,7 @@ use super::codebase::{
 use super::email::{core_email_adapter, core_email_inbound};
 use super::types::{
     NapiBatchEntity, NapiCodebaseSnapshot, NapiEdgeInfo, NapiEmailIdentityAdapterConfig,
-    NapiEmailInboundEvent, NapiScoredEntity, NapiSubtreeEntry,
+    NapiEmailInboundEvent, NapiScoredEntity, NapiSubtreeEntry, NapiVectorProvenance,
 };
 use crate::facade::{NapiRecallMedia, boundary_error, facade_error, recall_media_to_engine};
 use crate::host_root::HostRootOpenOptions;
@@ -514,14 +514,34 @@ impl NapiVault {
 
     // ─── Vectors ───────────────────────────────────────────────
 
-    /// Store a vector embedding for an entity.
+    /// Store a vector embedding for an entity, marked with the device and
+    /// runtime that computed it when `provenance` is given (ARCH-0036 device
+    /// mark); without one the vector reads device `unknown`.
     #[napi]
-    pub fn put_vector(&self, id: Buffer, vector: Array<'_>) -> napi::Result<()> {
+    pub fn put_vector(
+        &self,
+        id: Buffer,
+        vector: Array<'_>,
+        provenance: Option<NapiVectorProvenance>,
+    ) -> napi::Result<()> {
         let eid = parse_entity_id(&id)?;
         let f32_vec = read_vector(&vector, self.dimensions, "vector")?;
-        match self.bound_memory() {
-            Some(memory) => memory.raw_put_vector(&eid, &f32_vec).map_err(facade_error),
-            None => self.vault.put_vector(&eid, &f32_vec).map_err(to_napi_err),
+        let provenance = provenance
+            .map(|mark| {
+                oneiron::embed::EmbeddingProvenance::from_host(&mark.device, &mark.runtime)
+                    .map_err(|reason| boundary_error(format!("provenance: {reason}")))
+            })
+            .transpose()?;
+        match (self.bound_memory(), provenance) {
+            (Some(memory), Some(provenance)) => memory
+                .raw_put_vector_with_provenance(&eid, &f32_vec, provenance)
+                .map_err(facade_error),
+            (Some(memory), None) => memory.raw_put_vector(&eid, &f32_vec).map_err(facade_error),
+            (None, Some(provenance)) => self
+                .vault
+                .put_vector_with_provenance(&eid, &f32_vec, provenance)
+                .map_err(to_napi_err),
+            (None, None) => self.vault.put_vector(&eid, &f32_vec).map_err(to_napi_err),
         }
     }
 

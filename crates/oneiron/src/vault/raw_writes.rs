@@ -138,10 +138,45 @@ impl Memory<'_> {
     ///
     /// As [`Self::raw_put_entities`], and the vector's own refusal.
     pub fn raw_put_vector(&self, id: &EntityId, vector: &[f32]) -> MemoryResult<()> {
-        if self.raw_write_in_session(&[RawOp::Vector { id: *id, vector }])? {
+        self.raw_put_vector_marked(id, vector, None)
+    }
+
+    /// [`Self::raw_put_vector`] marked with the device and runtime that
+    /// computed the vector (ARCH-0036 device mark), for a host that embeds on
+    /// its own.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::raw_put_vector`].
+    pub fn raw_put_vector_with_provenance(
+        &self,
+        id: &EntityId,
+        vector: &[f32],
+        provenance: crate::embed::EmbeddingProvenance,
+    ) -> MemoryResult<()> {
+        self.raw_put_vector_marked(id, vector, Some(provenance))
+    }
+
+    fn raw_put_vector_marked(
+        &self,
+        id: &EntityId,
+        vector: &[f32],
+        provenance: Option<crate::embed::EmbeddingProvenance>,
+    ) -> MemoryResult<()> {
+        let staged = RawOp::Vector {
+            id: *id,
+            vector,
+            provenance: provenance.as_ref(),
+        };
+        if self.raw_write_in_session(&[staged])? {
             return Ok(());
         }
-        self.commit_raw_batch(self.vault().batch().vector(id, vector), &[])
+        let batch = self.vault().batch();
+        let batch = match provenance {
+            Some(provenance) => batch.vector_with_provenance(id, vector, provenance),
+            None => batch.vector(id, vector),
+        };
+        self.commit_raw_batch(batch, &[])
     }
 
     /// Deletes `id` as this surface's caller through the `vault.delete` row

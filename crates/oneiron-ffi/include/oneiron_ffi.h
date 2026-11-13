@@ -1002,6 +1002,33 @@ enum OneironStatus oneiron_vault_put_vector(struct OneironVault *vault,
                                             size_t vector_len);
 
 /**
+ * Store a vector embedding for an entity, marked with the device and runtime
+ * that computed it (ARCH-0036 device mark), so `oneiron doctor` names them
+ * instead of `unknown`.
+ *
+ * `device_ptr` is UTF-8 `cpu`, `cuda`, `metal`, `remote` or `unknown`
+ * (`unknown` leaves the vector unmarked); `runtime_ptr` is the runtime's
+ * UTF-8 name and version, 1 to 128 bytes with no control characters. Any
+ * other mark returns `InvalidArg` and stores nothing. Otherwise as
+ * `oneiron_vault_put_vector`.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. Each non-null input pointer covers its length in readable
+ * values, for the whole call.
+ */
+enum OneironStatus oneiron_vault_put_vector_with_provenance(struct OneironVault *vault,
+                                                            const uint8_t *id_ptr,
+                                                            size_t id_len,
+                                                            const double *vector_ptr,
+                                                            size_t vector_len,
+                                                            const uint8_t *device_ptr,
+                                                            size_t device_len,
+                                                            const uint8_t *runtime_ptr,
+                                                            size_t runtime_len);
+
+/**
  * Run a context-pack query and return UTF-8 bytes.
  *
  * `query_text_ptr`, `query_vector_ptr`, `format_ptr` and `media_json_ptr`
