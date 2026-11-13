@@ -5,9 +5,9 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::EntityId;
 use crate::channel_identity_provider::native_mail::canonical_recipient;
 use crate::side_table::{self, Named, SideTable};
+use crate::{EntityId, Result, Vault};
 
 /// Every connected source, by its id.
 pub const SOURCES: SideTable<EntityId, MailSourceRow, Named> =
@@ -225,6 +225,30 @@ pub struct MailSourceView {
     pub status: MailSourceStatus,
     pub connected_at: u64,
     pub updated_at: u64,
+}
+
+/// The pack's Active sources and the kind of each, read in one snapshot,
+/// while the pack is installed Active; none while it is not. The host steps
+/// in `oneiron-mail-pack` (`mail_sources_due`, `mail_sync_sources`) read
+/// their sources here, since the vault's store is crate-private (FIX
+/// VAULT-STORE-FIELD-PUBLIC).
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn active_sources(vault: &Vault) -> Result<Vec<(EntityId, MailSourceKind)>> {
+    let txn = vault.store.env.read_txn()?;
+    if super::pack::require_pack_active_in(vault, &txn).is_err() {
+        return Ok(Vec::new());
+    }
+    let mut active = Vec::new();
+    for row in SOURCES.iter_from(&vault.store, &txn, &[])? {
+        let (source, row) = row?;
+        if row.status == MailSourceStatus::Active {
+            active.push((source, row.kind));
+        }
+    }
+    Ok(active)
 }
 
 /// The identity key one source is found by again: its provider, kind,
