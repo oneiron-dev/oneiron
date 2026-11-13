@@ -285,3 +285,77 @@ fn longmemeval_refuses_counts_that_do_not_sum() {
         Err(ConvertError::CountsMismatch { .. })
     ));
 }
+
+/// The mini fixture with `mini_ssu_1`'s haystack session at `position` named
+/// once more, under a later date; `edit` changes the copy's first turn.
+fn with_repeated_session(position: usize, edit: bool) -> (Vec<LmeQuestion>, String, String) {
+    let (mut questions, dataset_sha256) = mini_questions();
+    let question = questions
+        .iter_mut()
+        .find(|question| question.question_id == "mini_ssu_1")
+        .unwrap();
+    let session_id = question.haystack_session_ids[position].clone();
+    let mut copy = question.haystack_sessions[position].clone();
+    if edit {
+        copy[0].content.push_str(" (edited)");
+    }
+    question.haystack_session_ids.push(session_id.clone());
+    question
+        .haystack_dates
+        .push("2023/06/01 (Thu) 09:00".to_owned());
+    question.haystack_sessions.push(copy);
+    (questions, dataset_sha256, session_id)
+}
+
+#[test]
+fn longmemeval_skips_an_identical_repeated_distractor_session() {
+    let (questions, dataset_sha256, session_id) = with_repeated_session(0, false);
+    assert_eq!(session_id, "shared_filler_1");
+    let split = split_of(
+        [Slice::Search, Slice::HeldOut, Slice::Sealed],
+        &dataset_sha256,
+    );
+    let meta = mini_meta(&dataset_sha256);
+    let pack = convert(&questions, &split, Slice::Search, &meta, None).unwrap();
+    let corpus = pack
+        .corpora
+        .iter()
+        .find(|corpus| corpus.corpus_id == "mini_ssu_1")
+        .unwrap();
+    let sessions: Vec<&str> = corpus
+        .sessions
+        .iter()
+        .map(|session| session.session_id.as_str())
+        .collect();
+    assert_eq!(sessions, ["shared_filler_1", "answer_mini_ssu_1"]);
+    let question = questions
+        .iter()
+        .find(|question| question.question_id == "mini_ssu_1")
+        .unwrap();
+    let first_date = lme_time(&question.haystack_dates[0]).unwrap();
+    assert_eq!(corpus.sessions[0].time, first_date);
+}
+
+#[test]
+fn longmemeval_refuses_a_repeated_answer_session_or_a_changed_copy() {
+    for (position, edit) in [(1, false), (0, true)] {
+        let (questions, dataset_sha256, session_id) = with_repeated_session(position, edit);
+        let split = split_of(
+            [Slice::Search, Slice::HeldOut, Slice::Sealed],
+            &dataset_sha256,
+        );
+        let meta = mini_meta(&dataset_sha256);
+        let refused = convert(&questions, &split, Slice::Search, &meta, None);
+        let Err(ConvertError::DuplicateSessionInHaystack {
+            session_id: repeated,
+            ..
+        }) = &refused
+        else {
+            panic!(
+                "position {position} edit {edit}: want DuplicateSessionInHaystack, got {:?}",
+                refused.as_ref().err()
+            );
+        };
+        assert_eq!(repeated, &session_id);
+    }
+}
