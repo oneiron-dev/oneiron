@@ -1,6 +1,10 @@
 //! Moved from `crates/oneiron/src/receipt/field_set.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use serde::Deserialize;
+use serde::Serialize;
+use std::collections::BTreeMap;
+
 pub const FIELD_MANIFEST_ENTRIES: &str = "manifest.entries";
 
 /// FIX 6934: the complete set of rows the attempt read its inputs from.
@@ -28,3 +32,7 @@ pub const FIELD_BUDGET_REFUSAL: &str = "budget_refusal";
 /// The run's project, frozen beside its typeRef: the scope its learning
 /// cells key on (FIX 6038). Absent, the vault's.
 pub const FIELD_TYPE_REF_PROJECT: &str = "type_ref.project";
+
+pub const BOARD_STATE_REF_PREFIX: &str = "board:";
+
+pub const ACTIVATED_MEMORY_IDS_SEPARATOR: char = ',';

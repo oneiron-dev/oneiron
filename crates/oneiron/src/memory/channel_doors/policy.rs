@@ -50,17 +50,11 @@ pub struct DeliveryWindowPolicyPutRequest {
     pub valid_to: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DeliveryWindowPolicyRequest {
-    pub subject_ref: EntityId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DeliveryWindowPolicyRetractRequest {
-    pub claim_ref: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::channel_doors::policy::{
+    DeliveryWindowEvaluateRequest, DeliveryWindowPolicyRequest, DeliveryWindowPolicyRetractRequest,
+    DeliveryWindowPreview,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeliveryWindowPolicyRow {
@@ -80,33 +74,6 @@ pub struct DeliveryWindowPolicyRow {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeliveryWindowPolicies {
     pub rows: Vec<DeliveryWindowPolicyRow>,
-}
-
-/// A read-only policy preview. This cannot schedule, approve or release a
-/// send; dispatch always evaluates live policy again at its own effect door.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DeliveryWindowEvaluateRequest {
-    pub subject_refs: Vec<EntityId>,
-    pub delivery_epoch_secs: u64,
-    pub local_minute_of_day: u16,
-    pub verb_class: DeliveryWindowVerbClass,
-    pub channel: String,
-    #[serde(default)]
-    pub active_contexts: Vec<DeliveryWindowContextCondition>,
-    #[serde(default)]
-    pub interrupt_surface: Option<String>,
-    #[serde(default)]
-    pub degrade_to: Option<String>,
-    #[serde(default)]
-    #[schemars(with = "Option<String>")]
-    pub apns_interruption_level: Option<DeliveryWindowApnsInterruptionLevel>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DeliveryWindowPreview {
-    pub policy_refs: Vec<EntityId>,
-    pub resolution: DeliveryWindowResolution,
 }
 
 fn policy_value(rule: &DeliveryWindowRule, reason: Option<&str>) -> (String, serde_json::Value) {

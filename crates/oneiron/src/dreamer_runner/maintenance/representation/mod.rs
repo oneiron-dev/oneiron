@@ -49,13 +49,8 @@ pub struct RepresentationRequest {
     pub voice: Vec<RepresentationSourceRef>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RepresentationSourceRef {
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub claim: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_runner::maintenance::representation::RepresentationSourceRef;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

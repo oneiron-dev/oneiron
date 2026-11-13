@@ -309,38 +309,10 @@ impl HostSlipIssuer {
     }
 }
 
-/// Filtered bytes bound by the host signature to a pact, epoch and destination.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ConnectWindow {
-    pub pact: String,
-    pub epoch: u64,
-    pub source_vault: String,
-    pub recipient_vault: String,
-    pub world_ref: crate::EntityId,
-    pub facets: Vec<crate::EntityId>,
-    pub bands: Vec<SelectorRange>,
-    pub window_key: String,
-    pub update: Vec<u8>,
-}
-
-impl ConnectWindow {
-    /// A signature binds the admitted bytes to the disclosed axes, peer and epoch.
-    pub(crate) fn transcript(&self) -> crate::Result<Vec<u8>> {
-        rmp_serde::to_vec_named(&("oneiron/connect/window/v1", self))
-            .map_err(|_| crate::Error::InvalidConfig("Connect window encoding failed".into()))
-    }
-}
-
-/// The authority context signed together with the stripped canonical envelope body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GuestDocumentContext {
-    pub pact: String,
-    pub epoch: u64,
-    pub ceiling: Scope,
-    pub effective_scope: FederationDirectionScope,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::authority::slip_vault::connect_lifecycle::{
+    ConnectWindow, GuestDocumentContext,
+};
 
 /// The actual recipient update, not a summary or a server-generated expected view.
 /// `envelope.signature` signs its canonical body, as the engine envelope codec
@@ -356,11 +328,4 @@ pub struct GuestDocumentEnvelope {
     pub signature: Vec<u8>,
     /// Unsigned export-preparation metadata, never recipient authority or delivery proof.
     pub travel_receipt: Option<crate::share_travel::GuestWindowTravelNote>,
-}
-
-impl GuestDocumentContext {
-    pub(crate) fn transcript(&self, envelope: &[u8]) -> crate::Result<Vec<u8>> {
-        rmp_serde::to_vec_named(&("oneiron/guest-document/v1", self, envelope))
-            .map_err(|_| crate::Error::InvalidConfig("guest document encoding failed".into()))
-    }
 }

@@ -18,23 +18,8 @@ use crate::llm::decision::types::invalid;
 use crate::{Result, Vault};
 use serde::{Deserialize, Serialize};
 
-/// The standing grant an owner's reason drafted from an ask about one consent effect.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum AskGrantDraft {
-    /// Drafted from the reason, by the bound's digest: it grants nothing until the owner
-    /// confirms it.
-    Proposed { grant_ref: String },
-    /// The owner confirmed it: the standing grant is live, under the rule row the reason
-    /// landed as.
-    Confirmed {
-        grant_ref: String,
-        /// The confirm's consent receipt, by decision id hex.
-        receipt: String,
-        /// The reason's rule row, by decision id hex: the one-tap undo names it.
-        rule: String,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::llm::decision::asks::grant_draft::AskGrantDraft;
 
 /// The draft an answer to `ask` by `role` with `reason` leaves: a Proposed grant of the
 /// ask's bound when the owner gave a reason on an ask about a consent effect; none

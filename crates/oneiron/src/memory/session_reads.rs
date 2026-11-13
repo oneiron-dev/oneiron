@@ -39,34 +39,11 @@ use crate::store::SessionStoreView;
 use oneiron_retrieval::pipeline::ScoredEntity;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HydrateRequest {
-    pub refs: Vec<String>,
-    /// The caller's retrieval filter: it only narrows what the refs read.
-    #[serde(default)]
-    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::session_reads::{
+    CreateNoteRequest, EntityRequest, HydrateRequest, QueryBm25Request,
+};
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EntityRequest {
-    pub entity_ref: String,
-    /// The caller's retrieval filter: it only narrows what the ref reads.
-    #[serde(default)]
-    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct QueryBm25Request {
-    pub query: String,
-    pub limit: usize,
-    /// The caller's retrieval filter, applied inside the posting scan,
-    /// before the rank and the cut.
-    #[serde(default)]
-    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
-}
 use crate::vault::{ReadMode, RevisionRef};
 use crate::{Vault, WriteActor};
 
@@ -691,11 +668,4 @@ fn decode<T: serde::de::DeserializeOwned>(value: &serde_json::Value) -> MemoryRe
 
 fn encode(value: &impl serde::Serialize) -> MemoryResult<serde_json::Value> {
     serde_json::to_value(value).map_err(|_| MemoryError::bad_request("SDK result encoding failed"))
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CreateNoteRequest {
-    pub kind: String,
-    pub markdown: String,
 }

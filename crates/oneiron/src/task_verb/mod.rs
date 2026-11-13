@@ -544,12 +544,9 @@ impl TaskAskRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TaskWaitRequest {
-    pub handle: TaskAskHandle,
-    pub step_key: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::task_verb::TaskWaitRequest;
+
 /// `tasks.update`: a typed report on a TASK (progress, blocked work, a
 /// durable result, a failure, a release or a brief revision) through the
 /// task highway under the caller's `report_key`, fenced by the `attempt` an

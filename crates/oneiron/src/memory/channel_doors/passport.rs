@@ -9,56 +9,11 @@ use crate::write_envelope::thread_claim::{
     StickyMaskDecision, ThreadMask, ThreadPassport, canonical_message_id,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ThreadPassportRequest {
-    pub identity_ref: EntityId,
-    pub message_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ThreadPassportsRequest {
-    pub thread_ref: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ThreadMaskView {
-    pub identity_ref: EntityId,
-    pub actor_ref: EntityId,
-    pub facet_ref: Option<EntityId>,
-}
-
-impl From<ThreadMask> for ThreadMaskView {
-    fn from(mask: ThreadMask) -> Self {
-        Self {
-            identity_ref: mask.identity_ref,
-            actor_ref: mask.actor_ref,
-            facet_ref: mask.facet_ref,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ThreadPassportView {
-    pub identity_ref: EntityId,
-    pub message_id: String,
-    pub thread_ref: String,
-    pub mask: ThreadMaskView,
-    pub observed_at: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ThreadPassportLookup {
-    pub passport: Option<ThreadPassportView>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ThreadPassportsView {
-    pub canonical_thread_ref: String,
-    pub passports: Vec<ThreadPassportView>,
-    pub pinned_mask: Option<ThreadMaskView>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::channel_doors::passport::{
+    ThreadMaskView, ThreadPassportLookup, ThreadPassportRequest, ThreadPassportView,
+    ThreadPassportsRequest, ThreadPassportsView,
+};
 
 impl Memory<'_> {
     pub(super) fn channel_mask_readable(&self, mask: ThreadMask) -> MemoryResult<()> {

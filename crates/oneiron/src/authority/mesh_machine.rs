@@ -36,14 +36,9 @@ const BIND_DOMAIN: &[u8] = b"oneiron/mesh-machine-binding/v1\0";
 /// a stranger's work stays bounded until an endpoint index serves it.
 const MAX_LOOKUP_MACHINES: usize = 1024;
 
-/// Address hints. This structure has no authority by itself.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct MeshMachineAddress {
-    pub endpoint_key: [u8; 32],
-    pub direct_addrs: Vec<SocketAddr>,
-    pub relay_url: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::authority::mesh_machine::MeshMachineAddress;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MeshMachineAddressEnvelope {

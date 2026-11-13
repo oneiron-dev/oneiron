@@ -46,25 +46,8 @@ const OWNER_ACTOR_CLASS: &str = "human";
 const MINT_DIGEST_CONTEXT: &[u8] = b"oneiron/support-grant/mint/v1\0";
 const REVOKE_DIGEST_CONTEXT: &[u8] = b"oneiron/support-grant/revoke/v1\0";
 
-/// Which kind of support party a grant names: a named support person
-/// (`human`) or a support agent (`agent`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SupportHolderClass {
-    Human,
-    Agent,
-}
-
-impl SupportHolderClass {
-    /// The actor class the slip carries.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Human => "human",
-            Self::Agent => "agent",
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::authority::support_grant::{SupportGrantStatus, SupportHolderClass};
 
 /// What the customer's owner approves.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,21 +75,6 @@ pub struct SupportGrantRequest {
     /// The repairs the support holder may run (FIX 4407), each by its own
     /// id, signed into the slip; empty for none.
     pub repairs: BTreeSet<SupportRepair>,
-}
-
-/// Where a support grant stands, as its list and the registry show it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SupportGrantStatus {
-    /// It admits its holder now.
-    Active,
-    /// Its wall deadline or its slip lifetime has passed.
-    Expired,
-    /// The customer revoked it.
-    Revoked,
-    /// It no longer stands for another reason: its holder is gone, or the
-    /// host that minted it no longer stands.
-    Ended,
 }
 
 /// One support grant, read from its logged mint.

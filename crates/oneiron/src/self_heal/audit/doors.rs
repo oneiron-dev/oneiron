@@ -14,56 +14,11 @@ use super::{
     SealedAttemptReceipt, audit_rate_in_txn, draw_audit,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SealAttemptRequest {
-    pub attempt: AttemptId,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SealPendingRequest {
-    #[serde(default)]
-    pub attempt: Option<AttemptId>,
-}
-
-/// Completion names a persisted request, never a caller-selected audit rate.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SealCompleteRequest {
-    pub attempt: AttemptId,
-    pub kind: SealCheckKind,
-    pub outcome: SealCheckOutcome,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SealRunRequest {}
-
-/// A normal Coach job; its existing leased runner performs the checks.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SealRunReceipt {
-    pub job: AttemptId,
-}
-
-/// Findings move task quality; the confession reward remains separate.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SealReceiptView {
-    pub receipt: SealedAttemptReceipt,
-    pub assessment: SealAssessment,
-    pub honesty_reward: f64,
-}
-
-impl From<SealedAttemptReceipt> for SealReceiptView {
-    fn from(receipt: SealedAttemptReceipt) -> Self {
-        let assessment = seal_assessment(&receipt);
-        Self {
-            receipt,
-            assessment,
-            honesty_reward: assessment.honesty_reward(),
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::self_heal::audit::doors::{
+    SealAttemptRequest, SealCompleteRequest, SealPendingRequest, SealReceiptView, SealRunReceipt,
+    SealRunRequest,
+};
 
 /// Adds only the immutable report and its directed recheck requests.
 pub fn confess_as_owner(

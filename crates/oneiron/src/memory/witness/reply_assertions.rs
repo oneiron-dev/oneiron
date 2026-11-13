@@ -34,21 +34,8 @@ use oneiron_model::llm::{ReplyAssertionRecord, ReplyAssertions};
 const BIRTHS: SideTable<EntityId, MessageReplyAssertions, Named> =
     SideTable::new(&side_table::MESSAGE_REPLY_ASSERTIONS);
 
-/// The reply assertions a MESSAGE born whole (not streamed) keeps beside it
-/// (FIX 10260): which MESSAGE, in which TURN and conversation, written by
-/// whom, and the records its turn asserts, as admitted when it landed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct MessageReplyAssertions {
-    pub message: EntityId,
-    pub conversation: EntityId,
-    pub turn: EntityId,
-    /// The writer the MESSAGE was witnessed as, and its actor class.
-    pub writer: EntityId,
-    pub writer_class: u8,
-    /// The records its turn asserts it cited or created, each readable by
-    /// its writer when it landed: no proof of authorship.
-    pub assertions: ReplyAssertions,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::witness::reply_assertions::MessageReplyAssertions;
 
 /// The canonical set `sets` assert, in order, cited and created each once:
 /// each record by the registry type its row has in `txn` and its id. A

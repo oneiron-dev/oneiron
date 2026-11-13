@@ -11,9 +11,10 @@ use serde::{Deserialize, Serialize};
 
 pub use super::criteria::{MAX_CRITERION_BYTES, QuestionCriteria};
 
-/// The adapter of a standing question over artifact units, asked on each artifact's head
-/// as it changes ([`QuestionDefinition::artifacts`]).
-pub const ARTIFACT_ADAPTER: &str = "artifact";
+#[doc(hidden)]
+pub use oneiron_verb_wire::llm::decision::questions::records::{
+    ARTIFACT_ADAPTER, AnswerRecord, QUESTION_CALL_BUDGET_MS,
+};
 
 /// One artifact a standing artifact question asks: the artifact its answers land in, and
 /// which of its units are asked, as a `vault.artifacts.ask` names them.
@@ -160,16 +161,6 @@ impl QuestionDefinition {
     }
 }
 
-/// The vault's question call budget (ARCH-0076): each decision call's clock,
-/// in milliseconds, when neither the question nor the ask names one. It
-/// ships at a graph ask's default, within the asks' own bounds.
-pub const QUESTION_CALL_BUDGET_MS: SettingSpec = SettingSpec {
-    key: "question_call_budget_ms",
-    min: 1.0,
-    max: crate::memory::caps::MAX_RECALL_DEADLINE_MS as f64,
-    seed: crate::receipt::GRAPH_ASK_UNIT_DEADLINE_MS as f64,
-};
-
 /// One decision call's clock: `explicit` milliseconds when the question or
 /// the ask names them, else the vault's [`QUESTION_CALL_BUDGET_MS`] row,
 /// to the nearest millisecond.
@@ -258,27 +249,6 @@ pub struct AnswerProposal {
     pub rule: Option<HostRuleRef>,
     /// Provider-reported cost at the answered rung, when known.
     pub cost_per_thousand: Option<f64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AnswerRecord {
-    #[serde(with = "super::super::codec::entity")]
-    #[schemars(with = "String")]
-    pub claim: EntityId,
-    #[serde(with = "super::super::codec::entity")]
-    #[schemars(with = "String")]
-    pub unit: EntityId,
-    pub decision: TypedDecision,
-    /// Engine-computed hash of the live source row and its document frontier.
-    pub frontier: [u8; 32],
-    pub source_kind: u8,
-    pub answered_at: u64,
-    /// The readable neighbours this answer left out, each with why: it was
-    /// answered using the sources compatible with its unit alone. Refs and
-    /// reasons only, never a body; empty when none was left out.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub omitted: Vec<OmittedNeighbor>,
 }
 
 /// A standing question's scheduled backfill: from `due_at`, the question

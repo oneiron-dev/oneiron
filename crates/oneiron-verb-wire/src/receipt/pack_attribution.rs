@@ -1,0 +1,144 @@
+//! Moved from `crates/oneiron/src/receipt/pack_attribution.rs` (lib split W2: wire types below the lib).
+//! `oneiron` re-exports each item at its old path.
+
+use crate::receipt::task_type_ref::TypeRef;
+use oneiron_base::error::Error;
+use oneiron_base::error::Result;
+use oneiron_contracts::entity_id::EntityId;
+use serde::Deserialize;
+use serde::Serialize;
+
+/// A contribution check is distinct from loading or citing an input.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ContributionCheck {
+    pub receipt: String,
+    pub contributed: bool,
+}
+
+/// A derived-from edge the run actually used, directed from output to input.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct UsedProvenanceEdge {
+    pub derived: EntityId,
+    pub source: EntityId,
+    pub check: Option<ContributionCheck>,
+}
+
+/// An attributed contribution by a loaded skill, including a team pattern.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SkillContribution {
+    pub skill: EntityId,
+    pub check: ContributionCheck,
+}
+
+/// The lineage-credit controls in effect for this run. No depth cap means the
+/// full used chain; a zero decay or disabled credit passes no late credit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CreditOptions {
+    pub enabled: bool,
+    pub depth_cap: Option<u32>,
+    pub check_every_hop: bool,
+}
+
+/// Execution context is stamped once; actual-use lists may only grow while
+/// the lease is live. Every model string is an id pinned as `id@revision`.
+/// The judge is unknown until the model whose answer to the run's Done stands
+/// is recorded, once, under the live lease (FIX 1877); a run no model judged
+/// keeps it unknown. The agent definition is stamped once with the execution
+/// context, pinned the same way; a run no agent definition started keeps it
+/// absent (FIX 11637).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PackAttributionFields {
+    #[serde(rename = "typeRef")]
+    pub type_ref: TypeRef,
+    pub executor: String,
+    /// The agent definition that started the run, pinned as `id@revision`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_definition: Option<String>,
+    pub judge: Option<String>,
+    pub pattern: EntityId,
+    pub team_shape: Vec<String>,
+    pub decider: EntityId,
+    pub project: Option<EntityId>,
+    pub output: Option<EntityId>,
+    pub contributions: Vec<SkillContribution>,
+    pub used_edges: Vec<UsedProvenanceEdge>,
+    pub credit: CreditOptions,
+}
+
+/// Provenance retained beside each learning evidence row, not in its cell key.
+/// In particular, changing judges never forks a reliability cell.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PackLearningContext {
+    pub attempt_receipt: String,
+    pub outcome_receipt: String,
+    pub attribution: PackAttributionFields,
+}
+
+impl PackAttributionFields {
+    pub fn validate(&self) -> Result<()> {
+        self.type_ref.validate()?;
+        for model in std::iter::once(&self.executor).chain(&self.judge) {
+            reference(model)?;
+            if !model
+                .rsplit_once('@')
+                .is_some_and(|(id, rev)| !id.is_empty() && !rev.is_empty())
+            {
+                return Err(Error::InvalidClaimBody(
+                    "pack attribution needs model ids at revisions",
+                ));
+            }
+        }
+        if self.team_shape.is_empty() {
+            return Err(Error::InvalidClaimBody(
+                "pack attribution needs a team shape",
+            ));
+        }
+        for role in &self.team_shape {
+            reference(role)?;
+        }
+        let mut skills = std::collections::BTreeSet::new();
+        for contribution in &self.contributions {
+            reference(&contribution.check.receipt)?;
+            if !skills.insert(contribution.skill) {
+                return Err(Error::InvalidClaimBody("one contribution check per skill"));
+            }
+        }
+        let mut edges = std::collections::BTreeSet::new();
+        for edge in &self.used_edges {
+            if edge.derived == edge.source || !edges.insert((edge.derived, edge.source)) {
+                return Err(Error::InvalidClaimBody(
+                    "used provenance edges are distinct and not self edges",
+                ));
+            }
+            if let Some(check) = &edge.check {
+                reference(&check.receipt)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn extends(&self, previous: &Self) -> bool {
+        let mut fixed = self.clone();
+        fixed.contributions = previous.contributions.clone();
+        fixed.used_edges = previous.used_edges.clone();
+        if previous.output.is_none() {
+            fixed.output = None;
+        }
+        // An unknown judge is recorded once (FIX 1877); a recorded one stays.
+        if previous.judge.is_none() {
+            fixed.judge = None;
+        }
+        fixed == *previous
+            && self.contributions.starts_with(&previous.contributions)
+            && self.used_edges.starts_with(&previous.used_edges)
+    }
+}
+
+pub fn reference(text: &str) -> Result<()> {
+    if text.is_empty() || text.len() > 256 || text.chars().any(char::is_control) {
+        return Err(Error::InvalidClaimBody(
+            "an attribution reference is 1..=256 bytes without controls",
+        ));
+    }
+    Ok(())
+}

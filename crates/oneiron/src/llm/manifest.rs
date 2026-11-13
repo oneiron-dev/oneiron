@@ -41,27 +41,9 @@ pub struct ModelManifest {
     pub seat_policy: Option<super::seat::SeatPolicy>,
 }
 use crate::model_binding::invalid;
-fn model_for_route(
-    binding: &ModelBinding,
-    route: ModelLocality,
-    widest: ModelLocality,
-) -> Result<&ModelId> {
-    if route == widest {
-        Ok(&binding.model)
-    } else {
-        binding
-            .route_models
-            .get(&route)
-            .ok_or_else(|| invalid("resident route has no model binding"))
-    }
-}
-fn route_rank(route: ModelLocality) -> u8 {
-    match route {
-        ModelLocality::OnDevice => 0,
-        ModelLocality::OwnServer => 1,
-        ModelLocality::ThirdParty => 2,
-    }
-}
+#[doc(hidden)]
+use oneiron_verb_wire::llm::manifest::{model_for_route, route_rank};
+
 impl ModelManifest {
     pub fn from_json(bytes: &[u8]) -> Result<Self> {
         let value: Self =

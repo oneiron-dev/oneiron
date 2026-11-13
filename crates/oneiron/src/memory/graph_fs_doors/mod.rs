@@ -13,17 +13,6 @@ use crate::graph_fs::{
     GraphFsOptions, GraphFsResolver,
 };
 
-impl GraphFsMountRequest {
-    fn options(&self) -> GraphFsOptions {
-        let options = GraphFsOptions::default();
-        let options = self
-            .page_byte_cap
-            .map_or(options, |cap| options.with_page_byte_cap(cap));
-        self.max_entries
-            .map_or(options, |cap| options.with_max_entries(cap))
-    }
-}
-
 fn descriptor(
     tree: &GraphFsResolver<'_, '_>,
     request: &GraphFsMountRequest,

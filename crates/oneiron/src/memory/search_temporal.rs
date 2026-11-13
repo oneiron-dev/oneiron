@@ -9,31 +9,10 @@ use crate::pipeline::TemporalSearchReport;
 use crate::ports::EntityStoreRead;
 use crate::temporal::TemporalAnchorMode;
 
-/// An inclusive UTC range in Unix seconds. An outer range only narrows results;
-/// it is not an anchor and adaptive widening never removes it.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TemporalSearchRange {
-    pub start: u64,
-    pub end: u64,
-}
-
-impl TemporalSearchRange {
-    fn validate(self) -> MemoryResult<()> {
-        caps::check_as_of(Some(self.start))?;
-        caps::check_as_of(Some(self.end))?;
-        if self.start > self.end {
-            return Err(MemoryError::bad_request(
-                "temporal range start must not exceed end",
-            ));
-        }
-        Ok(())
-    }
-
-    fn overlaps(self, start: u64, end: u64) -> bool {
-        self.start <= end && start <= self.end
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::search_temporal::{
+    TemporalSearchHit, TemporalSearchRange, TemporalSearchResult,
+};
 
 /// The engine's explicit temporal controls. `start` and `end` anchor the selected
 /// axis; `both` uses them for occurrence and requires the separate learned range.
@@ -100,24 +79,6 @@ impl TemporalSearchRequest {
         }
         Ok(())
     }
-}
-
-/// One admitted result, with dates from the same source revision the run pinned.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct TemporalSearchHit {
-    pub entity_ref: String,
-    pub source_revision_ref: Option<String>,
-    pub score: f32,
-    pub occurred_start: u64,
-    pub occurred_end: u64,
-    pub learned_at: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct TemporalSearchResult {
-    pub hits: Vec<TemporalSearchHit>,
-    /// None when authority prevented the temporal channel from running.
-    pub widening: Option<TemporalSearchReport>,
 }
 
 impl Memory<'_> {

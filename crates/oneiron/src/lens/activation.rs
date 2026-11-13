@@ -19,27 +19,8 @@ use crate::receipt::{LensActivationReceipt, LensSlotDecision};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::{EntityId, Error, Result, Vault};
 
-/// `vault.lenses.activate`'s input: the proposal to select, the revision the
-/// owner was shown, and the lens the slot held when they looked.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LensActivateRequest {
-    pub lens_ref: String,
-    pub compiled_hash: String,
-    /// The slot's active lens as shown, or none when it held none.
-    #[serde(default)]
-    pub expected_active_ref: Option<String>,
-}
-
-/// `vault.lenses.deactivate`'s input: the slot to clear and the lens it was
-/// shown holding. It clears the selection only; the pack, its skill and the
-/// proposal stay.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LensDeactivateRequest {
-    pub slot: LensSlot,
-    pub expected_active_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::lens::activation::{LensActivateRequest, LensDeactivateRequest};
 
 fn lens_id(field: &str, value: &str) -> MemoryResult<EntityId> {
     EntityId::from_hex(value)

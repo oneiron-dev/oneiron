@@ -47,32 +47,14 @@ const RUN_CONTROL_FIX: &str =
 /// The holder the host root names, and every slip cut from it keeps.
 const HOST_HOLDER: &str = "host";
 
-/// One branch to pause or resume, by the attempt id its run tree names.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RunControlRequest {
-    /// The branch's attempt id, hex, as `vault.runs.branches.get` names it.
-    pub branch: String,
-    /// Kept on the branch's intervention event.
-    #[serde(default)]
-    pub note: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::task_verb::run_control::{RunControlEffect, RunControlRequest};
 
 /// What the pause or resume did, and the branch as it stands after it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunControlReceipt {
     pub effect: RunControlEffect,
     pub branch: RunBranchView,
-}
-
-/// The queue's own effect: a repeat answers `already_*` and writes nothing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RunControlEffect {
-    Paused,
-    AlreadyPaused,
-    Resumed,
-    AlreadyResumed,
 }
 
 /// The two controls these doors run.

@@ -19,14 +19,8 @@ use crate::store::person_billing_account::PERSON_BILLING_ACCOUNT;
 /// The longest account reference a PERSON may file, in bytes (CALLS).
 pub const MAX_BILLING_ACCOUNT_BYTES: usize = 256;
 
-/// `self.billing.account.file`'s input: the caller's own billing account.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BillingAccountFiling {
-    /// The account the caller's room-paid calls bill, 1 to 256 bytes with no
-    /// control character; empty withdraws the caller's filing.
-    pub account: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::llm::run_admission::person_billing::BillingAccountFiling;
 
 impl Vault {
     /// Files `account` as `person`'s own billing account, replacing any the

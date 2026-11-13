@@ -13,53 +13,8 @@ use crate::edit_roundtrip::ArtifactAskRun;
 use crate::llm::decision::TypedDecision;
 use crate::office_body::LivePin;
 
-/// One unit an artifact ask left without an answer, as its log keeps it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ArtifactUnitReceipt {
-    /// Asked and not answered: the decision with its receipt, or none when the
-    /// unit had no input to read or its state was past the call's bound. A
-    /// unit whose ask went to the next authorised role stays here, with that
-    /// ask's reason on its receipt, until the role answers.
-    Abstained {
-        unit: Value,
-        decision: Option<TypedDecision>,
-        /// The live body the ask read the unit on, when it read one (FIX
-        /// 12018).
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        judged_live: Option<LivePin>,
-    },
-    /// Not read as given, and why.
-    Refused {
-        unit: Value,
-        reason: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        judged_live: Option<LivePin>,
-    },
-    /// A unit whose copy did not pass the secret scan: it was there, its
-    /// content is left out.
-    Omitted,
-}
-
-impl ArtifactUnitReceipt {
-    /// Every id the receipt names: its decision's evidence.
-    pub(in crate::llm::decision::questions) fn names(&self, id: &crate::EntityId) -> bool {
-        match self {
-            Self::Abstained {
-                decision: Some(decision),
-                ..
-            } => {
-                decision.evidence.contains(id)
-                    || decision
-                        .receipt
-                        .evidence_versions
-                        .iter()
-                        .any(|pin| pin.id == *id)
-            }
-            _ => false,
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::llm::decision::questions::artifact_refresh::unit_receipts::ArtifactUnitReceipt;
 
 /// The receipts of every unit `run` left without an answer, abstained then
 /// refused, in the order the ask met them.
