@@ -1,0 +1,14 @@
+{
+  "name": "vault.snapshot.page",
+  "description": "Reads the next page of a snapshot handle: the rows that read for the caller at this call, each with its source version; a row born or changed since the open is marked changed_since_open.",
+  "input": "crate::snapshot_read::SnapshotPageRequest",
+  "output": "crate::claim::ScopedReadResult<crate::snapshot_read::SnapshotPage>",
+  "call": "crate::snapshot_read::snapshot_page(memory, &input)?",
+  "scope": "Read",
+  "act_class": "reversible_work",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered"
+}

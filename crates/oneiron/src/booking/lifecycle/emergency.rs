@@ -131,7 +131,9 @@ pub(in crate::booking) fn commit_emergency_item(
         } else {
             read_booking_facts(vault, &*txn, &event)?
         };
-        if booking.status != BookingStatus::Confirmed
+        // A calendar provider's cancellation ends the booking too (FIX 22385):
+        // a plan built before it is stale, whatever its action policy.
+        if booking.effective_status() != BookingStatus::Confirmed
             || booking.slot != plan.booking.occurrence
             || booking.page_ref != plan.booking.page_ref
             || booking.event_type != plan.booking.event_type
@@ -447,7 +449,7 @@ pub(in crate::booking) fn pick_emergency_item(
                 BookingStatus::Confirmed
             };
         if current != item.calendar
-            || booking.status != expected_status
+            || booking.effective_status() != expected_status
             || booking.context.as_ref() != Some(&item.plan.booking.context)
         {
             return Err(emergency_refused(

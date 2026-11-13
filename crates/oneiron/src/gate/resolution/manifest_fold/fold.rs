@@ -46,6 +46,10 @@ pub(super) fn fold_policy_manifest(
     let mut value_seeds = crate::gate::policy_value_seeds::SeededPolicyValueRows::default();
     let mut code_consent_settlement =
         crate::gate::code_consent_settlement::CodeConsentSettlementFold::default();
+    // Once a host has minted a base agent's Steward grant (untangle 6.3,
+    // 6.6), its rows come from that grant, not from the manifest rows that
+    // name it.
+    let steward_rows = crate::federation::steward_rows_rewrite(store, txn)?;
 
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
         let id = match index_entry {
@@ -98,7 +102,18 @@ pub(super) fn fold_policy_manifest(
         if !crate::gate::manifest_authenticity::manifest_is_trusted(store, txn, &id, body)? {
             continue;
         }
-        let decoded_row = store.manifest_memo().row(body);
+        // The grant's rows replace the manifest's rows for the Dreamer in
+        // every trusted pack, so they read as the shipped rows did, the read
+        // row inside the grant's own data axes. A pack that does not decode
+        // keeps its own bytes and its own diagnostic.
+        let steward_body = if steward_rows.is_empty() {
+            None
+        } else {
+            crate::gate::body_with_steward_rows(body, &steward_rows).unwrap_or(None)
+        };
+        let decoded_row = store
+            .manifest_memo()
+            .row(steward_body.as_deref().unwrap_or(&body[..]));
         match &decoded_row.carrier {
             Some(DecodedManifestCarrier::Pack(pack)) => {
                 let decoded = pack.clone();
@@ -214,6 +229,16 @@ pub(super) fn fold_policy_manifest(
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
                 }
+                // One inquiry row per vault, as the wait above: two different
+                // rows have no deterministic keep, so the policy fails closed
+                // and the vault reads `task`, marked unreadable.
+                if let Some(policy) = decoded.inquiry_policy {
+                    match &resolution.inquiry_policy {
+                        None => resolution.inquiry_policy = Some(policy),
+                        Some(existing) if *existing == policy => {}
+                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                    }
+                }
                 // Every valid row carries its version's pinned membership, so
                 // the newest version among trusted packs is the floor.
                 if let Some(floor) = decoded.catastrophe_floor
@@ -223,6 +248,17 @@ pub(super) fn fold_policy_manifest(
                         .is_none_or(|current| current.version() < floor.version())
                 {
                     resolution.catastrophe_floor = Some(floor);
+                }
+                // One check-in row per vault: the same row twice is one
+                // configuration; two different rows have no deterministic
+                // wait, so the policy fails closed and every rung takes the
+                // shipped wait, receipted as unreadable.
+                if let Some(policy) = decoded.check_in_policy {
+                    match &resolution.check_in_policy {
+                        None => resolution.check_in_policy = Some(policy),
+                        Some(existing) if *existing == policy => {}
+                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                    }
                 }
                 resolution
                     .owner_policy_rows

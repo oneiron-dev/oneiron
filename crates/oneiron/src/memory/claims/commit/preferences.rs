@@ -1,8 +1,10 @@
-//! Stated-preference matching: the prior-claim lookup, preference conflicts and answer agreement.
+//! Stated-preference matching: the prior-claim lookup and preference conflicts.
+//! Answer agreement is shared through [`crate::claim::preference_answers_agree`].
 //! `Memory::find_prior_claim` and the two preference-conflict reads are its call surface.
 //! `memory::claims::commit` defines `MemoryKey`, the key these match on.
 
 use super::*;
+use crate::claim::preference_answers_agree;
 
 impl Memory<'_> {
     /// Prior-claim match for auto-supersede: the standing head on `key`.
@@ -17,8 +19,7 @@ impl Memory<'_> {
         beside_stated: bool,
     ) -> MemoryResult<Option<EntityId>> {
         let ids = self.vault.claims_for_subject(&key.subject)?;
-        let set_answer = SET_CARDINALITY_PREDICATES
-            .contains(&key.input.predicate.as_str())
+        let set_answer = (declared_cardinality(&key.input.predicate) == ClaimCardinality::Set)
             .then(|| json_to_rmpv(&key.input.value));
         let mut best: Option<EntityId> = None;
         for id in ids {
@@ -32,7 +33,7 @@ impl Memory<'_> {
                 || (beside_stated && body.source == Some(ClaimSource::UserStated))
                 || set_answer
                     .as_ref()
-                    .is_some_and(|answer| !answers_agree(answer, &body.value))
+                    .is_some_and(|answer| !preference_answers_agree(answer, &body.value))
             {
                 continue;
             }
@@ -53,8 +54,7 @@ impl Memory<'_> {
         exclude: &EntityId,
         beside_stated: bool,
     ) -> crate::Result<Option<EntityId>> {
-        let set_answer = SET_CARDINALITY_PREDICATES
-            .contains(&key.input.predicate.as_str())
+        let set_answer = (declared_cardinality(&key.input.predicate) == ClaimCardinality::Set)
             .then(|| json_to_rmpv(&key.input.value));
         let mut best: Option<EntityId> = None;
         for id in self.vault.claims_for_subject_in_txn(rtxn, &key.subject)? {
@@ -68,7 +68,7 @@ impl Memory<'_> {
                 || (beside_stated && body.source == Some(ClaimSource::UserStated))
                 || set_answer
                     .as_ref()
-                    .is_some_and(|answer| !answers_agree(answer, &body.value))
+                    .is_some_and(|answer| !preference_answers_agree(answer, &body.value))
             {
                 continue;
             }
@@ -107,7 +107,7 @@ impl Memory<'_> {
             };
             if body.source == Some(ClaimSource::UserStated)
                 && key.stands(&body)
-                && !answers_agree(value, &body.value)
+                && !preference_answers_agree(value, &body.value)
             {
                 conflicts.push(peer);
             }
@@ -180,39 +180,4 @@ impl Memory<'_> {
         }
         Ok(())
     }
-}
-
-/// OF-023: whether an observed preference gives the stated one's answer.
-/// Canon names a normalized answer key without pinning it, so this is the
-/// one place that decides: text compares blind to case and spacing (the
-/// Dreamer's `normalize_text` rule), maps compare whatever their key order,
-/// and every other value, structured qualifiers included, must match.
-fn answers_agree(observed: &Value, stated: &Value) -> bool {
-    match (observed, stated) {
-        (Value::String(a), Value::String(b)) => match (a.as_str(), b.as_str()) {
-            (Some(a), Some(b)) => fold_answer_text(a) == fold_answer_text(b),
-            _ => a == b,
-        },
-        (Value::Array(a), Value::Array(b)) => {
-            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| answers_agree(a, b))
-        }
-        (Value::Map(a), Value::Map(b)) => {
-            a.len() == b.len() && a.iter().all(|(k, v)| entry_agrees(b, k, v))
-        }
-        _ => observed == stated,
-    }
-}
-
-/// Whether `map` holds `key` with an answer that agrees with `value`.
-fn entry_agrees(map: &[(Value, Value)], key: &Value, value: &Value) -> bool {
-    map.iter()
-        .find(|(k, _)| k == key)
-        .is_some_and(|(_, v)| answers_agree(v, value))
-}
-
-fn fold_answer_text(text: &str) -> String {
-    text.split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
 }

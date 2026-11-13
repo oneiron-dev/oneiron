@@ -134,6 +134,14 @@ pub(crate) fn row_with_markdown_in_txn(
     Ok(selected)
 }
 
+/// The text fields a NOTE's text index publishes from one stored image:
+/// title, tags and body, each under its BM25F NOTE field (FIX 7789). A
+/// persist's capture, the idle refresh and a repo projection all read them
+/// here.
+pub(crate) fn index_fields(doc: &LoroDoc) -> Result<Vec<(&'static str, String)>> {
+    super::document::index_fields(doc)
+}
+
 /// Capture before replacing a canonical snapshot: the old indexed frontier
 /// may no longer be readable once a shallow or StateOnly image lands.
 pub(super) fn indexed_input_in_txn(
@@ -173,9 +181,13 @@ pub(super) fn index_stored_note_in_txn(
             Some(grant) => crate::batch::BatchBuilder::promotion_replay(vault, Vec::new(), grant),
             None => vault.batch_in(),
         };
-        batch
-            .text(&note, &[("markdown", capture.markdown.as_str())])
-            .apply(txn)?;
+        // Title, tags and body, each the NOTE field it ranks as (FIX 7789).
+        let fields: Vec<(&str, &str)> = capture
+            .fields
+            .iter()
+            .map(|(name, text)| (*name, text.as_str()))
+            .collect();
+        batch.text(&note, &fields).apply(txn)?;
     }
     if capture.published {
         crate::vault::entity_revision::finish_native_note_publication_in_txn(vault, txn, note)?;

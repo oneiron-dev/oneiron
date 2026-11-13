@@ -49,6 +49,9 @@ pub(super) fn write_imported_chat_in_txn(
     body.scope = Some(scope_with_lineage(pair_scope, ClaimSource::Imported));
     body.valid_from = Some(evidence.at);
     body.source = Some(ClaimSource::Imported);
+    // The same facet rule as a born actor claim (write.rs): a PERSON's
+    // substrate, else the actor's stored birth FACET, else the vault default.
+    body.scope_facet = super::write::actor_claim_facet_in_txn(vault, txn, row.actor())?;
     let id = vault.store.clock.entity_id()?;
     vault.put_reserved_claim_in_txn(
         txn,

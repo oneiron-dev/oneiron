@@ -9,6 +9,7 @@ use heed::RoTxn;
 use crate::claim::ClaimBody;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::pipeline::WorldScope;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD};
 use crate::store::StoreRead;
 
@@ -36,7 +37,31 @@ pub(super) fn resolve_edge_short_ids(
     }
 }
 
-/// ARCH-0004 / ARCH-0022 world partitioning for an `All`-scope pack, run once
+/// Whether a pack under `scope` is partitioned by world: every scope whose
+/// selection holds base reality beside at least one other world (ARCH-0004
+/// #world-scope: "The context pack MUST partition claims by world — the
+/// base-reality section first, labeled per-world sections after, the non-base
+/// sections budget-capped"). Those are `All`, `World(id)` (its default
+/// selection is `{base, id}`, and the pipeline's world filter admits both) and
+/// a `WorldSet` that includes base and names a world; [`partition_pack_claims`]
+/// and the selection-time world share then hold the same non-base cap for all
+/// three.
+///
+/// The rest select no base row beside a world, so their packs stay flat in
+/// score order. `Base` is base alone. A `WorldSet` without base, or naming no
+/// world, is one side only. `CodebaseSet` selects repository membership, not
+/// worlds. `ActiveSet` resolves its members only while the run executes, and
+/// the pack builder sets no selection for it.
+pub(super) fn partitions_by_world(scope: &WorldScope) -> bool {
+    match scope {
+        WorldScope::All | WorldScope::World(_) => true,
+        WorldScope::WorldSet(worlds) => worlds.include_base() && !worlds.worlds().is_empty(),
+        WorldScope::Base | WorldScope::CodebaseSet(_) | WorldScope::ActiveSet => false,
+    }
+}
+
+/// ARCH-0004 / ARCH-0022 world partitioning for a pack whose scope
+/// [`partitions_by_world`], run once
 /// over the rows it emits (FIX 9759): reorders `results` so rows are grouped
 /// by world — the base section (claims with no `world` key plus every other
 /// base-reality record) first, then one section per non-base world, which
@@ -48,7 +73,13 @@ pub(super) fn resolve_edge_short_ids(
 /// order: results by score, then neighbors in walk order (FIX 9760). Returns
 /// the critical claims the share left out, and the non-base claims it kept.
 ///
-/// When no non-base row survives, `results` are left flat in score order.
+/// When a non-base row survives in `results` or `neighbors`, every kept
+/// hydrated row is labeled with its world under [`WORLD_SECTION_FIELD`]
+/// (ARCH-0004 #world-scope: "labeled per-world sections"; "Retrieval MUST NOT
+/// mix worlds *unlabeled*"), so a rendered pack names each row's world.
+///
+/// When no non-base row survives, `results` are left flat in score order and
+/// no row carries the label.
 pub(super) fn partition_pack_claims(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
@@ -109,12 +140,13 @@ pub(super) fn partition_pack_claims(
     };
 
     let mut kept_neighbors = Vec::with_capacity(neighbors.len());
-    for (entity, world) in neighbors.drain(..).zip(&neighbor_worlds) {
-        if emitted(&entity, world) {
+    let mut kept_neighbor_worlds = Vec::with_capacity(neighbors.len());
+    for (entity, world) in neighbors.drain(..).zip(neighbor_worlds) {
+        if emitted(&entity, &world) {
             kept_neighbors.push(entity);
+            kept_neighbor_worlds.push(world);
         }
     }
-    *neighbors = kept_neighbors;
 
     let mut base: Vec<ContextEntity> = Vec::with_capacity(results.len());
     let mut non_base: Vec<(EntityId, ContextEntity)> = Vec::new();
@@ -127,6 +159,25 @@ pub(super) fn partition_pack_claims(
             Some(world) => non_base.push((world, entity)),
         }
     }
+
+    // Labels only where worlds meet. A pack with no kept non-base row carries
+    // none, including a label an earlier pass set before a later cut.
+    if non_base.is_empty() && kept_neighbor_worlds.iter().all(Option::is_none) {
+        for entity in base.iter_mut().chain(kept_neighbors.iter_mut()) {
+            clear_world_section(entity);
+        }
+    } else {
+        for entity in &mut base {
+            label_world_section(entity, None);
+        }
+        for (world, entity) in &mut non_base {
+            label_world_section(entity, Some(*world));
+        }
+        for (entity, world) in kept_neighbors.iter_mut().zip(&kept_neighbor_worlds) {
+            label_world_section(entity, *world);
+        }
+    }
+    *neighbors = kept_neighbors;
 
     // No fictional / dream row survived — leave the pack flat (score order).
     if non_base.is_empty() {
@@ -164,6 +215,45 @@ pub(super) fn partition_pack_claims(
 /// Designed in canon (eiri/context, ARCH-0004, eiri-arch-0016); unwired as of
 /// 2026-08-19 — needs wiring/design completion.
 pub const WORLD_STALE_FIELD: &str = "world_stale";
+
+/// Hydrated-field key naming the world section a row of a partitioned pack
+/// sits in (ARCH-0004 #world-scope: the base-reality section first, "labeled
+/// per-world sections after"; "Retrieval MUST NOT mix worlds *unlabeled*").
+/// Its value is [`BASE_WORLD_SECTION`] for a base-reality row and the world's
+/// id hex for a row of a non-base world section. The engine writes it from the
+/// row's stored world, never from a field value. It is set only on packs where
+/// a non-base row is kept beside base, and the serializer writes it first in
+/// the row in every field profile, so the label precedes the row's text.
+///
+/// A dedicated key, as for [`WORLD_STALE_FIELD`]: every field the row carried
+/// still reads back as before.
+pub const WORLD_SECTION_FIELD: &str = "world_section";
+
+/// The [`WORLD_SECTION_FIELD`] value of a base-reality row.
+pub const BASE_WORLD_SECTION: &str = "base";
+
+/// Labels a hydrated row with its world section: base for `None`, else the
+/// world's id hex. An unhydrated row carries no field map and stays as it is;
+/// its typed read names its world itself.
+fn label_world_section(entity: &mut ContextEntity, world: Option<EntityId>) {
+    let Some(fields) = entity.fields.as_mut() else {
+        return;
+    };
+    let label = match world {
+        None => BASE_WORLD_SECTION.to_owned(),
+        Some(world) => world.to_hex(),
+    };
+    fields.insert(
+        WORLD_SECTION_FIELD.to_owned(),
+        serde_json::Value::String(label),
+    );
+}
+
+fn clear_world_section(entity: &mut ContextEntity) {
+    if let Some(fields) = entity.fields.as_mut() {
+        fields.remove(WORLD_SECTION_FIELD);
+    }
+}
 
 /// Appends the ONE-1411 stale marker to every surfaced stale-world row.
 ///

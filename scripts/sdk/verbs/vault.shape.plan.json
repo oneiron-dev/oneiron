@@ -5,6 +5,7 @@
   "output": "crate::vault_shape::ShapePlan",
   "call": "memory.shape_plan(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

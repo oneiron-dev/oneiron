@@ -215,6 +215,15 @@ crate::side_table::side_tables! {
     /// The owner's `secrets: on | off` switch for the write-door secret scan. Key: ().
     OWNER_POLICY_SECRET_SCAN_MODE: VaultMeta b"owner_policy:secret_scan:mode:v1" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// One claim the owner's whole-vault restore inserted as Proposed: a member of that
+    /// restore's inbox group. Only the owner restore door writes it. Key: hex32 (restore
+    /// receipt) ":" hex32 (claim).
+    OWNER_RESTORE_CLAIM: VaultMeta b"owner_restore:claim:v1:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// The source vault id an owner whole-vault restore's archive names, for that restore's
+    /// inbox group card. Only the owner restore door writes it. Key: hex32 (restore receipt).
+    OWNER_RESTORE_GROUP: VaultMeta b"owner_restore:group:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Durable per-operation oplog entry (prepared/committed/failed mutation record), keyed by (repo
     /// key hash, seq as 16 lowercase hex chars). Key: hex64 ":" hex16.
     REPO_MUTATION_OPLOG: VaultMeta b"repo_mutation:oplog:v1:" Named

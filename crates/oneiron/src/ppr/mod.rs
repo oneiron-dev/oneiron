@@ -17,10 +17,13 @@ pub(crate) use self::cache_store::{
 };
 pub(crate) use self::community::{
     CommunityPprDiversity, CommunityPprRequest, ppr_expand_in_txn_with_community_diagnostics,
+    ppr_expand_scoped_in_txn_with_community_diagnostics,
     ppr_query_in_txn_with_community_deferred_cache,
 };
 #[cfg(test)]
 pub(crate) use self::policy::lambda_for_kind;
+#[cfg(test)]
+pub(crate) use self::policy::seed_weights_with_deadline;
 pub(crate) use self::policy::{SeedWeighting, canonical_vad_alpha};
 pub(crate) use self::query::{
     DeferredPprCacheWrite, ppr_query_in_txn_with_diagnostics,

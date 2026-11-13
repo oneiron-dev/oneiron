@@ -64,11 +64,11 @@ pub use step::{
     DREAMER_STEP_VALUE_KEYS, DREAMER_STEP_VALUE_SCHEMA_VERSION, DREAMER_TRAP_PREDICATE,
     DREAMER_TRAP_VALUE_KEYS, DREAMER_TRAP_VALUE_SCHEMA_VERSION, DreamerTrapKind, DreamerTrapState,
     DurableStepContext, DurableStepError, DurableStepResult, MediaStepOutcome,
-    PeerResultWaitBinding, ReplyCheck, StepOutcome, StepProgression, TrapRef, call_as_step,
-    call_as_step_checked, call_as_step_with_fallbacks, call_media_as_step, consume_trap_signal,
-    open_trap, reconcile_peer_result_signals, register_peer_result_wait, register_wait,
-    send_peer_result_signal, send_trap_signal, trap_for_durable_wait, trap_park_owner,
-    validate_json_schema,
+    PeerResultWaitBinding, ReplyCheck, StepOutcome, StepProgression, StepSpendScope, TrapRef,
+    call_as_step, call_as_step_checked, call_as_step_with_fallbacks, call_media_as_step,
+    consume_trap_signal, open_trap, reconcile_peer_result_signals, register_peer_result_wait,
+    register_wait, send_peer_result_signal, send_trap_signal, trap_for_durable_wait,
+    trap_park_owner, validate_json_schema,
 };
 pub(crate) use step::{
     StepEffectBinding, TrapBrokenPark, TrapConsumePrecheck,
@@ -78,6 +78,10 @@ pub(crate) use step::{
     retire_peer_wait_binding_for_trap_in_txn, signal_step_wait_in_txn,
     trap_consume_precheck_in_txn, verified_step_consolidation_eligible_in_txn,
     verified_step_effector_eligible_in_txn, wake_trap_in_txn,
+};
+pub(crate) use step::{
+    wake_budget_trap_of_park_in_txn, wake_budget_traps_in_txn, wake_pass_budget_traps,
+    wake_resident_share_traps_in_txn,
 };
 // KS-2B1: row-held step responses under body custody.
 pub(crate) use step::{
@@ -169,7 +173,8 @@ pub use self::role_defaults::RoleModelDefaults;
 pub use self::solo::{is_solo, mark_solo};
 pub(crate) use self::step::{
     CallerSettledStep, ExecutedModelWitness, committed_steps_in_txn, settled_step_for_caller,
-    settled_step_usage_in_txn, terminal_step_identity,
+    settled_step_for_reader, settled_step_target, settled_step_usage_in_txn,
+    terminal_step_identity,
 };
 pub use oneiron_model::llm::canonical_json_bytes;
 pub use oneiron_model::llm::limit;

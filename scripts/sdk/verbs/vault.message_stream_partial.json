@@ -5,6 +5,7 @@
   "output": "crate::memory::MessageStreamPartial",
   "call": "memory.messages_stream_partial(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

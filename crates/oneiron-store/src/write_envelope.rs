@@ -155,9 +155,10 @@ pub struct WriteEnvelope {
     approval: ClaimApprovalStatus,
     session_tag: Option<String>,
     machine_signature: Option<MachineWriteSignature>,
-    /// ONE-1314. Stamped HOST-INTERNALLY only: no public constructor, guest
-    /// payload, or API argument reaches this field, and the 4-arity
-    /// constructors below can only produce the trivial value.
+    /// ONE-1314. Stamped HOST-INTERNALLY only: no guest payload or API
+    /// argument reaches this field (no `Deserialize` on the envelope or the
+    /// lineage), and the 4-arity constructors below can only produce the
+    /// trivial value; see [`Self::with_lineage`].
     lineage: SourceLineage,
 }
 
@@ -185,9 +186,16 @@ impl WriteEnvelope {
     ///
     /// The ONE non-trivial-lineage constructor, reserved for host dispatchers
     /// that own a run's effect history (the code-run dispatcher, the Dreamer
-    /// promotion writer). It is `pub(crate)` on purpose: no public, guest, or
-    /// API path may supply a lineage value, so a caller cannot narrow its own
-    /// history to ride the auto lane.
+    /// promotion writer). No guest or API path may supply a lineage value, so
+    /// a caller cannot narrow its own history to ride the auto lane.
+    ///
+    /// `pub` because those dispatchers are in core and the envelope's fields
+    /// stay in the store, which encodes them. The guard is the wire, not Rust
+    /// privacy: neither [`SourceLineage`] nor [`WriteEnvelope`] implements
+    /// `Deserialize`, so no guest payload or API body decodes into one, and
+    /// the dispatchers stamp the lineage host-side. An in-process caller of
+    /// this constructor already chooses the declared source through
+    /// [`Self::new`], so the constructor gives it no new authority.
     pub fn with_lineage(
         actor: WriteActor,
         source: ClaimSource,
@@ -501,15 +509,7 @@ impl ClaimCandidate {
         mut self,
         principal: EntityId,
     ) -> oneiron_contracts::error::Result<Self> {
-        let mut scope = match self.scope.take() {
-            Some(Value::Map(scope)) => scope,
-            None => Vec::new(),
-            Some(_) => {
-                return Err(oneiron_contracts::error::Error::InvalidClaimBody(
-                    "scope must be a map",
-                ));
-            }
-        };
+        let mut scope = crate::write_envelope::claim_body::scope_map_entries(self.scope.take());
         scope.retain(|(key, _)| key.as_str() != Some("typed_question_principal"));
         scope.push((
             Value::from("typed_question_principal"),
@@ -523,15 +523,7 @@ impl ClaimCandidate {
         mut self,
         taint: ClaimSource,
     ) -> oneiron_contracts::error::Result<Self> {
-        let mut entries = match self.scope.take() {
-            Some(Value::Map(entries)) => entries,
-            None => Vec::new(),
-            Some(_) => {
-                return Err(oneiron_contracts::error::Error::InvalidClaimBody(
-                    "scope must be a map",
-                ));
-            }
-        };
+        let mut entries = crate::write_envelope::claim_body::scope_map_entries(self.scope.take());
         entries.retain(|(key, _)| key.as_str() != Some("evidence_taint"));
         entries.push((Value::from("evidence_taint"), Value::from(taint.as_str())));
         self.scope = Some(Value::Map(entries));
@@ -551,12 +543,13 @@ impl ClaimCandidate {
         let key = crate::write_envelope::claim_body::CLAIM_SCOPE_INITIAL_CLAIM_OF_WEIGHT_KEY;
         let mut entries = match self.scope.take() {
             Some(Value::Map(entries)) => entries,
-            None => Vec::new(),
-            Some(_) => {
-                return Err(oneiron_contracts::error::Error::InvalidClaimBody(
-                    "scope must be a map",
-                ));
+            // A scope that is not a map carries no recognized entry, so it
+            // holds no initial weight to drop and stays as written.
+            Some(opaque) if weight.is_none() => {
+                self.scope = Some(opaque);
+                return Ok(self);
             }
+            scope => crate::write_envelope::claim_body::scope_map_entries(scope),
         };
         entries.retain(|(entry, _)| entry.as_str() != Some(key));
         if let Some(weight) = weight {
@@ -648,10 +641,17 @@ impl ClaimCandidate {
                         .as_str()
                         .and_then(|value| EntityId::from_hex(value).ok()),
                 };
+                // An explicit stamp is the copied record's canonical facet or
+                // project, the one its read is judged by; a selector in the
+                // opaque map never overrides it (review round 2 of #6972).
                 if let Some(id) = id {
                     match key.as_str() {
-                        Some("facet" | "facet_ref" | "facetRef") => body.scope_facet = id,
-                        Some("scopeProjectId") => body.scope_project = id,
+                        Some("facet" | "facet_ref" | "facetRef") if self.facet_stamp.is_none() => {
+                            body.scope_facet = id;
+                        }
+                        Some("scopeProjectId") if self.project_stamp.is_none() => {
+                            body.scope_project = id;
+                        }
                         _ => {}
                     }
                 }

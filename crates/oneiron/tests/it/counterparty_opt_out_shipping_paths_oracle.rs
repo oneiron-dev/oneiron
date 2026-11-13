@@ -22,8 +22,8 @@
 //!   `gate.pending.external_effect_authority`. The deny arm is measured against
 //!   THAT — the opt-out deny must PREEMPT the fail-closed pending, exactly as
 //!   the restrictive-wins law requires.
-//! * [`sending_vault`] is seeded and granted, so an unsuppressed send is
-//!   observed reaching the connector. The executor assertions need it: on a
+//! * [`sending_vault`] runs under an explicit policy that grants the send, so
+//!   an unsuppressed send is observed reaching the connector. The executor assertions need it: on a
 //!   fail-closed vault the connector is never called either way, so
 //!   `sink.calls == 0` there would be vacuously true.
 
@@ -45,6 +45,22 @@ use oneiron::{
 };
 use rmpv::Value;
 
+/// The vault's owner, authenticated: a standing outbound grant is the owner's
+/// standing consent row (FIX 11874, 282c8eb3d58), minted by the owner.
+fn owner_proof(vault: &oneiron::Vault) -> oneiron::consent::AuthenticatedOwner {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    vault
+        .authenticate_owner(
+            owner,
+            "principal:owner",
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("owner proof")
+}
+
 /// The counterparty every send in this file addresses.
 const COUNTERPARTY: &str = "mika@example.com";
 const CHANNEL: &str = "email";
@@ -61,6 +77,7 @@ const SECOND_CONTACT_SEED: u8 = 0x55;
 const DO_NOT_CONTACT_SEED: u8 = 0x56;
 const CONNECTOR_KEY_SEED: u8 = 0x57;
 const SEND_GRANT_SEED: u8 = 0x58;
+const POLICY_SEED: u8 = 0x59;
 
 #[derive(Default)]
 struct RecordingSink {
@@ -86,6 +103,11 @@ fn test_config() -> VaultConfig {
 fn oracle_vault() -> (tempfile::TempDir, Vault, EntityId) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open_unseeded_for_test(dir.path(), test_config()).unwrap();
+    // The host installs this device's keystore after each open; the outbound
+    // and claim doors load this install's keys from it (P6c).
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     let actor = test_id(ACTOR_SEED);
     vault
         .put_entity(
@@ -99,8 +121,9 @@ fn oracle_vault() -> (tempfile::TempDir, Vault, EntityId) {
     (dir, vault, actor)
 }
 
-/// A vault whose sends actually REACH the transport: seeded policy plus a
-/// standing `send` grant for the actor.
+/// A vault whose sends actually REACH the transport: an explicit policy that
+/// grants the actor's send (see [`send_grant_manifest`]) plus a standing
+/// `send` grant for the actor.
 ///
 /// The unseeded fixture above cannot tell "denied" from "never got that far" on
 /// the executor path, because a fail-closed pending never calls the connector
@@ -108,7 +131,12 @@ fn oracle_vault() -> (tempfile::TempDir, Vault, EntityId) {
 /// THIS vault, where an unsuppressed send is observed to hit the sink.
 fn sending_vault() -> (tempfile::TempDir, Vault, EntityId) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), test_config()).unwrap();
+    let vault = Vault::open_unseeded_for_test(dir.path(), test_config()).unwrap();
+    // The host installs this device's keystore after each open; the outbound
+    // and claim doors load this install's keys from it (P6c).
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     // The pinned first-party Eiri connector actor, constructed directly rather
     // than through `test_id`: under the seeded manifest this exact id is the one
     // with an Auto actor ceiling, so it is the only actor whose send can be
@@ -126,7 +154,8 @@ fn sending_vault() -> (tempfile::TempDir, Vault, EntityId) {
         .unwrap();
     vault
         .mint_standing_outbound_grant(
-            &test_id(SEND_GRANT_SEED),
+            &owner_proof(&vault),
+            test_id(SEND_GRANT_SEED),
             &GrantMintIntent {
                 principal_ref: actor.to_hex(),
                 origin_component_id: "tasks".to_owned(),
@@ -136,10 +165,43 @@ fn sending_vault() -> (tempfile::TempDir, Vault, EntityId) {
                     verb_class: VERB.to_owned(),
                 },
             },
-            1,
         )
         .unwrap();
+    oneiron::test_support::put_policy_manifest_bytes(
+        &vault,
+        test_id(POLICY_SEED),
+        &send_grant_manifest(actor, CHANNEL, VERB),
+    )
+    .unwrap();
     (dir, vault, actor)
+}
+
+/// The explicit policy the sending vault runs under (Engine ruling
+/// T0F-SEEDED-SEND-BUILTIN-PACK = C, Tue 10 Nov 09:02): an Auto ceiling and an
+/// `external:{verb}` grant on `channel` for `actor`, the way the in-crate
+/// executor tests reach the sink (`outbound/tests/mod.rs` `policy_manifest`).
+/// A seeded vault would also need the channel's built-in pack installed and
+/// its connection checked (OF-519), which no test can ready yet.
+fn send_grant_manifest(actor: EntityId, channel: &str, verb: &str) -> Vec<u8> {
+    let actor_ref = actor.to_hex();
+    let manifest = serde_json::json!({
+        "schema_version": "1.2",
+        "pack_id": "opt-out-oracle-send",
+        "pack_version": "v1",
+        "min_engine_version": env!("CARGO_PKG_VERSION"),
+        "defaults": {"criticality": "normal", "sensitivity": "normal"},
+        "rules": [],
+        "actor_ceilings": [
+            {"actor_class": "agent", "actor_ref": actor_ref, "ceiling": "auto"}
+        ],
+        "scoped_grants": [{
+            "actor_ref": actor_ref,
+            "effector": format!("external:{verb}"),
+            "scope": oneiron::test_support::effect_preset(),
+            "selectors": {"channel": channel},
+        }],
+    });
+    rmp_serde::to_vec_named(&manifest).unwrap()
 }
 
 /// An ACTIVE sending identity on `channel`, bound to `actor`.
@@ -275,6 +337,7 @@ fn schedule(
             trigger_ref: "session:opt-out-oracle".to_owned(),
             job_ref: None,
             occurred_at: Some(1_000),
+            mention: None,
         })
         .unwrap()
 }

@@ -13,8 +13,8 @@ use oneiron::dreamer_runner::maintenance::agent_health::{
 use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::decision::MAX_DECISION_STATE_BYTES;
 use oneiron::skill_optimize::{
-    HeldOutReplayCase, HonestyReplay, JudgeRubric, SkillEditGoal, SkillReplayResponse,
-    SkillReplayResponses, judge_rubric, skill_edit_goal,
+    GoalAxisKind, HeldOutReplayCase, HonestyReplay, JudgeRubric, SkillEditGoal,
+    SkillReplayResponse, SkillReplayResponses, judge_rubric, skill_edit_goal,
 };
 use oneiron::{EntityId, Result, Vault};
 use oneiron_contracts::entity_id::bytes_to_hex_lower;
@@ -124,25 +124,39 @@ fn response_text(vault: &Vault, attempt: &AttemptRecord) -> String {
 }
 
 impl ServeReplayJudge {
-    /// The skill's already-read goal as a judge question reads it: the joined
-    /// project's goal, its why, and each axis's measure and bound. `None` when
-    /// the goal joins no project, or the project states no goal record.
+    /// The skill's already-read goal as a judge question reads it: each axis
+    /// the joined project's goal states, by its name and kind. `None` when
+    /// the goal joins no project, or the project states no goal record. The
+    /// goal's text, why, measure and bound stay in the project (FIX 22437):
+    /// every journaled judgment state carries this brief.
     fn goal_brief(&self, goal: &SkillEditGoal) -> Result<Option<Value>> {
         let Some((project, _)) = goal.project else {
             return Ok(None);
         };
-        Ok(self.vault.project_intake_goal(project)?.map(|record| {
-            let axes: Vec<Value> = record
-                .primary_axes
-                .iter()
-                .chain(&record.floor_axes)
-                .chain(&record.cost_axes)
-                .map(
-                    |axis| json!({"name": axis.name, "measure": axis.measure, "bound": axis.bound}),
-                )
-                .collect();
-            json!({"goal": record.goal, "why": record.why, "axes": axes})
-        }))
+        Ok(self
+            .vault
+            .project_intake_goal_as(oneiron::dreamer_runner::authority::coach_reader()?, project)?
+            .map(|record| {
+                let axes: Vec<Value> = record
+                    .primary_axes
+                    .iter()
+                    .map(|axis| (GoalAxisKind::Primary, axis))
+                    .chain(
+                        record
+                            .floor_axes
+                            .iter()
+                            .map(|axis| (GoalAxisKind::Floor, axis)),
+                    )
+                    .chain(
+                        record
+                            .cost_axes
+                            .iter()
+                            .map(|axis| (GoalAxisKind::Cost, axis)),
+                    )
+                    .map(|(kind, axis)| json!({"name": axis.name, "kind": kind}))
+                    .collect();
+                json!({"axes": axes})
+            }))
     }
 
     /// A reserved receipt's run as a replay reads it: its kind, task and

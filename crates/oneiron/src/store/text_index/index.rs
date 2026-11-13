@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use heed::{RoTxn, RwTxn};
 
-use crate::analyzer::{AnalyzerChannel, AnalyzerContext, MultilingualAnalyzer, Token};
+use crate::analyzer::{AnalyzerContext, MultilingualAnalyzer, Token};
+use crate::config::bm25::{NoteTextField, text_field_id, text_field_of_id};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, StoreError};
 use crate::side_table::{self, Named, SideTable};
@@ -73,6 +74,19 @@ fn prove_bm25_doc_counted_for_missing_posting_repair(
                     .ok_or(Error::ArithmeticOverflow(
                         "bm25 field total_length recompute",
                     ))?;
+        }
+        // A NOTE's fields count in their channels' pooled stats too, as the
+        // index write counted them (FIX 7789).
+        for (channel, (counts, len)) in pooled_note_lengths(&lengths)? {
+            let (doc_count, total_length) = recomputed_field_stats.entry(channel).or_default();
+            *doc_count = doc_count
+                .checked_add(u32::from(counts))
+                .ok_or(Error::ArithmeticOverflow("bm25 field doc_count recompute"))?;
+            *total_length = total_length
+                .checked_add(len)
+                .ok_or(Error::ArithmeticOverflow(
+                    "bm25 field total_length recompute",
+                ))?;
         }
     }
 
@@ -221,9 +235,11 @@ fn analyze(analyzer: &MultilingualAnalyzer, fields: &[(String, String)]) -> Resu
     check_indexed_text_bytes(fields)?;
     let ctx = AnalyzerContext::for_index();
 
-    // Aggregate tokens by (channel, term) → tf, and by channel → length.
-    // Terms within the same channel collide on identical folded text, so
-    // tf = count of matching tokens regardless of offset.
+    // Aggregate tokens by (field id, term) → tf, and by field id → length.
+    // A field id is the token's channel, in a NOTE's semantic field when the
+    // source names one (FIX 7789). Terms within the same field id collide on
+    // identical folded text, so tf = count of matching tokens regardless of
+    // offset.
     let mut per_field: HashMap<u16, HashMap<String, u32>> = HashMap::new();
     let mut per_field_len: HashMap<u16, u32> = HashMap::new();
     let mut doc_len_total: u32 = 0;
@@ -231,10 +247,11 @@ fn analyze(analyzer: &MultilingualAnalyzer, fields: &[(String, String)]) -> Resu
     // One field's tokens at a time: the buffer peaks at the largest field,
     // not at the whole document.
     let mut tokens: Vec<Token> = Vec::new();
-    for (_, value) in fields {
+    for (name, value) in fields {
+        let field = NoteTextField::from_source_name(name);
         analyzer.analyze(value, &ctx, &mut tokens);
         for tok in tokens.drain(..) {
-            let fid = tok.channel.field_id();
+            let fid = text_field_id(field, tok.channel);
             let inc = u32::from(tok.length_increment);
             let entry = per_field.entry(fid).or_default();
             *entry.entry(tok.term.into_string()).or_insert(0) += 1;
@@ -365,6 +382,18 @@ fn write_index(
             .ok_or(Error::ArithmeticOverflow("bm25 field total_length"))?;
         write_field_stats(store, wtxn, fid, doc_count, total_length)?;
     }
+    // A NOTE field's lengths count in its channel's pooled stats too, so
+    // every other text's length norm reads the corpus as before (FIX 7789).
+    for (channel, (counts, len)) in pooled_note_lengths(per_field_len)? {
+        let (doc_count, total_length) = read_field_stats(store, wtxn, channel)?;
+        let doc_count = doc_count
+            .checked_add(u32::from(counts))
+            .ok_or(Error::ArithmeticOverflow("bm25 field doc_count"))?;
+        let total_length = total_length
+            .checked_add(len)
+            .ok_or(Error::ArithmeticOverflow("bm25 field total_length"))?;
+        write_field_stats(store, wtxn, channel, doc_count, total_length)?;
+    }
 
     // === Collection-wide doc count (plan §4.1 keeps TOTAL_DOCS_KEY only) ===
     let total_docs = read_total_docs(store, wtxn)?;
@@ -374,6 +403,28 @@ fn write_index(
     write_total_docs(store, wtxn, total_docs)?;
 
     Ok(())
+}
+
+/// What a document's NOTE fields add to each channel's pooled stats, by the
+/// channel's field id: their lengths summed, and whether the document counts
+/// once more there (it does when no pooled field of that channel already
+/// counts it). Empty for a document with no NOTE field (FIX 7789).
+fn pooled_note_lengths(lengths: &HashMap<u16, u32>) -> Result<BTreeMap<u16, (bool, u64)>> {
+    let mut pooled: BTreeMap<u16, (bool, u64)> = BTreeMap::new();
+    for (&fid, &len) in lengths {
+        let Some((Some(_), channel)) = text_field_of_id(fid) else {
+            continue;
+        };
+        let channel = channel.field_id();
+        let entry = pooled
+            .entry(channel)
+            .or_insert((!lengths.contains_key(&channel), 0));
+        entry.1 = entry
+            .1
+            .checked_add(u64::from(len))
+            .ok_or(Error::ArithmeticOverflow("bm25 field total_length"))?;
+    }
+    Ok(pooled)
 }
 
 pub(crate) fn deindex_text(
@@ -427,7 +478,7 @@ pub(crate) fn deindex_text(
         // `total_length -= 0` would silently succeed while `doc_count--`
         // still fires, drifting `avgdl` for every subsequent score. Only
         // overlay channels legitimately carry zero-length tokens.
-        if let Some(channel) = AnalyzerChannel::from_field_id(*fid)
+        if let Some((_, channel)) = text_field_of_id(*fid)
             && !channel.permits_zero_doc_field_length()
             && len == 0
         {
@@ -508,6 +559,27 @@ pub(crate) fn deindex_text(
                 .delete(wtxn, &fid.to_be_bytes())?;
         } else {
             write_field_stats(store, wtxn, fid, doc_count, total_length)?;
+        }
+    }
+    // And what its NOTE fields added to the pooled stats, as the write added it.
+    for (channel, (counts, len)) in pooled_note_lengths(&lengths)? {
+        let (doc_count, total_length) = read_field_stats(store, wtxn, channel)?;
+        let doc_count = match doc_count.checked_sub(u32::from(counts)) {
+            Some(count) => count,
+            None if union => 0,
+            None => return Err(corrupted("field doc_count underflow during deindex")),
+        };
+        let total_length = match total_length.checked_sub(len) {
+            Some(length) => length,
+            None if union => 0,
+            None => return Err(corrupted("field total_length underflow during deindex")),
+        };
+        if doc_count == 0 && total_length == 0 {
+            store
+                .text_bm25_field_stats()
+                .delete(wtxn, &channel.to_be_bytes())?;
+        } else {
+            write_field_stats(store, wtxn, channel, doc_count, total_length)?;
         }
     }
 

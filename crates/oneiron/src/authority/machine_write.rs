@@ -28,7 +28,8 @@ pub(crate) use after_mask::resign_machine_claim_after_mask_in_txn;
 pub(crate) use history_anchor::machine_history_host_context;
 
 const DOMAIN: &[u8] = b"oneiron/machine-claim/v1";
-const SIGNATURE_KEY: &str = "machine_signature";
+/// The claim evidence key that holds a MACHINE write signature.
+pub(crate) const MACHINE_SIGNATURE_KEY: &str = "machine_signature";
 
 pub(super) fn denied() -> Error {
     Error::Claim(ClaimError::ActorLacksClaimAuthority {
@@ -222,7 +223,7 @@ impl Vault {
 pub(crate) fn evidence_without_machine_signature(body: &ClaimBody) -> Option<Value> {
     let mut evidence = body.evidence.clone();
     if let Some(Value::Map(entries)) = &mut evidence {
-        entries.retain(|(key, _)| key.as_str() != Some(SIGNATURE_KEY));
+        entries.retain(|(key, _)| key.as_str() != Some(MACHINE_SIGNATURE_KEY));
     }
     evidence
 }
@@ -259,7 +260,7 @@ fn proof(body: &ClaimBody) -> Result<Option<(EntityId, u64, Option<MachineWriteS
         return Ok(None);
     };
     let class = evidence_field(entries, "actor_class")?.and_then(Value::as_u64);
-    let signature = evidence_field(entries, SIGNATURE_KEY)?;
+    let signature = evidence_field(entries, MACHINE_SIGNATURE_KEY)?;
     let actor = evidence_field(entries, "actor_entity_ref")?.and_then(|value| match value {
         Value::Binary(bytes) => EntityId::from_bytes(bytes.as_slice().try_into().ok()?).ok(),
         _ => None,
@@ -345,7 +346,7 @@ pub(crate) fn machine_claim_needs_history_observing(
     };
     if entries
         .iter()
-        .any(|(key, _)| key.as_str() == Some(SIGNATURE_KEY))
+        .any(|(key, _)| key.as_str() == Some(MACHINE_SIGNATURE_KEY))
     {
         return Ok(true);
     }
@@ -456,7 +457,7 @@ pub(crate) fn machine_claim_read_admitted(
     };
     let carries_proof = entries
         .iter()
-        .any(|(key, _)| key.as_str() == Some(SIGNATURE_KEY));
+        .any(|(key, _)| key.as_str() == Some(MACHINE_SIGNATURE_KEY));
     let machine_ref = names_machine(store, txn, entries)?;
     if !carries_proof {
         if machine_ref {
@@ -642,6 +643,70 @@ fn covered_endpoint_stands(image: &super::AuthorityCheckpointV2, hash: &[u8; 32]
     image.rows.contains_key(hash) && image.fold().valid_entries.contains(hash)
 }
 
+/// Whether `key` binds `actor` as a system writer in `fold`: an Active
+/// actor binding plus a live Software `ROLE_AGENT` roster entry, or a
+/// history the successor root carried. Shared by the local writer gate and
+/// the landing-reply signer binding test.
+fn machine_signer_binding_holds_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    fold: &super::AuthorityFold,
+    id: EntityId,
+    key: &AuthorityKey,
+    actor: EntityId,
+) -> bool {
+    if fold.actor_bindings.get(key).is_some_and(|binding| {
+        binding.status == ActorBindingStatus::Active
+            && binding.actor_ref == actor
+            && binding.actor_class == "system"
+    }) && fold.roster.get(key).is_some_and(|device| {
+        !device.revoked && device.tier == AuthorityTier::Software && device.roles & ROLE_AGENT != 0
+    }) {
+        return true;
+    }
+    // A history the successor root carried stays writable as it
+    // stays readable: its transitions project an existing birth.
+    super::host_re_root::origin_carried_past_re_root(store, txn, fold, id, key, actor)
+}
+
+/// Whether `body`'s MACHINE proof binds `writer` as its signer in `fold`:
+/// the proof's actor is `writer`, its class is System, its key is strong,
+/// and the folded key/actor binding holds. Malformed or absent proof is
+/// false; storage faults propagate. Read-only: landing-reply admission uses
+/// it so a provisional row's unbound key admits no reply.
+pub(crate) fn machine_claim_signer_bound_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    fold: &super::AuthorityFold,
+    id: &EntityId,
+    body: &ClaimBody,
+    writer: EntityId,
+) -> Result<bool> {
+    let parsed = match proof(body) {
+        Ok(parsed) => parsed,
+        Err(Error::Claim(_) | Error::Record(_) | Error::EntityNotFound) => return Ok(false),
+        Err(local) => return Err(local),
+    };
+    let Some((actor, class, Some(signature))) = parsed else {
+        return Ok(false);
+    };
+    if actor != writer || class != EdgeActorClass::System as u64 {
+        return Ok(false);
+    }
+    if super::strong_ed25519_key(&signature.public_key).is_err() {
+        return Ok(false);
+    }
+    let authority_key = AuthorityKey::Ed25519(signature.public_key);
+    Ok(machine_signer_binding_holds_in_txn(
+        store,
+        txn,
+        fold,
+        *id,
+        &authority_key,
+        actor,
+    ))
+}
+
 /// Replay checks origin only, while the local writer must also have an active
 /// key/actor tuple in the transaction's folded roster. No unknown-signer
 /// rejection occurs on replay: an enrollment can arrive after its signed claim.
@@ -659,7 +724,7 @@ pub(crate) fn verify_machine_claim_in_txn(
     };
     let carries_proof = entries
         .iter()
-        .any(|(key, _)| key.as_str() == Some(SIGNATURE_KEY));
+        .any(|(key, _)| key.as_str() == Some(MACHINE_SIGNATURE_KEY));
     // Existing system-labeled engine writes are not MACHINE identities.
     let machine_ref = names_machine(store, txn, entries)?;
     if !machine_ref && !carries_proof {
@@ -696,7 +761,7 @@ pub(crate) fn verify_machine_claim_in_txn(
                 if crate::claim::history_projection::project_machine_claim(&projection) != *body
                     || projection.birth.evidence.as_ref().is_none_or(|value| {
                         !matches!(value, Value::Map(entries) if entries.iter().any(|(key, _)|
-                            key.as_str() == Some(SIGNATURE_KEY)))
+                            key.as_str() == Some(MACHINE_SIGNATURE_KEY)))
                     })
                 {
                     return Err(invalid_origin(replicated));
@@ -750,32 +815,8 @@ pub(crate) fn verify_machine_claim_in_txn(
     // bytes provisionally; read/export withhold until verified history arrives.
     if !replicated {
         let authority_key = AuthorityKey::Ed25519(proof.public_key);
-        if !fold
-            .actor_bindings
-            .get(&authority_key)
-            .is_some_and(|binding| {
-                binding.status == ActorBindingStatus::Active
-                    && binding.actor_ref == actor
-                    && binding.actor_class == "system"
-            })
-            || !fold.roster.get(&authority_key).is_some_and(|device| {
-                !device.revoked
-                    && device.tier == AuthorityTier::Software
-                    && device.roles & ROLE_AGENT != 0
-            })
-        {
-            // A history the successor root carried stays writable as it
-            // stays readable: its transitions project an existing birth.
-            if !super::host_re_root::origin_carried_past_re_root(
-                store,
-                txn,
-                &fold,
-                *id,
-                &authority_key,
-                actor,
-            ) {
-                return Err(denied());
-            }
+        if !machine_signer_binding_holds_in_txn(store, txn, &fold, *id, &authority_key, actor) {
+            return Err(denied());
         }
     }
     Ok(())

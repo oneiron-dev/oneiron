@@ -20,6 +20,53 @@ pub enum ModelStepFailureClass {
     FinalizeRefused,
     DeadlineHardCut,
     Engine,
+    /// A spend scope refused the step's reservation and no write frees it:
+    /// the failure's `budget_refusal` says which scope and why.
+    BudgetRefused,
+}
+
+/// Why a step's spent budget refused it with no park
+/// (BUDGET-TRAP-UNTYPED-NO-SENDER): no write the step could wait for gives
+/// its budget room again, so the step fails at once, typed, and nothing parks.
+/// `scope` is the refusing spend scope's id, `available_units` its room for
+/// the reservation, `asked_units` what the reservation asked of it.
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, thiserror::Error,
+)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum StepBudgetRefusal {
+    /// A closed boundary on the way to the open scope that books the step has
+    /// less room than asked. Nothing reopens a closed scope.
+    #[error(
+        "spend scope {scope} is closed with {available_units} of the {asked_units} units the step asks"
+    )]
+    BoundaryClosed {
+        scope: String,
+        available_units: u64,
+        asked_units: u64,
+    },
+    /// A scope's ceiling, set at its launch, has less room than asked. A
+    /// top-up of its cap does not raise it.
+    #[error(
+        "spend scope {scope} is at its ceiling with {available_units} of the {asked_units} units the step asks"
+    )]
+    CeilingReached {
+        scope: String,
+        available_units: u64,
+        asked_units: u64,
+    },
+    /// The step's guard is spent and the step is bound to no wake pass and no
+    /// spend scope, so no write it could wait for refills that guard.
+    /// `asked_units` is the reservation the guard refused, when the refusal
+    /// named one.
+    #[error("the step's budget is spent and no wake pass or spend scope refills it")]
+    Unbound { asked_units: Option<u64> },
+    /// The host's run admission found no allocation to fund the host-paid
+    /// call: none delivered, the allocation spent or another wallet's, or a
+    /// price past its unit. No budget write funds it. `asked_units` is the
+    /// reservation the step's guard held for the call.
+    #[error("no allocation of the host funds the step's call")]
+    Unfunded { asked_units: Option<u64> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -30,6 +77,10 @@ pub struct ModelStepFailure {
     pub validation_attempts: Option<u8>,
     pub validation_errors: Vec<String>,
     pub spent_usage: Option<LlmUsage>,
+    /// The typed refusal of a `BudgetRefused` failure; `None` for every
+    /// other class, and on a row written before the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_refusal: Option<StepBudgetRefusal>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

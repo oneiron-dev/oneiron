@@ -27,6 +27,9 @@ fn register_catalog(
             spends: false,
             sends_outward: false,
             legacy_ask: false,
+            read_only: false,
+            idempotent: false,
+            price: None,
         })
         .collect();
     let manifest = if manifest.is_empty() {
@@ -40,6 +43,9 @@ fn register_catalog(
             spends: false,
             sends_outward: false,
             legacy_ask: false,
+            read_only: false,
+            idempotent: false,
+            price: None,
         }]
     } else {
         manifest
@@ -352,20 +358,26 @@ fn spend_settle_ledgers_on_the_engine_clock_and_records_cost_time() -> Result<()
     // Zero-amount settlements are rejected (nothing to record; keeps the
     // usage entry log bounded by the row limit).
     assert!(matches!(
-        vault.settle_connector_spend(&id, 0, 0, 2_000, "settle:zero"),
+        vault.settle_connector_spend(&id, EffectorBudgetRowId::key(0), 0, 2_000, "settle:zero"),
         Err(Error::Record(RecordError::InvalidConnectorKeyBody(
             "settle amount must be at least 1"
         )))
     ));
     // Event identity is required and shape-checked.
     assert!(matches!(
-        vault.settle_connector_spend(&id, 0, 10, 2_000, "  "),
+        vault.settle_connector_spend(&id, EffectorBudgetRowId::key(0), 10, 2_000, "  "),
         Err(Error::Record(RecordError::InvalidConnectorKeyBody(
             "settle event_ref must not be blank"
         )))
     ));
     assert!(matches!(
-        vault.settle_connector_spend(&id, 0, 10, 2_000, "x".repeat(129).as_str()),
+        vault.settle_connector_spend(
+            &id,
+            EffectorBudgetRowId::key(0),
+            10,
+            2_000,
+            "x".repeat(129).as_str()
+        ),
         Err(Error::Record(RecordError::InvalidConnectorKeyBody(
             "settle event_ref too long"
         )))
@@ -387,7 +399,13 @@ fn spend_settle_ledgers_on_the_engine_clock_and_records_cost_time() -> Result<()
     let mut expected_used = 0;
     for (declared, event_ref) in declared_times {
         expected_used += 100;
-        let read = vault.settle_connector_spend(&id, 0, 100, declared, event_ref)?;
+        let read = vault.settle_connector_spend(
+            &id,
+            EffectorBudgetRowId::key(0),
+            100,
+            declared,
+            event_ref,
+        )?;
         assert_eq!(read.used, expected_used, "{event_ref} accumulates");
         assert!(
             read.window_start >= live_bucket && read.window_start <= crate::unix_seconds_now(),
@@ -401,12 +419,24 @@ fn spend_settle_ledgers_on_the_engine_clock_and_records_cost_time() -> Result<()
 
     // A replay of the SAME settlement is idempotent: nothing debits, the
     // current state echoes back.
-    let replay = vault.settle_connector_spend(&id, 0, 100, 5, "settle:first-touch-ancient")?;
+    let replay = vault.settle_connector_spend(
+        &id,
+        EffectorBudgetRowId::key(0),
+        100,
+        5,
+        "settle:first-touch-ancient",
+    )?;
     assert_eq!(replay.used, expected_used, "replay settles nothing");
     // An honest retry whose DECLARED cost time drifted between attempts is
     // still the same settlement: idempotent, no second debit, and the first
     // write's recorded time stands (first-writer-wins).
-    let drifted = vault.settle_connector_spend(&id, 0, 100, 6, "settle:first-touch-ancient")?;
+    let drifted = vault.settle_connector_spend(
+        &id,
+        EffectorBudgetRowId::key(0),
+        100,
+        6,
+        "settle:first-touch-ancient",
+    )?;
     assert_eq!(
         drifted.used, expected_used,
         "drifted-time retry settles nothing"
@@ -429,7 +459,10 @@ fn spend_settle_ledgers_on_the_engine_clock_and_records_cost_time() -> Result<()
     // A replayed event id with different CONTENT (row or amount) fails
     // closed — a pre-claimed event_ref cannot force a silent no-op for a
     // different settlement.
-    for (row, amount) in [(1_u16, 100_u64), (0, 999)] {
+    for (row, amount) in [
+        (EffectorBudgetRowId::key(1), 100_u64),
+        (EffectorBudgetRowId::key(0), 999),
+    ] {
         assert!(
             matches!(
                 vault.settle_connector_spend(&id, row, amount, 5, "settle:first-touch-ancient"),
@@ -437,7 +470,7 @@ fn spend_settle_ledgers_on_the_engine_clock_and_records_cost_time() -> Result<()
                     "settle event replay with different settlement"
                 )))
             ),
-            "content-mismatched replay (row {row}, amount {amount}) must fail closed"
+            "content-mismatched replay (row {row:?}, amount {amount}) must fail closed"
         );
     }
     Ok(())
@@ -494,7 +527,7 @@ fn charter_propose_approve_discard_lifecycle() -> Result<()> {
 
     // Approve/discard without a staged proposal fail closed.
     assert!(matches!(
-        vault.approve_connector_charter(&id, [0; 32], "owner", 1_001),
+        vault.approve_connector_charter(&id, [0; 32], [0; 32], "owner", 1_001),
         Err(Error::Record(RecordError::ConnectorCharterMissing))
     ));
     assert!(matches!(
@@ -536,18 +569,23 @@ fn charter_propose_approve_discard_lifecycle() -> Result<()> {
 
     // The human gate demands the out-of-band re-presented hash.
     assert!(matches!(
-        vault.approve_connector_charter(&id, [0xAB; 32], "owner", 1_004),
+        vault.approve_connector_charter(&id, pending.text_hash, [0xAB; 32], "owner", 1_004),
         Err(Error::Record(RecordError::ConnectorCharterApprovalMismatch))
     ));
     assert!(matches!(
-        vault.approve_connector_charter(&id, pending.compiled_hash, "  ", 1_004),
+        vault.approve_connector_charter(&id, pending.text_hash, pending.compiled_hash, "  ", 1_004),
         Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
-    let stamped =
-        vault.approve_connector_charter(&id, pending.compiled_hash, "owner:olety", 1_005)?;
+    let stamped = vault.approve_connector_charter(
+        &id,
+        pending.text_hash,
+        pending.compiled_hash,
+        "owner:owen",
+        1_005,
+    )?;
     let block = stamped.charter.as_ref().expect("stamped charter");
     assert!(stamped.pending_charter.is_none());
-    assert_eq!(block.stamped_by, "owner:olety");
+    assert_eq!(block.stamped_by, "owner:owen");
     assert_eq!(block.compiled_hash, pending.compiled_hash);
     assert_eq!(
         block.stamped_aggregate,
@@ -621,7 +659,13 @@ fn revoked_key_charter_ops_fail_closed_and_revoke_clears_pending() -> Result<()>
 
     // Approve on a revoked key now errors (propose -> revoke -> approve).
     assert!(matches!(
-        vault.approve_connector_charter(&id, pending.compiled_hash, "owner", 1_003),
+        vault.approve_connector_charter(
+            &id,
+            pending.text_hash,
+            pending.compiled_hash,
+            "owner",
+            1_003
+        ),
         Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
     ));
     // Discard on a revoked key errors too.
@@ -735,6 +779,7 @@ fn crlf_imported_charter_block_does_not_false_drift() -> Result<()> {
     let compiled_hash = compiled.compiled_hash;
     let stamped_aggregate = charter_stamped_aggregate(&text_hash, &compiled_hash);
     let block = ConnectorCharterBlock {
+        approval_id: test_id(0xC7),
         text: crlf_text.to_owned(),
         text_hash,
         compiled: compiled.compiled,
@@ -900,6 +945,7 @@ fn register_test_secret(vault: &Vault, name: &str) -> Result<EntityId> {
         name: name.to_owned(),
         class: crate::secret_custody::CustodyClass::CustodyPortable,
         device_only: false,
+        model_reveal_allowed: false,
         value_bytes: CUSTODY_VALUE_FIXTURE.to_vec(),
         status: crate::secret_custody::SecretCustodyStatus::Active,
         registered_at: 1,
@@ -1121,6 +1167,7 @@ fn replicated_existing_pending_key_cannot_activate() -> Result<()> {
                     end: 2_000
                 },
                 2_000,
+                None,
                 &data
             )
             .commit()
@@ -2173,6 +2220,9 @@ mod foreign_owner_proof {
             spends: false,
             sends_outward: true,
             legacy_ask: false,
+            read_only: false,
+            idempotent: false,
+            price: None,
         }];
         let rows = draft_connector_slate(&manifest);
         let id = vault.store_connector_slate(
@@ -2188,7 +2238,6 @@ mod foreign_owner_proof {
             "send".to_owned(),
             SlateOwnerOverride {
                 disposition: SlateDisposition::Auto,
-                enabled: true,
             },
         )]
         .into();
@@ -2319,8 +2368,14 @@ fn charter_clp_cap_suspends_the_key_past_100_pesos() -> Result<()> {
     )?;
     let pending =
         vault.propose_connector_charter(&id, "cap spend 100 CLP per day on payments", 1_001)?;
-    vault.approve_connector_charter(&id, pending.compiled_hash, "owner", 1_002)?;
-    let row = CONNECTOR_KEY_CHARTER_ROW_BASE;
+    vault.approve_connector_charter(
+        &id,
+        pending.text_hash,
+        pending.compiled_hash,
+        "owner",
+        1_002,
+    )?;
+    let row = EffectorBudgetRowId::charter(0);
 
     let read = vault.settle_connector_spend(&id, row, 99, 1_003, "settle:clp-99")?;
     assert_eq!(read.used, 99);

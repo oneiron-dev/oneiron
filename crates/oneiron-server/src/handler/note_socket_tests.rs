@@ -136,6 +136,7 @@ async fn authenticated_note_socket_preserves_pins_provenance_and_review_after_re
             learned_at: None,
             salience: None,
             relationship_ref: None,
+            confidence_details: None,
         })
         .unwrap();
     let source = EntityId::from_hex(
@@ -267,7 +268,7 @@ async fn authenticated_note_socket_preserves_pins_provenance_and_review_after_re
             .unwrap()
             .authorship
             .iter()
-            .any(|record| record.operation == edit.request_id && record.actor == actor)
+            .any(|record| record.operation == edit.request_id && record.actor.is(actor))
     );
     assert!(matches!(
         b.resolve_note_pin(&pin).unwrap(),
@@ -364,7 +365,8 @@ async fn document_handler_refuses_unbound_and_selector_impersonation_and_raw_pin
         auth_secret: Some(SECRET.into()),
         ..Default::default()
     };
-    let server = SyncServer::new(vault.clone(), config).unwrap();
+    let server =
+        crate::test_credentials::server_with_fixture_keystore(vault.clone(), config).unwrap();
     let mut state = ConnState::new(transport::PROTOCOL_VERSION);
     let (direct, mut responses) = tokio::sync::mpsc::unbounded_channel();
     let request =
@@ -479,14 +481,19 @@ async fn document_handler_refuses_unbound_and_selector_impersonation_and_raw_pin
         let replica = loro::LoroDoc::new();
         let state_frame = transport::decode_document(&exported[0][1..]).unwrap();
         assert_eq!(state_frame.kind, document_sub_tags::STATE);
-        assert!(
-            replica
-                // A NOTE frame names its head and head sequence first.
-                .import(&state_frame.payload[24..])
-                .unwrap()
-                .pending
-                .is_none()
-        );
+        // A NOTE frame names its head (16 bytes) and head sequence (8) first,
+        // then its seal (604f9388019, #4268) and its overrides (c4e646dfc0a,
+        // #4298), each after a big-endian u32 length, then the document.
+        let document = {
+            let (seal_len, rest) = state_frame.payload[16 + 8..].split_at(4);
+            let seal_len =
+                usize::try_from(u32::from_be_bytes(seal_len.try_into().unwrap())).unwrap();
+            let (overrides_len, rest) = rest[seal_len..].split_at(4);
+            let overrides_len =
+                usize::try_from(u32::from_be_bytes(overrides_len.try_into().unwrap())).unwrap();
+            &rest[overrides_len..]
+        };
+        assert!(replica.import(document).unwrap().pending.is_none());
         let NoteEditOutcome::Applied(view) = &receipt.outcome else {
             panic!("free text must be applied");
         };
@@ -599,20 +606,27 @@ async fn document_socket_update_cannot_use_a_downgraded_subscription() {
     let facet = EntityId::now();
     vault
         .put_entity(
-            &id,
-            oneiron::registry::ENTITY_TYPE_TURN,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"turn",
-        )
-        .unwrap();
-    vault
-        .put_entity(
             &facet,
             oneiron::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 1, end: 1 },
             1,
             b"turn facet",
+        )
+        .unwrap();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    vault
+        .set_default_facet(
+            facet,
+            oneiron::WriteActor::new(owner, EdgeActorClass::Human),
+        )
+        .unwrap();
+    vault
+        .put_entity(
+            &id,
+            oneiron::registry::ENTITY_TYPE_TURN,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"turn",
         )
         .unwrap();
     vault
@@ -634,6 +648,7 @@ async fn document_socket_update_cannot_use_a_downgraded_subscription() {
         vec![facet],
         vec![oneiron::federation::SelectorRange::Core],
     );
+    crate::test_credentials::install_fixture_keystore(&vault, SECRET.as_bytes());
     let server = SyncServer::new(
         vault.clone(),
         SyncServerConfig {
@@ -731,7 +746,7 @@ async fn owner_document_lane_refuses_a_principal_that_is_not_the_owner() {
             b"agent",
         )
         .unwrap();
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         vault,
         SyncServerConfig {
             auth_secret: Some(SECRET.into()),
@@ -809,7 +824,7 @@ async fn note_frames_gate(check_latency: bool) {
     );
     oneiron::sync::put_selector_test_federation_grant(&vault, &grant_id, &grant, 1).unwrap();
     let selector = SyncSelector::new(grant_id, owner, SyncSelectorWorld::All, vec![], vec![]);
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         vault.clone(),
         SyncServerConfig {
             auth_secret: Some(SECRET.into()),

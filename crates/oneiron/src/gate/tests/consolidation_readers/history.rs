@@ -141,6 +141,7 @@ pub(super) fn esign_ledger(reader: ConsolidationReader) -> Result<()> {
         fields: Vec::new(),
         full_trail_appendix: true,
         lifecycle: None,
+        commitments: Vec::new(),
     };
     vault.create_esign_document(document, &body, actor(), 2)?;
     crate::blob_artifact::esign::mark_sent_for_test(&vault, document, actor(), 3)?;

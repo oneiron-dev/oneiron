@@ -38,7 +38,7 @@ impl Home {
         let dir = tempfile::tempdir().unwrap();
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
         let server = Arc::new(
-            SyncServer::new(
+            crate::test_credentials::server_with_fixture_keystore(
                 vault,
                 SyncServerConfig {
                     auth_secret: Some(SECRET.into()),
@@ -145,6 +145,10 @@ impl Heard {
             .flatten()
             .any(|frame| {
                 let (_, tag, payload) = transport::decode_window_sync(&frame[1..]).unwrap();
+                // A released window frame carries its update inside the pad
+                // envelope; a frame with no envelope is read as it is.
+                let payload = transport::window_pad_frame_payload(payload)
+                    .map_or(payload, |(_, inner, _)| inner);
                 tag == window_sub_tags::UPDATE
                     && (payload == change.update.as_slice() || carries(payload, change.id))
             })
@@ -310,6 +314,13 @@ async fn a_lag_reexports_each_selector_document_from_its_last_version() {
             b"placeholder facet",
         )
         .unwrap();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    vault
+        .set_default_facet(
+            facet,
+            oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+        )
+        .unwrap();
     let id = EntityId::now();
     vault
         .put_entity(
@@ -339,6 +350,7 @@ async fn a_lag_reexports_each_selector_document_from_its_last_version() {
         vec![facet],
         vec![oneiron::federation::SelectorRange::Core],
     );
+    crate::test_credentials::install_fixture_keystore(&vault, SECRET.as_bytes());
     let server = SyncServer::new(
         vault,
         SyncServerConfig {
@@ -370,13 +382,21 @@ async fn a_lag_reexports_each_selector_document_from_its_last_version() {
     )
     .unwrap();
 
-    // A change the socket's lagged receiver never saw.
+    // A change the socket's lagged receiver never saw, the vault's own
+    // owner writing as a human at its now (FIX 8873).
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     server
         .reassert_manager
         .documents()
         .open(id)
         .unwrap()
-        .edit_text(0, 0, "placeholder edit")
+        .edit_text(
+            oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+            server.vault.now_recorded_at(),
+            0,
+            0,
+            "placeholder edit",
+        )
         .unwrap();
     let notices: Vec<_> = super::lag_resync::lag_resync_frames(&server, &state)
         .into_iter()

@@ -2457,8 +2457,6 @@ fn authority_genesis_fixture_for_window(seed: u8) -> crate::authority::Authority
             },
             genesis_nonce: [seed.wrapping_add(1); 32],
             recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-            tier_floor: crate::authority::AuthorityTier::Software,
-            pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },
         signer: crate::authority::AuthoritySignature {
             suite: key.suite(),
@@ -2538,27 +2536,6 @@ fn make_entity_blob_with_range(
     blob.extend_from_slice(&learned_at.to_be_bytes());
     blob.extend_from_slice(data);
     blob
-}
-
-/// Rewrites a MessagePack authority payload into its LEGACY-GENESIS shape by
-/// dropping the `pending_widen_delay_secs` field wherever it appears (only the
-/// genesis op map carries it). That is exactly the delta between the current
-/// and legacy encodings/transcripts, so signing over the stripped transcript
-/// mints a genuinely legacy-signed entry without reaching into the private
-/// authority encoders.
-#[cfg(feature = "sync")]
-fn strip_genesis_delay_field(value: &Value) -> Value {
-    match value {
-        Value::Map(fields) => Value::Map(
-            fields
-                .iter()
-                .filter(|(key, _)| key.as_str() != Some("pending_widen_delay_secs"))
-                .map(|(key, val)| (key.clone(), strip_genesis_delay_field(val)))
-                .collect(),
-        ),
-        Value::Array(items) => Value::Array(items.iter().map(strip_genesis_delay_field).collect()),
-        other => other.clone(),
-    }
 }
 
 /// ONE-1604-D1/D5 T9 (fix-leg 1, P2-b): the window-path twin of the bridge
@@ -3048,81 +3025,6 @@ fn forward_remat_quarantines_off_table_facet_of_and_admits_the_on_table_row() ->
     assert_eq!(
         record.payload_hash,
         crate::sync::quarantine::payload_hash(&forged_value)
-    );
-    Ok(())
-}
-
-/// ONE-1604-D1 (fix-leg 3, P2 — regression 3, legacy-genesis leg): the
-/// decode layer's dual-encoding posture must reach the dominance verdict
-/// UNCHANGED. `decode_authority_log_entry_body` admits both the exact
-/// canonical AND the exact legacy-genesis encoding (whose signed bytes omit
-/// `pending_widen_delay_secs`), and `authority_entry_hash` keys off whichever
-/// of the two actually verifies. So:
-///
-/// * a legacy-encoded carrier AT ITS OWN derived key is ADMISSIBLE and is
-///   preserved as-is — the codebase never normalizes legacy bytes, it keys
-///   off them, so there is no re-encode posture to follow here;
-/// * the current re-encoding of that same legacy-signed entry carries no
-///   verifying signature, so it fails the BODY check and is dominated — for
-///   INADMISSIBILITY, not for differing from the local bytes.
-///
-/// Asserted at the admissibility helper rather than through a full
-/// reverse-remat pass because no live door can put a legacy-signed row into a
-/// vault: `put_authority_log_entry` re-encodes canonically, and the
-/// replicated door needs a local authority root that a genesis row is itself
-/// the only source of. The helper is the whole dominance predicate, so its
-/// verdict IS the preserve/dominate decision.
-#[cfg(feature = "sync")]
-#[test]
-fn legacy_genesis_carrier_is_admissible_and_its_current_reencoding_is_not() -> Result<()> {
-    use ed25519_dalek::{Signer, SigningKey};
-
-    const DOMAIN_LEN: usize = 20; // b"oneiron/authority/v1"
-    let mut legacy = authority_genesis_fixture_for_window(0x7A);
-    let signing = SigningKey::from_bytes(&[0x7A; 32]);
-
-    // Re-sign over the delay-free transcript, then encode the delay-free
-    // body: exactly the legacy-genesis pair the decode layer still accepts.
-    let canonical_transcript = crate::authority::authority_transcript(&legacy)?;
-    let mut cursor = std::io::Cursor::new(&canonical_transcript[DOMAIN_LEN..]);
-    let legacy_transcript_value =
-        strip_genesis_delay_field(&rmpv::decode::read_value(&mut cursor).expect("transcript"));
-    let mut legacy_transcript = canonical_transcript[..DOMAIN_LEN].to_vec();
-    rmpv::encode::write_value(&mut legacy_transcript, &legacy_transcript_value)
-        .expect("legacy transcript");
-    legacy.signer.signature = signing.sign(&legacy_transcript).to_bytes().to_vec();
-
-    let current_body = crate::authority::encode_authority_log_entry_body(&legacy)?;
-    let mut cursor = std::io::Cursor::new(current_body.as_slice());
-    let legacy_value =
-        strip_genesis_delay_field(&rmpv::decode::read_value(&mut cursor).expect("body"));
-    let mut legacy_body = Vec::new();
-    rmpv::encode::write_value(&mut legacy_body, &legacy_value).expect("legacy body");
-    assert_ne!(
-        legacy_body, current_body,
-        "the two encodings must genuinely differ for this to test the dual-encoding path"
-    );
-
-    let id = crate::authority::authority_log_entity_id(&legacy)?;
-    let envelope =
-        |body: &[u8]| make_entity_blob_with_range(ENTITY_TYPE_AUTHORITY_LOG, 5, 9, 9, body);
-
-    assert!(
-        crdt_carrier_is_admissible_authority_row(&id, &envelope(&legacy_body)),
-        "a legacy-encoded carrier at its own derived key must be ADMISSIBLE (preserved, not normalized)"
-    );
-    assert!(
-        !crdt_carrier_is_admissible_authority_row(&id, &envelope(&current_body)),
-        "the current re-encoding carries no verifying signature — dominated for inadmissibility"
-    );
-    // Same legacy bytes, inverted envelope: the envelope leg is independent
-    // of the body leg, so a legacy body cannot launder a poisoned range.
-    assert!(
-        !crdt_carrier_is_admissible_authority_row(
-            &id,
-            &make_entity_blob_with_range(ENTITY_TYPE_AUTHORITY_LOG, 9, 5, 9, &legacy_body)
-        ),
-        "an inverted occurred range must dominate even a legacy-valid body"
     );
     Ok(())
 }

@@ -5,6 +5,7 @@
   "output": "crate::campaign::surface::SavedQueryReadResult",
   "call": "memory.read_saved_query(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

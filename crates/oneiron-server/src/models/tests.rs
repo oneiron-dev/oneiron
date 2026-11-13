@@ -22,6 +22,7 @@ pub(super) fn test_run() -> RunAdmission {
     undeclared_run(
         "models-test",
         BudgetGuard::new("models-test", 100_000, BudgetExhaustionPolicy::Suspend),
+        None,
         Arc::new(MemoryReceipts::default()),
     )
 }
@@ -35,6 +36,8 @@ fn events(rows: &[RunReceipt]) -> Vec<&'static str> {
             RunEvent::Dispatched { .. } => "dispatched",
             RunEvent::Settled { .. } => "settled",
             RunEvent::Revised { .. } => "revised",
+            RunEvent::ResidentOverdraft { .. } => "resident_overdraft",
+            RunEvent::PlanModelSubstituted { .. } => "plan_model_substituted",
         })
         .collect()
 }
@@ -58,10 +61,15 @@ pub(super) fn request(model: &ModelId, text: &str) -> LlmRequest {
             ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::ThirdParty,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![LlmMessage {
             role: LlmMessageRole::User,
-            content: vec![ContentPart::Text { text: text.into() }],
+            content: vec![ContentPart::Text {
+                text: text.into(),
+                signature: None,
+            }],
         }],
         tools: Vec::new(),
         params: BTreeMap::new(),
@@ -75,7 +83,7 @@ pub(super) fn text_of(message: &LlmMessage) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect()
@@ -129,10 +137,13 @@ async fn openai_compatible_provider_generates_and_streams_through_a_seat() {
         None,
     )
     .await;
-    let runtime = ModelRuntime::build(Some(&config(&format!(
-        "default = \"cpa:olety7/gpt-6.1-sol\"\n[providers.cpa]\nkind = \"openai-compat\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n",
-        fake.base_url
-    ))));
+    let runtime = ModelRuntime::build(
+        Some(&config(&format!(
+            "default = \"cpa:team/gpt-6.1-sol\"\n[providers.cpa]\nkind = \"openai-compat\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n",
+            fake.base_url
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,
+    );
     let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
     let response = generate(seat, "hi").await;
     assert_eq!(text_of(&response.message), "hello there");
@@ -143,7 +154,7 @@ async fn openai_compatible_provider_generates_and_streams_through_a_seat() {
     );
     assert_eq!(
         response.usage.raw_provider["requested_model"],
-        json!("olety7/gpt-6.1-sol")
+        json!("team/gpt-6.1-sol")
     );
     assert_eq!(response.usage.raw_provider["provider"], json!("cpa"));
     let (deltas, usage, text) = stream(seat, "again").await;
@@ -153,7 +164,7 @@ async fn openai_compatible_provider_generates_and_streams_through_a_seat() {
     let seen = fake.seen();
     assert_eq!(seen.len(), 2);
     assert_eq!(seen[0].path, "/v1/chat/completions");
-    assert_eq!(seen[0].body["model"], json!("olety7/gpt-6.1-sol"));
+    assert_eq!(seen[0].body["model"], json!("team/gpt-6.1-sol"));
     assert_eq!(seen[1].body["stream"], json!(true));
     let home = std::env::var("HOME").unwrap();
     assert_eq!(
@@ -165,10 +176,13 @@ async fn openai_compatible_provider_generates_and_streams_through_a_seat() {
 #[tokio::test]
 async fn a_call_that_picks_its_own_model_or_route_never_reaches_the_provider() {
     let fake = FakeLlm::start(Vec::new(), None).await;
-    let runtime = ModelRuntime::build(Some(&config(&format!(
-        "default = \"cpa:olety7/gpt-6.1-sol\"\n[providers.cpa]\nkind = \"openai-compat\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n",
-        fake.base_url
-    ))));
+    let runtime = ModelRuntime::build(
+        Some(&config(&format!(
+            "default = \"cpa:team/gpt-6.1-sol\"\n[providers.cpa]\nkind = \"openai-compat\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n",
+            fake.base_url
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,
+    );
     let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
     let run = test_run();
     let mut fallback_list = request(&seat.model, "hi");
@@ -205,26 +219,29 @@ async fn an_answer_pays_for_the_rungs_that_failed_before_it_and_never_nothing() 
         model: "big".into(),
     };
     let answering = FakeLlm::start(vec![Reply::text("ok"), no_usage], None).await;
-    let runtime = ModelRuntime::build(Some(&config(&format!(
-        r#"
+    let runtime = ModelRuntime::build(
+        Some(&config(&format!(
+            r#"
 [providers.first]
-kind = "local-openai-compat"
+kind = "openai-compat"
 base_url = "{}"
 [providers.second]
-kind = "local-openai-compat"
+kind = "openai-compat"
 base_url = "{}"
 [roles.generative_reasoner]
 rungs = [{{ model = "first:small" }}, {{ model = "second:big" }}]
 "#,
-        failing.base_url, answering.base_url
-    ))));
+            failing.base_url, answering.base_url
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,
+    );
     let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
     let floor = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
     let guard = BudgetGuard::new("models-test", 100 * floor, BudgetExhaustionPolicy::Suspend);
     let receipts = Arc::new(MemoryReceipts::default());
     let mut charges = Vec::new();
     for _ in 0..2 {
-        let run = undeclared_run("models-test", guard.clone(), receipts.clone());
+        let run = undeclared_run("models-test", guard.clone(), None, receipts.clone());
         let before = guard.read().used_units;
         let response = seat
             .ladder
@@ -268,10 +285,13 @@ async fn anthropic_compatible_provider_generates_and_streams_through_a_seat() {
         None,
     )
     .await;
-    let runtime = ModelRuntime::build(Some(&config(&format!(
-        "default = \"claude:proxy/claude-family-latest\"\n[providers.claude]\nkind = \"anthropic-compat\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\nmax_output_tokens = 900\n",
-        fake.base_url
-    ))));
+    let runtime = ModelRuntime::build(
+        Some(&config(&format!(
+            "default = \"claude:proxy/claude-family-latest\"\n[providers.claude]\nkind = \"anthropic-compat\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\nmax_output_tokens = 900\n",
+            fake.base_url
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,
+    );
     let seat = runtime.seat(ModelRole::DreamerCurrent).expect("seat");
     assert_eq!(seat.locality, ModelLocality::ThirdParty);
     let response = generate(seat, "hi").await;
@@ -309,10 +329,13 @@ async fn the_configured_output_ceiling_reaches_every_openai_compatible_call() {
     ];
     for (kind, field_line, field) in endpoints {
         let before = fake.seen().len();
-        let runtime = ModelRuntime::build(Some(&config(&format!(
-            "default = \"p:m\"\n[providers.p]\nkind = \"{kind}\"\nbase_url = \"{}\"\nmax_output_tokens = 64\n{field_line}",
-            fake.base_url
-        ))));
+        let runtime = ModelRuntime::build(
+            Some(&config(&format!(
+                "default = \"p:m\"\n[providers.p]\nkind = \"{kind}\"\nbase_url = \"{}\"\nmax_output_tokens = 64\n{field_line}",
+                fake.base_url
+            ))),
+            oneiron::HostingPrivacyPosture::SelfHostLocal,
+        );
         let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
         // A workflow step generates; a chat turn streams.
         generate(seat, "step").await;
@@ -347,10 +370,13 @@ async fn the_configured_output_ceiling_reaches_every_openai_compatible_call() {
 #[tokio::test]
 async fn local_openai_compatible_server_takes_a_v1_base_and_no_key() {
     let fake = FakeLlm::start(vec![Reply::text("local answer")], None).await;
-    let runtime = ModelRuntime::build(Some(&config(&format!(
-        "local = \"llama:qwen3:8b\"\n[providers.llama]\nkind = \"local-openai-compat\"\nbase_url = \"{}/v1\"\n",
-        fake.base_url
-    ))));
+    let runtime = ModelRuntime::build(
+        Some(&config(&format!(
+            "local = \"llama:qwen3:8b\"\n[providers.llama]\nkind = \"local-openai-compat\"\nbase_url = \"{}/v1\"\n",
+            fake.base_url
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,
+    );
     let seat = runtime.seat(ModelRole::LocalReasoner).expect("local seat");
     assert_eq!(seat.locality, ModelLocality::OwnServer);
     assert_eq!(text_of(&generate(seat, "hi").await.message), "local answer");
@@ -367,10 +393,13 @@ async fn a_reply_without_usage_still_names_the_model_that_served_it() {
         model: "served-under-another-name".into(),
     };
     let fake = FakeLlm::start(vec![served(), served()], None).await;
-    let runtime = ModelRuntime::build(Some(&config(&format!(
-        "local = \"llama:qwen3:8b\"\n[providers.llama]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n",
-        fake.base_url
-    ))));
+    let runtime = ModelRuntime::build(
+        Some(&config(&format!(
+            "local = \"llama:qwen3:8b\"\n[providers.llama]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n",
+            fake.base_url
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,
+    );
     let seat = runtime.seat(ModelRole::LocalReasoner).expect("local seat");
     // `"usage": null` on a plain reply.
     let response = generate(seat, "hi").await;
@@ -399,10 +428,13 @@ async fn an_anthropic_reply_without_usage_still_names_the_model_that_served_it()
         model: "served-under-another-name".into(),
     };
     let fake = FakeLlm::start(vec![served(), served()], None).await;
-    let runtime = ModelRuntime::build(Some(&config(&format!(
-        "default = \"claude:proxy/claude-family-latest\"\n[providers.claude]\nkind = \"anthropic-compat\"\nbase_url = \"{}\"\n",
-        fake.base_url
-    ))));
+    let runtime = ModelRuntime::build(
+        Some(&config(&format!(
+            "default = \"claude:proxy/claude-family-latest\"\n[providers.claude]\nkind = \"anthropic-compat\"\nbase_url = \"{}\"\n",
+            fake.base_url
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,
+    );
     let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
     // `"usage": null` on a plain reply.
     let response = generate(seat, "hi").await;
@@ -434,10 +466,13 @@ async fn a_streamed_event_past_the_bound_is_refused_not_buffered() {
         None,
     )
     .await;
-    let runtime = ModelRuntime::build(Some(&config(&format!(
-        "local = \"llama:qwen3:8b\"\n[providers.llama]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n",
-        fake.base_url
-    ))));
+    let runtime = ModelRuntime::build(
+        Some(&config(&format!(
+            "local = \"llama:qwen3:8b\"\n[providers.llama]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n",
+            fake.base_url
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,
+    );
     let seat = runtime.seat(ModelRole::LocalReasoner).expect("local seat");
     let run = test_run();
     let mut events = seat
@@ -458,8 +493,9 @@ async fn a_streamed_event_past_the_bound_is_refused_not_buffered() {
 async fn a_failing_rung_hands_the_call_to_the_next_with_its_prompt() {
     let down = FakeLlm::start(vec![], Some(Reply::Status(503))).await;
     let up = FakeLlm::start(vec![], Some(Reply::text("rescued"))).await;
-    let runtime = ModelRuntime::build(Some(&config(&format!(
-        r#"
+    let runtime = ModelRuntime::build(
+        Some(&config(&format!(
+            r#"
 [providers.first]
 kind = "local-openai-compat"
 base_url = "{}"
@@ -472,8 +508,10 @@ rungs = [
   {{ model = "second:big", prompt = "second rung rules" }},
 ]
 "#,
-        down.base_url, up.base_url
-    ))));
+            down.base_url, up.base_url
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,
+    );
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
     // The widest rung bounds where the seat's data may go.
     assert_eq!(seat.locality, ModelLocality::ThirdParty);
@@ -504,10 +542,11 @@ rungs = [
 #[tokio::test]
 async fn a_failed_call_pays_for_each_provider_call_it_made() {
     let fake = FakeLlm::start(vec![], Some(Reply::Status(500))).await;
-    let runtime = ModelRuntime::build(Some(&config(&format!(
-        r#"
+    let runtime = ModelRuntime::build(
+        Some(&config(&format!(
+            r#"
 [providers.local]
-kind = "local-openai-compat"
+kind = "openai-compat"
 base_url = "{}"
 [roles.generative_reasoner]
 rungs = [
@@ -516,8 +555,10 @@ rungs = [
   {{ model = "local:third" }},
 ]
 "#,
-        fake.base_url
-    ))));
+            fake.base_url
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,
+    );
     let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
     let (_dir, vault) = crate::ai_host::test_support::rooted_vault();
     let guard = BudgetGuard::new("models-test", 100_000, BudgetExhaustionPolicy::Suspend);
@@ -537,6 +578,7 @@ rungs = [
         let run = undeclared_run(
             "models-test",
             guard.clone(),
+            None,
             Arc::new(MemoryReceipts::default()),
         );
         route
@@ -566,10 +608,13 @@ async fn a_rung_that_has_spoken_keeps_the_call_when_its_stream_breaks() {
     ] {
         let first = FakeLlm::start(vec![], Some(Reply::Raw(broken.clone()))).await;
         let second = FakeLlm::start(vec![], Some(Reply::text("switched"))).await;
-        let runtime = ModelRuntime::build(Some(&config(&format!(
-            "[providers.first]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n[providers.second]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n[roles.checker]\nrungs = [{{ model = \"first:small\" }}, {{ model = \"second:big\" }}]\n",
-            first.base_url, second.base_url
-        ))));
+        let runtime = ModelRuntime::build(
+            Some(&config(&format!(
+                "[providers.first]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n[providers.second]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n[roles.checker]\nrungs = [{{ model = \"first:small\" }}, {{ model = \"second:big\" }}]\n",
+                first.base_url, second.base_url
+            ))),
+            oneiron::HostingPrivacyPosture::SelfHostLocal,
+        );
         let seat = runtime.seat(ModelRole::Checker).expect("seat");
         let run = test_run();
         let mut events = seat
@@ -650,8 +695,9 @@ async fn an_oversized_provider_body_is_refused_before_it_is_read_whole() {
 #[tokio::test]
 async fn a_receipt_names_the_selected_rungs_place_in_the_configured_ladder() {
     let fake = FakeLlm::start(vec![], Some(Reply::text("answered"))).await;
-    let runtime = ModelRuntime::build(Some(&config(&format!(
-        r#"
+    let runtime = ModelRuntime::build(
+        Some(&config(&format!(
+            r#"
 [providers.gone]
 kind = "openai-compat"
 base_url = "https://h"
@@ -666,8 +712,10 @@ rungs = [
   {{ model = "local:second" }},
 ]
 "#,
-        fake.base_url
-    ))));
+            fake.base_url
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,
+    );
     let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
     // Rung 0 has no key, so rung 1 answers the ladder.
     assert_eq!(
@@ -711,9 +759,12 @@ rungs = [
 
 #[tokio::test]
 async fn an_unset_key_variable_takes_the_provider_out_and_says_why() {
-    let runtime = ModelRuntime::build(Some(&config(
-        "default = \"cloud:m\"\n[providers.cloud]\nkind = \"openai-compat\"\nbase_url = \"https://h\"\nkey_env = \"ONEIRON_TEST_KEY_THAT_IS_NEVER_SET\"\n",
-    )));
+    let runtime = ModelRuntime::build(
+        Some(&config(
+            "default = \"cloud:m\"\n[providers.cloud]\nkind = \"openai-compat\"\nbase_url = \"https://h\"\nkey_env = \"ONEIRON_TEST_KEY_THAT_IS_NEVER_SET\"\n",
+        )),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,
+    );
     assert!(runtime.seat(ModelRole::GenerativeReasoner).is_none());
     let status = serde_json::to_value(runtime.status()).unwrap();
     assert_eq!(status["providers"][0]["state"], json!("unavailable"));
@@ -743,9 +794,10 @@ async fn one_config_edit_swaps_the_seat_model_with_the_same_calling_code() {
     );
     let mut answers = Vec::new();
     for default in ["a:model-one", "b:model-two"] {
-        let runtime = ModelRuntime::build(Some(&config(&format!(
-            "default = \"{default}\"\n{providers}"
-        ))));
+        let runtime = ModelRuntime::build(
+            Some(&config(&format!("default = \"{default}\"\n{providers}"))),
+            oneiron::HostingPrivacyPosture::SelfHostLocal,
+        );
         let seat = runtime.seat(ModelRole::DreamerCurrent).unwrap();
         answers.push(text_of(&generate(seat, "same call").await.message));
     }
@@ -755,10 +807,13 @@ async fn one_config_edit_swaps_the_seat_model_with_the_same_calling_code() {
 #[tokio::test]
 async fn the_router_serves_seats_and_configured_models_by_id() {
     let fake = FakeLlm::start(vec![], Some(Reply::text("routed"))).await;
-    let runtime = ModelRuntime::build(Some(&config(&format!(
-        "default = \"p:m\"\n[providers.p]\nkind = \"openai-compat\"\nbase_url = \"{}\"\n",
-        fake.base_url
-    ))));
+    let runtime = ModelRuntime::build(
+        Some(&config(&format!(
+            "default = \"p:m\"\n[providers.p]\nkind = \"openai-compat\"\nbase_url = \"{}\"\n",
+            fake.base_url
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,
+    );
     let router = runtime.router().expect("router");
     let seat = runtime.seat(ModelRole::Checker).unwrap();
     let direct = ModelId::new("p/m@live").unwrap();
@@ -792,10 +847,13 @@ async fn a_declared_run_calls_only_its_teachers_and_a_t1_key_only_when_allowed()
     let keyed = FakeLlm::start(vec![], Some(Reply::text("keyed"))).await;
     let own = FakeLlm::start(vec![], Some(Reply::text("own"))).await;
     let receipts = Arc::new(MemoryReceipts::default());
-    let runtime = ModelRuntime::build(Some(&config(&format!(
-        "default = \"keyed:teacher\"\n[providers.keyed]\nkind = \"openai-compat\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n[providers.own]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n[roles.checker]\nrungs = [{{ model = \"own:small\" }}]\n",
-        keyed.base_url, own.base_url
-    ))))
+    let runtime = ModelRuntime::build(
+        Some(&config(&format!(
+            "default = \"keyed:teacher\"\n[providers.keyed]\nkind = \"openai-compat\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n[providers.own]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n[roles.checker]\nrungs = [{{ model = \"own:small\" }}]\n",
+            keyed.base_url, own.base_url
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,
+    )
     .with_receipts(receipts.clone());
     let keyed_id = ModelId::new("keyed/teacher@live").unwrap();
     let own_id = ModelId::new("own/small@live").unwrap();
@@ -911,10 +969,13 @@ async fn a_declared_run_calls_only_its_teachers_and_a_t1_key_only_when_allowed()
 async fn a_declared_runs_receipt_log_carries_no_run_text() {
     const SENTINEL: &str = "sentinel-world-text-3d8e";
     let own = FakeLlm::start(vec![], Some(Reply::text("own"))).await;
-    let runtime = ModelRuntime::build(Some(&config(&format!(
-        "default = \"own:small\"\n[providers.own]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n[roles.checker]\nrungs = [{{ model = \"own:small\" }}, {{ model = \"own:other\" }}]\n",
-        own.base_url
-    ))));
+    let runtime = ModelRuntime::build(
+        Some(&config(&format!(
+            "default = \"own:small\"\n[providers.own]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n[roles.checker]\nrungs = [{{ model = \"own:small\" }}, {{ model = \"own:other\" }}]\n",
+            own.base_url
+        ))),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,
+    );
     let own_id = ModelId::new("own/small@live").unwrap();
     // Served here, so the refusal is the run's: it did not declare this teacher.
     let undeclared = ModelId::new("own/other@live").unwrap();
@@ -981,10 +1042,13 @@ async fn each_http_transport_sends_a_call_once_and_follows_no_redirect() {
             redirect,
         ];
         let fake = FakeLlm::start(script, Some(Reply::text("unreached"))).await;
-        let runtime = ModelRuntime::build(Some(&config(&format!(
-            "default = \"p:m\"\n[providers.p]\nkind = \"{kind}\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n",
-            fake.base_url
-        ))));
+        let runtime = ModelRuntime::build(
+            Some(&config(&format!(
+                "default = \"p:m\"\n[providers.p]\nkind = \"{kind}\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n",
+                fake.base_url
+            ))),
+            oneiron::HostingPrivacyPosture::SelfHostLocal,
+        );
         let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
         for sent in 1..=6 {
             let run = test_run();
@@ -1113,7 +1177,11 @@ async fn a_broker_call_that_cannot_go_out_is_refused_uncharged() {
             "a child that let its channel go" => &dropped,
             _ => &config,
         };
-        let runtime = ModelRuntime::build_with_keys(Some(config), Some(door.clone()));
+        let runtime = ModelRuntime::build_with_keys(
+            Some(config),
+            Some(door.clone()),
+            oneiron::HostingPrivacyPosture::SelfHostLocal,
+        );
         let model = runtime
             .seat(ModelRole::Checker)
             .expect("seat")
@@ -1121,7 +1189,7 @@ async fn a_broker_call_that_cannot_go_out_is_refused_uncharged() {
             .clone();
         let receipts = Arc::new(MemoryReceipts::default());
         let meter = BudgetGuard::new("broker-test", 100_000, BudgetExhaustionPolicy::Suspend);
-        let run = undeclared_run("broker-test", meter.clone(), receipts.clone());
+        let run = undeclared_run("broker-test", meter.clone(), None, receipts.clone());
         let (_, ladder) = runtime.router().unwrap().served(&model).unwrap();
         let refused = ladder.generate(&run, request(&model, "hi"), None).await;
         assert!(refused.is_err(), "{case}");
@@ -1158,10 +1226,13 @@ async fn a_provider_set_to_no_schema_sends_no_response_format() {
     let schema = json!({"type": "object"});
     for (line, sends) in [("", true), ("response_format = \"none\"\n", false)] {
         let before = fake.seen().len();
-        let runtime = ModelRuntime::build(Some(&config(&format!(
-            "default = \"p:m\"\n[providers.p]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n{line}",
-            fake.base_url
-        ))));
+        let runtime = ModelRuntime::build(
+            Some(&config(&format!(
+                "default = \"p:m\"\n[providers.p]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n{line}",
+                fake.base_url
+            ))),
+            oneiron::HostingPrivacyPosture::SelfHostLocal,
+        );
         let seat = runtime.seat(ModelRole::DreamerCurrent).expect("seat");
         let run = test_run();
         let mut call = request(&seat.model, "extract");

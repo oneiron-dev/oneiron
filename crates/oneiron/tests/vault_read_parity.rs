@@ -350,6 +350,9 @@ fn context_pack_request() -> CoreContextPackRequest {
         max_neighbors: Some(4),
         budget: None,
         filter: None,
+        type_ref: None,
+        axis: None,
+        media: None,
     }
 }
 
@@ -360,6 +363,8 @@ fn hydrate_request(reference: &str) -> CoreHydrateRequest {
         content_hash: None,
         view: Some(View::Full),
         filter: None,
+        image_input: false,
+        task: None,
     }
 }
 
@@ -438,9 +443,11 @@ fn scope_denial_preserves_not_found_and_reports_withholding() {
     }
     assert_eq!(denied_direct, denied_wire);
     assert_eq!(missing_direct, missing_wire);
-    // Both adapters keep NOT_FOUND; mandatory receipts distinguish policy
-    // exclusions from refs which never resolved, without returning row data.
-    for (error, expected) in [(&denied_direct, 1), (&missing_direct, 0)] {
+    // Both adapters keep NOT_FOUND, and every resolved read carries its
+    // receipt. A row the reader's own key can never read is absent, not
+    // withheld: its receipt counts nothing and names no row authority, the
+    // same as a ref that never resolved (ARCH-0067 F21(b)/(c), #5241).
+    for (error, expected) in [(&denied_direct, 0), (&missing_direct, 0)] {
         let VaultReadError::Engine {
             narrowing: Some(receipt),
             ..
@@ -459,6 +466,8 @@ fn scope_denial_preserves_not_found_and_reports_withholding() {
         refs: vec![reference.to_owned()],
         view: Some(View::Full),
         filter: None,
+        image_input: false,
+        task: None,
     };
     let denied_item = in_process
         .hydrate_many(batch(&fixture.denied_ref))

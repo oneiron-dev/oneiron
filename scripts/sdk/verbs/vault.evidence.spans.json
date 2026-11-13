@@ -1,0 +1,15 @@
+{
+  "name": "vault.evidence.spans",
+  "description": "Reads exact byte spans of one TURN's text, or one source's version, through the caller's scoped read; a source that moved since the version named serves no bytes.",
+  "input": "crate::snapshot_read::EvidenceSpansRequest",
+  "output": "crate::claim::ScopedReadResult<crate::snapshot_read::EvidenceSpans>",
+  "call": "crate::snapshot_read::evidence_spans(memory, &input)?",
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "lane_record_scope": true,
+    "validate": "crate::snapshot_read::validate_evidence_spans(&input)?;"
+  },
+  "section": false,
+  "mcp_scope": "filtered"
+}

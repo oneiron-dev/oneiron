@@ -25,6 +25,21 @@ use oneiron_contracts::affect::Vad;
 
 mod materialization;
 
+/// How a retract runs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum RetractRun {
+    /// The live gate answers, unless the claim's pending consent closes
+    /// first, and the retract lands.
+    Gated,
+    /// Only the live gate's answer: nothing after it is written, and the
+    /// caller rolls back what the answer wrote.
+    GateAnswerOnly,
+    /// The holder's consent to a retract parked for it
+    /// ([`super::deferred`]): the settling door has checked the parked
+    /// binding and closes the tray row itself.
+    ParkedConsent,
+}
+
 /// Validity endpoints cannot precede either admitted start. The transition,
 /// edge and receipt still record the actual operation time separately.
 fn lifecycle_effective_end(body: &ClaimBody, header: &EntityMetadataHeader, now: u64) -> u64 {
@@ -34,12 +49,12 @@ fn lifecycle_effective_end(body: &ClaimBody, header: &EntityMetadataHeader, now:
 
 /// The family a want derived from behaviour is minted into, beside the
 /// user's own statement (ARCH-0003, ruled 2026-07-29).
-const PREFERENCE_PREDICATE_PREFIX: &str = "preference.";
+pub(super) const PREFERENCE_PREDICATE_PREFIX: &str = "preference.";
 
 /// OF-023: an `observed` `preference.*` claim is held beside the
 /// `user_stated` one on its key and never outranks or closes it.
 pub(crate) fn is_observed_preference(source: Option<ClaimSource>, predicate: &str) -> bool {
-    source == Some(ClaimSource::Observed) && predicate.starts_with(PREFERENCE_PREDICATE_PREFIX)
+    source == Some(ClaimSource::Observed) && is_preference_predicate(predicate)
 }
 
 /// How a supersession closes its old head: directly, attributed to a typed
@@ -731,6 +746,21 @@ impl Vault {
         now: u64,
         actor: Option<crate::WriteActor>,
     ) -> Result<Option<GateDecisionRecord>> {
+        self.retract_claim_in_txn_with(wtxn, id, now, actor, RetractRun::Gated)
+    }
+
+    /// [`Vault::retract_claim_in_txn_as`], run as `run` says. A retract the
+    /// holder consented to closes no tray row and asks no gate: its door
+    /// checked the parked binding, as a closed tray row is the consent of
+    /// any other retract.
+    pub(super) fn retract_claim_in_txn_with(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        now: u64,
+        actor: Option<crate::WriteActor>,
+        run: RetractRun,
+    ) -> Result<Option<GateDecisionRecord>> {
         // A retracted head moves what the host's timers read; the mark fires
         // only if this transaction commits.
         crate::batch::queue_proactivity_change(self, wtxn);
@@ -741,15 +771,20 @@ impl Vault {
         let closed_end = lifecycle_effective_end(&body, &header, now);
         // The retraction closes the claim, so its owner is shown no item for
         // the open revision; an open obligation stays open.
-        let consent_receipt = self.store.close_pending_gate_consent_as_in_txn(
-            wtxn,
-            id,
-            now,
-            "retracted",
-            vec!["gate.pending.claim_retracted".to_owned()],
-            None,
-            crate::store::TrayRemoval::Silent,
-        )?;
+        let consent_receipt = match run {
+            RetractRun::Gated | RetractRun::GateAnswerOnly => {
+                self.store.close_pending_gate_consent_as_in_txn(
+                    wtxn,
+                    id,
+                    now,
+                    "retracted",
+                    vec!["gate.pending.claim_retracted".to_owned()],
+                    None,
+                    crate::store::TrayRemoval::Silent,
+                )?
+            }
+            RetractRun::ParkedConsent => None,
+        };
         body.lifecycle = ClaimLifecycleStatus::Retracted;
         body.valid_to = Some(closed_end);
         let body = super::transition::close_machine_claim_in_txn(
@@ -788,7 +823,7 @@ impl Vault {
             )?;
 
         let mut write_receipt = None;
-        if consent_receipt.is_none() {
+        if consent_receipt.is_none() && run != RetractRun::ParkedConsent {
             let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
             crate::gate::check_claim_policy_for_write_with_record(
                 &self.store,
@@ -819,7 +854,18 @@ impl Vault {
             )?;
         }
 
+        if run == RetractRun::GateAnswerOnly {
+            return Ok(None);
+        }
         self.apply_lifecycle_materialization(wtxn, ops, binding, transition, false)?;
+        // A retract parked for the holder has nothing left to close.
+        self.drop_parked_retract_in_txn(wtxn, id)?;
+        // FIX 22383: a commitment instance retracted while its promise is open
+        // is withdrawn. Its due phases go in this transaction, so it never
+        // wakes and never enters a lapse sweep; its status stays as it was.
+        if body.predicate == crate::commitment::PREDICATE_COMMITMENT_RECORD {
+            self.clear_withdrawn_commitment_due_in_txn(wtxn, id)?;
+        }
         Ok(consent_receipt
             .or(write_receipt.map(crate::gate::RecordedClaimGateDecision::into_record)))
     }

@@ -35,7 +35,7 @@ use super::super::join_consent::{
 use super::super::join_door::rooms_join_in_txn;
 use super::super::join_receipt::JoinReceiptRef;
 use super::fact_subject::FactSubject;
-use super::{ProjectRoom, RoomTurn, invalid, require_member, room_in, turn_in};
+use super::{RoomAccess, RoomTurn, invalid, require_member, room_access_in, turn_in};
 use super::{TURNS, audience, hosting, offers};
 use crate::error::{ClaimError, Error, RecordError, Result};
 use crate::memory::WitnessTurn;
@@ -257,9 +257,10 @@ pub(super) fn delete_thread_facts(
 /// takes part as that PERSON: `actor.subject_ref` is the stored answer to who
 /// stands behind an actor (ARCH-0063 R7), the same anchor OF-531 reads.
 /// Every other AGENT_DEF (an ORG-anchored house mind, an unanchored team lead
-/// or worker) is an agent. The actor class decides nothing: an AGENT_DEF
-/// only ever carries `Agent`. Anything else takes part in no room. Claims
-/// and bylines keep the original actor.
+/// or worker, an agent anchored to its own model PERSON on the PEOPLE board)
+/// is an agent. The actor class decides nothing: an AGENT_DEF only ever
+/// carries `Agent`. Anything else takes part in no room. Claims and bylines
+/// keep the original actor.
 pub(crate) fn join_subject_for_actor_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -416,19 +417,19 @@ pub(super) fn turn_root_in_txn(
     )
 }
 
-/// Whether `actor`, taking part as `subject`, reads the project room
-/// `record`: from its seat, as before, or on a Ready receipt for the room,
-/// an agent's or, through its pen, a person's (OF-417). A thread's receipt
-/// opens no room-wide read.
+/// Whether `actor`, taking part as `subject`, reads the room whose roster
+/// is `members`: from its seat, as before, or on a Ready receipt for the
+/// room, an agent's or, through its pen, a person's (OF-417). A thread's
+/// receipt opens no room-wide read.
 pub(super) fn reads_room_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
-    record: &ProjectRoom,
+    members: &[String],
     actor: EntityId,
     subject: Option<JoinSubject>,
 ) -> Result<bool> {
-    if record.member_ids.contains(&actor.to_hex()) {
+    if members.contains(&actor.to_hex()) {
         return Ok(true);
     }
     let Some(subject) = subject else {
@@ -458,19 +459,19 @@ fn hosts_room_in_txn(
     Ok(crate::conversation::room_host_in_txn(vault, txn, room, host)?.is_some())
 }
 
-/// The room read entry (OF-529): for a person its seat or a Ready receipt
-/// for the room (OF-417), and for an agent its seat or a Ready receipt for
-/// the room. The room's host reads it too ([`hosts_room_in_txn`]). Returns
-/// the room as its project vouches for it.
+/// The room read entry (OF-529), in any room (THREAD-TASK-EVERY-ROOM): for
+/// a person its seat or a Ready receipt for the room (OF-417), and for an
+/// agent its seat or a Ready receipt for the room. The room's host reads it
+/// too ([`hosts_room_in_txn`]). Returns the room's access.
 pub(in crate::workspace_roster) fn require_reader(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
     actor: EntityId,
-) -> Result<ProjectRoom> {
-    let record = room_in(vault, txn, room)?;
+) -> Result<RoomAccess> {
+    let record = room_access_in(vault, txn, room)?;
     let subject = participant_in_txn(vault, txn, actor, vault.store.clock.now_recorded_at())?;
-    if !reads_room_in_txn(vault, txn, room, &record, actor, subject)?
+    if !reads_room_in_txn(vault, txn, room, &record.member_ids, actor, subject)?
         && !hosts_room_in_txn(vault, txn, room, actor)?
     {
         return Err(invalid());
@@ -485,15 +486,14 @@ pub(in crate::workspace_roster) fn require_reader(
 /// room's host reads each of its threads, as it reads the room, except a
 /// private one (FIX 2951), which only its audience reads. Last, the vault's
 /// Owner or an Admin in a private thread's audience reads that thread with
-/// no standing in the room (FIX 5638). Returns the room as its project
-/// vouches for it.
+/// no standing in the room (FIX 5638). Returns the room's access.
 pub(in crate::workspace_roster) fn require_thread_reader(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
     thread: EntityId,
     actor: EntityId,
-) -> Result<ProjectRoom> {
+) -> Result<RoomAccess> {
     Ok(require_thread_standing(vault, txn, room, thread, actor)?.0)
 }
 
@@ -506,15 +506,15 @@ pub(super) fn require_thread_standing(
     room: EntityId,
     thread: EntityId,
     actor: EntityId,
-) -> Result<(ProjectRoom, bool)> {
-    let record = room_in(vault, txn, room)?;
+) -> Result<(RoomAccess, bool)> {
+    let record = room_access_in(vault, txn, room)?;
     require_thread_audience_in(vault, txn, room, Some(thread), actor)?;
     let subject = participant_in_txn(vault, txn, actor, vault.store.clock.now_recorded_at())?;
     let reads = match subject {
         Some(JoinSubject::Agent(agent)) => {
             agent_standing_in_txn(vault, txn, room, Some(thread), agent, None)?.is_some()
         }
-        subject => reads_room_in_txn(vault, txn, room, &record, actor, subject)?,
+        subject => reads_room_in_txn(vault, txn, room, &record.member_ids, actor, subject)?,
     };
     if reads || hosts_room_in_txn(vault, txn, room, actor)? {
         return Ok((record, false));
@@ -523,6 +523,41 @@ pub(super) fn require_thread_standing(
         return Ok((record, true));
     }
     Err(invalid())
+}
+
+/// Whether `actor` stands in `room`'s thread `root` now, as a bound TASK's
+/// assignee must (THREAD-TASK-EVERY-ROOM, Q3): a seat on the room's roster,
+/// or a live Ready receipt that covers the thread, an agent's own or,
+/// through its pen, a person's (OF-417). A room host's role, which lets a
+/// person read and speak in the room, is no assignee's standing. It reads
+/// standing and records nothing.
+pub(in crate::workspace_roster) fn stands_in_thread_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    root: EntityId,
+    actor: EntityId,
+) -> Result<bool> {
+    let subject = participant_in_txn(vault, txn, actor, vault.store.clock.now_recorded_at())?;
+    match subject {
+        Some(JoinSubject::Agent(agent)) => {
+            Ok(agent_standing_in_txn(vault, txn, room, Some(root), agent, None)?.is_some())
+        }
+        Some(JoinSubject::Person(person)) => {
+            let seats = room_access_in(vault, txn, room)?.member_ids;
+            if [person, actor]
+                .iter()
+                .any(|id| seats.contains(&id.to_hex()))
+            {
+                return Ok(true);
+            }
+            let subject = JoinSubject::Person(person);
+            let receipt =
+                require_join_covering_in_txn(vault, txn, room, Some(root), &subject, None);
+            Ok(joined(receipt)?.is_some())
+        }
+        None => Ok(false),
+    }
 }
 
 /// Whether `actor` is an agent with no standing in `room` itself: no seat
@@ -536,12 +571,12 @@ pub(super) fn agent_off_room_in_txn(
     room: EntityId,
     actor: EntityId,
 ) -> Result<bool> {
-    let Ok(record) = room_in(vault, txn, room) else {
+    let Ok(record) = room_access_in(vault, txn, room) else {
         return Ok(false);
     };
     let subject = participant_in_txn(vault, txn, actor, vault.store.clock.now_recorded_at())?;
     Ok(matches!(subject, Some(JoinSubject::Agent(_)))
-        && !reads_room_in_txn(vault, txn, room, &record, actor, subject)?)
+        && !reads_room_in_txn(vault, txn, room, &record.member_ids, actor, subject)?)
 }
 
 /// Who claims a room turn, and on what (OF-529).

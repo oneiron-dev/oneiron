@@ -160,10 +160,15 @@ fn classify(
                 // Steward is the owner's to give (ARCH-0043; lead 10 Nov
                 // 06:5x): a move into it waits for his stamp, whoever asks.
                 || *now == ShapeMemberRole::Steward
-                // A Steward made a Member or an Admin gains `write`, which no
-                // Steward holds.
+                // A Steward made a Member, an Admin or a Deputy gains
+                // `write`, which no Steward holds.
                 || (*was == ShapeMemberRole::Steward
-                    && matches!(now, ShapeMemberRole::Member | ShapeMemberRole::Admin))
+                    && matches!(
+                        now,
+                        ShapeMemberRole::Member
+                            | ShapeMemberRole::Admin
+                            | ShapeMemberRole::Deputy
+                    ))
             {
                 Widening
             } else {

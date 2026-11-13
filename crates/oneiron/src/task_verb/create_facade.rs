@@ -62,6 +62,24 @@ fn create_proposal_identity(value: &Value) -> Vec<u8> {
     canonical_bytes(&Value::Map(neutralized))
 }
 
+/// The receipt of a create its actor's ceiling admitted Auto: the TASK took
+/// effect with its route, and no proposal stands.
+pub(super) fn direct_create_receipt(
+    task_ref: EntityId,
+    route: TaskRouteOutcome,
+) -> TaskCreateReceipt {
+    TaskCreateReceipt {
+        task_ref: Some(task_ref),
+        proposal_ref: None,
+        approval: ClaimApprovalStatus::Auto,
+        effected: true,
+        route: Some(route),
+        task_record: None,
+        proposal_record: None,
+    }
+    .with_record_refs()
+}
+
 impl Memory<'_> {
     /// Mints one TASK plus one linked realizing attempt when the actor's live
     /// definition/manifest ceiling permits Auto; otherwise parks one proposal.
@@ -123,36 +141,12 @@ impl Memory<'_> {
                 return Ok(None);
             }
             record_task_create(self.vault(), wtxn, self.actor(), rate_now, rate_limit)?;
-
-            let owner_ref = spec.owner_ref.unwrap_or_else(|| self.actor());
-            let task_ref = self.mint_task_in_txn(
-                wtxn,
-                &validated,
-                spec.label.clone(),
-                owner_ref,
-                &provenance,
-                now,
-            )?;
-            self.attach_task_parent_in_txn(wtxn, task_ref, spec.parent_ref)?;
-            // The TASK and its realizing work commit together, so a route
-            // failure rolls the intent back rather than leaving an invisible
-            // half-created task behind.
-            let route = self.route_created_task_in_txn(wtxn, task_ref, &validated, now)?;
-            self.witness_human_assignment_in_txn(wtxn, task_ref, &validated, owner_ref, now)?;
-            Ok(Some((task_ref, route)))
+            self.create_direct_task_in_txn(wtxn, spec, &validated, &provenance, now)
+                .map(Some)
         })?;
 
         if let Some((task_ref, route)) = direct {
-            return Ok(TaskCreateReceipt {
-                task_ref: Some(task_ref),
-                proposal_ref: None,
-                approval: ClaimApprovalStatus::Auto,
-                effected: true,
-                route: Some(route),
-                task_record: None,
-                proposal_record: None,
-            }
-            .with_record_refs());
+            return Ok(direct_create_receipt(task_ref, route));
         }
 
         // Authority ceilings still park proposals. Accounting never changes
@@ -183,6 +177,36 @@ impl Memory<'_> {
             proposal_record: None,
         }
         .with_record_refs())
+    }
+
+    /// The writes of a brief-less create its actor's ceiling admitted Auto,
+    /// once its accounting is recorded, in the caller's write transaction:
+    /// the TASK, its parent edge, its realizing route and the
+    /// human-assignment witness.
+    pub(super) fn create_direct_task_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        spec: &TaskCreateSpec,
+        validated: &ValidatedTaskCreate,
+        provenance: &Value,
+        now: u64,
+    ) -> MemoryResult<(EntityId, TaskRouteOutcome)> {
+        let owner_ref = spec.owner_ref.unwrap_or_else(|| self.actor());
+        let task_ref = self.mint_task_in_txn(
+            wtxn,
+            validated,
+            spec.label.clone(),
+            owner_ref,
+            provenance,
+            now,
+        )?;
+        self.attach_task_parent_in_txn(wtxn, task_ref, spec.parent_ref)?;
+        // The TASK and its realizing work commit together, so a route
+        // failure rolls the intent back rather than leaving an invisible
+        // half-created task behind.
+        let route = self.route_created_task_in_txn(wtxn, task_ref, validated, now)?;
+        self.witness_human_assignment_in_txn(wtxn, task_ref, validated, owner_ref, now)?;
+        Ok((task_ref, route))
     }
 
     /// A caller-chosen owner_ref does not certify who authored the
@@ -498,8 +522,12 @@ impl Memory<'_> {
         )?;
         let previous =
             super::linear_store::task_revision_in_txn(&self.vault().store, &*wtxn, task_ref)?;
+        // A TASK born here carries its writer's facet as its birth edge, else
+        // the vault default (ARCH-0022 #facets, UNBUILT item 10). A re-put
+        // keeps the edge its birth wrote.
         self.vault()
             .batch_in()
+            .mask(self.birth_position().facet)
             .put_internal(&task_ref, ENTITY_TYPE_TASK, occurred, now, body)
             .apply(wtxn)?;
         if super::linear_store::task_revision_in_txn(&self.vault().store, &*wtxn, task_ref)?

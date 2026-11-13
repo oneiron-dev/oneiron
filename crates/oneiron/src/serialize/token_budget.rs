@@ -10,6 +10,7 @@ use super::pack_preparation::{clone_value_with_depth_limit, value_depth_limit_re
 use super::types::{GROUP_ORDER, GroupKey, ValueDepthLimit};
 use crate::context_pack::ContextPack;
 use crate::context_pack::PackStats;
+use crate::context_pack::{BASE_WORLD_SECTION, WORLD_SECTION_FIELD};
 use crate::registry::ENTITY_TYPE_FACET;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 use crate::serialize::pack_accounting::PackItemTokenStats;
@@ -22,9 +23,53 @@ use crate::tokenizer::PackTokenizer;
 use serde_json::{Map, Number, Value};
 use std::collections::HashMap;
 
+/// The world section label (`context_pack::WORLD_SECTION_FIELD`) a hydrated
+/// row carries, if any.
+pub(super) fn world_section_label(fields: Option<&HashMap<String, Value>>) -> Option<&str> {
+    fields?.get(WORLD_SECTION_FIELD)?.as_str()
+}
+
+/// The section order of a world-partitioned pack's rows (ARCH-0004
+/// #world-scope: "the base-reality section first, labeled per-world sections
+/// after"). `context_pack`'s partition orders the rows by section and labels
+/// each one; a serializer that re-sorts rows by criticality and score sorts by
+/// this rank first. Rank 0 is base reality and any row with no label, so an
+/// unpartitioned pack sorts as before; each non-base world takes the next rank
+/// in the order its first row appears.
+#[derive(Debug)]
+pub(super) struct WorldSectionOrder {
+    ranks: HashMap<String, usize>,
+}
+
+impl WorldSectionOrder {
+    pub(super) fn of_rows<T>(rows: &[T], label: impl Fn(&T) -> Option<&str>) -> Self {
+        let mut ranks = HashMap::new();
+        for row in rows {
+            let Some(label) = label(row) else {
+                continue;
+            };
+            if label != BASE_WORLD_SECTION && !ranks.contains_key(label) {
+                let rank = ranks.len() + 1;
+                ranks.insert(label.to_owned(), rank);
+            }
+        }
+        Self { ranks }
+    }
+
+    pub(super) fn rank(&self, label: Option<&str>) -> usize {
+        label
+            .and_then(|label| self.ranks.get(label).copied())
+            .unwrap_or(0)
+    }
+}
+
 pub(super) fn group_entities(
     entities: Vec<PreparedEntity>,
 ) -> Vec<(GroupKey, Vec<PreparedEntity>)> {
+    // Within a record kind, a partitioned pack's rows keep their world
+    // sections in the pack's order, base first (ARCH-0004 #world-scope); the
+    // rank is 0 for every row of an unpartitioned pack, which sorts as before.
+    let sections = WorldSectionOrder::of_rows(&entities, |entity| entity.world_section.as_deref());
     let mut buckets = HashMap::<GroupKey, Vec<PreparedEntity>>::new();
     for entity in entities {
         buckets
@@ -35,8 +80,10 @@ pub(super) fn group_entities(
 
     for rows in buckets.values_mut() {
         rows.sort_unstable_by(|a, b| {
-            b.critical
-                .cmp(&a.critical)
+            sections
+                .rank(a.world_section.as_deref())
+                .cmp(&sections.rank(b.world_section.as_deref()))
+                .then_with(|| b.critical.cmp(&a.critical))
                 .then_with(|| b.score.total_cmp(&a.score))
                 .then_with(|| a.id.cmp(&b.id))
         });
@@ -79,6 +126,28 @@ pub(super) fn enforce_token_budget_with_depth_limit(
         return 0;
     }
 
+    let needs: Vec<usize> = groups
+        .iter()
+        .map(|(_, rows)| {
+            rows.iter()
+                .map(|row| {
+                    estimate_entity_tokens_with_depth_limit(row, tokenizer, value_depth_limit)
+                })
+                .sum::<usize>()
+        })
+        .collect();
+    // Groups whose summed need fits keep every row. The per-type split below
+    // floors each share, so at a budget equal to the need (what
+    // `allocate_section_budgets` hands a section that fits) one type ended a
+    // token short and lost its row (FIX [CONTEXT-PACK-GROUP-SPLIT-DROPS-ROW]).
+    let total_need = needs
+        .iter()
+        .fold(0_usize, |total, need| total.saturating_add(*need));
+    if total_need <= token_budget {
+        groups.retain(|(_, rows)| !rows.is_empty());
+        return total_need;
+    }
+
     // Normalize fractions so they sum to 1.0 (multiple "other" types each
     // get allocation.other, so raw sum can exceed 1.0).
     let raw: Vec<f32> = groups
@@ -90,24 +159,18 @@ pub(super) fn enforce_token_budget_with_depth_limit(
 
     // First pass: compute initial budgets vs actual needs.
     let mut budgets: Vec<usize> = Vec::with_capacity(groups.len());
-    let mut needs: Vec<usize> = Vec::with_capacity(groups.len());
     let mut surplus: usize = 0;
     let mut hungry_weight: f32 = 0.0;
 
-    for (i, (_, rows)) in groups.iter().enumerate() {
+    for (i, &needed) in needs.iter().enumerate() {
         let frac = raw[i] * norm;
         let budget = (token_budget as f32 * frac) as usize;
-        let needed: usize = rows
-            .iter()
-            .map(|row| estimate_entity_tokens_with_depth_limit(row, tokenizer, value_depth_limit))
-            .sum();
         if needed <= budget {
             surplus += budget - needed;
         } else {
             hungry_weight += frac;
         }
         budgets.push(budget);
-        needs.push(needed);
     }
 
     // Second pass: redistribute surplus to hungry types, then truncate.

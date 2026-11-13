@@ -1,0 +1,11 @@
+{
+  "name": "vault.feeds.subscribe",
+  "description": "Subscribes the caller's actor to a change feed from a durable cursor of its own; each entry is judged by the caller's read lane when it is read, never at subscribe.",
+  "input": "crate::feeds::FeedSubscribeRequest",
+  "output": "crate::feeds::FeedSubscription",
+  "call": "memory.feed_subscribe(&input)?",
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "openapi": true,
+  "section": false
+}

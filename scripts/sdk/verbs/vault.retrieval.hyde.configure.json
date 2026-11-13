@@ -5,6 +5,7 @@
   "output": "crate::query_expansion::host::HydeHostConfiguration",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.retrieval.hyde.configure\", &input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "host_door": true,
   "host_door_lists": true,
   "admission": {

@@ -1,8 +1,10 @@
-//! Whether a claim write only closes its stored row, under a verified
-//! in-place transition: the checks the claim door and its closer share.
+//! Whether a claim write only closes or only approves its stored row, under a
+//! verified in-place transition: the checks the claim door and its closer share.
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, VerifiedClaimTransition};
-use crate::claim::{ClaimBody, ClaimLifecycleStatus, decode_claim_body, encode_claim_body};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, decode_claim_body, encode_claim_body,
+};
 use crate::entity_id::EntityId;
 use crate::ports::EntityStoreRead;
 use crate::store::Store;
@@ -42,6 +44,37 @@ pub(super) fn closes_stored_row_only(
             stored.valid_to = body.valid_to;
             match (encode_claim_body(&stored), encode_claim_body(body)) {
                 (Ok(closed), Ok(written)) => closed == written,
+                _ => false,
+            }
+        })
+}
+
+/// Whether this write is the approval of the stored row's proposal and nothing
+/// more: the stored Active Proposed body with only its approval moved to
+/// Approved, under a verified in-place transition of the same row. That is the
+/// Put a settle door builds for a reviewed proposal; a raw Approved stamp has
+/// no transition, and an edit that also moves any other field is not one.
+pub(super) fn approves_stored_proposal_only(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &ClaimBody,
+    transition: Option<&VerifiedClaimTransition>,
+) -> bool {
+    body.approval == ClaimApprovalStatus::Approved
+        && transition.is_some_and(|proof| {
+            proof.predecessor().is_none()
+                && proof.matches_body(store, txn, id, body).unwrap_or(false)
+        })
+        && stored_claim_body(store, txn, id).is_some_and(|mut stored| {
+            if stored.approval != ClaimApprovalStatus::Proposed
+                || stored.lifecycle != ClaimLifecycleStatus::Active
+            {
+                return false;
+            }
+            stored.approval = body.approval;
+            match (encode_claim_body(&stored), encode_claim_body(body)) {
+                (Ok(approved), Ok(written)) => approved == written,
                 _ => false,
             }
         })

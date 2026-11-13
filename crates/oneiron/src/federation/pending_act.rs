@@ -377,7 +377,10 @@ impl Vault {
                 continue;
             }
             let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            // An owner's `engine.controls` grant confers no membership
+            // standing: its holder acts as a member only by a membership row.
             if grant.scope == FederationGrantScope::vault(vault_id)
+                && !super::is_engine_controls_grant(&grant)
                 && grant.confers_at(now)
                 && matches!(
                     federation_grant_activation(&fold, &id),

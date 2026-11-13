@@ -620,9 +620,13 @@ impl Child {
                     };
                     return match error {
                         // A host check holds new host-paid work as a spent line
-                        // stops it (FIX 9924).
+                        // stops it (FIX 9924); so do a host-paid call nothing
+                        // funds and a resident's spent share (D3).
                         EngineExecutorError::Llm(LlmError::BudgetDenied(
-                            BudgetDenied::Exhausted | BudgetDenied::HostCheck,
+                            BudgetDenied::Exhausted
+                            | BudgetDenied::HostCheck
+                            | BudgetDenied::Unfunded
+                            | BudgetDenied::ResidentShareSpent { .. },
                         )) => ReaderRunEnd::SpendExhausted,
                         _ if guard.read().remaining_units == 0 => ReaderRunEnd::SpendExhausted,
                         _ => {
@@ -811,7 +815,12 @@ impl Child {
         });
         let response = match generated {
             Err(_) => return ReaderRunEnd::Cutoff,
-            Ok(Err(LlmError::BudgetDenied(BudgetDenied::Exhausted | BudgetDenied::HostCheck))) => {
+            Ok(Err(LlmError::BudgetDenied(
+                BudgetDenied::Exhausted
+                | BudgetDenied::HostCheck
+                | BudgetDenied::Unfunded
+                | BudgetDenied::ResidentShareSpent { .. },
+            ))) => {
                 return ReaderRunEnd::SpendExhausted;
             }
             Ok(Err(_)) => {

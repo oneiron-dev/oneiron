@@ -216,11 +216,17 @@ jobs:
           cp packages/oneiron/scripts/wire-parity.mjs "$WIRE_NODE_PROJECT/"
           cp packages/oneiron/scripts/wire-key-value-parity.mjs "$WIRE_NODE_PROJECT/"
 
+      - name: Structural assertions on both measured quickstart outputs
+        run: >-
+          "$WIRE_PYTHON_ENV/bin/python" -m pytest -q
+          scripts/tests/test_wire_quickstart.py::test_installed_quickstarts
+
       - name: Remote DTO and error parity through the real server
         env:
           ONEIRON_WIRE_EXEC: >-
             "$WIRE_PYTHON_ENV/bin/python" -m pytest -q
             scripts/tests/test_wire_quickstart.py::test_remote_sdk_parity
+            scripts/tests/test_wire_quickstart.py::test_installed_remote_quickstarts
             scripts/tests/test_wire_key_value.py::test_remote_key_value_parity
         run: bash scripts/wire-test-server.sh
 

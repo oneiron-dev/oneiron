@@ -193,6 +193,25 @@ impl From<MemoryError> for FacadeApiError {
                 host_doors::ask_image_refusal_status(code)
                     .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
             }
+            // A facade door that holds a live run (live_run_doors.rs) refuses
+            // under the live-run guard's own codes. They take the status the
+            // guard's direct route answers (LiveRunRefusal::status): 400 for
+            // a missing or malformed handle, 403 for a run this credential may
+            // not act for, 409 for a stale, busy or attached run. They are the
+            // caller's refusal, never this server's failure.
+            code if crate::server::LiveRunRefusal::from_code(code).is_some() => {
+                crate::server::LiveRunRefusal::from_code(code)
+                    .map_or(StatusCode::INTERNAL_SERVER_ERROR, |refusal| {
+                        refusal.status()
+                    })
+            }
+            // A repo door's typed refusal or hold (NO-DOOR
+            // REPO-MEMBER-SNAPSHOT-SYMBOL-READ): 403 where the Grant or the
+            // run's lane does not admit the act, 409 where a lease or a hold
+            // is the cause (`repo_doors::repo_refusal_status`).
+            code if repo_doors::repo_refusal_status(code).is_some() => {
+                repo_doors::repo_refusal_status(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+            }
             MEMORY_CODE_INTERNAL => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };

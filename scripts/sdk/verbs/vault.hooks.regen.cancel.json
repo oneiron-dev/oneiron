@@ -5,6 +5,7 @@
   "output": "crate::runtime_hooks::HookRegenCancel",
   "call": "memory.hooks_regen_cancel_as(&memory.embedded_owner(\"vault.hooks.regen.cancel\")?, input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

@@ -100,7 +100,7 @@ impl BudgetGuard {
             return Err(BudgetDenied::AdmissionDenied);
         }
         let mut state = self.lock_state();
-        let lease = state.issue_lease(0, false, "local", Some(binding));
+        let lease = state.issue_lease(0, false, "local", Some(binding))?;
         let read = state.read();
         Ok(BudgetAdmission {
             lease,
@@ -201,9 +201,18 @@ impl BudgetGuard {
         state.leases.get(lease.id()).map(|record| record.dispatched)
     }
 
-    /// Clears a premature dispatch mark when the caller proves no physical
-    /// attempt was sent. Subsequent unsent settlement releases the reservation
-    /// and records no dispatched receipt.
+    /// Clears a premature dispatch mark for a call that sent nothing. Later
+    /// unsent settlement releases the reservation and records no dispatched
+    /// receipt.
+    ///
+    /// # Errors
+    ///
+    /// [`BudgetDenied::LeaseInvalid`] for a lease another meter issued, a
+    /// closed lease, or a lease under which any physical attempt began
+    /// (FIX BUDGET-LEASE). The meter reads that evidence from its own record,
+    /// which the lease's transports write; the caller's word never clears it.
+    /// The dispatch mark then stays, so the lease neither starts again nor
+    /// settles as unsent.
     pub fn mark_unsent(&self, lease: &BudgetLease) -> Result<(), BudgetDenied> {
         let mut state = self.lock_state();
         state.check_lease_provenance(lease)?;
@@ -211,7 +220,7 @@ impl BudgetGuard {
             .leases
             .get_mut(lease.id())
             .ok_or(BudgetDenied::LeaseInvalid)?;
-        if record.state != LeaseState::Open {
+        if record.state != LeaseState::Open || record.physical_attempts.count() > 0 {
             return Err(BudgetDenied::LeaseInvalid);
         }
         record.dispatched = false;

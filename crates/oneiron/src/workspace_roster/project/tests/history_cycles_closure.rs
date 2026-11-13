@@ -271,10 +271,10 @@ fn a_component_that_grows_in_a_batch_is_decided_once() -> Result<()> {
         let q0 = spawn_signed(&vault, root, q, holder, lead, root_row.slice, 3)?;
         let mut h1 = h0.clone();
         h1.parents = vec![q.to_hex()];
-        sign_with(&vault, h, &mut h1, None, Some(h0.anchor()), None)?;
+        sign_with(&vault, h, &mut h1, None, Some(h0.anchor()?), None)?;
         let mut h2 = h1.clone();
         h2.parents = vec![root.to_hex()];
-        sign_with(&vault, h, &mut h2, None, Some(h1.anchor()), None)?;
+        sign_with(&vault, h, &mut h2, None, Some(h1.anchor()?), None)?;
         for (at, row) in [(4, &h1), (5, &h2)] {
             let (_, revision) = revisions_of_row(h, row)?.pop().ok_or_else(invalid)?;
             put_companion(&vault, &revision, at)?;

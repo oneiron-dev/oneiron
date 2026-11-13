@@ -19,6 +19,11 @@
         reason = "a test process starts its own subprocesses; the rule covers the server's crates"
     )
 )]
+// A `Send` proof for a route's future nests past the default limit of 128 through the HTTP
+// client's types (h2's stream buffers). The proofs used to meet those types early, among
+// the server's own fields; `SyncServer`'s `Send` and `Sync` impls no longer walk the fields
+// (server/core.rs), so the limit is raised.
+#![recursion_limit = "256"]
 
 pub mod actions;
 mod admission;
@@ -94,6 +99,11 @@ pub mod server;
 mod shared_envs;
 mod skills_pack;
 mod slide_render;
+/// Doors from the integration tests to crate-private items. Compiled only under
+/// `--cfg oneiron_test_support`, which only the test command sets. Not API.
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
+pub mod test_doors;
 pub mod usage;
 mod wake_adapters;
 pub mod web_client;

@@ -15,11 +15,15 @@ A per-call observation follows every rung and fallback. It becomes true as soon
 as any rung's existing `admit_media` succeeds, before that rung can enter a
 backend or gate.
 
-A typed `BudgetDenied::Exhausted` or `BudgetDenied::HostCheck` opens the existing
-budget trap only while that observation is false. The existing durable-step
-helper commits the trap and its signal park in one transaction. The two denial
-kinds retain their existing, distinct park reasons. A host check is not counted
-as a spent budget.
+A typed `BudgetDenied::Exhausted`, `BudgetDenied::HostCheck` or
+`BudgetDenied::ResidentShareSpent` opens the existing budget trap only while
+that observation is false. The existing durable-step helper commits the trap
+and its signal park in one transaction. The denial kinds retain their distinct
+park reasons. A host check is not counted as a spent budget. A resident's spent
+pinned share parks on a `ResidentShare` wait, which the owner's share write
+that fits the call wakes. A `BudgetDenied::Unfunded` denial (no allocation of
+the host funds the call) opens no trap: the step is refused `Unfunded`, typed,
+and nothing parks.
 
 This observation means that a rung was admitted, not that it sent bytes or
 answered. Once true it stays true across later rungs and fallbacks. A denial

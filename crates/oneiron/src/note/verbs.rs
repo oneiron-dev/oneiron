@@ -373,7 +373,10 @@ impl Vault {
                 )?;
                 let source = crate::claim::ClaimSource::Inferred;
                 body.source = Some(source);
-                body.scope_facet = origin_facet;
+                // An imported record's origin facet need not be a FACET row
+                // here; such a suggestion takes the vault default facet.
+                body.scope_facet =
+                    self.claim_put_facet_keeping_in_txn(txn, &suggestion, origin_facet)?;
                 self.put_claim_in_txn(
                     txn,
                     &suggestion,
@@ -409,11 +412,22 @@ impl Vault {
         edit: &NoteProgramEdit,
         actor: WriteActor,
     ) -> MemoryResult<NoteProgramEditOutcome> {
+        self.edit_note_landing(note, edit, actor, super::NoteEditLanding::Grant)
+    }
+
+    /// [`Self::edit_note`], landing through `landing`.
+    pub(crate) fn edit_note_landing(
+        &self,
+        note: EntityId,
+        edit: &NoteProgramEdit,
+        actor: WriteActor,
+        landing: super::NoteEditLanding<'_>,
+    ) -> MemoryResult<NoteProgramEditOutcome> {
         let result = self
             .memory(actor.entity_ref(), actor.actor_class())
             .with_actor_content_write_txn_as(actor, |content| {
                 content.update_note(note, |txn, lane| {
-                    self.edit_note_in_txn(txn, note, edit, actor, lane)
+                    self.edit_note_landing_in_txn(txn, note, edit, actor, lane, landing)
                 })
             })?;
         #[cfg(feature = "sync")]
@@ -430,6 +444,20 @@ impl Vault {
         edit: &NoteProgramEdit,
         actor: WriteActor,
         lane: crate::core_write::CoreWriteLaneRef<'_>,
+    ) -> MemoryResult<NoteProgramEditOutcome> {
+        self.edit_note_landing_in_txn(txn, note, edit, actor, lane, super::NoteEditLanding::Grant)
+    }
+
+    /// [`Self::edit_note_in_txn`], landing through `landing`: an edit that
+    /// does not land opens a fork.
+    pub(crate) fn edit_note_landing_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        note: EntityId,
+        edit: &NoteProgramEdit,
+        actor: WriteActor,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
+        landing: super::NoteEditLanding<'_>,
     ) -> MemoryResult<NoteProgramEditOutcome> {
         // A sealed NOTE's edit opens a fork and leaves the seal intact.
         let sealed = super::lifecycle::note_sealed_in_txn(&self.store, txn, note)?;
@@ -454,7 +482,7 @@ impl Vault {
         } else {
             None
         };
-        let authorized = super::proposals::grant_allows(self, txn, note, actor)?;
+        let authorized = super::proposals::edit_lands(self, txn, note, actor, landing)?;
         if let Some((base, edits)) = semantic.filter(|_| authorized && !sealed) {
             let operation = super::NoteOperation {
                 request_id: self.store.clock.entity_id()?,

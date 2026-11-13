@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::ConnectorCredentialBindingView",
   "call": "crate::task_verb::sdk::reask_connector_issuer(memory.vault(), &memory.embedded_owner(\"vault.connectors.slates.reask_issuer\")?, input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

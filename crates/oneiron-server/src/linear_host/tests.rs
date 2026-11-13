@@ -96,6 +96,7 @@ fn scheduled_pass_pushes_dirty_task_then_applies_inbound_page() {
         base: reqwest::Url::parse(&format!("http://{addr}/")).expect("URL"),
         credential: reqwest::header::HeaderValue::from_static("Bearer test-token"),
         request_timeout: Duration::from_secs(3),
+        rate_wait: Duration::ZERO,
     };
     let (push, initial_pull) =
         synchronize_once(&vault, bridge.clone(), bridge.clone(), 100, 64).expect("link pass");
@@ -168,6 +169,7 @@ fn linked_update_sends_expected_base_and_refuses_remote_precondition_miss() {
         base: reqwest::Url::parse(&format!("http://{addr}/")).expect("url"),
         credential: reqwest::header::HeaderValue::from_static("Bearer test-token"),
         request_timeout: Duration::from_secs(3),
+        rate_wait: Duration::ZERO,
     };
     let issue = LinearIssueRef {
         issue_id: "opaque".into(),
@@ -189,6 +191,14 @@ fn enabled_linear_host_refuses_unauthenticated_core_writers() {
     assert!(validate_server_auth(true, Some(""), false).is_err());
     assert!(validate_server_auth(true, Some("server-secret"), false).is_ok());
     assert!(validate_server_auth(false, None, true).is_ok());
+    // The scheduler actor is the `[linear]` section's (72cd7917aa0, #3235).
+    let scheduler_actor = |raw: Option<String>| {
+        LinearConfig {
+            scheduler_actor: raw,
+            ..LinearConfig::default()
+        }
+        .scheduler_actor()
+    };
     assert!(scheduler_actor(None).is_err());
     assert!(scheduler_actor(Some("not-an-id".into())).is_err());
     let actor = EntityId::now();
@@ -197,7 +207,10 @@ fn enabled_linear_host_refuses_unauthenticated_core_writers() {
 
 #[test]
 fn missing_effect_grants_refuse_before_any_linear_http_request() {
-    use oneiron::linear_sync::{LinearSyncDirection, linear_operation_id};
+    use oneiron::linear_sync::{
+        LinearEffectKind, LinearEffectRequest, LinearSyncDirection, LinearTaskStore as _,
+        linear_operation_id,
+    };
     use oneiron::task_verb::TaskCreateSpec;
     use oneiron::{EdgeActorClass, TimeRange, Vault, VaultConfig};
     let dir = tempfile::tempdir().unwrap();
@@ -236,19 +249,25 @@ fn missing_effect_grants_refuse_before_any_linear_http_request() {
     );
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
-    let mut egress = GatedEgress {
-        bridge: LinearBridge {
-            client: Client::builder().build().unwrap(),
-            base: reqwest::Url::parse(&format!("http://{}/", listener.local_addr().unwrap()))
-                .unwrap(),
-            credential: reqwest::header::HeaderValue::from_static("Bearer test-token"),
-            request_timeout: Duration::from_secs(3),
-        },
-        vault: Arc::clone(&vault),
+    // The gate runs in the egress's admitted sends (dfe7dbd9e96, #1713):
+    // each admits the scheduler and the TASK's writer before any request.
+    let mut bridge = LinearBridge {
+        client: Client::builder().build().unwrap(),
+        base: reqwest::Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap(),
+        credential: reqwest::header::HeaderValue::from_static("Bearer test-token"),
+        request_timeout: Duration::from_secs(3),
+        rate_wait: Duration::ZERO,
+    };
+    let create = LinearEffectRequest {
+        operation_id: op,
+        task_ref: task,
         scheduler_actor: scheduler,
+        issue: None,
+        kind: LinearEffectKind::Create,
+        fields: snapshot.fields.clone(),
     };
     assert!(matches!(
-        egress.create_issue(op, task, &snapshot.fields),
+        bridge.create_issue_admitted(&vault, &create),
         Err(LinearSyncError::AuthorizationDenied)
     ));
     // An update for an issue the vault never linked has no TASK authority.
@@ -257,8 +276,13 @@ fn missing_effect_grants_refuse_before_any_linear_http_request() {
         team_id: "team".into(),
         identifier: "TEAM-9".into(),
     };
+    let update = LinearEffectRequest {
+        issue: Some(issue),
+        kind: LinearEffectKind::Update,
+        ..create
+    };
     assert!(matches!(
-        egress.update_issue_conditional(op, &issue, &BTreeMap::new(), &snapshot.fields),
+        bridge.update_issue_conditional_admitted(&vault, &update, &BTreeMap::new()),
         Err(LinearSyncError::AuthorizationDenied)
     ));
     assert_eq!(

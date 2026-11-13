@@ -40,6 +40,9 @@
 
 use serde_json::Value;
 
+use crate::authority::VerifiedSlip;
+use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
+use crate::entity_id::EntityId;
 use crate::memory::Memory;
 use crate::receipt::{ReferenceOutcome, ReferenceRefusalFacts, receipt_reference_refusals};
 use oneiron_contracts::memory::{
@@ -140,6 +143,74 @@ pub(crate) fn admit_row_references<T: serde::Serialize>(
             Err(invented_reference(&pointer, recorded))
         }
     }
+}
+
+/// The check the run rows `vault.claims.put`, `vault.claims.supersede` and
+/// `vault.edges.put` run before their in-core write (FIX 1214). A run row
+/// carries no verb-table `refs`, so its adapter names them: `refs` holds a
+/// (field pointer, id) for each record `row`'s write names. Each must
+/// resolve under `read_as`, the key the run's door admitted the call with,
+/// else under `memory`'s own read key; and, when a slip woke the program,
+/// under `waking_slip`'s target key too. A slip with no target key resolves
+/// no record.
+///
+/// `Some(error)` is the row's refusal: the read key's own refusal, or the
+/// invented-reference refusal of the first record that does not resolve,
+/// which names the field, never the ref, and is receipted first. `None`
+/// when every record resolves.
+///
+/// # Errors
+/// Storage errors, and a receipt that could not be written.
+pub(crate) fn admit_run_row_references(
+    memory: &Memory<'_>,
+    row: &'static str,
+    read_as: Option<&ScopedReadActorKey>,
+    waking_slip: Option<&VerifiedSlip>,
+    refs: &[(&'static str, EntityId)],
+) -> crate::Result<Option<MemoryError>> {
+    let vault = memory.vault();
+    let key = match read_as {
+        Some(key) => key.clone(),
+        None => match memory.read_key() {
+            Ok(key) => key,
+            Err(error) => return Ok(Some(error)),
+        },
+    };
+    let slip_key = match waking_slip {
+        Some(proof) => Some(vault.credential_target_key(proof)?),
+        None => None,
+    };
+    // A record resolves on the recorded lane, as a facade row's ref does
+    // (`Memory::get_entity`): a superseded claim the writer may read is
+    // history it may name (REVIEW-6389).
+    let reads = |key: &ScopedReadActorKey, id: EntityId| {
+        vault
+            .scoped_read(key.clone())
+            .with_claim_status(ClaimReadStatus::Recorded)
+            .all_refs_readable(&[id])
+    };
+    for (pointer, id) in refs {
+        let resolves = reads(&key, *id)?
+            && match &slip_key {
+                Some(Some(slip_key)) => reads(slip_key, *id)?,
+                Some(None) => false,
+                None => true,
+            };
+        if !resolves {
+            let recorded = receipt_reference_refusals(
+                memory,
+                &[ReferenceRefusalFacts {
+                    actor: memory.actor(),
+                    actor_class: memory.actor_class(),
+                    row,
+                    field: (*pointer).to_owned(),
+                    outcome: ReferenceOutcome::Refused,
+                }],
+            )?;
+            return Ok(Some(invented_reference(pointer, recorded)));
+        }
+    }
+    Ok(None)
 }
 
 /// The one slot that may name a record a cleanup archive filed away (FIX

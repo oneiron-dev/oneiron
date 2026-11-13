@@ -75,15 +75,15 @@ use clap::Parser;
 use oneiron_server::config::{ServeArgs, SyncServerConfig};
 use oneiron_server::managed::{
     CANARY_MARKER_KEY, CANARY_MARKER_VALUE, DEK_MAC_KEY, HYPNOS_LISTEN_FD, LEDGER_REV_KEY,
-    ManagedArgs, ManagedCtl, ManagedError, ManagedShutdown, ManagedState, ServeListener,
-    WRITES_FROZEN_TAG, WakeLedger, check_managed_open_gates, final_ledger_push,
+    LedgerSnapshot, ManagedArgs, ManagedCtl, ManagedError, ManagedShutdown, ManagedState,
+    ServeListener, WRITES_FROZEN_TAG, WakeLedger, check_managed_open_gates, final_ledger_push,
     read_managed_credentials, serve_managed,
 };
 use oneiron_server::server::{OversightStartError, SyncServer};
 use oneiron_vault_contract::{
-    CONTRACT_VERSION, CREDENTIALS_LEN, Credentials, CtlResponse, DEK_LEN, LedgerAck, LedgerUpdate,
-    MAX_CTL_LINE, READY_BYTE, Schedule, TOKEN_LEN, read_credentials, validate_wake_entries,
-    write_credentials,
+    CONTRACT_VERSION, CREDENTIALS_LEN, Credentials, CtlResponse, DEK_LEN, LedgerAck,
+    LedgerPageRequest, LedgerReportHead, LedgerUpdate, MAX_CTL_LINE, READY_BYTE, Schedule,
+    TOKEN_LEN, TokenHex, read_credentials, validate_wake_entries, write_credentials,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 
@@ -119,6 +119,8 @@ fn managed_argv(root: &Path) -> Vec<String> {
         "09".repeat(32),
         "--data-dir".to_owned(),
         path("data"),
+        "--keystore-dir".to_owned(),
+        path("keys"),
         "--http-socket".to_owned(),
         path("http.sock"),
         "--ctl-socket".to_owned(),
@@ -314,8 +316,10 @@ fn ctl_response(line: &str) -> CtlResponse {
 }
 
 /// A supervisor that answers on its ledger socket. The first `silent_attempts`
-/// connections are closed with no ack; the rest are acked. Returns the raw
-/// lines it received, so a caller can validate what the engine actually sent.
+/// connections are closed with no ack; the rest are acked, page by page, each
+/// ack naming its page's report and offset and the last one committed (FIX
+/// 9549). Returns the raw lines it received, so a caller can validate what the
+/// engine actually sent.
 fn spawn_mock_supervisor(
     listener: tokio::net::UnixListener,
     silent_attempts: usize,
@@ -329,19 +333,41 @@ fn spawn_mock_supervisor(
             };
             let (reader, mut writer) = stream.into_split();
             let mut reader = tokio::io::BufReader::new(reader);
-            let mut line = String::new();
-            if reader.read_line(&mut line).await.is_ok() {
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+                    break;
+                }
                 lines.push(line.trim().to_owned());
-            }
-            if attempt >= silent_attempts {
+                if attempt < silent_attempts {
+                    break;
+                }
+                let Ok(update) = serde_json::from_str::<LedgerUpdate>(line.trim()) else {
+                    break;
+                };
+                let page = &update.page;
+                let last =
+                    page.offset + page.entries.len() as u64 + page.artifact_origins.len() as u64
+                        >= page.total + page.artifact_origins_total;
                 let ack = serde_json::to_string(&LedgerAck {
                     ok: true,
                     error: None,
+                    report: Some(LedgerReportHead {
+                        rev: page.rev,
+                        report_digest: page.report_digest.clone(),
+                        total: page.total,
+                        artifact_origins_total: page.artifact_origins_total,
+                    }),
+                    offset: Some(page.offset),
+                    committed: last,
                 })
                 .unwrap();
                 let _ = writer.write_all(ack.as_bytes()).await;
                 let _ = writer.write_all(b"\n").await;
                 let _ = writer.flush().await;
+                if last {
+                    break;
+                }
             }
         }
         lines
@@ -367,15 +393,18 @@ fn an_unknown_contract_version_is_refused_before_any_io() {
     let dir = tempfile::tempdir().unwrap();
     let full = managed_argv(dir.path());
 
-    let bad = with_flag_value(&full, "--contract-version", "3");
+    // Version 3 is the supported contract since #3266 (CONTRACT_VERSION = 3),
+    // so the unknown probe is the next version, not a literal.
+    let unknown = CONTRACT_VERSION + 1;
+    let bad = with_flag_value(&full, "--contract-version", &unknown.to_string());
     let error = ManagedArgs::from_serve_args(&parse_serve(&bad)).unwrap_err();
     assert!(
         matches!(
             error,
             ManagedError::UnknownContractVersion {
-                found: 3,
+                found,
                 expected: CONTRACT_VERSION
-            }
+            } if found == unknown
         ),
         "unexpected: {error}"
     );
@@ -773,7 +802,7 @@ fn a_markerless_vault_is_refused_as_a_real_tenant() {
     assert!(
         matches!(
             &error,
-            ManagedError::ManagedRealTenantRefused { vault, marker }
+            ManagedError::ManagedRealTenantRefused { vault, marker, .. }
                 if vault == VAULT_NAME && *marker == CANARY_MARKER_KEY
         ),
         "unexpected: {error}"
@@ -785,7 +814,7 @@ fn a_markerless_vault_is_refused_as_a_real_tenant() {
     assert!(
         matches!(
             &error,
-            ManagedError::ManagedRealTenantRefused { vault, marker }
+            ManagedError::ManagedRealTenantRefused { vault, marker, .. }
                 if vault == VAULT_NAME && *marker == CANARY_MARKER_KEY
         ),
         "unexpected: {error}"
@@ -895,6 +924,7 @@ async fn ctl_socket_answers_the_contract_verbs() {
             vault,
             pid,
             contract_version,
+            ..
         } => {
             assert!(ok);
             assert_eq!(vault, VAULT_NAME);
@@ -908,17 +938,28 @@ async fn ctl_socket_answers_the_contract_verbs() {
     fixture.state.guard_write().unwrap();
 
     match ctl_response(&ctl_roundtrip(&fixture.ctl_path, r#"{"op":"prepare_reap"}"#).await) {
-        CtlResponse::PrepareReap {
-            quiescent,
-            ledger_rev,
-            next_wake,
-        } => {
+        CtlResponse::PrepareReap { quiescent, ledger } => {
             assert!(
                 quiescent,
                 "a drained lease table on an idle vault is quiescent"
             );
-            assert!(ledger_rev >= 1, "the freeze export advances the revision");
-            validate_wake_entries(&next_wake).unwrap();
+            assert!(ledger.rev >= 1, "the freeze export advances the revision");
+            // The wake entries ride the frozen report's pages (FIX 9549).
+            let request = LedgerPageRequest {
+                vault: VAULT_NAME.to_owned(),
+                token: TokenHex::from_token(&[0x22; TOKEN_LEN]),
+                rev: ledger.rev,
+                report_digest: ledger.report_digest.clone(),
+                offset: 0,
+            };
+            let mut line = serde_json::to_value(&request).unwrap();
+            line["op"] = serde_json::json!("ledger_page");
+            match ctl_response(&ctl_roundtrip(&fixture.ctl_path, &line.to_string()).await) {
+                CtlResponse::LedgerPage { ledger_page } => {
+                    validate_wake_entries(&ledger_page.entries).unwrap();
+                }
+                other => panic!("expected a ledger_page reply, got {other:?}"),
+            }
         }
         other => panic!("expected a prepare_reap reply, got {other:?}"),
     }
@@ -1034,13 +1075,13 @@ async fn ledger_rev_persists_across_a_restart() {
     let ledger = wake_ledger(&vault, &sup, &creds);
     assert_eq!(ledger.rev(), 0);
 
-    let (rev, entries) = ledger.export_at_freeze(&server).await.unwrap();
-    assert_eq!(rev, 1);
-    validate_wake_entries(&entries).unwrap();
+    let frozen = ledger.export_at_freeze(&server).await.unwrap();
+    assert_eq!(frozen.head.rev, 1);
+    validate_wake_entries(&frozen.snapshot.entries).unwrap();
 
     // The same entries again are not a change, so the revision does not churn.
-    let (again, _) = ledger.export_at_freeze(&server).await.unwrap();
-    assert_eq!(again, 1);
+    let again = ledger.export_at_freeze(&server).await.unwrap();
+    assert_eq!(again.head.rev, 1);
     drop(ledger);
 
     // Restart: a new ledger over the same vault resumes the supervisor's
@@ -1081,7 +1122,7 @@ async fn an_on_change_push_validates_and_honours_the_ack() {
     update.validate().unwrap();
     assert_eq!(update.op, "ledger_update");
     assert_eq!(update.vault, VAULT_NAME);
-    assert_eq!(update.rev, 1);
+    assert_eq!(update.page.rev, 1);
     // The token authenticates the push; it must never reach a diagnostic.
     assert!(!format!("{:?}", update.token).contains(update.token.expose()));
     assert!(!format!("{ledger:?}").contains(update.token.expose()));
@@ -1122,7 +1163,12 @@ async fn a_connected_supervisor_that_never_acks_is_abandoned_on_a_deadline() {
     });
 
     let ledger = wake_ledger(&vault, &sup, &creds);
-    let outcome = tokio::time::timeout(NO_HANG_BOUND, ledger.push_once(11, &[]))
+    let empty = LedgerSnapshot {
+        entries: Vec::new(),
+        training: ledger.training().unwrap(),
+        artifact_origins: Vec::new(),
+    };
+    let outcome = tokio::time::timeout(NO_HANG_BOUND, ledger.push_once(11, &empty))
         .await
         .expect("a silent supervisor must not hold the push open");
     let Err(error) = outcome else {
@@ -1135,7 +1181,7 @@ async fn a_connected_supervisor_that_never_acks_is_abandoned_on_a_deadline() {
 
     // And the retry policy still ends: one retry over the same silence, then
     // proceed without the supervisor.
-    let proceeded = tokio::time::timeout(NO_HANG_BOUND, ledger.push_with_retry(11, &[]))
+    let proceeded = tokio::time::timeout(NO_HANG_BOUND, ledger.push_with_retry(11, &empty))
         .await
         .expect("the retry policy must not hold the exit open either");
     assert!(!proceeded, "a push nobody acked is not accepted");
@@ -1188,15 +1234,15 @@ async fn the_final_push_advances_the_rev_when_the_entries_moved() {
     let boot: LedgerUpdate = serde_json::from_str(&lines[0]).unwrap();
     let shutdown: LedgerUpdate = serde_json::from_str(&lines[1]).unwrap();
     assert_ne!(
-        shutdown.entries, boot.entries,
+        shutdown.page.entries, boot.page.entries,
         "this row is only meaningful while the shutdown entries differ"
     );
     assert!(
-        shutdown.rev > boot.rev,
+        shutdown.page.rev > boot.page.rev,
         "the shutdown snapshot rode rev {} against an acked rev {}, so a \
          rev-ordered supervisor drops it",
-        shutdown.rev,
-        boot.rev
+        shutdown.page.rev,
+        boot.page.rev
     );
 }
 
@@ -1278,20 +1324,21 @@ async fn a_served_write_is_refused_while_frozen_and_accepted_again_after_abort()
     let before = probe_entity_id(0x01);
     let during = probe_entity_id(0x02);
 
-    // Unfrozen, the served write path commits for real — the entity reads back
-    // — so the refusal below is a change of behaviour rather than a surface
-    // that never worked in the first place.
+    // Ruled (#3222, FIX 2222 / FIX 5255 part 3): a managed request with no
+    // caller slip and no owner attestation is anonymous, never the host root,
+    // so these bare requests get 401 where they once got the root's 200. The
+    // unfrozen 401 still differs from the frozen typed 503 below.
     let accepted = http_over_unix(&http, &conversation_write(&before)).await;
-    assert!(accepted.starts_with("HTTP/1.1 200 OK"), "{accepted}");
+    assert!(accepted.starts_with("HTTP/1.1 401"), "{accepted}");
     let read_back = http_get_over_unix(&http, &format!("/api/entity/{before}")).await;
-    assert!(read_back.starts_with("HTTP/1.1 200 OK"), "{read_back}");
+    assert!(read_back.starts_with("HTTP/1.1 401"), "{read_back}");
 
     // The supervisor's authenticated socket is the principal. An arbitrary
     // forwarded actor/token claim cannot replace that contract identity.
     let forwarded = http_over_unix(&http, &format!(
         "GET /api/entity/{before} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer v2.scope=core:read;principal_ref=ffffffffffffffffffffffffffffffff.unsigned\r\nx-oneiron-actor: hostile\r\nConnection: close\r\n\r\n"
     )).await;
-    assert!(forwarded.starts_with("HTTP/1.1 200 OK"), "{forwarded}");
+    assert!(forwarded.starts_with("HTTP/1.1 401"), "{forwarded}");
 
     // The supervisor asks for quiescence. The lifecycle tick starts a
     // housekeeping pass at boot, admitted like a served write, so the first
@@ -1326,7 +1373,7 @@ async fn a_served_write_is_refused_while_frozen_and_accepted_again_after_abort()
     );
     // Never a silent accept: nothing was committed under that id.
     let absent = http_get_over_unix(&http, &format!("/api/entity/{during}")).await;
-    assert!(absent.starts_with("HTTP/1.1 404"), "{absent}");
+    assert!(absent.starts_with("HTTP/1.1 401"), "{absent}");
     // The sync socket is a write path too. Its frames ride past every
     // per-request gate, so a frozen engine refuses the handshake itself.
     let upgrade = http_over_unix(&http, WS_UPGRADE_REQUEST).await;
@@ -1340,10 +1387,11 @@ async fn a_served_write_is_refused_while_frozen_and_accepted_again_after_abort()
         CtlResponse::Ok { ok } => assert!(ok),
         other => panic!("expected an ok reply, got {other:?}"),
     }
+    // Anonymous again (#3222), but past the freeze gate: 401, not the 503.
     let accepted = http_over_unix(&http, &conversation_write(&during)).await;
-    assert!(accepted.starts_with("HTTP/1.1 200 OK"), "{accepted}");
+    assert!(accepted.starts_with("HTTP/1.1 401"), "{accepted}");
     let read_back = http_get_over_unix(&http, &format!("/api/entity/{during}")).await;
-    assert!(read_back.starts_with("HTTP/1.1 200 OK"), "{read_back}");
+    assert!(read_back.starts_with("HTTP/1.1 401"), "{read_back}");
 
     boot.abort();
 }
@@ -1385,18 +1433,14 @@ async fn a_sync_session_upgraded_before_the_freeze_denies_quiescence() {
     );
 
     match ctl_response(&ctl_roundtrip(&ctl, r#"{"op":"prepare_reap"}"#).await) {
-        CtlResponse::PrepareReap {
-            quiescent,
-            ledger_rev,
-            ..
-        } => {
+        CtlResponse::PrepareReap { quiescent, ledger } => {
             assert!(
                 !quiescent,
                 "a sync session upgraded before the freeze can still commit, so this is not quiescent"
             );
             // The freeze still happened and the ledger still exported: this is
             // a narrower claim, not a failed verb.
-            assert!(ledger_rev >= 1, "the freeze still exports a revision");
+            assert!(ledger.rev >= 1, "the freeze still exports a revision");
         }
         other => panic!("expected a prepare_reap reply, got {other:?}"),
     }
@@ -1493,6 +1537,23 @@ async fn admitted_http_body_blocks_quiescence_until_its_write_finishes() {
     use tower::ServiceExt;
 
     let fixture = spawn_ctl_fixture();
+    let issuer = oneiron::test_support::test_host_issuer();
+    let slip = fixture
+        .server
+        .vault()
+        .ensure_host_root_slip(&issuer)
+        .unwrap();
+    let timestamp = fixture.server.vault().now_recorded_at();
+    let nonce = oneiron::EntityId::now().to_hex();
+    let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+    let signature: String = issuer
+        .binding_proof(&slip, challenge.as_bytes())
+        .unwrap()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let binding =
+        serde_json::json!({"timestamp": timestamp, "nonce": nonce, "signature": signature});
     let app = oneiron_server::managed::build_managed_app(
         Arc::clone(&fixture.server),
         Arc::clone(&fixture.state),
@@ -1511,6 +1572,11 @@ async fn admitted_http_body_blocks_quiescence_until_its_write_finishes() {
     let request = Request::builder()
         .method("POST")
         .uri("/v1/core/conversations")
+        .header(
+            "authorization",
+            format!("Bearer {}", slip.to_token().unwrap()),
+        )
+        .header("x-oneiron-binding", binding.to_string())
         .header("content-type", "application/json")
         .header("content-length", len)
         .body(Body::from_stream(stream))

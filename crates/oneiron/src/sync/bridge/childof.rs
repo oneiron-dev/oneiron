@@ -498,6 +498,26 @@ fn parse_pending_child_of(row: &str) -> Result<(&str, EntityId, EntityId)> {
     Ok((window, src, tgt))
 }
 
+/// Whether a deferred ChildOf row in any window has `src` as its source.
+pub(crate) fn has_deferred_child_of_source_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    src: &EntityId,
+) -> Result<bool> {
+    let prefix = format!("{CHILD_OF_ENDPOINT}{}:", src.to_hex());
+    for entry in vault.store.sync_state.prefix_iter(txn, &prefix)? {
+        let (key, _) = entry?;
+        let pending = key
+            .strip_prefix(&prefix)
+            .ok_or(crate::Error::CorruptedIndex("deferred ChildOf index"))?;
+        let (_, source, _) = parse_pending_child_of(pending)?;
+        if source == *src && vault.store.sync_state.get(txn, pending)?.is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub(in crate::sync) fn has_pending_child_of_source_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -600,6 +620,12 @@ fn retry_child_of_row(
         }
     }
     if absent {
+        return Ok(None);
+    }
+    // A landing reply whose signed landing has not arrived yet waits: the
+    // ChildOf stays owed in its pending ledger with its replay marker,
+    // never a terminal quarantine.
+    if crate::conversation_dag::landing_reply_waits_in(&vault.store, &vault.store, txn, &src)? {
         return Ok(None);
     }
     let op = BatchOp::EdgeWithCreatedAt {

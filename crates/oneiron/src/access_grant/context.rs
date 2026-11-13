@@ -282,6 +282,11 @@ impl AccessContextSnapshot {
             ENTITY_TYPE_MESSAGE => AccessGrantCapability::MessagesRead,
             ENTITY_TYPE_SUMMARY => AccessGrantCapability::SummariesRead,
             ENTITY_TYPE_CLAIM => AccessGrantCapability::RelationshipClaimsRead,
+            // An identity row named only in a relationship's MESSAGEs is read
+            // as those MESSAGEs are (OPUS-LEAKS).
+            kind if crate::tagging::label_kind_admitted(kind) => {
+                AccessGrantCapability::MessagesRead
+            }
             _ => return false,
         };
         self.grants.iter().any(|grant| {
@@ -648,11 +653,22 @@ mod tests {
                     b"person",
                 )
                 .expect("put the member");
-            // Bound before the shipped manifest is installed below: under it
-            // the binding's predicate is critical and the write pends.
+            // Bound before the shipped manifest is installed below; the
+            // owner's binding lands under it too (its proof lifts the floor).
             let binding = match world {
-                None => crate::federation::bind_member_person(vault, space, member, when, 1)
-                    .expect("bind the member"),
+                None => {
+                    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+                    let owner = vault
+                        .authenticate_owner(
+                            owner,
+                            &owner.to_hex(),
+                            true,
+                            crate::store::GateDecisionId::now(),
+                        )
+                        .expect("owner proof");
+                    crate::federation::bind_member_person(vault, &owner, space, member, when, 1)
+                        .expect("bind the member")
+                }
                 Some(world) => {
                     let binding = EntityId::now();
                     let mut body = ClaimBody::new(
