@@ -6,7 +6,7 @@
 //!   the owner and the companion spoke, imported with foreign speakers into a
 //!   fresh vault, lands each MESSAGE as a `counterparty`'s, its original
 //!   author kept as `metadata.import.source_author`, and marks the MESSAGE
-//!   (`metadata.import.speakers`), its TURN and its CONVERSATION
+//!   (`metadata.import.speakers`), each TURN and the CONVERSATION
 //!   (`import_speakers`) as a foreign archive's words.
 //! * `own_import_of_foreign_restored_speech_is_refused_by_name`: the same
 //!   archive again with foreign speakers is an exact repeat; with own
@@ -60,16 +60,17 @@ fn message(author: WitnessAuthor, content: &str, order: u32) -> WitnessMessage {
     }
 }
 
-/// What the source vault holds: one TURN in which the owner spoke and the
-/// companion answered.
+/// What the source vault holds: one CONVERSATION in which the owner spoke a
+/// TURN and the companion answered in the next.
 struct Spoken {
     archive: Vec<u8>,
-    turn: EntityId,
+    turns: Vec<EntityId>,
     conversation: EntityId,
     messages: Vec<EntityId>,
 }
 
-/// A source vault where the owner and the companion spoke one TURN, and its
+/// A source vault where the owner spoke one TURN and the companion answered
+/// in the next (a witnessed TURN carries one non-system speaker), and its
 /// whole-vault archive.
 fn spoken_archive() -> Spoken {
     let (_dir, source) = open_vault();
@@ -82,19 +83,25 @@ fn spoken_archive() -> Spoken {
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_secs();
-    let receipt = memory
-        .witness(&WitnessTurn {
-            conversation_ref: conversation.to_hex(),
-            turn_ref: None,
-            thread_audience: None,
-            messages: vec![
-                message(WitnessAuthor::User, "Repot the basil on Sunday.", 0),
-                message(WitnessAuthor::Companion, "Sunday it is.", 1),
-            ],
-            occurred_at,
-            assertions: WitnessAssertions::default(),
-        })
-        .expect("witness the turn");
+    let turns: Vec<EntityId> = [
+        (WitnessAuthor::User, "Repot the basil on Sunday."),
+        (WitnessAuthor::Companion, "Sunday it is."),
+    ]
+    .into_iter()
+    .map(|(author, content)| {
+        memory
+            .witness(&WitnessTurn {
+                conversation_ref: conversation.to_hex(),
+                turn_ref: None,
+                thread_audience: None,
+                messages: vec![message(author, content, 0)],
+                occurred_at,
+                assertions: WitnessAssertions::default(),
+            })
+            .expect("witness the turn")
+            .turn_id
+    })
+    .collect();
     let messages = source
         .entities_by_type(ENTITY_TYPE_MESSAGE)
         .expect("list MESSAGE rows");
@@ -106,7 +113,7 @@ fn spoken_archive() -> Spoken {
         .to_vec();
     Spoken {
         archive,
-        turn: receipt.turn_id,
+        turns,
         conversation,
         messages,
     }
@@ -185,10 +192,12 @@ fn foreign_archive_speech_lands_counterparty() {
         [foreign("companion"), foreign("user")],
         "each MESSAGE speaks as a counterparty, its author kept inert"
     );
-    for (row, name) in [
-        (&spoken.turn, "TURN"),
-        (&spoken.conversation, "CONVERSATION"),
-    ] {
+    let rows = spoken
+        .turns
+        .iter()
+        .map(|turn| (turn, "TURN"))
+        .chain([(&spoken.conversation, "CONVERSATION")]);
+    for (row, name) in rows {
         assert_eq!(
             text(&stored(&dest, row), "import_speakers").as_deref(),
             Some("foreign"),
