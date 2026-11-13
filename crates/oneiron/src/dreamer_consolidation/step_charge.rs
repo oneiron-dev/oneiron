@@ -1,5 +1,6 @@
 //! Attempt-local step spend due to the shared wake ledger after memo replay.
 
+use super::executor::PartitionRun;
 use super::parallel::ExtractedPartition;
 use super::recipe_failure::RecipeFailure;
 use super::sieve_ports::SliceStep;
@@ -399,31 +400,54 @@ pub(super) fn tally_slice_outcome(
 }
 
 /// Accounts an extracted prefix whose finish never tallies it (a
-/// window slot whose branch would not re-open, or whose extraction a
-/// changed prior set discards for a fresh run): the finish loop's own
-/// classification, so the paid steps settle beside their receipts
-/// instead of refunding at zero. Reports whether any slice trapped:
-/// that step already parked the attempt under its durable trap, so
-/// the caller must settle the trapped exit, never extract past it
-/// (FIX 12487 round 2).
+/// window slot stopped behind an earlier slot, whose branch would not
+/// re-open, or whose extraction a changed prior set discards for a
+/// fresh run): the finish loop's own classification, so the paid steps
+/// settle beside their receipts instead of refunding at zero. Reports
+/// the run a slice already decided, in the finish loop's order:
+/// `Trapped` when any slice trapped, as that step already parked the
+/// attempt under its durable trap and the caller must never extract
+/// past it (FIX 12487 round 2); else `SeatRefused` when a spent model
+/// seat refused a slice and no spend scope refused one for good, so
+/// the try waits on that seat instead of a Retry that a later pass
+/// would resume (and ask the seat again) before the seat's available
+/// write (review round 2 of #7340). `None` leaves the caller's own arm.
 pub(super) fn tally_extracted_outcomes(
     vault: &Vault,
     extracted: ExtractedPartition,
     charges: &mut StepChargeTally,
-) -> Result<bool> {
+) -> Result<Option<PartitionRun>> {
     let mut trapped = false;
+    let mut budget_refused = false;
+    let mut seat_refused = None;
     for SliceStep {
         outcome,
         unsaved_usage,
         ..
     } in extracted.steps
     {
-        if matches!(
-            tally_slice_outcome(vault, outcome, unsaved_usage, charges)?,
-            SliceFate::Trapped
-        ) {
-            trapped = true;
+        match tally_slice_outcome(vault, outcome, unsaved_usage, charges)? {
+            SliceFate::Trapped => trapped = true,
+            SliceFate::BudgetRefused { .. } => budget_refused = true,
+            SliceFate::SeatRefused {
+                reason,
+                seat,
+                reset_at_s,
+            } => {
+                seat_refused.get_or_insert((reason, seat, reset_at_s));
+            }
+            SliceFate::Finished { .. } | SliceFate::Checkpoint | SliceFate::Refused(_) => {}
         }
     }
-    Ok(trapped)
+    if trapped {
+        return Ok(Some(PartitionRun::Trapped));
+    }
+    let Some((reason, seat, reset_at_s)) = seat_refused.filter(|_| !budget_refused) else {
+        return Ok(None);
+    };
+    Ok(Some(PartitionRun::SeatRefused {
+        reason,
+        seat,
+        reset_at_s,
+    }))
 }

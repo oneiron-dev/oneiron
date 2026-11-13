@@ -1,9 +1,9 @@
 //! SEAT-PARK-MODEL-STEP-PATH: a Dreamer step that a login-backed model seat refuses parks its try
 //! on that seat's wait, which the seat's available write wakes.
 //!
-//! Each case runs one Micro wake pass through `DreamerWakeDriver` over one witnessed TURN. The
-//! host's partition executor (`ConsolidationExecutor`, single pass) makes the extraction call on a
-//! backend that answers every call with one refusal:
+//! Cases 1-4 each run one Micro wake pass through `DreamerWakeDriver` over one witnessed TURN.
+//! The host's partition executor (`ConsolidationExecutor`, single pass) makes the extraction call
+//! on a backend that answers every call with one refusal:
 //!
 //! 1. A seat's spent window with a stated reset parks the try on that seat at generation 1 with
 //!    the reset. A later pass and boot recovery do not resume it. The due-seat sweep wakes nothing
@@ -15,11 +15,18 @@
 //! 4. A lapsed login whose refusal arrives once the call has run the pass past its deadline still
 //!    parks the try on that seat (review round 1 of #7340): a checkpoint would let a later pass
 //!    ask the seat again before its available write.
+//! 5. A lapsed login in a partition window whose finishes stopped at an earlier slot still parks
+//!    that slot's try on the seat (review round 2 of #7340). Two TURNs make a window of two
+//!    slots over one `ConsolidationExecutor`. Slot A's extraction lands a reply and its commit is
+//!    refused as an authority refusal, which ends the pass; slot B's extraction prefix, already
+//!    refused by the seat, is accounted without a finish. B parks on the seat, is asked once, and
+//!    the restored login wakes it.
 //!
 //! Red on the head with `dreamer_seat_refusal_of_step` answering `None`: every refusal parks as
 //! before (Retry, or the private Other park), so each seat-wait assert fails. Case 4 is red on
 //! 41c70865b7b, where the partition's finish checkpoints an expired pass before it reads the
-//! seat refusal. Doors:
+//! seat refusal. Case 5 is red on 1ab473f227d, where the stopped window's prefix tally keeps only
+//! a trap, so slot B parks as a Retry with the window's stop reason and no seat wait. Doors:
 //! `oneiron::test_doors::seat_park_model_step`, built only under `--cfg oneiron_test_support`.
 #![cfg(oneiron_test_support)]
 
@@ -30,18 +37,22 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::task::{Context, Poll, Waker};
 
 use oneiron::attempt_queue::AttemptId;
+use oneiron::dreamer_consolidation::{PromotionCandidate, ScopedConsolidationWrite};
 use oneiron::dreamer_runner::{
     DREAMER_SERVER_PARK_OWNER, DreamerConsolidationScope, DreamerParkWait, DreamerParkedWait,
     DreamerRunnerStore, ModelSeatAvailability, ModelSeatAvailableSource, ModelSeatId, ParkResumer,
 };
-use oneiron::llm::SpentKind;
+use oneiron::error::RecordError;
+use oneiron::llm::{HostInferenceBinding, HostInferenceContext, SpentKind};
 use oneiron::test_doors::seat_park_model_step as doors;
 use oneiron::test_doors::wake_d1_park_release as release_doors;
 use oneiron::{
-    BudgetExhaustionPolicy, BudgetGuard, BudgetLease, DreamerParkCause, DreamerWakeDriver,
-    FatalLlmError, LlmBackend, LlmError, LlmGenerateFuture, LlmRequest, LlmStreamResult,
-    RetryableLlmError, RunWakePass, Vault, VaultConfig, WakeCancellation, WakePassDeadline,
-    WakeTrigger,
+    BudgetExhaustionPolicy, BudgetGuard, BudgetLease, ConsolidationDecisions,
+    ConsolidationExecutor, ConsolidationSink, ContentPart, DreamerClaimAuthoringStrategy,
+    DreamerParkCause, DreamerWakeDriver, Error, ErrorKind, FatalLlmError, FinishReason, LlmBackend,
+    LlmError, LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage,
+    LlmRequest, LlmResponse, LlmStreamResult, LlmUsage, ModelId, ModelLocality, RetryableLlmError,
+    RunWakePass, Vault, VaultConfig, WakeCancellation, WakePassDeadline, WakeTrigger,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -506,5 +517,284 @@ fn a_seats_lapsed_login_after_the_deadline_still_parks_the_step_on_the_seat() ->
         "the restored login wakes the try parked past the deadline"
     );
     assert_eq!(pass.calls, 1, "the late refusal is asked once");
+    Ok(())
+}
+
+/// Slot A's words in case 5: its extraction lands a reply.
+const SLOT_A_WORDS: &str = "call me Owen";
+/// Slot B's words in case 5: the seat refuses its extraction.
+const SLOT_B_WORDS: &str = "The garden gate is painted blue.";
+/// The model case 5's executor names, as the partition door's does.
+const WINDOW_MODEL: &str = "test/model@r1";
+
+/// Slot A's extraction reply: one new person, named in T1, and its name.
+fn slot_a_reply() -> LlmResponse {
+    let text = serde_json::json!({
+        "persons": [{"id": "new:P1", "name": "Owen", "evidence_turn_refs": ["T1"]}],
+        "candidates": [{
+            "subject": "new:P1",
+            "predicate": "profile.name",
+            "value": "Owen",
+            "confidence": 0.8,
+            "evidence_refs": [{"source": "T1", "quote": "Owen"}],
+        }],
+    })
+    .to_string();
+    LlmResponse {
+        message: LlmMessage {
+            role: LlmMessageRole::Assistant,
+            content: vec![ContentPart::Text {
+                text,
+                signature: None,
+            }],
+        },
+        usage: LlmUsage {
+            input: LlmInputUsage {
+                total: 40,
+                cache_read: 0,
+                cache_write: 0,
+            },
+            output: LlmOutputUsage {
+                total: 10,
+                text: 10,
+                reasoning: 0,
+            },
+            raw_provider: serde_json::Value::Null,
+            call_metadata: None,
+        },
+        finish_reason: FinishReason::Stop,
+        reply_assertions: Default::default(),
+        token_scores: None,
+    }
+}
+
+/// The text of a request's last message: an extraction call's transcript of its TURNs.
+fn last_message_text(request: &LlmRequest) -> String {
+    request
+        .messages
+        .last()
+        .map(|message| {
+            message
+                .content
+                .iter()
+                .filter_map(|part| match part {
+                    ContentPart::Text { text, .. } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<String>()
+        })
+        .unwrap_or_default()
+}
+
+/// A backend for a window of two slots: the seat refuses the call over slot B's words, and every
+/// other call gets slot A's reply. It counts both kinds of call.
+struct WindowBackend {
+    seat: ModelSeatId,
+    slot_b_calls: AtomicUsize,
+    other_calls: AtomicUsize,
+}
+
+impl LlmBackend for WindowBackend {
+    fn generate<'a>(
+        &'a self,
+        request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        let answer = if last_message_text(&request).contains(SLOT_B_WORDS) {
+            self.slot_b_calls.fetch_add(1, Ordering::SeqCst);
+            Err(FatalLlmError::SeatSignedOut { seat: self.seat }.into())
+        } else {
+            self.other_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(slot_a_reply())
+        };
+        Box::pin(async move { answer })
+    }
+
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(FatalLlmError::InvalidRequest.into())
+    }
+}
+
+/// A promotion sink that refuses every write as an authority refusal, an owner act a later pass
+/// cannot clear, so the window's finishes stop at the slot whose commit it refuses.
+struct AuthorityRefusingSink {
+    writes: usize,
+}
+
+impl AuthorityRefusingSink {
+    fn refuse(&mut self) -> oneiron::Result<()> {
+        self.writes += 1;
+        Err(Error::Record(RecordError::AuthorityRefused(
+            "the test sink refuses every promotion",
+        )))
+    }
+}
+
+impl ConsolidationSink for AuthorityRefusingSink {
+    fn accept(&mut self, _candidates: Vec<PromotionCandidate>) -> oneiron::Result<()> {
+        self.refuse()
+    }
+
+    fn accept_scoped(&mut self, _write: ScopedConsolidationWrite) -> oneiron::Result<()> {
+        self.refuse()
+    }
+}
+
+/// Every extraction call may leave this server.
+fn allow_extraction(_: &LlmRequest) -> bool {
+    true
+}
+
+/// Case 5: in a partition window whose finishes stopped at an earlier slot, a slot whose
+/// extraction the seat already refused parks on that seat, not as the stopped window's Retry.
+#[test]
+fn a_seats_lapsed_login_in_a_stopped_window_still_parks_the_step_on_the_seat() -> TestResult {
+    let seat = ModelSeatId::from_bytes(SEAT_BYTES)?;
+    let clock = oneiron_store::ports::manual_clock::ManualClock::new(PASS_T);
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let dir = tempfile::tempdir()?;
+    let vault = doors::open_partition_vault(dir.path(), config, READER)?;
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner");
+    let first = doors::enqueue_witnessed_turn(&vault, SLOT_A_WORDS, RUN_ID, PASS_T)?;
+    assert_eq!(first.len(), 1, "slot A's TURN enqueues one partition try");
+    let slot_a = first[0];
+    let both = doors::enqueue_witnessed_turn(&vault, SLOT_B_WORDS, RUN_ID, PASS_T)?;
+    assert_eq!(
+        both.len(),
+        2,
+        "two TURNs in two conversations make two partition tries"
+    );
+    let slot_b = both
+        .iter()
+        .copied()
+        .find(|attempt| *attempt != slot_a)
+        .expect("slot B's try");
+    assert!(
+        slot_a.as_bytes() < slot_b.as_bytes(),
+        "slot A is admitted, and finishes, first"
+    );
+
+    let backend = WindowBackend {
+        seat,
+        slot_b_calls: AtomicUsize::new(0),
+        other_calls: AtomicUsize::new(0),
+    };
+    let guard =
+        BudgetGuard::with_reserve_units(WAKE_LINE, 10_000, 100, BudgetExhaustionPolicy::Suspend);
+    let model = ModelId::new(WINDOW_MODEL).expect("the window model id");
+    let mut sink = AuthorityRefusingSink { writes: 0 };
+    let (deadline, _elapsed) = frozen_deadline();
+    let node_id = release_doors::load_or_mint_client_id(&vault)?;
+    let result = {
+        // One executor for the whole window, as the host builds one: it implements the window's
+        // side-by-side prefixes and serial finishes.
+        let mut executor = ConsolidationExecutor {
+            roles: Default::default(),
+            backend: &backend,
+            guard: &guard,
+            strategy: DreamerClaimAuthoringStrategy::SinglePass,
+            actor: vault.dreamer_authority()?,
+            model: model.clone(),
+            inference: HostInferenceContext {
+                binding: HostInferenceBinding::Advertised {
+                    model,
+                    locality: ModelLocality::OwnServer,
+                    keyless: false,
+                },
+                extraction_egress: Some(&allow_extraction),
+            },
+            sink: &mut sink,
+            scope: None,
+            decisions: ConsolidationDecisions::shipped()?,
+        };
+        let mut driver = DreamerWakeDriver::new(&vault, WAKE_LINE, deadline);
+        block_on_ready(driver.run_wake_pass(
+            RunWakePass {
+                trigger: WakeTrigger::Compaction,
+                scope: DreamerConsolidationScope::Micro,
+                local_node_id: node_id,
+                lease_owner: DREAMER_SERVER_PARK_OWNER.to_owned(),
+                budget_total_units: 10_000,
+                reserve_units: 100,
+                now: PASS_T,
+                host_scope: None,
+                destination_bound: None,
+            },
+            &mut executor,
+            &WakeCancellation::new(),
+        ))
+    };
+    let Err(error) = result else {
+        panic!("slot A's refused commit ends the pass with its error");
+    };
+    assert_eq!(
+        error.kind(),
+        ErrorKind::AuthorityRefused,
+        "the pass ends on slot A's refused commit"
+    );
+    assert_eq!(
+        sink.writes, 1,
+        "slot A's commit is the window's one write: slot B never commits"
+    );
+
+    let store = DreamerRunnerStore::new(&vault);
+    let park_a = store.parked_attempt(slot_a)?.expect("slot A's park");
+    assert_eq!(
+        park_a.cause,
+        DreamerParkCause::ExecutorError,
+        "the window stopped at slot A's refused commit"
+    );
+    let park_b = store.parked_attempt(slot_b)?.expect("slot B's park");
+    let lease_generation = store
+        .status(slot_b)?
+        .expect("slot B's row")
+        .attempt
+        .attempt_count;
+    assert_eq!(
+        park_b.wait,
+        Some(DreamerParkedWait {
+            wait: DreamerParkWait::Seat {
+                seat,
+                generation: 1,
+                reset_at_s: None,
+            },
+            lease_generation,
+        }),
+        "slot B parks on the seat at generation 1, not as the stopped window's Retry"
+    );
+    assert_eq!(
+        park_b.cause,
+        DreamerParkCause::Signal,
+        "slot B's park waits on a signal"
+    );
+    assert!(
+        !park_b.resumable_by(ParkResumer::LaterPass),
+        "a later pass does not resume slot B's park"
+    );
+    assert!(
+        !park_b.resumable_by(ParkResumer::BootRecovery),
+        "boot recovery does not resume slot B's park"
+    );
+    assert_eq!(
+        backend.slot_b_calls.load(Ordering::SeqCst),
+        1,
+        "the seat is asked once for slot B"
+    );
+    assert!(
+        backend.other_calls.load(Ordering::SeqCst) >= 1,
+        "slot A's extraction call reached the backend"
+    );
+
+    let resumed =
+        vault.record_model_seat_available(seat, 1, ModelSeatAvailableSource::LoginRestored)?;
+    assert_eq!(
+        resumed,
+        vec![slot_b],
+        "the restored login wakes slot B's try, and only it"
+    );
     Ok(())
 }
