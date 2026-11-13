@@ -8,8 +8,8 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::mail_pack::{
-    MailAddressHeaders, MailAttachmentRef, MailFull, MailHeaders, MailHistoryPage,
-    MailHistoryRead, MailIdPage, MailListQuery, MailMessageRef, MailProvider, MailProviderWire,
+    MailAddressHeaders, MailAttachmentRef, MailFull, MailHeaders, MailHistoryPage, MailHistoryRead,
+    MailIdPage, MailListQuery, MailMessageRef, MailProvider, MailProviderWire,
     MailSourceConnectRequest, MailSourceKind, MailSyncBudget, MailSyncSource,
 };
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
@@ -203,13 +203,11 @@ pub fn landed_message_authors(
     )?;
     let txn = vault.store.env.read_txn()?;
     let mut authors = Vec::new();
-    for edge in vault.store.port_edges(
-        &txn,
-        &turn,
-        EdgeDirection::In,
-        Some(EdgeKind::PartOf),
-        None,
-    )? {
+    for edge in
+        vault
+            .store
+            .port_edges(&txn, &turn, EdgeDirection::In, Some(EdgeKind::PartOf), None)?
+    {
         let message = edge?.target;
         let Some(raw) = vault.store.port_entity_record(&txn, &message)? else {
             continue;
