@@ -5,6 +5,7 @@
 //! `--all-features` build reaches them. Hidden; never API.
 
 pub mod big_rung;
+pub mod build_server;
 pub mod coach_round;
 pub mod live_lease;
 pub mod live_run_payer;
@@ -14,5 +15,4 @@ pub mod media_job_spend;
 pub mod native_board;
 pub mod replay_admission;
 pub mod resident_pump;
-pub mod served_server;
 pub mod solved_runs;
