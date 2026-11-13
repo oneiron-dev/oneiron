@@ -34,3 +34,6 @@ use self::security::{add_security_scheme, set_schema_property_description};
 // `openapi_document()`); the non-test build reaches it through the handlers.
 #[cfg(test)]
 pub(crate) use self::endpoints_merge::openapi_document;
+// The `openapi_document` test door counts the assemblies.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::endpoints_merge::openapi_document_assemblies;
