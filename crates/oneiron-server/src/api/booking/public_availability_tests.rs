@@ -1,5 +1,6 @@
 use super::fixture::*;
 use super::*;
+use oneiron::booking::load_public_booking_page;
 
 fn install_slot_cache(fixture: &Fixture) {
     let scope = BookingRuleScope {
@@ -234,5 +235,103 @@ async fn queued_public_hold_loses_authority_before_the_lifecycle_writer() {
     assert!(
         outcome.is_err(),
         "delayed public attempts must recheck authority inside the writer"
+    );
+}
+
+/// One request to the real public router as a visitor on this device sends
+/// it: from loopback, with no proxy forwarding header.
+async fn route_on_this_device(fixture: &Fixture, path: &str, body: Value) -> Response {
+    let request = Request::builder()
+        .method("POST")
+        .uri(path)
+        .header(CONTENT_TYPE, "application/json")
+        .extension(ConnectInfo(
+            "127.0.0.1:43124".parse::<SocketAddr>().expect("peer"),
+        ))
+        .body(Body::from(serde_json::to_vec(&body).expect("body")))
+        .expect("request");
+    crate::build_app(fixture.server.clone())
+        .oneshot(request)
+        .await
+        .expect("response")
+}
+
+/// DEC-0005 (census L5-29): "A caller off this device reads nothing a
+/// withheld world keeps." The page's event-type configuration claim moves
+/// into a world the owner keeps on this machine. A visitor off this device
+/// (the fixture's requests carry a proxy forwarding header) then meets no
+/// page, the same 404 an unknown page gives, rather than slots that kept
+/// configuration shapes. A visitor on this device still gets the page. On
+/// main the visitor off this device still got the kept configuration's slots.
+#[tokio::test]
+async fn public_availability_off_this_device_ignores_a_kept_configuration() {
+    let fixture = Fixture::new();
+    let vault = &fixture.server.vault;
+    let now = now_secs().expect("clock");
+    let path = format!("/public/booking/{}/availability", fixture.token);
+    let request = serde_json::to_value(listing(now)).expect("request");
+    let before = fixture.route("POST", &path, request.clone()).await;
+    assert_eq!(
+        before.status(),
+        StatusCode::OK,
+        "the published page answers before any world keeps its configuration"
+    );
+
+    // The configuration claim moves into a kept world; its value, and so the
+    // publication's configuration hash, stay as they were.
+    let world = EntityId::now();
+    vault
+        .put_entity(
+            &world,
+            oneiron::registry::ENTITY_TYPE_WORLD,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .expect("world");
+    let mut body = vault.get_claim(&id(0x72)).expect("read").expect("config");
+    body.world = Some(world);
+    vault
+        .put_claim(&id(0x72), &body, TimeRange { start: 1, end: 1 }, 1)
+        .expect("configuration in the world");
+    vault
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&fixture.server),
+            world,
+            true,
+        )
+        .expect("keep the world on this machine");
+    // Keeping a world rebinds the host key to the vault's embedded owner; the
+    // page's publisher is bound again as the fixture bound him.
+    crate::test_credentials::bind_owner(vault, "owner-fixture-secret", id(0x77));
+    assert!(
+        vault
+            .device_local_keeps_for(&id(0x72), &oneiron::claim::CallerLocality::OffDevice.into())
+            .expect("world judge"),
+        "the kept world holds the configuration from a caller off this device"
+    );
+
+    let here = route_on_this_device(&fixture, &path, request.clone()).await;
+    let status = here.status();
+    let answer = bytes(here).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a visitor on this device still gets the page: {}",
+        String::from_utf8_lossy(&answer)
+    );
+
+    let away = fixture.route("POST", &path, request).await;
+    let status = away.status();
+    let answer = bytes(away).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "a configuration a kept world holds shaped a visitor's slots off this device: {}",
+        String::from_utf8_lossy(&answer)
+    );
+    assert!(
+        !String::from_utf8_lossy(&answer).contains(&world.to_hex()),
+        "the miss names no world"
     );
 }

@@ -166,6 +166,9 @@ pub(crate) struct BookingTransportContext {
     /// 5327): rechecked before a model call spends, by this module alone.
     payer_guard: Option<transport::BookingPayerGuard>,
     pub(crate) transport: BookingTransport,
+    /// Where this request's answer goes (DEC-0005): a public page it books
+    /// on is judged for it ([`resolve_public_booking_page_listing`]).
+    pub(crate) destination: oneiron::settings::ReadDestination,
 }
 
 impl BookingTransportContext {
