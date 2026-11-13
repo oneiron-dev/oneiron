@@ -81,8 +81,8 @@ pub use self::model::{
     A1Range, ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE,
     ANNOTATION_COMMENT_TEXT_MAX_BYTES, ANNOTATION_LOCATOR_RANGE_MAX_BYTES,
     ANNOTATION_LOCATOR_TEXT_MAX_BYTES, ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationComment,
-    AnnotationThread, BodyAnchor, CODE_ANCHOR_VERSION, DriftMarker, Locator, ReanchorOp,
-    ReanchorOutcome, ReanchorSummary, TaskBrief, ThreadState,
+    AnnotationThread, BodyAnchor, CODE_ANCHOR_VERSION, DriftMarker, IMAGE_LOCATOR_MAX_SIDE,
+    Locator, ReanchorOp, ReanchorOutcome, ReanchorSummary, TaskBrief, ThreadState,
 };
 pub use self::reanchor::replay_locator;
 

@@ -46,6 +46,14 @@ pub(super) const FORMAT_TEXT: &str = "text";
 
 pub(super) const FORMAT_CODE: &str = "code";
 
+pub(super) const FORMAT_IMAGE_PIXEL: &str = "image_pixel";
+
+pub(super) const FORMAT_IMAGE_OBJECT: &str = "image_object";
+
+/// The longest side an image locator's region may reach, the image organ's
+/// side limit.
+pub const IMAGE_LOCATOR_MAX_SIDE: u32 = 65_535;
+
 pub(super) const STATE_OPEN: &str = "open";
 
 pub(super) const STATE_RESOLVED: &str = "resolved";
@@ -115,9 +123,10 @@ impl A1Range {
 /// A format-typed anchor locator.
 ///
 /// The format-specific fields identify XLSX ranges, DOCX character spans,
-/// PPTX shapes, HTML and plain-text character spans, and character spans in
-/// one code file. Readers resolve them against one version's bytes, or the
-/// code file's, rather than guessing a location.
+/// PPTX shapes, HTML and plain-text character spans, character spans in
+/// one code file, and an image's pixel regions and overlays. Readers resolve
+/// them against one version's bytes, or the code file's, rather than
+/// guessing a location.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Locator {
@@ -185,6 +194,26 @@ pub enum Locator {
         char_start: u64,
         /// Exclusive character-span end.
         char_end: u64,
+    },
+    /// An image version's half-open pixel rectangle, top-left origin, after
+    /// EXIF orientation (ARCH-0075's `pixel` unit, L4-16). It names a
+    /// region, not words, so its quote is null.
+    ImagePixel {
+        /// The left edge, in pixels.
+        x: u32,
+        /// The top edge, in pixels.
+        y: u32,
+        /// The width, at least one pixel.
+        w: u32,
+        /// The height, at least one pixel.
+        h: u32,
+    },
+    /// An image overlay by its id, `overlay/{id}` in the image organ's body
+    /// (ARCH-0075's `object` unit, L4-16). No stored image body holds an
+    /// overlay yet (IO-BODY A), so no pin takes one.
+    ImageObject {
+        /// The overlay's id in the body.
+        overlay: u32,
     },
 }
 
@@ -318,6 +347,33 @@ impl Locator {
         })
     }
 
+    /// Builds an image pixel locator: a region of at least one pixel each
+    /// way, whose far edges stay within [`IMAGE_LOCATOR_MAX_SIDE`].
+    pub fn image_pixel(x: u32, y: u32, w: u32, h: u32) -> Result<Self> {
+        if w == 0 || h == 0 {
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "image pixel locator region is empty",
+            )));
+        }
+        let within = |start: u32, length: u32| {
+            start
+                .checked_add(length)
+                .is_some_and(|end| end <= IMAGE_LOCATOR_MAX_SIDE)
+        };
+        if !within(x, w) || !within(y, h) {
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "image pixel locator region passes the side limit",
+            )));
+        }
+        Ok(Self::ImagePixel { x, y, w, h })
+    }
+
+    /// Builds an image overlay locator.
+    #[must_use]
+    pub const fn image_object(overlay: u32) -> Self {
+        Self::ImageObject { overlay }
+    }
+
     /// The format discriminator string.
     #[must_use]
     pub fn format(&self) -> &'static str {
@@ -329,6 +385,8 @@ impl Locator {
             Self::Html { .. } => FORMAT_HTML,
             Self::Text { .. } => FORMAT_TEXT,
             Self::Code { .. } => FORMAT_CODE,
+            Self::ImagePixel { .. } => FORMAT_IMAGE_PIXEL,
+            Self::ImageObject { .. } => FORMAT_IMAGE_OBJECT,
         }
     }
 }

@@ -9,7 +9,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 /// A position in one office artifact version. Character offsets count Unicode
-/// characters, not bytes; slides are 1-based and ranges use A1 notation.
+/// characters, not bytes; slides are 1-based and ranges use A1 notation. An
+/// image position is a pixel region or an overlay (L4-16).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "format", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AnnotationLocator {
@@ -53,6 +54,20 @@ pub enum AnnotationLocator {
         char_start: u64,
         char_end: u64,
     },
+    /// A half-open pixel rectangle of an image version, top-left origin,
+    /// after EXIF orientation; `w` and `h` are at least 1. It names no
+    /// words, so its quote is null.
+    ImagePixel {
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+    },
+    /// An image overlay by its id. No stored image body holds one yet, so a
+    /// pin refuses it.
+    ImageObject {
+        overlay: u32,
+    },
 }
 
 impl TryFrom<&AnnotationLocator> for Locator {
@@ -95,6 +110,8 @@ impl TryFrom<&AnnotationLocator> for Locator {
                 *char_start,
                 *char_end,
             ),
+            AnnotationLocator::ImagePixel { x, y, w, h } => Self::image_pixel(*x, *y, *w, *h),
+            AnnotationLocator::ImageObject { overlay } => Ok(Self::image_object(*overlay)),
         }
     }
 }
@@ -159,6 +176,13 @@ impl From<&Locator> for AnnotationLocator {
                 char_start: *char_start,
                 char_end: *char_end,
             },
+            Locator::ImagePixel { x, y, w, h } => Self::ImagePixel {
+                x: *x,
+                y: *y,
+                w: *w,
+                h: *h,
+            },
+            Locator::ImageObject { overlay } => Self::ImageObject { overlay: *overlay },
         }
     }
 }

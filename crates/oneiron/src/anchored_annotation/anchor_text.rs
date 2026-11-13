@@ -197,6 +197,8 @@ pub(super) fn anchor_text(
             char_end,
             ..
         } => Ok(text::text_span(bytes, *char_start, *char_end)),
+        // An image region or overlay names no words (L4-16).
+        Locator::ImagePixel { .. } | Locator::ImageObject { .. } => Ok(None),
     }
 }
 
