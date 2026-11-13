@@ -6,7 +6,9 @@ mod rsi;
 pub mod rsi_doors;
 
 pub use resident::{ResidentShareRead, VaultResidentLedger};
-pub(crate) use resident::{resident_share_fits_in_txn, resident_share_frees};
+pub(crate) use resident::{
+    resident_share_fits_in_txn, resident_share_frees, resident_share_in_txn,
+};
 
 pub use rsi::{
     RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead,

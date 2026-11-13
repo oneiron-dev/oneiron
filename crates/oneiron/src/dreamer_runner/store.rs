@@ -1280,6 +1280,14 @@ impl<'a> DreamerRunnerStore<'a> {
         super::program::unindex_program_hold_in_txn(self.vault, wtxn, &record)?;
         super::seat_wait::unindex_seat_wait_in_txn(self.vault, wtxn, &record)?;
         PARKED.delete(&self.vault.store, wtxn, &attempt_id)?;
+        // A woken budget trap park waits on no owner answer: its open ask is
+        // withdrawn in the wake's write (RUNBUDGET-SCOPE = B).
+        if matches!(
+            record.wait.as_ref().map(|wait| &wait.wait),
+            Some(DreamerParkWait::Budget { .. } | DreamerParkWait::ResidentShare { .. })
+        ) {
+            crate::agent_dispatch::withdraw_budget_trap_ask_in_txn(self.vault, wtxn, attempt_id)?;
+        }
         // FIX 4747: a resuming agent run keeps its executor lease until its
         // next claim takes it.
         crate::agent_dispatch::renew_agent_run_lease_in_txn(self.vault, wtxn, attempt_id)?;

@@ -26,6 +26,7 @@ mod attenuation;
 mod brief;
 pub mod budget_doors;
 mod budget_hold;
+mod budget_trap_ask;
 mod caller_origin;
 pub use caller_origin::CallerOrigin;
 mod codec;
@@ -172,6 +173,11 @@ pub(crate) use self::agent_wait::{
 pub(crate) use self::budget_hold::erase_plan_hold_actor_in_txn;
 pub use self::budget_hold::{
     BudgetHoldLease, BudgetHoldNotice, BudgetHoldState, HeldAttempt, PartialResultHold,
+};
+pub use self::budget_trap_ask::{BudgetTrapLimit, BudgetTrapQuestion, budget_trap_questions};
+pub(crate) use self::budget_trap_ask::{
+    apply_budget_trap_answer_in_txn, is_budget_trap_ask, queue_budget_trap_ask_in_txn,
+    withdraw_budget_trap_ask_in_txn,
 };
 pub use self::codec::{
     agent_dispatch_actor, agent_dispatch_payload_agent_id, agent_dispatch_run_actor,
