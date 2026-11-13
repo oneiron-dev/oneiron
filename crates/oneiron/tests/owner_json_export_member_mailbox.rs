@@ -1,8 +1,10 @@
-//! FIX 15416 slice 1 (owner rulings EXPORT-MAILBOXES, 2026-11-07 01:43 and
-//! 01:45): the Owner's whole-vault JSON export and another member's personal
-//! mailbox. A person-owned shared vault (Family) leaves the member's mailbox
-//! out and names it to the Owner; an org-owned one (Team) carries it and
-//! tells the member.
+//! FIX 15416 slices 1 and 3 (owner rulings EXPORT-MAILBOXES, 2026-11-07
+//! 01:43 and 01:45): the Owner's whole-vault JSON export and another member's
+//! personal mailbox. A person-owned shared vault (Family) leaves the member's
+//! mailbox out and names it to the Owner; an org-owned one (Team) carries it
+//! and tells the member. In a person-owned vault an Owner may request the
+//! mailbox (`vault.mail.export_request`): the member alone answers one Ask,
+//! and an approval carries the mailbox in that Owner's next export only.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test owner_json_export_member_mailbox`.
@@ -14,12 +16,14 @@ use std::collections::BTreeSet;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{InitialSharedMember, SharedVaultPreset};
 use oneiron::inbox::{NotificationBody, decode_notification_body};
+use oneiron::llm::decision::DecisionAnswer;
 use oneiron::mail_pack::{
     MailAddressHeaders, MailAttachmentRef, MailFull, MailHeaders, MailHistoryPage, MailHistoryRead,
     MailIdPage, MailListQuery, MailMessageRef, MailProvider, MailProviderWire,
     MailSourceConnectRequest, MailSourceKind, MailSyncBudget, MailSyncSource,
     install_mail_calendar_pack_embedded,
 };
+use oneiron::memory::MemoryResult;
 use oneiron::registry::{
     ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_PERSON,
     ENTITY_TYPE_TURN,
@@ -27,7 +31,7 @@ use oneiron::registry::{
 use oneiron::secret_custody::{CustodyTier, SecretBinding};
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
-use oneiron::{EdgeActorClass, EntityId, Result, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, Result, Vault, VaultConfig, WriteActor};
 use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
 use serde_json::{Value, json};
 
@@ -213,6 +217,7 @@ fn mailbox_with_one_message(
 struct Fixture {
     _dir: tempfile::TempDir,
     vault: Vault,
+    owner: EntityId,
     member: EntityId,
     member_source: String,
     owner_rows: BTreeSet<EntityId>,
@@ -274,6 +279,7 @@ fn fixture(preset: SharedVaultPreset) -> Fixture {
     Fixture {
         _dir: dir,
         vault,
+        owner,
         member,
         member_source,
         owner_rows,
@@ -368,4 +374,182 @@ fn org_owner_json_export_carries_member_mailbox_and_tells_member() {
         told[0].subject_refs
     );
     assert_eq!(bundle["mailbox_notices"], json!([]), "nothing was left out");
+}
+
+/// Whether `text` holds any of the member's mail rows.
+fn carries_member_mail(fx: &Fixture, text: &str) -> bool {
+    fx.member_rows.iter().any(|id| text.contains(&id.to_hex()))
+}
+
+/// Whether the export names the member's mailbox to the Owner as left out.
+fn names_member_mailbox(fx: &Fixture, bundle: &Value) -> bool {
+    bundle["mailbox_notices"]
+        .as_array()
+        .expect("the export's mailbox notices")
+        .iter()
+        .any(|notice| {
+            notice["source_ref"] == json!(fx.member_source)
+                && notice["reason"] == json!("member_mailbox")
+        })
+}
+
+/// The Owner's request for the member's mailbox, called by the verb's name
+/// as the Owner's own embedded handle calls it.
+fn request_member_mailbox(fx: &Fixture) -> MemoryResult<Value> {
+    oneiron::task_verb::sdk::invoke(
+        &fx.vault.memory(fx.owner, EdgeActorClass::Human),
+        "vault.mail.export_request",
+        json!({ "source_ref": fx.member_source }),
+    )
+}
+
+/// The open Ask whose correlation is the request `view` answers.
+fn request_ask_seq(vault: &Vault, view: &Value) -> u64 {
+    let request = EntityId::from_hex(view["request_ref"].as_str().expect("a request ref"))
+        .expect("a request id");
+    vault
+        .decision_asks(None, 1000, true)
+        .expect("the open Asks")
+        .into_iter()
+        .find(|ask| ask.correlation == Some(request))
+        .expect("the member's Ask for the request is queued")
+        .seq
+}
+
+/// `who` answers the Ask `seq` with `choice`, as a person.
+fn answer_as(vault: &Vault, who: EntityId, seq: u64, choice: &str) -> Result<()> {
+    vault
+        .answer_decision_ask_as(
+            &WriteActor::new(who, EdgeActorClass::Human),
+            seq,
+            DecisionAnswer::Choice(choice.to_owned()),
+        )
+        .map(drop)
+}
+
+#[test]
+fn a_member_approval_carries_their_mailbox_in_the_owner_next_export_once() {
+    let fx = fixture(SharedVaultPreset::Family);
+    let (text, bundle) = export(&fx.vault);
+    assert!(
+        !carries_member_mail(&fx, &text) && names_member_mailbox(&fx, &bundle),
+        "FIXTURE: before any request the member's mailbox stays home and is named"
+    );
+    let request =
+        request_member_mailbox(&fx).expect("the Owner's request for the member's mailbox is taken");
+    assert_eq!(request["state"], json!("pending"), "{request}");
+    assert_eq!(request["source_ref"], json!(fx.member_source), "{request}");
+    let again = request_member_mailbox(&fx).expect("the Owner asks again");
+    assert_eq!(
+        again["request_ref"], request["request_ref"],
+        "asking again while the member has not answered answers the same request"
+    );
+
+    // Not answered: the export never waits; it leaves the mailbox out and names it.
+    let (text, bundle) = export(&fx.vault);
+    assert!(
+        !carries_member_mail(&fx, &text),
+        "an unanswered request leaves the member's mailbox out"
+    );
+    assert!(
+        names_member_mailbox(&fx, &bundle),
+        "the mailbox an unanswered request left out is named to the Owner"
+    );
+    assert!(
+        notifications_for(&fx.vault, fx.member).is_empty(),
+        "a mailbox left out tells no one"
+    );
+
+    let seq = request_ask_seq(&fx.vault, &request);
+    assert!(
+        answer_as(&fx.vault, fx.owner, seq, "Approve").is_err(),
+        "no Owner answers the member's Ask in their place"
+    );
+    answer_as(&fx.vault, fx.member, seq, "Approve").expect("the member approves");
+
+    let (text, bundle) = export(&fx.vault);
+    assert!(
+        carries_member_mail(&fx, &text),
+        "the Owner's next export carries the mailbox its member approved"
+    );
+    assert!(
+        !names_member_mailbox(&fx, &bundle),
+        "a carried mailbox is not named as left out"
+    );
+    let told = notifications_for(&fx.vault, fx.member);
+    let producers: BTreeSet<&str> = told
+        .iter()
+        .map(|notice| notice.source.producer.as_str())
+        .collect();
+    assert_eq!(
+        producers,
+        BTreeSet::from([
+            "mail_pack.member_mail_request_used",
+            "mail_pack.member_mailbox_export",
+        ]),
+        "the member is told the export carried the mailbox and used the approval: {told:?}"
+    );
+    assert_eq!(told.len(), 2, "each told once: {told:?}");
+    let request_ref = request["request_ref"].as_str().expect("a request ref");
+    assert!(
+        told.iter().any(|notice| {
+            notice.source.producer == "mail_pack.member_mail_request_used"
+                && notice.source.event.contains(request_ref)
+        }),
+        "the use notice names the request: {told:?}"
+    );
+
+    // One export only: the approval was used.
+    let (text, bundle) = export(&fx.vault);
+    assert!(
+        !carries_member_mail(&fx, &text),
+        "an approval covers one export: the next leaves the mailbox out"
+    );
+    assert!(
+        names_member_mailbox(&fx, &bundle),
+        "the next export names the mailbox again"
+    );
+    assert_eq!(
+        notifications_for(&fx.vault, fx.member).len(),
+        2,
+        "the export after the used approval tells no one"
+    );
+    let renewed = request_member_mailbox(&fx).expect("the Owner asks again after the use");
+    assert_eq!(renewed["state"], json!("pending"), "{renewed}");
+    assert_ne!(
+        renewed["request_ref"], request["request_ref"],
+        "after a use the Owner's request is a new one"
+    );
+}
+
+#[test]
+fn a_declined_request_leaves_the_mailbox_out_and_named() {
+    let fx = fixture(SharedVaultPreset::Family);
+    let request =
+        request_member_mailbox(&fx).expect("the Owner's request for the member's mailbox is taken");
+    let seq = request_ask_seq(&fx.vault, &request);
+    answer_as(&fx.vault, fx.member, seq, "Decline").expect("the member declines");
+    let (text, bundle) = export(&fx.vault);
+    assert!(
+        !carries_member_mail(&fx, &text),
+        "a declined request leaves the member's mailbox out"
+    );
+    assert!(
+        !text.contains(MEMBER_BODY) && !text.contains(MEMBER_SUBJECT),
+        "no word of the member's mail is in the copy"
+    );
+    assert!(
+        names_member_mailbox(&fx, &bundle),
+        "the mailbox a declined request left out is named to the Owner"
+    );
+    assert!(
+        notifications_for(&fx.vault, fx.member).is_empty(),
+        "a declined request tells no one"
+    );
+    let renewed = request_member_mailbox(&fx).expect("the Owner asks again after a decline");
+    assert_eq!(renewed["state"], json!("pending"), "{renewed}");
+    assert_ne!(
+        renewed["request_ref"], request["request_ref"],
+        "after a decline the Owner's request is a new one"
+    );
 }
