@@ -37,8 +37,6 @@ mod pending_lookup;
 #[path = "../repair_tests.rs"]
 mod repair_tests;
 
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-ACTOR-FORK]: the lib test target's type check fails here (3 errors: E0061 x2, E0308 x1); port it, then drop this gate
-#[cfg(any())]
 mod actor_fork;
 // FIX [LIBTEST-QUARANTINE-GATE-TESTS-AUTO-CHECKER]: the lib test target's type check fails here (3 errors: E0608 x2, E0599 x1); port it, then drop this gate
 #[cfg(any())]
@@ -56,8 +54,6 @@ mod consent_bundle;
 // FIX [LIBTEST-QUARANTINE-GATE-TESTS-CONSOLIDATION-READERS]: the lib test target's type check fails here (15 errors: E0063 x11, E0308 x3, E0061 x1); port it, then drop this gate
 #[cfg(any())]
 mod consolidation_readers;
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-CREDENTIAL-LIFETIMES]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 mod credential_lifetimes;
 mod critical_confirm_holds;
 // FIX [LIBTEST-QUARANTINE-GATE-TESTS-CRITICAL-CONFIRM-INDEX]: the lib test target's type check fails here (13 errors: E0061 x10, E0063 x3); port it, then drop this gate

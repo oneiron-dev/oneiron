@@ -46,6 +46,7 @@ fn worlds_filter_before_projection_and_counting() {
         id: id(n),
         label: format!("world-{n}"),
         trust: "trusted".into(),
+        fiction: false,
     });
     let authority = ResolvedWorldAuthority {
         allowed_set: WorldAuthoritySet::new(false, [id(1), id(2), id(3)]).unwrap(),
@@ -164,6 +165,7 @@ fn a_refused_later_write_never_answers_for_a_settled_proposal() -> crate::Result
             grant_ref: grant.map(str::to_owned),
             diff_handle: vec![0xA5],
             read_frontier_hash: [0; 32],
+            context: Default::default(),
             redacted_at: None,
         })
     };

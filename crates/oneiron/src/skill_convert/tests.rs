@@ -141,11 +141,15 @@ fn witnessed_turns(vault: &Vault, lines: &[&str], now: u64) -> Vec<EntityId> {
                         author: WitnessAuthor::User,
                         message_type: "text".to_owned(),
                         content: (*line).to_owned(),
+                        parts: None,
                         metadata: None,
                         is_visible: true,
                         order: 0,
+                        quote: None,
                     }],
                     occurred_at: now + u64::try_from(index).expect("fixture turn counts are small"),
+                    thread_audience: None,
+                    assertions: Default::default(),
                 })
                 .expect("the witness door lands the turn");
             turn

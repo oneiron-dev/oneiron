@@ -17,8 +17,6 @@ mod history_cycles_closure;
 mod history_cycles_guards;
 #[cfg(feature = "sync")]
 mod history_cycles_kept;
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-HISTORY-CYCLES-NAMED]: the lib test target's type check fails here (3 errors: E0308 x2, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(feature = "sync")]
 mod history_cycles_named;
 #[cfg(feature = "sync")]

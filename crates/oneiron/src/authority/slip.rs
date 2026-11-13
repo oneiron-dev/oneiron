@@ -1000,8 +1000,6 @@ pub(super) fn unhex(value: &str) -> EngineResult<Vec<u8>> {
         .collect()
 }
 
-// FIX [LIBTEST-QUARANTINE-AUTHORITY-SLIP-TESTS]: the lib test target's type check fails here (9 errors: E0063 x9); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 #[path = "slip_tests.rs"]
 mod tests;

@@ -69,8 +69,6 @@ pub(crate) mod claim_vad;
 // FIX [LIBTEST-QUARANTINE-TESTS-CLAIMS]: the lib test target's type check fails here (12 errors: E0061 x12); port it, then drop this gate
 #[cfg(any())]
 pub(crate) mod claims;
-// FIX [LIBTEST-QUARANTINE-TESTS-DELETION]: the lib test target's type check fails here (5 errors: E0308 x3, E0063 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 pub(crate) mod deletion;
 pub(crate) mod edge_prov_lifecycle;
 pub(crate) mod embedding;
@@ -83,8 +81,6 @@ pub(crate) mod reput_phonetic;
 pub(crate) mod session_misc;
 pub(crate) mod short_ids;
 mod support;
-// FIX [LIBTEST-QUARANTINE-TESTS-TEXT-SEARCH]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 pub(crate) mod text_search;
 pub(crate) mod tombstones;
 pub(crate) mod type_registry;

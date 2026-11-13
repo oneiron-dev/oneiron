@@ -159,8 +159,6 @@ mod advertise_tests;
 mod checkout_tests;
 #[cfg(test)]
 mod door_serve_tests;
-// FIX [LIBTEST-QUARANTINE-ORIGIN-SMART-HTTP-EPOCH-TESTS]: the lib test target's type check fails here (2 errors: E0308 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod epoch_tests;
 #[cfg(test)]

@@ -61,8 +61,6 @@ pub(crate) use scanner::{CredentialStream, find_custody_credential};
 
 #[cfg(test)]
 mod chunk_tests;
-// FIX [LIBTEST-QUARANTINE-ORIGIN-LFS-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

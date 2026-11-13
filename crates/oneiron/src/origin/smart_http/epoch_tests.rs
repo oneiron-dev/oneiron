@@ -51,7 +51,7 @@ fn epoch_intent(
         quarantine_path: None,
     };
     vault
-        .record_receive_pack_intent(&unpinned_repo_ref(root), &stamp, &door)
+        .record_receive_pack_intent(&unpinned_repo_ref(root), &stamp, &door, None)
         .expect("intent");
     stamp.operation_id()
 }
@@ -319,7 +319,7 @@ fn epoch_cutover_drains_crashed_old_admission_and_cannot_reauthorize_its_source(
         required_objects: row.required_objects,
         required_lfs_oids: row.required_lfs_oids,
         provenance_claim_id: row.provenance_claim_id,
-        actor_id: row.actor_id,
+        actor_id: row.actor_id.id().expect("an unerased publication actor"),
         occurred: row.occurred,
         learned_at: now_secs(),
     };

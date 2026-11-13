@@ -171,7 +171,7 @@ fn anchor_replicated_batch_validates_at_each_op_and_rolls_back_earlier_dependenc
                 batch = match op {
                     0 => batch.put(&actor, ENTITY_TYPE_PERSON, occurred, 100, b"actor"),
                     1 => batch.put(&subject, subject_kind, occurred, 100, b"subject"),
-                    _ => batch.put_replicated(&id, ENTITY_TYPE_CLAIM, occurred, 100, &data),
+                    _ => batch.put_replicated(&id, ENTITY_TYPE_CLAIM, occurred, 100, None, &data),
                 };
             }
             let result = batch.edge(&id, EdgeKind::ClaimOf, &actor, 1.0).commit();

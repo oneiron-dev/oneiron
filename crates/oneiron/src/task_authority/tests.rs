@@ -321,14 +321,28 @@ fn an_authority_fact_admits_only_an_exact_echo() {
         assert!(
             vault
                 .batch()
-                .put_replicated(&fact_ref, ENTITY_TYPE_TASK, occurred, learned_at, body)
+                .put_replicated(
+                    &fact_ref,
+                    ENTITY_TYPE_TASK,
+                    occurred,
+                    learned_at,
+                    None,
+                    body
+                )
                 .commit()
                 .is_err()
         );
     }
     vault
         .batch()
-        .put_replicated(&fact_ref, ENTITY_TYPE_TASK, occurred, learned_at, &stored)
+        .put_replicated(
+            &fact_ref,
+            ENTITY_TYPE_TASK,
+            occurred,
+            learned_at,
+            None,
+            &stored,
+        )
         .commit()
         .expect("an exact echo lands");
     assert_eq!(

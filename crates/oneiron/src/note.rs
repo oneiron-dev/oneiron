@@ -466,8 +466,6 @@ mod program_tests;
 #[cfg(test)]
 mod shared_membership_tests;
 
-// FIX [LIBTEST-QUARANTINE-NOTE-ADAPTER-TESTS]: the lib test target's type check fails here (2 errors: E0308 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod adapter_tests;
 pub(crate) mod tables;

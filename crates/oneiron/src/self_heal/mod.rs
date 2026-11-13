@@ -127,8 +127,6 @@ mod healer_host_tests;
 #[cfg(test)]
 mod production_tests;
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-SELF-HEAL-TESTS]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

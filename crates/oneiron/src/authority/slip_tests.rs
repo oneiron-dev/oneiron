@@ -553,7 +553,11 @@ fn a_slip_mint_signed_by_an_agent_device_folds_invalid_even_with_an_owner_cosign
             Some(root.claims.vault_id),
             0,
             vec![enrolled_hash],
-            AuthorityOp::SlipMint(SlipMintAction { claims }),
+            AuthorityOp::SlipMint(SlipMintAction {
+                claims,
+                renews: None,
+                minting_member: None,
+            }),
             root.claims.issued_at,
         )
         .unwrap();
@@ -849,7 +853,11 @@ fn divergent_mints_poison_the_identifier_in_either_merge_order() {
             Some(claims.vault_id),
             2,
             vec![parent],
-            AuthorityOp::SlipMint(SlipMintAction { claims }),
+            AuthorityOp::SlipMint(SlipMintAction {
+                claims,
+                renews: None,
+                minting_member: None,
+            }),
             root.claims.issued_at,
         )
         .unwrap();
@@ -858,7 +866,11 @@ fn divergent_mints_poison_the_identifier_in_either_merge_order() {
             Some(other.vault_id),
             3,
             vec![parent],
-            AuthorityOp::SlipMint(SlipMintAction { claims: other }),
+            AuthorityOp::SlipMint(SlipMintAction {
+                claims: other,
+                renews: None,
+                minting_member: None,
+            }),
             root.claims.issued_at,
         )
         .unwrap();
@@ -897,7 +909,11 @@ fn collision_denial_still_needs_one_explicit_signed_revoke() {
             Some(claims.vault_id),
             2,
             vec![parent],
-            AuthorityOp::SlipMint(SlipMintAction { claims }),
+            AuthorityOp::SlipMint(SlipMintAction {
+                claims,
+                renews: None,
+                minting_member: None,
+            }),
             at.start,
         )
         .unwrap();
@@ -906,7 +922,11 @@ fn collision_denial_still_needs_one_explicit_signed_revoke() {
             Some(other.vault_id),
             3,
             vec![parent],
-            AuthorityOp::SlipMint(SlipMintAction { claims: other }),
+            AuthorityOp::SlipMint(SlipMintAction {
+                claims: other,
+                renews: None,
+                minting_member: None,
+            }),
             at.start,
         )
         .unwrap();
@@ -970,7 +990,11 @@ fn a_rejected_signed_local_entry_still_advances_the_next_sequence() {
             Some(root.claims.vault_id),
             7,
             vec![parent],
-            AuthorityOp::SlipMint(SlipMintAction { claims: invalid }),
+            AuthorityOp::SlipMint(SlipMintAction {
+                claims: invalid,
+                renews: None,
+                minting_member: None,
+            }),
             root.claims.issued_at,
         )
         .unwrap();
@@ -1031,13 +1055,24 @@ fn slip_mint_signed_wire_is_fieldwise_and_rejects_noncanonical_fields() {
         channels: ["git.receive-pack".into()].into(),
         actor_class: Some("agent".into()),
         org_ref: Some(crate::EntityId::from_bytes([6; 16]).unwrap().to_hex()),
+        grant_ref: None,
+        invitation_ref: None,
+        share_ref: None,
+        delegation: None,
+        comm: None,
+        trusted_contact: None,
+        seat_claim: None,
     };
     let entry = issuer
         .sign_entry(
             Some([4; 32]),
             2,
             vec![[8; 32]],
-            AuthorityOp::SlipMint(SlipMintAction { claims }),
+            AuthorityOp::SlipMint(SlipMintAction {
+                claims,
+                renews: None,
+                minting_member: None,
+            }),
             10,
         )
         .unwrap();
@@ -1068,7 +1103,10 @@ fn slip_mint_signed_wire_is_fieldwise_and_rejects_noncanonical_fields() {
             "records",
             "channels",
             "actor_class",
-            "org_ref"
+            "org_ref",
+            "grant_ref",
+            "invitation_ref",
+            "share_ref"
         ]
     );
     assert!(matches!(
@@ -1125,11 +1163,15 @@ fn pact_caveats_meet_and_recheck_live_grant_state() {
             peer_owner_key: issuer.public_key(),
             pact_epoch: 1,
             scope_digest: [44; 32],
+            pact_nonce: [46; 16],
+            scope_epoch: 1,
             pact_scope: FederationPactScope {
                 lo_to_hi: wide.clone(),
                 hi_to_lo: wide.clone(),
             },
             effective_scope: wide.clone(),
+            narrowings: std::collections::BTreeMap::new(),
+            superseded_narrowings: std::collections::BTreeSet::new(),
             successor_vault_id: None,
             terminal_epoch: None,
         },

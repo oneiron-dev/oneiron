@@ -301,7 +301,9 @@ fn receipt_attestation_transcript_literal() {
         hard_purge_complete_at: 0x0102_0304_0506_0708,
         sweep_queued_at: Some(102),
     };
-    let body = encode_redaction_audit_receipt(input, &receipt_id, &identity).unwrap();
+    let body =
+        encode_redaction_audit_receipt(input, Vec::new(), Vec::new(), &receipt_id, &identity)
+            .unwrap();
 
     // The verification map must be the FINAL entry in bytes, its four
     // att_ keys in sorted (BTreeMap) order. Locate the value by the
@@ -389,6 +391,8 @@ fn no_remote_deletion_attestation_surface() {
         requester_vault_id: [2; 32],
         peer_vault_id: [3; 32],
         worlds: vec![],
+        page: 0,
+        pages: 1,
         epoch_cutoff: 7,
         ts: 42,
         nonce: [4; 16],
@@ -447,6 +451,8 @@ fn cooperative_request_rejects_noncanonical_scope_and_wrong_domain() {
         requester_vault_id: [2; 32],
         peer_vault_id: [3; 32],
         worlds: vec![],
+        page: 0,
+        pages: 1,
         epoch_cutoff: 7,
         ts: 42,
         nonce: [4; 16],

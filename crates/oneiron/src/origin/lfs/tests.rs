@@ -23,7 +23,8 @@ fn repo_id() -> EntityId {
 /// what real corruption looks like: no write path validated it, and the
 /// lookup row still claims the original digest and length.
 fn overwrite_stored_bytes(vault: &Vault, asset_id: EntityId, body: &[u8]) {
-    let payload = crate::test_util::entity_record(ENTITY_TYPE_ASSET, test_time(), LEARNED_AT, body);
+    let payload =
+        crate::test_util::entity_record(ENTITY_TYPE_ASSET, test_time(), LEARNED_AT, 0, body);
     vault
         .with_write_txn(|wtxn| {
             vault
