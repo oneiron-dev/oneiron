@@ -8,6 +8,7 @@ pub mod agent_definition_scans;
 pub mod archive_import;
 pub mod authority_view_grant;
 pub mod authority_world_undo;
+pub mod board_child_done;
 pub mod board_task_wakes;
 pub mod callable_skill;
 pub mod check_in;
