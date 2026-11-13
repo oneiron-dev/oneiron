@@ -24,8 +24,8 @@ use super::symbols::symbol_run;
 use super::work::{RepoOwnWork, open_local_repo, resolve_repo_queue_target};
 use super::{
     NO_PATHS, RepoMergeQueueEnqueueInput, RepoMergeQueueEnqueueOutput, RepoProposalResolveInput,
-    RepoProposalSubmitInput, RepoProposalSubmitOutput, RepoQueueEntryView, RepoRunAnswer,
-    RepoRunBinding, RepoRunStamp, refusal_error, repo_target,
+    RepoProposalSubmitInput, RepoProposalSubmitOutput, RepoQueueEntryView, RepoQueueSuccessor,
+    RepoRunAnswer, RepoRunBinding, RepoRunStamp, refusal_error, repo_target,
 };
 use crate::code_document::CodeOpProvenance;
 use crate::code_symbol::{CodeSymbolManifest, code_symbol_entity_id};
@@ -34,6 +34,7 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::git_wire::GitOid;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
+use crate::merge_queue::BatchState;
 use crate::merge_queue::{
     MergeBatch, MergeFile, MergeFileExpected, MergeProposal, MergeQueue, RepoQueueOrder,
     RepoQueuePredecessor,
@@ -697,6 +698,7 @@ impl Memory<'_> {
         let reads = |id: &EntityId| readable.contains(id);
         let mut rows = blockers.clone();
         rows.extend(readable.iter().copied());
+        let superseded_by = self.repo_entry_successor(binding, queue, &batch, &mut rows)?;
         let order = batch.run_order.ok_or(Error::InvariantViolation(
             "a run's queue entry lost its order",
         ))?;
@@ -708,6 +710,7 @@ impl Memory<'_> {
                 declaration: order.declaration,
                 state: batch.state,
                 drive,
+                superseded_by,
                 base_green: batch.base_green,
                 expected_head: batch.expected_head,
                 landed_head: batch.landed_head,
@@ -718,6 +721,38 @@ impl Memory<'_> {
             },
             rows,
         ))
+    }
+
+    /// What carried the run's Superseded entry `batch`, as its lane reads
+    /// it (QUEUE Q1 = A): the green successor batch when the lane reads that
+    /// successor's own completion receipt, which then joins `rows`; else
+    /// only that another batch did. `None` for an entry that is not
+    /// Superseded.
+    fn repo_entry_successor(
+        &self,
+        binding: &RepoRunBinding,
+        queue: &MergeQueue<'_>,
+        batch: &MergeBatch,
+        rows: &mut Vec<EntityId>,
+    ) -> MemoryResult<Option<RepoQueueSuccessor>> {
+        if batch.state != BatchState::Superseded {
+            return Ok(None);
+        }
+        let Some(successor) = batch
+            .drive
+            .as_ref()
+            .and_then(|drive| drive.overlap.as_ref())
+            .and_then(|link| link.resolution_batch.as_deref())
+        else {
+            return Ok(Some(RepoQueueSuccessor::AnotherBatch));
+        };
+        let completion = queue.batch_receipts(&queue.batch(successor)?)?.completion;
+        let readable = self.repo_lane_readable(binding, completion.into_iter().collect())?;
+        if readable.is_empty() {
+            return Ok(Some(RepoQueueSuccessor::AnotherBatch));
+        }
+        rows.extend(readable);
+        Ok(Some(RepoQueueSuccessor::Batch(successor.to_owned())))
     }
 }
 
