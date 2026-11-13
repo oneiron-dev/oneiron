@@ -314,7 +314,7 @@ fn compact_window(
     key: &crate::sync::types::WindowKey,
     erased: &BTreeSet<EntityId>,
 ) -> Result<CompactOutcome> {
-    compact_window_with(vault, key, erased, &mut WithdrawnSweep::default())
+    compact_window_with(vault, key, erased, &mut WithdrawnSweep::default(), false)
 }
 
 /// Compacts one CLOSED window: load `d:w:` + pending `u:w:` rows, scrub

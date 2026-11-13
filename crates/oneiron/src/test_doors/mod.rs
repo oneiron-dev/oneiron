@@ -31,6 +31,9 @@ pub mod dreamer_stage_line;
 pub mod esign_commitments;
 pub mod fanout_admission;
 pub mod feeds;
+pub mod free_time_cycle_writer;
+#[cfg(feature = "sync")]
+pub mod free_time_handoff;
 pub mod grant_roles;
 pub mod graph_ask_centre;
 pub mod house_link;
