@@ -268,6 +268,53 @@ pub(super) fn output_in_txn(
     Ok(())
 }
 
+/// The text of a held output revision, as the Coach's recipe reads it: an
+/// ARTIFACT version's bytes, or another entity's body at its revision (a
+/// MessagePack body as its served JSON). `None` when that revision no longer
+/// serves (withdrawn words, a body its reader refuses).
+pub(super) fn output_text_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    output: &ArchiveOutputRef,
+) -> Result<Option<String>> {
+    output_in_txn(vault, txn, output)?;
+    if entity_type_in_txn(vault, txn, &output.entity)? == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT
+    {
+        let Some(version) = vault
+            .blob_artifact_versions_in_txn(txn, &output.entity)?
+            .into_iter()
+            .find(|version| lower_hex(&version.content_hash) == output.revision)
+        else {
+            return Ok(None);
+        };
+        return Ok(vault
+            .read_blob_artifact_version_in_txn(txn, &output.entity, version.version)?
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()));
+    }
+    let Some(revision) = revision_ref(&output.revision) else {
+        return Ok(None);
+    };
+    let Some(row) = crate::vault::entity_revision::read_entity_revision_in_txn(
+        vault,
+        txn,
+        &output.entity,
+        crate::vault::entity_revision::ReadMode::Pinned(revision),
+    )?
+    else {
+        return Ok(None);
+    };
+    let body = row
+        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        .unwrap_or_default();
+    let mut cursor = body;
+    Ok(Some(match rmpv::decode::read_value(&mut cursor) {
+        Ok(value) if cursor.is_empty() => {
+            crate::batch::export::served_stored_messagepack_json(body, value).to_string()
+        }
+        _ => String::from_utf8_lossy(body).into_owned(),
+    }))
+}
+
 fn lower_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
