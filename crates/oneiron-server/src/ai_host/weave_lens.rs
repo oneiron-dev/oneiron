@@ -427,7 +427,9 @@ async fn render_listing(
         let Some(hosted) = hosted else {
             continue;
         };
-        let (frame, card) = hosted.lower(&surface)?;
+        let (frame, mut card) = hosted.lower(&surface)?;
+        // A replacing card carries its predecessor's `$state`, so the card
+        // answered is the render as held.
         match (&caller, &auth, owner) {
             // A run holds its card itself, and its end closes it (FIX 2086).
             (WeaveLensCaller::Run { run, .. }, _, owner) => {
@@ -435,17 +437,16 @@ async fn render_listing(
                     creator_run: run.to_hex(),
                     subscription: None,
                 });
-                server
+                card.render = server
                     .lens_frames
-                    .replace_for_run(*run, frame, card.render.clone(), owner)?;
+                    .replace_for_run(*run, frame, card.render.clone(), owner)
+                    .await?;
             }
             (_, Some(auth), Some(owner)) => {
-                server.lens_frames.replace_for_subscription(
-                    auth,
-                    frame,
-                    card.render.clone(),
-                    owner,
-                )?;
+                card.render = server
+                    .lens_frames
+                    .replace_for_subscription(auth, frame, card.render.clone(), owner)
+                    .await?;
             }
             (_, Some(auth), None) => server
                 .lens_frames

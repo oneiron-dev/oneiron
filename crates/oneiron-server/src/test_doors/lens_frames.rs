@@ -62,8 +62,8 @@ pub async fn replace_run_card(
     };
     server
         .lens_frames
-        .replace_for_run(run, frame, render.clone(), owner)?;
-    Ok(render)
+        .replace_for_run(run, frame, render, owner)
+        .await
 }
 
 /// The held `$state` of card `card_id`; `None` when the server holds no
