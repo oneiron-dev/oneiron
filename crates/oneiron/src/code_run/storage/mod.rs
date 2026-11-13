@@ -83,8 +83,8 @@ pub(crate) use self::replay_capsule::{
     contribution_pair_erase_candidates_in_txn, erase_capsule_actor_in_txn,
     erase_contribution_forks_in_txn, finalize_capsule, fork_execution_outputs, fork_response,
     fork_rows, fork_rows_in_txn, put_fork, put_staged_capsule, put_unavailable,
-    refresh_staged_request, route_prompt_at, step_replay_capsules_in_txn, store_fork_execution,
-    store_fork_response,
+    refresh_staged_request, request_as_stored, route_prompt_at, step_replay_capsules_in_txn,
+    store_fork_execution, store_fork_response,
 };
 pub(crate) use self::replay_capsule::{
     StrippedPieces, drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
