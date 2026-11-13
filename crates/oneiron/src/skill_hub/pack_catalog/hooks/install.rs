@@ -416,3 +416,55 @@ impl Vault {
         crate::runtime_hooks::sync_binding_cursor_in_txn(self, txn, binding, Some(&previous), &row)
     }
 }
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// Door for `oneiron-server`'s `tests/workflow_park_save_retry.rs`
+    /// ([WORKFLOW-PARK-FAIL-RETRYABLE], `runtime_hooks::verb::park_ask_door`):
+    /// `row` bound as the owner's bind writes one hook, in one write: its
+    /// CODE entity at `row.code` (a hook body of `body_hash`), then its
+    /// binding claim under the owner's envelope, marked the owner's own
+    /// write (the binding predicate is critical on the shipped manifest, so
+    /// an Approved stamp with no owner proof pends on the floor). A hook's
+    /// ask names that claim as its question, so the ask door reads it.
+    /// Answers the claim's id. Compiled only under
+    /// `--cfg oneiron_test_support`; never API.
+    ///
+    /// # Errors
+    ///
+    /// The owner's proof no longer valid, or the write's refusal.
+    pub(crate) fn bind_hook_row_for_test(
+        &self,
+        owner: &AuthenticatedOwner,
+        row: &PackHookBinding,
+        body_hash: [u8; 32],
+    ) -> Result<EntityId> {
+        let id = EntityId::now();
+        self.with_write_txn_grouped(|txn| {
+            let owner_id = owner.revalidate_in_txn(self, txn)?;
+            let owner_authored = owner.owner_authored_write_in_txn(self, txn)?;
+            let at = crate::unix_seconds_now();
+            let occurred = TimeRange { start: at, end: at };
+            let envelope = owner_envelope(owner, owner_id, &row.pack, &row.source)?;
+            let body = CodeArtifactBody::new(
+                format!("Hook {} of pack {}.", row.hook, row.pack),
+                body_hash,
+                format!("pack:{}@{}/hooks/{}", row.pack, row.body_hash, row.hook),
+            )
+            .with_class(CodeArtifactClass::Hook);
+            self.batch_in()
+                .with_owner_authored(Some(owner_authored))
+                .put(
+                    &row.code,
+                    crate::registry::ENTITY_TYPE_CODE_ARTIFACT,
+                    occurred,
+                    at,
+                    &encode_code_artifact_body(&body)?,
+                )
+                .claim_candidate(&id, binding_candidate(row)?, &envelope, occurred, at)
+                .apply(txn)?;
+            Ok(())
+        })?;
+        Ok(id)
+    }
+}

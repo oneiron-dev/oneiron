@@ -539,10 +539,10 @@ impl Vault {
             &WriteActor::new(inviter, EdgeActorClass::Human),
             &SharedVaultWrite::Admin(OrgAdminPower::AddMember),
         )?;
-        // Steward is the owner's to give, judged on the inviter's standing
-        // now: an Owner made an Admin while the invitation waited no longer
-        // gives it (FABLE-6988-1).
-        self.steward_given_by_owner_in_txn(txn, vault_id, inviter, invitation.role)?;
+        // Steward and Deputy are the owner's to give, judged on the
+        // inviter's standing now: an Owner made an Admin while the invitation
+        // waited no longer gives either (FABLE-6988-1).
+        self.reserved_role_given_by_owner_in_txn(txn, vault_id, inviter, invitation.role)?;
         let grants = self.set_member_role_in_txn(txn, vault_id, actor, invitation.role, now)?;
         invitation.state = SharedInvitationState::Accepted { at: now };
         self.put_invitation_in_txn(txn, &invitation)?;
