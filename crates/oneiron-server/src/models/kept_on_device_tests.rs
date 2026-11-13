@@ -12,11 +12,12 @@ use oneiron::llm::run_admission::{
 };
 use oneiron::recovery::checkpoint::RestoreReason;
 use oneiron::store::ports::ManualClock;
-use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EntityId, LlmStreamEvent, Vault, VaultConfig};
+use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EntityId, Vault, VaultConfig};
 use serde_json::json;
 
 use super::fallback_tests::{
-    T0, about, clocked_vault, kept, kept_here, portable_world, private_world, refusal, two_offers,
+    T0, about, clocked_vault, kept, kept_here, outcome, portable_world, private_world, refusal,
+    stream_outcome, two_offers,
 };
 use super::tests::{config, request, test_run, text_of};
 use super::*;
@@ -44,9 +45,9 @@ fn holds(rows: &[RunReceipt]) -> Vec<String> {
 
 /// Done means (Engine ruling): in a vault with a private world, a call that
 /// names no world never reaches a cloud rung after its offer on the device
-/// fails. It waits within its one wait for that offer, else returns the
-/// typed hold with a receipt. In a vault with no private world the same call
-/// falls back as before.
+/// fails. It retries that offer until its deadline (OF-305, FIX 8213), else
+/// returns the typed hold with a receipt. In a vault with no private world
+/// the same call falls back as before.
 #[tokio::test]
 async fn a_call_that_names_no_world_stays_on_the_device_while_any_world_does() {
     let first = FakeLlm::start(
@@ -67,23 +68,16 @@ async fn a_call_that_names_no_world_stays_on_the_device_while_any_world_does() {
     let answer = answer.expect("no world stays here: the cloud offer answers");
     assert_eq!(text_of(&answer.message), "from the cloud");
 
+    // A call held from the cloud retries the offer on the device until its
+    // deadline and answers from it: after its failure (a 500), in a stream
+    // too, and after its limit's wait. Each answer is read whole, then all
+    // are checked at once, so one run shows them all.
     private_world(&vault);
     first.push(Reply::Status(500));
-    let error = seat.ladder.generate(&run, call(), None).await;
-    assert_eq!(error.expect_err("held"), kept_here(None));
+    let failed = outcome(seat.ladder.generate(&run, call(), None).await);
     first.push(Reply::Status(500));
-    let mut events = seat.ladder.stream(&run, call(), None).expect("a stream");
-    let error = events.next().await.expect("an event").expect_err("held");
-    assert_eq!(error, kept_here(None));
-    assert_eq!(second.seen().len(), 1, "no held call reached the cloud");
-    assert_eq!(
-        holds(&receipts.rows()).len(),
-        2,
-        "each held call is receipted"
-    );
-
-    // A call held from the cloud waits for the offer on the device, within
-    // its one wait, and answers from it.
+    let events = seat.ladder.stream(&run, call(), None).expect("a stream");
+    let streamed = stream_outcome(events).await;
     let limit = |seconds: &str| {
         refusal(
             429,
@@ -93,21 +87,37 @@ async fn a_call_that_names_no_world_stays_on_the_device_while_any_world_does() {
     };
     first.push(limit("1"));
     let answer = seat.ladder.generate(&run, call(), None).await;
-    let answer = answer.expect("the offer on the device answers after the wait");
-    assert_eq!(text_of(&answer.message), "from the device");
-    assert_eq!(
-        answer.usage.raw_provider["passed_over"][1],
-        json!({"rung": 1, "provider": "second", "model": "big", "passed": "kept_on_device"})
-    );
+    let passed = answer.as_ref().map_or(serde_json::Value::Null, |answer| {
+        answer.usage.raw_provider["passed_over"][1].clone()
+    });
+    let waited = outcome(answer);
 
     // Past the longest wait, the hold says when that offer is back.
     clock.set(T0 + 10);
     first.push(limit("3600"));
     let error = seat.ladder.generate(&run, call(), None).await;
-    assert_eq!(error.expect_err("held"), kept_here(Some((3600, T0 + 3610))));
-    assert_eq!(second.seen().len(), 1, "no held call reached the cloud");
     let held = holds(&receipts.rows());
-    assert_eq!(held.len(), 4);
+    assert_eq!(
+        (
+            failed.as_str(),
+            streamed.as_str(),
+            waited.as_str(),
+            second.seen().len(),
+            held.len(),
+            error.as_ref().err(),
+            passed
+        ),
+        (
+            "ok from the device",
+            "ok from the device",
+            "ok from the device",
+            1,
+            4,
+            Some(&kept_here(Some((3600, T0 + 3610)))),
+            json!({"rung": 1, "provider": "second", "model": "big", "passed": "kept_on_device"})
+        ),
+        "no held call reached the cloud, and each held call is receipted"
+    );
     assert!(held.iter().all(|model| model.contains("big")), "{held:?}");
 }
 
@@ -229,7 +239,7 @@ async fn a_world_made_private_while_its_fallback_is_admitted_never_goes_out() {
 /// so the one wait goes past both cloud offers to the offer on the device,
 /// which then answers.
 #[tokio::test]
-async fn a_stream_spends_its_one_wait_on_an_offer_its_world_may_use() {
+async fn a_stream_waits_until_its_deadline_for_an_offer_its_world_may_use() {
     let limit = |seconds: &str| {
         refusal(
             429,
@@ -262,32 +272,33 @@ rungs = [{{ model = "local:small" }}, {{ model = "cloud:big" }}, {{ model = "oth
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
     let (other, world) = (portable_world(&vault), portable_world(&vault));
     // Each offer refuses; after the call's wait the first cloud offer refuses
-    // again. The local offer rests until T0 + 3, both cloud ones until T0 + 2.
-    let error = seat
-        .ladder
-        .generate(&test_run(), about(seat, other), None)
-        .await;
-    assert!(error.is_err(), "every offer rests");
+    // again. The local offer rests until T0 + 3, both cloud ones until T0 + 2;
+    // the call waits until its deadline (OF-305, FIX 8213), so an offer whose
+    // refusals run out answers. Each answer is read whole, then all are
+    // checked at once, so one run shows them all.
+    let portable = outcome(
+        seat.ladder
+            .generate(&test_run(), about(seat, other), None)
+            .await,
+    );
 
     let sink = PrivateWhen::new(&vault, world, cloud_admitted);
     let run = run_into(sink.clone());
-    let mut events = seat
+    let events = seat
         .ladder
         .stream(&run, about(seat, world), None)
         .expect("a stream");
-    let mut text = String::new();
-    while let Some(event) = events.next().await {
-        if let LlmStreamEvent::TextDelta { text: delta, .. } = event.expect("an answer") {
-            text.push_str(&delta);
-        }
-    }
-    assert_eq!(text, "from the device");
+    let streamed = stream_outcome(events).await;
     assert_eq!(
-        (cloud.seen().len(), other_cloud.seen().len()),
-        (2, 1),
+        (
+            portable.as_str(),
+            streamed.as_str(),
+            (cloud.seen().len(), other_cloud.seen().len()),
+            holds(&sink.rows.rows()).len()
+        ),
+        ("ok from the device", "ok from the device", (3, 2), 0),
         "the world's text stayed here"
     );
-    assert_eq!(holds(&sink.rows.rows()).len(), 2);
 }
 
 /// Review repro (Astra R4 P2): a cloud offer sent while its world may leave,
@@ -411,8 +422,8 @@ async fn a_checkpoint_carries_no_offer_cooldown() {
 /// cannot read and no longer reads a reply that names no finish as finished.
 /// Neither takes a call the floor holds off the device. An unreadable tool
 /// request ends the call with its decode error on any world; an empty reply
-/// hands the call on, so it is held with the typed outcome; an unfinished
-/// answer is the device's answer.
+/// hands the call on, and held off the cloud it retries the device until its
+/// deadline (OF-305, FIX 8213), whose unfinished answer is its answer.
 #[tokio::test]
 async fn a_reply_the_device_cannot_read_never_reaches_the_cloud() {
     let body = |body: serde_json::Value| Reply::Error {
@@ -438,15 +449,23 @@ async fn a_reply_the_device_cannot_read_never_reaches_the_cloud() {
     let error = seat.ladder.generate(&run, call(), None).await;
     let decode = oneiron::LlmError::from(oneiron::FatalLlmError::InvalidRequest);
     assert_eq!(error.expect_err("an unreadable tool request"), decode);
-    let error = seat.ladder.generate(&run, call(), None).await;
-    assert_eq!(error.expect_err("an empty reply"), kept_here(None));
     let answer = seat.ladder.generate(&run, call(), None).await;
-    let answer = answer.expect("the device's unfinished answer");
-    assert_eq!(text_of(&answer.message), "from the device");
+    let finish = answer
+        .as_ref()
+        .ok()
+        .map(|answer| answer.finish_reason.clone());
+    let answer = outcome(answer);
     let unreported = oneiron::FinishReason::Other {
         name: "unreported".into(),
     };
-    assert_eq!(answer.finish_reason, unreported);
-    assert_eq!(first.seen().len(), 3);
-    assert!(second.seen().is_empty(), "the text stayed here");
+    assert_eq!(
+        (
+            answer.as_str(),
+            first.seen().len(),
+            second.seen().len(),
+            finish
+        ),
+        ("ok from the device", 3, 0, Some(unreported)),
+        "the empty reply's call answers the device's unfinished answer; the text stayed here"
+    );
 }

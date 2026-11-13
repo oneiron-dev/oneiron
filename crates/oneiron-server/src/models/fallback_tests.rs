@@ -126,6 +126,27 @@ pub(super) fn kept_here(back: Option<(u64, u64)>) -> LlmError {
     .into()
 }
 
+/// A call's answer as one line: `ok` and its text, or `err` and its error.
+pub(super) fn outcome(answer: LlmResult<LlmResponse>) -> String {
+    match answer {
+        Ok(answer) => format!("ok {}", text_of(&answer.message)),
+        Err(error) => format!("err {error:?}"),
+    }
+}
+
+/// A stream's answer as one line, as [`outcome`] gives a call's.
+pub(super) async fn stream_outcome(mut events: oneiron::LlmStream<'static>) -> String {
+    let mut text = String::new();
+    while let Some(event) = events.next().await {
+        match event {
+            Ok(LlmStreamEvent::TextDelta { text: delta, .. }) => text.push_str(&delta),
+            Ok(_) => {}
+            Err(error) => return format!("err {error:?}"),
+        }
+    }
+    format!("ok {text}")
+}
+
 /// The text a seat streams for one call, which must answer.
 async fn streamed(seat: &Seat) -> String {
     let mut events = seat
@@ -812,12 +833,13 @@ rungs = [{{ model = "first:small" }}, {{ model = "second:big" }}]
     assert_eq!(answer.usage.raw_provider["rung"], json!(1));
 }
 
-/// Review repro (Sol R2 P2): after its one wait a call tries every offer
-/// back, not only the one it waited for, in a stream too, and a refusal
-/// then names each offer's current end: a later refusal supersedes the
-/// reset the call waited for.
+/// Review repro (Sol R2 P2): after a wait a call tries every offer back, not
+/// only the one it waited for, in a stream too. A rate-limited chain backs
+/// off and retries until the call's deadline (OF-305, FIX 8213), so a call
+/// whose offers refuse again after a wait waits again, and the first offer
+/// whose refusals run out answers.
 #[tokio::test]
-async fn after_its_one_wait_a_call_tries_every_offer_back_and_names_the_current_end() {
+async fn a_resting_call_tries_every_offer_back_until_its_deadline() {
     let wait = |seconds: &str| {
         refusal(
             429,
@@ -849,28 +871,51 @@ async fn after_its_one_wait_a_call_tries_every_offer_back_and_names_the_current_
     assert_eq!(streamed(seat).await, "second after the wait");
     assert_eq!((first.seen().len(), second.seen().len()), (4, 4));
 
-    // And in a stream that opens with both offers resting until one time.
+    // A call whose offers each refuse twice waits twice: the first offer's
+    // queue is spent (a 500), and the second answers. Each later answer is
+    // read whole, then all are checked at once, so one run shows them all.
     clock.set(T0 + 400);
     for _ in 0..2 {
         first.push(wait("1"));
         second.push(wait("1"));
     }
-    let error = ask(seat).await.expect_err("each refused twice");
-    assert_eq!(error, limited(1, T0 + 402));
+    let twice = outcome(ask(seat).await);
+    let twice_seen = (first.seen().len(), second.seen().len());
     first.push(wait("120"));
-    assert_eq!(streamed(seat).await, "second after the wait");
-    assert_eq!((first.seen().len(), second.seen().len()), (7, 7));
+    let events = seat
+        .ladder
+        .stream(&test_run(), request(&seat.model, "stream this"), None)
+        .expect("a stream");
+    let stream = stream_outcome(events).await;
+    let stream_seen = (first.seen().len(), second.seen().len());
 
-    // When nothing answers after the wait, the refusal names the end now
-    // first: the other offer's, not the one the call waited for.
+    // When nothing is back after a wait, the call waits for the offer back
+    // first (the other one, not the one it waited for), which answers.
     clock.set(T0 + 600);
     for reply in [wait("1"), wait("120")] {
         first.push(reply);
     }
     second.push(wait("2"));
-    let error = ask(seat).await.expect_err("nothing is back");
-    assert_eq!(error, limited(1, T0 + 602));
-    assert_eq!((first.seen().len(), second.seen().len()), (9, 8));
+    let later = outcome(ask(seat).await);
+    let later_seen = (first.seen().len(), second.seen().len());
+    assert_eq!(
+        (
+            twice.as_str(),
+            twice_seen,
+            stream.as_str(),
+            stream_seen,
+            later.as_str(),
+            later_seen
+        ),
+        (
+            "ok second after the wait",
+            (7, 7),
+            "ok second after the wait",
+            (8, 8),
+            "ok second after the wait",
+            (10, 10)
+        )
+    );
 }
 
 /// CORRECTION-MODEL-2: a `PendingReceipt` persisted before `model_id`
