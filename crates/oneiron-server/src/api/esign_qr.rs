@@ -4,9 +4,11 @@
 //! the address bar and posts it only in the `x-oneiron-esign-qr-capability`
 //! header of `/esign/verify/report`, which answers the vault's projection
 //! ([`oneiron::blob_artifact::esign::EsignQrPage`]): metadata, each item's
-//! hash and its seal-time validation, never the PDF. Every response is
-//! noindex, no-referrer and no-store. An unusable capability gets one
-//! refusal, and no call is refused for its rate.
+//! hash and its seal-time validation, never the PDF. The page says in two
+//! separate sentences that a reader without the signer's trust root and a
+//! changed document are different facts (ARCH-0064a section 9). Every
+//! response is noindex, no-referrer and no-store. An unusable capability
+//! gets one refusal, and no call is refused for its rate.
 use crate::server::SyncServer;
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
@@ -42,7 +44,7 @@ async fn page() -> Response {
         "default-src 'none'; script-src 'sha256-{digest}'; connect-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     );
     let html = format!(
-        "<!doctype html><html lang=en><meta charset=utf-8><meta name=referrer content=no-referrer><meta name=robots content=noindex><title>Document verification</title><main><h1>Document verification</h1><p id=status></p><dl id=report></dl></main><script>{script}</script></html>"
+        "<!doctype html><html lang=en><meta charset=utf-8><meta name=referrer content=no-referrer><meta name=robots content=noindex><title>Document verification</title><main><h1>Document verification</h1><p id=status></p><dl id=report></dl><div id=reading></div></main><script>{script}</script></html>"
     );
     (
         [(header::CONTENT_SECURITY_POLICY, csp)],

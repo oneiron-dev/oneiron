@@ -2,16 +2,26 @@
   "use strict";
   const status = document.getElementById("status");
   const report = document.getElementById("report");
+  const reading = document.getElementById("reading");
   const token = location.hash.slice(1);
   // The capability leaves the address bar and the history entry before any
   // request is made.
   history.replaceState(null, "", location.pathname);
+  // Another QR opened in this tab changes only the fragment, which reruns
+  // nothing here: reload, so its own capability is read, scrubbed and
+  // checked, and no earlier report stays on the screen.
+  window.addEventListener("hashchange", () => location.reload());
   const row = (label, value) => {
     const term = document.createElement("dt");
     term.textContent = label;
     const detail = document.createElement("dd");
     detail.textContent = value;
     report.append(term, detail);
+  };
+  const say = (text) => {
+    const paragraph = document.createElement("p");
+    paragraph.textContent = text;
+    reading.append(paragraph);
   };
   const when = (seconds) => new Date(seconds * 1000).toISOString();
   if (!/^[0-9a-f]{64}$/.test(token)) {
@@ -42,14 +52,31 @@
       for (const item of page.items) {
         const name = `Item ${item.item + 1}`;
         row(`${name} SHA-256`, item.sha256);
+        // Only a seal whose own verification passed commits: every
+        // applicable check ran and passed on these bytes when they were
+        // sealed. What the seal could not reach is listed beside it.
         row(
-          `${name} seal`,
-          `${item.profile.achieved} of ${item.profile.requested}; self-verification ${item.self_verify}`,
+          `${name} verified when sealed`,
+          item.self_verify === "passed"
+            ? "every applicable check ran and passed"
+            : `verification ${item.self_verify}`,
+        );
+        row(
+          `${name} seal profile`,
+          `${item.profile.achieved} of ${item.profile.requested}`,
         );
         for (const shortfall of item.profile.degraded) {
           row(`${name} not reached`, `${shortfall.requested}: ${shortfall.reason}`);
         }
       }
+      // Trust and change are two different facts (ARCH-0064a section 9):
+      // a reader without the signer's trust root never reads as a change.
+      say(
+        "If your PDF reader cannot validate the seal's signature, your reader does not have the trust root for this signer. That is a fact about your reader, not about the file.",
+      );
+      say(
+        "If the SHA-256 of your copy differs from the item's SHA-256 above, this document was changed after signing. If it is the same, nothing has changed since it was sealed.",
+      );
     })
     .catch(() => {
       status.textContent =
