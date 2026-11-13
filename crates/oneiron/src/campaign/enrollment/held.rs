@@ -162,8 +162,7 @@ fn queue_held_owner_ask_in_txn(
             &vault.store,
             txn,
             facts.campaign_ref,
-            facts.program_ref,
-            facts.step_ref,
+            facts.payload_digest,
         )?
     } else {
         None
