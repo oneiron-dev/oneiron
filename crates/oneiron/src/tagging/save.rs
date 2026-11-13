@@ -522,6 +522,19 @@ pub(crate) fn role_hits_in_txn(
         .collect())
 }
 
+/// The role rung's answer for one mention ([`Linker::role_link`]).
+enum RoleRung {
+    /// The rung links the mention: one person a settled Approved edge
+    /// names, or two or more persons as candidates.
+    Link(MentionLink),
+    /// One person only an unsure edge names: the mention keeps its
+    /// provisional entity, and the re-check asks about that person.
+    Unsure,
+    /// The mention names no role, the key found a real person, or no edge
+    /// names anyone.
+    Abstain,
+}
+
 /// Links mentions over the identity key, over the speaker's role edges for a
 /// mention of a relationship, and over the phonetic postings when the key
 /// misses. It never compares names itself: candidates come only
@@ -729,16 +742,17 @@ impl<'v> Linker<'v> {
         Ok(found)
     }
 
-    /// The role rung's link for a person mention that names someone by
-    /// their relationship to the speaker (`my manager`), when the rung
-    /// decides it. Two or more persons the speaker's role edges name are
-    /// its candidates, a question the nightly re-check asks, never a merge.
-    /// One person an Approved edge names is the link, in the form of an
-    /// exact key hit: a known role edge hard-links (ARCH-0024 signal 3). One
-    /// only an Auto edge names is an unsure match (OF-123): the rung leaves
-    /// the mention to its provisional entity, and the re-check asks whether
-    /// it is that person or someone new. A real person among `keyed`, the
-    /// key's candidates, wins over the rung (signal 1).
+    /// The role rung's answer for a person mention that names someone by
+    /// their relationship to the speaker (`my manager`). Two or more
+    /// persons the speaker's role edges name are its candidates, a question
+    /// the nightly re-check asks, never a merge. One person a settled
+    /// Approved edge names is the link, in the form of an exact key hit: a
+    /// known role edge hard-links (ARCH-0024 signal 3). One only an unsure
+    /// edge names (Auto, Proposed, or held for its owner's answer) is an
+    /// unsure match (OF-123): the rung leaves the mention to its provisional
+    /// entity, and the re-check asks whether it is that person or someone
+    /// new. A real person among `keyed`, the key's candidates, wins over the
+    /// rung (signal 1).
     fn role_link(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -747,21 +761,27 @@ impl<'v> Linker<'v> {
         message: &EntityId,
         hint_read: HintRead<'_, '_>,
         keyed: &[EntityId],
-    ) -> Result<Option<MentionLink>> {
+    ) -> Result<RoleRung> {
         let Some(word) = role::role_word(kind, mention) else {
-            return Ok(None);
+            return Ok(RoleRung::Abstain);
         };
         for id in keyed {
             if provisional::get_in_txn(&self.vault.store, txn, id)?.is_none() {
-                return Ok(None);
+                return Ok(RoleRung::Abstain);
             }
         }
         let hits = self.role_hits(txn, kind, &word, message, hint_read)?;
         let sure = hits.len() == 1 && hits.values().all(|approved| *approved);
-        Ok((hits.len() >= 2 || sure).then(|| MentionLink::Candidates {
-            kind,
-            entities: hits.into_keys().collect(),
-        }))
+        Ok(if hits.len() >= 2 || sure {
+            RoleRung::Link(MentionLink::Candidates {
+                kind,
+                entities: hits.into_keys().collect(),
+            })
+        } else if hits.len() == 1 {
+            RoleRung::Unsure
+        } else {
+            RoleRung::Abstain
+        })
     }
 
     /// Links a mention said in `message` by its own name: a real person the
@@ -771,7 +791,9 @@ impl<'v> Linker<'v> {
     /// two or more, or a provisional entity minted for it. One person who
     /// only sounds like the name is an unsure match: the mention mints, and
     /// the nightly re-check asks whether it is that person or someone new
-    /// (OF-123).
+    /// (OF-123). One person only an unsure role edge names is the same
+    /// unsure match, and the phonetic rung is not asked: persons who only
+    /// sound like the role words never stand in for the one the edge names.
     fn link(
         &mut self,
         txn: &mut heed::RwTxn<'_>,
@@ -781,10 +803,12 @@ impl<'v> Linker<'v> {
         hint_read: HintRead<'_, '_>,
     ) -> Result<MentionLink> {
         let mut entities = self.candidates(txn, kind, mention)?;
-        if let Some(link) = self.role_link(txn, kind, mention, message, hint_read, &entities)? {
-            return Ok(link);
-        }
-        if entities.is_empty() {
+        let unsure_role = match self.role_link(txn, kind, mention, message, hint_read, &entities)? {
+            RoleRung::Link(link) => return Ok(link),
+            RoleRung::Unsure => true,
+            RoleRung::Abstain => false,
+        };
+        if entities.is_empty() && !unsure_role {
             entities = self.sounds_like(txn, kind, mention)?;
             if entities.len() < 2 {
                 entities.clear();
