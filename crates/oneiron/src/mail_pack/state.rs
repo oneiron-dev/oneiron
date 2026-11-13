@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::quota::MailQuotaWindow;
 use super::source::MailCopySetting;
 use super::wire::MailAttachmentRef;
 use crate::side_table::{self, Named, SideTable};
@@ -85,6 +86,10 @@ pub(super) struct MailSyncState {
     /// [`OWN_ADDRESSES_REFRESH_SECS`] after it.
     #[serde(default)]
     pub(super) own_addresses_read_at: Option<u64>,
+    /// Where the source's provider quota windows stand, and until when it
+    /// rests ([`super::quota`]).
+    #[serde(default)]
+    pub(super) quota: MailQuotaWindow,
 }
 
 /// How long a provider's answer for a mailbox's own addresses stands before
@@ -405,6 +410,11 @@ pub struct MailSyncStatusView {
     pub last_step_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// Until when the source rests, its provider quota spent for the
+    /// minute or the day, or its provider having answered that its rate is
+    /// spent: no step reads the provider before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_paused_until: Option<u64>,
 }
 
 /// The status view of `source` in `txn`.
@@ -432,5 +442,6 @@ pub(super) fn status_view_in(
         claim_rechecks_obsolete: rechecks.obsolete,
         last_step_at: state.last_step_at,
         last_error: state.last_error,
+        quota_paused_until: state.quota.resting_at(crate::unix_seconds_now()),
     })
 }

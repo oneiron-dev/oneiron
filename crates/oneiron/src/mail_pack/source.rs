@@ -238,11 +238,43 @@ pub struct MailSourceView {
 /// Storage failures.
 pub fn active_sources(vault: &Vault) -> Result<Vec<(EntityId, MailSourceKind)>> {
     let txn = vault.store.env.read_txn()?;
-    if super::pack::require_pack_active_in(vault, &txn).is_err() {
+    active_sources_in(vault, &txn)
+}
+
+/// The Active sources a host steps now: [`active_sources`], less each
+/// mailbox that rests until later, its provider quota spent for the minute
+/// or the day or its provider having answered that its rate is spent
+/// (MAIL-GOOGLE = A).
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn due_sources(vault: &Vault) -> Result<Vec<(EntityId, MailSourceKind)>> {
+    let txn = vault.store.env.read_txn()?;
+    let now = crate::unix_seconds_now();
+    let mut due = Vec::new();
+    for (source, kind) in active_sources_in(vault, &txn)? {
+        let resting = kind.is_mailbox()
+            && super::state::SYNC
+                .get(&vault.store, &txn, &source)?
+                .is_some_and(|state| state.quota.resting_at(now).is_some());
+        if !resting {
+            due.push((source, kind));
+        }
+    }
+    Ok(due)
+}
+
+/// The pack's Active sources and the kind of each in `txn`.
+fn active_sources_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(EntityId, MailSourceKind)>> {
+    if super::pack::require_pack_active_in(vault, txn).is_err() {
         return Ok(Vec::new());
     }
     let mut active = Vec::new();
-    for row in SOURCES.iter_from(&vault.store, &txn, &[])? {
+    for row in SOURCES.iter_from(&vault.store, txn, &[])? {
         let (source, row) = row?;
         if row.status == MailSourceStatus::Active {
             active.push((source, row.kind));

@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::quota::MailQuota;
 use super::source::{MailProvider, MailSourceRow};
 use crate::{EntityId, Result};
 
@@ -291,4 +292,19 @@ pub trait MailProviderWire {
         provider_id: &str,
         attachment: &MailAttachmentRef,
     ) -> Result<Option<Vec<u8>>>;
+
+    /// The provider's per-user limits and each call's cost, which one step
+    /// of the importer spends within. `None` by default: a wire that
+    /// declares none is never charged, and only a rate-limit answer
+    /// ([`super::MAIL_WIRE_RATE_LIMITED`]) rests its source.
+    fn quota(&self) -> Option<MailQuota> {
+        None
+    }
+
+    /// The answer bytes this wire has read from its provider so far, failure
+    /// answers included: the importer counts each call's against the day's
+    /// download cap. 0 by default.
+    fn bytes_read(&self) -> u64 {
+        0
+    }
 }

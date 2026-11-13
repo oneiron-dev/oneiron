@@ -12,8 +12,14 @@
 //! mailbox never fills another mailbox's source, even one replaced at its
 //! door between two reads.
 //!
+//! The wire declares Gmail's per-user quota and counts the bytes it reads,
+//! so the importer paces each step within them ([`GMAIL_MAIL_QUOTA`]); a
+//! 429, or a 403 for a usage limit, answers
+//! [`MAIL_WIRE_RATE_LIMITED`](super::MAIL_WIRE_RATE_LIMITED).
+//!
 //! Call it from a blocking context: `reqwest::blocking` owns its own runtime.
 
+use std::cell::Cell;
 use std::collections::BTreeSet;
 
 use base64::Engine as _;
@@ -21,6 +27,7 @@ use reqwest::header::{AUTHORIZATION, HeaderValue};
 use serde_json::Value;
 
 use super::credential::WireReads;
+use super::quota::{GMAIL_MAIL_QUOTA, MailQuota};
 use super::rest::{
     self, FreshGoogleTokens, RestAnswer, VerifiedCredentials, array, header_value, html_text,
     refused, text_of,
@@ -66,6 +73,8 @@ pub struct HttpGmailMailWire<'v> {
     /// The fresh access tokens its sources' stored grants were exchanged
     /// for (fix list row 16311).
     tokens: FreshGoogleTokens,
+    /// The answer bytes read from Gmail so far.
+    read_bytes: Cell<u64>,
 }
 
 impl<'v> HttpGmailMailWire<'v> {
@@ -80,6 +89,7 @@ impl<'v> HttpGmailMailWire<'v> {
             client: rest::https_client()?,
             verified: VerifiedCredentials::new(),
             tokens: FreshGoogleTokens::new(),
+            read_bytes: Cell::new(0),
         })
     }
 
@@ -96,13 +106,15 @@ impl<'v> HttpGmailMailWire<'v> {
             Some(profile) if url == GMAIL_PROFILE_URL && query.is_empty() => {
                 Ok(RestAnswer::Found(profile))
             }
-            _ => rest::send(
+            _ => rest::send_counted(
                 self.client
                     .get(url)
                     .query(query)
                     .header(AUTHORIZATION, auth),
+                &self.read_bytes,
             ),
         })?
+        .unless_rate_limited()?
         .found_or_gone("gmail_mail")
     }
 
@@ -133,7 +145,8 @@ impl<'v> HttpGmailMailWire<'v> {
                         .client
                         .get(GMAIL_PROFILE_URL)
                         .header(AUTHORIZATION, auth.clone());
-                    let profile = rest::send(request)?
+                    let profile = rest::send_counted(request, &self.read_bytes)?
+                        .unless_rate_limited()?
                         .found_or_gone("gmail_mail")?
                         .ok_or_else(|| refused("gmail_mail_profile_not_found"))?;
                     reads_mailbox(&profile, source)?;
@@ -294,8 +307,9 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
                     .get(url.as_str())
                     .query(&params)
                     .header(AUTHORIZATION, auth);
-                rest::send_raw_header_block(request)
+                rest::send_raw_header_block(request, &self.read_bytes)
             })?
+            .unless_rate_limited()?
             .found_or_gone("gmail_mail")?
             .ok_or_else(|| refused("gmail_mail_message_not_found"))?;
         Ok(Some(super::mime::raw_address_headers(&header_block)))
@@ -444,6 +458,14 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
             Some(id) => self.attachment_by_id(source, &message_url, id),
             None => Ok(None),
         }
+    }
+
+    fn quota(&self) -> Option<MailQuota> {
+        Some(GMAIL_MAIL_QUOTA)
+    }
+
+    fn bytes_read(&self) -> u64 {
+        self.read_bytes.get()
     }
 }
 

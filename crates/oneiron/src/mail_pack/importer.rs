@@ -12,6 +12,10 @@
 //! 4. fills in the bodies of messages that landed with their headers only,
 //!    newest first.
 //!
+//! Each step spends within its provider's per-user quota (`quota.rs`):
+//! the change feed may take the whole minute, the copy three quarters of it,
+//! and a step out of quota ends as a pause, with what landed kept.
+//!
 //! Trash, spam and drafts never land. Every provider call runs outside any
 //! vault transaction; each message lands in its own commit with its source
 //! audience binding ([`super::landing`]). Imported mail wakes no agent: it is
@@ -25,6 +29,7 @@ use super::provider_delete::{
     ProviderDeleteOutcome, apply_provider_delete, restore_from_provider_trash, resume_owed_forgets,
     update_labels,
 };
+use super::quota::{MeteredMailWire, pause_is_no_failure};
 use super::source::{
     MailCopySetting, MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES,
     proven_own_address_set,
@@ -95,6 +100,12 @@ pub struct MailSyncReport {
     /// Opened attachments fetched into their artifacts.
     #[serde(default)]
     pub attachments_stored: u64,
+    /// Until when the source rests, its provider quota spent for the minute
+    /// or the day, or its provider having answered that its rate is spent:
+    /// the step stopped there, kept what landed, and no step reads the
+    /// provider before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_paused_until: Option<u64>,
 }
 
 impl MailSyncReport {
@@ -683,7 +694,10 @@ impl Vault {
     /// through `wire`, under the vault owner's write authority (the rows land
     /// bound to the source's audience; the owner's authority reads none of
     /// them). A provider failure is kept on the source for its owner and
-    /// returned; what landed before it stays.
+    /// returned; what landed before it stays. The step spends within the
+    /// quota `wire` declares, in windows the source keeps: one out of quota,
+    /// or rate-limited by its provider, stops there, answers
+    /// `quota_paused_until`, and is no failure.
     pub fn mail_sync_step(
         &self,
         owner: &AuthenticatedOwner,
@@ -691,15 +705,18 @@ impl Vault {
         wire: &dyn MailProviderWire,
         budget: MailSyncBudget,
     ) -> MemoryResult<MailSyncReport> {
-        let row = {
+        let (row, window) = {
             let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
             require_pack_active_in(self, &txn)?;
-            SOURCES
+            let row = SOURCES
                 .get(&self.store, &txn, &source_ref)?
                 .filter(|row| row.kind != MailSourceKind::Calendar)
                 .filter(|row| row.status == MailSourceStatus::Active)
-                .ok_or_else(|| MemoryError::bad_request("no syncing mailbox source by that ref"))?
+                .ok_or_else(|| MemoryError::bad_request("no syncing mailbox source by that ref"))?;
+            let state = SYNC.get(&self.store, &txn, &source_ref)?;
+            (row, state.unwrap_or_default().quota)
         };
+        let metered = MeteredMailWire::new(wire, window);
         let at = crate::unix_seconds_now();
         let newer_than = match row.copy {
             MailCopySetting::RecentMonths { months } => {
@@ -715,7 +732,7 @@ impl Vault {
                 ..MailSyncSource::of(source_ref, &row)
             },
             row,
-            wire,
+            wire: &metered,
             landing: Landing::new(self, owner, source_ref, at)?,
             newer_than,
             at,
@@ -738,6 +755,8 @@ impl Vault {
                 step.write_state(|state| state.anchor = Some(anchor))?;
             }
             step.history(budget.history_pages)?;
+            // The copy leaves a quarter of the minute to the change feed.
+            metered.set_live(false);
             step.backfill(budget.list_pages)?;
             step.bodies(budget.bodies)?;
             let stored = super::attachments::fetch_waiting_attachments(
@@ -752,14 +771,18 @@ impl Vault {
             step.refresh_own_addresses()?;
             Ok(())
         })();
+        let outcome = pause_is_no_failure(outcome);
+        step.report.quota_paused_until = metered.resting_until(crate::unix_seconds_now());
         let error = outcome
             .as_ref()
             .err()
             .map(|error| error.message.clone())
             .or(owed);
+        let window = metered.window();
         step.write_state(|state| {
             state.last_step_at = Some(at);
             state.last_error = error;
+            state.quota = window;
         })?;
         outcome?;
         step.report.copy_done = step.state()?.backfill_done;
