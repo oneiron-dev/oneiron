@@ -221,31 +221,39 @@ fn a_first_name_alone_takes_no_phonetic_link() {
     assert_mints(&vault, link);
 }
 
-/// "Owen Snow" and Owen Smith share the Soundex code of the whole name,
-/// O525, which stops inside the last name. The last names' own codes, S500
-/// and S530, differ, so Owen Smith is not a candidate and the mention mints
-/// a provisional entity, as on main.
+/// "Robert Jones" and Robert Smith share the Soundex code of the whole
+/// name, R163, because the first name's consonants fill all four of its
+/// characters. The last names' own codes, J520 and S530, differ, so Robert
+/// Smith is not a candidate and the mention mints, as on main.
 #[test]
-fn a_last_name_that_sounds_different_takes_no_phonetic_link() {
-    let dir = tempfile::tempdir().expect("dir");
-    let vault = open(&dir);
-    person(&vault, "Owen Smith");
-
-    let (_, link) = save(&vault, "Owen Snow called.", "Owen Snow");
-
-    assert_mints(&vault, link);
+fn a_shared_first_name_takes_no_phonetic_link() {
+    assert_no_phonetic_link("Robert Smith", "Robert Jones");
 }
 
-/// The whole name's Soundex code of "Owen Mori Jones" ends before its last
-/// part: O562, the same as Owen Mori Smith's. The last parts' codes, J520
+/// "Owen Snow" and Owen Smith share the Soundex code of the whole name,
+/// O525, which stops inside the last name. The last names' own codes, S500
 /// and S530, differ, so the mention mints, as on main.
 #[test]
-fn a_different_last_part_past_the_whole_name_code_takes_no_phonetic_link() {
+fn a_last_name_that_sounds_different_takes_no_phonetic_link() {
+    assert_no_phonetic_link("Owen Smith", "Owen Snow");
+}
+
+/// A family name written first fills the whole name's Soundex code alone:
+/// "Morimoto Owen" and Morimoto Yuki are both M653. The given names' codes,
+/// O500 and Y200, differ, so the mention mints, as on main.
+#[test]
+fn a_shared_family_name_written_first_takes_no_phonetic_link() {
+    assert_no_phonetic_link("Morimoto Yuki", "Morimoto Owen");
+}
+
+/// With only `person_name` in the vault, a mention of `mention` is not
+/// their candidate: it mints a provisional person.
+fn assert_no_phonetic_link(person_name: &str, mention: &str) {
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(&dir);
-    person(&vault, "Owen Mori Smith");
+    person(&vault, person_name);
 
-    let (_, link) = save(&vault, "Owen Mori Jones called.", "Owen Mori Jones");
+    let (_, link) = save(&vault, &format!("{mention} called."), mention);
 
     assert_mints(&vault, link);
 }

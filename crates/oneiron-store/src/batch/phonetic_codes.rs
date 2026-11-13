@@ -45,8 +45,8 @@ pub struct LinkingCodes {
     /// The Soundex code of each part of a Latin name. A person who holds
     /// every one of them matches. The whole name's Soundex code is not used:
     /// Soundex stops at four characters, so over a joined name it can end
-    /// before the last part ("owen mori smith" and "owen mori jones" are
-    /// both O562).
+    /// inside or before the last part ("owen snow" and "owen smith" are
+    /// both O525).
     pub every_part: Vec<String>,
 }
 
