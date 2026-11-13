@@ -77,12 +77,12 @@ impl ReceiptReader for Memory<'_> {
         ReceiptContent::base(self.vault)
     }
 
-    fn readable_trigger_rows(&self, ids: &[EntityId]) -> MemoryResult<Option<BTreeSet<EntityId>>> {
-        self.credential_readable_ids(ids)
+    fn readable_trigger_rows(&self, _ids: &[EntityId]) -> MemoryResult<Option<BTreeSet<EntityId>>> {
+        Ok(None)
     }
 
     fn has_read_credential(&self) -> bool {
-        self.read_proof.is_some()
+        false
     }
 
     fn reads_owner_notices(&self) -> bool {
