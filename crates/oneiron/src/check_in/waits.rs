@@ -81,13 +81,6 @@ pub enum CheckInTransition {
 /// # Errors
 ///
 /// No such row; storage errors.
-#[cfg_attr(
-    not(oneiron_test_support),
-    allow(
-        dead_code,
-        reason = "2e's host ticks it; until then only the test door does"
-    )
-)]
 pub(crate) fn advance_pending_check_in_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
