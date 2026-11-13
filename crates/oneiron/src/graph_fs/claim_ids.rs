@@ -1,6 +1,8 @@
 //! Claim listings in id order, `/claims/by-id` and an entity's `claims`: each
 //! page reads one bounded run of ids, and resumes after the last id it read.
 
+use heed::RoTxn;
+
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -104,7 +106,7 @@ impl GraphFsResolver<'_, '_> {
         let mut next_cursor = None;
         let mut last_listed = after;
         let mut receipt = self.scoped_read.read_receipt(None, 0)?;
-        let run = self.device_admitted_run(after, fetch, &mut count, ids_after)?;
+        let run = self.device_admitted_run(None, after, fetch, &mut count, ids_after)?;
         count.finish(self.scoped_read.vault());
         for id in &run.ids {
             if self.read_live_into(*id, &mut receipt)?.is_none() {
@@ -131,8 +133,11 @@ impl GraphFsResolver<'_, '_> {
     /// one (DEC-0005). That walk has no bound, so `count` counts every id it
     /// reads, a withheld one too, and the owner's check sees a large walk
     /// (rule 5). The bounded run on this device adds nothing to `count`.
+    /// A caller that holds a read transaction passes it as `txn`, and the
+    /// withheld claims are judged in it: the thread keeps one at a time.
     pub(super) fn device_admitted_run(
         &self,
+        txn: Option<&RoTxn<'_>>,
         after: Option<EntityId>,
         fetch: usize,
         count: &mut ScanCount,
@@ -147,11 +152,18 @@ impl GraphFsResolver<'_, '_> {
             let run = ids_after(scanned.as_ref(), fetch)?;
             scanned = run.resume_after;
             count.rows(run.ids.len());
-            ids.extend(
-                self.scoped_read
-                    .vault()
-                    .off_device_readable_for(run.ids, self.scoped_read.actor_key().destination())?,
-            );
+            let vault = self.scoped_read.vault();
+            let destination = self.scoped_read.actor_key().destination();
+            ids.extend(match txn {
+                Some(txn) => crate::settings::off_device_readable_in_txn(
+                    vault,
+                    &vault.store,
+                    txn,
+                    run.ids,
+                    destination,
+                )?,
+                None => vault.off_device_readable_for(run.ids, destination)?,
+            });
             if scanned.is_none() || ids.len() >= fetch {
                 break;
             }
