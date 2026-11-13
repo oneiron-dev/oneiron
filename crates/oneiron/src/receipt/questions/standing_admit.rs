@@ -22,7 +22,11 @@ pub struct QuestionPrepareRequest {
 pub struct QuestionPreparedSource {
     pub id: EntityId,
     pub entity_type: u8,
+    /// The body as the asker is served it: as stored to the owner, as the
+    /// typed Nulled rule releases it to every other asker, and empty when
+    /// that rule withholds it (ruling EXPORTDOORS Q4 = A).
     pub body: Vec<u8>,
+    /// The BLAKE3 of the stored body, which the admit compares.
     pub hash: [u8; 32],
 }
 

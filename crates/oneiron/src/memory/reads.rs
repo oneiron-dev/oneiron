@@ -572,9 +572,19 @@ impl Memory<'_> {
             &Default::default(),
             |(hit, _, body)| (hit.score, body.as_ref()),
         )?;
+        // Every reader but the owner reads each hit's snippet and label from
+        // the body the typed Nulled rule releases (ruling EXPORTDOORS
+        // Q4 = A); a withheld body gives the hit no snippet.
+        let reads_stored = lane.reads_stored_bodies()?;
         let mut out = Vec::with_capacity(ranked.len());
         for ((hit, row, _), score) in ranked.into_iter().zip(scores) {
-            let mut body = row.body.as_deref().and_then(decode_body_json);
+            let released = match row.body.as_deref() {
+                Some(stored) => {
+                    crate::batch::export::released_body_for(reads_stored, row.entity_type, stored)?
+                }
+                None => None,
+            };
+            let mut body = released.as_deref().and_then(decode_body_json);
             if let Some(value) = &mut body {
                 let txn = self
                     .vault
