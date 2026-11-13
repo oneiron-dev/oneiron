@@ -80,8 +80,9 @@ pub use source::{
     SettledFact, SettledOutcome, SettlementKind, SettlementPosition, SurfaceInboundPosition,
 };
 pub(crate) use source::{
-    index_task_due_in_txn, next_tick_release_at, record_surface_inbound_in_txn, release_due_ticks,
-    releases_here as releases_ticks_here,
+    hold_task_tick_in_txn, index_task_due_in_txn, next_tick_release_at,
+    record_surface_inbound_in_txn, release_due_ticks, release_task_tick_hold_in_txn,
+    releases_here as releases_ticks_here, task_tick_held_in_txn, task_tick_waiting_in_txn,
 };
 pub(crate) use store::{
     forget_scrubbed_source_in_txn, hook_receipts, hook_run_read_rows, scrub_erased_hook_sources,

@@ -1,12 +1,12 @@
 {
   "note": "VENDORED CANON SNAPSHOT — do not hand-edit. Generated from oneiron-docs site/src/data/oneiron-contracts.ts at the recorded commit. payloadBlake3 is BLAKE3 over the compact (no-whitespace, authored key order) JSON serialization of `payload`.",
   "docsRepo": "oneiron-docs",
-  "docsCommit": "126df7912e3a2f553ac6c613c138be685e4273ff",
+  "docsCommit": "bed8401c1c417f0687dc54799eef1b85a0cc6c6a",
   "docsPath": "site/src/data/oneiron-contracts.ts",
-  "payloadBlake3": "596ba40e57217d709ae546617b52754b28c82d93a5c9cd97d4c1fdc1a8bf02f6",
+  "payloadBlake3": "7805d0ab2b23f8d378f8703c8ee6198b66d7ba6e0404047c5fc1c45547025758",
   "payload": {
     "contractVersion": "1.0.0",
-    "storageAbiVersion": 21,
+    "storageAbiVersion": 28,
     "typeByteZones": [
       {
         "range": "0",
@@ -116,11 +116,12 @@
         "zone": "core",
         "family": "agents and surfacing",
         "range": "40–49",
-        "free": 7,
+        "free": 6,
         "kinds": [
           "SKILL",
           "AGENT_DEF",
-          "NOTIFICATION"
+          "NOTIFICATION",
+          "WORKFLOW"
         ]
       },
       {
@@ -134,25 +135,27 @@
         "zone": "system",
         "family": "authority, policy, custody",
         "range": "64–71",
-        "free": 3,
+        "free": 2,
         "kinds": [
           "AUTHORITY_LOG",
           "POLICY_MANIFEST",
           "FEDERATION_GRANT",
           "ACCESS_GRANT",
-          "SECRET_CUSTODY"
+          "SECRET_CUSTODY",
+          "WORLD_KEY_PAD"
         ]
       },
       {
         "zone": "system",
         "family": "audit and observability",
         "range": "72–79",
-        "free": 4,
+        "free": 3,
         "kinds": [
           "REDACTION_AUDIT",
           "DIAGNOSTIC",
           "IDENTITY_TOPOLOGY_EVENT",
-          "SUSPICIOUS_WAKE"
+          "SUSPICIOUS_WAKE",
+          "ISSUE"
         ]
       },
       {
@@ -174,13 +177,14 @@
         "zone": "system",
         "family": "registries and derived",
         "range": "90–99",
-        "free": 5,
+        "free": 4,
         "kinds": [
           "MODEL",
           "CLAIM_CLASS_DESCRIPTOR",
           "SKILL_HUB",
           "SKILL_CONTENT_ANCHOR",
-          "PSYCH_PROFILE"
+          "PSYCH_PROFILE",
+          "EMBEDDING_SETUP"
         ]
       },
       {
@@ -218,10 +222,8 @@
         "zone": "pack",
         "family": "companion",
         "range": "115–119",
-        "free": 4,
-        "kinds": [
-          "COMPANION_REGISTER"
-        ]
+        "free": 5,
+        "kinds": []
       },
       {
         "zone": "pack",
@@ -377,6 +379,14 @@
         "family": "agents and surfacing"
       },
       {
+        "id": "WORKFLOW",
+        "classification": "core",
+        "typeByte": 43,
+        "shortIdPrefix": "wf",
+        "typeByteRange": "40–49",
+        "family": "agents and surfacing"
+      },
+      {
         "id": "RITUAL",
         "classification": "pack",
         "typeByte": null,
@@ -471,14 +481,6 @@
         "shortIdPrefix": "ba",
         "typeByteRange": "110–114",
         "family": "documents"
-      },
-      {
-        "id": "COMPANION_REGISTER",
-        "classification": "pack",
-        "typeByte": 115,
-        "shortIdPrefix": "cr",
-        "typeByteRange": "115–119",
-        "family": "companion"
       },
       {
         "id": "PSYCH_PROFILE",
@@ -585,10 +587,26 @@
         "family": "audit and observability"
       },
       {
+        "id": "ISSUE",
+        "classification": "maintenance",
+        "typeByte": 76,
+        "shortIdPrefix": null,
+        "typeByteRange": "72–79",
+        "family": "audit and observability"
+      },
+      {
         "id": "SECRET_CUSTODY",
         "classification": "maintenance",
         "typeByte": 68,
         "shortIdPrefix": "sc",
+        "typeByteRange": "64–71",
+        "family": "authority, policy, custody"
+      },
+      {
+        "id": "WORLD_KEY_PAD",
+        "classification": "maintenance",
+        "typeByte": 69,
+        "shortIdPrefix": null,
         "typeByteRange": "64–71",
         "family": "authority, policy, custody"
       },
@@ -647,6 +665,14 @@
         "shortIdPrefix": null,
         "typeByteRange": "90–99",
         "family": "registries and derived"
+      },
+      {
+        "id": "EMBEDDING_SETUP",
+        "classification": "maintenance",
+        "typeByte": 95,
+        "shortIdPrefix": null,
+        "typeByteRange": "90–99",
+        "family": "registries and derived"
       }
     ],
     "systemBandAllocation": [
@@ -676,6 +702,11 @@
         "state": "assigned"
       },
       {
+        "byte": 69,
+        "kind": "WORLD_KEY_PAD",
+        "state": "assigned"
+      },
+      {
         "byte": 72,
         "kind": "REDACTION_AUDIT",
         "state": "assigned"
@@ -694,6 +725,11 @@
         "byte": 75,
         "kind": "SUSPICIOUS_WAKE",
         "state": "reserved — canon row, no engine substrate, write-rejected"
+      },
+      {
+        "byte": 76,
+        "kind": "ISSUE",
+        "state": "assigned"
       },
       {
         "byte": 80,
@@ -738,12 +774,12 @@
       {
         "byte": 91,
         "kind": "CLAIM_CLASS_DESCRIPTOR",
-        "state": "reserved — canon row, no engine substrate, write-rejected"
+        "state": "assigned"
       },
       {
         "byte": 92,
         "kind": "SKILL_HUB",
-        "state": "reserved — canon row, no engine substrate, write-rejected"
+        "state": "assigned"
       },
       {
         "byte": 93,
@@ -753,6 +789,11 @@
       {
         "byte": 94,
         "kind": "PSYCH_PROFILE",
+        "state": "assigned"
+      },
+      {
+        "byte": 95,
+        "kind": "EMBEDDING_SETUP",
         "state": "assigned"
       }
     ],
@@ -1008,13 +1049,6 @@
         "v31Byte": 111,
         "zone": "pack",
         "family": "documents"
-      },
-      {
-        "kind": "COMPANION_REGISTER",
-        "v3Byte": 78,
-        "v31Byte": 115,
-        "zone": "pack",
-        "family": "companion"
       }
     ]
   }

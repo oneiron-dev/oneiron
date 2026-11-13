@@ -659,7 +659,13 @@ async fn quickjs_code_mode_keeps_connector_narrowing() {
         json!({"run_ref": "quickjs-world", "task": "recall the heron lantern"}),
     );
     for request in [
-        mcp_endpoint_call_request(MCP_TOOL_FIRST_PATH, "quickjs-world", "tool", "recall", tool),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            "quickjs-world",
+            "tool",
+            "vault.recall",
+            tool,
+        ),
         mcp_endpoint_call_request("/mcp", "quickjs-world", "code", "execute_code", code),
     ] {
         let body = mcp_refusal(&mode.server, request).await;
@@ -1046,7 +1052,7 @@ async fn quickjs_code_mode_and_tool_list_refuse_a_field_the_schema_does_not_list
             MCP_TOOL_FIRST_PATH,
             "quickjs-closed",
             "misspelled",
-            "recall",
+            "vault.recall",
             recall(json!({"facet_ref": facet})),
         ),
     )
@@ -1062,7 +1068,7 @@ async fn quickjs_code_mode_and_tool_list_refuse_a_field_the_schema_does_not_list
             MCP_TOOL_FIRST_PATH,
             "quickjs-closed",
             "listed",
-            "recall",
+            "vault.recall",
             recall(json!({"world_ref": null, "facet": null})),
         ),
     )

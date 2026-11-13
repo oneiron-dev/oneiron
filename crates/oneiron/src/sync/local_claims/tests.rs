@@ -100,6 +100,7 @@ impl Fixture {
                 fields: Vec::new(),
                 full_trail_appendix: true,
                 lifecycle: None,
+                commitments: Vec::new(),
             },
             EsignAuditActor {
                 actor: owner.to_hex(),

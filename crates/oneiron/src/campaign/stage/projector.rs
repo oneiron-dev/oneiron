@@ -100,6 +100,9 @@ pub(super) fn project_stage_transition_in_txn(
     if mode == PromotionMode::Propose {
         require_current_stage_head(vault, txn, input)?;
     }
+    // Only a PERSON party has a substrate FACET; any other party takes the
+    // vault default facet (a birth gate refusal otherwise, #4389).
+    body.scope_facet = vault.claim_put_facet_keeping_in_txn(txn, &new_id, body.scope_facet)?;
     vault.put_claim_in_txn(txn, &new_id, &body, at(recorded_at), recorded_at)?;
     match mode {
         PromotionMode::Propose => Ok(StageProjectResult::Proposed {

@@ -70,38 +70,11 @@ fn room() -> Room {
     let project = seeded_test_entity_id(0x2401_0003);
     let mut roster =
         oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner).unwrap();
-    create_owned_project(&server, owner, project, &roster);
     roster.roster.push(agent.to_hex());
+    // The member joins at the owner-signed birth: its v3 proof signs the
+    // roster, and the birth derives the home room from it.
+    create_owned_project(&server, owner, project, &roster);
     let room = oneiron::EntityId::from_hex(&roster.home_room).unwrap();
-    let exact_room = oneiron::workspace_roster::ProjectRoom {
-        schema_version: 1,
-        kind: "channel".into(),
-        project_id: project.to_hex(),
-        member_ids: roster.roster.clone(),
-        claims_scope_ref: roster.claims_scope_ref.clone(),
-        origin: None,
-        pins: Vec::new(),
-        pin_policy: Default::default(),
-    };
-    server
-        .vault
-        .batch()
-        .put(
-            &project,
-            server.vault.project_type_byte().unwrap(),
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            &rmp_serde::to_vec_named(&roster).unwrap(),
-        )
-        .put(
-            &room,
-            oneiron::registry::ENTITY_TYPE_CONVERSATION,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            &rmp_serde::to_vec_named(&exact_room).unwrap(),
-        )
-        .commit()
-        .expect("onboard exact project and room in one batch");
     let space = seeded_test_entity_id(0x2401_0004);
     let (spaced, unscoped) = (oneiron::EntityId::now(), oneiron::EntityId::now());
     for (message, content, metadata, at) in [
@@ -382,10 +355,10 @@ async fn an_agent_class_credential_on_the_owners_person_is_not_the_owners() {
         );
         let messages = oneiron::task_verb::sdk::invoke(
             &memory,
-            "rooms.messages",
+            "vault.rooms.messages",
             json!({ "room_ref": room.room.to_hex() }),
         )
-        .expect("rooms.messages")
+        .expect("vault.rooms.messages")
         .to_string();
         assert_eq!(
             (

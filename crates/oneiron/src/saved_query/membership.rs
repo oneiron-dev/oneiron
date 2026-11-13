@@ -287,6 +287,10 @@ pub fn commit_membership_plan(
         // A kept state keeps the instant it began, so a pause still knows
         // which events came after it.
         let start = reconciled.kept_since.unwrap_or(event.valid_at);
+        // Only a PERSON subject has a substrate FACET; any other subject takes
+        // the vault default facet (a birth gate refusal otherwise, #4389).
+        claim_body.scope_facet =
+            vault.claim_put_facet_keeping_in_txn(wtxn, &claim_id, claim_body.scope_facet)?;
         vault.put_claim_in_txn(
             wtxn,
             &claim_id,
