@@ -74,5 +74,7 @@ pub use record::{
 };
 pub use route::{InquiryRoute, InquiryRouteRequest};
 pub(crate) use route::{end_inquiry_route_in_txn, erase_inquiry_route_actor_in_txn};
-pub use send::{InquirySendRequest, InquirySent, InquiryTransport, InquiryTransportError};
+pub use send::{
+    INQUIRY_PEER_PATH, InquirySendRequest, InquirySent, InquiryTransport, InquiryTransportError,
+};
 pub use terms::{InquiryCheckInMode, InquiryTerms, InquiryTierCeiling};

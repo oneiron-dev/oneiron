@@ -350,6 +350,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // OF-273: a former peer's signed courtesy deletion ask and answer.
         // Keyless; the signed body authenticates against the pinned pact key.
         .merge(self::courtesy_delete::routes())
+        // INQUIRE-1 PR 5: a company host's inquiry over an inquiry edge.
+        // Admitted by the edge's guest slip and the host's holder proof.
+        .merge(self::inquiry_peer::routes())
         // FIX 922: a kit-only restore's read of the sealed cloud bundle.
         // Keyless; each request is signed with the kit's owner anchor.
         .merge(self::recovery_bundle::routes())

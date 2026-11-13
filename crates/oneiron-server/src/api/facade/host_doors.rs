@@ -95,6 +95,7 @@ pub(crate) use super::clustering_doors::*;
 pub(crate) use super::default_facet_doors::*;
 pub(crate) use super::extraction_doors::*;
 pub(crate) use super::identity_doors::*;
+pub(crate) use super::inquiry_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
