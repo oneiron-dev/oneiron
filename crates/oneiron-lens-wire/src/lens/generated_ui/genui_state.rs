@@ -1,7 +1,6 @@
 //! Action manifest, typed `$state` schema and patch rules, card lifecycle, and the interactivity gate.
 
 use super::GeneratedUiNode;
-use super::genui_expr::check_prop_expressions;
 use crate::lens::atom::{FiniteF64, LensAtom, LensNode, LensText};
 use crate::lens::self_ui::{SelfUiAction, SelfUiValue};
 use crate::lens::validate::MAX_LENS_TOKEN_BYTES;
@@ -631,7 +630,7 @@ pub fn validate_generated_ui_state_bindings(
     // stays declared and present, so a patch cannot remove it.
     for element in elements {
         if let LensAtom::Component(component) = element.atom {
-            check_prop_expressions(&component.props, state)?;
+            super::genui_expr::check_prop_expressions(&component.props, state)?;
         }
     }
 
