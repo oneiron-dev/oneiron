@@ -9,10 +9,12 @@
 //! `git_push` Grant could force-push or delete the default branch like any
 //! other: the door refused only names it cannot journal and its secret scan.
 //!
-//! The rewrite asks the owner instead (DEC-0006: a one-way act asks): the
-//! door puts the owner one question per exact move, and the owner's leave is
-//! `vault.consent.approve_once` on the digest it shows. The same push then
-//! lands, once. A plain "yes" to the question is no leave.
+//! The rewrite or delete asks the owner instead (DEC-0006: a one-way act
+//! asks): the door puts the owner one question per exact move, and the
+//! owner's leave is `vault.consent.approve_once` on the digest it shows. The
+//! same push then passes the door, once. A plain "yes" to the question is no
+//! leave. Git itself refuses to delete the branch HEAD names; that refusal
+//! stays git's.
 //!
 //! The holder pushes with a stock `git` through the real smart-HTTP wire
 //! ([`oneiron::origin::smart_http::serve_bounded_as`], the host's entry with
@@ -52,10 +54,13 @@ use oneiron::verbs::{
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
 /// The typed reason the door refuses a protected-ref delete or rewrite with.
-const PROTECTED_REF_REWRITE: &str = "protected_ref_rewrite";
+const PROTECTED_REF_REWRITE_OR_DELETE: &str = "protected_ref_rewrite_or_delete";
 
-/// The queue the door puts the owner its question about one rewrite on.
-const PROTECTED_REF_ASK_QUEUE: &str = "origin.protected_ref_rewrite";
+/// The queue the door puts the owner its question about one move on.
+const PROTECTED_REF_ASK_QUEUE: &str = "origin.protected_ref_rewrite_or_delete";
+
+/// Git's own refusal to delete the branch a repository's HEAD names.
+const GIT_DELETE_CURRENT_REFUSAL: &str = "deletion of the current branch prohibited";
 
 // ---------------------------------------------------------------------------
 // git helpers
@@ -618,7 +623,7 @@ fn a_grant_holders_force_push_of_the_default_branch_is_refused() {
     let refusals = origin.door_refusals();
     assert!(
         refusals.last().is_some_and(|reason| {
-            reason.contains("refs/heads/main") && reason.contains(PROTECTED_REF_REWRITE)
+            reason.contains("refs/heads/main") && reason.contains(PROTECTED_REF_REWRITE_OR_DELETE)
         }),
         "the door refused the rewrite with its typed reason: {refusals:?}"
     );
@@ -635,9 +640,10 @@ fn a_grant_holders_force_push_of_the_default_branch_is_refused() {
 }
 
 /// A delete of the default branch by a Grant holder is refused by the door
-/// with the same typed reason, before git decides anything.
+/// with the same typed reason, before git decides anything, and puts the
+/// owner the same one question: the move's state names no new tip.
 #[test]
-fn a_grant_holders_delete_of_the_default_branch_is_refused() {
+fn a_grant_holders_delete_of_the_default_branch_is_refused_and_asks_the_owner() {
     let source = tempfile::tempdir().expect("source tempdir");
     let seed = seed_source_repo(source.path(), "base\n");
     let origin = TestOrigin::start(source.path());
@@ -651,7 +657,7 @@ fn a_grant_holders_delete_of_the_default_branch_is_refused() {
     let refusals = origin.door_refusals();
     assert!(
         refusals.last().is_some_and(|reason| {
-            reason.contains("refs/heads/main") && reason.contains(PROTECTED_REF_REWRITE)
+            reason.contains("refs/heads/main") && reason.contains(PROTECTED_REF_REWRITE_OR_DELETE)
         }),
         "the door refused the delete with its typed reason: {refusals:?}"
     );
@@ -661,6 +667,74 @@ fn a_grant_holders_delete_of_the_default_branch_is_refused() {
         "main is still there"
     );
     assert!(origin.landed().is_empty(), "nothing moved, nothing landed");
+
+    let digest = origin.asked_digest();
+    assert_eq!(digest.len(), 64, "a 64-hex approve-once digest");
+    let asks = origin.protected_ref_asks();
+    let state = asks[0]
+        .pack_state
+        .as_ref()
+        .expect("the question names the delete");
+    assert_eq!(state["ref"], "refs/heads/main");
+    assert_eq!(state["old_oid"], seed.as_str());
+    assert!(
+        state["new_oid"].is_null(),
+        "a delete has no new tip: {state}"
+    );
+    assert_eq!(state["pusher"], origin.holder.to_hex().as_str());
+}
+
+/// The owner's leave for a delete passes the door and is spent with the
+/// intent, as a rewrite's is. Git itself then refuses to delete the branch
+/// HEAD names, for every pusher: the refusal the holder reads is git's own,
+/// and the door adds none.
+#[test]
+fn the_owners_approve_once_passes_a_delete_to_gits_own_refusal() {
+    let source = tempfile::tempdir().expect("source tempdir");
+    let seed = seed_source_repo(source.path(), "base\n");
+    let origin = TestOrigin::start(source.path());
+    let work = tempfile::tempdir().expect("work tempdir");
+    let clone = origin.clone_main(work.path());
+
+    origin.push_as_holder();
+    let push = git_output(&clone, &["push", "origin", "--delete", "main"]);
+    assert!(!push.status.success(), "refused until the owner leaves it");
+    let digest = origin.asked_digest();
+
+    approve_once(
+        &origin.vault,
+        &origin.proof,
+        ApproveOnceRequest {
+            effect_digest: digest,
+        },
+    )
+    .expect("the owner leaves this exact delete once");
+    let push = git_output(&clone, &["push", "origin", "--delete", "main"]);
+    assert!(
+        !push.status.success(),
+        "git refuses to delete the branch HEAD names"
+    );
+    let stderr = String::from_utf8_lossy(&push.stderr);
+    assert!(
+        stderr.contains(GIT_DELETE_CURRENT_REFUSAL),
+        "the refusal the holder reads is git's own: {stderr}"
+    );
+    assert!(
+        !stderr.contains(PROTECTED_REF_REWRITE_OR_DELETE),
+        "the door added no refusal of its own: {stderr}"
+    );
+    let asks = origin.protected_ref_asks();
+    assert_eq!(asks.len(), 1, "no second question: {asks:?}");
+    assert!(
+        asks[0].withdrawn_at.is_some(),
+        "the door let the left delete pass: its leave spent with the intent, \
+         its question is withdrawn"
+    );
+    assert_eq!(
+        origin.origin_ref("refs/heads/main").as_deref(),
+        Some(seed.as_str()),
+        "main is still there"
+    );
 }
 
 /// The rule narrows nothing else a Grant holder does: a fast-forward of the
@@ -853,7 +927,7 @@ fn the_owners_approve_once_lands_the_exact_rewrite_once() {
     let refusals = origin.door_refusals();
     assert!(
         refusals.last().is_some_and(|reason| {
-            reason.contains(PROTECTED_REF_REWRITE) && reason.contains("already spent")
+            reason.contains(PROTECTED_REF_REWRITE_OR_DELETE) && reason.contains("already spent")
         }),
         "the door refused the same move again, its leave spent: {refusals:?}"
     );
