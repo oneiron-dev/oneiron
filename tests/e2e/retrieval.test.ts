@@ -1267,7 +1267,7 @@ suite.test(test, "RETRIEVAL-06", "Evidence abstention not invented recall should
         expect(["missing_data", "low_confidence"]).toContain(pack.state.kind);
       } catch (error) {
         throw new Error(
-          `RETRIEVAL-06 ENGINE DEFECT 2026-11-11: FIX 22309/22313 empty abstained retrieval reports ${pack.state.kind}; probe=${probe.label}; state=${JSON.stringify(pack.state)}; ${errorText(error)}`,
+          `RETRIEVAL-06 an empty abstained pack reports ${pack.state.kind} (FIX 22309/22313 was fixed by #7567); probe=${probe.label}; state=${JSON.stringify(pack.state)}; ${errorText(error)}`,
           { cause: error },
         );
       }
