@@ -135,7 +135,10 @@ pub struct Vault {
     pub(crate) housekeeping:
         std::sync::Mutex<crate::store::housekeeping_schedule::HousekeepingHandle>,
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
-    pub store: Store,
+    /// The vault's store. Crate-private: another crate reads stored rows
+    /// only through the engine's doors, never through a raw read
+    /// transaction (FIX VAULT-STORE-FIELD-PUBLIC).
+    pub(crate) store: Store,
     pub(crate) config: VaultConfig,
     /// The late tagging arming first-run setup installs after open: read
     /// beside the open config by [`Vault::tagging_marker_config`]. In memory
