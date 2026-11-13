@@ -303,6 +303,7 @@ pub(crate) use live_body::{
 mod brief_doors;
 pub use brief_doors::{AuthorBriefRequest, BriefClaimCitation, BriefKindStamp};
 mod plan_doc;
+pub(crate) use plan_doc::plan_doc_pin_in_txn;
 pub use plan_doc::{
     PLAN_DOC_NOTE_KIND, PlanDocBody, PlanDocDecision, PlanDocProposeRequest, PlanDocRequest,
     PlanDocSettlementView, PlanDocState, PlanDocVerdictRequest, PlanDocVerdictView, PlanDocView,

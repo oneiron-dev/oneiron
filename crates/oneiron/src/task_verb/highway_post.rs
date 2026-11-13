@@ -519,6 +519,10 @@ impl Memory<'_> {
         let (type_ref, stale_pins) = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             observe_key_in(self.vault(), &txn, &post.intent_key, task_ref);
+            // Plan mode, before the pin checks: a plan-doc pinned at a
+            // revision the owner has not approved is a plan refusal, not a
+            // moved pin.
+            self.require_approved_plan_pins_in(&txn, &post.brief)?;
             let stale_pins = if copy.is_some() {
                 post.brief
                     .validate_copy_in(self.vault(), &txn, Some(post.assignee))?
@@ -620,6 +624,9 @@ impl Memory<'_> {
             if let Some(binding) = &post.brief.context.workflow {
                 binding.validate_in(self.vault(), &*wtxn, Some(post.assignee))?;
             }
+            // Plan mode: so is a plan the brief pins, so a verdict or edit
+            // that lands after the check above still decides.
+            self.require_approved_plan_pins_in(&*wtxn, &post.brief)?;
             record_task_create(
                 self.vault(),
                 wtxn,
