@@ -76,7 +76,9 @@ pub(super) struct StepRunner {
     pub(super) retry_backoff_secs: u64,
     /// What each step's tries spent in all, by the failed try a retry
     /// follows: the next try replays exactly that. Held only while a retry
-    /// may follow, and only in this process.
+    /// may follow. A failed try's value is also its attempt's carried-spend
+    /// row ([`AttemptQueue::record_carried_spend`]), which a retry reads
+    /// once this process is gone.
     pub(super) spent: Mutex<HashMap<AttemptId, u64>>,
     /// The server each step's `self.use` sends through, once bound.
     pub(super) host: StepHost,
@@ -280,12 +282,16 @@ fn record_step_read(
 }
 
 impl StepRunner {
-    /// Drops what a failed try spent once no retry follows it.
-    pub(super) fn forget(&self, attempt: AttemptId) {
+    /// Drops what a failed try spent once no retry follows it, here and in
+    /// its carried-spend row.
+    pub(super) fn forget(&self, vault: &Vault, attempt: AttemptId) {
         self.spent
             .lock()
             .expect("step spend mutex poisoned")
             .remove(&attempt);
+        if let Err(error) = AttemptQueue::new(vault).forget_carried_spend(attempt) {
+            tracing::warn!(kind = ?error.kind(), ?attempt, "a failed try's carried spend was not dropped");
+        }
         // Nothing can parent on this try's ticket anymore (FIX 11960).
         if let Ok(entity) = oneiron::EntityId::from_bytes(*attempt.as_bytes()) {
             forget_work_parent(&entity);
@@ -753,10 +759,12 @@ impl StepRunner {
         // matches (the agent's cap, the purpose's) see them: retries share
         // one budget, never renew it. The try this one follows left what the
         // chain spent, or this same try did when it parked on its payer
-        // (FIX 805). After a restart nothing is left, and each earlier try
-        // is replayed at one reservation per rung of the ladder it has now:
-        // an estimate, exact only when every earlier rung went out metered on
-        // the same ladder and routes.
+        // (FIX 805). After a restart the failed try's carried-spend row holds
+        // what the chain spent (ARCH-0053 #paid-leg-built), and the retry
+        // takes it. With no row left (written before the row existed, or not
+        // written), each earlier try is replayed at one reservation per rung
+        // of the ladder it has now: an estimate, exact only when every
+        // earlier rung went out metered on the same ladder and routes.
         let reserve = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
         let earlier = if continuation.is_none() {
             AttemptQueue::new(vault).retry_chain_depth(attempt.id)?
@@ -764,10 +772,19 @@ impl StepRunner {
             0
         };
         let carried = if continuation.is_none() {
-            let mut spent = self.spent.lock().expect("step spend mutex poisoned");
-            spent
-                .remove(&attempt.id)
-                .or_else(|| attempt.retry_of.and_then(|parent| spent.remove(&parent)))
+            let held = {
+                let mut spent = self.spent.lock().expect("step spend mutex poisoned");
+                spent
+                    .remove(&attempt.id)
+                    .or_else(|| attempt.retry_of.and_then(|parent| spent.remove(&parent)))
+            };
+            // The row is taken either way, so none outlives its retry; this
+            // process's value, when it holds one, is the same or newer.
+            let stored = match attempt.retry_of {
+                Some(parent) => AttemptQueue::new(vault).take_carried_spend(parent)?,
+                None => None,
+            };
+            held.or(stored)
         } else {
             None
         };
@@ -1104,6 +1121,12 @@ impl StepRunner {
                         .lock()
                         .expect("step spend mutex poisoned")
                         .insert(attempt.id, chain);
+                    // The retry may run after a restart: the row keeps it.
+                    if let Err(error) =
+                        AttemptQueue::new(vault).record_carried_spend(attempt.id, chain)
+                    {
+                        tracing::warn!(kind = ?error.kind(), attempt = ?attempt.id, "a failed try's carried spend was not recorded; a retry after a restart estimates it");
+                    }
                 }
                 return Err(StepFault {
                     retry: retryable.then_some(StepRetryCause::ModelCallFailed),
