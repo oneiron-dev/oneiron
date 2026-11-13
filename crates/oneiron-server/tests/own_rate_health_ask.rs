@@ -5,6 +5,7 @@
 //! once on the host's ladder, to wire rate's recipients, the vault owner
 //! role (ARCH-0076 #roles-everywhere). A later crossing by the same actor of
 //! the same kind counts on the open check; the owner's answer settles it.
+//! The actor's erase takes its check (FIX 3520).
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support
 //! --no-fail-fast --test own_rate_health_ask`.
@@ -16,6 +17,7 @@ use oneiron::authority::MachineRole;
 use oneiron::llm::decision::{AnswerActor, AskTo, DecisionAnswer, DecisionAsk};
 use oneiron::own_rate::OwnRateKind;
 use oneiron::test_doors::advisory_rate_window::count_own_acts;
+use oneiron::test_doors::inquiry::erase_actor_in_tables_in_order;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_server::ENGINE_THREAD_STACK_BYTES;
@@ -31,6 +33,14 @@ const THRESHOLD: u64 = 2;
 /// A window wider than the clock's range, so every act of one test lands in
 /// the same window whatever second it runs at.
 const WINDOW_SECONDS: u64 = 1 << 40;
+/// The tables an actor's erase scrubs for its own-rate rows: the counter's
+/// three and the host health check that holds a copy.
+const OWN_RATE_TABLES: [&str; 4] = [
+    "OWN_RATE_WINDOW",
+    "OWN_RATE_CHECK",
+    "OWN_RATE_CHECK_ORDER",
+    "WIRE_HEALTH_CHECK",
+];
 
 /// Runs `test` on a multi-thread runtime whose threads have the engine's
 /// stack, driven from a thread that has it too, as the server's binary runs.
@@ -91,7 +101,7 @@ async fn served() -> TestResult<Served> {
     })
 }
 
-fn subject(kind: OwnRateKind, actor: EntityId) -> String {
+fn own_rate_subject(kind: OwnRateKind, actor: EntityId) -> String {
     format!("own_rate:{}:{}", kind.token(), actor.to_hex())
 }
 
@@ -148,7 +158,7 @@ async fn own_actor_rate_crossing_is_asked_once() -> TestResult {
 
     sweep_once(&served.server)?;
 
-    let subject = subject(OwnRateKind::TaskCreate, actor);
+    let subject = own_rate_subject(OwnRateKind::TaskCreate, actor);
     let check = check_for(vault, &subject)?
         .ok_or("the sweep keeps a health check for the own actor's crossing")?;
     assert_eq!(
@@ -201,7 +211,7 @@ async fn later_crossing_counts_on_the_open_check() -> TestResult {
         WINDOW_SECONDS,
     )?;
     sweep_once(&served.server)?;
-    let subject = subject(OwnRateKind::TaskCreate, actor);
+    let subject = own_rate_subject(OwnRateKind::TaskCreate, actor);
     let first = check_for(vault, &subject)?.ok_or("the first crossing is kept")?;
     let question = asked_question(&first)?;
 
@@ -237,7 +247,7 @@ async fn later_crossing_counts_on_the_open_check() -> TestResult {
         "the open check is not asked again"
     );
     assert_eq!(asks_on(vault, &question)?.len(), 1);
-    let other_check = check_for(vault, &subject(OwnRateKind::TaskCreate, other))?
+    let other_check = check_for(vault, &own_rate_subject(OwnRateKind::TaskCreate, other))?
         .ok_or("another actor's crossing is a check of its own")?;
     let other_question = asked_question(&other_check)?;
     assert_ne!(other_question, question);
@@ -264,7 +274,7 @@ async fn owner_answer_settles_an_own_rate_check() -> TestResult {
         WINDOW_SECONDS,
     )?;
     sweep_once(&served.server)?;
-    let subject = subject(OwnRateKind::ConsultFanout, actor);
+    let subject = own_rate_subject(OwnRateKind::ConsultFanout, actor);
     let check = check_for(vault, &subject)?.ok_or("the crossing is kept")?;
     let question = asked_question(&check)?;
     let asks = asks_on(vault, &question)?;
@@ -291,6 +301,58 @@ async fn owner_answer_settles_an_own_rate_check() -> TestResult {
         }
         other => panic!("the owner's answer settles the check, not {other:?}"),
     }
+    Ok(())
+}
+
+/// An actor's erase takes its own-rate health check (FIX 3520): the check's
+/// subject names the actor. Another actor's check stays, and the next pass
+/// does not bring the erased one back. The red pin has no own-rate source,
+/// so it keeps no check to take.
+#[test]
+fn an_actor_erase_takes_its_own_rate_check() -> TestResult {
+    on_engine_stack(actor_erase_takes_its_own_rate_check)
+}
+
+async fn actor_erase_takes_its_own_rate_check() -> TestResult {
+    let served = served().await?;
+    let vault = &served.vault;
+    let actor = vault.new_entity_id()?;
+    let other = vault.new_entity_id()?;
+    for counted in [actor, other] {
+        count_own_acts(
+            vault,
+            OwnRateKind::AutoWrite,
+            counted,
+            THRESHOLD + 1,
+            THRESHOLD,
+            WINDOW_SECONDS,
+        )?;
+    }
+    sweep_once(&served.server)?;
+    let erased = own_rate_subject(OwnRateKind::AutoWrite, actor);
+    let kept = own_rate_subject(OwnRateKind::AutoWrite, other);
+    check_for(vault, &erased)?.ok_or("the actor's crossing is kept")?;
+    check_for(vault, &kept)?.ok_or("the other actor's crossing is kept")?;
+
+    let scrubbed = erase_actor_in_tables_in_order(vault, &actor, &OWN_RATE_TABLES)?;
+    assert_eq!(
+        scrubbed,
+        OWN_RATE_TABLES.len(),
+        "each table that holds the actor registers its scrub"
+    );
+    assert!(
+        check_for(vault, &erased)?.is_none(),
+        "the erase takes the actor's health check"
+    );
+    sweep_once(&served.server)?;
+    assert!(
+        check_for(vault, &erased)?.is_none(),
+        "the next pass does not bring the erased check back"
+    );
+    assert!(
+        check_for(vault, &kept)?.is_some(),
+        "another actor's check stays"
+    );
     Ok(())
 }
 
