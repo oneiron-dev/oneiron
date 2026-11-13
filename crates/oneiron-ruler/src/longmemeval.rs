@@ -537,7 +537,7 @@ pub fn convert(
                     });
                 }
             }
-            let mut latest_answer = None;
+            let mut latest_answer: Option<usize> = None;
             for (h, session) in sessions.iter().enumerate() {
                 if !question.answer_session_ids.contains(&session.session_id) {
                     continue;
