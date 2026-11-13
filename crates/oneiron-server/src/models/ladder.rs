@@ -25,6 +25,8 @@ mod generation;
 mod live_fork;
 mod model_call;
 mod model_list;
+#[cfg(oneiron_test_support)]
+mod owner_fallback_door;
 mod replay_prompt;
 mod rung;
 mod sends;
@@ -415,6 +417,39 @@ impl OfferLadder {
             );
         }
         models
+    }
+
+    /// Whether an owner's standing fallback (`use_fallback`) for one of this
+    /// ladder's offers names `model` served at `locality`, read now: a
+    /// target that speaks this ladder's wire, keeps the call on the device
+    /// when the role's work stays there, and sits within this ladder's
+    /// locality ceiling, as [`Self::fallback_rung_models`] and
+    /// [`Self::prompt_locality_bound`] judge one, with a rung of that model
+    /// at that locality. Owner policy only: whether the target rests now is
+    /// not asked. An exact replay of a call such a fallback answered keeps
+    /// to the owner's choice while it stands (FIX-LIST
+    /// REPLAY-REFUSED-FOR-WIDER-FALLBACK-RUNG).
+    pub(super) fn owner_fallback_serves(
+        &self,
+        model: &ModelId,
+        locality: oneiron::ModelLocality,
+    ) -> bool {
+        self.rungs.iter().any(|rung| {
+            self.rests
+                .fallback_for(&rung.offer.binding, &rung.wire_model)
+                .is_some_and(|target| {
+                    target.scope.wire == self.scope.wire
+                        && !(self.scope.stays_on_device
+                            && target
+                                .rungs
+                                .iter()
+                                .any(|rung| leaves_device(&rung.offer.binding)))
+                        && target.within_ceiling(&self.scope)
+                        && target.rungs.iter().any(|rung| {
+                            rung.model == *model && rung.offer.binding.locality == locality
+                        })
+                })
+        })
     }
 
     /// The offers of the rungs that could serve `request` (FIX 3194): each
