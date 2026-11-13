@@ -878,6 +878,15 @@ pub(super) fn run_signals_output_path(seq: u64) -> String {
 /// The suffix of every [`run_signals_output_path`].
 pub(super) const RUN_SIGNALS_OUTPUT_SUFFIX: &str = ".run-signals.json";
 
+/// The interrupts the `take`-th read of step `seq`'s model turn took, kept
+/// beside that turn ([INTERRUPT-CUTS-MODEL-REQUEST-IN-FLIGHT]).
+pub(super) fn turn_interrupts_output_path(seq: u64, take: u32) -> String {
+    format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.{take:02}{TURN_INTERRUPTS_OUTPUT_SUFFIX}")
+}
+
+/// The suffix of every [`turn_interrupts_output_path`].
+pub(super) const TURN_INTERRUPTS_OUTPUT_SUFFIX: &str = ".turn-interrupts.json";
+
 pub(super) fn implicit_speak_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.implicit-speak.json")
 }
