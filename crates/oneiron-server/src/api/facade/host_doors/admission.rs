@@ -175,6 +175,11 @@ pub(in crate::api::facade) fn door_admits(
         Proof::WorkflowMember => {
             crate::api::facade::agent_definition_doors::member_proof(server, auth, verb).map(drop)
         }
+        // A check-in holder's answer (ROLES-CHECKIN P2.3c): a live person on
+        // their own slip, bound to it, as the door answers under.
+        Proof::CheckInHolder => {
+            crate::api::facade::check_in_doors::holder_proof(server, auth, verb).map(drop)
+        }
         // The off-record session rows admit their session's manager: the
         // owner, or a person or agent who starts and keeps their own
         // (WILL-PLAN L13 row 03). Each door binds the stretch for them again.

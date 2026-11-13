@@ -60,6 +60,8 @@ pub(crate) use super::agent_definition_doors::*;
 pub(crate) use super::agent_grant_doors::*;
 // The owner's verdict on a plan-doc (plan mode) too.
 pub(crate) use super::plan_doc_doors::*;
+// A check-in holder's answer (ROLES-CHECKIN P2.3c), likewise.
+pub(crate) use super::check_in_doors::*;
 // The Steward doors: member asks, the system-agent grant narrowing and the
 // engine-control receipts (untangle 6.3, 6.6).
 pub(crate) use super::steward_doors::*;
