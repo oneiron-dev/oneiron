@@ -20,7 +20,7 @@ use std::sync::Arc;
 use oneiron::attempt_queue::{AttemptQueue, AttemptState};
 use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
-use oneiron::test_doors::derive::{derive_item_receipts, row_live};
+use oneiron::test_doors::derive::{derive_item_receipts, row_live, wake_reads_about_facts};
 use oneiron::test_doors::derive_verbs::revert_as_owner;
 use oneiron::test_doors::dreamer_attempt_binding::{
     ObservedStrengthClaim, STRENGTH_RUN, enqueue_unadmitted_strength_attempt,
@@ -89,9 +89,12 @@ fn queued_strength(dir: &tempfile::TempDir, verbs: &[&str]) -> StrengthTestResul
     // quiet once the clock passes it.
     std::thread::sleep(std::time::Duration::from_millis(2_100));
     let now = vault.now_recorded_at();
-    // Only the strength attempt is due in the pass: anything the fixture's
-    // consolidation left queued (a PERSON `about` line, say) would call a
-    // model, and the pass ends at the first executor panic.
+    // A wake pass queues the PERSON `about` line at its start, and that line
+    // calls a model. Queue it here instead, so the loop below defers it; the
+    // pass then finds the person's facts already asked and queues nothing.
+    wake_reads_about_facts(&vault)?;
+    // Only the strength attempt is due in the pass: any other queued attempt
+    // could call a model, and the pass returns the first executor error.
     for record in AttemptQueue::new(&vault).list()? {
         if matches!(record.state, AttemptState::Queued) {
             defer_enqueued(&vault, record.id, now + 86_400)?;
