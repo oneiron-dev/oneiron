@@ -43,9 +43,18 @@
 //! Cancelled and its folder is removed. A pass also removes the folder of an
 //! ended job that outlived its end, and what is left of a deleted upload's.
 //!
-//! Each conversation lands under the host's admission, as a served write
-//! does: a managed vault frozen for reap lands nothing, and the pass stops
-//! between conversations.
+//! Every write of a pass is made under the host's admission, as a served
+//! write is: the rows it makes and the folders it removes, each conversation,
+//! and a job's end with its inbox row, its Dreamer queue and the removal of
+//! its folder, which run under the guard of the job's last conversation. A
+//! managed vault frozen for reap writes nothing, and the pass gives the guard
+//! back between two conversations and stops there.
+//!
+//! A process that stops after a conversation's landing commits and before the
+//! job's place is kept leaves messages the import landed that the landing of
+//! the same conversation again counts skipped. The pass reads them first
+//! ([`oneiron::Vault::hosted_import_resumed`]) and counts them as they landed,
+//! so the job's counts, and whether its import is surfaced, stay true.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
@@ -740,8 +749,9 @@ impl Upload {
 /// What a running server drains: the staged imports of its vault.
 pub(crate) struct HostedImports {
     vault_path: PathBuf,
-    /// Asked before each conversation lands; `None` lands nothing more this
-    /// pass.
+    /// Asked before each unit of writes (a job's first conversation with
+    /// its decode, each later conversation, the rows and removals of the
+    /// staging folder); `None` writes nothing more this pass.
     admission: HousekeepingAdmission,
 }
 
@@ -801,8 +811,8 @@ impl HostedImports {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
             Err(error) => anyhow::bail!("read {}: {error}", root.display()),
         };
-        if root_exists {
-            adopt(vault, &root)?;
+        if root_exists && !self.adopt(vault, &root)? {
+            return Ok(());
         }
         let mut budget = budget;
         for (id, job) in vault.hosted_imports()? {
@@ -829,6 +839,13 @@ impl HostedImports {
         budget: &mut Option<u64>,
     ) -> anyhow::Result<bool> {
         let folder = root.join(id.to_hex());
+        // Held through every write of the job's first conversation, and of
+        // its end when that comes in this pass; given back and asked again
+        // between two conversations.
+        let mut admitted = (self.admission)();
+        if admitted.is_none() {
+            return Ok(false);
+        }
         let Some(source) = job.history_source() else {
             fail(
                 vault,
@@ -868,16 +885,21 @@ impl HostedImports {
         vault.hosted_import_decoded(id, u64::try_from(conversations.len())?, messages)?;
         let owner = crate::owner::local_owner(vault)?;
         let mut cursor = job.cursor;
-        for conversation in conversations
+        for (landed_here, conversation) in conversations
             .iter()
             .skip(usize::try_from(cursor).unwrap_or(usize::MAX))
+            .enumerate()
         {
             if *budget == Some(0) {
                 return Ok(false);
             }
-            let Some(_admitted) = (self.admission)() else {
-                return Ok(false);
-            };
+            if landed_here > 0 {
+                drop(admitted.take());
+                admitted = (self.admission)();
+                if admitted.is_none() {
+                    return Ok(false);
+                }
+            }
             if vault
                 .hosted_import(id)?
                 .is_some_and(|row| row.state == HostedImportState::Cancelling)
@@ -892,9 +914,19 @@ impl HostedImports {
                 )?;
                 return Ok(true);
             }
-            let report = vault
+            // The conversation at the job's place may hold what a process
+            // that stopped part way landed of it.
+            let resumed = if landed_here == 0 {
+                Some(vault.hosted_import_resumed(source, conversation, job.imported_at)?)
+            } else {
+                None
+            };
+            let mut report = vault
                 .import_history(&owner, source, conversation, job.imported_at)
                 .map_err(|error| anyhow::anyhow!("import stopped: {error}"))?;
+            if let Some(resumed) = resumed {
+                resumed.fold_into(&mut report);
+            }
             cursor += 1;
             vault.hosted_import_landed(id, cursor, &report)?;
             if let Some(left) = budget.as_mut() {
@@ -902,8 +934,83 @@ impl HostedImports {
             }
         }
         // A cancel asked while the last conversation landed finds nothing
-        // left to stop: the job ends Landed.
+        // left to stop: the job ends Landed, under the last guard.
         finish(vault, &folder, id, source, job, HostedImportState::Landed)?;
+        drop(admitted);
+        Ok(true)
+    }
+
+    /// Makes the row of each whole folder under `root` that has none, each
+    /// at a second of its own, and removes what is left of a deleted
+    /// upload's folder and the folder of an ended job. `false` when there
+    /// is such work and the host admits none.
+    fn adopt(&self, vault: &oneiron::Vault, root: &Path) -> anyhow::Result<bool> {
+        let mut whole = Vec::new();
+        let mut removals = Vec::new();
+        for entry in fs::read_dir(root)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if name
+                .strip_suffix(DELETED_SUFFIX)
+                .and_then(HostedImportId::parse)
+                .is_some()
+            {
+                // A deleted upload's folder, renamed away, that a process
+                // which stopped before removing it left.
+                removals.push(entry.path());
+                continue;
+            }
+            let Some(id) = HostedImportId::parse(name) else {
+                continue;
+            };
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            if let Some(job) = vault.hosted_import(id)? {
+                // An ended job's folder that outlived its end, as a process
+                // that stopped between the two, or a removal that failed,
+                // leaves it.
+                if job.ended() {
+                    removals.push(entry.path());
+                }
+                continue;
+            }
+            let Some(request) = read_request(&entry.path())? else {
+                continue;
+            };
+            let (Some(source), Ok(hash)) = (
+                HistorySource::parse(&request.source),
+                blake3::Hash::from_hex(&request.blake3),
+            ) else {
+                tracing::warn!(import = %id.to_hex(), "a staged import's request does not read; left");
+                continue;
+            };
+            let staged = HostedImportStaged {
+                bytes: request.bytes,
+                blake3: *hash.as_bytes(),
+            };
+            whole.push((id, source, staged));
+        }
+        if whole.is_empty() && removals.is_empty() {
+            return Ok(true);
+        }
+        let Some(_admitted) = (self.admission)() else {
+            return Ok(false);
+        };
+        for folder in &removals {
+            remove_folder(folder);
+        }
+        if whole.is_empty() {
+            return Ok(true);
+        }
+        let owner = crate::owner::local_owner(vault)?;
+        for (id, source, staged) in whole {
+            vault.hosted_import_create(&owner, id, source, staged, own_second(vault)?)?;
+            tracing::info!(import = %id.to_hex(), source = source.source_id(), "hosted import staged");
+        }
         Ok(true)
     }
 }
@@ -912,6 +1019,7 @@ impl HostedImports {
 /// landed is surfaced in the import's one review: one inbox row for the
 /// import, never one per conversation, when anything landed new or changed,
 /// and the Dreamer queued. Then the job ends and its folder is removed.
+/// The caller holds the host's admission through all of it.
 fn finish(
     vault: &oneiron::Vault,
     folder: &Path,
@@ -948,67 +1056,6 @@ fn finish(
     Ok(())
 }
 
-/// Makes the row of each whole folder under `root` that has none, each at a
-/// second of its own, and removes what is left of a deleted upload's folder.
-fn adopt(vault: &oneiron::Vault, root: &Path) -> anyhow::Result<()> {
-    let mut whole = Vec::new();
-    for entry in fs::read_dir(root)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            continue;
-        };
-        if name
-            .strip_suffix(DELETED_SUFFIX)
-            .and_then(HostedImportId::parse)
-            .is_some()
-        {
-            // A deleted upload's folder, renamed away, that a process which
-            // stopped before removing it left.
-            remove_folder(&entry.path());
-            continue;
-        }
-        let Some(id) = HostedImportId::parse(name) else {
-            continue;
-        };
-        if !entry.file_type()?.is_dir() {
-            continue;
-        }
-        if let Some(job) = vault.hosted_import(id)? {
-            // An ended job's folder that outlived its end, as a process that
-            // stopped between the two leaves it.
-            if job.ended() {
-                remove_folder(&entry.path());
-            }
-            continue;
-        }
-        let Some(request) = read_request(&entry.path())? else {
-            continue;
-        };
-        let (Some(source), Ok(hash)) = (
-            HistorySource::parse(&request.source),
-            blake3::Hash::from_hex(&request.blake3),
-        ) else {
-            tracing::warn!(import = %id.to_hex(), "a staged import's request does not read; left");
-            continue;
-        };
-        let staged = HostedImportStaged {
-            bytes: request.bytes,
-            blake3: *hash.as_bytes(),
-        };
-        whole.push((id, source, staged));
-    }
-    if whole.is_empty() {
-        return Ok(());
-    }
-    let owner = crate::owner::local_owner(vault)?;
-    for (id, source, staged) in whole {
-        vault.hosted_import_create(&owner, id, source, staged, own_second(vault)?)?;
-        tracing::info!(import = %id.to_hex(), source = source.source_id(), "hosted import staged");
-    }
-    Ok(())
-}
-
 /// The request of a whole folder; `None` while the folder is not whole.
 fn read_request(folder: &Path) -> anyhow::Result<Option<Request>> {
     let path = folder.join(REQUEST_FILE);
@@ -1040,7 +1087,41 @@ fn staged_export(folder: &Path, bytes: u64) -> anyhow::Result<Option<PathBuf>> {
     Ok((metadata.is_file() && metadata.len() == bytes).then_some(path))
 }
 
-/// Ends a job Failed with `reason` and removes its folder.
+/// Door for `tests/hosted_import_job.rs`: lands conversation `index`
+/// (earliest first) of hosted import `id` into its review and keeps no
+/// place, as a process that stops after that landing commits and before the
+/// job's place is kept leaves it. Compiled only under
+/// `--cfg oneiron_test_support`; never API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn land_unplaced(
+    vault: &oneiron::Vault,
+    vault_path: &Path,
+    id: HostedImportId,
+    index: usize,
+) -> anyhow::Result<()> {
+    let job = vault
+        .hosted_import(id)?
+        .ok_or_else(|| anyhow::anyhow!("no hosted import {}", id.to_hex()))?;
+    let source = job
+        .history_source()
+        .ok_or_else(|| anyhow::anyhow!("the import's source is not one this build reads"))?;
+    let folder = imports_root(vault_path).join(id.to_hex());
+    let export = staged_export(&folder, job.staged_bytes)?
+        .ok_or_else(|| anyhow::anyhow!("the staged export is gone or changed"))?;
+    let (_, mut conversations) = decode(source, &export)?;
+    earliest_first(&mut conversations);
+    let conversation = conversations
+        .get(index)
+        .ok_or_else(|| anyhow::anyhow!("the export has no conversation {index}"))?;
+    let owner = crate::owner::local_owner(vault)?;
+    vault
+        .import_history(&owner, source, conversation, job.imported_at)
+        .map_err(|error| anyhow::anyhow!("import stopped: {error}"))?;
+    Ok(())
+}
+
+/// Ends a job Failed with `reason` and removes its folder, under the
+/// caller's admission.
 fn fail(
     vault: &oneiron::Vault,
     folder: &Path,

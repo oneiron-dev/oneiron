@@ -15,10 +15,11 @@
 #![cfg(all(oneiron_test_support, unix))]
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use oneiron::ingest::history::{HistorySource, HostedImportId, HostedImportJob, HostedImportState};
 use oneiron::{Vault, VaultConfig};
-use oneiron_server::test_doors::hosted_import::{pass, stage};
+use oneiron_server::test_doors::hosted_import::{land_unplaced, pass, pass_admitting, stage};
 use serde_json::{Map, Value, json};
 
 type TestError = Box<dyn std::error::Error>;
@@ -265,6 +266,179 @@ fn the_job_row_counts_the_rows_of_each_landed_conversation() -> TestResult {
         revised.new + revised.skipped + revised.changed + revised.refused + revised.pending,
         revised.messages,
         "every decoded message is counted once"
+    );
+    Ok(())
+}
+
+/// Two conversations, of 2 and 3 messages.
+fn two_conversations() -> [Conversation; 2] {
+    [
+        Conversation {
+            created: 1_757_840_000,
+            messages: 2,
+            edited: None,
+        },
+        Conversation {
+            created: 1_757_840_100,
+            messages: 3,
+            edited: None,
+        },
+    ]
+}
+
+/// A host frozen for reap admits nothing, and a pass then writes nothing: it
+/// makes no row for a whole folder and removes no folder.
+#[test]
+fn a_pass_the_host_does_not_admit_makes_no_row_and_removes_no_folder() -> TestResult {
+    let vault_dir = tempfile::tempdir()?;
+    let exports = tempfile::tempdir()?;
+    let export = exports.path().join("conversations.json");
+    write_export(&export, &two_conversations())?;
+
+    let vault = open_vault(vault_dir.path())?;
+    let id = stage(vault_dir.path(), HistorySource::Chatgpt, &export)?;
+    pass_admitting(&vault, vault_dir.path(), None, || None)?;
+    assert!(
+        vault.hosted_import(id)?.is_none(),
+        "FAILBEFORE: a pass the host does not admit makes no row"
+    );
+    assert!(staging(vault_dir.path(), id).is_dir());
+
+    pass(&vault, vault_dir.path(), None)?;
+    assert_eq!(job(&vault, id)?.state, HostedImportState::Landed);
+    // The folder outlives the job's end; an unadmitted pass leaves it.
+    std::fs::create_dir(staging(vault_dir.path(), id))?;
+    std::fs::write(staging(vault_dir.path(), id).join("export.json"), b"[]")?;
+    pass_admitting(&vault, vault_dir.path(), None, || None)?;
+    assert!(
+        staging(vault_dir.path(), id).is_dir(),
+        "a pass the host does not admit removes nothing"
+    );
+    Ok(())
+}
+
+/// The folder of an ended job that outlived its end, as a process that
+/// stopped between the end and the removal leaves it (or a removal that
+/// failed), is removed by the next pass, and the job stays as it ended.
+#[test]
+fn an_ended_jobs_folder_that_outlived_its_end_is_removed_by_the_next_pass() -> TestResult {
+    let vault_dir = tempfile::tempdir()?;
+    let exports = tempfile::tempdir()?;
+    let export = exports.path().join("conversations.json");
+    write_export(&export, &two_conversations())?;
+
+    let vault = open_vault(vault_dir.path())?;
+    let id = stage(vault_dir.path(), HistorySource::Chatgpt, &export)?;
+    pass(&vault, vault_dir.path(), None)?;
+    let landed = job(&vault, id)?;
+    assert_eq!(landed.state, HostedImportState::Landed);
+    assert!(!staging(vault_dir.path(), id).exists());
+
+    std::fs::create_dir(staging(vault_dir.path(), id))?;
+    std::fs::write(staging(vault_dir.path(), id).join("export.json"), b"[]")?;
+    pass(&vault, vault_dir.path(), None)?;
+    assert!(
+        !staging(vault_dir.path(), id).exists(),
+        "FAILBEFORE: the next pass removes an ended job's folder"
+    );
+    assert_eq!(counts(&job(&vault, id)?), counts(&landed));
+    assert_eq!(job(&vault, id)?.state, HostedImportState::Landed);
+    Ok(())
+}
+
+/// What the test's host holds while a unit of the pass writes: at its drop
+/// it notes whether the job's staging folder is still there.
+struct Watched {
+    folder: PathBuf,
+    seen: Arc<Mutex<Vec<bool>>>,
+}
+
+impl Drop for Watched {
+    fn drop(&mut self) {
+        self.seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(self.folder.is_dir());
+    }
+}
+
+/// The job's end (its inbox row, its Dreamer queue, the end itself and the
+/// removal of its folder) runs under the admission of its last
+/// conversation, so a host frozen for reap after that conversation never
+/// sees the pass idle while it still writes.
+#[test]
+fn a_jobs_end_and_its_staging_removal_run_under_the_last_admission() -> TestResult {
+    let vault_dir = tempfile::tempdir()?;
+    let exports = tempfile::tempdir()?;
+    let export = exports.path().join("conversations.json");
+    write_export(&export, &two_conversations())?;
+
+    let vault = open_vault(vault_dir.path())?;
+    let id = stage(vault_dir.path(), HistorySource::Chatgpt, &export)?;
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let folder = staging(vault_dir.path(), id);
+    let kept = Arc::clone(&seen);
+    pass_admitting(&vault, vault_dir.path(), None, move || {
+        Some(Box::new(Watched {
+            folder: folder.clone(),
+            seen: Arc::clone(&kept),
+        }) as Box<dyn Send>)
+    })?;
+    let landed = job(&vault, id)?;
+    assert_eq!(landed.state, HostedImportState::Landed);
+    assert_eq!(counts(&landed), (2, 5, 0, 0, 0, 0));
+    assert!(!staging(vault_dir.path(), id).exists());
+    let seen = seen
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert!(seen.len() >= 2, "each conversation is admitted: {seen:?}");
+    assert_eq!(
+        seen.last(),
+        Some(&false),
+        "FAILBEFORE: the staging is removed before the host gets the last admission back: {seen:?}"
+    );
+    Ok(())
+}
+
+/// A process that stops after a conversation's landing commits and before
+/// the job keeps its place: the next pass lands the same conversation again,
+/// which finds its messages already there. They count new, as the stopped
+/// landing landed them, so the job's counts are true and its import is
+/// surfaced (an inbox row needs new or changed messages). A later import of
+/// the same export counts them skipped: they were not learned at its second.
+#[test]
+fn messages_a_stopped_landing_left_count_new_when_the_job_resumes() -> TestResult {
+    let vault_dir = tempfile::tempdir()?;
+    let exports = tempfile::tempdir()?;
+    let export = exports.path().join("conversations.json");
+    write_export(&export, &two_conversations()[..1])?;
+
+    let vault = open_vault(vault_dir.path())?;
+    let id = stage(vault_dir.path(), HistorySource::Chatgpt, &export)?;
+    pass(&vault, vault_dir.path(), Some(0))?;
+    land_unplaced(&vault, vault_dir.path(), id, 0)?;
+    assert_eq!(counts(&job(&vault, id)?), (0, 0, 0, 0, 0, 0));
+    assert_eq!(vault.history_import_ledger_len(HistorySource::Chatgpt)?, 2);
+    drop(vault);
+
+    let vault = open_vault(vault_dir.path())?;
+    pass(&vault, vault_dir.path(), None)?;
+    let landed = job(&vault, id)?;
+    assert_eq!(landed.state, HostedImportState::Landed);
+    assert_eq!(
+        counts(&landed),
+        (1, 2, 0, 0, 0, 0),
+        "FAILBEFORE: the messages the stopped landing left count new, not skipped"
+    );
+    assert_eq!(vault.history_import_ledger_len(HistorySource::Chatgpt)?, 2);
+
+    let again = stage(vault_dir.path(), HistorySource::Chatgpt, &export)?;
+    pass(&vault, vault_dir.path(), None)?;
+    assert_eq!(
+        counts(&job(&vault, again)?),
+        (1, 0, 2, 0, 0, 0),
+        "another import's landing of the same messages counts them skipped"
     );
     Ok(())
 }
