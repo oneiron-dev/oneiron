@@ -3498,10 +3498,12 @@ suite.test(test, "MUSE-RECALL-09", "Recall above 1,048,576 records a limit quest
 //   world hits are never interleaved unlabeled in one list.
 // - P-RECALL-011: "World sections are labeled and presented base-first
 //   within their budgets." Source: ARCH-0004#world-scope. Proved in the
-//   typed pack (per-item world label, base group first) and in the rendered
-//   pack (base text before story text, story label before story text; the
-//   rendered label came with #7304, FIX-LIST
-//   [RECALL-RENDERED-PACK-WORLD-UNLABELED]). The
+//   typed pack (per-item world label, base group first). In the rendered
+//   pack the claims, all about the vault owner, are l2_base rows; proved:
+//   each row names its world (story rows the story world, base rows not it)
+//   and the out-of-scope world is absent. NOT proved there: base-first order,
+//   because l2_base rows sit in claim-id order (FIX-LIST
+//   [RECALL-L2-PREFIX-WORLDS-UNPARTITIONED]). The
 //   exact non-base budget fraction is not asserted: no typed door read here
 //   lets the owner set or read that fraction. The fixture holds three base
 //   claims beside the three story claims, so the default non-base share
@@ -3549,6 +3551,26 @@ function museRecall03NoSentinels(value: unknown, sentinels: readonly string[]): 
   const text = JSON.stringify(value) ?? "";
   // Boolean form keeps sentinel text out of assertion diagnostics.
   expect(sentinels.every((sentinel) => !text.includes(sentinel))).toBe(true);
+}
+
+// A rendered toon pack's l2_base rows. serialize/l2_prefix.rs with_l2_prefix
+// writes the first line as `l2_base: <JSON string of {content_hash, body}>`;
+// body is the row array context_pack/l2_base.rs render_l2_rows_with_handles
+// writes ({id, subj, pred, val, world}). A pack with no prefix has no rows.
+function museRecall03RenderedL2Rows(rendered: string): Retrieval04L2Row[] {
+  const tag = "l2_base: ";
+  const head = rendered.split("\n", 1)[0] ?? "";
+  if (!head.startsWith(tag)) return [];
+  const summary = JSON.parse(JSON.parse(head.slice(tag.length)) as string) as { readonly body: string };
+  return JSON.parse(summary.body) as Retrieval04L2Row[];
+}
+
+// The spellings an l2_base row's `world` takes for a WORLD: its short handle
+// (the entity_ref before its ":<hash>"), or its id hex where no short handle
+// resolves (l2_base.rs read_l2_handle).
+function museRecall03WorldHandles(world: { readonly entity_ref: string; readonly id_hex: string }): string[] {
+  const colon = world.entity_ref.lastIndexOf(":");
+  return [colon > 0 ? world.entity_ref.slice(0, colon) : world.entity_ref, world.id_hex];
 }
 
 function museRecall03NamesWorld(
@@ -3780,21 +3802,37 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
     });
     expect(typeof renderedPack.rendered).toBe("string");
     const rendered = renderedPack.rendered ?? "";
-    const renderedBaseAt = rendered.indexOf(baseSentinel);
-    const renderedStoryAt = rendered.indexOf(storySentinels[0]!);
-    expect(renderedBaseAt).toBeGreaterThanOrEqual(0);
-    expect(renderedStoryAt).toBeGreaterThan(renderedBaseAt);
-    const storyWorldLabels = [storyWorldName, storyWorld.id_hex, storyWorld.entity_ref];
-    const renderedStoryLabelled = storyWorldLabels.some((label) => {
-      const at = rendered.indexOf(label);
-      return at >= 0 && at < renderedStoryAt;
-    });
-    // P-RECALL-011 in the rendered pack: each row carries its world section
-    // (#7304, FIX-LIST [RECALL-RENDERED-PACK-WORLD-UNLABELED]), so the story
-    // world's id hex is written before the first story claim's text.
-    if (!renderedStoryLabelled) {
-      throw new Error(`MUSE-RECALL-03 the rendered recall pack (format=toon) writes no world label before the story section; story_label_anywhere=${storyWorldLabels.some((label) => rendered.includes(label))} rendered_chars=${rendered.length}`);
+    // P-RECALL-011 in the rendered pack. Every claim here is about the vault
+    // owner, an L2 subject, so the rendered pack serves each one once, as an
+    // l2_base row ahead of the delta (context_pack/l2_base.rs
+    // render_l2_rows_with_handles; serialize/pack_preparation.rs
+    // prepare_entities skips l2_base.evidence_ids). Each row names its world
+    // by the world's short handle (`world`, the id hex where none resolves).
+    // #7304's `world_section` label is for delta rows, and these claims are
+    // none. The rows sit in claim-id order, so base-first is not asserted
+    // here (FIX-LIST [RECALL-L2-PREFIX-WORLDS-UNPARTITIONED]).
+    const l2Rows = museRecall03RenderedL2Rows(rendered);
+    const l2RowWith = (sentinel: string) => l2Rows.find(
+      (row) => (JSON.stringify(row.val) ?? "").includes(sentinel),
+    );
+    const storyWorldHandles = museRecall03WorldHandles(storyWorld);
+    const otherWorldHandles = museRecall03WorldHandles(otherWorld);
+    const baseRows = [baseSentinel, ...baseExtraSentinels].map(l2RowWith);
+    const storyRows = storySentinels.map(l2RowWith);
+    const renderedLabelled =
+      baseRows.every((row) => row !== undefined && !storyWorldHandles.includes(row.world ?? ""))
+      && storyRows.every((row) => row !== undefined && storyWorldHandles.includes(row.world ?? ""));
+    if (!renderedLabelled) {
+      // World handles are printed as kinds, not text: a handle can carry a
+      // redacted world name.
+      const kinds = storyRows.map((row) => row === undefined ? "missing"
+        : storyWorldHandles.includes(row.world ?? "") ? "story"
+          : row.world === null ? "null" : "other");
+      throw new Error(`MUSE-RECALL-03 the rendered recall pack (format=toon) does not name each owner claim's world in its l2_base rows; rendered_head=${JSON.stringify(rendered.slice(0, 12))} delta_empty=${rendered.endsWith("delta:\n")} l2_rows=${l2Rows.length} base_rows_found=${baseRows.filter(Boolean).length} story_rows_found=${storyRows.filter(Boolean).length} story_row_worlds=${JSON.stringify(kinds)} rendered_chars=${rendered.length}`);
     }
+    // The out-of-scope world's claim is in no part of the rendered pack.
+    expect(rendered.includes(otherSentinel)).toBe(false);
+    expect(l2Rows.some((row) => otherWorldHandles.includes(row.world ?? ""))).toBe(false);
 
     const otherOnlyInput: FacadeInput<"vault.recall"> = {
       query: tokenOtherWorld, effort: "light", limit: 10,
