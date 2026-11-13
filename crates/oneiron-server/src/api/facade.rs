@@ -36,6 +36,8 @@ mod agent_verbs {
     include!(concat!(env!("OUT_DIR"), "/agent_verbs.rs"));
 }
 mod aging_doors;
+// The output archive's judge door (ARM05 P3).
+mod archive_judge_doors;
 mod artifact_hosting_doors;
 mod asr_doors;
 mod authority_history_doors;

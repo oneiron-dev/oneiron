@@ -281,7 +281,7 @@ pub(crate) fn mint_axes_in_txn(
 
 /// The installed pin of `root`, whose goal is still current and whose
 /// version is `descriptor_revision`.
-fn current_pin_in_txn(
+pub(super) fn current_pin_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     root: EntityId,
@@ -430,6 +430,13 @@ pub(crate) fn mint_score_in_txn(
         output,
         quality,
     })
+}
+
+/// How many producer records the engine holds, for a test door.
+#[cfg(oneiron_test_support)]
+pub(crate) fn producer_record_count(vault: &Vault) -> Result<usize> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(PRODUCERS.scan(&vault.store, &txn)?.len())
 }
 
 /// Install's and repropose's check: the pin's proposal receipt names the

@@ -33,7 +33,7 @@ const REQUESTS: SideTable<[u8; 16], ArchiveAxesRequestRecord, Named> =
 
 /// What the recipe reads of one sample output's text. Canon sets no number;
 /// this is the engine's policy.
-const SAMPLE_TEXT_BYTES: usize = 4096;
+pub(super) const SAMPLE_TEXT_BYTES: usize = 4096;
 /// Most clusters the embedding fallback makes. Canon sets no number; this is
 /// the engine's policy.
 const MAX_CLUSTERS: usize = 8;
@@ -467,7 +467,7 @@ fn parse_axes(text: &str) -> Option<Vec<ArchiveAxis>> {
 }
 
 /// `text` cut to at most `bytes` bytes, at a character boundary.
-fn clip(mut text: String, bytes: usize) -> String {
+pub(super) fn clip(mut text: String, bytes: usize) -> String {
     if text.len() > bytes {
         let mut end = bytes;
         while !text.is_char_boundary(end) {
