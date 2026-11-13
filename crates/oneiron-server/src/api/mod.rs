@@ -95,6 +95,8 @@ mod conversation_transcript;
 mod conversations;
 mod core;
 mod courtesy_delete;
+// INQUIRE-1 PR 5: the member host's inquiry route.
+mod inquiry_peer;
 mod discover;
 mod entity;
 mod error_map;
