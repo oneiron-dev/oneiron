@@ -10,7 +10,9 @@ use oneiron_organ_protocol::{
 };
 use serde::Deserialize;
 
-use crate::body::{Filter, Format, Icc, ImageBody, KIND, Shape, Source, Stroke, bad, from_value};
+use crate::body::{
+    Filter, Format, Icc, ImageBody, KIND, SCHEMA, Shape, Source, Stroke, bad, from_value, to_value,
+};
 use crate::decode::{Header, Profile, check_size, decode, header_cost, read_header};
 use crate::ops::{self, Edited};
 use crate::render::{encode_png, render};
@@ -424,11 +426,15 @@ impl ImageOrgan {
         drop(source);
         call.check_cancel()?;
         let png = encode_png(&pixels, header.alpha)?;
+        // The body it rendered rides in the report, so a proposal the export
+        // lands keeps the edit that made it (RULING 09:34 Fri 13 Nov, IO-BODY A).
         let report = Value::Map(vec![
             ("format".into(), "png".into()),
             ("width".into(), pixels.width().into()),
             ("height".into(), pixels.height().into()),
             ("bytes".into(), (png.len() as u64).into()),
+            ("body_schema".into(), SCHEMA.into()),
+            ("body".into(), to_value(&body)?),
         ]);
         let mut notes = Notes::default();
         if header.profile == Profile::Untagged {
