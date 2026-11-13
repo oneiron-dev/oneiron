@@ -15,6 +15,7 @@ mod items;
 mod paid;
 mod presentation;
 mod render_budget;
+mod replay;
 mod scope_honesty;
 mod selection;
 mod speculative;
@@ -1083,4 +1084,18 @@ pub struct RecallRequest {
     /// narrows the vault's floor, and every stage of the recall meets it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
+    /// The caller's operation id (RESEARCH-0363 p5): 1 to 128 of
+    /// `A-Z a-z 0-9 . _ : -`. The first recall under it keeps its items' ids
+    /// and the revisions it served them at, never their text. The same
+    /// request under it again rebuilds those items at those revisions under
+    /// the caller's current read, and answers them only when they are the
+    /// same; otherwise it refuses with `INVALID_STATE`, so an erase or a
+    /// narrowed read never serves an old answer. It takes no `format` and no
+    /// deadline. Omitted, recall runs as before.
+    #[serde(
+        default,
+        alias = "operationId",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub operation_id: Option<String>,
 }

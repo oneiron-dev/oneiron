@@ -914,6 +914,7 @@ fn a_recall_the_engine_refuses_never_embeds_its_query() {
         query_affect: None,
         telemetry: None,
         filter: None,
+        operation_id: None,
     };
     let call = |deadline_ms| RecallRequest {
         effort: Some(crate::memory::RecallEffort::Call),

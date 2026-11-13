@@ -377,6 +377,7 @@ impl ActorScopedVault {
             query_affect: None,
             telemetry: None,
             filter: None,
+            operation_id: None,
         };
         let memory = self.facade()?;
         let pack = typed_row(
