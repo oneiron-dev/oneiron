@@ -4,6 +4,15 @@
 
 use super::*;
 
+/// A refused refund or settlement leaves the reservation as it stands; any
+/// other error stops the pass.
+fn past_refusal(result: Result<()>) -> Result<()> {
+    match result {
+        Ok(()) | Err(Error::InvalidConfig(_)) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 impl Pass<'_> {
     fn root(&self) -> AttemptId {
         self.binding.root
@@ -53,16 +62,15 @@ impl Pass<'_> {
     }
 
     /// End a continuation on a refusal. A reservation nothing was dispatched
-    /// on is refunded; a dispatched run's stays as the run left it.
+    /// on is refunded; a dispatched run's stays as the run left it. A
+    /// confirmation's exposure stays spent once its cohort was served.
     fn fail(&self, row: &ResearchContinuation, reason: String) -> Result<()> {
         let mut next = row.clone();
         if let Some(running) = &row.running
             && running.run.is_none()
         {
-            match self.refund(running.reservation) {
-                Ok(()) | Err(Error::InvalidConfig(_)) => {}
-                Err(error) => return Err(error),
-            }
+            past_refusal(self.refund(running.reservation))?;
+            past_refusal(self.close_exposure(running))?;
             next.running = None;
         }
         next.state = failed(reason);
@@ -79,6 +87,7 @@ impl Pass<'_> {
         let mut next = row.clone();
         // A budget hold retries its task now.
         next.state = ResearchContinuationState::Open;
+        next.held_line = None;
         if next.pending.is_empty() {
             next.state = ResearchContinuationState::Done {
                 note: "every task ran".to_owned(),
@@ -106,7 +115,25 @@ impl Pass<'_> {
                 (RsiSpendPurpose::HeldOut, execution.confirm_units, candidate)
             }
         };
-        match reserve_research_work(
+        // Serving the sealed cohort spends exposure on its own line, reserved
+        // before the token work and before the shot.
+        let exposure = match task {
+            ResearchTask::Confirm { candidate } => match reserve_research_exploration(
+                self.vault,
+                self.root(),
+                SERVING_EXPOSURE,
+                Some(candidate),
+                self.now,
+            ) {
+                Ok(exposure) => Some(exposure),
+                Err(error) if is_budget_refusal(&error) => {
+                    return self.hold(row, next, task, ResearchReservationLine::Exploration);
+                }
+                Err(error) => return Err(error),
+            },
+            _ => None,
+        };
+        let reservation = match reserve_research_work(
             self.vault,
             self.root(),
             purpose,
@@ -114,27 +141,52 @@ impl Pass<'_> {
             Some(attempt),
             self.now,
         ) {
-            Ok(reservation) => {
-                next.running = Some(ResearchRunning {
-                    task,
-                    reservation,
-                    run: None,
-                    release: None,
-                });
-                self.save(row, next)?;
-                Ok(Flow::Next)
+            Ok(reservation) => reservation,
+            Err(error) => {
+                if let Some(exposure) = exposure {
+                    self.refund(exposure)?;
+                }
+                if is_budget_refusal(&error) {
+                    return self.hold(row, next, task, ResearchReservationLine::Work { purpose });
+                }
+                return Err(error);
             }
-            // No room: the task waits at the front, as a round pauses.
-            Err(error) if is_budget_refusal(&error) => {
-                next.pending.insert(0, task);
-                next.state = ResearchContinuationState::Held {
-                    reason: BUDGET_HELD.to_owned(),
-                };
-                self.save(row, next)?;
-                Ok(Flow::Stop)
+        };
+        next.running = Some(ResearchRunning {
+            task,
+            reservation,
+            exposure,
+            run: None,
+            release: None,
+        });
+        if let Err(error) = self.save(row, next) {
+            // Another pass moved the row first: no run of this pass will
+            // spend what it reserved (FIX 14686).
+            self.refund(reservation)?;
+            if let Some(exposure) = exposure {
+                self.refund(exposure)?;
             }
-            Err(error) => Err(error),
+            return Err(error);
         }
+        Ok(Flow::Next)
+    }
+
+    /// No room on `line`: the task waits at the front, as a round pauses,
+    /// with nothing reserved and nothing dispatched.
+    fn hold(
+        &self,
+        row: &ResearchContinuation,
+        mut next: ResearchContinuation,
+        task: ResearchTask,
+        line: ResearchReservationLine,
+    ) -> Result<Flow> {
+        next.pending.insert(0, task);
+        next.state = ResearchContinuationState::Held {
+            reason: BUDGET_HELD.to_owned(),
+        };
+        next.held_line = Some(line);
+        self.save(row, next)?;
+        Ok(Flow::Stop)
     }
 
     /// The held-out basis needs no run. Only a Promote goes on, and only to
@@ -188,6 +240,7 @@ impl Pass<'_> {
                 let Some(release) = &running.release else {
                     return self.release(row, running, candidate);
                 };
+                self.close_exposure(running)?;
                 let referee = self
                     .execution
                     .referee
@@ -237,6 +290,7 @@ impl Pass<'_> {
             Err(error) => return Err(error),
         };
         self.refund(running.reservation)?;
+        self.close_exposure(running)?;
         let mut next = row.clone();
         next.running = None;
         next.state = failed(reason);
@@ -267,6 +321,7 @@ impl Pass<'_> {
                     // Refused before the shot was consumed: nothing was spent.
                     if !self.shot_spent(candidate)? {
                         self.refund(running.reservation)?;
+                        self.close_exposure(running)?;
                         next.running = None;
                         next.state = failed(reason);
                         self.save(row, next)?;
@@ -277,6 +332,7 @@ impl Pass<'_> {
             }
         }
         self.refund(running.reservation)?;
+        self.close_exposure(running)?;
         next.running = None;
         next.state = ResearchContinuationState::Held {
             reason: SHOT_SPENT.to_owned(),
@@ -611,6 +667,36 @@ impl Pass<'_> {
         Ok(self
             .basis_of(candidate)?
             .is_some_and(|basis| basis.confirmation.is_some()))
+    }
+
+    /// Whether the candidate's sealed cohort was served: its serving is on
+    /// the cohort's exposure ledger.
+    fn cohort_served(&self, candidate: AttemptId) -> Result<bool> {
+        Ok(self
+            .basis_of(candidate)?
+            .and_then(|basis| basis.confirmation)
+            .is_some_and(|confirmation| confirmation.exposure.is_some()))
+    }
+
+    /// Close a confirmation's exposure reservation, once: spent when its
+    /// sealed cohort was served, refunded when it never was.
+    fn close_exposure(&self, running: &ResearchRunning) -> Result<()> {
+        let (ResearchTask::Confirm { candidate }, Some(id)) = (running.task, running.exposure)
+        else {
+            return Ok(());
+        };
+        if !self
+            .reservation(id)?
+            .is_some_and(|row| row.settlement.is_none())
+        {
+            return Ok(());
+        }
+        if self.cohort_served(candidate)? {
+            settle_research_work(self.vault, self.root(), id, SERVING_EXPOSURE)?;
+        } else {
+            refund_research_work(self.vault, self.root(), id)?;
+        }
+        Ok(())
     }
 
     fn measurement(
