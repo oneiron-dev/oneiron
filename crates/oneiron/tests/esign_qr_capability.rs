@@ -5,20 +5,22 @@
 //! page that capability opens shows the seal's metadata and hashes, never an
 //! email or the token; an unknown, foreign, expired or revoked capability
 //! gets one refusal; the owner sets its expiry or revokes it; and it opens
-//! no PDF door, which only a party's own signing link reads.
+//! no PDF door, which only a party's own signing link reads, unless the
+//! vault owner turns on the document's QR PDF download (`qr_pdf_download`,
+//! RULING ESIGN-QR-POSSESSION-FACTOR B).
 
 use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron::blob_artifact::esign::{
-    DocumentKind, EsignAuditActor, EsignCapability, EsignDocument, EsignItem, EsignQrCapability,
-    EsignQrOutcome, EsignQrSigner, EsignRecipient, EsignSealError, EsignSealProducer,
-    EsignSealRequest, EsignSealRun, EsignSealed, EsignSealer, EsignSealerError, EsignVerdict,
-    RecipientRole, SealActiveContentFacts, SealProfile, SealVerdict, SigningAction, SigningOutcome,
-    render,
+    DocumentKind, EsignAuditActor, EsignCapability, EsignCreateRequest, EsignDocument, EsignItem,
+    EsignQrCapability, EsignQrOutcome, EsignQrSigner, EsignRecipient, EsignSealError,
+    EsignSealProducer, EsignSealRequest, EsignSealRun, EsignSealed, EsignSealer, EsignSealerError,
+    EsignVerdict, RecipientRole, SealActiveContentFacts, SealProfile, SealVerdict, SigningAction,
+    SigningOutcome, render,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::ports::ManualClock;
-use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use sha2::{Digest, Sha256};
 
 type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -116,7 +118,52 @@ struct Sealed {
     _dir: tempfile::TempDir,
 }
 
+/// How the fixture drafts its document.
+#[derive(Clone, Copy)]
+enum Draft {
+    /// The vault's own create door, as every QR test before the switch.
+    Vault,
+    /// `vault.esign.create` as the vault owner, with this QR PDF download.
+    OwnerVerb { qr_pdf_download: bool },
+}
+
+/// The one-approver, one-item draft on `artifact`.
+fn agreement(artifact: EntityId, now: u64) -> EsignDocument {
+    EsignDocument {
+        schema_version: 1,
+        kind: DocumentKind::Document,
+        title: "Agreement".into(),
+        sequential: false,
+        expires_at: now + 3600,
+        token_expires_at: None,
+        items: vec![EsignItem {
+            artifact_ref: artifact.to_hex(),
+            original_version: 1,
+        }],
+        recipients: vec![EsignRecipient {
+            id: EntityId::now().to_hex(),
+            email: "owen@example.com".into(),
+            name: "Owen".into(),
+            role: RecipientRole::Approver,
+            order: 0,
+            expires_at: now + 3600,
+            principal_ref: None,
+            automated: false,
+            natural_person: None,
+        }],
+        fields: vec![],
+        full_trail_appendix: true,
+        lifecycle: None,
+        project: None,
+        commitments: Vec::new(),
+    }
+}
+
 fn sealed() -> TestResult<Sealed> {
+    sealed_with(Draft::Vault)
+}
+
+fn sealed_with(draft: Draft) -> TestResult<Sealed> {
     let dir = tempfile::tempdir()?;
     let now = 1_800_000_000;
     let clock = ManualClock::new(now);
@@ -155,40 +202,24 @@ fn sealed() -> TestResult<Sealed> {
         at,
         now,
     )?;
-    let document = EsignDocument {
-        schema_version: 1,
-        kind: DocumentKind::Document,
-        title: "Agreement".into(),
-        sequential: false,
-        expires_at: now + 3600,
-        token_expires_at: None,
-        items: vec![EsignItem {
-            artifact_ref: id.to_hex(),
-            original_version: 1,
-        }],
-        recipients: vec![EsignRecipient {
-            id: EntityId::now().to_hex(),
-            email: "owen@example.com".into(),
-            name: "Owen".into(),
-            role: RecipientRole::Approver,
-            order: 0,
-            expires_at: now + 3600,
-            principal_ref: None,
-            automated: false,
-            natural_person: None,
-        }],
-        fields: vec![],
-        full_trail_appendix: true,
-        lifecycle: None,
-        project: None,
-        commitments: Vec::new(),
-    };
+    let document = agreement(id, now);
     let actor = EsignAuditActor {
         actor: person.to_hex(),
         ip: None,
         user_agent: None,
     };
-    vault.create_esign_document(id, &document, actor.clone(), now)?;
+    match draft {
+        Draft::Vault => vault.create_esign_document(id, &document, actor.clone(), now)?,
+        Draft::OwnerVerb { qr_pdf_download } => {
+            vault
+                .memory(person, EdgeActorClass::Human)
+                .esign_create(&EsignCreateRequest {
+                    document_ref: id.to_hex(),
+                    draft: document,
+                    qr_pdf_download,
+                })?;
+        }
+    }
     let owner = vault.authenticate_owner(
         person,
         &person.to_hex(),
@@ -412,5 +443,128 @@ fn a_qr_capability_opens_no_pdf_door_and_the_signing_link_reads_the_sealed_copy(
         hex(&manifest.items[0].sha256),
         "the signing link reads the sealed, hash-checked copy"
     );
+    Ok(())
+}
+
+/// RULING ESIGN-QR-POSSESSION-FACTOR B: every envelope is sensitive until
+/// the vault owner turns on its QR PDF download. Off, a usable QR capability
+/// reads no PDF and its page says so; on, it reads the hash-checked sealed
+/// PDF it was printed in, the same bytes the signing link reads. The switch
+/// is read live, and a revoked capability reads nothing whatever it says.
+/// Each closed read answers the one refusal.
+#[test]
+fn the_owner_turns_a_documents_qr_pdf_download_on_and_off() -> TestResult {
+    let sealed = sealed()?;
+    let (_, token) = printed_capability(&sealed.printed)?;
+    let vault = &sealed.vault;
+    let manifest = vault
+        .sealed_esign_document(sealed.id)?
+        .ok_or("the sealed manifest")?;
+    let unknown = vault
+        .esign_qr_page(&EsignQrCapability::parse(&"ef".repeat(32))?)
+        .expect_err("a capability no seal printed is refused")
+        .to_string();
+
+    assert!(!vault.esign_qr_page(&token)?.pdf_download, "off by default");
+    let off = vault
+        .esign_qr_sealed_pdf(&token, 0)
+        .expect_err("a QR capability reads no PDF while the download is off")
+        .to_string();
+    assert_eq!(off, unknown, "one refusal");
+
+    assert!(
+        !vault.set_esign_qr_pdf_download(&sealed.owner, sealed.id, true)?,
+        "it was off"
+    );
+    assert!(vault.esign_qr_page(&token)?.pdf_download);
+    let copy = vault.esign_qr_sealed_pdf(&token, 0)?;
+    assert_eq!(
+        hex(&Sha256::digest(&copy)),
+        hex(&manifest.items[0].sha256),
+        "the QR reads the sealed, hash-checked copy"
+    );
+    assert_eq!(
+        copy,
+        vault.esign_pdf_for_capability(&sealed.signing, 0, None, None)?,
+        "the same bytes the signing link reads"
+    );
+    let missing = vault
+        .esign_qr_sealed_pdf(&token, 1)
+        .expect_err("an item the seal did not print is refused")
+        .to_string();
+    assert_eq!(missing, unknown, "one refusal");
+    let stranger = vault
+        .esign_qr_sealed_pdf(&EsignQrCapability::parse(&"ef".repeat(32))?, 0)
+        .expect_err("a capability no seal printed reads no PDF")
+        .to_string();
+    assert_eq!(stranger, unknown, "one refusal");
+
+    assert!(
+        vault.set_esign_qr_pdf_download(&sealed.owner, sealed.id, false)?,
+        "it was on"
+    );
+    assert!(!vault.esign_qr_page(&token)?.pdf_download);
+    let closed = vault
+        .esign_qr_sealed_pdf(&token, 0)
+        .expect_err("turning the download off closes the next read")
+        .to_string();
+    assert_eq!(closed, unknown, "one refusal");
+
+    vault.set_esign_qr_pdf_download(&sealed.owner, sealed.id, true)?;
+    vault.revoke_esign_qr_capabilities(&sealed.owner, sealed.id)?;
+    let revoked = vault
+        .esign_qr_sealed_pdf(&token, 0)
+        .expect_err("a revoked capability reads no PDF")
+        .to_string();
+    assert_eq!(revoked, unknown, "one refusal");
+    assert!(
+        vault
+            .set_esign_qr_pdf_download(&sealed.owner, EntityId::now(), true)
+            .is_err(),
+        "no switch for a document never drafted"
+    );
+    Ok(())
+}
+
+/// The switch at drafting: the vault owner drafting through
+/// `vault.esign.create` with `qr_pdf_download` gets a QR that downloads the
+/// sealed PDF; an agent asking for it is refused before anything lands.
+#[test]
+fn only_the_owner_drafts_a_document_with_its_qr_pdf_download_on() -> TestResult {
+    let sealed = sealed_with(Draft::OwnerVerb {
+        qr_pdf_download: true,
+    })?;
+    let (_, token) = printed_capability(&sealed.printed)?;
+    let vault = &sealed.vault;
+    let manifest = vault
+        .sealed_esign_document(sealed.id)?
+        .ok_or("the sealed manifest")?;
+    assert!(vault.esign_qr_page(&token)?.pdf_download);
+    assert_eq!(
+        hex(&Sha256::digest(&vault.esign_qr_sealed_pdf(&token, 0)?)),
+        hex(&manifest.items[0].sha256)
+    );
+
+    let other = EntityId::now();
+    let refused = vault
+        .memory(EntityId::now(), EdgeActorClass::Agent)
+        .esign_create(&EsignCreateRequest {
+            document_ref: other.to_hex(),
+            draft: agreement(sealed.id, sealed.now),
+            qr_pdf_download: true,
+        })
+        .expect_err("only the vault owner turns the QR PDF download on");
+    assert!(
+        refused.to_string().contains("only the vault owner"),
+        "the refusal names the owner: {refused}"
+    );
+    assert!(vault.esign_audit(other)?.is_empty(), "nothing was drafted");
+
+    let default_off = sealed_with(Draft::OwnerVerb {
+        qr_pdf_download: false,
+    })?;
+    let (_, token) = printed_capability(&default_off.printed)?;
+    assert!(!default_off.vault.esign_qr_page(&token)?.pdf_download);
+    assert!(default_off.vault.esign_qr_sealed_pdf(&token, 0).is_err());
     Ok(())
 }

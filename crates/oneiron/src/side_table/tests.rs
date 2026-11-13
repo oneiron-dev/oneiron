@@ -434,6 +434,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "ENTITY_REVISION_VECTOR_REFILL",
         "ESIGN_CAPABILITY_TOKEN",
         "ESIGN_DOCUMENT_QR_CAPABILITY_INDEX",
+        "ESIGN_DOCUMENT_QR_PDF_DOWNLOAD",
         "ESIGN_PUBLIC_CHECK",
         "ESIGN_PUBLIC_RATE_V2",
         "ESIGN_QR_CAPABILITY",
