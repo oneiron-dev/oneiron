@@ -196,9 +196,9 @@ pub struct GeneratedUiSurfaceCapabilities {
     #[serde(default)]
     pub components: Vec<GeneratedUiComponentSchema>,
     /// The expression tier this surface resolves in app-component props
-    /// (ARCH-0048 G5 #2): `$state` reads and the `$computed` functions it
-    /// registered. Without it, a component whose props hold an expression
-    /// lowers to text.
+    /// (ARCH-0048 G5 #2): `$state` reads, `$cond`, `$template`, and the
+    /// `$computed` functions it registered. Without it, a component whose props
+    /// hold an expression lowers to text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expressions: Option<GeneratedUiExpressionProfile>,
     #[serde(default)]
