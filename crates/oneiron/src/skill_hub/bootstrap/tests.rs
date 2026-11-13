@@ -88,9 +88,7 @@ fn deferred_judge_import_with_capability(
 
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
     assert!(!SEEDED.contains(&vault.store, &vault.store.env.read_txn()?, &())?);
-    vault.with_write_txn(|wtxn| {
-        crate::batch::deindex_entity_for_test(&vault.store, wtxn, &manifest)
-    })?;
+    vault.with_write_txn(|wtxn| crate::batch::deindex_entity_for_test(&vault, wtxn, &manifest))?;
     drop(vault);
     Ok((dir, imported, before))
 }

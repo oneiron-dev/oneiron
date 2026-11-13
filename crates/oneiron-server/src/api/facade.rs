@@ -130,6 +130,8 @@ mod host_door_rows {
 pub(in crate::api) use host_door_rows::needs_caller_credential;
 pub(super) mod host_doors;
 mod host_trigger_doors;
+// The hosted import's verbs (ARCH-0027 #hosted-import).
+mod hosted_import_doors;
 mod hub_doors;
 mod hyde_doors;
 mod identity;
