@@ -9,6 +9,7 @@ pub mod archive_import;
 pub mod authority_view_grant;
 pub mod authority_world_undo;
 pub mod callable_skill;
+pub mod campaign_member_index;
 pub mod check_in;
 pub mod checkpoint_registry;
 pub mod claim_facet_birth;

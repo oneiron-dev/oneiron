@@ -43,6 +43,26 @@ crate::side_table::side_tables! {
     /// Campaign-local MACRO home-node election result. Key: ().
     CAMPAIGN_HOME_NODE_MACRO: VaultMeta b"campaign:home_node_macro:v1" LegacyJson
         [restore: content] [family: unclassified] [tier: canonical];
+    /// One `campaign.member` claim, any lifecycle, under the CAMPAIGN its value is scoped to
+    /// (ARCH-0044 H202): a prefilter the membership pages re-read. Key: id16(campaign) +
+    /// id16(claim).
+    CAMPAIGN_MEMBER_CAMPAIGN_INDEX: VaultMeta b"campaign:member_campaign_index:v1:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// The member index rows one claim holds, so a rewrite or a removal moves them. Key:
+    /// id16(claim).
+    CAMPAIGN_MEMBER_INDEX_REVERSE: VaultMeta b"campaign:member_index_reverse:v1:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// Completeness flag of the campaign member indexes (u64 version). Key: ().
+    CAMPAIGN_MEMBER_INDEX_STATE: VaultMeta b"campaign:member_index_state:v1" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// One `campaign.member` claim, any lifecycle, under the SAVED_QUERY that derived it
+    /// (ARCH-0044 H202). Key: id16(query) + id16(claim).
+    CAMPAIGN_MEMBER_QUERY_INDEX: VaultMeta b"campaign:member_query_index:v1:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// A `campaign.member` claim whose value does not decode: while one is stored the membership
+    /// pages scan every CLAIM. Key: id16(claim).
+    CAMPAIGN_MEMBER_UNDECODABLE: VaultMeta b"campaign:member_undecodable:v1:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// Persisted binding from a campaign program to the campaign it belongs to. Key: id16.
     CAMPAIGN_PROGRAM: VaultMeta b"campaign:program:v1:" LegacyJson
         [restore: content] [family: unclassified] [tier: canonical];
