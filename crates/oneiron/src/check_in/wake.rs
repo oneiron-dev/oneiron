@@ -41,7 +41,7 @@ impl Vault {
     ///
     /// Storage errors reading the due index.
     pub(crate) fn advance_due_check_ins(&self) -> Result<usize> {
-        let now = self.store.clock.now_recorded_at();
+        let now = self.now_recorded_at();
         let due = {
             let rtxn = self.store.env.read_txn()?;
             let mut due = Vec::new();
@@ -109,6 +109,22 @@ fn still_due_in_txn(
 /// Storage errors.
 pub(crate) fn next_check_in_due_at(vault: &Vault) -> Result<Option<u64>> {
     let rtxn = vault.store.env.read_txn()?;
-    let first = DUE.iter_from(&vault.store, &rtxn, &[])?.next().transpose()?;
+    let first = DUE
+        .iter_from(&vault.store, &rtxn, &[])?
+        .next()
+        .transpose()?;
     Ok(first.map(|((due_at, _), ())| due_at))
+}
+
+/// Every `DUE` index entry, in due order: the test door's view of the index.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn due_rows(vault: &Vault) -> Result<Vec<(u64, EntityId)>> {
+    let rtxn = vault.store.env.read_txn()?;
+    DUE.iter_from(&vault.store, &rtxn, &[])?
+        .map(|row| row.map(|(key, ())| key))
+        .collect()
 }

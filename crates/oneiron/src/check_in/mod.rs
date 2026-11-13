@@ -53,16 +53,16 @@ pub use act_class::{ACT_CLASS, ActClass, ActClassRow, ModelCheck, ProofKind, Und
 pub(crate) use chain::{AgentHolderVerdict, NoAgentVerdict, VerifiedChain};
 pub use mode::CheckInMode;
 pub use pending::{
-    CapturedWait, DelayWindow, DelayWindowOpen, Extension, HolderAnswer, HolderKind, HolderReply,
-    Objection, OpenPendingCheckIn, PendingCheckIn, PendingState, Rung, RungEntry, RungHolder,
-    RungMembers,
+    CapturedWait, DelayWindow, DelayWindowOpen, EligibleBasis, Extension, HolderAnswer, HolderKind,
+    HolderReply, Objection, OpenPendingCheckIn, PendingCheckIn, PendingState, Rung, RungEntry,
+    RungHolder, RungMembers,
 };
 pub(crate) use pending::{erase_pending_check_in_actor_in_txn, pending_check_in_in_txn};
 // The doors 2c and 2e-2l call; until then only `test_doors::check_in` does.
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use pending::{
-    RungResolver, answer_pending_check_in_in_txn, extend_pending_check_in_in_txn,
-    open_pending_check_in_in_txn, record_objection_in_txn,
+    RungResolver, answer_pending_check_in_in_txn, consume_pending_check_in_in_txn,
+    extend_pending_check_in_in_txn, open_pending_check_in_in_txn, record_objection_in_txn,
 };
 pub(crate) use policy::{CHECK_IN_ROW_KEY, CheckInPolicyRead};
 pub use policy::{
@@ -77,6 +77,8 @@ pub use resolve::{
 pub use role_preset::{ROLE_PRESET, RoleDefault, RolePreset, RolePresetRow};
 pub use verb_act_class::{VerbActClass, verb_act_class};
 pub use waits::CheckInTransition;
-pub(crate) use wake::next_check_in_due_at;
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use waits::advance_pending_check_in_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use wake::due_rows;
+pub(crate) use wake::next_check_in_due_at;
