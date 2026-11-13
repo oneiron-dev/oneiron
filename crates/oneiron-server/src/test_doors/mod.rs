@@ -8,6 +8,7 @@ pub mod big_rung;
 pub mod coach_round;
 pub mod live_lease;
 pub mod live_run_payer;
+pub mod mcp_surface;
 pub mod media_job_spend;
 pub mod native_board;
 pub mod resident_pump;
