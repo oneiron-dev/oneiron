@@ -456,8 +456,9 @@ impl SyncClient {
     /// `Some([])`, a fresh SyncClientConfig's request, is the device's own
     /// follow (ARCH-0023b #partial-sync): under sync all (residence All, or
     /// the manifest's shipped `sync_world_default`) every world readable on
-    /// this machine, else none. A named list follows the worlds it names that
-    /// are readable here. Read at every check, so a world whose setting turns
+    /// this machine, else the worlds the owner picked for it (`rs:worlds`,
+    /// none until he picks) that are readable here. A named list follows the
+    /// worlds it names that are readable here. Read at every check, so a world whose setting turns
     /// away from this machine is unfollowed at once (DEC-0005). `None`, the
     /// home's sync all, follows every world. A federation lane follows what
     /// it names.
@@ -481,6 +482,14 @@ impl SyncClient {
         let requested = match self.config.followed_worlds.as_deref() {
             None => FollowedWorlds::All,
             Some([]) if device && sync_all => self.readable_worlds_in(&txn)?,
+            Some([]) if device => {
+                let pick: Vec<crate::EntityId> =
+                    crate::sync::residence::device_world_pick_in(&self.vault, &txn)
+                        .map_err(|error| TransportError::Storage(error.to_string()))?
+                        .into_iter()
+                        .collect();
+                self.readable_worlds_in(&txn)?.narrowed_to(&pick)
+            }
             Some(worlds) if device => self.readable_worlds_in(&txn)?.narrowed_to(worlds),
             Some([]) if default_all => FollowedWorlds::All,
             Some(worlds) => FollowedWorlds::Only(worlds.iter().copied().collect()),

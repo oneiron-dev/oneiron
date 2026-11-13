@@ -1,9 +1,9 @@
 //! A device follows its worlds by itself (census L7-42; ARCH-0023b
-//! #partial-sync; Engine ruling WORLDSET-1, Fri 13 Nov 03:02). Under sync
-//! all a device follows every world readable on this machine. A world whose
-//! read setting turns away from this machine is unfollowed at once, in both
-//! residence modes (DEC-0005). The thin index lists every readable world,
-//! followed or not.
+//! #partial-sync; Engine ruling WORLDSET-1, Fri 13 Nov 03:02). It follows
+//! only the worlds the owner picked for it, and under sync all every world
+//! readable on this machine. A world whose read setting turns away from this
+//! machine is unfollowed at once, in both residence modes (DEC-0005). The
+//! thin index lists every readable world, followed or not.
 //!
 //! The device vault is never marked "yours" (`MachineRole::Unanswered`), so
 //! a world kept on "my machines" is withheld from it and a world readable
@@ -16,6 +16,7 @@ use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole, ReadLocation, 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
 use oneiron::sync::bridge::Materializer;
+use oneiron::sync::connection::{ConnectionConfig, SyncConnection};
 use oneiron::sync::schema::create_root_doc;
 use oneiron::sync::transport::{self, TAG_SYNC_UPDATE, TAG_WINDOW_SYNC};
 use oneiron::sync::{SyncClient, SyncClientConfig, SyncResidenceMode, WindowKey, WindowManager};
@@ -88,16 +89,20 @@ impl Device {
             .expect("the owner keeps the world on his machines");
     }
 
+    fn manager(&self) -> Arc<WindowManager> {
+        Arc::new(WindowManager::new(
+            Arc::clone(&self.vault),
+            Arc::new(Materializer::new()),
+            "device-world-follow",
+        ))
+    }
+
     fn client(
         &self,
         residence_mode: SyncResidenceMode,
         followed: Option<Vec<EntityId>>,
     ) -> SyncClient {
-        let manager = Arc::new(WindowManager::new(
-            Arc::clone(&self.vault),
-            Arc::new(Materializer::new()),
-            "device-world-follow",
-        ));
+        let manager = self.manager();
         let mut config = SyncClientConfig {
             residence_mode,
             ..SyncClientConfig::default()
@@ -162,6 +167,49 @@ fn world_update(at: u64, world: EntityId) -> Vec<u8> {
 fn sorted(mut keys: Vec<WindowKey>) -> Vec<WindowKey> {
     keys.sort_by(|left, right| left.as_str().cmp(right.as_str()));
     keys
+}
+
+#[test]
+fn a_device_follows_only_its_picked_world() {
+    let device = Device::open();
+    let at = now_secs();
+    // The owner picks the founder world for this machine; its connection
+    // records the pick.
+    let connection = SyncConnection::new(device.manager(), ConnectionConfig::default())
+        .expect("the device's connection");
+    connection
+        .set_followed_worlds([device.founder].into_iter().collect())
+        .expect("the owner's pick");
+    let mut client = device.client(SyncResidenceMode::Opened, None);
+
+    let picked = client
+        .handle_server_message(&world_update(at, device.founder))
+        .err()
+        .map(|error| error.to_string())
+        .unwrap_or_default();
+    assert!(
+        !picked.contains("unfollowed world window"),
+        "the picked world is followed: {picked}",
+    );
+    let unpicked = client
+        .handle_server_message(&world_update(at, device.granted))
+        .expect_err("a readable world the owner did not pick is not followed");
+    assert!(
+        unpicked.to_string().contains("unfollowed world window"),
+        "refused as unfollowed: {unpicked}",
+    );
+
+    // A pick never reaches past the world's read setting.
+    connection
+        .set_followed_worlds([device.founder, device.kept_home].into_iter().collect())
+        .expect("the owner's wider pick");
+    let kept = client
+        .handle_server_message(&world_update(at, device.kept_home))
+        .expect_err("a picked world this machine may not read is not followed");
+    assert!(
+        kept.to_string().contains("unfollowed world window"),
+        "refused as unfollowed: {kept}",
+    );
 }
 
 #[test]
