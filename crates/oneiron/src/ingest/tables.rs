@@ -29,6 +29,11 @@ crate::side_table::side_tables! {
     /// (`source:native message id`).
     INGEST_HISTORY_LEDGER: VaultMeta b"history-import:v1:" Named Authored [accepts: crate::ingest::ingest_history_ledger_accepts_masked]
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The source policy each sharing container of a history import reads under (ARCH-0027
+    /// #import-audience): one per container, its readers set again by each import of it.
+    /// Key: string (`source:container`).
+    INGEST_HISTORY_SHARING_POLICY: VaultMeta b"history-import:sharing:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// One sensitive-topic cluster of imported claims (OF-492): its topic label, the claims
     /// and import reviews seen in it, and whether it was found clear, asked of the owner
     /// (the frozen question, evidence and options) or settled as a standing rule. Key: id16
