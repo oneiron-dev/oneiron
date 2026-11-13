@@ -143,40 +143,19 @@ impl FreeTimePolicyRows {
             .map(|(row, facts)| rejoin_policy(&joined, row, facts))
             .collect())
     }
-}
 
-impl HomeTable for FreeTimePolicyRows {
-    type Rows = Self;
-    type Actor = FreeTimeActorPartition;
-    const TABLE: &'static SideTableDecl = &side_table::DREAMER_FREE_TIME_POLICY;
-    const SCHEMA_VERSION: u16 = 2;
-
-    /// An owner's set or clear is one writer of its own: none is in flight.
-    fn quiescent(_vault: &Vault, _txn: &RoTxn<'_>, _movement: &HomeMove) -> Result<bool> {
-        Ok(true)
-    }
-
-    fn export(
-        vault: &Vault,
-        txn: &RoTxn<'_>,
-        _fence: &HomeFence,
-    ) -> Result<FreeTimePartitioned<Self>> {
+    /// Every policy row here, partitioned: what a move exports.
+    fn export_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<FreeTimePartitioned<Self>> {
         let rows = POLICY
             .iter_from(&vault.store, txn, &[])?
             .collect::<Result<_>>()?;
         Self::partition(rows)
     }
 
-    /// The witnesses decide: a carried row whose acts extend this node's
-    /// lands; a row here whose acts extend the carried ones is the owner's
-    /// later say-so here and stays; any other difference is a Conflict. Rows
-    /// only this node holds stay: each is the owner's own act. A row whose
-    /// subject did not open here lands nothing; one whose setter or linked
-    /// machine did not lands without that attribution.
-    fn adopt(
+    /// Lands carried `rows` as [`HomeTable::adopt`] judges them.
+    fn adopt_in_txn(
         vault: &Vault,
         txn: &mut RwTxn<'_>,
-        _fence: &HomeFence,
         rows: FreeTimePartitioned<Self>,
     ) -> Result<TableAdopt> {
         for row in Self::rejoin_in_txn(vault, txn, rows)? {
@@ -216,6 +195,103 @@ impl HomeTable for FreeTimePolicyRows {
             POLICY.put(&vault.store, txn, &agent, &record)?;
         }
         Ok(TableAdopt::Applied)
+    }
+}
+
+/// The doors' carry of the policy rows (FABLE-6918-2): the export and the
+/// adoption a home move runs for this table, each actor's content encoded
+/// as the carrier encodes it, with no move and no fence; and one agent's
+/// stored row as it stands, for a home that has not seen a later act.
+#[cfg(oneiron_test_support)]
+impl FreeTimePolicyRows {
+    /// The encoded facts and each actor's encoded content a move carries.
+    pub(crate) fn export_for_doors(vault: &Vault) -> Result<(Vec<u8>, Vec<Vec<u8>>)> {
+        let txn = vault.store.env.read_txn()?;
+        let rows = Self::export_in_txn(vault, &txn)?;
+        let encoding = |_| Error::InvariantViolation("free-time policy rows encoding");
+        let facts =
+            <side_table::Named as SideCodec<Self>>::encode(&rows.facts).map_err(encoding)?;
+        let actors = rows
+            .actors
+            .iter()
+            .map(|content| {
+                <side_table::Named as SideCodec<FreeTimeActorPartition>>::encode(content)
+                    .map_err(encoding)
+            })
+            .collect::<Result<_>>()?;
+        Ok((facts, actors))
+    }
+
+    /// Lands the encoded `facts` and `actors` here, in one writer; `true`
+    /// when they applied, `false` for a Conflict.
+    pub(crate) fn adopt_for_doors(vault: &Vault, facts: &[u8], actors: &[Vec<u8>]) -> Result<bool> {
+        let decoding = |_| Error::InvariantViolation("free-time policy rows decoding");
+        let facts = <side_table::Named as SideCodec<Self>>::decode(facts).map_err(decoding)?;
+        let actors = actors
+            .iter()
+            .map(|content| {
+                <side_table::Named as SideCodec<FreeTimeActorPartition>>::decode(content)
+                    .map_err(decoding)
+            })
+            .collect::<Result<_>>()?;
+        let adopted = vault.with_write_txn_grouped(|txn| {
+            Self::adopt_in_txn(
+                vault,
+                txn,
+                crate::sync::home_handoff::Partitioned { facts, actors },
+            )
+        })?;
+        Ok(adopted == TableAdopt::Applied)
+    }
+
+    /// `agent`'s stored policy row, encoded; `None` when there is none.
+    pub(crate) fn row_for_doors(vault: &Vault, agent: EntityId) -> Result<Option<Vec<u8>>> {
+        let txn = vault.store.env.read_txn()?;
+        POLICY
+            .get(&vault.store, &txn, &agent)?
+            .map(|record| POLICY.encode_value(&record))
+            .transpose()
+    }
+
+    /// Puts `row`, one read by [`Self::row_for_doors`], back as `agent`'s.
+    pub(crate) fn put_row_for_doors(vault: &Vault, agent: EntityId, row: &[u8]) -> Result<()> {
+        let record = POLICY.decode_value(row)?;
+        vault.with_write_txn_grouped(|txn| POLICY.put(&vault.store, txn, &agent, &record))
+    }
+}
+
+impl HomeTable for FreeTimePolicyRows {
+    type Rows = Self;
+    type Actor = FreeTimeActorPartition;
+    const TABLE: &'static SideTableDecl = &side_table::DREAMER_FREE_TIME_POLICY;
+    const SCHEMA_VERSION: u16 = 2;
+
+    /// An owner's set or clear is one writer of its own: none is in flight.
+    fn quiescent(_vault: &Vault, _txn: &RoTxn<'_>, _movement: &HomeMove) -> Result<bool> {
+        Ok(true)
+    }
+
+    fn export(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        _fence: &HomeFence,
+    ) -> Result<FreeTimePartitioned<Self>> {
+        Self::export_in_txn(vault, txn)
+    }
+
+    /// The witnesses decide: a carried row whose acts extend this node's
+    /// lands; a row here whose acts extend the carried ones is the owner's
+    /// later say-so here and stays; any other difference is a Conflict. Rows
+    /// only this node holds stay: each is the owner's own act. A row whose
+    /// subject did not open here lands nothing; one whose setter or linked
+    /// machine did not lands without that attribution.
+    fn adopt(
+        vault: &Vault,
+        txn: &mut RwTxn<'_>,
+        _fence: &HomeFence,
+        rows: FreeTimePartitioned<Self>,
+    ) -> Result<TableAdopt> {
+        Self::adopt_in_txn(vault, txn, rows)
     }
 
     fn live_keys(vault: &Vault, txn: &RoTxn<'_>) -> Result<Vec<Vec<u8>>> {
