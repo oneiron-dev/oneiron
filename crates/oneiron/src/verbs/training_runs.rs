@@ -146,7 +146,7 @@ pub struct TrainingRunGetRequest {
 }
 
 /// `vault.coach.training_runs.execute`'s input.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TrainingRunExecuteRequest {
     pub run: EntityId,
