@@ -104,6 +104,7 @@ impl UnitDecider for DecisionLadder<'_> {
             self.rule,
             self.local,
             self.system_one,
+            self.precision,
             self.escalation,
             self.big,
         ]
@@ -126,6 +127,7 @@ impl UnitDecider for DecisionLadder<'_> {
             self.rule,
             self.local,
             self.system_one,
+            self.precision,
             self.escalation,
             self.big,
         ]

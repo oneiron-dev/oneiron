@@ -181,6 +181,7 @@ impl JevTradeoffVerdict {
                 DecisionRung::Rule
                     | DecisionRung::Local
                     | DecisionRung::SystemOne
+                    | DecisionRung::Precision
                     | DecisionRung::Escalation
                     | DecisionRung::Big
             )

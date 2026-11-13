@@ -256,7 +256,10 @@ impl ModelDecisionProvider {
     pub fn new(pin: ProviderPin, model: Arc<dyn DecisionModel>) -> Result<Self> {
         if !matches!(
             pin.rung,
-            DecisionRung::Local | DecisionRung::SystemOne | DecisionRung::Big
+            DecisionRung::Local
+                | DecisionRung::SystemOne
+                | DecisionRung::Precision
+                | DecisionRung::Big
         ) {
             return Err(invalid("not a model decision rung"));
         }

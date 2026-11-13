@@ -215,15 +215,21 @@ impl Config {
                     covered.insert(route.engine_model.clone());
                 }
             }
-            if let Some(seat) = &models.decisions.system_one {
+            // The head's seat and the precision band's both speak the System
+            // One wire, so each goes through its own `system_one` gate route.
+            for (table, seat) in [
+                ("system_one", &models.decisions.system_one),
+                ("precision", &models.decisions.precision),
+            ] {
+                let Some(seat) = seat else { continue };
                 let wire = format!("{}-{}", seat.model, seat.version);
                 let route = arm
                     .routes
                     .iter()
                     .find(|r| r.protocol == "system_one" && r.requested_model == wire)
-                    .ok_or("system_one_gate_unavailable")?;
+                    .ok_or_else(|| format!("{table}_gate_unavailable"))?;
                 if seat.endpoint != format!("{}/v1/systemone", route.local_url()) {
-                    return Err("system_one_gate_bypass".into());
+                    return Err(format!("{table}_gate_bypass"));
                 }
                 crate::interface_bench::pinned_model_for_wire_id(&pins, &route.engine_model)
                     .map_err(|e| e.to_string())?;

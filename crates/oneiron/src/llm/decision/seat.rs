@@ -202,11 +202,13 @@ pub async fn decide_at_remote_seat(
     dial.band
         .validate()
         .map_err(|_| FatalLlmError::InvalidRequest)?;
-    if dial.first > DecisionRung::SystemOne || dial.ceiling < DecisionRung::SystemOne {
-        return Err(FatalLlmError::InvalidRequest.into());
-    }
+    // The head's seat or the precision band's, on the same wire; the dial must span
+    // the seat's own rung, which answers.
     let pin = seat.pin();
-    if pin.rung != DecisionRung::SystemOne
+    let rung = pin.rung;
+    if !matches!(rung, DecisionRung::SystemOne | DecisionRung::Precision)
+        || dial.first > rung
+        || dial.ceiling < rung
         || pin.model.trim().is_empty()
         || pin.version.trim().is_empty()
     {
@@ -346,7 +348,7 @@ pub async fn decide_at_remote_seat(
         answer = DecisionAnswer::Abstain;
         human_ask = Some(HumanAskReason::Uncertain);
     }
-    let answered = (answer != DecisionAnswer::Abstain).then_some(DecisionRung::SystemOne);
+    let answered = (answer != DecisionAnswer::Abstain).then_some(rung);
     let evidence_versions = request
         .images
         .iter()

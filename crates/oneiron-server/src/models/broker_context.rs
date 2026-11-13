@@ -302,18 +302,18 @@ impl BrokerContext {
 
 /// How long each send may run, for every consumer `config` gives a
 /// vault-secret key: the `[models]` providers' timeouts, the System One
-/// seat's ceiling, the embedder endpoint's and its remote rung's request
-/// timeouts, and for the GPU pods their probes and the endpoint's document
-/// batches they take.
+/// wire seats' ceiling (the head's and the precision band's), the embedder
+/// endpoint's and its remote rung's request timeouts, and for the GPU pods
+/// their probes and the endpoint's document batches they take.
 fn vault_secret_sends(config: &ServeConfig) -> Vec<Duration> {
     let millis = |ms: u64| Duration::from_secs(ms.div_ceil(1000));
     let mut sends: Vec<Duration> = config.models.iter().flat_map(provider_sends).collect();
-    if config
-        .models
-        .as_ref()
-        .and_then(|models| models.decisions.system_one.as_ref())
-        .is_some_and(|seat| seat.key_secret.is_some())
-    {
+    if config.models.as_ref().is_some_and(|models| {
+        [&models.decisions.system_one, &models.decisions.precision]
+            .into_iter()
+            .flatten()
+            .any(|seat| seat.key_secret.is_some())
+    }) {
         sends.push(SYSTEM_ONE_SEND);
     }
     if let Some(embedder) = &config.embedder {

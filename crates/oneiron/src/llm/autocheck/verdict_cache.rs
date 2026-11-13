@@ -112,6 +112,7 @@ impl AutoCheckDecisions {
             ladder.rule,
             ladder.local,
             ladder.system_one,
+            ladder.precision,
             ladder.escalation,
             ladder.big,
         ]

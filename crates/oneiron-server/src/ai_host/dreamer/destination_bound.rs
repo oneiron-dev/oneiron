@@ -64,6 +64,7 @@ fn lends_model_rung(host: &DecisionHost) -> bool {
     let ladder = host.ladder();
     ladder.local.is_some()
         || ladder.system_one.is_some()
+        || ladder.precision.is_some()
         || ladder.escalation.is_some()
         || ladder.big.is_some()
 }

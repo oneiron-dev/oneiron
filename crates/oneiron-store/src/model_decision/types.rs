@@ -12,6 +12,9 @@ pub enum DecisionRung {
     Rule,
     Local,
     SystemOne,
+    /// The precision band: a served typed-decision model on the System One wire that a
+    /// unit the head leaves in the band moves to (`[models.decisions.precision]`).
+    Precision,
     /// The house model in decision-read mode, between the precision rung and the big model.
     Escalation,
     Big,

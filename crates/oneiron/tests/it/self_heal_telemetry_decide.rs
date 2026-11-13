@@ -73,6 +73,7 @@ fn decisions<'a>(
             rule: None,
             local,
             system_one: None,
+            precision: None,
             escalation: None,
             big: None,
             human: &NoPerson,

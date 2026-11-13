@@ -54,6 +54,7 @@ impl DecisionLadder<'_> {
             &mut self.rule,
             &mut self.local,
             &mut self.system_one,
+            &mut self.precision,
             &mut self.escalation,
             &mut self.big,
         ] {
@@ -69,6 +70,7 @@ impl DecisionLadder<'_> {
             DecisionRung::Rule => self.rule,
             DecisionRung::Local => self.local,
             DecisionRung::SystemOne => self.system_one,
+            DecisionRung::Precision => self.precision,
             DecisionRung::Escalation => self.escalation,
             DecisionRung::Big => self.big,
             DecisionRung::Human => None,

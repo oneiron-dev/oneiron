@@ -773,7 +773,7 @@ export type TaskAssignee = "dreamer" | {agent_def: {agent_def_ref: string}} | {p
 export type ConsultPayloadRef = {claim: string} | {turn: string};
 export type TaskAskOptionId = string;
 export type TaskAskTarget = {responder: TaskAssignee} | {people: string[]} | {authority: {class: string; selectors: string[]; target: string | null; budget: number | null; receipt_required: boolean}};
-export interface TaskAskLadderPrediction { option: TaskAskOptionId; rung: "rule" | "system_one"; probability: number | null }
+export interface TaskAskLadderPrediction { option: TaskAskOptionId; rung: "rule" | "system_one" | "precision" | "escalation"; probability: number | null }
 export interface TaskAskQuestion { reference: ConsultPayloadRef; revision: number; options: Record<TaskAskOptionId, string>; context_refs: ConsultPayloadRef[]; label?: string | null; outcome_binding?: OutcomeBinding | null; ladder_answer?: TaskAskLadderPrediction | null; class_key?: string | null }
 export type TaskAskElectorate = "any" | {people: string[]};
 export interface TaskAskNeed {count: number; of?: TaskAskElectorate}

@@ -656,10 +656,12 @@ pub(super) fn checked_useful_decision(
     if receipt.question != question.id
         || receipt.question_version != question.version
         || receipt.principal != resident
-        || receipt
-            .providers
-            .first()
-            .is_none_or(|p| !matches!(p.rung, DecisionRung::SystemOne | DecisionRung::Escalation))
+        || receipt.providers.first().is_none_or(|p| {
+            !matches!(
+                p.rung,
+                DecisionRung::SystemOne | DecisionRung::Precision | DecisionRung::Escalation
+            )
+        })
         || receipt
             .providers
             .iter()

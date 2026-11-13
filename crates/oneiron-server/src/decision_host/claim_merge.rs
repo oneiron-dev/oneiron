@@ -27,8 +27,8 @@ impl DecisionHost {
     ///
     /// # Errors
     ///
-    /// A host with no System One seat or house read, or the merge's own
-    /// refusal.
+    /// A host with no System One seat, precision seat or house read, or the
+    /// merge's own refusal.
     pub fn merge_claim_refinement(
         &self,
         vault: &Vault,
@@ -42,6 +42,7 @@ impl DecisionHost {
         // evidence ids (FIX 1327).
         let read = |inner| ClaimBodyRead { inner, vault };
         let system_one = replay.ladder.system_one.map(read);
+        let precision = replay.ladder.precision.map(read);
         let escalation = replay.ladder.escalation.map(read);
         let big = replay.ladder.big.map(read);
         let replay = ClaimReplayDecisions {
@@ -49,6 +50,7 @@ impl DecisionHost {
                 system_one: system_one
                     .as_ref()
                     .map(|rung| rung as &dyn DecisionProvider),
+                precision: precision.as_ref().map(|rung| rung as &dyn DecisionProvider),
                 escalation: escalation
                     .as_ref()
                     .map(|rung| rung as &dyn DecisionProvider),

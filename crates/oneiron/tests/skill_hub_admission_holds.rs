@@ -248,6 +248,7 @@ fn ladder(provider: &dyn DecisionProvider) -> DecisionLadder<'_> {
         rule: None,
         local: None,
         system_one: Some(provider),
+        precision: None,
         escalation: None,
         big: None,
         human: &NoPerson,

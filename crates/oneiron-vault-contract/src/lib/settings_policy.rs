@@ -82,6 +82,7 @@ pub const ENVIRONMENT_KEYS: &[&str] = &[
     "gpu.api_key_env",
     "models.providers.*.key_env",
     "models.decisions.system_one.key_env",
+    "models.decisions.precision.key_env",
 ];
 
 /// Whether `field`, a dotted field given one key per part, is one of

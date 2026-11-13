@@ -599,6 +599,7 @@ mod judged {
                 rule: None,
                 local: Some(judge),
                 system_one: None,
+                precision: None,
                 escalation: None,
                 big: None,
                 human: &NoPerson,
