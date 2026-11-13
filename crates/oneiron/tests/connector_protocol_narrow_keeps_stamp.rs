@@ -203,6 +203,15 @@ fn grant_active(vault: &Vault, grant: &ConnectorToolGrant) -> bool {
         .is_some_and(|grant| grant.is_active())
 }
 
+/// The wall clock in Unix seconds. The consent door stamps its per-grant
+/// keys with it, so a later status change must not be dated before it.
+fn wall_clock_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock reads after 1970")
+        .as_secs()
+}
+
 /// The open asks on the narrowing protocol revision's queue.
 fn narrow_asks(vault: &Vault) -> Vec<oneiron::llm::decision::DecisionAsk> {
     vault
@@ -221,13 +230,14 @@ fn a_narrowing_protocol_revision_keeps_the_stamp_and_the_agents_tools() {
         .ensure_agent_principal("harbor.ledger.agent")
         .expect("named agent principal");
     let grants = consent_both(&fixture, agent);
+    let consented_at = wall_clock_seconds();
 
     // Revision B drops `write` and tightens `read` to always ask.
     let narrow = store_slate(vault, &[tool("read")], |rows| {
         rows[0].disposition = SlateDisposition::AlwaysAsk;
     });
     let pending = vault
-        .revise_connector_protocol(&fixture.catalog, "B", narrow, NOW + 2)
+        .revise_connector_protocol(&fixture.catalog, "B", narrow, consented_at + 2)
         .expect("revise to protocol revision B");
     assert_eq!(pending.status, ConnectorKeyStatus::Pending, "the key halts");
     assert!(!pending.consent_required, "a pure narrow re-asks no row");
@@ -269,7 +279,7 @@ fn a_narrowing_protocol_revision_keeps_the_stamp_and_the_agents_tools() {
     }
 
     let active = vault
-        .attest_connector_key(&owner(&fixture), &fixture.catalog, "B", NOW + 3)
+        .attest_connector_key(&owner(&fixture), &fixture.catalog, "B", consented_at + 3)
         .expect("the owner attests revision B without a new tap");
     assert_eq!(active.status, ConnectorKeyStatus::Active);
 
