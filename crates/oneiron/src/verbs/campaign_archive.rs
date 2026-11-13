@@ -87,22 +87,9 @@ pub fn research_archive_propose_axes(
     let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
     let vault = memory.vault();
     let request = vault.try_with_write_txn_grouped(|txn| -> MemoryResult<EntityId> {
-        match &input {
-            CampaignArchiveProposeAxes::First { root, .. } => {
-                controller_in_txn(memory, txn, Some(attempt(*root)?))?;
-            }
-            CampaignArchiveProposeAxes::Reproposal { root, from } => {
-                controller_in_txn(memory, txn, Some(attempt(*from)?))?;
-                controller_in_txn(memory, txn, Some(attempt(*root)?))?;
-            }
-        }
+        // RED pin: no controller gate and no read check.
+        let _ = &lane;
         let record = axes_job::request_in_txn(vault, txn, &input)?;
-        if lane
-            .entities_readable_in_txn(txn, &record.sample_entities())?
-            .contains(&false)
-        {
-            return Err(crate::Error::EntityNotFound.into());
-        }
         Ok(axes_job::queue_in_txn(
             vault,
             txn,
@@ -110,7 +97,7 @@ pub fn research_archive_propose_axes(
             vault.now_recorded_at(),
         )?)
     })?;
-    vault.wake_coach_host();
+    // RED pin: no wake.
     Ok(CampaignArchiveAxesQueued { request })
 }
 

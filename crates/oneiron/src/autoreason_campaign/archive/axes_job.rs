@@ -250,7 +250,7 @@ pub(crate) fn request_in_txn(
             }
         }
     };
-    producers::axes_premises_in_txn(vault, txn, &record.premises())?;
+    // RED pin: no premise check when the request is asked.
     Ok(record)
 }
 
@@ -299,6 +299,10 @@ impl Vault {
         host: &dyn ArchiveAxesHost,
     ) -> Result<CampaignArchiveProposalState> {
         let request = self.coach_archive_axes_target(attempt)?;
+        // RED pin: the job never answers, as on main where no producer exists.
+        if !request.as_bytes().is_empty() {
+            return Ok(CampaignArchiveProposalState::Pending);
+        }
         let brief = {
             let txn = self.store.env.read_txn()?;
             let record = request_record_in_txn(self, &txn, request)?;
