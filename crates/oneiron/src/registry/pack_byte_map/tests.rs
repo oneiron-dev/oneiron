@@ -138,7 +138,7 @@ fn import_and_replay_resolve_name_not_the_senders_byte() -> Result<()> {
     let replay_id = EntityId::now();
     destination
         .batch()
-        .put_replicated(&replay_id, 128, range(), 10, &source_body)
+        .put_replicated(&replay_id, 128, range(), 10, None, &source_body)
         .commit()?;
     let replay_raw = destination.get_raw(&replay_id)?.unwrap();
     assert_eq!(
@@ -438,7 +438,6 @@ fn binary_payload_encoding_cannot_hide_credentials_from_the_write_wall() -> Resu
 
 #[test]
 fn archive_resolves_named_instances_without_importing_install_authority() -> Result<()> {
-    use crate::context_pack::PackFormat;
     let (_a, source) = vault();
     let (_b, destination) = vault();
     let alpha = kind("alpha");
@@ -446,11 +445,11 @@ fn archive_resolves_named_instances_without_importing_install_authority() -> Res
     source.install_pack_kinds(&[alpha.clone(), beta.clone()])?;
     let id = EntityId::now();
     source.put_pack_instance(&id, &alpha.name, range(), 10, b"exact portable data")?;
-    let artifact = source.export_whole_vault(PackFormat::Json)?;
-    destination.read_whole_vault_json(artifact.bytes())?;
+    let artifact = source.export_whole_vault(false)?;
+    destination.read_whole_vault_archive(artifact.bytes())?;
     assert_eq!(
         destination
-            .import_whole_vault_json(artifact.bytes())
+            .import_whole_vault_archive(artifact.bytes())
             .unwrap_err()
             .kind(),
         ErrorKind::PackKindNotInstalled
@@ -458,10 +457,10 @@ fn archive_resolves_named_instances_without_importing_install_authority() -> Res
     assert!(destination.pack_byte_map_snapshot()?.is_none());
     assert!(destination.get(&id)?.is_none());
     destination.install_pack_kinds(&[beta, alpha.clone()])?;
-    destination.import_whole_vault_json(artifact.bytes())?;
+    destination.import_whole_vault_archive(artifact.bytes())?;
     assert_eq!(
         destination
-            .import_whole_vault_json(artifact.bytes())?
+            .import_whole_vault_archive(artifact.bytes())?
             .inserted_entities,
         0
     );
@@ -474,13 +473,12 @@ fn archive_resolves_named_instances_without_importing_install_authority() -> Res
         restored.canonical_wire_form()?
     );
     source.uninstall_pack_kind(&alpha.name)?;
-    assert!(source.export_whole_vault(PackFormat::Json)?.bytes().len() > 100);
+    assert!(source.export_whole_vault(false)?.bytes().len() > 100);
     Ok(())
 }
 
 #[test]
 fn archive_nulls_pack_payload_credentials_without_losing_named_identity() -> Result<()> {
-    use crate::context_pack::PackFormat;
     use crate::serialize::ExportBody;
     let (_dir, vault) = vault();
     let alpha = kind("alpha");
@@ -497,30 +495,20 @@ fn archive_nulls_pack_payload_credentials_without_losing_named_identity() -> Res
         vault.store.entities.put(txn, id.as_bytes(), &replaced)?;
         Ok(())
     })?;
-    for format in [
-        PackFormat::Json,
-        PackFormat::Yaml,
-        PackFormat::Toon,
-        PackFormat::Markdown,
-        PackFormat::Plaintext,
-    ] {
-        let archive = vault.export_whole_vault(format)?;
-        assert!(!String::from_utf8_lossy(archive.bytes()).contains("hidden-in-pack"));
-        if format == PackFormat::Json {
-            let document = vault.read_whole_vault_json(archive.bytes())?;
-            let row = document
-                .evidence_ledger
-                .entities
-                .iter()
-                .find(|r| r.id == id.to_hex())
-                .unwrap();
-            let ExportBody::Pack(body) = &row.body else {
-                panic!("named identity lost");
-            };
-            assert_eq!(body.kind, alpha);
-            assert_eq!(body.payload, ExportBody::Nulled);
-            assert!(vault.import_whole_vault_json(archive.bytes()).is_err());
-        }
-    }
+    let archive = vault.export_whole_vault(false)?;
+    assert!(!String::from_utf8_lossy(archive.bytes()).contains("hidden-in-pack"));
+    let document = vault.read_whole_vault_archive(archive.bytes())?;
+    let row = document
+        .evidence_ledger
+        .entities
+        .iter()
+        .find(|r| r.id == id.to_hex())
+        .unwrap();
+    let ExportBody::Pack(body) = &row.body else {
+        panic!("named identity lost");
+    };
+    assert_eq!(body.kind, alpha);
+    assert_eq!(body.payload, ExportBody::Nulled);
+    assert!(vault.import_whole_vault_archive(archive.bytes()).is_err());
     Ok(())
 }

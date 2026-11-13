@@ -40,9 +40,10 @@ fn room_on_record_as(
             .expect("join the room");
     }
     install_self_memory_allow_policy(vault, agent).expect("policy");
+    let starter = crate::test_util::embedded_owner_proof(vault);
     let session = vault
         .off_record_session_vault()
-        .enter_in_room("deck", OffRecordBackendClass::Local, id, owner)
+        .enter_in_room_as("deck", OffRecordBackendClass::Local, id, &starter)
         .expect("start off record");
     let proof = vault
         .authenticate_owner(
@@ -366,17 +367,22 @@ fn a_removed_agents_run_learns_nothing_of_the_room_from_its_refusal() {
             &crate::memory::WitnessTurn {
                 conversation_ref: room.id.to_hex(),
                 turn_ref: Some(turn_id.to_hex()),
+                thread_audience: None,
                 messages: vec![crate::memory::WitnessMessage {
                     id: None,
                     author: crate::memory::WitnessAuthor::Companion,
                     message_type: "text".to_owned(),
                     content: "the owner's word at order 1".to_owned(),
+                    parts: None,
                     metadata: None,
                     is_visible: true,
                     order: 1,
+                    quote: None,
                 }],
                 occurred_at: 70,
+                assertions: Default::default(),
             },
+            None,
             None,
             None,
         )
@@ -541,13 +547,14 @@ fn a_removed_agents_run_hears_nothing_of_the_saver() {
     });
     let run = bind_run(&session, &room);
     let storage = ExecutorStorage::for_session(&session, room.agent).expect("bind the storage");
+    let run_id = EntityId::now();
     let note = |name: &str| {
         let raw = format!("{name}: the lighthouse key is under the blue stone");
         let output =
             CodeRunRawOutput::from_bytes(format!("/mnt/outputs/{name}.txt"), raw.as_bytes())
                 .expect("raw output");
         storage
-            .put_code_run_raw_output(&output, raw.as_bytes())
+            .put_code_run_raw_output(run_id, &output, raw.as_bytes())
             .err()
     };
     let put_claim = || {
@@ -589,17 +596,22 @@ fn a_removed_agents_run_hears_nothing_of_the_saver() {
             &crate::memory::WitnessTurn {
                 conversation_ref: room.id.to_hex(),
                 turn_ref: None,
+                thread_audience: None,
                 messages: vec![crate::memory::WitnessMessage {
                     id: None,
                     author: crate::memory::WitnessAuthor::Companion,
                     message_type: "text".to_owned(),
                     content: "the owner's word after the revocation".to_owned(),
+                    parts: None,
                     metadata: None,
                     is_visible: true,
                     order: 0,
+                    quote: None,
                 }],
                 occurred_at: 70,
+                assertions: Default::default(),
             },
+            None,
             None,
             None,
         )

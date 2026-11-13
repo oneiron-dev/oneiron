@@ -4,7 +4,7 @@ use crate::error::ErrorKind;
 use crate::test_util::entity;
 
 fn test_grant() -> AccessGrant {
-    AccessGrant::companion_profile_read(entity(0x51), entity(0xB1), entity(0xC1), 42)
+    AccessGrant::companion_profile_read(entity(0x51), entity(0xB1), Some(entity(0xC1)), 42)
 }
 
 fn encode_value(value: &Value) -> Vec<u8> {
@@ -162,7 +162,7 @@ fn access_grant_scope_and_capability_must_be_a_matched_pair() {
         AccessGrantCapability::CalendarDisclosureRead
     );
     assert_eq!(
-        AccessGrantScope::companion_profile(entity(0xB1), entity(0xC1)).required_capability(),
+        AccessGrantScope::companion_profile(entity(0xB1), Some(entity(0xC1))).required_capability(),
         AccessGrantCapability::CompanionProfileRead
     );
 
@@ -283,6 +283,7 @@ fn shared_brief_grant() -> AccessGrant {
         created_at: 42,
         revoked_at: None,
         expires_at: None,
+        companion_bounds: None,
     }
 }
 
@@ -415,7 +416,7 @@ fn shared_brief_codec_rejects_unknown_duplicate_and_malformed_scope() -> Result<
 #[test]
 fn schema_v3_carries_every_access_scope_and_rejects_other_versions() -> Result<()> {
     let scopes = [
-        AccessGrantScope::companion_profile(entity(0xB1), entity(0xC1)),
+        AccessGrantScope::companion_profile(entity(0xB1), Some(entity(0xC1))),
         AccessGrantScope::calendar(entity(0xB2), DisclosureRung::Titles),
         AccessGrantScope::SharedBrief {
             brief_ref: "brief:kept".to_owned(),
@@ -439,6 +440,7 @@ fn schema_v3_carries_every_access_scope_and_rejects_other_versions() -> Result<(
             created_at: 42,
             revoked_at: None,
             expires_at: None,
+            companion_bounds: None,
         };
         let bytes = encode_access_grant_body(&grant)?;
         assert_eq!(decode_access_grant_body(&bytes)?, grant);
@@ -492,6 +494,7 @@ fn relationship_scopes_and_expiry_fail_closed() -> Result<()> {
             created_at: 1,
             revoked_at: None,
             expires_at: Some(u64::MAX),
+            companion_bounds: None,
         };
         assert_eq!(
             decode_access_grant_body(&encode_access_grant_body(&grant)?)?,

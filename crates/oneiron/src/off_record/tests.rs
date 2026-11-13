@@ -61,6 +61,7 @@ fn floor_gate_decision() -> GateDecisionRecord {
         grant_ref: None,
         diff_handle: vec![0xA5],
         read_frontier_hash: [0xB6; 32],
+        context: Default::default(),
         redacted_at: None,
     }
 }
@@ -590,10 +591,15 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
                     metadata: None,
                     is_visible: true,
                     order: 0,
+                    parts: None,
+                    quote: None,
                 }],
                 occurred_at: 1000,
+                thread_audience: None,
+                assertions: Default::default(),
             },
             Some("grant-scope fixture summary"),
+            None,
         )
         .unwrap_or_else(|error| panic!("session witness failed: {error:?}"));
     let turn = EntityId::from_hex(
@@ -736,9 +742,14 @@ fn promote_refuses_a_turn_whose_author_left_base() -> Result<()> {
                     metadata: None,
                     is_visible: true,
                     order: 0,
+                    parts: None,
+                    quote: None,
                 }],
                 occurred_at: 1000,
+                thread_audience: None,
+                assertions: Default::default(),
             },
+            None,
             None,
         )
         .unwrap_or_else(|error| panic!("session witness failed: {error:?}"));
@@ -802,9 +813,14 @@ fn said_alone(
                     metadata: None,
                     is_visible: true,
                     order: 0,
+                    parts: None,
+                    quote: None,
                 }],
                 occurred_at: at,
+                thread_audience: None,
+                assertions: Default::default(),
             },
+            None,
             None,
         )
         .unwrap_or_else(|error| panic!("session witness failed: {error:?}"));
@@ -971,8 +987,12 @@ fn seed_recallable_base_turn(vault: &Vault, needle: &str) -> EntityId {
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
             occurred_at: 1500,
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .expect("witness base turn");
     actor
@@ -1313,14 +1333,14 @@ fn a_room_retrieval_publishes_no_run_once_its_saver_left() -> Result<()> {
     let room = EntityId::now();
     vault.create_conversation(room, &ConversationBody::default(), by, 1)?;
     vault.join_member(room, owner, by, 2, HistoryChoice::Share)?;
-    let session = vault.off_record_session_vault().enter_in_room(
+    let proof =
+        vault.authenticate_owner(owner, "principal:room-owner", true, GateDecisionId::now())?;
+    let session = vault.off_record_session_vault().enter_in_room_as(
         "lamp",
         OffRecordBackendClass::Local,
         room,
-        owner,
+        &proof,
     )?;
-    let proof =
-        vault.authenticate_owner(owner, "principal:room-owner", true, GateDecisionId::now())?;
     session.flip_on_record_as(&proof)?;
     let route = session.write_route()?;
     let door = session.retrieval_telemetry(&route)?;
@@ -1398,14 +1418,14 @@ fn a_room_retrieval_queues_no_embed_job_once_its_saver_left() -> Result<()> {
     let room = EntityId::now();
     vault.create_conversation(room, &ConversationBody::default(), by, 1)?;
     vault.join_member(room, owner, by, 2, HistoryChoice::Share)?;
-    let session = vault.off_record_session_vault().enter_in_room(
+    let proof =
+        vault.authenticate_owner(owner, "principal:room-owner", true, GateDecisionId::now())?;
+    let session = vault.off_record_session_vault().enter_in_room_as(
         "lamp",
         OffRecordBackendClass::Local,
         room,
-        owner,
+        &proof,
     )?;
-    let proof =
-        vault.authenticate_owner(owner, "principal:room-owner", true, GateDecisionId::now())?;
     session.flip_on_record_as(&proof)?;
     let route = session.write_route()?;
     let door = session.retrieval_telemetry(&route)?;
@@ -1519,11 +1539,13 @@ fn a_room_on_record_with_an_unsaved_message(
     vault.create_conversation(room, &ConversationBody::default(), by, 1)?;
     vault.join_member(room, owner, by, 2, HistoryChoice::Share)?;
     vault.join_member(room, agent, by, 3, HistoryChoice::Share)?;
-    let session = vault.off_record_session_vault().enter_in_room(
+    let proof =
+        vault.authenticate_owner(owner, "principal:room-owner", true, GateDecisionId::now())?;
+    let session = vault.off_record_session_vault().enter_in_room_as(
         "lamp",
         OffRecordBackendClass::Local,
         room,
-        owner,
+        &proof,
     )?;
     vault
         .memory(owner, EdgeActorClass::Human)
@@ -1540,15 +1562,18 @@ fn a_room_on_record_with_an_unsaved_message(
                     metadata: None,
                     is_visible: true,
                     order: 0,
+                    parts: None,
+                    quote: None,
                 }],
                 occurred_at: 10,
+                thread_audience: None,
+                assertions: Default::default(),
             },
+            None,
             None,
             None,
         )
         .unwrap_or_else(|error| panic!("the room hears the message: {error:?}"));
-    let proof =
-        vault.authenticate_owner(owner, "principal:room-owner", true, GateDecisionId::now())?;
     session.flip_on_record_as(&proof)?;
     Ok((
         room,
@@ -1668,6 +1693,7 @@ fn a_room_bound_run_forwards_no_verb_once_the_saver_left() -> Result<()> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let refused = |_| AgentVerbRefusal {
                 code: "engine_error".to_owned(),
+                hook_notice: None,
             };
             self.vault
                 .memory(self.actor, EdgeActorClass::Human)
@@ -1684,6 +1710,10 @@ fn a_room_bound_run_forwards_no_verb_once_the_saver_left() -> Result<()> {
             Ok(crate::code_run::AgentVerbAnswer {
                 output: serde_json::json!({"recalled": true}),
                 rows: Some(Vec::new()),
+                hook_notice: None,
+                observations: Vec::new(),
+                hooks: Vec::new(),
+                stored_output: None,
             })
         }
     }
@@ -1728,14 +1758,14 @@ fn a_room_bound_run_forwards_no_verb_once_the_saver_left() -> Result<()> {
     vault.create_conversation(room, &ConversationBody::default(), by, 1)?;
     vault.join_member(room, owner, by, 2, HistoryChoice::Share)?;
     vault.join_member(room, agent, by, 3, HistoryChoice::Share)?;
-    let session = vault.off_record_session_vault().enter_in_room(
+    let proof =
+        vault.authenticate_owner(owner, "principal:room-owner", true, GateDecisionId::now())?;
+    let session = vault.off_record_session_vault().enter_in_room_as(
         "lamp-door",
         OffRecordBackendClass::Local,
         room,
-        owner,
+        &proof,
     )?;
-    let proof =
-        vault.authenticate_owner(owner, "principal:room-owner", true, GateDecisionId::now())?;
     session.flip_on_record_as(&proof)?;
     let door = Arc::new(RecallDoor {
         vault: Arc::clone(&vault),
@@ -1752,7 +1782,7 @@ fn a_room_bound_run_forwards_no_verb_once_the_saver_left() -> Result<()> {
 
     let base_runs_before = vault.retrieval_runs(64)?.len();
     let answer = dispatcher.dispatch(SelfCall::AgentVerb(SelfAgentVerbCall {
-        verb: crate::task_verb::sdk::AgentVerb::Recall,
+        verb: crate::task_verb::sdk::AgentVerb::VaultRecall,
         input: serde_json::json!({"query": "forwardedlanternneedle"}),
     }))?;
     assert_eq!(
@@ -1761,6 +1791,7 @@ fn a_room_bound_run_forwards_no_verb_once_the_saver_left() -> Result<()> {
             effect: SelfEffect::AgentVerb,
             outcome: AGENT_VERB_SESSION_BOUND.to_owned(),
             reason_codes: Vec::new(),
+            hook_notice: None,
         })
     );
     assert_eq!(door.calls.load(Ordering::SeqCst), 0, "the door never runs");
@@ -1800,6 +1831,7 @@ fn a_session_bound_run_refuses_a_search_its_door_narrows() -> Result<()> {
         {
             Ok(Err(AgentVerbRefusal {
                 code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
+                hook_notice: None,
             }))
         }
 
@@ -1829,6 +1861,7 @@ fn a_session_bound_run_refuses_a_search_its_door_narrows() -> Result<()> {
             effect: SelfEffect::MemorySearch,
             outcome: AGENT_VERB_SESSION_BOUND.to_owned(),
             reason_codes: Vec::new(),
+            hook_notice: None,
         })
     );
     drop(dispatcher);
@@ -2051,10 +2084,15 @@ fn anonymous_witness_read_and_close_retain_no_rows_or_receipts() -> Result<()> {
                     metadata: None,
                     is_visible: true,
                     order: 0,
+                    parts: None,
+                    quote: None,
                 }],
                 occurred_at: 1600,
+                thread_audience: None,
+                assertions: Default::default(),
             },
             Some("anonymous private summary"),
+            None,
         )
         .expect_err("anonymous cannot promise a materialized witness");
     assert_eq!(error.code, crate::memory::MEMORY_CODE_FORBIDDEN);
@@ -2302,10 +2340,9 @@ fn anonymous_audited_effects_refuse_before_creating_floor_receipts() -> Result<(
 }
 
 fn telemetry_config() -> VaultConfig {
-    VaultConfig {
-        retrieval_telemetry_capture: true,
-        ..VaultConfig::default()
-    }
+    let mut config = VaultConfig::device();
+    config.retrieval_telemetry_capture = true;
+    config
 }
 
 // The public self.memory.search route must obey capture policy independently
@@ -2316,10 +2353,8 @@ fn assert_session_search_capture(capture: bool, on_record: bool) -> Result<()> {
     };
 
     let dir = tempfile::tempdir()?;
-    let config = VaultConfig {
-        retrieval_telemetry_capture: capture,
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::device();
+    config.retrieval_telemetry_capture = capture;
     let vault = Vault::open(dir.path(), config)?;
     let id = EntityId::from_bytes([0xB8; 16])?;
     vault
