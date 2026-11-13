@@ -1,5 +1,5 @@
-//! L2-08 (ARCH-0026 #sieve-open): words a TURN's edges change reach the
-//! turn's listeners. A witnessed TURN's words are its MESSAGE children by
+//! L2-08 (ARCH-0026 #sieve-open): words a TURN's edges or a document edit
+//! change reach the turn's listeners. A witnessed TURN's words are its MESSAGE children by
 //! `PartOf`, each read with its `BelongsTo` and its speaker's `AuthoredBy`.
 //! An edge write that unlinks a MESSAGE from the turn, links one into it, or
 //! rebinds a MESSAGE's speaker changes what the turn says with no write to
@@ -10,22 +10,27 @@
 //! read (a scope's watermark passed it) takes a re-dirty carrier, pending for
 //! every consolidation scope, as a TURN put behind a watermark does; the
 //! sieve and the projector owe it a read; and the tagger and the embedder
-//! mark it at its new words.
+//! mark it at its new words. A document edit of a MESSAGE inside a turn a
+//! round read ("an edit after consolidation") re-dirtied nothing for
+//! consolidation either; it is admitted the same way now.
 //!
 //! The carrier and the embedding marker have no public read, and a round's
 //! watermark is settled without a model; all three go through the test door
 //! `oneiron::test_doors::turn_words`.
 //!
 //! Fleet: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test turn_words_edge_rewire`
-#![cfg(oneiron_test_support)]
+#![cfg(all(oneiron_test_support, feature = "test-support"))]
 #![allow(clippy::expect_used)]
 
+use oneiron::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, TextField};
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::store::GateDecisionId;
 use oneiron::test_doors::turn_words::{
     embedding_marker, redirty_pending, settle_every_scope_on_turn,
 };
-use oneiron::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::test_support::{bind_host_owner, provision_engine_machines, test_host_issuer};
+use oneiron::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -43,6 +48,21 @@ fn fixture(embedder: bool) -> Fixture {
     }
     let vault = Vault::open(dir.path(), config).expect("fresh vault");
     let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    Fixture {
+        _dir: dir,
+        vault,
+        owner,
+    }
+}
+
+/// [`fixture`] with no embedder, its owner bound to the host, so the owner
+/// can authenticate an act on a document.
+fn bound_fixture() -> Fixture {
+    let dir = tempfile::tempdir().expect("temporary vault");
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault");
+    provision_engine_machines(&vault);
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    bind_host_owner(&vault, &test_host_issuer(), owner).expect("owner host binding");
     Fixture {
         _dir: dir,
         vault,
@@ -186,6 +206,65 @@ fn a_rebound_speaker_on_a_member_message_re_dirties_the_read_turn() {
     assert!(
         fixture.redirty_pending(&turn),
         "the read turn whose speaker changed is pending again"
+    );
+}
+
+/// The owner's document edit of a MESSAGE inside a read turn changes the
+/// turn's words: the turn is pending again for every scope ("an edit after
+/// consolidation").
+#[test]
+fn a_document_edit_of_a_read_turns_message_re_dirties_the_turn() {
+    let fixture = bound_fixture();
+    let (turn, messages) = fixture.witness_turn(&["the ferry leaves at nine"]);
+    let proof = fixture
+        .vault
+        .authenticate_owner(
+            fixture.owner,
+            &fixture.owner.to_hex(),
+            true,
+            GateDecisionId::now(),
+        )
+        .expect("owner proof");
+    let owner = WriteActor::new(fixture.owner, EdgeActorClass::Human);
+    fixture
+        .vault
+        .migrate_entity_text(
+            &messages[0],
+            &TextField::MapField("content".to_owned()),
+            owner,
+            &DocAuthorization::Owner(&proof),
+        )
+        .expect("the owner moves the message's words into its document");
+    fixture.read_by_every_scope(&turn);
+    let end = fixture
+        .vault
+        .entity_text(&messages[0])
+        .expect("the message's words")
+        .chars()
+        .count();
+
+    fixture
+        .vault
+        .edit_entity_text(
+            &messages[0],
+            &[AnchoredEdit {
+                actor: Some(owner),
+                verb: EditVerb::ReplaceQuotedSpan {
+                    span: fixture
+                        .vault
+                        .entity_text_anchor(&messages[0], 0, end)
+                        .expect("the whole text"),
+                    text: "the ferry leaves at ten".to_owned(),
+                },
+            }],
+            &DocAuthorization::Owner(&proof),
+            fixture.vault.now_recorded_at(),
+        )
+        .expect("the owner edits the message's words");
+
+    assert!(
+        fixture.redirty_pending(&turn),
+        "the read turn whose message the owner edited is pending again"
     );
 }
 
