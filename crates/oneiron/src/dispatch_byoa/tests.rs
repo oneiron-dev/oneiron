@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::io::Read;
 use std::sync::Arc;
 
 use super::*;
@@ -58,6 +59,7 @@ fn cli_spec() -> CliSandboxSpec {
         checkout_id: CheckoutId::from_bytes([7_u8; 16]).expect("checkout id"),
         egress_profile_ref: "egress/foreign-default".to_owned(),
         credential_handles: vec![handle("custody://byoa/cli-token")],
+        staged_input: None,
     }
 }
 
@@ -163,6 +165,10 @@ fn cli_sandbox_runs_foreign_tier_and_refuses_a_command_line() {
         schema_version: BYOA_CONNECTOR_SCHEMA_VERSION,
         connector: ByoaConnectorSpec::CliSandbox(spec.clone()),
         parent_attempt: None,
+        dev_refs: None,
+        official_seat: None,
+        repo_binding: None,
+        work: None,
     })
     .expect("encode cli");
     let decoded = decode_byoa_attempt_payload(&payload).expect("decode cli");
@@ -263,6 +269,7 @@ fn dispatch_and_claim<E: ByoaEgressPort>(
             user_login: false,
             connector,
             task_ref: None,
+            dev_refs: None,
             parent_attempt_id: None,
             run_id: Some("byoa-run".to_owned()),
             dedupe_key: None,
@@ -290,10 +297,10 @@ fn dispatch_and_claim<E: ByoaEgressPort>(
 
 fn sample_exhaust() -> ByoaExhaust {
     ByoaExhaust {
-        transcript: Some(b"turn 1\nturn 2".to_vec()),
-        stdout: b"built ok".to_vec(),
-        stderr: b"warning: none".to_vec(),
-        diff_bundle: Some(b"diff --git a b".to_vec()),
+        transcript: Some(ByoaStream::from(b"turn 1\nturn 2".to_vec())),
+        stdout: ByoaStream::from(b"built ok".to_vec()),
+        stderr: ByoaStream::from(b"warning: none".to_vec()),
+        diff_bundle: Some(ByoaStream::from(b"diff --git a b".to_vec())),
         checkpoint_frontier: vec!["refs/heads/work@".to_owned() + &"a".repeat(40)],
         secret_taint_refs: Vec::new(),
     }
@@ -308,6 +315,7 @@ fn capture_refuses_an_empty_exhaust_and_an_unclaimed_row() {
             user_login: false,
             connector: ByoaConnectorSpec::CliSandbox(cli_spec()),
             task_ref: None,
+            dev_refs: None,
             parent_attempt_id: None,
             run_id: None,
             dedupe_key: None,
@@ -368,6 +376,10 @@ fn a_payload_from_an_unknown_schema_version_is_refused() {
         schema_version: BYOA_CONNECTOR_SCHEMA_VERSION + 1,
         connector: ByoaConnectorSpec::Endpoint(endpoint_spec()),
         parent_attempt: None,
+        dev_refs: None,
+        official_seat: None,
+        repo_binding: None,
+        work: None,
     })
     .expect("encode");
     assert!(
@@ -474,6 +486,10 @@ fn endpoint_credentials_and_malformed_authorities_are_refused_at_every_door() {
             schema_version: BYOA_CONNECTOR_SCHEMA_VERSION,
             connector: ByoaConnectorSpec::Endpoint(spec),
             parent_attempt: None,
+            dev_refs: None,
+            official_seat: None,
+            repo_binding: None,
+            work: None,
         };
         assert!(encode_byoa_attempt_payload(&payload).is_err(), "{url}");
         let unchecked = rmp_serde::to_vec_named(&payload).expect("unchecked fixture");
@@ -484,6 +500,7 @@ fn endpoint_credentials_and_malformed_authorities_are_refused_at_every_door() {
                     user_login: false,
                     connector: payload.connector,
                     task_ref: None,
+                    dev_refs: None,
                     parent_attempt_id: None,
                     run_id: None,
                     dedupe_key: None,
@@ -514,6 +531,7 @@ fn dedupe_reports_the_persisted_connector_not_the_losing_request() {
         user_login: false,
         connector,
         task_ref: None,
+        dev_refs: None,
         parent_attempt_id: None,
         run_id: None,
         dedupe_key: Some("same-work".to_owned()),
@@ -555,6 +573,10 @@ fn capture_refuses_wrong_owner_generation_kind_and_payload_without_writes() {
             schema_version: BYOA_CONNECTOR_SCHEMA_VERSION,
             connector: ByoaConnectorSpec::CliSandbox(cli_spec()),
             parent_attempt: None,
+            dev_refs: None,
+            official_seat: None,
+            repo_binding: None,
+            work: None,
         };
         if case == "schema" {
             payload.schema_version += 1;
@@ -671,7 +693,7 @@ fn divergent_captures_never_grow_the_canonical_chain() {
         let before = custody_snapshot(&vault);
         for n in 0..8 {
             let mut request = capture_request(&attempt, disposition);
-            request.exhaust.stdout = format!("divergent {n}").into_bytes();
+            request.exhaust.stdout = ByoaStream::from(format!("divergent {n}").into_bytes());
             request.now += n;
             let retry = dispatcher.capture_terminal_exhaust(request);
             if disposition == ByoaTerminalDisposition::Abandoned {
@@ -897,6 +919,8 @@ fn execution_llm_request() -> LlmRequest {
             ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::ThirdParty,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: Vec::new(),
         tools: Vec::new(),
@@ -916,6 +940,7 @@ impl LlmBackend for RecordingBackend {
     ) -> LlmGenerateFuture<'a> {
         use crate::llm::{
             ContentPart, FinishReason, LlmMessage, LlmMessageRole, LlmResponse, LlmUsage,
+            ReplyAssertions,
         };
         assert_eq!(request.model, model("byo/fast@1"));
         assert_eq!(lease.id(), "execution-budget");
@@ -926,10 +951,13 @@ impl LlmBackend for RecordingBackend {
                     role: LlmMessageRole::Assistant,
                     content: vec![ContentPart::Text {
                         text: "generated output".to_owned(),
+                        signature: None,
                     }],
                 },
                 usage: LlmUsage::zero(),
                 finish_reason: FinishReason::Stop,
+                reply_assertions: ReplyAssertions::default(),
+                token_scores: None,
             })
         })
     }
@@ -963,10 +991,15 @@ fn endpoint_execution_invokes_the_backend_with_the_stored_model_and_budget() {
     let exhaust =
         ready_result(dispatcher.execute_endpoint(&fence, "fast", execution_llm_request(), &lease))
             .expect("backend generated output");
-    assert!(
-        String::from_utf8_lossy(exhaust.transcript.as_ref().expect("transcript"))
-            .contains("generated output")
-    );
+    let mut transcript = Vec::new();
+    exhaust
+        .transcript
+        .as_ref()
+        .expect("transcript")
+        .reader()
+        .read_to_end(&mut transcript)
+        .expect("read transcript");
+    assert!(String::from_utf8_lossy(&transcript).contains("generated output"));
     assert_eq!(backend.0.load(std::sync::atomic::Ordering::SeqCst), 1);
     for slug in ["smart", "unknown"] {
         assert!(
@@ -1020,9 +1053,9 @@ impl ByoaMcpExecutor for RecordingMcp {
         self.calls += 1;
         Ok(ByoaExhaust {
             stdout: if self.oversized {
-                vec![0; BYOA_MAX_EXHAUST_STREAM_BYTES + 1]
+                ByoaStream::from(vec![0; BYOA_MAX_EXHAUST_STREAM_BYTES + 1])
             } else {
-                input.to_vec()
+                ByoaStream::from(input.to_vec())
             },
             ..ByoaExhaust::default()
         })
@@ -1048,7 +1081,7 @@ fn mcp_execution_invokes_only_the_matching_fenced_connector_and_bounds_output() 
     let exhaust = dispatcher
         .execute_mcp(&fence, b"mcp output", budget, &mut client)
         .expect("MCP call");
-    assert_eq!(exhaust.stdout, b"mcp output");
+    assert_eq!(exhaust.stdout, ByoaStream::from(b"mcp output".to_vec()));
     assert_eq!(client.calls, 1);
     assert!(
         dispatcher
@@ -1154,7 +1187,7 @@ impl ByoaCliExecutor for RecordingCli {
         let lease = authorize("api.example.com", 30)?;
         assert!(lease.permits_host("api.example.com", 30));
         Ok(ByoaExhaust {
-            stdout: b"foreign guest output".to_vec(),
+            stdout: ByoaStream::from(b"foreign guest output".to_vec()),
             ..ByoaExhaust::default()
         })
     }
@@ -1174,11 +1207,7 @@ fn cli_execution_requires_live_checkout_foreign_boundary_and_scoped_egress() {
     let budget = ExecutionBudget::new(30, 128, 8);
     let mut checkouts = CheckoutLeaseService::new(&vault, CheckoutFacts, CheckoutPulse::default());
     let mut guest = RecordingCli(0);
-    assert!(
-        denied
-            .execute_cli(&fence, budget, &checkouts, &mut guest, 30)
-            .is_err()
-    );
+    assert!(denied.execute_cli(&fence, budget, &mut guest, 30).is_err());
     assert_eq!(guest.0, 0, "missing checkout must not invoke host code");
     checkouts
         .claim(crate::checkout::CheckoutClaimRequest {
@@ -1194,11 +1223,7 @@ fn cli_execution_requires_live_checkout_foreign_boundary_and_scoped_egress() {
             now: 25,
         })
         .expect("checkout lease");
-    assert!(
-        denied
-            .execute_cli(&fence, budget, &checkouts, &mut guest, 30)
-            .is_err()
-    );
+    assert!(denied.execute_cli(&fence, budget, &mut guest, 30).is_err());
     assert_eq!(
         guest.0, 1,
         "host reached default-deny egress, not a socket fallback"
@@ -1206,18 +1231,12 @@ fn cli_execution_requires_live_checkout_foreign_boundary_and_scoped_egress() {
     let mut granted = ByoaDispatcher::new(&vault, StubFactory, GrantingEgress::new(500));
     assert!(
         granted
-            .execute_cli(&fence, budget, &checkouts, &mut guest, 125)
+            .execute_cli(&fence, budget, &mut guest, 125)
             .is_err()
     );
     assert!(
         granted
-            .execute_cli(
-                &fence,
-                ExecutionBudget::new(30, 0, 8),
-                &checkouts,
-                &mut guest,
-                30
-            )
+            .execute_cli(&fence, ExecutionBudget::new(30, 0, 8), &mut guest, 30)
             .is_err()
     );
     assert_eq!(
@@ -1225,7 +1244,7 @@ fn cli_execution_requires_live_checkout_foreign_boundary_and_scoped_egress() {
         "expired checkout and invalid budget must refuse before invocation"
     );
     let exhaust = granted
-        .execute_cli(&fence, budget, &checkouts, &mut guest, 30)
+        .execute_cli(&fence, budget, &mut guest, 30)
         .expect("guest ran");
     assert_eq!(guest.0, 2);
     let mut request = capture_request(&attempt, ByoaTerminalDisposition::Completed);
@@ -1272,7 +1291,6 @@ fn capture_cli_run(
         .execute_cli(
             &execution_fence(&attempt),
             ExecutionBudget::new(30, 128, 8),
-            &checkouts,
             &mut RecordingCli(0),
             30,
         )
@@ -1400,7 +1418,14 @@ fn a_replicated_capture_exports_its_payload_redacted() {
     for (id, row) in &rows {
         replica
             .batch_in()
-            .put_replicated(id, row.entity_type, row.occurred, row.learned_at, &row.body)
+            .put_replicated(
+                id,
+                row.entity_type,
+                row.occurred,
+                row.learned_at,
+                None,
+                &row.body,
+            )
             .commit()
             .expect("replicated put");
     }
@@ -1486,6 +1511,7 @@ fn user_login_is_refused_before_cloud_dispatch_but_allowed_locally() {
         user_login: true,
         connector: ByoaConnectorSpec::CliSandbox(cli_spec()),
         task_ref: None,
+        dev_refs: None,
         parent_attempt_id: None,
         run_id: None,
         dedupe_key: None,
@@ -1493,7 +1519,7 @@ fn user_login_is_refused_before_cloud_dispatch_but_allowed_locally() {
     };
     assert!(matches!(
         dispatcher(&cloud).dispatch(request()),
-        Err(ByoaError::CloudLoginRefused)
+        Err(ByoaError::CloudLoginRefused { .. })
     ));
     assert!(matches!(
         dispatcher(&local).dispatch(request()),
