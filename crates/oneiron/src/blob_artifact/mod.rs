@@ -93,6 +93,9 @@ pub(crate) use self::lifecycle::{archive_version_stands_in_txn, release_archive_
 pub(crate) use self::lifecycle::{
     release_claimed_version_in_txn, release_response_version_in_txn, response_version_stands_in_txn,
 };
+pub(crate) use self::lifecycle::{
+    release_replayed_claim_version_in_txn, replayed_claim_version_in_txn,
+};
 pub use self::provenance::BlobVersionProvenance;
 pub(crate) use self::references::archive_version_claim_tables;
 pub(crate) use self::references::{

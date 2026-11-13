@@ -17,7 +17,7 @@ use super::holders::artifact_hashes;
 use super::references::{
     claimed_hash_rows_exist, fence_released_asset, forget_claimed_hashes,
     forget_claimed_hashes_except_in_txn, forget_released_pair_in_txn, held_by_live_artifact,
-    retained_claim_names,
+    live_version_claim_reference, retained_claim_names,
 };
 use super::store_keys::{ASSET_REF, BLOB_ARTIFACT_CONTENT_HASH_LEN};
 use super::versions::{HEAD, VERSIONS, blob_artifact_asset_entity_id};
@@ -291,7 +291,15 @@ pub(crate) fn release_response_version_in_txn(
     version: u64,
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
 ) -> Result<()> {
-    release_version_in_txn(write, wtxn, artifact, version, content_hash, true)
+    release_version_in_txn(
+        write,
+        wtxn,
+        artifact,
+        version,
+        content_hash,
+        true,
+        VersionClaimRow::Tear,
+    )
 }
 
 /// Releases a native provider archive's privately captured version. The
@@ -317,7 +325,15 @@ pub(crate) fn release_archive_version_in_txn(
     )? {
         return Ok(());
     }
-    release_version_in_txn(write, wtxn, artifact, version, content_hash, false)
+    release_version_in_txn(
+        write,
+        wtxn,
+        artifact,
+        version,
+        content_hash,
+        false,
+        VersionClaimRow::Tear,
+    )
 }
 
 /// Whether the immutable local archive version still names the exact
@@ -360,16 +376,16 @@ pub(crate) fn release_claimed_version_in_txn(
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
 ) -> Result<bool> {
     let store = write.store;
-    let mut chained = None;
-    for row in VERSIONS.iter_from(store, wtxn, artifact.as_bytes())? {
-        let (_, record) = row?;
-        if record.claim_id == *claim {
-            chained = Some((record.version, record.content_hash));
-            break;
-        }
-    }
-    if let Some((version, chained_hash)) = chained {
-        release_version_in_txn(write, wtxn, artifact, version, &chained_hash, false)?;
+    if let Some((version, chained_hash)) = chained_version_of(store, wtxn, artifact, claim)? {
+        release_version_in_txn(
+            write,
+            wtxn,
+            artifact,
+            version,
+            &chained_hash,
+            false,
+            VersionClaimRow::Tear,
+        )?;
         return Ok(VERSIONS.get(store, wtxn, &(*artifact, version))?.is_none());
     }
     let asset = blob_artifact_asset_entity_id(content_hash)?;
@@ -399,6 +415,94 @@ pub(crate) fn release_claimed_version_in_txn(
     Ok(true)
 }
 
+/// The version of this vault's chain of `artifact` whose ledger claim is `claim`, with its hash.
+fn chained_version_of(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    artifact: &EntityId,
+    claim: &EntityId,
+) -> Result<Option<(u64, [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN])>> {
+    for row in VERSIONS.iter_from(store, txn, artifact.as_bytes())? {
+        let (_, record) = row?;
+        if record.claim_id == *claim {
+            return Ok(Some((record.version, record.content_hash)));
+        }
+    }
+    Ok(None)
+}
+
+/// A version of a live artifact's chain here whose `blob.version` claim a peer's tombstone is
+/// about to purge: read before the purge, released after it
+/// ([`release_replayed_claim_version_in_txn`]).
+pub(crate) struct ReplayedClaimVersion {
+    artifact: EntityId,
+    version: u64,
+    content_hash: [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+}
+
+/// The chain version a replayed tombstone of `claim` takes with it: `Some` when `claim` is a
+/// `blob.version` claim of a live artifact here and this vault's chain of that artifact keeps a
+/// version under it. `None` for any other record. Read before the replay's purge takes the
+/// claim's body.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn replayed_claim_version_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    claim: &EntityId,
+) -> Result<Option<ReplayedClaimVersion>> {
+    let Some((artifact, _)) = live_version_claim_reference(store, txn, claim)? else {
+        return Ok(None);
+    };
+    Ok(
+        chained_version_of(store, txn, &artifact, claim)?.map(|(version, content_hash)| {
+            ReplayedClaimVersion {
+                artifact,
+                version,
+                content_hash,
+            }
+        }),
+    )
+}
+
+/// A peer's purge of a version's `blob.version` claim releases that version of this vault's chain
+/// (Engine ruling 13 Nov 17:56: the owner's release takes the claim and the bytes on every
+/// replica). The origin may hold no chain and send only the claim's tombstone; without this the
+/// uploader's chain would keep a version whose claim is gone, and reading it would answer
+/// `CorruptedIndex`. The version goes as the owner's release takes it, after the replay purged the
+/// claim; the artifact stays even when emptied, and a legal hold on the artifact or its ASSET
+/// keeps the version.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn release_replayed_claim_version_in_txn(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    wtxn: &mut RwTxn<'_>,
+    replayed: &ReplayedClaimVersion,
+) -> Result<()> {
+    release_version_in_txn(
+        write,
+        wtxn,
+        &replayed.artifact,
+        replayed.version,
+        &replayed.content_hash,
+        false,
+        VersionClaimRow::PurgedByReplay,
+    )
+}
+
+/// What a version's release does with the version's ledger claim.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VersionClaimRow {
+    /// The release tears it and stages its tombstone.
+    Tear,
+    /// A replayed tombstone purged it in this transaction.
+    PurgedByReplay,
+}
+
 fn release_version_in_txn(
     write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
@@ -406,6 +510,7 @@ fn release_version_in_txn(
     version: u64,
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
     remove_empty_artifact: bool,
+    claim_row: VersionClaimRow,
 ) -> Result<()> {
     let store = write.store;
     let Some(record) = VERSIONS.get(store, wtxn, &(*artifact, version))? else {
@@ -439,7 +544,9 @@ fn release_version_in_txn(
             }
         }
     }
-    tear_in_txn(write, wtxn, &record.claim_id, &mut cleanup)?;
+    if claim_row == VersionClaimRow::Tear {
+        tear_in_txn(write, wtxn, &record.claim_id, &mut cleanup)?;
+    }
     crate::artifact_hosting::retire_released_version_in_txn(store, wtxn, artifact, version)?;
     if !chain_holds(store, wtxn, artifact, content_hash)? {
         ASSET_REF.delete(store, wtxn, &(*content_hash, *artifact))?;
