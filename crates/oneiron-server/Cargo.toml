@@ -286,22 +286,43 @@ name = "facade_live_run_status"
 path = "tests/facade_live_run_status.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
 
+# L9-12's broker rerank leg registers its sentinel key in a test vault and
+# answers from the paid-leg TLS fake provider.
+[[test]]
+name = "broker_rerank"
+path = "tests/broker_rerank.rs"
+required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
+
 # The NOTE session bind probe roots its home on a `MemoryKeystore` as well.
 [[test]]
 name = "note_session_bind_reply"
 path = "tests/note_session_bind_reply.rs"
 required-features = ["oneiron/test-support"]
 
+# DEL-2's core HTTP delete door roots its server on a `MemoryKeystore` too.
+[[test]]
+name = "delete_authority_served_door"
+path = "tests/delete_authority_served_door.rs"
+required-features = ["oneiron/test-support"]
+
+# The off-record stretch pack cases serve the owner's root from a `MemoryKeystore` too.
+[[test]]
+name = "off_record_room_context_pack"
+path = "tests/off_record_room_context_pack.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
+
 [lints]
 workspace = true
 
 [features]
-# The shipped server serves MCP `execute_code` over the checked-in QuickJS
-# component once `[models.code_mode]` asks for it.
-default = ["code-sandbox-wasmtime"]
+# The default features are the shipped server. It serves MCP `execute_code`
+# over the checked-in QuickJS component once `[models.code_mode]` asks for
+# it, and carries the paired-machine mesh listener.
+default = ["code-sandbox-wasmtime", "mesh"]
 code-sandbox-wasmtime = ["oneiron/code-sandbox-wasmtime", "oneiron-agent-runtime/code-sandbox-wasmtime"]
-# The paired-machine mesh listener (OF-535); off by default, and on only when
-# the host also names a bind address.
+# The paired-machine mesh listener (OF-535), in the shipped server. It starts
+# only when the host names a bind address (`ONEIRON_MESH_BIND`, or
+# `--mesh-bind` in managed mode); without one no listener runs.
 mesh = [
   "dep:tokio-rustls",
   "dep:webpki-roots",

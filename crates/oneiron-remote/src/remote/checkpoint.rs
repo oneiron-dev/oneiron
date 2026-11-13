@@ -76,7 +76,7 @@ impl OneironClient {
     ) -> Result<AuthorityCheckpointBundle, MemoryError> {
         match &self.backend {
             Backend::Remote(remote) => remote.authority_checkpoint_bundle(id),
-            Backend::Embedded(_) => Err(embedded_refusal()),
+            Backend::Embedded(_) | Backend::DreamerAttempt(_) => Err(embedded_refusal()),
         }
     }
 

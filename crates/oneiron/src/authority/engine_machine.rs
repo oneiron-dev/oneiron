@@ -53,7 +53,7 @@ impl Vault {
     }
 
     /// Every engine MACHINE writer, its row created on first use.
-    pub(super) fn engine_machine_actors(&self) -> Result<[EntityId; 9]> {
+    pub(super) fn engine_machine_actors(&self) -> Result<[EntityId; 10]> {
         let seed = ENGINE_MACHINE_SEED_TIME;
         Ok([
             self.ensure_commitment_projection_machine(seed)?,
@@ -65,6 +65,7 @@ impl Vault {
             self.dreamer_authority()?.entity_ref(),
             self.coach_authority()?.entity_ref(),
             self.ensure_scope_summary_landing_machine(seed)?,
+            self.ensure_plugin_section_fit_install_machine(seed)?,
         ])
     }
 
@@ -195,6 +196,12 @@ impl Vault {
     fn ensure_scope_summary_landing_machine(&self, now: u64) -> Result<EntityId> {
         self.with_write_txn_grouped(|txn| {
             Ok(crate::scope_summary::landing_writer(self, txn, now)?.entity_ref())
+        })
+    }
+
+    fn ensure_plugin_section_fit_install_machine(&self, now: u64) -> Result<EntityId> {
+        self.with_write_txn_grouped(|txn| {
+            crate::context_board::ensure_fit_install_writer_machine(self, txn, now)
         })
     }
 }

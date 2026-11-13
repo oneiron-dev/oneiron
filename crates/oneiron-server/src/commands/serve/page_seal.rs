@@ -45,6 +45,11 @@ pub(crate) fn open_served_vault_anchored<H: oneiron_vault_contract::host::Host>(
     } else {
         tracing::info!(dict_paths = ?dicts.paths, "using CJK dictionary search paths");
     }
+    // Vaults live in the app folder, never in a synced folder (CROSS-ARCH-0019
+    // #vault-20-hot): serve says so and opens the vault as before.
+    if let Some(folder) = crate::owner::synced_folder::enclosing(&config.vault_path) {
+        tracing::warn!(vault = %config.vault_path.display(), "{}", folder.warning());
+    }
 
     // A page-seal mirror whose vault's data is missing is refused, never
     // adopted for a new vault (OF-570).

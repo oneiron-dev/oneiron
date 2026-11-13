@@ -9,6 +9,9 @@
 //! -p oneiron-server --all-features --features oneiron/test-support
 //! --test code_run_reply_evidence`.
 
+#[path = "support/engine_stack.rs"]
+mod engine_stack;
+
 use std::collections::BTreeSet;
 use std::future::Future;
 use std::pin::pin;
@@ -20,6 +23,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::Request;
 use base64::Engine as _;
 use ed25519_dalek::{Signer, SigningKey};
+use engine_stack::on_engine_stack;
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole, holder_proof_challenge};
 use oneiron::code_run::{CodeRunDeterminism, GatedActorWrite};
 use oneiron::engine_executor::{
@@ -35,9 +39,7 @@ use oneiron::{
     LlmGenerateFuture, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, LlmStreamResult,
     LlmUsage, ModelId, ModelLocality, ModelTierRef, TimeRange, Vault, VaultConfig, WriteActor,
 };
-use oneiron_server::{
-    ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
-};
+use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -263,34 +265,6 @@ fn served_bytes(view: &Value) -> TestResult<Vec<u8>> {
         .as_str()
         .ok_or("the read serves its bytes")?;
     Ok(base64::engine::general_purpose::STANDARD.decode(encoded)?)
-}
-
-/// Runs `test` as the server's binary runs its app: on a multi-thread runtime
-/// whose threads have the engine's stack, driven from a thread that has it
-/// too. The generated facade dispatch's poll frame does not fit a test
-/// thread's default stack (`ENGINE_THREAD_STACK_BYTES`).
-fn on_engine_stack<F, Fut>(test: F) -> TestResult
-where
-    F: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = TestResult>,
-{
-    let driver = std::thread::Builder::new()
-        .stack_size(ENGINE_THREAD_STACK_BYTES)
-        .spawn(move || -> Result<(), String> {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_stack_size(ENGINE_THREAD_STACK_BYTES)
-                .enable_all()
-                .build()
-                .map_err(|error| error.to_string())?
-                .block_on(test())
-                .map_err(|error| error.to_string())
-        })?;
-    match driver.join() {
-        Ok(outcome) => Ok(outcome?),
-        // A failed assertion fails the test with its own message.
-        Err(panic) => std::panic::resume_unwind(panic),
-    }
 }
 
 #[test]

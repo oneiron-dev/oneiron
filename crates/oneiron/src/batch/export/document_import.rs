@@ -8,7 +8,8 @@ mod seed_replacement;
 
 use owner_archive_restore::OwnerRestore;
 pub(crate) use owner_archive_restore::{
-    OwnerArchiveRestorePermit, owner_restore_opened_claim_in_txn,
+    OwnerArchiveRestorePermit, owner_restore_group_head_in_txn, owner_restore_groups_in_txn,
+    owner_restore_members_in_txn, owner_restore_opened_claim_in_txn, owner_restore_receipt_in_txn,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -35,8 +36,8 @@ use crate::error::{Error, Result};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_EVENT,
-    ENTITY_TYPE_FACET, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN,
-    ENTITY_TYPE_WORKFLOW,
+    ENTITY_TYPE_FACET, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_TURN, ENTITY_TYPE_WORKFLOW,
 };
 use crate::serialize::{ExportBody, ExportBodyFile, ExportSecrets};
 use crate::temporal::TimeRange;
@@ -456,9 +457,10 @@ impl Vault {
             // nothing (it is never Waiting); the put then fails fail-closed.
             // FIX 8741: so does an ASSET_TEXT the archive carries with no
             // `DerivedFrom` edge, born source-free under its archived facet.
+            // UNBUILT item 10: so does a TASK, born under its writer's facet.
             if matches!(
                 row.entity_type,
-                ENTITY_TYPE_EVENT | ENTITY_TYPE_TURN | ENTITY_TYPE_NOTE
+                ENTITY_TYPE_EVENT | ENTITY_TYPE_TURN | ENTITY_TYPE_NOTE | ENTITY_TYPE_TASK
             ) || archived_source_free_text(&archive, &id, row.entity_type)?
             {
                 if let Some(facet) = archived_birth_facet(&archive, &id)?
@@ -824,7 +826,16 @@ fn insert_ready_row<R: Read + Seek>(
                         row.learned_at,
                     )
                 }
-                _ => vault.put_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at),
+                // The owner's restore lists each open proposal it inserts in its
+                // inbox group (R1, RULING 02:26 13 Nov).
+                _ => vault
+                    .put_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
+                    .and_then(|()| match owner_restore {
+                        Some(restore) => owner_archive_restore::record_restored_member_in_txn(
+                            vault, wtxn, restore, &id, &claim,
+                        ),
+                        None => Ok(()),
+                    }),
             }
         }
         // FIX 7777: the witness archive owner writes the row as imported
@@ -886,8 +897,13 @@ fn insert_ready_row<R: Read + Seek>(
             // `DerivedFrom` edges in that put, so it is no source-free birth
             // and reads only beside them (facet rule C); the edge pass then
             // restores each carried edge's archived value.
-            let mask = if matches!(row.entity_type, ENTITY_TYPE_EVENT | ENTITY_TYPE_TURN)
-                || archived_source_free_text(&archive, &id, row.entity_type)?
+            // UNBUILT item 10: a TASK is masked the same way. One the archive
+            // carries with no stamp (born before TASKs carried one) is born
+            // under this vault's default, as a NOTE is.
+            let mask = if matches!(
+                row.entity_type,
+                ENTITY_TYPE_EVENT | ENTITY_TYPE_TURN | ENTITY_TYPE_TASK
+            ) || archived_source_free_text(&archive, &id, row.entity_type)?
             {
                 archived_birth_facet(&archive, &id)?
             } else {
@@ -1763,7 +1779,7 @@ fn stored_asset_in_txn(vault: &Vault, wtxn: &heed::RwTxn<'_>, id: &EntityId) -> 
     )
 }
 
-/// The archived `FacetOf` target of EVENT/TURN row `id`, if the archive
+/// The archived `FacetOf` target of EVENT/TURN/TASK row `id`, if the archive
 /// carries the stamp (blind-review P1b, REVIEW-4389), or of a source-free
 /// ASSET_TEXT (FIX 8741). The dependency queue waits on it and the initial
 /// put is masked with it, so the row is born under its original facet;

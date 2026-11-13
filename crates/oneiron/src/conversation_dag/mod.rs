@@ -81,7 +81,8 @@ pub use types::{
     ResolvedScope, ScopePath, ScopeSelector,
 };
 pub(crate) use writes::{
-    append_composed_at_in_txn, append_composed_in_txn, append_in_txn, put_thread_event_in_txn,
+    append_composed_in_txn, append_in_txn, append_regenerated_turn_at_in_txn,
+    put_thread_event_in_txn,
 };
 
 #[cfg(test)]
