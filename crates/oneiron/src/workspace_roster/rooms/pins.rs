@@ -230,6 +230,25 @@ fn pin_writer_in(
     Ok((person, agent))
 }
 
+/// Whether `caller` sets `room`'s pin policy, read in `txn`: only a person
+/// who runs the room ([`manager_in`]), never an agent. Answers the stored
+/// body the policy lives on.
+fn policy_setter_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    caller: WriteActor,
+) -> Result<PinnedBody> {
+    if caller.actor_class() != EdgeActorClass::Human {
+        return Err(lacks(POLICY_BY_PERSON));
+    }
+    let body = PinnedBody::read_in(vault, txn, room)?;
+    if !manager_in(vault, txn, room, caller.entity_ref(), true, body.home())? {
+        return Err(lacks(NOT_ROOM_MANAGER));
+    }
+    Ok(body)
+}
+
 impl Memory<'_> {
     /// An agent bound to a room turn changes only that room's pins.
     fn require_pin_room(&self, room: EntityId) -> MemoryResult<()> {
@@ -330,25 +349,12 @@ impl Memory<'_> {
         let caller = self.write_actor();
         let policy = vault.try_with_write_txn_grouped(|txn| {
             vault.verify_write_actor_in_txn(txn, &caller)?;
-            if caller.actor_class() != EdgeActorClass::Human {
-                return Err(MemoryError::from(lacks(POLICY_BY_PERSON)));
-            }
-            let mut body = PinnedBody::read_in(vault, txn, input.room)?;
-            if !manager_in(
-                vault,
-                txn,
-                input.room,
-                caller.entity_ref(),
-                true,
-                body.home(),
-            )? {
-                return Err(MemoryError::from(lacks(NOT_ROOM_MANAGER)));
-            }
+            let mut body = policy_setter_in(vault, txn, input.room, caller)?;
             if body.policy() != input.policy {
                 body.set_policy(input.policy);
                 body.write_in(vault, txn, input.room)?;
             }
-            Ok(body.policy())
+            Ok::<_, MemoryError>(body.policy())
         })?;
         #[cfg(feature = "sync")]
         vault.refresh_room_cell_in_live_window(input.room, None);
@@ -356,5 +362,65 @@ impl Memory<'_> {
             room: input.room,
             policy,
         })
+    }
+}
+
+/// The pin doors' admissions, read only, for `can({verb})` (FIX
+/// [UI-GATE-PREVIEW]): each meets the checks its door meets, in its order,
+/// in read transactions, and writes nothing. The door checks all of it
+/// again in its own write transaction.
+impl Memory<'_> {
+    /// `vault.rooms.pins.pin`'s admission: the bound room turn, the writer
+    /// rule ([`pin_writer_in`]), the target read through the room's lane,
+    /// then the writer's own standing.
+    pub(crate) fn rooms_pins_pin_admission(&self, input: &RoomPinRequest) -> MemoryResult<()> {
+        self.require_pin_room(input.room)?;
+        let vault = self.vault();
+        let caller = self.write_actor();
+        {
+            let txn = vault.store.env.read_txn().map_err(Error::from)?;
+            let body = PinnedBody::read_in(vault, &txn, input.room)?;
+            pin_writer_in(vault, &txn, input.room, caller, &body)?;
+        }
+        if self
+            .for_room_turn(input.room)?
+            .get_entity(&input.target.to_hex())?
+            .value
+            .is_none()
+        {
+            return Err(MemoryError::from(Error::EntityNotFound));
+        }
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        vault.verify_write_actor_in_txn(&txn, &caller)?;
+        Ok(())
+    }
+
+    /// `vault.rooms.pins.unpin`'s admission: the bound room turn, the
+    /// writer's own standing, then the writer rule ([`pin_writer_in`]). It
+    /// reads no target, as the door reads none.
+    pub(crate) fn rooms_pins_unpin_admission(&self, input: &RoomPinRequest) -> MemoryResult<()> {
+        self.require_pin_room(input.room)?;
+        let vault = self.vault();
+        let caller = self.write_actor();
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        vault.verify_write_actor_in_txn(&txn, &caller)?;
+        let body = PinnedBody::read_in(vault, &txn, input.room)?;
+        pin_writer_in(vault, &txn, input.room, caller, &body)?;
+        Ok(())
+    }
+
+    /// `vault.rooms.pins.policy.set`'s admission: the bound room turn, the
+    /// writer's own standing, then [`policy_setter_in`].
+    pub(crate) fn rooms_pins_policy_set_admission(
+        &self,
+        input: &RoomPinPolicySet,
+    ) -> MemoryResult<()> {
+        self.require_pin_room(input.room)?;
+        let vault = self.vault();
+        let caller = self.write_actor();
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        vault.verify_write_actor_in_txn(&txn, &caller)?;
+        policy_setter_in(vault, &txn, input.room, caller)?;
+        Ok(())
     }
 }
