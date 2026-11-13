@@ -26,7 +26,7 @@ use self::descriptions::fill_schema_description_gaps;
 pub(crate) use self::endpoints_merge::{
     __path_openapi_json, __path_skills_pack, SKILL_PACK_ENDPOINT, SKILL_PACK_FORMAT,
     SKILL_PACK_LAYER_BOUNDARY, SKILL_PACK_LOAD_HINT, SKILL_PACK_MIME_TYPE, SKILL_PACK_NAME,
-    SKILL_PACK_RESOLUTION, openapi_json, skills_pack,
+    SKILL_PACK_RESOLUTION, openapi_json, skills_pack, spawn_openapi_document_precompute,
 };
 pub(super) use self::owner_paths::{ByteBody, CHANGED, OwnerRoute, RestShape};
 use self::security::{add_security_scheme, set_schema_property_description};
