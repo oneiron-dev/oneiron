@@ -132,6 +132,19 @@ fn same_value(left: &rmpv::Value, right: &rmpv::Value) -> bool {
     }
 }
 
+/// One hydrated row, and the claim body it serves when that body is not the
+/// one [`HydrateOptions::claim_bodies`] holds for its id.
+pub(super) struct HydratedEntity {
+    pub(super) entity: ContextEntity,
+    /// The body of a claim served at a pin's own words (a hit a reranker
+    /// scored at its words, an Indexed pack, a history pin), or of a claim no
+    /// cached body stood for, such as a neighbor. `None` when the row is no
+    /// claim, or serves the cached body. World grouping, reference
+    /// validation and source ranking read this body after hydration (Sol R14
+    /// S2 on #1426).
+    pub(super) served_claim_body: Option<ClaimBody>,
+}
+
 /// Hydrates one entity for the context pack.
 ///
 /// Type-0 (CLAIM) records pass through the D19 status gate here too — pack
@@ -144,6 +157,10 @@ fn same_value(left: &rmpv::Value, right: &rmpv::Value) -> bool {
 /// body the write door refuses. Bodies of every other type byte stay opaque
 /// and are projected through the generic best-effort field decode, unchanged;
 /// one the write door refuses hydrates no field.
+///
+/// A claim served at another body than the one `options.claim_bodies` holds
+/// for it comes back with that body ([`HydratedEntity::served_claim_body`]),
+/// so the assembly's later stages read the body the pack serves.
 pub(super) fn hydrate_entity(
     vault: &Vault,
     store: &StoreRead<'_>,
@@ -152,7 +169,7 @@ pub(super) fn hydrate_entity(
     score: f32,
     options: HydrateOptions<'_>,
     claims_suppressed: &mut usize,
-) -> Result<Option<ContextEntity>> {
+) -> Result<Option<HydratedEntity>> {
     if let Some(deadline) = options.deadline {
         deadline.answer_checkpoint(Error::IndexOverflow("context pack hydration"))?;
     }
@@ -226,6 +243,8 @@ pub(super) fn hydrate_entity(
     }
 
     let mut gated_claim_body: Option<&ClaimBody> = None;
+    // The body served when it is another than the cache's entry for `id`.
+    let mut served_claim_body: Option<&ClaimBody> = None;
     let decoded_here: Option<ClaimBody>;
     if header.entity_type == ENTITY_TYPE_CLAIM {
         // Decoded once for gate + projection; reads allow reserved `edge.*`
@@ -248,6 +267,7 @@ pub(super) fn hydrate_entity(
             }
             (_, Some(body)) if judged_here && claim_surfaceable(body) => {
                 gated_claim_body = Some(body);
+                served_claim_body = Some(body);
             }
             _ => {
                 *claims_suppressed += 1;
@@ -354,17 +374,20 @@ pub(super) fn hydrate_entity(
         None
     };
 
-    Ok(Some(ContextEntity {
-        id,
-        short_id,
-        content_hash,
-        source_revision_ref: source_revision.map(|revision| revision.0),
-        entity_type: header.entity_type,
-        score,
-        critical,
-        fields,
-        edges,
-        vector,
+    Ok(Some(HydratedEntity {
+        entity: ContextEntity {
+            id,
+            short_id,
+            content_hash,
+            source_revision_ref: source_revision.map(|revision| revision.0),
+            entity_type: header.entity_type,
+            score,
+            critical,
+            fields,
+            edges,
+            vector,
+        },
+        served_claim_body: served_claim_body.cloned(),
     }))
 }
 
