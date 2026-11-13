@@ -14,6 +14,7 @@ mod archive_project;
 mod archive_read;
 mod archive_side_tables;
 mod archive_spool;
+mod bundle_lineage;
 pub(crate) use archive_project::project_stored_archive;
 pub(crate) use archive_read::{ArchiveFileSource, ArchiveFiles, read_vault_archive_indexed};
 pub use archive_side_tables::{
@@ -61,6 +62,8 @@ use std::collections::BTreeSet;
 
 mod agent_person_import;
 mod asset_reserve;
+mod copy_release;
+pub(crate) use copy_release::{OwnerCopyPass, ReleasedCopy, written_digest};
 mod document_import;
 pub(crate) use document_import::{
     OwnerArchiveRestorePermit, owner_restore_group_head_in_txn, owner_restore_groups_in_txn,
@@ -71,6 +74,9 @@ mod document_types;
 mod document_validation;
 mod embedding_setup;
 mod evidence_import;
+mod owner_records;
+mod side_names;
+mod side_provenance;
 pub use embedding_setup::*;
 mod epoch_floors;
 mod expression_import;

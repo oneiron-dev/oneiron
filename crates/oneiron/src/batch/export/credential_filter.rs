@@ -3,6 +3,7 @@
 
 pub(crate) use oneiron_store::batch::export::credential_filter::*;
 
+use super::bundle_lineage::BundleLineage;
 use super::{
     ExportManifest, ExportScope, ExportSecretsNulledManifest, carries_embedding_setup,
     whole_vault_export_excludes_entity_in_txn,
@@ -237,8 +238,8 @@ impl Vault {
         match crate::memory::record_member_mail_json_export(
             self,
             &bundle.json,
-            &bundle.thread_roots,
-            &member_mail,
+            bundle.thread_roots,
+            Some(&member_mail),
         ) {
             Ok(()) => Ok(bundle.json),
             // The write did not commit: no audit row and no notice of it
@@ -254,7 +255,14 @@ impl Vault {
                         "an export whose mailboxes' people were not told carries a mailbox",
                     ));
                 }
-                crate::memory::record_raw_json_export(self, &bundle.json, bundle.thread_roots);
+                // The copy made again leaves only once its own audit row,
+                // counting no mailbox, commits (fix list row 15416).
+                crate::memory::record_member_mail_json_export(
+                    self,
+                    &bundle.json,
+                    bundle.thread_roots,
+                    None,
+                )?;
                 Ok(bundle.json)
             }
         }
@@ -284,6 +292,7 @@ impl Vault {
             .as_ref()
             .map(|plan| plan.judge(self, &dbs, &txn))
             .transpose()?;
+        let lineage = BundleLineage::read_in(&self.store, &txn, judge.is_some())?;
         let exported: std::collections::BTreeSet<EntityId> = ids.iter().copied().collect();
         let mut records = Vec::new();
         let mut nulled = false;
@@ -317,11 +326,10 @@ impl Vault {
             }
             // A member's mailbox the copy does not carry, and what was
             // learned from it, stay home (fix list row 15416).
-            if let Some(judge) = judge.as_mut()
-                && !judge.carries(*id, Some(raw.as_slice()))?
-            {
+            let Some(sources) = lineage.admitted(judge.as_mut(), *id, header.entity_type, &raw)?
+            else {
                 continue;
-            }
+            };
             // A file-plane ASSET leaves as its body, never the manifest its
             // row keeps (FIX 3677).
             let raw = self.materialized_row_in_txn(&txn, id, raw)?;
@@ -336,7 +344,7 @@ impl Vault {
                 |source, _| {
                     Ok(exported.contains(source)
                         && !whole_vault_export_excludes_entity_in_txn(&self.store, &txn, source)?
-                        && carried_by(judge.as_mut(), *source)?)
+                        && lineage.carried_by(judge.as_mut(), *source)?)
                 },
             )? == Some(false)
             {
@@ -372,7 +380,7 @@ impl Vault {
             // The copy carries a member's mailbox only through a row it ships
             // (fix list row 15416).
             if let Some(judge) = judge.as_mut() {
-                judge.ships(*id);
+                BundleLineage::ships(judge, *id, sources);
             }
             records.push((
                 *id,
@@ -454,17 +462,6 @@ struct BundlePass {
     json: Vec<u8>,
     thread_roots: crate::workspace_roster::ExportThreadRoots,
     member_mail: Option<crate::mail_pack::CarriedMemberMailboxes>,
-}
-
-/// Whether a pass's mailbox judge, when it has one, carries the row `id`.
-fn carried_by(
-    judge: Option<&mut crate::source_audience::ExportJudge<'_, '_, '_>>,
-    id: EntityId,
-) -> Result<bool> {
-    match judge {
-        Some(judge) => judge.carries(id, None),
-        None => Ok(true),
-    }
 }
 
 #[cfg(test)]

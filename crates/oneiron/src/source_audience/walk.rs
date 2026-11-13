@@ -52,6 +52,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE};
 use crate::{EntityId, Vault};
+pub(super) mod export_verdicts;
 
 /// Whether the row bytes `raw` are one a source audience landed: its OWN
 /// body states the source-audience obligation, valid or malformed, whatever

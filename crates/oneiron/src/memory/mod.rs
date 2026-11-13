@@ -104,6 +104,7 @@ pub mod erase_sweep;
 mod export;
 mod export_audit;
 mod export_kept;
+mod export_owner_copy;
 mod feeds;
 pub mod query_records;
 // FIX 11176: a kept export read and let go through verbs.
@@ -256,8 +257,9 @@ pub use export::{
 };
 pub use export_audit::{ExportAuditScope, ExportReceipt};
 pub(crate) use export_audit::{
-    ExportCopy, owner_copy_in_txn, record_export, record_member_mail_json_export,
-    record_raw_export, record_raw_json_export, turn_thread_root,
+    ExportCopy, owner_copy_in_txn, raw_export_copy, raw_records_copy, record_export,
+    record_member_mail_export, record_member_mail_json_export, record_raw_json_export,
+    turn_thread_root,
 };
 pub use export_kept::KeptExportLapse;
 pub use export_transfer_read::{
