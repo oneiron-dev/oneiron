@@ -19,6 +19,8 @@
 //!   each at the offset the part has reached ([`upload_part`]). The upload's
 //!   state between two parts is the folder alone, so a restart resumes it
 //!   there. The part that reaches the declared size finishes the folder.
+//!   An upload the owner gives up before its export is staged is deleted
+//!   with its folder ([`delete_upload`]).
 //!
 //! Each pass of the worker ([`HostedImports::pass`]) first makes the job row
 //! ([`oneiron::Vault::hosted_import_create`]) of each whole folder that has
@@ -39,11 +41,22 @@
 //! during a pass stops the job at the next conversation. What landed is
 //! surfaced in the import's review as a finished job's is, the job ends
 //! Cancelled and its folder is removed. A pass also removes the folder of an
-//! ended job that outlived its end.
+//! ended job that outlived its end, and what is left of a deleted upload's.
 //!
-//! Each conversation lands under the host's admission, as a served write
-//! does: a managed vault frozen for reap lands nothing, and the pass stops
-//! between conversations.
+//! Every write of a pass is made under the host's admission, as a served
+//! write is: the rows it makes and the folders it removes, each conversation,
+//! and a job's end with its inbox row, its Dreamer queue and the removal of
+//! its folder, which run under the guard of the job's last conversation. A
+//! managed vault frozen for reap writes nothing, and the pass gives the guard
+//! back between two conversations and stops there.
+//!
+//! A process that stops after a conversation's landing commits and before the
+//! job's place is kept leaves messages the import landed that the landing of
+//! the same conversation again counts skipped. The pass reads them first
+//! ([`oneiron::Vault::hosted_import_resumed`]) and counts them as they landed,
+//! so the job's counts, and whether its import is surfaced, stay true. A job
+//! asked to cancel before that conversation landed again keeps them the same
+//! way before it ends, and lands nothing more.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
@@ -53,7 +66,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::ingest::history::{
-    HistorySource, HostedImportId, HostedImportJob, HostedImportStaged, HostedImportState,
+    HistoryConversation, HistorySource, HostedImportId, HostedImportJob, HostedImportStaged,
+    HostedImportState,
 };
 use rustix::fs::{CWD, Mode, OFlags, openat};
 use serde::{Deserialize, Serialize};
@@ -77,6 +91,10 @@ const REQUEST_FILE: &str = "request.json";
 const REQUEST_PART_FILE: &str = "request.part";
 const DECLARED_FILE: &str = "declared.json";
 const DECLARED_PART_FILE: &str = "declared.part";
+/// The suffix a deleted upload's folder is renamed to before it is removed:
+/// a folder so named is no upload, and a pass removes what a stopped process
+/// left of it.
+const DELETED_SUFFIX: &str = ".deleted";
 
 /// A zip's first bytes (a local file header).
 const ZIP_MAGIC: [u8; 4] = *b"PK\x03\x04";
@@ -523,14 +541,7 @@ pub(crate) fn upload_part(
     part: &mut dyn BufRead,
 ) -> Result<HostedUpload, UploadRefusal> {
     let upload = Upload::open(vault_path, id)?;
-    // The upload's lock is on `declared.json`, which stays in the folder
-    // through the finish: a second part sent meanwhile is refused at once,
-    // never left waiting.
-    match upload.declared_file.try_lock() {
-        Ok(()) => {}
-        Err(fs::TryLockError::WouldBlock) => return Err(UploadRefusal::Busy),
-        Err(fs::TryLockError::Error(error)) => return Err(error.into()),
-    }
+    upload.lock()?;
     let (written, staged) = upload.written()?;
     let declared = upload.declared;
     if staged {
@@ -570,6 +581,57 @@ pub(crate) fn upload_part(
     }
     finish_folder(&upload.folder, upload.source)?;
     Ok(upload.state(reached, true))
+}
+
+/// What a deleted upload answers.
+#[derive(Debug, Serialize)]
+pub(crate) struct DeletedUpload {
+    /// The deleted upload's id: no upload route answers it any more.
+    pub(crate) import_id: String,
+    /// The bytes the upload had written, removed with its folder.
+    pub(crate) removed_bytes: u64,
+}
+
+/// Deletes upload `id` in the vault at `vault_path`, whose export is not
+/// staged, with its folder: no upload route answers it after, and the bytes
+/// it had written leave the vault's disk. The delete takes the upload's
+/// lock, so it never meets a part being written. The folder is renamed away
+/// in one step, then removed; the worker's next pass removes what a process
+/// that stopped between the two left.
+///
+/// # Errors
+///
+/// [`UploadRefusal::NotFound`] for an id that is no upload in this vault,
+/// [`UploadRefusal::Busy`] while a part is written,
+/// [`UploadRefusal::Staged`] once the export is staged (its import is
+/// cancelled instead, with `vault.imports.cancel`), or a failed rename:
+/// nothing was deleted.
+pub(crate) fn delete_upload(
+    vault_path: &Path,
+    id: HostedImportId,
+) -> Result<DeletedUpload, UploadRefusal> {
+    let upload = Upload::open(vault_path, id)?;
+    upload.lock()?;
+    // A staged export is the worker's from here: it makes the import's job
+    // from the request, and only the job's cancel stops it.
+    match fs::symlink_metadata(upload.folder.join(REQUEST_FILE)) {
+        Ok(_) => return Err(UploadRefusal::Staged),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    // A folder whose export is gone is deleted all the same.
+    let removed_bytes = upload.written().map_or(0, |(written, _)| written);
+    let root = imports_root(vault_path);
+    let deleted = root.join(format!("{}{DELETED_SUFFIX}", id.to_hex()));
+    fs::rename(&upload.folder, &deleted)?;
+    if let Err(error) = File::open(&root).and_then(|imports| imports.sync_all()) {
+        tracing::warn!(import = %id.to_hex(), error = %error, "hosted import folder rename not synced");
+    }
+    remove_folder(&deleted);
+    Ok(DeletedUpload {
+        import_id: id.to_hex(),
+        removed_bytes,
+    })
 }
 
 /// Whether `part` holds no byte.
@@ -642,6 +704,23 @@ impl Upload {
         })
     }
 
+    /// Takes the upload's lock, on `declared.json`, which stays in the
+    /// folder through the finish: a second part or a delete sent meanwhile
+    /// is refused at once, never left waiting. An upload deleted between its
+    /// open and its lock is no upload: the delete moved its folder away.
+    fn lock(&self) -> Result<(), UploadRefusal> {
+        match self.declared_file.try_lock() {
+            Ok(()) => {}
+            Err(fs::TryLockError::WouldBlock) => return Err(UploadRefusal::Busy),
+            Err(fs::TryLockError::Error(error)) => return Err(error.into()),
+        }
+        match fs::symlink_metadata(self.folder.join(DECLARED_FILE)) {
+            Ok(_) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Err(UploadRefusal::NotFound),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     /// The bytes written so far, and whether the export is staged: the
     /// request's count once it is, else the part's length, or the named
     /// export's when the finish stopped between its two steps.
@@ -673,8 +752,9 @@ impl Upload {
 /// What a running server drains: the staged imports of its vault.
 pub(crate) struct HostedImports {
     vault_path: PathBuf,
-    /// Asked before each conversation lands; `None` lands nothing more this
-    /// pass.
+    /// Asked before each unit of writes (a job's first conversation with
+    /// its decode, each later conversation, the rows and removals of the
+    /// staging folder); `None` writes nothing more this pass.
     admission: HousekeepingAdmission,
 }
 
@@ -734,8 +814,8 @@ impl HostedImports {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
             Err(error) => anyhow::bail!("read {}: {error}", root.display()),
         };
-        if root_exists {
-            adopt(vault, &root)?;
+        if root_exists && !self.adopt(vault, &root)? {
+            return Ok(());
         }
         let mut budget = budget;
         for (id, job) in vault.hosted_imports()? {
@@ -762,6 +842,13 @@ impl HostedImports {
         budget: &mut Option<u64>,
     ) -> anyhow::Result<bool> {
         let folder = root.join(id.to_hex());
+        // Held through every write of the job's first conversation, and of
+        // its end when that comes in this pass; given back and asked again
+        // between two conversations.
+        let mut admitted = (self.admission)();
+        if admitted.is_none() {
+            return Ok(false);
+        }
         let Some(source) = job.history_source() else {
             fail(
                 vault,
@@ -772,6 +859,9 @@ impl HostedImports {
             return Ok(true);
         };
         if job.state == HostedImportState::Cancelling {
+            if let Some(conversation) = conversation_at_place(&folder, source, job) {
+                keep_resumed(vault, id, source, job, job.cursor, &conversation)?;
+            }
             finish(
                 vault,
                 &folder,
@@ -801,20 +891,28 @@ impl HostedImports {
         vault.hosted_import_decoded(id, u64::try_from(conversations.len())?, messages)?;
         let owner = crate::owner::local_owner(vault)?;
         let mut cursor = job.cursor;
-        for conversation in conversations
+        for (landed_here, conversation) in conversations
             .iter()
             .skip(usize::try_from(cursor).unwrap_or(usize::MAX))
+            .enumerate()
         {
             if *budget == Some(0) {
                 return Ok(false);
             }
-            let Some(_admitted) = (self.admission)() else {
-                return Ok(false);
-            };
+            if landed_here > 0 {
+                drop(admitted.take());
+                admitted = (self.admission)();
+                if admitted.is_none() {
+                    return Ok(false);
+                }
+            }
             if vault
                 .hosted_import(id)?
                 .is_some_and(|row| row.state == HostedImportState::Cancelling)
             {
+                if landed_here == 0 {
+                    keep_resumed(vault, id, source, job, cursor, conversation)?;
+                }
                 finish(
                     vault,
                     &folder,
@@ -825,9 +923,19 @@ impl HostedImports {
                 )?;
                 return Ok(true);
             }
-            let report = vault
+            // The conversation at the job's place may hold what a process
+            // that stopped part way landed of it.
+            let resumed = if landed_here == 0 {
+                Some(vault.hosted_import_resumed(source, conversation, job.imported_at)?)
+            } else {
+                None
+            };
+            let mut report = vault
                 .import_history(&owner, source, conversation, job.imported_at)
                 .map_err(|error| anyhow::anyhow!("import stopped: {error}"))?;
+            if let Some(resumed) = resumed {
+                resumed.fold_into(&mut report);
+            }
             cursor += 1;
             vault.hosted_import_landed(id, cursor, &report)?;
             if let Some(left) = budget.as_mut() {
@@ -835,8 +943,83 @@ impl HostedImports {
             }
         }
         // A cancel asked while the last conversation landed finds nothing
-        // left to stop: the job ends Landed.
+        // left to stop: the job ends Landed, under the last guard.
         finish(vault, &folder, id, source, job, HostedImportState::Landed)?;
+        drop(admitted);
+        Ok(true)
+    }
+
+    /// Makes the row of each whole folder under `root` that has none, each
+    /// at a second of its own, and removes what is left of a deleted
+    /// upload's folder and the folder of an ended job. `false` when there
+    /// is such work and the host admits none.
+    fn adopt(&self, vault: &oneiron::Vault, root: &Path) -> anyhow::Result<bool> {
+        let mut whole = Vec::new();
+        let mut removals = Vec::new();
+        for entry in fs::read_dir(root)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if name
+                .strip_suffix(DELETED_SUFFIX)
+                .and_then(HostedImportId::parse)
+                .is_some()
+            {
+                // A deleted upload's folder, renamed away, that a process
+                // which stopped before removing it left.
+                removals.push(entry.path());
+                continue;
+            }
+            let Some(id) = HostedImportId::parse(name) else {
+                continue;
+            };
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            if let Some(job) = vault.hosted_import(id)? {
+                // An ended job's folder that outlived its end, as a process
+                // that stopped between the two, or a removal that failed,
+                // leaves it.
+                if job.ended() {
+                    removals.push(entry.path());
+                }
+                continue;
+            }
+            let Some(request) = read_request(&entry.path())? else {
+                continue;
+            };
+            let (Some(source), Ok(hash)) = (
+                HistorySource::parse(&request.source),
+                blake3::Hash::from_hex(&request.blake3),
+            ) else {
+                tracing::warn!(import = %id.to_hex(), "a staged import's request does not read; left");
+                continue;
+            };
+            let staged = HostedImportStaged {
+                bytes: request.bytes,
+                blake3: *hash.as_bytes(),
+            };
+            whole.push((id, source, staged));
+        }
+        if whole.is_empty() && removals.is_empty() {
+            return Ok(true);
+        }
+        let Some(_admitted) = (self.admission)() else {
+            return Ok(false);
+        };
+        for folder in &removals {
+            remove_folder(folder);
+        }
+        if whole.is_empty() {
+            return Ok(true);
+        }
+        let owner = crate::owner::local_owner(vault)?;
+        for (id, source, staged) in whole {
+            vault.hosted_import_create(&owner, id, source, staged, own_second(vault)?)?;
+            tracing::info!(import = %id.to_hex(), source = source.source_id(), "hosted import staged");
+        }
         Ok(true)
     }
 }
@@ -845,6 +1028,7 @@ impl HostedImports {
 /// landed is surfaced in the import's one review: one inbox row for the
 /// import, never one per conversation, when anything landed new or changed,
 /// and the Dreamer queued. Then the job ends and its folder is removed.
+/// The caller holds the host's admission through all of it.
 fn finish(
     vault: &oneiron::Vault,
     folder: &Path,
@@ -881,49 +1065,40 @@ fn finish(
     Ok(())
 }
 
-/// Makes the row of each whole folder under `root` that has none, each at a
-/// second of its own.
-fn adopt(vault: &oneiron::Vault, root: &Path) -> anyhow::Result<()> {
-    let mut whole = Vec::new();
-    for entry in fs::read_dir(root)? {
-        let entry = entry?;
-        let Some(id) = entry.file_name().to_str().and_then(HostedImportId::parse) else {
-            continue;
-        };
-        if !entry.file_type()?.is_dir() {
-            continue;
-        }
-        if let Some(job) = vault.hosted_import(id)? {
-            // An ended job's folder that outlived its end, as a process that
-            // stopped between the two leaves it.
-            if job.ended() {
-                remove_folder(&entry.path());
-            }
-            continue;
-        }
-        let Some(request) = read_request(&entry.path())? else {
-            continue;
-        };
-        let (Some(source), Ok(hash)) = (
-            HistorySource::parse(&request.source),
-            blake3::Hash::from_hex(&request.blake3),
-        ) else {
-            tracing::warn!(import = %id.to_hex(), "a staged import's request does not read; left");
-            continue;
-        };
-        let staged = HostedImportStaged {
-            bytes: request.bytes,
-            blake3: *hash.as_bytes(),
-        };
-        whole.push((id, source, staged));
-    }
-    if whole.is_empty() {
-        return Ok(());
-    }
-    let owner = crate::owner::local_owner(vault)?;
-    for (id, source, staged) in whole {
-        vault.hosted_import_create(&owner, id, source, staged, own_second(vault)?)?;
-        tracing::info!(import = %id.to_hex(), source = source.source_id(), "hosted import staged");
+/// The conversation at a job's place, earliest first, read from its staged
+/// export. `None` when the job is past its last conversation, or its export
+/// is gone, changed, unreadable or does not decode: what a stopped landing
+/// left of it is then not read.
+fn conversation_at_place(
+    folder: &Path,
+    source: HistorySource,
+    job: &HostedImportJob,
+) -> Option<HistoryConversation> {
+    let export = staged_export(folder, job.staged_bytes).ok().flatten()?;
+    let (_, mut conversations) = decode(source, &export).ok()?;
+    earliest_first(&mut conversations);
+    conversations
+        .into_iter()
+        .nth(usize::try_from(job.cursor).ok()?)
+}
+
+/// Keeps on a job asked to cancel what a process that stopped after the
+/// landing of `conversation`, at the job's place `cursor`, committed, and
+/// before that place was kept, landed of it: its messages count as they
+/// landed, its TURNs are the job's, and the place moves past it, as the
+/// record of that landing would have done. Lands nothing. The caller holds
+/// the host's admission.
+fn keep_resumed(
+    vault: &oneiron::Vault,
+    id: HostedImportId,
+    source: HistorySource,
+    job: &HostedImportJob,
+    cursor: u64,
+    conversation: &HistoryConversation,
+) -> anyhow::Result<()> {
+    let resumed = vault.hosted_import_resumed(source, conversation, job.imported_at)?;
+    if resumed.new + resumed.changed > 0 {
+        vault.hosted_import_landed(id, cursor + 1, &resumed.report(conversation))?;
     }
     Ok(())
 }
@@ -959,7 +1134,41 @@ fn staged_export(folder: &Path, bytes: u64) -> anyhow::Result<Option<PathBuf>> {
     Ok((metadata.is_file() && metadata.len() == bytes).then_some(path))
 }
 
-/// Ends a job Failed with `reason` and removes its folder.
+/// Door for `tests/hosted_import_job.rs`: lands conversation `index`
+/// (earliest first) of hosted import `id` into its review and keeps no
+/// place, as a process that stops after that landing commits and before the
+/// job's place is kept leaves it. Compiled only under
+/// `--cfg oneiron_test_support`; never API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn land_unplaced(
+    vault: &oneiron::Vault,
+    vault_path: &Path,
+    id: HostedImportId,
+    index: usize,
+) -> anyhow::Result<()> {
+    let job = vault
+        .hosted_import(id)?
+        .ok_or_else(|| anyhow::anyhow!("no hosted import {}", id.to_hex()))?;
+    let source = job
+        .history_source()
+        .ok_or_else(|| anyhow::anyhow!("the import's source is not one this build reads"))?;
+    let folder = imports_root(vault_path).join(id.to_hex());
+    let export = staged_export(&folder, job.staged_bytes)?
+        .ok_or_else(|| anyhow::anyhow!("the staged export is gone or changed"))?;
+    let (_, mut conversations) = decode(source, &export)?;
+    earliest_first(&mut conversations);
+    let conversation = conversations
+        .get(index)
+        .ok_or_else(|| anyhow::anyhow!("the export has no conversation {index}"))?;
+    let owner = crate::owner::local_owner(vault)?;
+    vault
+        .import_history(&owner, source, conversation, job.imported_at)
+        .map_err(|error| anyhow::anyhow!("import stopped: {error}"))?;
+    Ok(())
+}
+
+/// Ends a job Failed with `reason` and removes its folder, under the
+/// caller's admission.
 fn fail(
     vault: &oneiron::Vault,
     folder: &Path,
@@ -972,8 +1181,8 @@ fn fail(
     Ok(())
 }
 
-/// Removes an ended job's folder; a failure is said, and the job stays
-/// ended.
+/// Removes an ended job's folder, or a deleted upload's; a failure is said,
+/// the job stays ended, and a later pass removes the folder.
 fn remove_folder(folder: &Path) {
     match fs::remove_dir_all(folder) {
         Ok(()) => {}

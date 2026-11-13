@@ -22,10 +22,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{HistoryImportReport, HistorySource, history_import_review_id};
+use super::{HistoryConversation, HistoryImportReport, HistorySource, history_import_review_id};
 use crate::Vault;
+use crate::batch::EntityMetadataHeader;
 use crate::consent::AuthenticatedOwner;
-use crate::entity_id::EntityId;
+use crate::entity_id::{EntityId, derived_domains};
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, Raw, SideTable};
 
@@ -289,6 +290,45 @@ pub struct HostedImportView {
     pub updated_at: u64,
 }
 
+/// What a hosted import already landed of one conversation before its
+/// process stopped part way ([`Vault::hosted_import_resumed`]).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct HostedImportResumed {
+    /// Messages it landed new.
+    pub new: u32,
+    /// Messages it landed as a revision of a text an earlier import landed.
+    pub changed: u32,
+    /// Their TURNs, each once, in the ledger's order.
+    pub turns: Vec<EntityId>,
+}
+
+impl HostedImportResumed {
+    /// Counts in `report`, the landing of the same conversation again, what
+    /// the stopped landing landed: those messages move from skipped to new
+    /// or changed, and their TURNs come first.
+    pub fn fold_into(&self, report: &mut HistoryImportReport) {
+        report.skipped = report.skipped.saturating_sub(self.new + self.changed);
+        report.new += self.new;
+        report.changed += self.changed;
+        let mut turns = self.turns.clone();
+        for turn in report.turns.drain(..) {
+            if !turns.contains(&turn) {
+                turns.push(turn);
+            }
+        }
+        report.turns = turns;
+    }
+
+    /// The report of a landing of `conversation` that lands nothing more,
+    /// counting only what the stopped landing landed: a job asked to cancel
+    /// keeps it at its place ([`Vault::hosted_import_landed`]).
+    pub fn report(&self, conversation: &HistoryConversation) -> HistoryImportReport {
+        let mut report = HistoryImportReport::new(conversation);
+        self.fold_into(&mut report);
+        report
+    }
+}
+
 impl Vault {
     /// Makes the row of a staged hosted import of `source`, Staged and
     /// learned at `imported_at`, for the vault's `owner`. When the row
@@ -416,6 +456,63 @@ impl Vault {
             JOBS.put(&self.store, txn, &id.0, &row)?;
             Ok(Some(row))
         })
+    }
+
+    /// What the import of `source` at `imported_at` already landed of
+    /// `conversation`: each of its messages whose text is a MESSAGE learned
+    /// at `imported_at`. A process that stops after a conversation's landing
+    /// commits and before the job's next place does leaves those; the
+    /// landing of the same conversation again counts them skipped. The
+    /// worker reads this before it lands the conversation at the job's place
+    /// and folds it into that landing's report
+    /// ([`HostedImportResumed::fold_into`]), so the job counts each message
+    /// it landed as it landed it, and its import's inbox row is written. A
+    /// message whose ledger row holds another text too counts changed.
+    ///
+    /// # Errors
+    ///
+    /// A storage error.
+    pub fn hosted_import_resumed(
+        &self,
+        source: HistorySource,
+        conversation: &HistoryConversation,
+        imported_at: u64,
+    ) -> Result<HostedImportResumed> {
+        let txn = self.store.env.read_txn()?;
+        let mut resumed = HostedImportResumed::default();
+        let mut seen = std::collections::HashSet::new();
+        for message in &conversation.messages {
+            if !seen.insert(message.native_id.as_str()) {
+                continue;
+            }
+            let id = super::land::derive(
+                derived_domains::HISTORY_MESSAGE,
+                &[
+                    source.source_id(),
+                    &message.native_id,
+                    &super::ledger::content_hash(message),
+                ],
+            )?;
+            let learned_here = self
+                .get_raw_in(&txn, &id)?
+                .and_then(|raw| EntityMetadataHeader::parse(&raw))
+                .is_some_and(|header| header.learned_at == imported_at);
+            if !learned_here {
+                continue;
+            }
+            let Some(row) = super::ledger::find(&self.store, &txn, source, message)? else {
+                continue;
+            };
+            if row.messages.len() > 1 || !row.erased.is_empty() {
+                resumed.changed += 1;
+            } else {
+                resumed.new += 1;
+            }
+            if !resumed.turns.contains(&row.turn) {
+                resumed.turns.push(row.turn);
+            }
+        }
+        Ok(resumed)
     }
 
     /// Ends the job as `state`, Landed, Failed or Cancelled, with the

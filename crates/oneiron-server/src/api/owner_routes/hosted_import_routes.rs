@@ -15,7 +15,10 @@
 //! size stages the export: there is no separate completion. The vault's
 //! disk floor (`limits.disk_reserve_bytes`, the floor every upload keeps) is
 //! the cap: a declared size it has no room for is refused before a byte is
-//! sent, and each part claims its bytes on it as it spools.
+//! sent, and each part claims its bytes on it as it spools. An upload the
+//! owner gives up before its export is staged is deleted with its folder
+//! and the bytes it has written; a staged export's import is cancelled
+//! instead, as its job (`vault.imports.cancel`).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,7 +28,7 @@ use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Json;
-use axum::routing::{get, post, put};
+use axum::routing::{delete, get, post, put};
 use oneiron::ingest::history::{HistorySource, HostedImportId};
 use serde::Deserialize;
 
@@ -33,7 +36,7 @@ use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::{self, OwnerJsonBody, SpoolPolicy, Unspooled};
 use crate::api::query_params;
 use crate::auth::CoreAuth;
-use crate::commands::hosted_import::{self, HostedUpload, UploadRefusal};
+use crate::commands::hosted_import::{self, DeletedUpload, HostedUpload, UploadRefusal};
 use crate::error::{ApiError, ApiErrorDetails};
 use crate::owner::OwnerError;
 use crate::server::SyncServer;
@@ -76,6 +79,16 @@ pub(super) fn owner_table() -> OwnerTable {
                 shape: None,
             },
             put(upload),
+        ),
+        (
+            OwnerRoute {
+                method: "delete",
+                path: "/imports/hosted/{import}/upload",
+                summary: "Deletes an upload whose export is not staged, with the bytes it has written; a staged export's import is cancelled with vault.imports.cancel instead.",
+                row: None,
+                shape: None,
+            },
+            delete(delete_upload),
         ),
     ]
 }
@@ -202,6 +215,31 @@ async fn upload(
     Ok(Json(state))
 }
 
+/// `DELETE /v1/owner/imports/hosted/{import}/upload`: deletes an upload the
+/// owner gives up before its export is staged, with its folder and the bytes
+/// it has written. It waits for no part: one being written refuses the
+/// delete.
+async fn delete_upload(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    UrlPath(import): UrlPath<String>,
+) -> OwnerReply<DeletedUpload> {
+    owner(&auth, &server)?;
+    let id = import_id(&import)?;
+    let vault_path = server.vault().path().to_path_buf();
+    let deleted = blocking(move || Ok(hosted_import::delete_upload(&vault_path, id)))
+        .await?
+        .map_err(|refusal| match refusal {
+            UploadRefusal::Staged => staged_not_deleted(),
+            UploadRefusal::Failed(error) => {
+                tracing::warn!(import = %import, error = %format!("{error:#}"), "hosted import upload delete failed");
+                ApiError::internal_server_error("the upload was not deleted")
+            }
+            refusal => refused(refusal, &import),
+        })?;
+    Ok(Json(deleted))
+}
+
 /// The import's id from its path; one that is no id names no upload.
 fn import_id(import: &str) -> Result<HostedImportId, ApiError> {
     HostedImportId::parse(import)
@@ -242,6 +280,18 @@ fn refused(refusal: UploadRefusal, import: &str) -> ApiError {
             ApiError::internal_server_error("the upload's part was not written")
         }
     }
+}
+
+/// A delete of an upload whose export is staged: the vault imports it as a
+/// job, which is cancelled, not deleted.
+fn staged_not_deleted() -> ApiError {
+    ApiError::new(
+        "this upload's export is staged: its import is a job, cancelled rather than deleted",
+        ApiErrorDetails::InvalidState {
+            state: Some(STAGED_STATE.to_owned()),
+        },
+        ["Cancel the import with vault.imports.cancel."],
+    )
 }
 
 /// A part of more bytes than the upload has still to come: past the
