@@ -311,8 +311,8 @@ fn person_id(field: &str, hex: &str) -> MemoryResult<EntityId> {
         .map_err(|_| MemoryError::bad_request(format!("{field} is not an entity id")))
 }
 
-/// The settled check-in a membership call names, when it names one.
-fn check_in_ref(hex: Option<&str>) -> MemoryResult<Option<EntityId>> {
+/// The settled check-in a call names, when it names one.
+pub(super) fn check_in_ref(hex: Option<&str>) -> MemoryResult<Option<EntityId>> {
     hex.map(|hex| {
         EntityId::from_hex(hex)
             .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))

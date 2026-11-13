@@ -230,6 +230,33 @@ pub fn vault_delete_effect_digest(vault_id: u64) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
+/// The digest of erasing `record`, with or without every other record
+/// holding its bytes: the effect an asker's `vault.check_in.open` names for
+/// `vault.records.erase_confirm`, and the one an Owner's confirm spends (2j;
+/// P24-SHAPE Q7 = A). BLAKE3, key derived from `oneiron check_in record erase
+/// v1`, over the record's 16 id bytes and one byte, 1 when the erase takes
+/// the same bytes too.
+#[must_use]
+pub fn record_erase_effect_digest(record: &EntityId, also_same_bytes: bool) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in record erase v1");
+    hasher.update(record.as_bytes());
+    hasher.update(&[u8::from(also_same_bytes)]);
+    *hasher.finalize().as_bytes()
+}
+
+/// The decision of an Owner's own act on a catastrophe row: the Owner acts
+/// on their own proof (P24-SHAPE Q9 = A), where the act's door asks for it.
+pub(crate) fn owner_own_proof_decision(act: ActClass) -> CheckInDecision {
+    CheckInDecision {
+        act_class: act.as_str().to_owned(),
+        role: RolePreset::Owner.as_str().to_owned(),
+        mode: None,
+        basis: "own_proof".to_owned(),
+        check_in: None,
+        requester: None,
+    }
+}
+
 /// Spends `id`, another asker's settled check-in for `verb`'s `act` over
 /// `effect_digest`, in the writer of the Owner who applies the act on their
 /// own proof (2j; P24-SHAPE Q7 = A). The answer is no proof of its own: the
