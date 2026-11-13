@@ -647,6 +647,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_def/creating_owner.rs",
+     "purpose": "Which owner created an agent definition through the owner's create door (OWNER-MADE-AGENT-DEF-UNPLACED)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -719,7 +729,7 @@
      "path": "src/agent_def/mod.rs",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "mod": 1,
       "re-export": 11
      }
@@ -15896,7 +15906,7 @@
      "path": "src/claim/deferred.rs",
      "purpose": "Local, content-bound destructive proposals",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 4
      }
     },
@@ -53021,7 +53031,7 @@
      "path": "src/memory/authorship.rs",
      "purpose": "Actor-bound authorship checks",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 19,
       "enum": 1,
       "fn": 1
      }
@@ -53621,7 +53631,7 @@
      "path": "src/memory/claims/commit/write/owner_correction.rs",
      "purpose": "The owner's direct correction of their own claim (FIX 22041): a replacement the vault's owner writes in…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -56256,6 +56266,7 @@
       "RepoProposalSubmitInput",
       "RepoProposalSubmitOutput",
       "RepoQueueEntryView",
+      "RepoQueueSuccessor",
       "RepoRunStamp",
       "RepoSnapshotView",
       "RepoSnapshotsGetInput",
@@ -56280,6 +56291,7 @@
      "path": "src/memory/repo_doors/types.rs",
      "purpose": "The run repo doors' closed inputs and per-row outputs (FIX 6867, G1 PR2a), and the run stamp a run's own…",
      "surface": {
+      "enum": 1,
       "struct": 27,
       "type": 8
      }
@@ -103432,6 +103444,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/owner_supersedes_own_agent_claim.rs",
+     "purpose": "The owner's upsert supersedes a claim of the owner's own agent in one act…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/pack_member_count.rs",
      "purpose": "A reader's context pack counts no row it cannot read (FIX-LIST ROOM-PACK-MEMBER-COUNT; the lead's ruling on…",
      "surface": {}
@@ -103664,11 +103684,35 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/repo_queue_drive.rs",
+     "purpose": "NO-DOOR PROPOSAL-DECLARATION-QUEUE-BINDING (tests/e2e/code-custody.test.ts CODE-CUSTODY-03), its waiting…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/repo_queue_supersede.rs",
+     "purpose": "NO-DOOR PROPOSAL-DECLARATION-QUEUE-BINDING (tests/e2e/code-custody.test.ts CODE-CUSTODY-03), its end: every…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/repo_run/fixture.rs",
-     "purpose": "The run repo door tests' shared fixture (`symbol_lease_observe.rs`, `repo_member_read.rs`): a fresh owned…",
+     "purpose": "The run repo door tests' shared fixture (`symbol_lease_observe.rs`, `repo_member_read.rs`…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 20
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/repo_run_proposal_provenance.rs",
+     "purpose": "A run's proposal submit mints its own attribution (`Memory::repo_proposal_submit_for_run`…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -104584,7 +104628,7 @@
      "purpose": "Affect facade: VAD annotations, claim VAD, triggers and coping outcomes"
     },
     "agent_def": {
-     "files": 29,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -106231,8 +106275,8 @@
    },
    "over_bar": 269,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7482,
-   "test_files": 1183
+   "source_files": 7483,
+   "test_files": 1187
   },
   "oneiron-agent-runtime": {
    "files": [
