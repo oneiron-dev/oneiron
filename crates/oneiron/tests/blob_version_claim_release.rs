@@ -261,7 +261,7 @@ fn the_owners_lone_version_claim_delete_runs_as_the_version_release() {
 /// Control (passes on main too): once the artifact is deleted, its bytes are gone and its version
 /// claims are no longer guarded, so a batch writer's delete of one lands.
 #[test]
-fn an_artifact_delete_takes_its_version_bytes_and_frees_its_claims() {
+fn an_artifact_delete_frees_its_version_claims_and_bytes() {
     let fx = fixture();
     fx.vault
         .delete_entity_with_reason(&fx.artifact, DeleteReason::UserHardDelete)
