@@ -1,14 +1,17 @@
 //! vault_meta row codecs and the digest receipt projector.
 
 use super::{
-    CLEANUP_PHASE, CleanupCandidate, CleanupDecision, CleanupDigest, CleanupKind, CleanupPosture,
-    CleanupProposal, DIGEST_ROW_LABEL, DIGEST_SCHEMA_VERSION, FIELD_CLEANUP_ARCHIVED_COUNT,
-    FIELD_CLEANUP_ARCHIVED_IDS, FIELD_CLEANUP_DECISION, FIELD_CLEANUP_PHASE, FIELD_CLEANUP_POSTURE,
-    FIELD_CLEANUP_PROPOSAL, FIELD_CLEANUP_REJECTED_COUNT, FIELD_CLEANUP_REJECTED_IDS,
-    FIELD_CLEANUP_SKIPPED_COUNT, FIELD_CLEANUP_SKIPPED_IDS, FIELD_CLEANUP_TOMBSTONE_REASON,
-    KEY_ARCHIVED, KEY_AT, KEY_ATTEMPT, KEY_CANDIDATES, KEY_CREATED_AT, KEY_DECISION, KEY_ENTITY,
-    KEY_KIND, KEY_POSTURE, KEY_PROPOSAL, KEY_REJECTED, KEY_SCHEMA_VERSION, KEY_SKIPPED,
-    PROPOSAL_ROW_LABEL, PROPOSAL_SCHEMA_VERSION, VAULT_CLEANUP_ACTOR, VAULT_CLEANUP_RECEIPT_PREFIX,
+    CLEANUP_PHASE, CleanupCandidate, CleanupDecision, CleanupDigest, CleanupIntegrityTeeth,
+    CleanupKind, CleanupPosture, CleanupProposal, DIGEST_ROW_LABEL, DIGEST_SCHEMA_VERSION,
+    FIELD_CLEANUP_ARCHIVED_COUNT, FIELD_CLEANUP_ARCHIVED_IDS, FIELD_CLEANUP_DECISION,
+    FIELD_CLEANUP_PHASE, FIELD_CLEANUP_POSTURE, FIELD_CLEANUP_PROPOSAL,
+    FIELD_CLEANUP_REJECTED_COUNT, FIELD_CLEANUP_REJECTED_IDS, FIELD_CLEANUP_SKIPPED_COUNT,
+    FIELD_CLEANUP_SKIPPED_IDS, FIELD_CLEANUP_TOMBSTONE_REASON, FIELD_CLEANUP_TOOTH_OS_SEPARATION,
+    FIELD_CLEANUP_TOOTH_READ_FOLD_COVERAGE, KEY_ARCHIVED, KEY_AT, KEY_ATTEMPT, KEY_CANDIDATES,
+    KEY_CREATED_AT, KEY_DECISION, KEY_ENTITY, KEY_INTEGRITY_TEETH, KEY_KIND,
+    KEY_OS_SEPARATION_CLOSED, KEY_POSTURE, KEY_PROPOSAL, KEY_READ_FOLD_COVERAGE_CLOSED,
+    KEY_REJECTED, KEY_SCHEMA_VERSION, KEY_SKIPPED, PROPOSAL_ROW_LABEL, PROPOSAL_SCHEMA_VERSION,
+    VAULT_CLEANUP_ACTOR, VAULT_CLEANUP_RECEIPT_PREFIX,
 };
 use crate::Vault;
 use crate::deletion::DeleteReason;
@@ -238,6 +241,15 @@ pub(super) fn put_digest_in_txn(
     if !digest.rejected.is_empty() {
         row.push((Value::from(KEY_REJECTED), id_value_list(&digest.rejected)));
     }
+    // Only an automatic run carries the integrity-teeth badge, so every other
+    // digest keeps its row shape too, and a row from before the badge reads
+    // as it was written.
+    if let Some(teeth) = digest.integrity_teeth {
+        row.push((
+            Value::from(KEY_INTEGRITY_TEETH),
+            integrity_teeth_value(teeth),
+        ));
+    }
     let encoded = encode_row(&Value::Map(row), DIGEST_ROW_LABEL)?;
     // Its slots are indexed with it, so an erase finds it (FIX 7616).
     super::entity_rows::put_in_txn(
@@ -296,6 +308,37 @@ pub(super) fn decode_digest(id: EntityId, raw: &[u8]) -> Result<CleanupDigest> {
             None => Vec::new(),
             Some(_) => id_list(&entries, KEY_REJECTED, DIGEST_ROW_LABEL)?,
         },
+        integrity_teeth: field(&entries, KEY_INTEGRITY_TEETH)
+            .map(decode_integrity_teeth)
+            .transpose()?,
+    })
+}
+
+fn integrity_teeth_value(teeth: CleanupIntegrityTeeth) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(KEY_READ_FOLD_COVERAGE_CLOSED),
+            Value::from(teeth.read_fold_coverage_closed),
+        ),
+        (
+            Value::from(KEY_OS_SEPARATION_CLOSED),
+            Value::from(teeth.os_separation_closed),
+        ),
+    ])
+}
+
+fn decode_integrity_teeth(value: &Value) -> Result<CleanupIntegrityTeeth> {
+    let Value::Map(entries) = value else {
+        return Err(Error::CorruptedIndex(DIGEST_ROW_LABEL));
+    };
+    let closed = |name: &str| {
+        field(entries, name)
+            .and_then(Value::as_bool)
+            .ok_or(Error::CorruptedIndex(DIGEST_ROW_LABEL))
+    };
+    Ok(CleanupIntegrityTeeth {
+        read_fold_coverage_closed: closed(KEY_READ_FOLD_COVERAGE_CLOSED)?,
+        os_separation_closed: closed(KEY_OS_SEPARATION_CLOSED)?,
     })
 }
 
@@ -436,6 +479,17 @@ fn cleanup_digest_receipt(digest: &CleanupDigest) -> ReceiptRecord {
             join_ids(&digest.rejected),
         );
     }
+    // An automatic run's proof badge: which integrity teeth stood behind it.
+    if let Some(teeth) = digest.integrity_teeth {
+        fields.insert(
+            FIELD_CLEANUP_TOOTH_READ_FOLD_COVERAGE.to_owned(),
+            tooth_state(teeth.read_fold_coverage_closed).to_owned(),
+        );
+        fields.insert(
+            FIELD_CLEANUP_TOOTH_OS_SEPARATION.to_owned(),
+            tooth_state(teeth.os_separation_closed).to_owned(),
+        );
+    }
     ReceiptRecord {
         receipt_id: format!("{VAULT_CLEANUP_RECEIPT_PREFIX}{}", digest.id.to_hex()),
         receipt_kind: ReceiptKind::Gate,
@@ -450,6 +504,11 @@ fn cleanup_digest_receipt(digest: &CleanupDigest) -> ReceiptRecord {
         policy_trace: vec![format!("vault_cleanup.{}", digest.decision.as_str())],
         fields,
     }
+}
+
+/// A tooth's state on a receipt.
+const fn tooth_state(closed: bool) -> &'static str {
+    if closed { "closed" } else { "open" }
 }
 
 /// The live ids, comma-joined. An erased slot names no one, so it is left
