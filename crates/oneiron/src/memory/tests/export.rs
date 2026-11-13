@@ -1097,9 +1097,12 @@ fn a_write_accepted_body_of_wide_integers_serves_its_numbers() {
         crate::batch::export::redacted_memory_payload(wide.clone()).unwrap(),
         wide
     );
+    // A contact bundle reads each body by the scoped export's typed rule,
+    // which reads the value in its own encoding: re-encoded at the narrowest
+    // width the letters spell the phrase, so the bundle withholds the body.
     let exported = bundle(kept);
-    assert_eq!(exported["entities"][0]["body"], numbers);
-    assert_eq!(exported["manifest"]["secrets_nulled"]["payloads"], false);
+    assert_eq!(exported["entities"][0]["body"], serde_json::Value::Null);
+    assert_eq!(exported["manifest"]["secrets_nulled"]["payloads"], true);
 
     // The same letters at the width the write door refuses stay withheld.
     let withheld = put_asset(&vault, &narrow, 11);
@@ -1161,7 +1164,10 @@ fn a_repeated_key_is_read_in_the_bytes_of_the_value_it_keeps() {
         crate::batch::export::redacted_memory_payload(body.clone()).unwrap(),
         body
     );
+    // A contact bundle reads each body by the scoped export's typed rule,
+    // which keeps both values and reads them in their own encoding: the kept
+    // value re-encoded narrow spells the phrase, so the bundle withholds it.
     let exported: serde_json::Value =
         serde_json::from_slice(&vault.export_entity_bundle_json(&[kept]).unwrap()).unwrap();
-    assert_eq!(exported["entities"][0]["body"], served);
+    assert_eq!(exported["entities"][0]["body"], serde_json::Value::Null);
 }

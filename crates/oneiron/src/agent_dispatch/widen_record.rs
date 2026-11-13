@@ -215,6 +215,9 @@ impl WidenIntent {
                 requester: None,
                 caller_origin: None,
                 powers: self.powers,
+                // A widened spawn is a child; only a root resident wake
+                // carries inbox wake keys.
+                carried_wake_keys: Vec::new(),
             },
         ))
     }

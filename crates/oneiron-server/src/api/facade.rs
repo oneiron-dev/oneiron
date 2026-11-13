@@ -171,6 +171,7 @@ mod output;
 pub(super) mod owner_binding;
 mod pack_preview_doors;
 mod persona_doors;
+mod plan_doc_doors;
 mod plugin_section_doors;
 mod policy_doors;
 mod proactivity_digest_doors;
@@ -236,6 +237,8 @@ pub(super) mod tests;
 mod trusted_contact_doors;
 pub(super) mod ui_action_routes;
 mod uncertain_send_doors;
+// The owner's undo-send window (DEC-0006 #undo-send).
+mod undo_send_doors;
 mod usage_repair_doors;
 mod vault_shape_doors;
 mod vector_doors;

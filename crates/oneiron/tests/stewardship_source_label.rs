@@ -10,7 +10,12 @@
 //! never the R claim; the test asserts it reads no reach-out that names the
 //! R claim or its time.
 //!
-//! A second test checks the place a reach-out copies: its record's canonical
+//! A second test checks the finding notice each reach-out lands (FIX-LIST
+//! STEWARDSHIP-NOTICE-POINTER): it names the reach-out, its person and when
+//! it landed, so a member outside R lists no notice of Rob's reach-out. It
+//! lists Pia's.
+//!
+//! A third test checks the place a reach-out copies: its record's canonical
 //! facet and project stamps win over a selector nested in the opaque scope
 //! map (review round 2 of #6972).
 //!
@@ -23,6 +28,7 @@
 
 use oneiron::dreamer_runner::maintenance::stewardship::{STEWARDSHIP_PREDICATE, StewardshipRule};
 use oneiron::edge::EdgeActorClass;
+use oneiron::inbox::{INBOX_PAGE_DEFAULT, NotificationKind, NotificationPage};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::label_writers::{
@@ -115,8 +121,22 @@ fn reach_out(vault: &Vault, person: EntityId) -> (EntityId, serde_json::Value) {
     one.clone()
 }
 
-#[test]
-fn a_reach_out_never_names_a_relationship_record_to_a_member_outside_it() {
+/// The owner's two people after one nightly stewardship pass.
+struct NightlyPass {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    /// A member outside R.
+    outsider: EntityId,
+    owner: EntityId,
+    pia: EntityId,
+    rob: EntityId,
+    /// Pia's open record.
+    open_record: EntityId,
+    /// Rob's R record.
+    hidden_record: EntityId,
+}
+
+fn nightly_pass() -> NightlyPass {
     let dir = tempfile::tempdir().expect("tempdir");
     let outsider = EntityId::now();
     let vault = open_member_vault(dir.path(), VaultConfig::device(), &[outsider.to_hex()])
@@ -134,7 +154,7 @@ fn a_reach_out_never_names_a_relationship_record_to_a_member_outside_it() {
     vault
         .put_entity(&outsider, ENTITY_TYPE_PERSON, at(1), 1, b"outsider")
         .expect("a member outside the relationship");
-    let (_owner, proof) = embedded_owner(&vault).expect("the owner");
+    let (owner, proof) = embedded_owner(&vault).expect("the owner");
     let pia = person(&vault, "Pia");
     let rob = person(&vault, "Rob");
     let open_record = record(&vault, pia, "Pia", None);
@@ -158,7 +178,31 @@ fn a_reach_out_never_names_a_relationship_record_to_a_member_outside_it() {
         .expect("the owner's rules");
 
     run_stewardship_once(&vault, PASS_AT).expect("one nightly stewardship pass");
+    NightlyPass {
+        _dir: dir,
+        vault,
+        outsider,
+        owner,
+        pia,
+        rob,
+        open_record,
+        hidden_record,
+    }
+}
 
+#[test]
+fn a_reach_out_never_names_a_relationship_record_to_a_member_outside_it() {
+    // `_dir` stays bound: the vault's directory lives as long as the test.
+    let NightlyPass {
+        _dir,
+        vault,
+        outsider,
+        pia,
+        rob,
+        open_record,
+        hidden_record,
+        ..
+    } = nightly_pass();
     let (pia_reach_out, pia_value) = reach_out(&vault, pia);
     assert_eq!(
         (&pia_value["last_record"], &pia_value["quiet_since"]),
@@ -204,6 +248,45 @@ fn a_reach_out_never_names_a_relationship_record_to_a_member_outside_it() {
         "LEAK: a member outside R reads a reach-out naming the R record {} and its time {}",
         rob_value["last_record"],
         rob_value["quiet_since"]
+    );
+}
+
+/// FIX-LIST STEWARDSHIP-NOTICE-POINTER: each reach-out lands a finding
+/// notice naming the reach-out and its person, and when it landed. A member
+/// outside R lists the notice of Pia's reach-out, never the one of Rob's.
+#[test]
+fn a_reach_out_notice_never_lists_to_a_member_outside_its_records_relationship() {
+    let pass = nightly_pass();
+    let (pia_reach_out, _) = reach_out(&pass.vault, pass.pia);
+    let (rob_reach_out, _) = reach_out(&pass.vault, pass.rob);
+    let inbox = |reader: EntityId| {
+        pass.vault
+            .memory(reader, EdgeActorClass::Human)
+            .inbox_list(None, INBOX_PAGE_DEFAULT)
+            .expect("inbox read")
+    };
+    let names = |page: &NotificationPage, finding: EntityId| {
+        page.rows.iter().any(|row| {
+            row.kind == NotificationKind::Finding && row.subject_refs.contains(&finding.to_hex())
+        })
+    };
+    let owner_inbox = inbox(pass.owner);
+    assert!(
+        names(&owner_inbox, pia_reach_out) && names(&owner_inbox, rob_reach_out),
+        "FIXTURE: the owner lists a notice of each reach-out"
+    );
+    let outsider_inbox = inbox(pass.outsider);
+    assert!(
+        names(&outsider_inbox, pia_reach_out),
+        "FIXTURE: the outsider lists the notice of Pia's reach-out"
+    );
+    assert!(
+        !names(&outsider_inbox, rob_reach_out),
+        "LEAK: a member outside R lists the notice of Rob's reach-out, which names the reach-out and Rob and when it landed: {:?}",
+        outsider_inbox
+            .rows
+            .iter()
+            .find(|row| row.subject_refs.contains(&rob_reach_out.to_hex()))
     );
 }
 

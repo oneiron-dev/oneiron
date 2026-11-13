@@ -81,6 +81,10 @@ impl OneironClient {
                     |input| memory.export_to(&input, &mut sink),
                 )
             }
+            Backend::DreamerAttempt(_) => Err(crate::error::forbidden(
+                "a Dreamer attempt handle exports nothing",
+                &["Export from the owner's handle."],
+            )),
         }
     }
 }
