@@ -25,6 +25,10 @@
 //!   `vault.inquiry.answer` as the verb; an inquiry the ladder takes to the
 //!   member waits as a pending check-in until the member answers
 //!   ([`InquiryMemberAnswer`]) or it expires.
+//! * The member's saved decisions (FIX INQUIRY-STANDING-PER-KEEP): the
+//!   edge's terms hold a check-in mode for each keep ([`InquiryKeepModes`]),
+//!   `never` among them, and the member changes them after the mint in
+//!   place ([`Vault::change_inquiry_edge_terms`](crate::Vault::change_inquiry_edge_terms)).
 //!
 //! * The asking side (PR 4), on the company vault: the route to a member's
 //!   vault, bound to the member's seat ([`InquiryRoute`]); the send through
@@ -50,7 +54,7 @@ mod terms;
 pub(crate) use edge::drop_inquiry_scope_links_in_txn;
 pub use edge::{
     INQUIRY_STATEMENT_PREDICATE, InquiryEdge, InquiryEdgeReciprocalGrant, InquiryEdgeRequest,
-    InquiryScopeItem,
+    InquiryScopeItem, InquiryTermsChange, InquiryTermsChangeOutcome, InquiryTermsChanged,
 };
 
 pub(crate) use holder::InquiryAnswerHolder;
@@ -77,4 +81,4 @@ pub(crate) use route::{end_inquiry_route_in_txn, erase_inquiry_route_actor_in_tx
 pub use send::{
     INQUIRY_PEER_PATH, InquirySendRequest, InquirySent, InquiryTransport, InquiryTransportError,
 };
-pub use terms::{InquiryCheckInMode, InquiryTerms, InquiryTierCeiling};
+pub use terms::{InquiryCheckInMode, InquiryKeepModes, InquiryTerms, InquiryTierCeiling};

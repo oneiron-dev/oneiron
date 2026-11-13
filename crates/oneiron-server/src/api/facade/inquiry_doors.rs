@@ -8,10 +8,10 @@
 //!   [`HttpInquiryTransport`], signed with this host's key.
 //! - The company Owner's `vault.inquiry.route.open` and
 //!   `vault.inquiry.reciprocal_grant.mint`, and the member's
-//!   `vault.inquiry.answer`, `.list`, `.scope.*` and `.edge.*`: the vault
-//!   owner's proof, which each engine door revalidates in its own
-//!   transaction. The route open and the edge revoke also sign with the
-//!   host's slip issuer.
+//!   `vault.inquiry.answer`, `.list`, `.scope.*` and `.edge.*` (the terms
+//!   change among them): the vault owner's proof, which each engine door
+//!   revalidates in its own transaction. The route open and the edge
+//!   revoke also sign with the host's slip issuer.
 use std::sync::Arc;
 
 use oneiron::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
@@ -19,10 +19,10 @@ use oneiron::receipt::GuestRevokeResponse;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{
     self, EmptyRequest, InquireAnswer, InquireRequest, InquiryAnswerRequest, InquiryAnswerView,
-    InquiryEdgeMintRequest, InquiryEdgeRef, InquiryEdgeView, InquiryLog,
-    InquiryReciprocalGrantMintRequest, InquiryReciprocalGrantMinted, InquiryRouteOpenRequest,
-    InquiryRouteOpened, InquiryScopeCloseRequest, InquiryScopeClosed, InquiryScopeItemView,
-    InquiryScopeItems, InquiryScopeOpenRequest,
+    InquiryEdgeMintRequest, InquiryEdgeRef, InquiryEdgeTermsChangeRequest, InquiryEdgeTermsChanged,
+    InquiryEdgeView, InquiryLog, InquiryReciprocalGrantMintRequest, InquiryReciprocalGrantMinted,
+    InquiryRouteOpenRequest, InquiryRouteOpened, InquiryScopeCloseRequest, InquiryScopeClosed,
+    InquiryScopeItemView, InquiryScopeItems, InquiryScopeOpenRequest,
 };
 use oneiron::{EdgeActorClass, EntityId};
 
@@ -121,6 +121,29 @@ pub(crate) async fn vault_inquiry_edge_mint(
         "vault.inquiry.edge.mint",
         move |server, owner| sdk::mint_inquiry_edge_as(server.vault(), owner, input),
         |edge| vec![edge.grant, edge.guest_actor, edge.opened_world],
+    )
+    .await
+}
+
+/// `vault.inquiry.edge.terms.change`: the member changes one inquiry edge's
+/// terms after the mint.
+pub(crate) async fn vault_inquiry_edge_terms_change(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: InquiryEdgeTermsChangeRequest,
+) -> Listed<InquiryEdgeTermsChanged> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.inquiry.edge.terms.change",
+        move |server, owner| sdk::change_inquiry_edge_terms_as(server.vault(), owner, input),
+        |changed| {
+            vec![
+                changed.edge.grant,
+                changed.edge.guest_actor,
+                changed.edge.opened_world,
+            ]
+        },
     )
     .await
 }
