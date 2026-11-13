@@ -196,8 +196,18 @@ pub fn checks(vault: &Vault) -> Result<Vec<HealthCheck>> {
     }
 }
 
+/// Writes an asked or answered check back over its row. A row gone since
+/// the pass read it stays gone: an actor's erase takes its own-rate checks
+/// (FIX 3520), and a pass that read one before must not write it back.
 fn put_check(vault: &Vault, check: &HealthCheck) -> Result<()> {
-    vault.sync_state_put(&format!("{CHECK}{}", check.subject), &encode(check)?)
+    let key = format!("{CHECK}{}", check.subject);
+    let body = encode(check)?;
+    vault.with_write_txn_grouped(|txn| {
+        if vault.sync_state_get_in_write_txn(txn, &key)?.is_some() {
+            vault.sync_state_put_in_write_txn(txn, &key, &body)?;
+        }
+        Ok(())
+    })
 }
 
 /// Whether `actor`, as the wire counted it, is a known actor under a grant:

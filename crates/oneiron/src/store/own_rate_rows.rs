@@ -15,10 +15,12 @@ const WINDOWS: SideTable<(EntityId, String), OwnRateWindow, Named> =
 /// The latest crossing per (actor, kind).
 pub(crate) const CHECKS: SideTable<(EntityId, String), OwnRateCheck, Named> =
     SideTable::new(&side_table::OWN_RATE_CHECK);
-/// Every crossing in the order it was kept: the recorded clock read in the
-/// keeping transaction and a store-local id minted there. Both lead fields
-/// only rise and writes commit one at a time, so key order is keeping order,
-/// and the host's health check reads past one cursor (ARCH-0044 C5).
+/// Every crossing in the order it was kept: the recorded clock observed
+/// against the vault's committed floor in the keeping transaction, and a
+/// store-local id minted there whose floor that transaction persists. Both
+/// lead fields only rise, across a reopen too, and writes commit one at a
+/// time, so key order is keeping order, and the host's health check reads
+/// past one cursor (ARCH-0044 C5).
 const CHECK_ORDER: SideTable<(u64, EntityId), OwnRateCheck, Named> =
     SideTable::new(&side_table::OWN_RATE_CHECK_ORDER);
 
@@ -100,7 +102,7 @@ pub(crate) fn observe_in_txn(
 /// Keeps `check` in [`CHECK_ORDER`] in the crossing's own transaction, and
 /// removes a few rows kept longer than [`ORDER_KEPT_SECS`] ago.
 fn keep_in_order(store: &Store, txn: &mut heed::RwTxn<'_>, check: &OwnRateCheck) -> Result<()> {
-    let kept_at = store.clock.now_recorded_at();
+    let kept_at = crate::ports::observe_clock_floor_in_txn(store, txn)?;
     let mut expired = Vec::new();
     for row in CHECK_ORDER
         .iter_from(store, txn, &[])?
@@ -115,7 +117,10 @@ fn keep_in_order(store: &Store, txn: &mut heed::RwTxn<'_>, check: &OwnRateCheck)
     for key in &expired {
         CHECK_ORDER.delete(store, txn, key)?;
     }
-    CHECK_ORDER.put(store, txn, &(kept_at, store.clock.entity_id()?), check)
+    let id = store.clock.entity_id()?;
+    // The order row is no entity write, so nothing else persists its id.
+    crate::ports::persist_id_floor_in_txn(store, txn)?;
+    CHECK_ORDER.put(store, txn, &(kept_at, id), check)
 }
 
 /// The kept crossings after `after`, in keeping order, at most `limit`.
@@ -130,6 +135,16 @@ pub(crate) fn checks_in_order_after(
         .iter_range(store, txn, start.as_ref(), Bound::Unbounded)?
         .take(limit)
         .collect()
+}
+
+/// Whether the crossing kept at `key` is still kept: an actor's erase takes
+/// its crossings, and the expiry prunes old ones.
+pub(crate) fn check_kept(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &(u64, EntityId),
+) -> Result<bool> {
+    Ok(CHECK_ORDER.get(store, txn, key)?.is_some())
 }
 
 /// Erasing `actor` (FIX 3520): its windows go, every kind, in the erase's own
