@@ -84,6 +84,14 @@ fn grant_class_bound_graph_reads(vault: &Vault, principal: EntityId) -> crate::R
     )
 }
 
+/// The asker's own read lane, as the engine built it before one-off asks took a
+/// lane: the principal's identity-checked class, owner-exempt like every ask.
+fn ask_lane(vault: &Vault, principal: EntityId) -> crate::claim::ScopedRead<'_> {
+    let txn = vault.store.env.read_txn().expect("ask lane snapshot");
+    let key = super::graph_ask::asker_reader_in_txn(vault, &txn, principal).expect("ask lane key");
+    vault.scoped_read(key)
+}
+
 fn question() -> DecisionQuestion {
     DecisionQuestion {
         id: EntityId::now(),
@@ -108,6 +116,7 @@ fn prediction() -> GraphPrediction {
         },
         cost_per_thousand: 0.25,
         paired: None,
+        rule: None,
     }
 }
 
@@ -209,9 +218,9 @@ fn scoped_graph_context_omits_unreadable_neighbors_and_units() -> crate::Result<
     vault.put_edge(&unit, EdgeKind::Mentions, &private_neighbor, 0.8)?;
 
     let mut answerer = FixedAnswerer::returning(Some(prediction()));
+    let lane = ask_lane(&vault, principal);
     let result = run_graph_ask(
-        &vault,
-        principal,
+        &lane,
         actor,
         question(),
         &[unit, private_neighbor],
@@ -257,16 +266,9 @@ fn each_prediction_lands_as_its_own_proposed_claim_with_source_receipt() -> crat
     let gate_before = vault.gate_decisions(100)?.len();
     let mut answerer = FixedAnswerer::returning(Some(prediction()));
 
-    let result = run_graph_ask(
-        &vault,
-        principal,
-        actor,
-        question,
-        &[first, second],
-        &mut answerer,
-        12,
-    )
-    .map_err(|failure| *failure.error)?;
+    let lane = ask_lane(&vault, principal);
+    let result = run_graph_ask(&lane, actor, question, &[first, second], &mut answerer, 12)
+        .map_err(|failure| *failure.error)?;
 
     assert!(result.abstained.is_empty());
     assert_eq!(result.answers.len(), 2);
@@ -328,16 +330,9 @@ fn invalid_provider_output_fails_before_any_claim_is_written() -> crate::Result<
     invalid.provider.model = "not-a-provider-model".into();
     let mut answerer = FixedAnswerer::returning(Some(invalid));
 
-    let error = run_graph_ask(
-        &vault,
-        principal,
-        actor,
-        question(),
-        &[unit],
-        &mut answerer,
-        13,
-    )
-    .expect_err("invalid provider output must be refused");
+    let lane = ask_lane(&vault, principal);
+    let error = run_graph_ask(&lane, actor, question(), &[unit], &mut answerer, 13)
+        .expect_err("invalid provider output must be refused");
 
     assert!(matches!(*error.error, crate::Error::InvalidConfig(_)));
     assert_eq!(error.failed_unit, Some(unit));
@@ -362,16 +357,9 @@ fn paired_reading_lands_on_the_receipt_bound_to_the_provider() -> crate::Result<
     let mut paired = prediction();
     paired.paired = Some(pair);
     let mut answerer = FixedAnswerer::returning(Some(paired));
-    let result = run_graph_ask(
-        &vault,
-        principal,
-        actor,
-        question(),
-        &[unit],
-        &mut answerer,
-        14,
-    )
-    .map_err(|failure| *failure.error)?;
+    let lane = ask_lane(&vault, principal);
+    let result = run_graph_ask(&lane, actor, question(), &[unit], &mut answerer, 14)
+        .map_err(|failure| *failure.error)?;
     assert_eq!(
         result.answers[0].decision.receipt.paired,
         vec![pair.bind(prediction().provider)]
@@ -385,7 +373,8 @@ fn paired_reading_lands_on_the_receipt_bound_to_the_provider() -> crate::Result<
     });
     let claims_before = vault.entities_by_type(ENTITY_TYPE_CLAIM)?;
     let mut answerer = FixedAnswerer::returning(Some(self_paired));
-    assert!(run_graph_ask(&vault, principal, actor, asked, &[unit], &mut answerer, 15).is_err());
+    let lane = ask_lane(&vault, principal);
+    assert!(run_graph_ask(&lane, actor, asked, &[unit], &mut answerer, 15).is_err());
     assert_eq!(vault.entities_by_type(ENTITY_TYPE_CLAIM)?, claims_before);
     Ok(())
 }
@@ -436,16 +425,9 @@ fn revoked_scope_during_answering_discards_the_prediction() -> crate::Result<()>
         contexts: Vec::new(),
     };
 
-    let result = run_graph_ask(
-        &vault,
-        principal,
-        actor,
-        question(),
-        &[unit],
-        &mut answerer,
-        14,
-    )
-    .map_err(|failure| *failure.error)?;
+    let lane = ask_lane(&vault, principal);
+    let result = run_graph_ask(&lane, actor, question(), &[unit], &mut answerer, 14)
+        .map_err(|failure| *failure.error)?;
 
     assert!(result.answers.is_empty());
     assert_eq!(result.abstained, vec![unit]);
@@ -471,16 +453,9 @@ fn stale_source_after_answering_is_abstained_without_a_claim() -> crate::Result<
         contexts: Vec::new(),
     };
 
-    let result = run_graph_ask(
-        &vault,
-        principal,
-        actor,
-        question(),
-        &[unit],
-        &mut answerer,
-        15,
-    )
-    .map_err(|failure| *failure.error)?;
+    let lane = ask_lane(&vault, principal);
+    let result = run_graph_ask(&lane, actor, question(), &[unit], &mut answerer, 15)
+        .map_err(|failure| *failure.error)?;
 
     assert!(result.answers.is_empty());
     assert_eq!(result.abstained, vec![unit]);
@@ -499,7 +474,8 @@ fn type_selector_limits_candidates_to_visible_rows_of_that_type() -> crate::Resu
     put_entity(&vault, second_org, ENTITY_TYPE_ORG, b"second org")?;
     put_entity(&vault, person, ENTITY_TYPE_PERSON, b"not an org")?;
 
-    let organizations = select_graph_units_by_type(&vault, principal, ENTITY_TYPE_ORG, 10)?;
+    let lane = ask_lane(&vault, principal);
+    let organizations = select_graph_units_by_type(&lane, ENTITY_TYPE_ORG, 10)?;
     assert_eq!(organizations.len(), 2);
     assert!(organizations.contains(&first_org));
     assert!(organizations.contains(&second_org));
@@ -509,11 +485,11 @@ fn type_selector_limits_candidates_to_visible_rows_of_that_type() -> crate::Resu
     let hidden_claim = EntityId::now();
     put_scoped_claim(&vault, visible_claim, principal, principal)?;
     put_scoped_claim(&vault, hidden_claim, EntityId::now(), principal)?;
-    let claims = select_graph_units_by_type(&vault, principal, ENTITY_TYPE_CLAIM, 10)?;
+    let claims = select_graph_units_by_type(&lane, ENTITY_TYPE_CLAIM, 10)?;
     assert!(claims.contains(&visible_claim));
     assert!(!claims.contains(&hidden_claim));
-    assert!(select_graph_units_by_type(&vault, principal, ENTITY_TYPE_ORG, 0)?.is_empty());
-    assert!(select_graph_units_by_type(&vault, principal, ENTITY_TYPE_ORG, 4097).is_err());
+    assert!(select_graph_units_by_type(&lane, ENTITY_TYPE_ORG, 0)?.is_empty());
+    assert!(select_graph_units_by_type(&lane, ENTITY_TYPE_ORG, 4097).is_err());
     Ok(())
 }
 
@@ -526,16 +502,20 @@ fn mail_and_private_note_each_get_one_receipted_prediction() -> crate::Result<()
         .witness(&crate::WitnessTurn {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: None,
+            thread_audience: None,
             messages: vec![crate::WitnessMessage {
                 id: None,
                 author: crate::WitnessAuthor::User,
                 message_type: "dialogue".into(),
                 content: "Fixture inbound mail".into(),
+                parts: None,
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
             occurred_at: 10,
+            assertions: Default::default(),
         })
         .expect("witness message");
     assert_eq!(receipt.message_short_ids.len(), 1);
@@ -549,16 +529,9 @@ fn mail_and_private_note_each_get_one_receipted_prediction() -> crate::Result<()
         .expect("author a private NOTE");
 
     let mut answerer = FixedAnswerer::returning(Some(prediction()));
-    let result = run_graph_ask(
-        &vault,
-        principal,
-        actor,
-        question(),
-        &[mail, note],
-        &mut answerer,
-        16,
-    )
-    .map_err(|failure| *failure.error)?;
+    let lane = ask_lane(&vault, principal);
+    let result = run_graph_ask(&lane, actor, question(), &[mail, note], &mut answerer, 16)
+        .map_err(|failure| *failure.error)?;
     assert_eq!(result.answers.len(), 2);
     assert!(result.abstained.is_empty());
     assert_eq!(answerer.contexts.len(), 2);
@@ -574,7 +547,8 @@ fn mail_and_private_note_each_get_one_receipted_prediction() -> crate::Result<()
     let mut other = FixedAnswerer::returning(Some(prediction()));
     let stranger = EntityId::now();
     put_entity(&vault, stranger, ENTITY_TYPE_PERSON, b"stranger")?;
-    let hidden = run_graph_ask(&vault, stranger, actor, question(), &[note], &mut other, 17)
+    let stranger_lane = ask_lane(&vault, stranger);
+    let hidden = run_graph_ask(&stranger_lane, actor, question(), &[note], &mut other, 17)
         .map_err(|failure| *failure.error)?;
     assert!(hidden.answers.is_empty());
     assert!(other.contexts.is_empty());
@@ -593,9 +567,9 @@ fn derived_answer_keeps_the_least_trusted_neighborhood_source() -> crate::Result
     vault.put_claim(&unit, &body, at(1), 1)?;
     vault.put_edge(&unit, EdgeKind::Mentions, &neighbor, 0.8)?;
     let mut answerer = FixedAnswerer::returning(Some(prediction()));
+    let lane = ask_lane(&vault, principal);
     let result = run_graph_ask(
-        &vault,
-        principal,
+        &lane,
         WriteActor::new(principal, EdgeActorClass::Human),
         question(),
         &[unit],
@@ -625,16 +599,9 @@ fn class_bound_asker_grant_does_not_require_a_writer_read_grant() -> crate::Resu
     let unit = EntityId::now();
     put_scoped_claim(&vault, unit, principal, principal)?;
     let mut answerer = FixedAnswerer::returning(Some(prediction()));
-    let result = run_graph_ask(
-        &vault,
-        principal,
-        actor,
-        question(),
-        &[unit],
-        &mut answerer,
-        20,
-    )
-    .map_err(|failure| *failure.error)?;
+    let lane = ask_lane(&vault, principal);
+    let result = run_graph_ask(&lane, actor, question(), &[unit], &mut answerer, 20)
+        .map_err(|failure| *failure.error)?;
     assert_eq!(result.answers.len(), 1);
     assert_eq!(result.answers[0].decision.receipt.principal, principal);
     Ok(())
@@ -666,16 +633,9 @@ fn later_provider_failure_returns_earlier_committed_receipts() -> crate::Result<
     for id in ids {
         put_entity(&vault, id, ENTITY_TYPE_ORG, b"graph unit")?;
     }
-    let error = run_graph_ask(
-        &vault,
-        principal,
-        actor,
-        question(),
-        &ids,
-        &mut FailsOnSecond(0),
-        21,
-    )
-    .expect_err("provider must fail at second unit");
+    let lane = ask_lane(&vault, principal);
+    let error = run_graph_ask(&lane, actor, question(), &ids, &mut FailsOnSecond(0), 21)
+        .expect_err("provider must fail at second unit");
     assert_eq!(error.failed_unit, Some(ids[1]));
     assert!(matches!(*error.error, crate::Error::InvalidConfig(_)));
     assert_eq!(error.completed.answers.len(), 1);
@@ -717,15 +677,8 @@ fn write_snapshot_invalidation_abstains_and_continues_after_committed_answer() -
     let worker_vault = Arc::clone(&vault);
     let worker = std::thread::spawn(move || {
         let mut answerer = FixedAnswerer::returning(Some(prediction()));
-        run_graph_ask(
-            &worker_vault,
-            principal,
-            actor,
-            question(),
-            &ids,
-            &mut answerer,
-            22,
-        )
+        let lane = ask_lane(&worker_vault, principal);
+        run_graph_ask(&lane, actor, question(), &ids, &mut answerer, 22)
     });
     arrived_rx
         .recv_timeout(Duration::from_secs(20))
@@ -782,9 +735,9 @@ fn diary_pair_revoked_during_answerer_cannot_be_used_as_graph_evidence() -> crat
         neighbor: b_note,
         saw_neighbor: false,
     };
+    let lane = ask_lane(&vault, a);
     let result = run_graph_ask(
-        &vault,
-        a,
+        &lane,
         WriteActor::new(a, EdgeActorClass::Human),
         question(),
         &[a2],
@@ -836,16 +789,20 @@ fn a_relationship_message_reaches_the_answerer_only_on_the_askers_grant() -> cra
         .witness(&crate::WitnessTurn {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: None,
+            thread_audience: None,
             messages: vec![crate::WitnessMessage {
                 id: Some(message.to_hex()),
                 author: crate::WitnessAuthor::User,
                 message_type: "dialogue".into(),
                 content: "relationship source".into(),
+                parts: None,
                 metadata: Some(serde_json::json!({ "rel": space.to_hex() })),
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
             occurred_at: 10,
+            assertions: Default::default(),
         })
         .expect("witness relationship message");
     let (hidden, shown) = (EntityId::now(), EntityId::now());
@@ -861,9 +818,9 @@ fn a_relationship_message_reaches_the_answerer_only_on_the_askers_grant() -> cra
     };
 
     let mut answerer = FixedAnswerer::returning(Some(prediction()));
+    let lane = ask_lane(&vault, principal);
     let result = run_graph_ask(
-        &vault,
-        principal,
+        &lane,
         actor,
         question(),
         &[hidden, message],
@@ -888,19 +845,13 @@ fn a_relationship_message_reaches_the_answerer_only_on_the_askers_grant() -> cra
             revoked_at: None,
             expires_at: Some(u64::MAX),
             authority_scope: crate::federation::scope_codec::read_preset(),
+            companion_bounds: None,
         },
     )?;
     let mut answerer = FixedAnswerer::returning(Some(prediction()));
-    run_graph_ask(
-        &vault,
-        principal,
-        actor,
-        question(),
-        &[shown],
-        &mut answerer,
-        17,
-    )
-    .map_err(|failure| *failure.error)?;
+    let lane = ask_lane(&vault, principal);
+    run_graph_ask(&lane, actor, question(), &[shown], &mut answerer, 17)
+        .map_err(|failure| *failure.error)?;
     assert!(sees_message(&answerer), "the asker's live grant reads it");
     Ok(())
 }

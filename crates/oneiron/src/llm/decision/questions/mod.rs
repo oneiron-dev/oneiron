@@ -105,7 +105,5 @@ pub use windows::{
     next_outcome_window_close_at,
 };
 
-// FIX [LIBTEST-QUARANTINE-LLM-DECISION-QUESTIONS-GRAPH-ASK-TESTS]: the lib test target's type check fails here (26 errors: E0061 x20, E0063 x6); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod graph_ask_tests;

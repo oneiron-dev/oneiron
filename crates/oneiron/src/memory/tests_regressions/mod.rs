@@ -13,8 +13,6 @@ use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_PERSON;
 
 mod authority;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-REGRESSIONS-CONSOLIDATION-OUTBOUND]: the lib test target's type check fails here (11 errors: E0609 x7, E0063 x4); port it, then drop this gate
-#[cfg(any())]
 mod consolidation_outbound;
 mod outbound_actor_scope;
 mod recall;
