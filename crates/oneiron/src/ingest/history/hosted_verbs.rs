@@ -47,7 +47,7 @@ impl HostedImportLookup {
 }
 
 /// `vault.imports.cancel`'s answer: the job's state after the call.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HostedImportCancel {
     /// The import's id, as 32 lowercase hex digits.
     pub import: String,

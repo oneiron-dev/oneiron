@@ -199,7 +199,7 @@ pub enum HostedImportCanceller<'a> {
 }
 
 /// A hosted import's state, as its progress names it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HostedImportStatus {
     Staged,
@@ -211,7 +211,7 @@ pub enum HostedImportStatus {
 }
 
 /// Upload: what the stager wrote.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HostedImportUpload {
     /// The staged export's bytes.
     pub bytes: u64,
@@ -220,7 +220,7 @@ pub struct HostedImportUpload {
 }
 
 /// Parse: what the job decoded the export to; 0 before it has.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HostedImportParse {
     pub conversations: u64,
     pub messages: u64,
@@ -228,7 +228,7 @@ pub struct HostedImportParse {
 
 /// Searchable: what has landed. A landed message is searchable at once: the
 /// write that lands it indexes its words.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HostedImportSearchable {
     /// Conversations landed, earliest first.
     pub conversations: u64,
@@ -244,7 +244,7 @@ pub struct HostedImportSearchable {
 
 /// Embeddings: the TURNs the import landed messages into, and how many of
 /// them still wait for a vector of their text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HostedImportEmbeddings {
     /// Whether the vault has an embedding model. A vault with none embeds
     /// nothing, so nothing waits.
@@ -255,7 +255,7 @@ pub struct HostedImportEmbeddings {
 }
 
 /// Review: where the import's claims wait for the owner.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HostedImportReview {
     /// The review the owner approves or declines whole (`oneiron runs`);
     /// absent when the job's source is not one this build reads.
@@ -268,7 +268,7 @@ pub struct HostedImportReview {
 
 /// One hosted import's progress, its five phases apart, because uploaded is
 /// not ready (ARCH-0027 #hosted-import): `vault.imports.get`'s answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HostedImportView {
     /// The import's id, as 32 lowercase hex digits.
     pub import: String,
