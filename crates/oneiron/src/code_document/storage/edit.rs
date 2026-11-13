@@ -55,48 +55,12 @@ impl Vault {
             None => Vec::new(),
         };
         let edit = admitted.as_ref().unwrap_or(edit);
-        let candidate = doc_from_snapshot(
-            &session
-                .doc
-                .export(ExportMode::Snapshot)
-                .map_err(|_| invalid())?,
-        )?;
-        let peer_id = session.doc.peer_id();
-        candidate.set_peer_id(peer_id).map_err(|_| invalid())?;
-        let counter_start = candidate.oplog_vv().get(&peer_id).copied().unwrap_or(0);
-        if let Some(metadata) = metadata {
-            super::super::file_metadata::apply_presence(&candidate.get_map("meta"), metadata)?;
-        }
-        if let Some(path) = &edit.new_path {
-            candidate
-                .get_map("meta")
-                .insert("path", path.as_str())
-                .map_err(|_| invalid())?;
-        } else {
-            let body = candidate.get_text("body");
-            if edit.end > edit.start {
-                body.delete(edit.start, edit.end - edit.start)
-                    .map_err(|_| invalid())?;
-            }
-            if !edit.replacement.is_empty() {
-                body.insert(edit.start, &edit.replacement)
-                    .map_err(|_| invalid())?;
-            }
-        }
-        let stamp = op_stamp(
-            &operation.to_hex(),
-            &session.session_id.to_hex(),
+        let StampedCandidate {
+            doc: candidate,
             peer_id,
             counter_start,
-            edit,
-            metadata,
-            &provenance,
-        )?;
-        candidate.commit_with(CommitOptions::new().commit_msg(&stamp));
-        let counter_end = candidate.oplog_vv().get(&peer_id).copied().unwrap_or(0);
-        if counter_end <= counter_start {
-            return Err(invalid());
-        }
+            counter_end,
+        } = stamped_candidate(operation, session, edit, metadata, &provenance)?;
         let (merged, mut receipts) =
             self.merge_code_file_candidate_in_txn(wtxn, session, edit, &before, candidate)?;
         let merged_text = merged.get_text("body").to_string();
@@ -236,7 +200,7 @@ impl Vault {
     /// The edit checked against its session before any write: its paths,
     /// provenance, span, metadata and rename; the provenance, the frontier
     /// before it and the text it edits, as they stood.
-    fn validate_code_file_edit(
+    pub(super) fn validate_code_file_edit(
         session: &CodeDocumentSession,
         edit: &CodeFileEdit,
         metadata: Option<&CodeFileMetadataEdit>,
@@ -382,4 +346,73 @@ impl Vault {
         }
         Ok(())
     }
+}
+
+/// One operation's candidate state: the session's document copied, the edit
+/// (and any metadata change) applied, and committed under the operation's
+/// stamp; with the peer and the counter span the commit took.
+pub(super) struct StampedCandidate {
+    pub(super) doc: loro::LoroDoc,
+    pub(super) peer_id: u64,
+    pub(super) counter_start: i32,
+    pub(super) counter_end: i32,
+}
+
+/// [`StampedCandidate`] of `edit` on `session`, for the shared writer and the
+/// view fork writer alike; a commit that took no change refuses.
+pub(super) fn stamped_candidate(
+    operation: EntityId,
+    session: &CodeDocumentSession,
+    edit: &CodeFileEdit,
+    metadata: Option<&CodeFileMetadataEdit>,
+    provenance: &crate::code_document::CodeOpProvenance,
+) -> Result<StampedCandidate> {
+    let candidate = doc_from_snapshot(
+        &session
+            .doc
+            .export(ExportMode::Snapshot)
+            .map_err(|_| invalid())?,
+    )?;
+    let peer_id = session.doc.peer_id();
+    candidate.set_peer_id(peer_id).map_err(|_| invalid())?;
+    let counter_start = candidate.oplog_vv().get(&peer_id).copied().unwrap_or(0);
+    if let Some(metadata) = metadata {
+        super::super::file_metadata::apply_presence(&candidate.get_map("meta"), metadata)?;
+    }
+    if let Some(path) = &edit.new_path {
+        candidate
+            .get_map("meta")
+            .insert("path", path.as_str())
+            .map_err(|_| invalid())?;
+    } else {
+        let body = candidate.get_text("body");
+        if edit.end > edit.start {
+            body.delete(edit.start, edit.end - edit.start)
+                .map_err(|_| invalid())?;
+        }
+        if !edit.replacement.is_empty() {
+            body.insert(edit.start, &edit.replacement)
+                .map_err(|_| invalid())?;
+        }
+    }
+    let stamp = op_stamp(
+        &operation.to_hex(),
+        &session.session_id.to_hex(),
+        peer_id,
+        counter_start,
+        edit,
+        metadata,
+        provenance,
+    )?;
+    candidate.commit_with(CommitOptions::new().commit_msg(&stamp));
+    let counter_end = candidate.oplog_vv().get(&peer_id).copied().unwrap_or(0);
+    if counter_end <= counter_start {
+        return Err(invalid());
+    }
+    Ok(StampedCandidate {
+        doc: candidate,
+        peer_id,
+        counter_start,
+        counter_end,
+    })
 }

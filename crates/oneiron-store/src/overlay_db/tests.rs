@@ -107,3 +107,48 @@ fn absent_exact_duplicate_delete_keeps_present_sibling() -> Result<()> {
     assert_eq!(values[0], present);
     Ok(())
 }
+
+#[test]
+fn a_page_full_write_error_is_traced_with_its_sizes_and_other_errors_are_not() {
+    let (_dir, env, db) = env_with_db(DatabaseFlags::DUP_SORT);
+    let wtxn = env.write_txn().expect("open trace test write txn");
+    let page_full = heed::Error::Mdb(heed::MdbError::PageFull);
+    let line = super::accessors::page_full_record(
+        &page_full,
+        &db,
+        "rows",
+        &wtxn,
+        "put",
+        (Some(3), Some(5)),
+    )
+    .expect("a PAGE_FULL error is traced");
+    for field in [
+        "database=\"rows\" ",
+        " database_flags=0x4 ",
+        " heed_call=put write_flags=0x0 ",
+        " key_len=Some(3) value_len=Some(5) ",
+        " map_size=16777216 ",
+        " transaction_stat=usable ",
+        " page_size_source=transaction ",
+        " entries=0 ",
+        " group_commit_member=not-in-scope",
+    ] {
+        assert!(
+            line.contains(field),
+            "{field:?} is missing from the trace line {line:?}"
+        );
+    }
+    let key_exists = heed::Error::Mdb(heed::MdbError::KeyExist);
+    assert_eq!(
+        super::accessors::page_full_record(
+            &key_exists,
+            &db,
+            "rows",
+            &wtxn,
+            "put",
+            (Some(3), Some(5))
+        ),
+        None,
+        "only PAGE_FULL is traced"
+    );
+}

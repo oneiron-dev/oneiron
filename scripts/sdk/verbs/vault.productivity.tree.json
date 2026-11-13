@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<Option<crate::memory::ProductivityTree>>",
   "call": "memory.productivity_tree(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

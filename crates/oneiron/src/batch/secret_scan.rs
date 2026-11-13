@@ -466,6 +466,14 @@ pub(crate) fn release_credential_field(name: &str, nil: bool, text: Option<&str>
     credential_field(name, nil, text, Door::Release)
 }
 
+/// The write door's credential-name rule alone. On write, its mask lifts the
+/// value of a map member under such a name into custody, whatever the value
+/// is, so a name an asker chose (an ask option id, an outcome name) is refused
+/// before its ask is kept (FIX-LIST ASK-OPTION-KEY-CREDENTIAL-NAME-MASKED).
+pub(crate) fn credential_field_name(name: &str) -> bool {
+    shapes::sensitive_key(name)
+}
+
 /// A credential name holding anything but nil or a placeholder.
 fn credential_field(name: &str, nil: bool, text: Option<&str>, door: Door) -> bool {
     shapes::sensitive_key(name)

@@ -50,6 +50,24 @@ pub(crate) fn code_symbol_definitions_in_txn(
     Ok(Some((manifest, definitions)))
 }
 
+/// The manifest stored for `code_artifact_id`, read in `txn` and checked
+/// against its CODE artifact, as `Vault::get_code_symbol_manifest` reads it.
+/// `None` when the artifact has no manifest.
+///
+/// # Errors
+/// A manifest that does not match its CODE artifact, or a store failure.
+pub(crate) fn code_symbol_manifest_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    code_artifact_id: &EntityId,
+) -> Result<Option<CodeSymbolManifest>> {
+    let Some(manifest) = MANIFEST.get(store, txn, code_artifact_id)? else {
+        return Ok(None);
+    };
+    validate_code_artifact_target(store, txn, code_artifact_id, &manifest.repo_ref)?;
+    Ok(Some(manifest))
+}
+
 /// The stable ids of every symbol `manifest` names (FIX 4300).
 ///
 /// # Errors

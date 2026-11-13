@@ -93,8 +93,9 @@ const CANON_RESERVED_UNREGISTERED: &[(u8, &str)] = &[
     // registering it is what that state was in flight TOWARDS, so the reserve
     // is dropped rather than the registration being hidden from conformance.
     // SKILL_HUB (92) now has C02's live substrate; it is no longer unregistered.
+    // CLAIM_CLASS_DESCRIPTOR (91) is registered, and canon assigns it since
+    // docs bed8401c1c4 (oneiron-docs#1027).
     (75, "SUSPICIOUS_WAKE"),
-    (91, "CLAIM_CLASS_DESCRIPTOR"),
 ];
 
 fn fixture_path() -> PathBuf {
@@ -267,20 +268,6 @@ fn byte_space_v3_matches_vendored_canon() {
         );
     }
 
-    // ONE-2060 explicitly adds WORKFLOW in this cluster. The read-only docs
-    // snapshot predates that contract. Keep its provenance/hash intact and pin
-    // this one allocation separately until canon incorporates it; never accept
-    // arbitrary extra registry rows. See impl-notes/W7-C02.md.
-    assert!(
-        canon_bytes.insert(18, "WORKFLOW").is_none(),
-        "canon now owns WORKFLOW; remove the ticket overlay"
-    );
-    let workflow = entity_type_registry_entry(18).expect("WORKFLOW registration");
-    assert_eq!(workflow.kind, "WORKFLOW");
-    assert_eq!(workflow.short_id_prefix, Some("wf"));
-    assert_eq!(workflow.classification, EntityClassification::Core);
-    assert_eq!(workflow.zone, TypeByteZone::Core);
-
     // Every reserve named above must actually appear in canon — a reserve that
     // canon dropped would otherwise sit here forever unnoticed.
     for (byte, name) in CANON_RESERVED_UNREGISTERED {
@@ -363,20 +350,26 @@ fn classification_matches(engine: EntityClassification, canon: &str) -> bool {
 }
 
 /// Conversation topology appends edge bytes without moving the entity ABI.
+/// The code-symbol relations at 32-34 (fa4b12efb #5599) carry the stored
+/// prior 1.0; the conversation kinds at 27-31 carry none.
 #[test]
 fn conversation_dag_edge_byte_census() {
     use oneiron::EdgeKind;
-    for (byte, kind) in [
-        (27, EdgeKind::Parent),
-        (28, EdgeKind::SpawnedBy),
-        (29, EdgeKind::AddressedTo),
-        (30, EdgeKind::RepliesTo),
+    for (byte, kind, weight) in [
+        (27, EdgeKind::Parent, None),
+        (28, EdgeKind::SpawnedBy, None),
+        (29, EdgeKind::AddressedTo, None),
+        (30, EdgeKind::RepliesTo, None),
+        (31, EdgeKind::Regenerates, None),
+        (32, EdgeKind::Calls, Some(1.0)),
+        (33, EdgeKind::Imports, Some(1.0)),
+        (34, EdgeKind::Refs, Some(1.0)),
     ] {
         assert_eq!(kind as u8, byte);
         assert_eq!(EdgeKind::try_from_u8(byte), Some(kind));
-        assert_eq!(kind.default_weight(), None);
+        assert_eq!(kind.default_weight(), weight);
     }
-    for byte in 31..=u8::MAX {
+    for byte in 35..=u8::MAX {
         assert!(EdgeKind::try_from_u8(byte).is_none());
     }
 }

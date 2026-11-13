@@ -17,9 +17,11 @@ use crate::error::Result;
 mod detach;
 mod git_push;
 mod guest_key;
+mod inquiry_terms;
 mod repo_bounds;
 mod verb_classes;
 mod wallet_ref;
+mod working_view_bounds;
 
 pub use detach::ConnectMemberLeaveBinding;
 pub(crate) use git_push::git_push_scope;
@@ -49,9 +51,12 @@ pub const MAX_DELEGATE_TTL_SECS: u64 = 7_776_000;
 /// exact verbs (FIX 8735); `wallet_ref` an owner's agent grant that names
 /// the host wallet its funded work draws on (FIX 7766);
 /// `detach_on_member_leave` a Connect guest grant whose minting owner chose
-/// the local release (FIX 12555). Each optional tail key keeps its own named
-/// child constant, never a bare index alias.
-pub const FEDERATION_GRANT_BODY_KEYS: [&str; 16] = [
+/// the local release (FIX 12555); `inquiry_terms` the Connect guest grant
+/// that carries the verb class `inquire`, an inquiry edge (INQUIRE-1);
+/// `working_view_bounds` an owner's agent grant with repo bounds that edits
+/// one owner working view alone (row 6 WORKING-VIEW-EDIT). Each optional
+/// tail key keeps its own named child constant, never a bare index alias.
+pub const FEDERATION_GRANT_BODY_KEYS: [&str; 18] = [
     "schema_version",
     "scope",
     "member_ref",
@@ -68,6 +73,8 @@ pub const FEDERATION_GRANT_BODY_KEYS: [&str; 16] = [
     verb_classes::KEY_VERB_CLASSES,
     wallet_ref::KEY_WALLET_REF,
     detach::KEY_DETACH_ON_MEMBER_LEAVE,
+    inquiry_terms::KEY_INQUIRY_TERMS,
+    working_view_bounds::KEY_WORKING_VIEW_BOUNDS,
 ];
 
 /// Count of unconditionally required keys at the head of
@@ -436,6 +443,15 @@ pub struct FederationGrant {
     /// (FIX 7766), an opaque host reference compared byte for byte; absent
     /// on every other grant and on an agent grant without one.
     pub wallet_ref: Option<crate::federation::WalletRef>,
+    /// The terms of an inquiry edge (INQUIRE-1): `Some` exactly on a
+    /// Connect guest grant whose verbs are the class `inquire` alone, over
+    /// the one opened WORLD the terms name; absent on every other grant.
+    pub inquiry_terms: Option<crate::inquiry::InquiryTerms>,
+    /// The one owner working view, and its account, this agent grant edits
+    /// (row 6 WORKING-VIEW-EDIT): it narrows `repo_bounds` to that view, and
+    /// every repo door but the view edit door refuses the grant; absent on
+    /// every other grant.
+    pub working_view_bounds: Option<crate::federation::WorkingViewEditBounds>,
 }
 
 impl FederationGrant {
@@ -467,6 +483,8 @@ impl FederationGrant {
             detach_on_member_leave: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            inquiry_terms: None,
+            working_view_bounds: None,
         }
     }
 
@@ -499,6 +517,8 @@ impl FederationGrant {
             detach_on_member_leave: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            inquiry_terms: None,
+            working_view_bounds: None,
         };
         grant.validate()?;
         Ok(grant)
@@ -565,6 +585,8 @@ impl FederationGrant {
             detach_on_member_leave: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            inquiry_terms: None,
+            working_view_bounds: None,
         })
     }
 
@@ -596,6 +618,8 @@ impl FederationGrant {
         detach::validate(self)?;
         verb_classes::validate(self)?;
         wallet_ref::validate(self)?;
+        inquiry_terms::validate(self)?;
+        working_view_bounds::validate(self)?;
         // Each purpose has its one role class: Ask and Connect are Guest, and
         // only Ask carries the fact payload; a shared vault is never Guest.
         match (self.scope, self.role.is_guest(), self.guest.as_ref()) {
@@ -761,6 +785,8 @@ pub fn encode_federation_grant_body(grant: &FederationGrant) -> Result<Vec<u8>> 
     entries.extend(detach::body_entry(grant));
     entries.extend(verb_classes::body_entry(grant));
     entries.extend(wallet_ref::body_entry(grant));
+    entries.extend(inquiry_terms::body_entry(grant));
+    entries.extend(working_view_bounds::body_entry(grant));
 
     encode_msgpack_value(
         &Value::Map(entries),
@@ -835,6 +861,8 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
     let detach_on_member_leave = detach::decode_body_entry(entries)?;
     let verb_classes = verb_classes::decode_body_entry(entries)?;
     let wallet_ref = wallet_ref::decode_body_entry(entries)?;
+    let inquiry_terms = inquiry_terms::decode_body_entry(entries)?;
+    let working_view_bounds = working_view_bounds::decode_body_entry(entries)?;
 
     let grant = FederationGrant {
         authority_scope: if legacy {
@@ -861,6 +889,8 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
         detach_on_member_leave,
         verb_classes,
         wallet_ref,
+        inquiry_terms,
+        working_view_bounds,
     };
     // Role-conditional presence is enforced here: a five-key Delegate body and
     // a seven-key Owner body both die at `validate`, not at the key allowlist.

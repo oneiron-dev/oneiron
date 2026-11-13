@@ -68,6 +68,7 @@ pub(crate) use super::engine_control_doors::*;
 pub(crate) use super::oauth_authorization_doors::*;
 // The owner's answer to a send that may have gone out (FIX 4747) too.
 pub(crate) use super::uncertain_send_doors::*;
+pub(crate) use super::undo_send_doors::*;
 // The owner's answer to a call a moved agent run replays (FIX 4747) too.
 pub(crate) use super::agent_run_effect_doors::*;
 // The owner's git_push Grant doors (FIX 6867, G1-PUSH) too.
@@ -91,6 +92,7 @@ pub(crate) use super::voice_bank_doors::*;
 pub(crate) use super::asr_doors::*;
 pub(crate) use super::cleanup_doors::*;
 pub(crate) use super::clustering_doors::*;
+pub(crate) use super::default_facet_doors::*;
 pub(crate) use super::extraction_doors::*;
 pub(crate) use super::identity_doors::*;
 pub(crate) use super::legal_hold_doors::*;
@@ -104,6 +106,7 @@ pub(crate) use super::model_pack_doors::*;
 pub(crate) use super::model_setting_doors::*;
 pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_stream_doors::*;
+pub(crate) use super::non_base_world_claim_fraction_doors::*;
 pub(crate) use super::outbox_diverged_doors::*;
 pub(crate) use super::snapshot_read_settings_doors::*;
 pub(crate) use super::web_connector_doors::*;

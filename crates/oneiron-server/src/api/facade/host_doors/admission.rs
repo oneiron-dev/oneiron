@@ -160,6 +160,11 @@ pub(in crate::api::facade) fn door_admits(
         Proof::CheckoutHolder => {
             crate::api::facade::origin_doors::checkout_holder_admits(server, auth)
         }
+        // The working view edit door (row 6 WORKING-VIEW-EDIT): a live
+        // Owner, or a bound caller whose view-bound Grant the engine judges.
+        Proof::ViewEditor => {
+            crate::api::facade::code_view_doors::view_editor_admits(server, auth, verb)
+        }
         // The vault's review policy rows (FIX 8268): a live Owner, or a bound
         // principal whose one Grant the engine door admits.
         Proof::ReviewPolicy => {
@@ -254,5 +259,8 @@ pub(in crate::api::facade) fn door_admits(
             auth,
             oneiron::memory::usage_repair::UsageRepairVerb::Receipts,
         ),
+        // A requested eval-authoring pass (LEARNING-06): the owner's own proof or an agent's own Grant
+        // naming the verb, as the writer that admits the Coach attempt checks it.
+        Proof::EvalAuthoring => crate::api::facade::eval_doors::execute_admits(server, auth),
     }
 }

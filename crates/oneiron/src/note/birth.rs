@@ -59,8 +59,9 @@ pub(crate) fn birth_document_in_txn(
 }
 
 /// The text index field a NOTE's text is published under, as every persist
-/// publishes it (`document_store`).
-const INDEX_FIELD: &str = "markdown";
+/// publishes its body (`revision::index_fields`). A NOTE is born with
+/// no title or tags.
+const INDEX_FIELD: &str = crate::config::bm25::NoteTextField::Body.source_name();
 
 /// The NOTE document a room stages beside a NOTE it births (FIX 4280), as
 /// the rows it stages: the deterministic birth of the row the room holds.

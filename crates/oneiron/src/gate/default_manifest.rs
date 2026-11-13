@@ -139,6 +139,10 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
     // trunk reply (SUMMARY-AS-RECORD-PERMIT-SHAPE = A). Derived the same way,
     // so a moved domain fails closed too.
     let scope_summary_landing_ref = crate::scope_summary::landing_writer_id()?.to_hex();
+    // The plugin section fit install MACHINE lands the install claim of a
+    // Ready fit (FIT-INSTALL-DESIGN = A). Derived the same way, so a moved
+    // domain fails closed too.
+    let fit_install_writer_ref = crate::context_board::fit_install_writer_id()?.to_hex();
     let policy_values: serde_json::Value =
         serde_json::from_str(include_str!("policy_value_defaults.json"))
             .expect("valid shipped policy values");
@@ -682,6 +686,26 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                     ),
                     (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
                 ]),
+                // FIT-INSTALL-DESIGN = A (ARCH-0053 "Everything installs;
+                // permissions ask"): a Ready fit's install claim lands under
+                // the engine's fit install writer, which only
+                // `Offer::land_in_txn` writes as, behind its private
+                // `ReadyFit` guard. It grants nothing: the section's verb and
+                // lane requests still ask, and the owner's revoke retracts
+                // the install. Keyed to that ONE derived actor; class
+                // `system` as a whole keeps default-deny.
+                //
+                // Reversal: delete this row and the fit install writer's
+                // `generated` source-trust row below; a ready fit then asks
+                // the owner again (fail-closed).
+                Value::Map(vec![
+                    (Value::from(ACTOR_CLASS_KEY), Value::from("system")),
+                    (
+                        Value::from(ACTOR_REF_KEY),
+                        Value::from(fit_install_writer_ref.clone()),
+                    ),
+                    (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
+                ]),
             ]),
         ),
         (
@@ -771,6 +795,29 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                             (
                                 Value::from(ACTOR_REF_KEY),
                                 Value::from(scope_summary_landing_ref),
+                            ),
+                            (
+                                Value::from(SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY),
+                                Value::from(u64::from(UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+                            ),
+                            (
+                                Value::from(SOURCE_TRUST_RECEIPTED_KEY),
+                                Value::Boolean(true),
+                            ),
+                            (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
+                        ]),
+                        // FIT-INSTALL-DESIGN = A: the fit install writer's
+                        // claim is the engine's attestation of a Ready fit,
+                        // so it is generated, and only this writer's is
+                        // trusted: the offering actor's own `generated`
+                        // writes keep pending on source trust. Same cap and
+                        // surfacing as the landing writer's row.
+                        // Reversal: as the fit install writer's ceiling row
+                        // above.
+                        Value::Map(vec![
+                            (
+                                Value::from(ACTOR_REF_KEY),
+                                Value::from(fit_install_writer_ref),
                             ),
                             (
                                 Value::from(SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY),
@@ -1415,13 +1462,14 @@ fn federation_grant_default_rows() -> Value {
                 scope: scope(&["read"]),
             },
             // FIX 3016: a Connect peer reads and proposes, at most private
-            // content. The mint names its worlds; this row names none.
+            // content. The mint names its worlds; this row names none. An
+            // inquiry edge's class `inquire` confers no read (INQUIRE-1).
             Row::ConnectGuestCeiling {
                 scope: Scope {
                     sensitivity: oneiron_authority::federation::SensitivityCeiling::AtMost(
                         oneiron_authority::federation::Sensitivity::Private,
                     ),
-                    ..scope(&["read", "propose"])
+                    ..scope(&["read", "propose", crate::federation::INQUIRE_VERB_CLASS])
                 },
             },
         ]

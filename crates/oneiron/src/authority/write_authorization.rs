@@ -4,6 +4,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
+use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
@@ -124,23 +125,70 @@ impl Vault {
     ) -> Result<AuthorityFold> {
         let fold = self.write_actor_store_truth_in_txn(txn, writer)?;
         if fold.vault_id.is_some() {
-            match fold.actor_write_disposition(
-                &writer.entity_ref(),
-                writer.actor_class().gate_actor_class(),
-                writer.authority_frontier(),
-            ) {
-                CausalWriteDisposition::Admitted => {}
-                CausalWriteDisposition::Unbound => {
-                    return Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
-                        reason: "writer has no active authority binding",
-                    }));
-                }
-                CausalWriteDisposition::Quarantined => {
-                    return Err(Error::Claim(ClaimError::WriteConcurrentWithRevocation));
-                }
-            }
+            admit_write_disposition(rooted_write_disposition(&fold, writer))?;
         }
         Ok(fold)
+    }
+
+    /// [`Self::verify_write_actor_in_txn`], with one refusal answered
+    /// instead: `Ok(false)` where store truth holds and the vault is rooted,
+    /// but the log binds no key to the writer at its class. `Ok(true)` where
+    /// that check admits it. A writer the store does not hold, two roots and
+    /// a binding a revocation quarantined are refused as there.
+    pub(crate) fn write_actor_bound_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        writer: &WriteActor,
+    ) -> Result<bool> {
+        let fold = self.write_actor_store_truth_in_txn(txn, writer)?;
+        if fold.vault_id.is_none() {
+            return Ok(true);
+        }
+        match rooted_write_disposition(&fold, writer) {
+            CausalWriteDisposition::Unbound => Ok(false),
+            disposition => admit_write_disposition(disposition).map(|()| true),
+        }
+    }
+
+    /// [`Self::verify_write_actor_in_txn`] for the room join and consent
+    /// doors, where one of this vault's own agents acts as itself: it asks
+    /// into a room by an offer card (ARCH-0006a:243) and answers the parts a
+    /// join asks of it. Pairing binds no such agent: it acts through its
+    /// capability slips, whose keys never enter the roster
+    /// (`agent_principal`), and the host checks the slip live on each
+    /// request. So on a rooted vault that is not shared, an agent the log
+    /// never bound, and that no revocation touched, writes here while it is
+    /// one of the vault's own agents (`disclosure::is_vault_agent_in`) and
+    /// its definition stands (`agent_def::stands`: active, enabled and
+    /// approved), both read in `txn`. A revoked or quarantined binding is
+    /// refused as before, and so is every other unbound writer.
+    pub(crate) fn verify_own_agent_write_actor_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        writer: &WriteActor,
+    ) -> Result<()> {
+        let fold = self.write_actor_store_truth_in_txn(txn, writer)?;
+        if fold.vault_id.is_none() {
+            return Ok(());
+        }
+        let disposition = rooted_write_disposition(&fold, writer);
+        let class = writer.actor_class().gate_actor_class();
+        if disposition != CausalWriteDisposition::Unbound
+            || writer.actor_class() != EdgeActorClass::Agent
+            || fold
+                .actor_revocation_affected_writers
+                .contains(&(writer.entity_ref(), class.to_owned()))
+            || self.shared_vault_creation_in_txn(txn)?.is_some()
+        {
+            return admit_write_disposition(disposition);
+        }
+        if own_agent_definition_stands_in_txn(self, txn, &fold, writer.entity_ref())? {
+            Ok(())
+        } else {
+            Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
+                reason: "an agent with no authority binding writes here only as one of this vault's own agents whose definition is active, enabled and approved",
+            }))
+        }
     }
 
     /// [`Self::verify_write_actor_in_txn`] for the in-process host's own
@@ -221,6 +269,55 @@ impl Vault {
             },
         )
     }
+}
+
+/// `writer`'s disposition in the rooted `fold`, at the authority frontier it
+/// observed.
+fn rooted_write_disposition(fold: &AuthorityFold, writer: &WriteActor) -> CausalWriteDisposition {
+    fold.actor_write_disposition(
+        &writer.entity_ref(),
+        writer.actor_class().gate_actor_class(),
+        writer.authority_frontier(),
+    )
+}
+
+/// The rooted writer rule: an admitted binding writes; a writer with none,
+/// or one a revocation quarantined, is refused.
+fn admit_write_disposition(disposition: CausalWriteDisposition) -> Result<()> {
+    match disposition {
+        CausalWriteDisposition::Admitted => Ok(()),
+        CausalWriteDisposition::Unbound => {
+            Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
+                reason: "writer has no active authority binding",
+            }))
+        }
+        CausalWriteDisposition::Quarantined => {
+            Err(Error::Claim(ClaimError::WriteConcurrentWithRevocation))
+        }
+    }
+}
+
+/// Whether `agent` is one of this vault's own agents by a live AGENT_DEF
+/// row whose definition its agent runs under (`agent_def::stands`). A body
+/// that does not decode stands for nothing.
+fn own_agent_definition_stands_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    agent: EntityId,
+) -> Result<bool> {
+    if !crate::disclosure::is_vault_agent_in(vault, txn, fold, &agent)? {
+        return Ok(false);
+    }
+    let crate::vault::LiveEntityRow::Live {
+        entity_type: ENTITY_TYPE_AGENT_DEF,
+        body,
+    } = crate::vault::live_entity_row_in_txn(&vault.store, txn, &agent)?
+    else {
+        return Ok(false);
+    };
+    Ok(crate::agent_def::decode_agent_definition(&body)
+        .is_ok_and(|definition| crate::agent_def::stands(&definition)))
 }
 
 /// One binding's identity: its key, epoch, actor and class. A rebind or a

@@ -115,6 +115,7 @@ mod standing;
 // FIX 17553: the owner resets a person's step-up passkeys.
 mod step_up;
 mod support_grant;
+mod sync_outbox;
 #[cfg(feature = "sync")]
 mod sync_quarantine;
 mod trusted_contact;
@@ -181,14 +182,28 @@ pub struct RoomClaimRequest {
 pub struct ProjectRefRequest {
     pub project_ref: String,
 }
-/// `vault.projects.goal.dismiss`'s input: the proposal one tradeoff question
-/// made, under the goal claim the caller saw in force.
+/// `vault.projects.goal.dismiss`'s input: the project and the proposal to
+/// set aside.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectGoalDismissRequest {
     pub project_ref: String,
-    pub expected_goal_ref: String,
-    pub question_digest: String,
+    pub target: ProjectGoalDismissTarget,
+}
+/// What `vault.projects.goal.dismiss` sets aside: the preference one
+/// tradeoff question proposed, under the goal claim the caller saw in force;
+/// or a full goal proposal by its id, with the owner's reason.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ProjectGoalDismissTarget {
+    Preference {
+        expected_goal_ref: String,
+        question_digest: String,
+    },
+    Proposal {
+        proposal_ref: String,
+        reason: String,
+    },
 }
 /// `vault.projects.goal.dismiss`'s result: `false` when an identical retry
 /// wrote nothing.
@@ -375,6 +390,30 @@ pub fn task_create_spec(
             "a briefed create names both its intent key and its brief",
         )),
     }
+}
+
+/// `tasks.create.from_message`: the project-room MESSAGE or TURN a TASK is
+/// made from, and the create as `tasks.create` names it. The TASK binds to
+/// the root of the thread the source stands in, in the create's write. A
+/// create that routes through approval (a typed brief, an intent key, or a
+/// ceiling short of Auto) is refused.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskCreateFromMessageRequest {
+    /// The MESSAGE or TURN, by short-id ref or 32-hex id.
+    pub source_ref: String,
+    pub create: TaskCreateRequest,
+}
+
+/// `tasks.create.from_message` for the surface's actor: the source by its
+/// id, and the create spec [`task_create_spec`] builds.
+pub fn task_create_from_message(
+    memory: &Memory<'_>,
+    input: TaskCreateFromMessageRequest,
+) -> MemoryResult<crate::task_verb::TaskCreateReceipt> {
+    let source_ref = crate::memory::resolve_entity_ref(memory.vault(), &input.source_ref)?;
+    let spec = task_create_spec(memory, input.create)?;
+    memory.tasks_create_from_message(source_ref, &spec)
 }
 /// `tasks.wave` (OF-427, ARCH-0068 RC5): an epic TASK cut into a wave of
 /// TASKs by a planner agent, queued as one planning attempt. Who asks, and
@@ -573,6 +612,7 @@ pub use self::skills::*;
 pub use self::standing::*;
 pub use self::step_up::*;
 pub use self::support_grant::*;
+pub use self::sync_outbox::*;
 #[cfg(feature = "sync")]
 pub use self::sync_quarantine::*;
 pub use self::trusted_contact::*;

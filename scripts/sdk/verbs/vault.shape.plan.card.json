@@ -5,6 +5,7 @@
   "output": "crate::memory::ShapePlanCardView",
   "call": "memory.shape_plan_card_view(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

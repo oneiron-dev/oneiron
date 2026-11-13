@@ -1,6 +1,6 @@
 {
   "name": "vault.inbox.groups",
-  "description": "Reads one page of the owner's inbox groups under his proof, newest first: Dreamer consent groups by run-tree root and shape applies waiting for his word, each tagged with its kind; a page's next resumes after it.",
+  "description": "Reads one page of the owner's inbox groups under his proof, newest first: Dreamer consent groups by run-tree root, shape applies and whole-vault restores waiting for his word, each tagged with its kind; next resumes after it.",
   "input": "crate::agent_inbox_lens::InboxRunGroupsRequest",
   "output": "crate::inbox::UnifiedInboxGroupPage",
   "call": "memory.inbox_groups_page(&memory.embedded_owner(\"vault.inbox.groups\")?, &input)?",
@@ -8,6 +8,7 @@
   "host_door_lists": true,
   "host_door_caller": true,
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

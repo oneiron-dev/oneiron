@@ -8,6 +8,7 @@
   "output": "Option<crate::anchored_annotation::AnnotationThreadView>",
   "call": "memory.artifacts_threads_read(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true,
     "readable": [

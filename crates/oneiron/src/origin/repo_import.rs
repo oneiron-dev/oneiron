@@ -189,7 +189,7 @@ impl Vault {
             source.source_commit,
             now,
         )?;
-        let body = manifest.claim_body()?;
+        let mut body = manifest.claim_body()?;
         let written = self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             self.import_source_still_admitted_in_txn(txn, anchor.repo, source, &record)?
@@ -203,16 +203,21 @@ impl Vault {
                 None if self.get_raw_in(txn, &manifest_ref)?.is_some() => Err(
                     Error::CorruptedIndex("an import manifest id holds another record"),
                 ),
-                None => self.put_reserved_claim_in_txn(
-                    txn,
-                    &manifest_ref,
-                    &body,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                ),
+                None => {
+                    // The subject is the repository, which has no FACET of
+                    // its own.
+                    body.scope_facet = self.claim_put_facet_in_txn(txn, &manifest_ref)?;
+                    self.put_reserved_claim_in_txn(
+                        txn,
+                        &manifest_ref,
+                        &body,
+                        TimeRange {
+                            start: now,
+                            end: now,
+                        },
+                        now,
+                    )
+                }
             }
         });
         if written.is_err() {

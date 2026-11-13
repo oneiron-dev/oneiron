@@ -5,6 +5,7 @@
   "output": "crate::core_write::CoreEntityWriteReceipt",
   "call": "memory.conversations_create(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

@@ -235,6 +235,42 @@ pub(crate) struct CoreRunTreeFailure {
     /// Last failure reason recorded on the backing queue row.
     #[schema(example = "worker failed")]
     reason: String,
+    /// The typed refusal of a try a spend scope refused for good, recorded on
+    /// the backing queue row beside `reason`; absent for every other failure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    budget_refusal: Option<CoreStepBudgetRefusal>,
+}
+
+/// Why a try's step was refused for good, so nothing parked and the try
+/// failed: a closed boundary or a scope's ceiling had less room than the
+/// step's reservation asked (`scope` is the refusing spend scope's id), the
+/// step's guard was spent with no wake pass or spend scope to refill it, or no
+/// allocation of the host funded its host-paid call.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub(crate) enum CoreStepBudgetRefusal {
+    /// A closed boundary on the way to the open scope that books the step.
+    BoundaryClosed {
+        scope: String,
+        available_units: u64,
+        asked_units: u64,
+    },
+    /// A scope's ceiling, set at its launch.
+    CeilingReached {
+        scope: String,
+        available_units: u64,
+        asked_units: u64,
+    },
+    /// A spent guard bound to no wake pass and no spend scope.
+    Unbound {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        asked_units: Option<u64>,
+    },
+    /// A host-paid call no allocation of the host funds.
+    Unfunded {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        asked_units: Option<u64>,
+    },
 }
 
 /// Lifecycle/operator event projected for a runtime attempt.

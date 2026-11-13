@@ -53,7 +53,7 @@ use crate::entity_id::EntityId;
 use crate::federation::{
     AGENT_GRANT_REVOKE_COMMAND, AgentGrantFromSlipUnchangedReason, AgentGrantStanding,
     EngineControlChange, GrantlessAgentConversion, RepoAccessBounds, Scope,
-    SystemAgentGrantNarrowing, SystemFunction, WalletRef,
+    SystemAgentGrantNarrowing, SystemFunction, WalletRef, WorkingViewEditBounds,
 };
 use crate::memory::MemoryResult;
 
@@ -93,6 +93,14 @@ pub struct AgentGrantMintRequest {
     /// none, and the grant funds no launch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wallet_ref: Option<WalletRef>,
+    /// The one owner working view of the `repo_bounds` repo the agent may
+    /// edit, and the owner account it lives in: the grant then edits that
+    /// view's files under the editable globs through
+    /// `vault.code.views.edit`, and every other repo door refuses it. It
+    /// needs `repo_bounds` and a view the owner made of their repo.
+    /// Omitted: no view bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_view_bounds: Option<WorkingViewEditBounds>,
 }
 
 /// One owner's agent grant.
@@ -121,6 +129,10 @@ pub struct AgentGrantView {
     /// it names none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wallet_ref: Option<WalletRef>,
+    /// The one owner working view, and its account, the grant edits alone;
+    /// absent on a grant bound to none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_view_bounds: Option<WorkingViewEditBounds>,
     /// Whether it confers now: unexpired, with `read` among its verbs (or
     /// admitted by a class it names) and no empty world, band, audience or
     /// sensitivity axis.
@@ -241,6 +253,7 @@ pub fn mint_agent_grant_as(
         input.repo_bounds,
         input.verb_classes,
         input.wallet_ref,
+        input.working_view_bounds,
     )?;
     Ok(AgentGrantMinted {
         grant: agent_grant_view(&minted.standing, minted.confers),
@@ -314,6 +327,7 @@ fn agent_grant_view(standing: &AgentGrantStanding, confers: bool) -> AgentGrantV
         repo_bounds: standing.grant.repo_bounds.clone(),
         verb_classes: standing.grant.verb_classes.clone(),
         wallet_ref: standing.grant.wallet_ref.clone(),
+        working_view_bounds: standing.grant.working_view_bounds,
         confers,
         revoke_command: AGENT_GRANT_REVOKE_COMMAND.to_owned(),
     }

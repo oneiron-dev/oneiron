@@ -168,6 +168,15 @@ pub struct RepoSymbolsReleaseInput {
     pub declaration: EntityId,
 }
 
+/// `self.code.symbols.observe`: reads the run's own current declaration for
+/// its TASK, held or waiting, with what it waits behind now. It renews,
+/// releases, declares and schedules nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RepoSymbolsObserveInput {
+    pub work: EntityId,
+}
+
 /// `self.code.proposal_submit`: one whole-file change against the run's own
 /// work, kept as an immutable Proposed proposal at the work's pinned base.
 /// Nothing lands, is approved or is queued here.
@@ -382,8 +391,10 @@ pub struct RepoSymbolDeclarationView {
     pub expires_at: u64,
     /// False while it waits behind an overlapping live declaration.
     pub held: bool,
-    /// The TASKs whose live overlapping declarations it waits behind; empty
-    /// when held, and on a renewal.
+    /// The TASKs whose live overlapping declarations it waits behind, as
+    /// they hold at the call that answers; empty when held, and on a
+    /// renewal. A waiting declaration whose blockers have all gone stays
+    /// waiting until it is declared again.
     pub blockers: Vec<EntityId>,
 }
 
@@ -392,6 +403,10 @@ pub type RepoSymbolsDeclareOutput = RepoSymbolDeclarationView;
 
 /// `self.code.symbols.renew`'s answer.
 pub type RepoSymbolsRenewOutput = RepoSymbolDeclarationView;
+
+/// `self.code.symbols.observe`'s answer: the declaration as it is stored,
+/// its id and expiry unchanged by the read.
+pub type RepoSymbolsObserveOutput = RepoSymbolDeclarationView;
 
 /// `self.code.symbols.release`'s answer: the declaration it removed.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

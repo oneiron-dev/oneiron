@@ -150,12 +150,12 @@ pub(super) fn decode_words(raw: &[u8]) -> String {
 const ADDRESS_FIELDS: [&str; 4] = ["from", "reply-to", "to", "cc"];
 
 /// The address headers of the raw message `bytes`: From, Reply-To, To and
-/// Cc, each the first field of its name, read as
-/// [`MimeMessage::address_header`] reads it. The header block is read to its
-/// end and only these four fields are kept, so a message with more fields
-/// than a parse keeps ([`MAX_FIELDS`]) still names each address field it
-/// carries, however late (fix list row 20520). Values are unfolded as
-/// [`split_header`] unfolds them.
+/// Cc, each the first field of its name, read by [`address_values`]. The
+/// header block is read to its end and only these four fields are kept, so a
+/// message with more fields than a parse keeps ([`MAX_FIELDS`]) still names
+/// each address field it carries, however late (fix list rows 20520, 20852:
+/// every landing and every reply reads its addresses here). Values are
+/// unfolded as [`split_header`] unfolds them.
 pub(super) fn raw_address_headers(bytes: &[u8]) -> MailAddressHeaders {
     let mut fields: [Option<Vec<u8>>; 4] = Default::default();
     // The kept field a continuation line goes on: the one on the line above.
@@ -197,9 +197,13 @@ pub(super) fn raw_address_headers(bytes: &[u8]) -> MailAddressHeaders {
     }
 }
 
-/// The mailboxes of one raw address field value, one entry each, split at
-/// its top-level commas BEFORE any encoded word is decoded
-/// ([`MimeMessage::address_header`]).
+/// The mailboxes of one raw address field value (From, To, Cc, Reply-To),
+/// one entry each. The value is split at its top-level commas BEFORE any
+/// encoded word is decoded, so a comma an encoded display name decodes to
+/// never splits a mailbox (fix list row 17645). A display name with encoded
+/// words is then decoded and written as a display name again
+/// ([`display_name`]); every other mailbox, and a group's bounds, stay as the
+/// sender wrote them.
 fn address_values(value: &[u8]) -> Vec<String> {
     super::gmail::address_list(&decode_charset(value, None))
         .iter()
@@ -678,21 +682,6 @@ impl<'m> MimeMessage<'m> {
             .iter()
             .find(|(held, _)| *held == name)
             .map(|(_, value)| decode_words(value).trim().to_owned())
-    }
-
-    /// The mailboxes of the first address header field named `name` (From,
-    /// To, Cc, Reply-To), one entry each. The field is split at its
-    /// top-level commas BEFORE any encoded word is decoded, so a comma an
-    /// encoded display name decodes to never splits a mailbox (fix list row
-    /// 17645). A display name with encoded words is then decoded and written
-    /// as a display name again ([`display_name`]); every other mailbox, and
-    /// a group's bounds, stay as the sender wrote them.
-    pub(super) fn address_header(&self, name: &str) -> Vec<String> {
-        let name = name.to_ascii_lowercase();
-        let Some((_, value)) = self.root.fields.iter().find(|(held, _)| *held == name) else {
-            return Vec::new();
-        };
-        address_values(value)
     }
 
     /// Its plain text (or its HTML's text) and its attachments, the way the

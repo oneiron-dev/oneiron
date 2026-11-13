@@ -5,6 +5,7 @@
   "output": "crate::memory::origin_doors::OriginMirrorCleared",
   "call": "memory.origin_mirror_clear_as(&memory.embedded_owner(\"vault.code.origin.mirror.clear\")?, input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

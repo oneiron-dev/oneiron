@@ -5,7 +5,10 @@
 //! [`FederationGrantScope::Connect`] and role Guest: read, propose or both
 //! inside explicit local named worlds, never base and never a received
 //! foreign world. A propose-only grant stands and confers no read (FIX
-//! 8734): mint and binding judge its liveness, each door its verb. The grant
+//! 8734): mint and binding judge its liveness, each door its verb. An
+//! inquiry edge (INQUIRE-1) is a Connect guest grant whose verbs are the
+//! class `inquire` alone, over one opened WORLD, with its `inquiry_terms`;
+//! it too stands and confers no read. The grant
 //! names a vault-resident guest actor for that peer, never a
 //! host key or a vault id, and that actor's row carries the origin vault.
 //!
@@ -44,9 +47,16 @@ pub(super) const SCOPE_KIND_CONNECT: &str = "connect";
 
 const CONNECT_SCOPE_KEYS: [&str; 2] = ["kind", "peer_vault_id"];
 
-/// The verb classes a Connect guest grant may carry: a guest reads and
-/// proposes, and never writes or administers (ARCH-0043 #guest-grants).
-const CONNECT_GUEST_VERBS: [&str; 2] = ["read", "propose"];
+/// The verb class of an inquiry edge (federation.md #inquiry; Engine ruling
+/// INQUIRE-SHAPE Q1 = A): the company may send `vault.inquire` to the
+/// member's vault. It confers no read: the member's vault answers from the
+/// opened scope.
+pub const INQUIRE_VERB_CLASS: &str = "inquire";
+
+/// The verb classes a Connect guest grant may carry: a guest reads,
+/// proposes or inquires, and never writes or administers (ARCH-0043
+/// #guest-grants). `inquire` rides only an inquiry edge, alone.
+const CONNECT_GUEST_VERBS: [&str; 3] = ["read", "propose", INQUIRE_VERB_CLASS];
 
 /// The guest actor row's body: its kind tag, a display name, and the origin
 /// vault (64 hex).
@@ -64,6 +74,13 @@ pub struct ConnectMemberLeaveConsent<'proof> {
     /// The member making the local release choice. This can be the minting
     /// Owner, as on the served Owner door, or a distinct authenticated person.
     pub member: &'proof AuthenticatedOwner,
+}
+
+/// What a Connect grant mint asks for: the scope, and an inquiry edge's
+/// terms when the scope's verbs are the class `inquire`.
+pub(crate) struct ConnectGrantRequest {
+    pub(crate) scope: Scope,
+    pub(crate) inquiry_terms: Option<crate::inquiry::InquiryTerms>,
 }
 
 /// What [`Vault::mint_connect_grant`] wrote.
@@ -95,6 +112,27 @@ impl FederationGrant {
         expires_at: Option<u64>,
         detach_on_member_leave: Option<ConnectMemberLeaveBinding>,
     ) -> Result<Self> {
+        Self::connect_guest_with_terms(
+            peer_vault_id,
+            guest_actor,
+            authority_scope,
+            expires_at,
+            detach_on_member_leave,
+            None,
+        )
+    }
+
+    /// [`Self::connect_guest`] carrying an inquiry edge's terms, which its
+    /// scope's verbs must be `inquire` alone for, over the terms' opened
+    /// WORLD alone.
+    pub(crate) fn connect_guest_with_terms(
+        peer_vault_id: AuthorityVaultId,
+        guest_actor: EntityId,
+        authority_scope: Scope,
+        expires_at: Option<u64>,
+        detach_on_member_leave: Option<ConnectMemberLeaveBinding>,
+        inquiry_terms: Option<crate::inquiry::InquiryTerms>,
+    ) -> Result<Self> {
         let grant = Self {
             authority_scope,
             scope: FederationGrantScope::Connect { peer_vault_id },
@@ -111,6 +149,8 @@ impl FederationGrant {
             detach_on_member_leave,
             verb_classes: std::collections::BTreeSet::new(),
             wallet_ref: None,
+            inquiry_terms,
+            working_view_bounds: None,
         };
         grant.validate()?;
         Ok(grant)
@@ -148,8 +188,8 @@ fn canonical_vault_id(value: &str) -> Option<AuthorityVaultId> {
 }
 
 /// The shape every Connect guest grant's authority holds, on encode and
-/// decode: verbs read/propose only, worlds named (never base, never a
-/// foreign-range id), and a band set the pact triple can carry.
+/// decode: verbs read, propose or inquire only, worlds named (never base,
+/// never a foreign-range id), and a band set the pact triple can carry.
 pub(super) fn validate_connect_authority(scope: &Scope) -> Result<()> {
     let verbs = matches!(&scope.verbs, ScopeAxis::Some(verbs)
         if !verbs.is_empty()
@@ -191,6 +231,19 @@ pub(crate) fn connect_direction_projection(scope: &Scope) -> Option<FederationDi
     };
     direction.validate().ok()?;
     Some(direction)
+}
+
+/// The structural Connect guest ceiling: every axis top, verbs the Connect
+/// guest classes. The Ask guest's exact scope stays read and propose.
+pub(super) fn connect_guest_structural_ceiling() -> Scope {
+    let mut scope = Scope::top();
+    scope.verbs = ScopeAxis::Some(
+        CONNECT_GUEST_VERBS
+            .iter()
+            .map(|verb| (*verb).to_owned())
+            .collect(),
+    );
+    scope
 }
 
 /// Whether a pact direction is a guest slice: named worlds without base.
@@ -348,7 +401,8 @@ impl Vault {
     /// unconflicted local root; not this vault; no live Connect with that
     /// peer; worlds that are this vault's live named worlds, never base or a
     /// received foreign world; verbs read/propose only, propose alone
-    /// included (FIX 8734); the request inside the manifest's Connect guest
+    /// included (FIX 8734), and never the class `inquire`, which only
+    /// [`Vault::mint_inquiry_edge`] mints; the request inside the manifest's Connect guest
     /// ceiling (an excess refuses, never a clamp); an expiry, when given, in
     /// the future; the resolved grant live. The grant names the
     /// peer's vault-resident guest actor, resolved or created here. It is
@@ -371,22 +425,32 @@ impl Vault {
                 txn,
                 owner,
                 peer_vault_id,
-                authority_scope,
+                ConnectGrantRequest {
+                    scope: authority_scope,
+                    inquiry_terms: None,
+                },
                 expires_at,
                 detach,
             )
         })
     }
 
-    fn mint_connect_grant_in_txn(
+    /// The writer of [`Self::mint_connect_grant`], in the caller's
+    /// transaction. An inquiry edge's mint passes its terms; any other mint
+    /// that asks for the class `inquire` refuses.
+    pub(crate) fn mint_connect_grant_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: &AuthenticatedOwner,
         peer_vault_id: AuthorityVaultId,
-        requested: Scope,
+        request: ConnectGrantRequest,
         expires_at: Option<u64>,
         detach: Option<ConnectMemberLeaveConsent<'_>>,
     ) -> Result<ConnectGrantMinted> {
+        let ConnectGrantRequest {
+            scope: requested,
+            inquiry_terms,
+        } = request;
         let actor = owner.revalidate_in_txn(self, txn)?;
         let fold = self.authority_fold_readonly_in_txn(txn)?;
         if fold.vault_root_is_conflicted() {
@@ -399,8 +463,17 @@ impl Vault {
             return Err(refused("a vault cannot connect to itself"));
         }
         require_one_connect_per_peer(&fold, &peer_vault_id, None)?;
-        validate_connect_authority(&requested)
-            .map_err(|_| refused("a Connect grant reads or proposes named worlds only"))?;
+        if inquiry_terms.is_none()
+            && matches!(&requested.verbs, ScopeAxis::Some(verbs)
+                if verbs.contains(INQUIRE_VERB_CLASS))
+        {
+            return Err(refused(
+                "the class inquire rides only an inquiry edge, minted with its terms",
+            ));
+        }
+        validate_connect_authority(&requested).map_err(|_| {
+            refused("a Connect grant reads, proposes or inquires over named worlds only")
+        })?;
         require_local_named_axes(self, txn, &requested)?;
         let ceiling = self.connect_guest_ceiling_in_txn(txn)?;
         if !requested.is_narrowing_of(&ceiling) {
@@ -418,12 +491,13 @@ impl Vault {
         };
         let resolved = requested.meet(&ceiling);
         let guest_actor = self.connect_guest_actor_in_txn(txn, &local, &peer_vault_id, now)?;
-        let grant = FederationGrant::connect_guest(
+        let grant = FederationGrant::connect_guest_with_terms(
             peer_vault_id,
             guest_actor,
             resolved.clone(),
             expires_at,
             detach_on_member_leave,
+            inquiry_terms,
         )?;
         if !grant.is_live_at(now) {
             return Err(refused(

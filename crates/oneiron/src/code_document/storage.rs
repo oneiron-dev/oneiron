@@ -24,10 +24,12 @@ mod edit;
 mod lift;
 mod receipt_actor;
 mod replay;
+mod view_fork;
 pub(crate) use self::lift::{CodeDocumentRows, code_document_texts_in_txn};
-use self::receipt_actor::ReceiptActor;
+pub(crate) use self::receipt_actor::ReceiptActor;
 pub(crate) use self::receipt_actor::{erase_head_actor_in_txn, erase_ingress_actor_in_txn};
 use self::replay::ReceiptCustody;
+pub(crate) use self::view_fork::ViewForkStep;
 
 /// Immutable tested snapshot of a code document at one exact operation
 /// frontier: key is the document id then the op-fold hash, raw-concatenated.
@@ -224,27 +226,29 @@ impl Vault {
                 provenance: CodeOpProvenance::default(),
             });
         }
-        // Every not-yet-born session uses identical genesis operations. Peer 0
-        // is reserved for this immutable seed, never an editing session.
         let generation = path_generation(&self.store, &rtxn, repo, path)?;
-        let document_id = code_document_genesis_id(repo, path, generation);
-        let doc = LoroDoc::new();
-        doc.set_peer_id(0).map_err(|_| invalid())?;
-        doc.get_map("meta")
-            .insert("path", path)
-            .map_err(|_| invalid())?;
-        doc.get_text("body")
-            .insert(0, initial)
-            .map_err(|_| invalid())?;
-        doc.commit_with(CommitOptions::new().commit_msg("oneiron.code_document.birth.v1"));
-        Ok(CodeDocumentSession {
-            doc: doc.fork(),
-            repo: repo.to_owned(),
-            document_id,
-            session_id,
-            initial_hash: hash(initial.as_bytes()),
-            provenance: CodeOpProvenance::default(),
-        })
+        genesis_session(repo, path, initial, generation, session_id)
+    }
+
+    /// A session on the birth state of `path` holding `initial`, as the first
+    /// session of an unborn path sees it, whether or not a live document was
+    /// born at the path since: the base of a working view's untouched blob of
+    /// a tested queue revision, which the live document may have moved past
+    /// (row 6 WORKING-VIEW-EDIT); read in the caller's snapshot `txn`.
+    pub(crate) fn open_code_document_genesis_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        repo: &str,
+        path: &str,
+        initial: &str,
+        session_id: EntityId,
+    ) -> Result<CodeDocumentSession> {
+        validate_path(repo, path)?;
+        if initial.len() > MAX_FILE_BYTES {
+            return Err(invalid());
+        }
+        let generation = path_generation(&self.store, txn, repo, path)?;
+        genesis_session(repo, path, initial, generation, session_id)
     }
 
     /// Opens a proposal fork at a tested historical file frontier, not at the
@@ -575,6 +579,36 @@ impl Vault {
             })
             .collect()
     }
+}
+
+/// A session on the birth state of `path` at rename generation `generation`.
+/// Every not-yet-born session uses identical genesis operations. Peer 0 is
+/// reserved for this immutable seed, never an editing session.
+fn genesis_session(
+    repo: &str,
+    path: &str,
+    initial: &str,
+    generation: u64,
+    session_id: EntityId,
+) -> Result<CodeDocumentSession> {
+    let document_id = code_document_genesis_id(repo, path, generation);
+    let doc = LoroDoc::new();
+    doc.set_peer_id(0).map_err(|_| invalid())?;
+    doc.get_map("meta")
+        .insert("path", path)
+        .map_err(|_| invalid())?;
+    doc.get_text("body")
+        .insert(0, initial)
+        .map_err(|_| invalid())?;
+    doc.commit_with(CommitOptions::new().commit_msg("oneiron.code_document.birth.v1"));
+    Ok(CodeDocumentSession {
+        doc: doc.fork(),
+        repo: repo.to_owned(),
+        document_id,
+        session_id,
+        initial_hash: hash(initial.as_bytes()),
+        provenance: CodeOpProvenance::default(),
+    })
 }
 
 pub(super) fn load_head(store: &Store, txn: &RoTxn<'_>, id: &[u8; 32]) -> Result<Option<HeadRow>> {

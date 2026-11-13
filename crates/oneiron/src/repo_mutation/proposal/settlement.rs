@@ -171,6 +171,8 @@ impl Vault {
             ClaimLifecycleStatus::Active,
         )?;
         body.source = Some(ClaimSource::Observed);
+        // The subject is the proposal claim, which has no FACET of its own.
+        body.scope_facet = self.claim_put_facet_in_txn(txn, &receipt)?;
         self.put_reserved_claim_in_txn(
             txn,
             &receipt,

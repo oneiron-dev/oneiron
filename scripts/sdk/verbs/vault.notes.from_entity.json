@@ -8,6 +8,7 @@
   "output": "crate::memory::EntityRefReceipt",
   "call": "memory.create_note_from_entity_for(&input.source_ref, &input.kind, input.reason.as_deref())?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true,
     "readable": [

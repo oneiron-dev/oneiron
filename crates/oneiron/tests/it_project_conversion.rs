@@ -1,3 +1,4 @@
+use oneiron::authority::HostSlipIssuer;
 use oneiron::claim::{ClaimApprovalStatus, ClaimSource};
 use oneiron::edge::EdgeActorClass;
 use oneiron::genui::{
@@ -36,10 +37,24 @@ fn speak(
                 }),
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
             occurred_at: 2,
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .expect("room speech");
+}
+
+/// The host's slip issuer, rooted in `vault`'s authority log: the owner's
+/// project signer signs conversions with its host-held slip (OF-497).
+fn host_issuer(vault: &Vault) -> HostSlipIssuer {
+    let issuer = HostSlipIssuer::from_secret(b"project-conversion-test-host").expect("host issuer");
+    vault
+        .ensure_host_root_slip(&issuer)
+        .expect("host root slip");
+    issuer
 }
 
 #[test]
@@ -47,6 +62,7 @@ fn conversion_moves_open_task_and_projects_thread_origin_without_copy() -> Resul
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), oneiron::VaultConfig::default())?;
     let host = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault.authenticate_owner(host, "principal:owner", true, GateDecisionId::now())?;
     let holder = EntityId::from_bytes([0xE1; 16])?;
     vault.put_entity(
         &holder,
@@ -65,6 +81,10 @@ fn conversion_moves_open_task_and_projects_thread_origin_without_copy() -> Resul
     .expect("fixture");
     source.roster.push(holder.to_hex());
     vault.put_project(source_id, &source, 1)?;
+    // Rooted after the source's birth: a project new to a rooted vault needs
+    // an owner-signed birth, which this fixture's source does not carry.
+    let issuer = host_issuer(&vault);
+    let signer = vault.owner_project_signer(&issuer)?;
     let room = EntityId::from_hex(&source.home_room)?;
     let trunk = EntityId::now();
     let message = EntityId::now();
@@ -84,11 +104,13 @@ fn conversion_moves_open_task_and_projects_thread_origin_without_copy() -> Resul
         .task_ref
         .expect("open task effects");
     vault
-        .bind_room_thread_task(room, thread, task)
+        .bind_room_thread_task(host, room, thread, task)
         .expect("task binding");
     let project_id = EntityId::now();
     let project = vault
-        .convert_thread_to_project(room, thread, message, project_id, None, 4)
+        .convert_thread_to_project(
+            &owner, &signer, room, thread, message, project_id, None, None, 4,
+        )
         .expect("conversion");
     assert_eq!(
         project.born_from.as_deref(),
@@ -149,7 +171,17 @@ fn conversion_moves_open_task_and_projects_thread_origin_without_copy() -> Resul
     );
     assert!(
         vault
-            .convert_thread_to_project(room, thread, message, EntityId::now(), None, 5)
+            .convert_thread_to_project(
+                &owner,
+                &signer,
+                room,
+                thread,
+                message,
+                EntityId::now(),
+                None,
+                None,
+                5,
+            )
             .is_err()
     );
     drop(vault);
@@ -171,6 +203,11 @@ fn confirmed_card_in_thread_mints_exact_terms_and_rejects_sibling_and_retired_ow
 {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), oneiron::VaultConfig::default())?;
+    // The host installs this device's keystore after each open; the delete
+    // door below loads this install's keys from it (P6c).
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     let host = EntityId::now();
     let owner_id = vault
         .ensure_embedded_owner_actor()
@@ -194,6 +231,9 @@ fn confirmed_card_in_thread_mints_exact_terms_and_rejects_sibling_and_retired_ow
     .expect("fixture");
     source.roster.push(owner_id.to_hex());
     vault.put_project(source_id, &source, 1)?;
+    // Rooted after the source's birth, as in the first test.
+    let issuer = host_issuer(&vault);
+    let signer = vault.owner_project_signer(&issuer)?;
     let room = EntityId::from_hex(&source.home_room)?;
     let trunk = EntityId::now();
     speak(&vault, host, room, trunk, EntityId::now(), None);
@@ -214,8 +254,12 @@ fn confirmed_card_in_thread_mints_exact_terms_and_rejects_sibling_and_retired_ow
                 metadata: Some(serde_json::json!({"room_thread_of": trunk.to_hex()})),
                 is_visible: true,
                 order: 1,
+                parts: None,
+                quote: None,
             }],
             occurred_at: 2,
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .expect("second message in thread turn");
     let sibling = EntityId::now();
@@ -276,12 +320,12 @@ fn confirmed_card_in_thread_mints_exact_terms_and_rejects_sibling_and_retired_ow
     assert!(
         card.clone()
             .on_thread(room, sibling)?
-            .convert_thread(&vault, &request, &proof, wrong, 4)
+            .convert_thread(&vault, &request, &proof, &signer, wrong, None, 4)
             .is_err()
     );
     assert!(vault.project(wrong)?.is_none());
     let id = EntityId::now();
-    let project = card.convert_thread(&vault, &request, &proof, id, 4)?;
+    let project = card.convert_thread(&vault, &request, &proof, &signer, id, None, 4)?;
     assert_eq!(
         project.born_from.as_deref(),
         Some(message.to_hex().as_str())
@@ -338,7 +382,7 @@ fn confirmed_card_in_thread_mints_exact_terms_and_rejects_sibling_and_retired_ow
     let rejected = EntityId::now();
     assert!(
         stale
-            .convert_thread(&vault, &request, &proof, rejected, 5)
+            .convert_thread(&vault, &request, &proof, &signer, rejected, None, 5)
             .is_err()
     );
     assert!(vault.project(rejected)?.is_none());
@@ -350,6 +394,9 @@ fn confirmed_card_in_thread_mints_exact_terms_and_rejects_sibling_and_retired_ow
 fn generic_project_write_proves_origin_and_prevents_duplicate_conversion() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), oneiron::VaultConfig::default())?;
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     let host = EntityId::now();
     vault.put_entity(
         &host,
@@ -418,9 +465,16 @@ fn generic_project_write_proves_origin_and_prevents_duplicate_conversion() -> Re
     duplicate.origin_thread = record.origin_thread.clone();
     duplicate.origin_at = record.origin_at;
     assert!(vault.put_project(second, &duplicate, 3).is_err());
+    let owner_actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner =
+        vault.authenticate_owner(owner_actor, "principal:owner", true, GateDecisionId::now())?;
+    let issuer = host_issuer(&vault);
+    let signer = vault.owner_project_signer(&issuer)?;
     assert!(
         vault
-            .convert_thread_to_project(room, thread, message, second, None, 3)
+            .convert_thread_to_project(
+                &owner, &signer, room, thread, message, second, None, None, 3
+            )
             .is_err()
     );
     assert!(vault.project(second)?.is_none());
@@ -510,8 +564,10 @@ struct HeldThread {
     leader: EntityId,
 }
 
-/// A thread whose bound open task is held by an actor outside the source
-/// roster, under a row that forbids that holder as leader.
+/// A thread whose bound open task is held by a source roster member other
+/// than the confirmed leader, under a row that forbids the holder override.
+/// A thread binds and moves only tasks whose owner is on the source roster
+/// (OF-522), so the holder is a member.
 fn held_thread(leader_in_roster: bool) -> Result<HeldThread> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), oneiron::VaultConfig::default())?;
@@ -535,6 +591,7 @@ fn held_thread(leader_in_roster: bool) -> Result<HeldThread> {
     let source_id = EntityId::now();
     let mut source = ProjectRecord::new(source_id, Some(root), root, host).expect("fixture");
     source.roster.push(owner.to_hex());
+    source.roster.push(holder.to_hex());
     if leader_in_roster {
         source.roster.push(leader.to_hex());
     }
@@ -556,7 +613,7 @@ fn held_thread(leader_in_roster: bool) -> Result<HeldThread> {
         .expect("task created")
         .task_ref
         .expect("open task effects");
-    vault.bind_room_thread_task(room, thread, task)?;
+    vault.bind_room_thread_task(host, room, thread, task)?;
     let vault = forbid_holder_override(vault, dir.path());
     Ok(HeldThread {
         dir,
@@ -647,13 +704,15 @@ fn disallowed_final_leader_rejects_with_no_writes() -> Result<()> {
     )?;
     let skills = vault.entities_by_type(ENTITY_TYPE_SKILL)?.len();
     let proof = vault.authenticate_owner(owner, "principal:owner", true, GateDecisionId::now())?;
+    let issuer = host_issuer(&vault);
+    let signer = vault.owner_project_signer(&issuer)?;
     let card = mint_card(message, leader, owner, vec![skill.to_hex()])?.on_thread(room, thread)?;
     let request = mint_request()?;
 
     // The confirmed leader is outside the source roster and is not the holder.
     let rejected = EntityId::now();
     assert!(
-        card.convert_thread(&vault, &request, &proof, rejected, 4)
+        card.convert_thread(&vault, &request, &proof, &signer, rejected, None, 4)
             .is_err()
     );
     assert!(vault.project(rejected)?.is_none(), "no PROJECT");
@@ -684,7 +743,7 @@ fn disallowed_final_leader_rejects_with_no_writes() -> Result<()> {
     source.roster.push(leader.to_hex());
     vault.put_project(source_id, &source, 5)?;
     let id = EntityId::now();
-    let project = card.convert_thread(&vault, &request, &proof, id, 6)?;
+    let project = card.convert_thread(&vault, &request, &proof, &signer, id, None, 6)?;
     assert_eq!(project.leader, leader.to_hex());
     assert_eq!(project.tasks, vec![task.to_hex()]);
     assert_eq!(project.skill_forks.len(), 1);

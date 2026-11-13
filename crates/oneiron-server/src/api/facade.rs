@@ -88,6 +88,8 @@ mod decision_ask_doors;
 mod decision_band_doors;
 pub(super) mod decision_role_asks;
 mod deck_creation_doors;
+// The owner's vault default facet (ARCH-0022 #facets).
+mod default_facet_doors;
 mod device_succession_doors;
 mod disclosure_doors;
 mod dispatch {
@@ -153,6 +155,8 @@ mod model_pack_doors;
 mod model_setting_doors;
 mod model_step_doors;
 mod model_stream_doors;
+// The owner's non-base world claim fraction (ARCH-0004 #world-scope).
+mod non_base_world_claim_fraction_doors;
 mod note_doors;
 mod oauth_authorization_doors;
 mod off_record_doors;
@@ -230,6 +234,8 @@ pub(super) mod tests;
 mod trusted_contact_doors;
 pub(super) mod ui_action_routes;
 mod uncertain_send_doors;
+// The owner's undo-send window (DEC-0006 #undo-send).
+mod undo_send_doors;
 mod usage_repair_doors;
 mod vault_shape_doors;
 mod vector_doors;

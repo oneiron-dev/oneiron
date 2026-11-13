@@ -285,8 +285,10 @@ fn every_read_a_room_turn_makes_runs_inside_the_rosters_scope() -> Result<()> {
 /// were born in (ARCH-0067 §5), and every world check reads them there. A
 /// room whose Scope holds base reality but not that world serves neither,
 /// by id or hydrated, beside a base TASK it does serve; a retrieval filtered
-/// to base reality finds only the base TASK, and one filtered to the world
-/// only the TASK born there.
+/// to base reality finds only the base TASK, one filtered to the world alone
+/// (a world set without base) only the TASK born there, and one filtered to
+/// the named world both, as its default selection is `{base, id}` (ARCH-0004
+/// #world-scope).
 #[test]
 fn a_room_reads_no_task_born_outside_its_worlds() -> Result<()> {
     // The shipped default policy, under which a writer's create mints its
@@ -405,9 +407,16 @@ fn a_room_reads_no_task_born_outside_its_worlds() -> Result<()> {
     };
     assert_eq!(found(crate::pipeline::WorldScope::Base)?, vec![base[0]]);
     assert_eq!(
-        found(crate::pipeline::WorldScope::World(fiction))?,
+        found(crate::pipeline::WorldScope::WorldSet(
+            WorldAuthoritySet::new(false, [fiction])?
+        ))?,
         vec![born[0]]
     );
+    let mut named = found(crate::pipeline::WorldScope::World(fiction))?;
+    named.sort_unstable();
+    let mut base_and_born = vec![base[0], born[0]];
+    base_and_born.sort_unstable();
+    assert_eq!(named, base_and_born);
     Ok(())
 }
 

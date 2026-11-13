@@ -27,6 +27,7 @@ use super::receipt::{
 use super::{CYCLE, FreeTimeKind, ITEM, LONG_RETRY_LINEAGE, RECEIPT};
 use crate::agent_dispatch::AgentDispatcher;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
+use crate::store::model_step_submission::StepBudgetRefusal;
 use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::{ClaimInput, ClaimSource, EdgeActorClass, EntityId, Error, Result, Vault};
 
@@ -519,6 +520,7 @@ fn rest_in_txn(
             proposal: None,
             context_unread: None,
             at,
+            budget_refusal: None,
         },
     )?;
     Ok(())
@@ -557,12 +559,14 @@ pub(crate) fn charge_free_time_item_in_txn(
 /// Ends a free-time item at its attempt's terminal (FIX 4453), in the commit
 /// that ends it: its scope settles into its cycle's root and gives back what
 /// it held, and an item that ended without its receipt takes `outcome`,
-/// never a success. A no-op for any attempt no cycle queued.
+/// never a success. A no-op for any attempt no cycle queued. A try that
+/// failed on a typed `budget_refusal` keeps it on the item's receipt.
 pub(crate) fn end_free_time_item_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     record: &AttemptRecord,
     outcome: FreeTimeItemOutcome,
+    budget_refusal: Option<&StepBudgetRefusal>,
     now: u64,
 ) -> Result<()> {
     if record.kind != crate::dreamer_runner::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND
@@ -584,7 +588,8 @@ pub(crate) fn end_free_time_item_in_txn(
         return Ok(());
     }
     AgentDispatcher::new(vault).settle_child_in_txn(txn, &record.id, now)?;
-    let receipt = FreeTimeItemReceipt::of(&binding, outcome, None, now);
+    let mut receipt = FreeTimeItemReceipt::of(&binding, outcome, None, now);
+    receipt.budget_refusal = budget_refusal.cloned();
     if record_receipt_in_txn(vault, txn, &receipt)? {
         close_cycle_if_done_in_txn(vault, txn, binding.agent, binding.boundary, now)?;
     }

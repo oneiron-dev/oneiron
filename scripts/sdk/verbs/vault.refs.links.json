@@ -5,6 +5,7 @@
   "output": "crate::lens::RecordLinks",
   "call": "memory.record_links(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

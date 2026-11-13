@@ -95,6 +95,29 @@ pub struct Archive {
     pub score: f64,
 }
 
+/// The pins an archive was read under: the observation row it scored, the
+/// strength policy and the scoring config. A claim with no observation row
+/// pins `""`.
+#[derive(Debug, Clone)]
+pub struct ArchivePins {
+    /// The claim's observation row pin, as the page served it.
+    pub observation_pin: String,
+    /// The strength policy pin of the page.
+    pub policy_pin: String,
+    /// The scoring config pin of the page.
+    pub config_pin: String,
+}
+
+/// An archive for a door batch with the pins it was read under: `claim` at
+/// `score`, judged against `pins`.
+#[derive(Debug, Clone)]
+pub struct PinnedArchive {
+    pub local: &'static str,
+    pub claim: Named,
+    pub score: f64,
+    pub pins: ArchivePins,
+}
+
 /// A person's `about` lines for a door batch, written from the facts whose
 /// digest `written_from` names.
 #[derive(Debug, Clone)]
@@ -127,6 +150,7 @@ pub enum Derived {
     About(About),
     Profile(Profile),
     Archive(Archive),
+    PinnedArchive(PinnedArchive),
 }
 
 /// One item's outcome, as the commit answered it or the batch record keeps
@@ -559,6 +583,41 @@ pub fn commit(
     commit_in_attempt(vault, actor, class, run, None, items)
 }
 
+/// The current pins for each archive item of `items`, in batch order:
+/// `None` for every other kind. One read transaction, so the three pins are
+/// one snapshot. A claim with no observation row pins `""`.
+///
+/// # Errors
+///
+/// The vault's.
+fn current_archive_pins(vault: &Vault, items: &[Derived]) -> Result<Vec<Option<ArchivePins>>> {
+    let txn = vault.store.env.read_txn()?;
+    let policy_pin =
+        crate::dreamer_consolidation::strength::strength_policy_pin_in_txn(vault, &txn)?;
+    let config_pin =
+        crate::dreamer_consolidation::selection::selection_config_pin_in_txn(vault, &txn)?;
+    items
+        .iter()
+        .map(|item| -> Result<Option<ArchivePins>> {
+            let Derived::Archive(archive) = item else {
+                return Ok(None);
+            };
+            let observation_pin = match &archive.claim {
+                Named::Stored(id) => {
+                    crate::dreamer_consolidation::strength::observation_pin_in_txn(vault, &txn, id)?
+                        .unwrap_or_default()
+                }
+                Named::Local(_) => String::new(),
+            };
+            Ok(Some(ArchivePins {
+                observation_pin,
+                policy_pin: policy_pin.clone(),
+                config_pin: config_pin.clone(),
+            }))
+        })
+        .collect()
+}
+
 /// [`commit`] in the attempt `attempt`.
 ///
 /// # Errors
@@ -579,11 +638,13 @@ pub fn commit_in_attempt(
         lineage: SourceLineage::of(ClaimSource::Generated),
     };
     let sources = versions_of(vault, stamp.actor, items)?;
+    let auto_pins = current_archive_pins(vault, items)?;
     let batch = DerivationBatch {
         sources,
         items: items
             .iter()
-            .map(|item| -> Result<DerivationItem> {
+            .enumerate()
+            .map(|(index, item)| -> Result<DerivationItem> {
                 Ok(match item {
                     Derived::Claim(claim) => DerivationItem::Claim(DerivedClaim {
                         local: claim.local.to_owned(),
@@ -603,16 +664,40 @@ pub fn commit_in_attempt(
                         new: named(&supersede.new),
                         old: named(&supersede.old),
                     }),
-                    Derived::Archive(archive) => DerivationItem::Archive(DerivedArchive {
-                        local: archive.local.to_owned(),
-                        claim: named(&archive.claim),
+                    Derived::Archive(archive) => {
+                        let pins = auto_pins[index].as_ref().ok_or(
+                            crate::error::Error::InvariantViolation(
+                                "an archive item pins its read",
+                            ),
+                        )?;
+                        DerivationItem::Archive(DerivedArchive {
+                            local: archive.local.to_owned(),
+                            claim: named(&archive.claim),
+                            signals: crate::dreamer_consolidation::selection::StrengthSignals {
+                                type_prior: 0.1,
+                                frequency: 0.1,
+                                recency: 0.1,
+                                diversity: 0.1,
+                            },
+                            score: archive.score,
+                            observation_pin: pins.observation_pin.clone(),
+                            policy_pin: pins.policy_pin.clone(),
+                            config_pin: pins.config_pin.clone(),
+                        })
+                    }
+                    Derived::PinnedArchive(pinned) => DerivationItem::Archive(DerivedArchive {
+                        local: pinned.local.to_owned(),
+                        claim: named(&pinned.claim),
                         signals: crate::dreamer_consolidation::selection::StrengthSignals {
                             type_prior: 0.1,
                             frequency: 0.1,
                             recency: 0.1,
                             diversity: 0.1,
                         },
-                        score: archive.score,
+                        score: pinned.score,
+                        observation_pin: pinned.pins.observation_pin.clone(),
+                        policy_pin: pinned.pins.policy_pin.clone(),
+                        config_pin: pinned.pins.config_pin.clone(),
                     }),
                     Derived::Settle(settle) => DerivationItem::Settle(DerivedSettle {
                         local: settle.local.to_owned(),
@@ -898,6 +983,7 @@ pub fn grant_topology_seal(vault: &Vault, agent: EntityId) -> Result<EntityId> {
         None,
         None,
         BTreeSet::new(),
+        None,
         None,
     )?;
     Ok(minted.standing.id)
@@ -1270,4 +1356,48 @@ pub fn refusal_tokens() -> Vec<&'static str> {
     .into_iter()
     .map(DeriveRefusal::token)
     .collect()
+}
+
+/// One derivation item's receipt, as the gate decision ledger keeps it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeriveItemReceipt {
+    /// The decision's outcome (`approved` or `deny`).
+    pub outcome: String,
+    /// The reason tokens it names.
+    pub reasons: Vec<String>,
+    /// The grant the item was judged by, when one was named.
+    pub grant_ref: Option<String>,
+    /// The policy frontier the item was judged under.
+    pub read_frontier_hash: [u8; 32],
+}
+
+/// The derivation item receipts written for `claim`, oldest first.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn derive_item_receipts(vault: &Vault, claim: &EntityId) -> Result<Vec<DeriveItemReceipt>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(vault
+        .store
+        .gate_decisions_for_claim_in_txn(&txn, claim.as_bytes())?
+        .into_iter()
+        .filter(|record| record.content_kind == crate::derive::DERIVE_ITEM_CONTENT_KIND)
+        .map(|record| DeriveItemReceipt {
+            outcome: record.outcome,
+            reasons: record.reason_codes,
+            grant_ref: record.grant_ref,
+            read_frontier_hash: record.read_frontier_hash,
+        })
+        .collect())
+}
+
+/// The policy frontier now: what the next derivation item is judged under.
+///
+/// # Errors
+///
+/// The vault's, and a policy manifest that does not resolve.
+pub fn derive_frontier(vault: &Vault) -> Result<[u8; 32]> {
+    let txn = vault.store.env.read_txn()?;
+    crate::gate::resolve_policy_manifest(&vault.store, &txn)?.read_frontier_hash()
 }

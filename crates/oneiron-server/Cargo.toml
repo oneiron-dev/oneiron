@@ -257,15 +257,46 @@ name = "it"
 path = "tests/it/main.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
 
+# Its signing fixture vault holds a `MemoryKeystore` (`oneiron-keystore/test-keystore`, forwarded
+# by `oneiron/test-support`): the e-sign dispatch signs with the install's keys.
 [[test]]
 name = "it_esign_public"
 path = "tests/it_esign_public.rs"
-required-features = ["oneiron/test-hooks"]
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
 [[test]]
 name = "managed_mode"
 path = "tests/managed_mode.rs"
 required-features = ["oneiron/test-hooks"]
+
+# These three build their servers on a `MemoryKeystore` (`oneiron-keystore/test-keystore`,
+# forwarded by `oneiron/test-support`), so they take `it`'s rolling-tier features.
+[[test]]
+name = "agent_definition_served_batch"
+path = "tests/agent_definition_served_batch.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
+
+[[test]]
+name = "consent_revoke_grantee_renounce"
+path = "tests/consent_revoke_grantee_renounce.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
+
+[[test]]
+name = "facade_live_run_status"
+path = "tests/facade_live_run_status.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
+
+# The NOTE session bind probe roots its home on a `MemoryKeystore` as well.
+[[test]]
+name = "note_session_bind_reply"
+path = "tests/note_session_bind_reply.rs"
+required-features = ["oneiron/test-support"]
+
+# DEL-2's core HTTP delete door roots its server on a `MemoryKeystore` too.
+[[test]]
+name = "delete_authority_served_door"
+path = "tests/delete_authority_served_door.rs"
+required-features = ["oneiron/test-support"]
 
 [lints]
 workspace = true

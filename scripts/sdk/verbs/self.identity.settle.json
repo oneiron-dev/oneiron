@@ -5,6 +5,7 @@
   "output": "crate::dreamer_runner::maintenance::identity::IdentityActNow",
   "call": "memory.identity_act_now(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

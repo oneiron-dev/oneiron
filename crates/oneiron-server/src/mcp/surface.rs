@@ -492,15 +492,37 @@ impl McpRegisteredSurface {
 pub fn try_registered_surface(
     mode: McpSurfaceMode,
 ) -> Result<&'static McpRegisteredSurface, McpSurfaceConstructionError> {
-    static PRIMARY: OnceLock<Result<McpRegisteredSurface, McpSurfaceConstructionError>> =
-        OnceLock::new();
-    static TOOL_FIRST: OnceLock<Result<McpRegisteredSurface, McpSurfaceConstructionError>> =
-        OnceLock::new();
-    let cell = match mode {
-        McpSurfaceMode::Primary => &PRIMARY,
-        McpSurfaceMode::ToolFirst => &TOOL_FIRST,
+    try_registered_surface_with_execution(mode, false)
+}
+
+/// The process's registered endpoint for `mode`, with the verified code
+/// host's tools when `available`, registered once per process. The listing is
+/// a function of these two inputs and the static verb tables alone, so no
+/// request path pays the registration again: each `tools/call` reads the
+/// surface twice and each `tools/list` once, and one tool-first registration
+/// builds a schema for every exported verb (FIX
+/// SLOW-FACADE-CALLS-COORDINATION-08: 742-815 ms per registration in the E2E
+/// build, 1437 tools).
+///
+/// # Errors
+///
+/// See [`generated_verb_tools`].
+pub fn try_registered_surface_with_execution(
+    mode: McpSurfaceMode,
+    available: bool,
+) -> Result<&'static McpRegisteredSurface, McpSurfaceConstructionError> {
+    type Registration = OnceLock<Result<McpRegisteredSurface, McpSurfaceConstructionError>>;
+    static PRIMARY: Registration = OnceLock::new();
+    static PRIMARY_EXECUTION: Registration = OnceLock::new();
+    static TOOL_FIRST: Registration = OnceLock::new();
+    static TOOL_FIRST_EXECUTION: Registration = OnceLock::new();
+    let cell = match (mode, available) {
+        (McpSurfaceMode::Primary, false) => &PRIMARY,
+        (McpSurfaceMode::Primary, true) => &PRIMARY_EXECUTION,
+        (McpSurfaceMode::ToolFirst, false) => &TOOL_FIRST,
+        (McpSurfaceMode::ToolFirst, true) => &TOOL_FIRST_EXECUTION,
     };
-    cell.get_or_init(|| McpRegisteredSurface::register(mode))
+    cell.get_or_init(|| McpRegisteredSurface::register_with_execution(mode, available))
         .as_ref()
         .map_err(|error| *error)
 }

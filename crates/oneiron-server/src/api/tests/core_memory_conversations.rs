@@ -1,6 +1,7 @@
 //! Batch/query/hydrate smoke, memory timeline + verbs, conversations/turns, platform announcements.
 
 use super::*;
+use oneiron::core_write::shape::{ANNOUNCEMENT_STATUS_CORRECTED, ANNOUNCEMENT_STATUS_RETRACTED};
 
 #[tokio::test]
 async fn v1_core_batch_query_context_pack_and_hydrate_routes_are_live() {
@@ -499,7 +500,11 @@ async fn v1_core_hydrate_distinguishes_malformed_not_found_and_deleted() {
     );
     assert!(deleted_body.get("item").is_none());
 
-    let too_many_refs = vec![empty_short_ref.clone(); CORE_MAX_BATCH_ENTITIES + 1];
+    // Ruled refusal removed (Rule 5, counted not capped: #4034 dropped the
+    // 256-ref refusal; #4211, FIX 11125, reads a longer batch frame by frame):
+    // a batch one past the old bound is served, every ref answered.
+    let too_many_refs =
+        vec![empty_short_ref.clone(); crate::api::core::CORE_HYDRATE_FRAME_REFS + 1];
     let (too_many_status, too_many_body) = route_json_auth(
         server.clone(),
         json_request(
@@ -509,8 +514,15 @@ async fn v1_core_hydrate_distinguishes_malformed_not_found_and_deleted() {
         ),
     )
     .await;
-    assert_eq!(too_many_status, StatusCode::BAD_REQUEST);
-    assert_error_envelope(&too_many_body, "BAD_REQUEST");
+    assert_eq!(too_many_status, StatusCode::OK, "{too_many_body:#}");
+    let too_many_results = too_many_body["results"].as_array().expect("batch results");
+    assert_eq!(too_many_results.len(), too_many_refs.len());
+    assert!(
+        too_many_results
+            .iter()
+            .all(|result| result["outcome"] == Value::from("live")),
+        "{too_many_body:#}"
+    );
 
     let (batch_status, batch_body) = route_json_auth(
         server,
@@ -1232,8 +1244,12 @@ async fn conversation_list_previews_witness_message_content_not_turn_speaker() {
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
             occurred_at: at,
+            assertions: Default::default(),
+            thread_audience: None,
         })
         .unwrap();
     let bearer = owner_reader_bearer(&server);
