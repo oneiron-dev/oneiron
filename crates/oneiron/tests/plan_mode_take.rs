@@ -13,7 +13,9 @@
 //! the owner's tray. On a tree whose settlement does not judge the plan, the
 //! take lands its TASK and that test fails. `an_agents_take_lands_the_run_of
 //! _an_approved_plan` holds that the same take lands while the plan stays
-//! approved.
+//! approved. In `a_take_for_an_agent_made_required_lands_no_unplanned_run`
+//! the post pins no plan and the owner sets the planner's plan mode to
+//! `required` while the rung is asked; the take's writer lands no run.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test plan_mode_take`.
 #![cfg(oneiron_test_support)]
@@ -24,6 +26,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use oneiron::agent_def::AgentPlanMode;
 use oneiron::authority::{ActSurface, AgentTier, HostSlipIssuer, MachineRole};
 use oneiron::claim::base_world_id;
 use oneiron::consent::AuthenticatedOwner;
@@ -47,7 +50,7 @@ use oneiron::test_doors::authority_view_grant::bind_agent;
 use oneiron::test_doors::derive_verbs::define_agent;
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
-use serde_json::json;
+use serde_json::{Value, json};
 
 /// The reason a refused take leaves on its proposal.
 const TAKE_REFUSED: &str = "tasks.take.refused";
@@ -188,6 +191,15 @@ fn state(fixture: &Fixture, plan: EntityId) -> PlanDocState {
 /// A TASK for the planner's definition whose brief pins plan-doc `plan` at
 /// `revision` (64 hex) as its read-first context.
 fn plan_run(fixture: &Fixture, plan: EntityId, revision: &str) -> TaskPost {
+    run(
+        fixture,
+        &json!([{"target": plan.to_hex(), "digest": revision}]),
+    )
+}
+
+/// A TASK for the planner's definition whose brief's read-first context is
+/// `read_first`.
+fn run(fixture: &Fixture, read_first: &Value) -> TaskPost {
     serde_json::from_value(json!({
         "intent_key": "plan-take/tide",
         "assignee": {"agent_def": {"agent_def_ref": fixture.planner.to_hex()}},
@@ -196,7 +208,7 @@ fn plan_run(fixture: &Fixture, plan: EntityId, revision: &str) -> TaskPost {
             "type_ref": {"node_id": EntityId::now().to_hex(), "tree_version": 1},
             "objective": "Tidy the tide log",
             "intent": {"need": "Tidy the tide log", "care": "light"},
-            "context": {"read_first": [{"target": plan.to_hex(), "digest": revision}]},
+            "context": {"read_first": read_first},
             "success": {
                 "question": "Is the tide log tidy?",
                 "criteria": {"yes_if_all": [{"text": "The duplicate dawn readings are merged."}]},
@@ -394,22 +406,63 @@ fn a_take_after_the_owner_rejects_the_plan_lands_no_run() {
         Some("yes"),
         "{receipt:?}"
     );
-    assert!(
-        landed_task(&receipt).is_none(),
-        "a take lands no TASK from a plan the owner rejected: {receipt:?}"
+    assert_take_refused(
+        &receipt,
+        "a take lands no TASK from a plan the owner rejected",
     );
+}
+
+#[test]
+fn a_take_for_an_agent_made_required_lands_no_unplanned_run() {
+    let fixture = fixture();
+    bind_planner(&fixture);
+    let (vault, owner, planner) = (&fixture.vault, fixture.owner, fixture.planner);
+    let rung = TakeRung {
+        interject: Some(Box::new(move || {
+            vault
+                .set_agent_plan_mode_as(
+                    &owner_proof(vault, owner),
+                    planner,
+                    AgentPlanMode::Optional,
+                    AgentPlanMode::Required,
+                )
+                .expect("the owner makes the planner's plan mode required while it is asked");
+        })),
+        asked: AtomicUsize::new(0),
+    };
+    let receipt = post_with_take(&fixture, &rung, run(&fixture, &json!([])));
+    assert_eq!(
+        rung.asked.load(Ordering::SeqCst),
+        1,
+        "the planner is asked once"
+    );
+    assert_eq!(
+        lifecycle_field(&receipt, "take"),
+        Some("yes"),
+        "{receipt:?}"
+    );
+    assert_take_refused(
+        &receipt,
+        "a take lands no unplanned run of an agent whose plan mode turned required",
+    );
+}
+
+/// Holds that `receipt` is a take refused in its writer by plan mode, not by
+/// L02's rule: no TASK landed and the proposal stays in the owner's tray.
+fn assert_take_refused(receipt: &TaskCallReceipt, why: &str) {
+    assert!(landed_task(receipt).is_none(), "{why}: {receipt:?}");
     match &receipt.outcome {
         TaskOutcome::Proposed { reason_codes, .. } => assert!(
             reason_codes.iter().any(|code| code == TAKE_REFUSED),
-            "the take is refused and the proposal stays in the owner's tray: {receipt:?}"
+            "{why}: the take is refused and the proposal stays in the owner's tray: {receipt:?}"
         ),
-        other => panic!("expected the parked proposal, got {other:?}"),
+        other => panic!("{why}: expected the parked proposal, got {other:?}"),
     }
-    let refused = lifecycle_field(&receipt, "take_refused");
-    assert!(refused.is_some(), "{receipt:?}");
+    let refused = lifecycle_field(receipt, "take_refused");
+    assert!(refused.is_some(), "{why}: {receipt:?}");
     assert_ne!(
         refused,
         Some(MEMORY_CODE_FORBIDDEN),
-        "the plan refuses the take, not L02's rule: {receipt:?}"
+        "{why}: plan mode refuses the take, not L02's rule: {receipt:?}"
     );
 }
