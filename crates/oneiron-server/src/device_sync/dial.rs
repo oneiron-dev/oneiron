@@ -7,13 +7,12 @@ use crate::server::SyncServer;
 use super::enrolment::{DeviceEnrolment, EnrolmentFiles, EnrolmentSource};
 
 /// What this machine dials: the home `[device_sync]` names by hand, else the
-/// one it enrolled with, and the worlds the section follows.
+/// one it enrolled with.
 #[cfg_attr(not(feature = "mesh"), allow(dead_code))]
 pub(super) struct Dial {
     pub(super) home: oneiron::EntityId,
     pub(super) url: String,
     pub(super) credential_file: std::path::PathBuf,
-    pub(super) worlds: Vec<oneiron::EntityId>,
     pub(super) home_node: Option<u64>,
     pub(super) pin: Option<oneiron::authority::AuthorityCheckpointPin>,
     /// Enrolled by `oneiron device enrol`: the home holds this machine's
@@ -47,10 +46,6 @@ impl Dial {
             Ok(Some(files)) => files.read()?.map(|record| (files, record)),
             Ok(None) | Err(_) => None,
         };
-        let worlds = section
-            .map(DeviceSyncConfig::followed_worlds)
-            .transpose()?
-            .unwrap_or_default();
         let node = section.and_then(|section| section.home_node_id);
         let (always_on, primary) = section.map_or((false, false), |section| {
             (section.always_on, section.primary)
@@ -71,7 +66,6 @@ impl Dial {
                 home: named.machine,
                 url: named.url.to_owned(),
                 credential_file: named.credential_file.to_owned(),
-                worlds,
                 home_node: node,
                 pin,
                 enrolled: false,
@@ -92,7 +86,6 @@ impl Dial {
             home: crate::config::device_sync::parse_machine(&record.home_machine)?,
             url: record.home_url,
             credential_file: files.credential,
-            worlds,
             home_node: Some(node.unwrap_or(record.home_node_id)),
             pin: record.authority_checkpoint_pin,
             enrolled: true,
