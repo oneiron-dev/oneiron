@@ -209,6 +209,11 @@ impl DecisionProvider for RuleDecisionProvider {
         self.pin.clone()
     }
 
+    /// A table lookup in this process: no call leaves the device.
+    fn runs_on_device(&self) -> bool {
+        true
+    }
+
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         Ok(self
             .rows

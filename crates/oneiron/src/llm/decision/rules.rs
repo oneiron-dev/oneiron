@@ -221,6 +221,12 @@ impl DecisionProvider for HostRuleProvider {
         self.pin.clone()
     }
 
+    /// The vault's own rule rows, read in this process: no call leaves the
+    /// device.
+    fn runs_on_device(&self) -> bool {
+        true
+    }
+
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         Ok(match self.standing(call)? {
             Some(row) => row.decision(),

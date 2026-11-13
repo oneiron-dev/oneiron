@@ -115,7 +115,11 @@ impl SyncServer {
                 models.raw_budget_units,
                 tokio::runtime::Handle::current(),
             )
-            .with_auto_check(models.decisions.auto_check.as_deref(), principal)
+            .with_auto_check(
+                models.decisions.auto_check.as_deref(),
+                principal,
+                &self.vault,
+            )
             .with_image_pick(models.decisions.image_pick.as_ref())
             .with_booking_parse(models.decisions.booking_parse.clone())
             .with_connector_slate(models.decisions.connector_slate.as_ref())

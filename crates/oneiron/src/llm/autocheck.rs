@@ -10,7 +10,8 @@ use serde_json::{Value as JsonValue, json};
 use super::ModelId;
 use super::decision::catalogue::AUTO_CHECK;
 use super::decision::{
-    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, HeldLadder, Reversibility,
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder, HeldLadder,
+    Reversibility,
 };
 use super::manifest::{CalibratedVerdict, ConfidenceBand, VerdictBasis};
 use crate::claim::ClaimSource;
@@ -85,16 +86,56 @@ impl AutoCheckWorldHold for crate::Vault {
     }
 }
 
+/// The rungs one check of a candidate runs on.
+struct CheckRungs<'a> {
+    ladder: DecisionLadder<'a>,
+    /// Whether the candidate's world keeps the check on this device: `ladder`
+    /// then holds only the rungs whose provider runs on this device, and no
+    /// notes model writes the hold's reasons.
+    kept_on_device: bool,
+}
+
 impl AutoCheckDecisions {
+    /// The rungs this check of `candidate` runs on: every rung, or, when
+    /// `world_hold` keeps the candidate's world on this device, only
+    /// those whose provider runs on this device
+    /// ([`DecisionLadder::on_device_only`]). A hold that cannot be read keeps
+    /// the check on this device too.
+    fn rungs(&self, candidate: &AutoCheckCandidate<'_>) -> CheckRungs<'_> {
+        let ladder = self.ladder.ladder();
+        let kept_on_device = self
+            .world_hold
+            .as_ref()
+            .is_some_and(|hold| hold.keeps_on_device(candidate.world).unwrap_or(true));
+        CheckRungs {
+            ladder: if kept_on_device {
+                ladder.on_device_only()
+            } else {
+                ladder
+            },
+            kept_on_device,
+        }
+    }
+
     /// An error, an abstention or a hold with no reasons is
     /// [`AutoCheckOutcome::Unavailable`], never a third label. `due` is when
     /// the caller stops waiting.
-    fn check(&self, candidate: &AutoCheckCandidate<'_>, due: Instant) -> AutoCheckOutcome {
-        self.decide(candidate, due)
+    fn check(
+        &self,
+        candidate: &AutoCheckCandidate<'_>,
+        rungs: &CheckRungs<'_>,
+        due: Instant,
+    ) -> AutoCheckOutcome {
+        self.decide(candidate, rungs, due)
             .unwrap_or(AutoCheckOutcome::Unavailable)
     }
 
-    fn decide(&self, candidate: &AutoCheckCandidate<'_>, due: Instant) -> Result<AutoCheckOutcome> {
+    fn decide(
+        &self,
+        candidate: &AutoCheckCandidate<'_>,
+        rungs: &CheckRungs<'_>,
+        due: Instant,
+    ) -> Result<AutoCheckOutcome> {
         let question = AUTO_CHECK.question(
             &[],
             self.wording.clone(),
@@ -102,7 +143,7 @@ impl AutoCheckDecisions {
                 options: vec![ALLOW.to_owned(), HOLD.to_owned()],
             },
         )?;
-        let decision = self.ladder.ladder().run(
+        let decision = rungs.ladder.run(
             &question,
             self.principal,
             &[],
@@ -126,12 +167,27 @@ impl AutoCheckDecisions {
         }
         Ok(if allow {
             AutoCheckOutcome::Allow
+        } else if rungs.kept_on_device {
+            AutoCheckOutcome::Hold {
+                reasons: kept_on_device_hold_reasons(candidate),
+            }
         } else {
             AutoCheckOutcome::Hold {
                 reasons: self.notes.hold_reasons(candidate, due)?,
             }
         })
     }
+}
+
+/// A kept candidate's hold reasons, written from the decision itself: no
+/// notes model reads a candidate whose world stays on this device, as no
+/// rung off it does (DEC-0005 fix 6).
+fn kept_on_device_hold_reasons(candidate: &AutoCheckCandidate<'_>) -> Vec<String> {
+    vec![format!(
+        "a check on this device held this {} write from a {} source",
+        candidate.predicate,
+        candidate.source.as_str()
+    )]
 }
 
 /// The answer as `model`'s calibrated verdict, in the band the verdict table
