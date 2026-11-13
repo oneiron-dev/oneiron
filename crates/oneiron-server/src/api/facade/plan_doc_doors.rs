@@ -10,9 +10,13 @@ use super::shared_act_doors::as_person_naming;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
-/// An answered plan-doc names its NOTE.
+/// An answered plan-doc names its NOTE, and the run an approval landed.
 fn settled_plan_rows(settled: &PlanDocSettlementView) -> Option<Vec<EntityId>> {
-    Some(vec![settled.plan_ref])
+    Some(
+        std::iter::once(settled.plan_ref)
+            .chain(settled.run_task_ref)
+            .collect(),
+    )
 }
 
 pub(crate) async fn vault_plans_approve(
