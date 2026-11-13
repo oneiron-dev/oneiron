@@ -16,9 +16,9 @@
 //! - `vault.esign.signing.act`, `vault.esign.signing.pdf`,
 //!   `vault.esign.signing.image`, `vault.esign.signing.signature`: the
 //!   recipient ceremony, typed twins of the public `/sign/*` doors. The
-//!   capability in the request is the authority (the public doors carry it
-//!   in the `x-oneiron-esign-capability` header, these rows in their
-//!   input); the bound caller only classes the act, and a narrowed
+//!   capability in the request is the authority (the public doors carry the
+//!   signing session it opened, ARCH-0064a [SGN-03]; these rows carry it in
+//!   their input); the bound caller only classes the act, and a narrowed
 //!   credential's lane bounds it to the documents that lane reaches.
 //! - `vault.esign.seal.get`: the seal task's receipts for one document
 //!   and its sealed manifest once sealing lands.
@@ -169,8 +169,8 @@ pub struct EsignVoidRequest {
 
 /// One recipient ceremony act (`vault.esign.signing.act`): the signing
 /// link's capability and the act it asks for. The public `POST /sign/action`
-/// door takes the act alone; its capability rides in the
-/// `x-oneiron-esign-capability` header, admitted before the body is read.
+/// door takes the act alone; its capability is the signing session's,
+/// admitted before the body is read.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EsignSigningRequest {
@@ -184,8 +184,8 @@ pub struct EsignSigningRequest {
 
 /// One ceremony document item to download (`vault.esign.signing.pdf`):
 /// the pinned original while signing, the sealed output after sealing.
-/// The public `POST /sign/pdf` door takes the item alone, under the
-/// `x-oneiron-esign-capability` header.
+/// The public `POST /sign/pdf` door takes the item alone, under the signing
+/// session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EsignSigningPdfRequest {
@@ -207,7 +207,7 @@ pub struct EsignSigningPdfView {
 /// One signature image to upload for a signature field
 /// (`vault.esign.signing.image`), bound to the capability's recipient.
 /// The public `POST /sign/image` door takes the raw PNG or JPEG bytes as
-/// its body, under the `x-oneiron-esign-capability` header.
+/// its body, under the signing session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EsignSigningImageRequest {
@@ -226,8 +226,7 @@ pub struct EsignSigningImageView {
 
 /// One stored signature image to read back (`vault.esign.signing.signature`),
 /// under the capability that uploaded it. The public `POST /sign/signature`
-/// door takes the image ref alone, under the `x-oneiron-esign-capability`
-/// header.
+/// door takes the image ref alone, under the signing session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EsignSigningSignatureRequest {

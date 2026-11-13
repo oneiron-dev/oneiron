@@ -264,6 +264,12 @@ name = "it_esign_public"
 path = "tests/it_esign_public.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
+# The signing session (ARCH-0064a [SGN-03]) over it_esign_public's fixture.
+[[test]]
+name = "esign_signing_session"
+path = "tests/esign_signing_session.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
 [[test]]
 name = "managed_mode"
 path = "tests/managed_mode.rs"

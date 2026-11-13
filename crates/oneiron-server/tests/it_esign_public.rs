@@ -343,6 +343,62 @@ fn sent_request() -> (
     (dir, server, token, field, artifact)
 }
 
+/// Opens a signing session for `token` the way the page does (ARCH-0064a
+/// [SGN-03]): the exchange door, then the session form. Answers the
+/// `Cookie` value every ceremony POST then carries.
+async fn open_signing_session(app: &axum::Router, token: &str) -> String {
+    let exchange = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/sign/exchange")
+                .header("x-oneiron-esign-capability", token)
+                .body(Body::empty())
+                .expect("build exchange request"),
+        )
+        .await
+        .expect("serve exchange request");
+    assert_eq!(exchange.status(), StatusCode::OK);
+    let exchange: serde_json::Value = serde_json::from_slice(
+        &to_bytes(exchange.into_body(), 4096)
+            .await
+            .expect("read exchange body"),
+    )
+    .expect("decode exchange body");
+    let opened = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/sign/session")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from(format!(
+                    "exchange={}",
+                    exchange["exchange"].as_str().expect("exchange value")
+                )))
+                .expect("build session request"),
+        )
+        .await
+        .expect("serve session request");
+    assert_eq!(opened.status(), StatusCode::SEE_OTHER);
+    session_pair(
+        opened.headers()[header::SET_COOKIE]
+            .to_str()
+            .expect("read session cookie"),
+    )
+}
+
+/// The `name=value` pair of a `Set-Cookie` value.
+fn session_pair(set_cookie: &str) -> String {
+    set_cookie
+        .split(';')
+        .next()
+        .expect("cookie pair")
+        .trim()
+        .to_owned()
+}
+
 #[tokio::test]
 async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() {
     use oneiron_server::managed::{BoundServeListener, ManagedShutdown, ServeListener};
@@ -372,6 +428,7 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
     let served = tokio::spawn(async move { listener.serve_until(app, signal).await });
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("build TCP signing client");
     let url = format!("http://{address}");
@@ -381,10 +438,36 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
         .await
         .expect("fetch public signing page");
     assert_eq!(page.status(), StatusCode::OK);
+    // The page trades the fragment once, then runs on its session cookie.
+    let exchange: serde_json::Value = client
+        .post(format!("{url}/sign/exchange"))
+        .header("x-oneiron-esign-capability", token.as_str())
+        .send()
+        .await
+        .expect("trade the link for an exchange over TCP")
+        .json()
+        .await
+        .expect("decode TCP exchange");
+    let opened = client
+        .post(format!("{url}/sign/session"))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(format!(
+            "exchange={}",
+            exchange["exchange"].as_str().expect("exchange value")
+        ))
+        .send()
+        .await
+        .expect("open the signing session over TCP");
+    assert_eq!(opened.status(), StatusCode::SEE_OTHER);
+    let cookie = session_pair(
+        opened.headers()[header::SET_COOKIE]
+            .to_str()
+            .expect("read TCP session cookie"),
+    );
     let load = client
         .post(format!("{url}/sign/action"))
         .header("x-forwarded-for", "203.0.113.9")
-        .header("x-oneiron-esign-capability", token.as_str())
+        .header(header::COOKIE, cookie.as_str())
         .json(&serde_json::json!({"action":{"action":"load"}}))
         .send()
         .await
@@ -398,7 +481,7 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
     );
     let saved = client
         .post(format!("{url}/sign/action"))
-        .header("x-oneiron-esign-capability", token.as_str())
+        .header(header::COOKIE, cookie.as_str())
         .json(&serde_json::json!({"action":{
             "action":"save_field", "field":field, "value":{"kind":"text","value":"Accepted"}
         }}))
@@ -413,7 +496,7 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
     );
     let preview = client
         .post(format!("{url}/sign/preview"))
-        .header("x-oneiron-esign-capability", token.as_str())
+        .header(header::COOKIE, cookie.as_str())
         .json(&serde_json::json!({"item":0}))
         .send()
         .await
@@ -431,7 +514,7 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
     );
     let pdf = client
         .post(format!("{url}/sign/pdf"))
-        .header("x-oneiron-esign-capability", token.as_str())
+        .header(header::COOKIE, cookie.as_str())
         .json(&serde_json::json!({"item":0}))
         .send()
         .await
@@ -462,8 +545,8 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
     assert_eq!(targets.first().map(String::as_str), Some("/sign"));
     assert_eq!(
         targets.len(),
-        5,
-        "page, load, save, preview, pdf: {targets:?}"
+        7,
+        "page, exchange, session, load, save, preview, pdf: {targets:?}"
     );
     assert!(
         targets.iter().all(|target| !target.contains(&token)),
@@ -476,24 +559,22 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
         .expect("finish TCP signing server");
 }
 
-/// One raw HTTP/1.1 exchange over the signing Unix socket; `capability` rides
-/// the `x-oneiron-esign-capability` header when given.
+/// One raw HTTP/1.1 exchange over the signing Unix socket; `header` is one
+/// more header line (`name: value`) when given.
 async fn over_unix(
     path: &std::path::Path,
     method: &str,
     target: &str,
     body: &str,
-    capability: Option<&str>,
+    header: Option<&str>,
 ) -> Vec<u8> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut stream = tokio::net::UnixStream::connect(path)
         .await
         .expect("connect to signing Unix socket");
-    let capability_header = capability
-        .map(|value| format!("x-oneiron-esign-capability: {value}\r\n"))
-        .unwrap_or_default();
+    let extra_header = header.map(|line| format!("{line}\r\n")).unwrap_or_default();
     let request = format!(
-        "{method} {target} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n{capability_header}X-Forwarded-For: 203.0.113.9\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "{method} {target} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n{extra_header}X-Forwarded-For: 203.0.113.9\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
     stream
@@ -541,12 +622,45 @@ async fn real_managed_unix_listener_uses_kernel_peer_not_forwarded_caller_ip() {
     let served = tokio::spawn(async move { listener.serve_until(app, signal).await });
     let page = over_unix(&socket, "GET", "/sign", "", None).await;
     assert!(!http_body(&page).is_empty());
+    let capability = format!("x-oneiron-esign-capability: {token}");
+    let exchange = over_unix(
+        &socket,
+        "POST",
+        "/sign/exchange",
+        "",
+        Some(capability.as_str()),
+    )
+    .await;
+    let exchange: serde_json::Value =
+        serde_json::from_slice(http_body(&exchange)).expect("decode Unix exchange");
+    let opened = over_unix(
+        &socket,
+        "POST",
+        "/sign/session",
+        &format!(
+            "exchange={}",
+            exchange["exchange"].as_str().expect("exchange value")
+        ),
+        None,
+    )
+    .await;
+    let opened = String::from_utf8_lossy(&opened).into_owned();
+    assert!(opened.starts_with("HTTP/1.1 303"), "{opened}");
+    let set_cookie = opened
+        .lines()
+        .find_map(|line| {
+            line.split_once(':')
+                .filter(|(name, _)| name.eq_ignore_ascii_case("set-cookie"))
+                .map(|(_, value)| value.trim().to_owned())
+        })
+        .expect("Unix session cookie");
+    let cookie = format!("cookie: {}", session_pair(&set_cookie));
     let load = over_unix(
         &socket,
         "POST",
         "/sign/action",
         &serde_json::json!({"action":{"action":"load"}}).to_string(),
-        Some(token.as_str()),
+        Some(cookie.as_str()),
     )
     .await;
     let load: serde_json::Value =
@@ -560,7 +674,7 @@ async fn real_managed_unix_listener_uses_kernel_peer_not_forwarded_caller_ip() {
             "action":"save_field", "field":field, "value":{"kind":"text","value":"Accepted"}
         }})
         .to_string(),
-        Some(token.as_str()),
+        Some(cookie.as_str()),
     )
     .await;
     let save: serde_json::Value =
@@ -571,7 +685,7 @@ async fn real_managed_unix_listener_uses_kernel_peer_not_forwarded_caller_ip() {
         "POST",
         "/sign/preview",
         &serde_json::json!({"item":0}).to_string(),
-        Some(token.as_str()),
+        Some(cookie.as_str()),
     )
     .await;
     let preview: serde_json::Value =
@@ -588,7 +702,7 @@ async fn real_managed_unix_listener_uses_kernel_peer_not_forwarded_caller_ip() {
         "POST",
         "/sign/pdf",
         &serde_json::json!({"item":0}).to_string(),
-        Some(token.as_str()),
+        Some(cookie.as_str()),
     )
     .await;
     assert_eq!(
@@ -720,10 +834,11 @@ async fn hosted_burst_keeps_a_live_ceremony_writable_and_raises_a_typed_check() 
         .await
         .expect("page response");
     assert_eq!(page.status(), StatusCode::OK);
+    let cookie = open_signing_session(&app, &token).await;
 
     let post = |action: serde_json::Value| {
         let app = app.clone();
-        let token = token.clone();
+        let cookie = cookie.clone();
         async move {
             let response = app
                 .oneshot(
@@ -736,7 +851,7 @@ async fn hosted_burst_keeps_a_live_ceremony_writable_and_raises_a_typed_check() 
                                 .expect("loopback peer"),
                         ))
                         .header(header::CONTENT_TYPE, "application/json")
-                        .header("x-oneiron-esign-capability", token.as_str())
+                        .header(header::COOKIE, cookie.as_str())
                         .body(Body::from(serde_json::json!({"action":action}).to_string()))
                         .expect("signing action request"),
                 )
