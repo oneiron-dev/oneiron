@@ -731,6 +731,17 @@ fn reverse_rematerialize_scan(
         }
     }
 
+    // One prune for the pass's evictions, the window pinned history-free
+    // first (fix list row 17211). It runs after the last mirror that writes a
+    // binding and before the NOTE refresh, which commits the whole pending
+    // batch when a NOTE changes: the policies no binding reaches go in the
+    // first commit that carries the evictions. The steps after it write no
+    // binding.
+    if evicted {
+        wrote_any |=
+            crate::sync::source_audiences::prune_unreached_policies(vault, doc, Some(window_key))?;
+    }
+
     // NOTE text, mutable workflows and head moves change even when the
     // entity carrier already exists. Refresh through the same export gates.
     if window_key.world().is_none() {
@@ -745,14 +756,6 @@ fn reverse_rematerialize_scan(
     if window_key.world().is_none() {
         wrote_any |=
             crate::sync::turn_programs::mirror_turn_program_armings(vault, doc, window_key)?;
-    }
-
-    // One prune for the pass's evictions, after its last mirror: the
-    // policies no binding reaches now go in its commit, the window pinned
-    // history-free first (fix list row 17211).
-    if evicted {
-        wrote_any |=
-            crate::sync::source_audiences::prune_unreached_policies(vault, doc, Some(window_key))?;
     }
 
     // Commit all bridge writes with origin tag
