@@ -382,9 +382,13 @@ impl Memory<'_> {
             let body = PinnedBody::read_in(vault, &txn, input.room)?;
             pin_writer_in(vault, &txn, input.room, caller, &body)?;
         }
+        // The preflight reader (FIX 22102): the pin's own lane, scope and
+        // admission, its grants judged at the snapshot's authority instant,
+        // so the preview persists no grant time. The pin reads to serve.
         if self
             .for_room_turn(input.room)?
-            .get_entity(&input.target.to_hex())?
+            .memory()
+            .peek_entity(&input.target.to_hex())?
             .value
             .is_none()
         {
