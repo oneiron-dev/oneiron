@@ -20,11 +20,11 @@ use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
-    self, FilesRescanAnswer, FilesSourceAttachAnswer, FilesSourceAttachRequest,
+    self, FilesDeviceAnswer, FilesRescanAnswer, FilesSourceAttachAnswer, FilesSourceAttachRequest,
     FilesSourceConvertRequest, FilesSourceDetachAnswer, FilesSourceDetachRequest,
     FilesSourceExcludeAnswer, FilesSourceExcludeRequest, FilesSourceFiles, FilesSourceFilesRequest,
     FilesSourceList, FilesSourceListRequest, FilesSourceRescanRequest, FilesSourceSearchAnswer,
-    FilesSourceSearchRequest,
+    FilesSourceSearchRequest, FilesUnreachedDevice, FilesUnreachedWhy,
 };
 
 use super::FacadeApiError;
@@ -269,8 +269,11 @@ pub(crate) async fn vault_files_sources_files(
 /// text matches in meaning. The meaning tier is the owner's own recall of
 /// the Files world through this server's recall pipeline, the one
 /// `vault.retrieval.recall` runs, so the query is embedded where this host
-/// embeds; a refused recall leaves the name tier's answer standing. It lists
-/// the Files world and each hit's note.
+/// embeds; a refused recall leaves the name tier's answer standing. With
+/// `devices`, it asks the owner's other devices over this install's mesh
+/// endpoint (ARCH-0027 #files-world: cross-device search) and merges their
+/// answers with its own; with no endpoint, each is listed unreached. It lists
+/// the Files world and each of this install's hits' notes.
 pub(crate) async fn vault_files_sources_search(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -305,10 +308,15 @@ pub(crate) async fn vault_files_sources_search(
         ),
         None => None,
     };
-    let server = Arc::clone(server);
+    let asked = input.clone();
+    let searching = Arc::clone(server);
     let searched = super::clock_ingress::run_blocking(
-        move || -> MemoryResult<(FilesSourceSearchAnswer, Vec<EntityId>)> {
-            let vault = server.vault();
+        move || -> MemoryResult<(FilesSourceSearchAnswer, Vec<EntityId>, Vec<EntityId>)> {
+            let vault = searching.vault();
+            let machines = match &input.devices {
+                Some(devices) => sdk::files_search_devices(vault, devices)?,
+                None => Vec::new(),
+            };
             let answer = sdk::search_files_sources_with(vault, &owner, input, meaning)?;
             let rows = vault
                 .files_world()?
@@ -316,13 +324,54 @@ pub(crate) async fn vault_files_sources_search(
                 .into_iter()
                 .chain(answer.hits.iter().filter_map(|hit| hit.note))
                 .collect::<Vec<_>>();
-            Ok((answer, rows))
+            Ok((answer, rows, machines))
         },
     )
     .await;
-    match searched {
-        Ok(Ok((answer, rows))) => (Ok(answer), rows),
-        Ok(Err(refusal)) => (Err(refusal), Vec::new()),
-        Err(_) => (Err(internal(VERB)), Vec::new()),
+    let (answer, rows, machines) = match searched {
+        Ok(Ok(searched)) => searched,
+        Ok(Err(refusal)) => return (Err(refusal), Vec::new()),
+        Err(_) => return (Err(internal(VERB)), Vec::new()),
+    };
+    if asked.devices.is_none() {
+        return (Ok(answer), rows);
     }
+    let (answered, unreached) = ask_other_devices(server, machines, &asked).await;
+    (
+        Ok(sdk::merge_files_search_answers(
+            asked.limit,
+            answer,
+            answered,
+            unreached,
+        )),
+        rows,
+    )
+}
+
+/// The answers of the owner's `machines` to `request`, asked over this
+/// install's mesh endpoint under the search's one deadline. With no endpoint
+/// (the mesh listener is off, or this build has no mesh), each machine is
+/// listed unreached.
+#[cfg_attr(not(feature = "mesh"), allow(unused_variables))]
+async fn ask_other_devices(
+    server: &Arc<SyncServer>,
+    machines: Vec<EntityId>,
+    request: &FilesSourceSearchRequest,
+) -> (Vec<FilesDeviceAnswer>, Vec<FilesUnreachedDevice>) {
+    #[cfg(feature = "mesh")]
+    if let Some(transport) = server.mesh_transport.get().cloned() {
+        use oneiron_mesh_transport::files_search::{
+            FILES_SEARCH_DEADLINE, ask_files_search_devices,
+        };
+        let transport: Arc<dyn oneiron_mesh_transport::MeshTransport> = transport;
+        return ask_files_search_devices(transport, machines, request, FILES_SEARCH_DEADLINE).await;
+    }
+    let unreached = machines
+        .into_iter()
+        .map(|machine| FilesUnreachedDevice {
+            machine,
+            why: FilesUnreachedWhy::Unavailable,
+        })
+        .collect();
+    (Vec::new(), unreached)
 }

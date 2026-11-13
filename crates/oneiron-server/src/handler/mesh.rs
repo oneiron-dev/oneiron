@@ -150,6 +150,7 @@ mod host {
     use hyper_util::rt::{TokioIo, TokioTimer};
     use hyper_util::service::TowerToHyperService;
     use oneiron_llm_own_server::{LLM_ALPN, LlmMeshService};
+    use oneiron_mesh_transport::files_search::{FILES_SEARCH_ALPN, FilesSearchService};
     use oneiron_mesh_transport::iroh_transport::{IrohTransport, private_relay_map};
     use oneiron_mesh_transport::transport_key::TransportKey;
     use oneiron_mesh_transport::{
@@ -304,6 +305,13 @@ mod host {
                     )
                     .with_stop(work.deadline.subscribe()),
                 ),
+            )
+            // This install's Files world answers the owner's other devices'
+            // searches, each machine the owner granted Files search
+            // (ARCH-0027 #files-world).
+            .route(
+                FILES_SEARCH_ALPN,
+                Arc::new(FilesSearchService::new(Arc::clone(vault))),
             )
             .tick(organ_redrive(
                 router,

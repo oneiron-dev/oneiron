@@ -14,8 +14,8 @@ use super::files::{FilesFileState, files_file_view};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::memory::{
-    MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryPack, MemoryResult, RecallRequest,
-    RecallScope, RecallWorlds,
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryPack, MemoryResult,
+    RecallRequest, RecallScope, RecallWorlds,
 };
 use crate::note::{
     FileHandle, FileReadiness, FolderFileState, FolderSourceFile, NameMatch, file_path_of,
@@ -37,7 +37,30 @@ pub struct FilesSourceSearchRequest {
     /// [`DEFAULT_FILES_SEARCH_LIMIT`] when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u64>,
+    /// The owner's other devices to search beside this one, over the mesh
+    /// (ARCH-0027 #files-world: "Cross-device search over the iroh mesh");
+    /// this device alone when absent. With devices, `sources` may name a
+    /// source of any device searched, and each device searches the named
+    /// sources it holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub devices: Option<FilesSearchDevices>,
 }
+
+/// Which of the owner's other devices a search asks, beside this one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FilesSearchDevices {
+    /// Every machine of the owner this install may ask: each one whose live
+    /// `mesh:alpn:oneiron/files-search/1` grant this vault holds.
+    All,
+    /// The named machines of the owner.
+    Only(Vec<EntityId>),
+}
+
+/// The ALPN on which a device of the owner answers another device's Files
+/// search ([`FilesSearchDevices`]). A machine is asked, and answered, only
+/// while this vault holds its live `mesh:alpn:oneiron/files-search/1` grant.
+pub const FILES_SEARCH_ALPN: &[u8] = b"oneiron/files-search/1";
 
 /// How many files `vault.files.sources.search` answers when its input names
 /// no limit.
@@ -104,6 +127,33 @@ pub enum FilesMeaningState {
 pub struct FilesSourceSearchAnswer {
     pub hits: Vec<FilesSearchHit>,
     pub meaning: FilesMeaningState,
+    /// The devices the search asked that gave no answer; none of their
+    /// files is listed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unreached: Vec<FilesUnreachedDevice>,
+}
+
+/// A device a cross-device search asked that gave no answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FilesUnreachedDevice {
+    pub machine: EntityId,
+    pub why: FilesUnreachedWhy,
+}
+
+/// Why a device gave a cross-device search no answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FilesUnreachedWhy {
+    /// This vault holds no live Files search grant for the machine, or the
+    /// machine refused this one.
+    Refused,
+    /// This install has no mesh endpoint, or found no path to the machine.
+    Unavailable,
+    /// No answer came before the search's deadline.
+    TimedOut,
+    /// The connection failed, or the device's answer could not be read.
+    Failed,
 }
 
 /// One ledger row a search may answer: a file of a chosen Files source that
@@ -157,8 +207,8 @@ fn searched_query(input: &FilesSourceSearchRequest) -> MemoryResult<&str> {
 }
 
 /// How many files a search answers.
-fn search_limit(input: &FilesSourceSearchRequest) -> usize {
-    usize::try_from(input.limit.unwrap_or(DEFAULT_FILES_SEARCH_LIMIT))
+fn search_limit(limit: Option<u64>) -> usize {
+    usize::try_from(limit.unwrap_or(DEFAULT_FILES_SEARCH_LIMIT))
         .unwrap_or(usize::MAX)
         .clamp(
             1,
@@ -167,10 +217,16 @@ fn search_limit(input: &FilesSourceSearchRequest) -> usize {
 }
 
 /// Every ledger row of the sources `wanted` names (every Files source when
-/// `None`), but those of files that left their folder.
-fn searched_files(vault: &Vault, wanted: Option<&[EntityId]>) -> MemoryResult<Vec<SearchedFile>> {
+/// `None`), but those of files that left their folder. A named source this
+/// install does not hold is refused when `strict`, and skipped otherwise: a
+/// cross-device search may name another device's source.
+fn searched_files(
+    vault: &Vault,
+    wanted: Option<&[EntityId]>,
+    strict: bool,
+) -> MemoryResult<Vec<SearchedFile>> {
     let attached = vault.files_sources()?;
-    if let Some(wanted) = wanted {
+    if let Some(wanted) = wanted.filter(|_| strict) {
         for source in wanted {
             if !attached.iter().any(|attached| {
                 attached
@@ -232,7 +288,7 @@ pub fn files_search_recall(
             }),
             ..RecallScope::default()
         }),
-        limit: Some(search_limit(input).saturating_mul(2)),
+        limit: Some(search_limit(input.limit).saturating_mul(2)),
         ..RecallRequest::default()
     }))
 }
@@ -246,6 +302,11 @@ pub fn files_search_recall(
 /// file through the ledger, and a file the name tier listed is not listed
 /// again.
 ///
+/// It answers for this install's Files world alone, whatever `devices` says:
+/// the host asks the other devices and merges their answers
+/// ([`merge_files_search_answers`]). With `devices`, a named source this
+/// install does not hold is skipped, not refused.
+///
 /// # Errors
 /// A proof that no longer holds, a query with no word, a source that is no
 /// Files source, or a storage error. A refused recall is no error: the
@@ -257,9 +318,21 @@ pub fn search_files_sources_with(
     meaning: Option<MemoryResult<MemoryPack>>,
 ) -> MemoryResult<FilesSourceSearchAnswer> {
     owner.revalidate(vault)?;
-    let query = searched_query(&input)?;
-    let limit = search_limit(&input);
-    let searched = searched_files(vault, input.sources.as_deref())?;
+    let strict = input.devices.is_none();
+    files_search_here(vault, &input, meaning, strict)
+}
+
+/// This install's answer to a search: its name tier, then its meaning tier
+/// from `meaning`, cut to the search's limit.
+fn files_search_here(
+    vault: &Vault,
+    input: &FilesSourceSearchRequest,
+    meaning: Option<MemoryResult<MemoryPack>>,
+    strict: bool,
+) -> MemoryResult<FilesSourceSearchAnswer> {
+    let query = searched_query(input)?;
+    let limit = search_limit(input.limit);
+    let searched = searched_files(vault, input.sources.as_deref(), strict)?;
 
     let mut named: Vec<(NameMatch, &SearchedFile)> = searched
         .iter()
@@ -329,7 +402,11 @@ pub fn search_files_sources_with(
         }
     };
     hits.truncate(limit);
-    Ok(FilesSourceSearchAnswer { hits, meaning })
+    Ok(FilesSourceSearchAnswer {
+        hits,
+        meaning,
+        unreached: Vec::new(),
+    })
 }
 
 /// `vault.files.sources.search` under the owner's proof, its meaning tier
@@ -359,11 +436,197 @@ fn search_files_sources_in(
 }
 
 /// `vault.files.sources.search` on an embedded handle: the embedded owner's
-/// own read, its meaning tier the handle's recall with no query vector.
+/// own read, its meaning tier the handle's recall with no query vector. An
+/// embedded handle has no mesh endpoint, so every device `devices` names is
+/// listed unreached, [`FilesUnreachedWhy::Unavailable`].
 pub fn search_files_sources_embedded(
     memory: &Memory<'_>,
     input: FilesSourceSearchRequest,
 ) -> MemoryResult<FilesSourceSearchAnswer> {
     let owner = memory.embedded_owner("vault.files.sources.search")?;
-    search_files_sources_in(memory, &owner, input)
+    let Some(devices) = input.devices.clone() else {
+        return search_files_sources_in(memory, &owner, input);
+    };
+    let unreached = files_search_devices(memory.vault(), &devices)?
+        .into_iter()
+        .map(|machine| FilesUnreachedDevice {
+            machine,
+            why: FilesUnreachedWhy::Unavailable,
+        })
+        .collect();
+    let limit = input.limit;
+    let answer = search_files_sources_in(memory, &owner, input)?;
+    Ok(merge_files_search_answers(
+        limit,
+        answer,
+        Vec::new(),
+        unreached,
+    ))
+}
+
+/// The machines a search with `devices` asks, each once, in machine order,
+/// never this install: every machine this vault holds the live Files search
+/// grant for ([`FILES_SEARCH_ALPN`]), or the machines `devices` names.
+///
+/// # Errors
+/// A storage error.
+pub fn files_search_devices(
+    vault: &Vault,
+    devices: &FilesSearchDevices,
+) -> MemoryResult<Vec<EntityId>> {
+    let this_install = vault.local_machine()?.map(|machine| machine.id);
+    let mut machines = match devices {
+        FilesSearchDevices::All => vault.mesh_machines_granted(FILES_SEARCH_ALPN)?,
+        FilesSearchDevices::Only(named) => named.clone(),
+    };
+    machines.retain(|machine| Some(*machine) != this_install);
+    machines.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+    machines.dedup();
+    Ok(machines)
+}
+
+/// Another device of the owner's search of this install's Files world
+/// (ARCH-0027 #files-world: "Each device ranks its own files and returns
+/// metadata and snippets"), for `peer`, the MACHINE whose endpoint key
+/// `endpoint_key` the mesh handshake proved. The peer must hold this
+/// vault's live Files search grant on that key now
+/// ([`Vault::mesh_peer_machine`] on [`FILES_SEARCH_ALPN`]); the grant is the
+/// gate (ruling L2-16-MESH-SNIPPETS = B: metadata and snippets go to any
+/// machine holding it). The mesh admitted the peer as the owner's own
+/// machine, so its search is the owner's, as a peer's model call is: the
+/// meaning tier is the vault owner's recall of this install's Files world,
+/// read on this install, with no query vector. The answer is this
+/// install's own ranking ([`search_files_sources_with`]); a named source
+/// this install does not hold is skipped, and `devices` is not followed.
+///
+/// # Errors
+/// A peer without the live grant (forbidden), a query with no word, or a
+/// storage error.
+pub fn search_files_sources_for_peer(
+    vault: &Vault,
+    peer: EntityId,
+    endpoint_key: [u8; 32],
+    input: FilesSourceSearchRequest,
+) -> MemoryResult<FilesSourceSearchAnswer> {
+    match vault.mesh_peer_machine(endpoint_key, FILES_SEARCH_ALPN)? {
+        crate::authority::PeerMachine::Proven { machine, .. } if machine == peer => {}
+        _ => {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                format!(
+                    "machine {} holds no live Files search grant here",
+                    peer.to_hex()
+                ),
+                &[
+                    "The owner grants Files search to a machine: vault.mesh.set_alpn_grant with alpn oneiron/files-search/1.",
+                ],
+            ));
+        }
+    }
+    let owner = crate::vault::embedded_owner_actor_id()?;
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let meaning = files_search_recall(vault, &input)?
+        .map(|request| super::recall_unembedded(&memory, request));
+    files_search_here(vault, &input, meaning, false)
+}
+
+/// One other device's answer to a cross-device search.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilesDeviceAnswer {
+    /// The machine that answered.
+    pub machine: EntityId,
+    pub answer: FilesSourceSearchAnswer,
+}
+
+/// A cross-device search's one answer (ARCH-0027 #files-world: "One
+/// calibrated merge orders the results across devices"): `this` install's
+/// answer and `others`', cut to the search's `limit`, with the devices that
+/// gave none in `unreached`.
+///
+/// Every name hit comes before any meaning hit. Name hits are ordered by
+/// match class, then newer first: a class is the same test on every device,
+/// so it compares across devices exactly. Meaning hits are interleaved by
+/// each device's own recall rank: a file lives on one device, so its
+/// reciprocal-rank fusion score 1/(k + rank) orders by that rank alone, and
+/// no score from one device's index is compared with another's. A tie goes
+/// to this install, then to the other devices in machine order. Each device
+/// answers for its own Files world only: a hit that names another machine is
+/// dropped, and a device's hits past `limit` are not read. The meaning tier
+/// ran when it ran on any device.
+#[must_use]
+pub fn merge_files_search_answers(
+    limit: Option<u64>,
+    this: FilesSourceSearchAnswer,
+    mut others: Vec<FilesDeviceAnswer>,
+    mut unreached: Vec<FilesUnreachedDevice>,
+) -> FilesSourceSearchAnswer {
+    let limit = search_limit(limit);
+    others.sort_by(|left, right| left.machine.as_bytes().cmp(right.machine.as_bytes()));
+    let mut meaning = this.meaning;
+    let mut found: Vec<(usize, FilesSearchHit)> = this
+        .hits
+        .into_iter()
+        .take(limit)
+        .map(|hit| (0, hit))
+        .collect();
+    unreached.extend(this.unreached);
+    for (index, other) in others.into_iter().enumerate() {
+        if other.answer.meaning == FilesMeaningState::Ran {
+            meaning = FilesMeaningState::Ran;
+        }
+        let machine = other.machine;
+        found.extend(
+            other
+                .answer
+                .hits
+                .into_iter()
+                .take(limit)
+                .filter(|hit| hit.machine == machine)
+                .map(|hit| (index.saturating_add(1), hit)),
+        );
+    }
+    found.sort_by(|(left_device, left), (right_device, right)| {
+        merged_order(left, right)
+            .then_with(|| left_device.cmp(right_device))
+            .then_with(|| left.handle.path.cmp(&right.handle.path))
+            .then_with(|| {
+                left.handle
+                    .source
+                    .as_bytes()
+                    .cmp(right.handle.source.as_bytes())
+            })
+    });
+    let mut listed: HashSet<(EntityId, EntityId, String)> = HashSet::new();
+    let hits: Vec<FilesSearchHit> = found
+        .into_iter()
+        .map(|(_, hit)| hit)
+        .filter(|hit| listed.insert((hit.machine, hit.handle.source, hit.handle.path.clone())))
+        .take(limit)
+        .collect();
+    unreached.sort_by(|left, right| left.machine.as_bytes().cmp(right.machine.as_bytes()));
+    unreached.dedup_by(|right, left| right.machine == left.machine);
+    FilesSourceSearchAnswer {
+        hits,
+        meaning,
+        unreached,
+    }
+}
+
+/// Name hits first, by class then newer first; then meaning hits by rank.
+fn merged_order(left: &FilesSearchHit, right: &FilesSearchHit) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match (left.matched, right.matched) {
+        (
+            FilesSearchMatch::Name { class: left_class },
+            FilesSearchMatch::Name { class: right_class },
+        ) => left_class
+            .cmp(&right_class)
+            .then_with(|| right.modified_at.cmp(&left.modified_at)),
+        (FilesSearchMatch::Name { .. }, FilesSearchMatch::Meaning { .. }) => Ordering::Less,
+        (FilesSearchMatch::Meaning { .. }, FilesSearchMatch::Name { .. }) => Ordering::Greater,
+        (
+            FilesSearchMatch::Meaning { rank: left_rank },
+            FilesSearchMatch::Meaning { rank: right_rank },
+        ) => left_rank.cmp(&right_rank),
+    }
 }
