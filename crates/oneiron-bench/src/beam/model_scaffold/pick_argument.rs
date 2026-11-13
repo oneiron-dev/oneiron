@@ -148,7 +148,7 @@ fn optional_memory_argument(
     }
     let mut families: BTreeMap<String, OptionalMemoryChoice> = BTreeMap::new();
     for pick in &picks {
-        let choice = choice(pick)?;
+        let choice = pick_choice(pick)?;
         if let Some(other) = families.insert(pick.task_family.clone(), choice)
             && other != choice
         {
@@ -168,7 +168,7 @@ fn optional_memory_argument(
     })
 }
 
-fn choice(pick: &SavedPick) -> BeamResult<OptionalMemoryChoice> {
+fn pick_choice(pick: &SavedPick) -> BeamResult<OptionalMemoryChoice> {
     let Some(tokens) = pick.optional_memory_tokens else {
         return Ok(OptionalMemoryChoice::None);
     };
