@@ -28,8 +28,6 @@ use crate::entity_id::EntityId;
 use oneiron_contracts::claim::ClaimSource;
 
 #[doc(hidden)]
-pub(super) use oneiron_verb_wire::compaction::fold_kinds::FoldByKind;
-#[doc(hidden)]
 pub use oneiron_verb_wire::compaction::fold_kinds::{FoldKind, FoldedOutput, FoldedSpeech};
 
 impl FoldLedger {
