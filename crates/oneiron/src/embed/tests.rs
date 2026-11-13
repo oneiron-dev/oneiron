@@ -438,8 +438,6 @@ fn remote_rung_dims_and_model_gates() -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-EMBED-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn stale_completion_preserves_newer_pending_job() -> Result<()> {
     let (_dir, vault) = test_vault();
@@ -459,6 +457,7 @@ fn stale_completion_preserves_newer_pending_job() -> Result<()> {
         &[1.0, 0.0, 0.0, 0.0],
         EmbedderLocality::OnDevice,
         &EmbeddingProvenance::unknown(),
+        None,
     )?;
     assert!(!filled, "old-token fill must be stale");
     assert!(

@@ -396,7 +396,5 @@ pub(super) fn validate(body: &ClaimBody) -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-CLAIM-SUPERSESSION-PROVENANCE-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

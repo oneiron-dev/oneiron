@@ -1,7 +1,5 @@
 //! ONE-1388 adapter tests. Existing scope and ranking suites stay separate.
 
-// FIX [LIBTEST-QUARANTINE-PIPELINE-AUTHORITY-CORPUS-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[path = "authority_corpus_tests.rs"]
 mod authority_corpus_tests;
 

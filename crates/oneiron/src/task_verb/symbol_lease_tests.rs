@@ -9,13 +9,9 @@ fn overlapping_declarations_serialize_queue_claims_but_disjoint_tasks_run() -> c
     for kind_scoped in [false, true] {
         let dir = tempfile::tempdir()?;
         let clock = crate::ports::ManualClock::new(1);
-        let vault = Vault::open(
-            dir.path(),
-            VaultConfig {
-                store_clock: clock.bundle(),
-                ..VaultConfig::default()
-            },
-        )?;
+        let mut config = VaultConfig::device();
+        config.store_clock = clock.bundle();
+        let vault = Vault::open(dir.path(), config)?;
         let holder = EntityId::now();
         vault.put_entity(
             &holder,

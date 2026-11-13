@@ -213,8 +213,6 @@ fn extraction_receipts(vault: &Vault) -> Vec<ReceiptRecord> {
         .expect("receipt query")
 }
 
-// FIX [LIBTEST-QUARANTINE-DREAMER-PREFILTER-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn skipped_turns_advance_the_watermark_and_the_rescan_door_re_sweeps_them() {
     let (_dir, vault) = open_vault();
@@ -226,8 +224,10 @@ fn skipped_turns_advance_the_watermark_and_the_rescan_door_re_sweeps_them() {
         })
         .expect("tighten");
 
-    let session = minted(vault.mint_session(1_000).expect("mint"));
-    let wake = meso_wake(&vault);
+    let actor = EntityId::now();
+    let key = vault.local_session_key(actor).expect("session key");
+    let session = minted(vault.mint_session(key, 1_000).expect("mint"));
+    let wake = meso_wake(&vault, session);
     vault
         .end_session_with_wake(&session, SessionClosePredicate::Explicit, 5_000, &wake)
         .expect("close")

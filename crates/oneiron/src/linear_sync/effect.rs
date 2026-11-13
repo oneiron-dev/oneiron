@@ -596,8 +596,6 @@ impl Vault {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-LINEAR-SYNC-EFFECT-TESTS]: the lib test target's type check fails here (1 errors: E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -793,8 +791,14 @@ mod tests {
         }
         // An already-admitted operation cannot use yesterday's grant after
         // the owner revokes it, even though its operation key was persisted.
+        let owner = crate::test_util::embedded_owner_proof(&fx.vault);
+        let grant = fx
+            .vault
+            .get_standing_outbound_grant(&writer_grant)
+            .unwrap()
+            .expect("writer grant");
         fx.vault
-            .revoke_standing_outbound_grant(&writer_grant, 20)
+            .revoke_consent_grant(&owner, &grant.grant_ref())
             .unwrap();
         assert!(fx.denied(&request));
     }

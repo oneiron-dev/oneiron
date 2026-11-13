@@ -67,8 +67,6 @@ mod magistrate_route_result;
 mod presence_scan;
 pub(crate) mod support;
 
-// FIX [LIBTEST-QUARANTINE-TASK-VERB-TESTS-ADDRESSABLE-CONSULTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 mod addressable_consults;
 
 mod authority_asks;

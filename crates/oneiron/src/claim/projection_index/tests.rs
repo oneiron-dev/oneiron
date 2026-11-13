@@ -31,8 +31,9 @@ fn predicate_projection_tracks_overwrites_rollback_and_deletion() -> Result<()> 
     assert_eq!(lookup("profile.name")?, vec![id]);
     body.predicate = "profile.alias".into();
     {
+        let write = crate::secret_custody::CustodyWrite::of(&vault);
         let mut txn = vault.store.env.write_txn()?;
-        maintain_claim_projection_index(&vault.store, &mut txn, id, &body)?;
+        maintain_claim_projection_index(&write, &mut txn, id, &body)?;
         // Drop aborts both reverse and forward edits.
     }
     assert_eq!(lookup("profile.name")?, vec![id]);

@@ -498,15 +498,13 @@ fn a_turn_witnessed_outside_any_session_records_no_membership() {
     assert_eq!(membership_of(&vault, &turn), None);
 }
 
-// FIX [LIBTEST-QUARANTINE-COMPACTION-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn appended_turn_admits_only_its_original_session_provenance() {
     let (_dir, vault) = open_vault();
     let actor = put_actor(&vault, 0x58);
     let session_a = mint_session(&vault, 400);
     let turn = witness_turn(&vault, actor, 0x59, 0x5A, 500, 0);
-    let wake = vault.plan_session_end_wake().unwrap();
+    let wake = vault.plan_session_end_wake(&session_a).unwrap();
     assert!(
         vault
             .end_session_with_wake(&session_a, SessionClosePredicate::Explicit, 600, &wake,)

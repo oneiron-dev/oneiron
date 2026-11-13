@@ -96,6 +96,7 @@ impl Fixture {
                     ENTITY_TYPE_CLAIM,
                     time(1),
                     1,
+                    None,
                     &crate::claim::encode_claim_body(&claim)?,
                 )
                 .commit()?;
@@ -182,10 +183,13 @@ impl Fixture {
             &mut WakeAttemptContext {
                 vault: &self.vault,
                 deadline: &deadline,
+                cancel: None,
+                device_cancel: None,
                 budget_id: "wake",
                 now_ms: 5_000,
                 prepared_wake: None,
                 prepared_attempt: None,
+                spend_meter: None,
             },
         ))
     }
@@ -265,7 +269,10 @@ fn committed_result_resumes_without_runtime_skill_or_evidence() -> Result<()> {
     let mut runtime = CountingRuntime::new();
     assert_eq!(
         fixture.run(&mut runtime)?,
-        DreamerAttemptExecution::Completed { completed_units: 0 }
+        DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_bindings: Vec::new()
+        }
     );
     let initial = fixture.output()?;
     let decision_count = fixture.vault.store.gate_decisions(1_000)?.len();
@@ -355,6 +362,7 @@ fn a_colliding_claim_without_a_result_cannot_satisfy_retry() -> Result<()> {
             ENTITY_TYPE_CLAIM,
             time(5),
             5,
+            None,
             &crate::claim::encode_claim_body(&forged)?,
         )
         .commit()?;
@@ -404,7 +412,10 @@ fn recipe_persists_source_meet_and_transitive_taint() -> Result<()> {
         let mut runtime = CountingRuntime::new();
         assert_eq!(
             fixture.run(&mut runtime)?,
-            DreamerAttemptExecution::Completed { completed_units: 0 }
+            DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_bindings: Vec::new()
+            }
         );
         assert_eq!(runtime.calls.get(), 1);
         let body = fixture.output()?;
@@ -451,7 +462,10 @@ fn a_committed_result_the_owner_declined_still_settles() -> Result<()> {
     let mut runtime = CountingRuntime::new();
     assert_eq!(
         fixture.run(&mut runtime)?,
-        DreamerAttemptExecution::Completed { completed_units: 0 }
+        DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_bindings: Vec::new()
+        }
     );
     let id = claim_id(&fixture.attempt)?;
     let run = fixture
@@ -490,7 +504,10 @@ fn a_committed_result_the_owner_declined_still_settles() -> Result<()> {
     };
     assert_eq!(
         fixture.run(&mut retry)?,
-        DreamerAttemptExecution::Completed { completed_units: 0 }
+        DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_bindings: Vec::new()
+        }
     );
     assert_eq!(runtime.calls.get(), 1);
     Ok(())
@@ -536,10 +553,13 @@ fn changed_source_between_draft_and_commit_refuses_the_write() -> Result<()> {
         &mut WakeAttemptContext {
             vault: &fixture.vault,
             deadline: &deadline,
+            cancel: None,
+            device_cancel: None,
             budget_id: "wake",
             now_ms: 5_000,
             prepared_wake: None,
             prepared_attempt: None,
+            spend_meter: None,
         },
     ));
     assert!(result.is_err());

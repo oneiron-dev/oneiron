@@ -155,6 +155,9 @@ fn membership_reads_are_scoped_to_the_owning_principal() {
             &CreateCampaignRequest {
                 schema_version: CAMPAIGN_SCHEMA_VERSION,
                 name: "owned cohort".to_owned(),
+                reply_snooze_policy: None,
+                voice_guide_ref: None,
+                copy_review: None,
             },
             10,
         )

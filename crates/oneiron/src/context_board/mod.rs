@@ -33,8 +33,6 @@ mod read_set;
 mod room;
 pub(crate) mod room_offer;
 mod room_verbs;
-// FIX [LIBTEST-QUARANTINE-CONTEXT-BOARD-ROOM-VERBS-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod room_verbs_tests;
 mod worlds;

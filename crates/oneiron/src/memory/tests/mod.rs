@@ -1074,8 +1074,6 @@ fn rows_naming(
     RowsNaming { entity, edges }
 }
 
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0639 x1); port it, then drop this gate
-#[cfg(any())]
 /// `witness` and `witness_into_session` are one program with the session as
 /// its parameter. The same turn witnessed through a room and without one
 /// stores the same rows: the conversation, TURN and MESSAGE entities, every
@@ -1094,10 +1092,8 @@ fn witness_and_session_witness_run_one_program() {
     let clock = std::sync::Arc::new(PinnedClock(AT));
     let open_pinned = || {
         let dir = tempfile::tempdir().expect("tempdir");
-        let config = VaultConfig {
-            store_clock: crate::ports::StoreClock::new(clock.clone(), clock.clone()),
-            ..VaultConfig::default()
-        };
+        let mut config = VaultConfig::device();
+        config.store_clock = crate::ports::StoreClock::new(clock.clone(), clock.clone());
         let vault = crate::Vault::open(dir.path(), config).expect("open vault");
         (dir, vault)
     };

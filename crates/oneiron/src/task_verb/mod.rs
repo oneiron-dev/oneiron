@@ -405,8 +405,6 @@ pub(crate) use symbol_lease::{
 pub(crate) use scheduling::terminal_success_from_body;
 pub(crate) use scheduling::{acquire_task_symbols, task_dispatch_ready, terminal_success_in_store};
 
-// FIX [LIBTEST-QUARANTINE-TASK-VERB-SYMBOL-LEASE-TESTS]: the lib test target's type check fails here (1 errors: E0639 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod symbol_lease_tests;
 

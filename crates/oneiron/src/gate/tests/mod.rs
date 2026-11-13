@@ -60,8 +60,6 @@ mod evaluator_core;
 mod external_effect_grants;
 mod gate_door;
 mod isolation_persona;
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-MANIFEST-AUTHENTICITY]: the lib test target's type check fails here (9 errors: E0061 x9); port it, then drop this gate
-#[cfg(any())]
 mod manifest_authenticity;
 mod manifest_auto;
 // FIX [LIBTEST-QUARANTINE-GATE-TESTS-POLICY-INPUTS]: the lib test target's type check fails here (8 errors: E0308 x8); port it, then drop this gate

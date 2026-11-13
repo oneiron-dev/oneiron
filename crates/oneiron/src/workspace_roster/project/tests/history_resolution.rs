@@ -657,8 +657,6 @@ fn a_quarantined_resolution_never_opens_a_board_fork_to_an_ordinary_write() -> R
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-HISTORY-RESOLUTION-ITEMS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 /// Bug repro (Sol #1434 r11 F2): the board holder H leaves the birth tied
 /// between W (seats X and Y) and N (seats Y), then resolves that tie in one
 /// chain of 258 resolutions, every link for W but the last, which is for N.
@@ -734,6 +732,7 @@ fn a_resolution_chain_past_the_depth_guard_settles_for_its_last_link() -> Result
                 kind,
                 TimeRange { start: at, end: at },
                 at,
+                None,
                 &link.canonical_bytes()?,
             );
         }

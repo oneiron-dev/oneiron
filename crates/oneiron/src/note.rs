@@ -457,8 +457,6 @@ pub use document::{NoteScalarEdit as NoteEdit, NoteScalarEditOutcome as NoteEdit
 
 #[cfg(test)]
 mod program_tests;
-// FIX [LIBTEST-QUARANTINE-NOTE-SHARED-MEMBERSHIP-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod shared_membership_tests;
 

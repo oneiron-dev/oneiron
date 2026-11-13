@@ -57,6 +57,7 @@ fn existing_companion_is_idempotent_only_for_matching_stamped_payload() -> Resul
             crate::registry::ENTITY_TYPE_CLAIM,
             crate::TimeRange { start: 2, end: 2 },
             2,
+            None,
             &crate::claim::encode_claim_body(&collision)?,
         )
         .commit()?;

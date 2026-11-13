@@ -25,8 +25,6 @@ mod history_refresh_order;
 mod history_resolution;
 #[cfg(feature = "sync")]
 mod history_transport;
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-ROOM-FACET]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 mod room_facet;
 mod support;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};

@@ -231,8 +231,6 @@ fn injected_clock(start_ms: u64) -> (Arc<AtomicU64>, WakePassDeadline) {
     (elapsed, deadline)
 }
 
-// FIX [LIBTEST-QUARANTINE-DREAMER-WAKE-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
     struct HardCutExecutor {
@@ -250,7 +248,9 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
             DreamerRunnerStore::new(ctx.vault).park_attempt(ParkDreamerAttempt {
                 attempt_id: attempt.status.attempt.id,
                 reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
+                cause: DreamerParkCause::Checkpoint,
                 park_owner: DREAMER_HARD_CUT_PARK_OWNER.to_owned(),
+                carried_spend: None,
                 now: ctx.now_ms / 1_000,
             })?;
             Err(crate::Error::InvariantViolation(
