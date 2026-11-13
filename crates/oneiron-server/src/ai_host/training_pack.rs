@@ -10,13 +10,19 @@
 //! never waits on a GPU. The durable `Running` state and its dispatched flag
 //! record the one dispatch, and a lost waiter never sends the run again.
 //!
-//! The one trainer adapter is the question-head worker (FIX 7263,
-//! `trainer`): a local process on this host, on a connector
-//! `[models.training.connectors]` names. It trains a question run on its one
-//! recipe and nothing else; a role run, another recipe or an unnamed
-//! connector holds with `training.no_connector`, as with no connector at
-//! all. A returned question head is scored locally on its held-out rows;
-//! unsupported role recipes still hold with `training.no_evaluator`.
+//! Two trainer adapters run as local processes on this host. The
+//! question-head worker (FIX 7263, `trainer`), on a connector
+//! `[models.training.connectors]` names, trains a question run on its one
+//! recipe and nothing else. The role trainer (ROLE-TRAINING-RUN,
+//! `role_trainer`), on a connector `[models.training.role_trainers]` names,
+//! trains a role run on a recipe that connector lists, on its own job wire.
+//! Any other run, recipe or connector holds with `training.no_connector`, as
+//! with no connector at all. A returned question head is scored locally on
+//! its held-out rows; a returned role run still holds with
+//! `training.no_evaluator`.
+//!
+//! `vault.coach.training_runs.execute` runs the same arm for one run on a
+//! caller's request (`step`), outside the Coach's queue.
 use std::sync::Arc;
 
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
@@ -34,11 +40,14 @@ mod parity;
 mod question_evaluation;
 mod question_serving;
 mod question_trial;
+mod role_trainer;
+mod role_wire;
 mod trainer;
 mod wire;
 
 pub(crate) use question_serving::QuestionHeadRung;
 pub(crate) use question_trial::{answerer_pins, run_question_head_trial};
+use role_trainer::RoleTrainer;
 use trainer::QuestionHeadTrainer;
 pub(crate) use trainer::{TrainingInputCleanup, cleanup_training_job_inputs};
 
@@ -71,13 +80,40 @@ pub(super) fn run(
     let Some(run) = server.vault().run_coach_training_run(admitted)? else {
         return Ok(());
     };
+    step(server, &run, now).map(drop)
+}
+
+/// What one host step did for a run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TrainingStep {
+    /// The run's trainer thread started: the run moves on its own from here.
+    Dispatched,
+    /// The run was recovered, scored or held, or had no step here: where it
+    /// stands now is the step's result.
+    Settled,
+}
+
+/// This host's next step for `run` at its state: an authorized run is
+/// handed to its trainer's thread (or held with the reason it cannot be), a
+/// running one is recovered from its trainer's receipt, and a returned,
+/// unscored one is scored (or held). Any other run is left as it is, as the
+/// Coach's queue never hands one over. The Coach's queued attempt and
+/// `vault.coach.training_runs.execute` both run it; the run's writer admits
+/// one dispatch and one completion whichever comes first.
+pub(crate) fn step(
+    server: &SyncServer,
+    run: &TrainingRun,
+    now: u64,
+) -> oneiron::Result<TrainingStep> {
     if run.state == TrainingState::Authorized {
-        train(server, &run, now)
-    } else if run.state == TrainingState::Running {
-        recover(server, &run)
-    } else {
-        evaluate(server, &run, now)
+        return train(server, run, now);
     }
+    if run.state == TrainingState::Running {
+        recover(server, run)?;
+    } else if run.awaits_host() {
+        evaluate(server, run, now)?;
+    }
+    Ok(TrainingStep::Settled)
 }
 
 /// The declaration the host admits a run under, from its pinned quote alone:
@@ -101,35 +137,43 @@ pub(crate) fn training_declaration(run: &TrainingRun) -> oneiron::Result<RunDecl
 
 /// The paid connector named `name` that a trainer on this host dispatches
 /// through: its route, payer, credential binding and quote, as
-/// `[models.training.connectors.<name>]` configures it. There is no default
-/// connector.
+/// `[models.training.connectors.<name>]` or
+/// `[models.training.role_trainers.<name>]` configures it (one name names
+/// one trainer across them). There is no default connector.
 pub(crate) fn trainer_binding(server: &SyncServer, name: &str) -> Option<PaidConnector> {
-    server
-        .ai
-        .model_runtime()
-        .training()
+    let training = server.ai.model_runtime().training();
+    training
         .connector(name)
         .map(|connector| connector.binding.clone())
+        .or_else(|| {
+            training
+                .role_trainer(name)
+                .map(|trainer| trainer.binding.clone())
+        })
 }
 
 /// The trainer for `run`, on the connector its compute pinned: the
-/// question-head worker, for a question run on its recipe. Anything else
-/// gets none before any dispatch, so a role run is never sent to it.
+/// question-head worker, for a question run on its recipe, or the role
+/// trainer, for a role run on a recipe its connector lists. Anything else
+/// gets none before any dispatch, so neither trainer is sent the other's run.
 fn training_connector(
     server: &SyncServer,
     run: &TrainingRun,
 ) -> Option<Box<dyn TrainingConnector + Send + Sync>> {
-    if !QuestionHeadTrainer::serves(&run.plan) {
-        return None;
+    let training = server.ai.model_runtime().training();
+    if QuestionHeadTrainer::serves(&run.plan) {
+        let connector = training.connector(&run.compute.connector)?;
+        return Some(Box::new(QuestionHeadTrainer::new(
+            Arc::clone(server.vault()),
+            connector.clone(),
+        )));
     }
-    let connector = server
-        .ai
-        .model_runtime()
-        .training()
-        .connector(&run.compute.connector)?;
-    Some(Box::new(QuestionHeadTrainer::new(
+    let trainer = training
+        .role_trainer(&run.compute.connector)
+        .filter(|trainer| RoleTrainer::serves(trainer, &run.plan))?;
+    Some(Box::new(RoleTrainer::new(
         Arc::clone(server.vault()),
-        connector.clone(),
+        trainer.clone(),
     )))
 }
 
@@ -148,7 +192,7 @@ fn training_evaluator(server: &SyncServer, run: &TrainingRun) -> Option<Training
 
 /// Hands an authorized run to its own thread, or holds it with the reason
 /// this host cannot dispatch it.
-fn train(server: &SyncServer, run: &TrainingRun, now: u64) -> oneiron::Result<()> {
+fn train(server: &SyncServer, run: &TrainingRun, now: u64) -> oneiron::Result<TrainingStep> {
     let vault = server.vault();
     let (Some(binding), Some(connector)) = (
         trainer_binding(server, &run.compute.connector),
@@ -156,14 +200,14 @@ fn train(server: &SyncServer, run: &TrainingRun, now: u64) -> oneiron::Result<()
     ) else {
         let detail = format!("{}: no trainer adapter on this host", run.compute.connector);
         vault.hold_training_run(&run.id, HOLD_NO_CONNECTOR, &detail, now)?;
-        return Ok(());
+        return Ok(TrainingStep::Settled);
     };
     let declaration = match training_declaration(run) {
         Ok(declaration) => declaration,
         Err(error) => {
             let detail = format!("{:?}", error.kind());
             vault.hold_training_run(&run.id, HOLD_NO_ADMISSION, &detail, now)?;
-            return Ok(());
+            return Ok(TrainingStep::Settled);
         }
     };
     let admission = server
@@ -176,7 +220,7 @@ fn train(server: &SyncServer, run: &TrainingRun, now: u64) -> oneiron::Result<()
     crate::engine_thread(format!("training-run-{}", id.to_hex()))
         .spawn(move || dispatch(&vault, &id, &admission, &binding, connector.as_ref()))
         .map_err(|_| Error::InvalidConfig("the training run's thread did not start".into()))?;
-    Ok(())
+    Ok(TrainingStep::Dispatched)
 }
 
 /// The thread one dispatched run waits on. A refusal before dispatch leaves

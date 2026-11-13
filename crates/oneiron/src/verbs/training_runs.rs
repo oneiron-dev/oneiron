@@ -14,6 +14,15 @@
 //! Running, Outstanding or Done. The bound ends only the caller's wait: it
 //! never stops, fails or re-dispatches the run.
 //!
+//! `vault.coach.training_runs.execute` (LEARN-TRAIN Q4) has the host take
+//! its next step for a run the owner already authorized, for the owner or an
+//! agent whose own live Grant lists the verb: it dispatches an authorized
+//! run to its trainer, recovers a running one and scores a returned one,
+//! then drives the run for a bounded time and answers as the read does. The
+//! authorization stays the owner's act; execute never authorizes, and the
+//! run's writer admits one dispatch whoever asks. This module holds its
+//! input and its admission; its host door holds the steps.
+//!
 //! [`Vault::prepare_training_pack`]: crate::Vault::prepare_training_pack
 
 use std::collections::BTreeMap;
@@ -25,7 +34,10 @@ use crate::EdgeActorClass;
 use crate::authority::{NoStanding, PACT_STANDING_LAPSED, principal_standing_or_lapse_in_txn};
 use crate::edit_distance::reservoir::ReservoirScope;
 use crate::entity_id::EntityId;
-use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use crate::memory::{
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError,
+    MemoryResult,
+};
 use crate::training_pack::{
     ArtifactPin, SplitSide, TrainingHold, TrainingPackDraft, TrainingRun, TrainingState,
 };
@@ -36,7 +48,11 @@ pub const TRAINING_RUN_PREPARE_VERB: &str = "vault.coach.training_runs.prepare";
 /// The run read: the row's own name, and the verb a Grant lists for it.
 pub const TRAINING_RUN_GET_VERB: &str = "vault.coach.training_runs.get";
 
-/// The longest one read waits for its run to move, in milliseconds.
+/// The run executor: the row's own name, and the verb a Grant lists for it.
+pub const TRAINING_RUN_EXECUTE_VERB: &str = "vault.coach.training_runs.execute";
+
+/// The longest one read or execute waits for its run to move, in
+/// milliseconds.
 pub const TRAINING_RUN_WAIT_MAX_MS: u64 = 30_000;
 
 /// How often a waiting read looks at its run again.
@@ -130,6 +146,18 @@ pub struct TrainingRunGetRequest {
     pub wait_ms: u64,
 }
 
+/// `vault.coach.training_runs.execute`'s input.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrainingRunExecuteRequest {
+    pub run: EntityId,
+    /// How long to drive the run on this host, in milliseconds, at most
+    /// [`TRAINING_RUN_WAIT_MAX_MS`]. Zero, the default, takes one step and
+    /// reads once.
+    #[serde(default)]
+    pub wait_ms: u64,
+}
+
 /// Where a run stands for its reader.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -208,7 +236,8 @@ pub fn training_run_get(
     }
     let bound = Duration::from_millis(input.wait_ms);
     let started = Instant::now();
-    let Some(first) = read_admitted(memory, &input.run)? else {
+    let read = |run: &EntityId| read_admitted(memory, run, TRAINING_RUN_GET_VERB);
+    let Some(first) = read(&input.run)? else {
         return Ok(None);
     };
     let mut run = first.clone();
@@ -220,14 +249,84 @@ pub fn training_run_get(
             break;
         };
         std::thread::sleep(left.min(TRAINING_RUN_POLL_INTERVAL));
-        match read_admitted(memory, &input.run)? {
+        match read(&input.run)? {
             Some(next) => run = next,
             // An erase removed the run while the read waited.
             None => return Ok(None),
         }
     }
     let waited_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-    Ok(Some(observation(run, waited_ms)))
+    Ok(Some(training_run_observation(run, waited_ms)))
+}
+
+/// `vault.coach.training_runs.execute`'s admission and its run: the caller
+/// is the vault owner or an agent one live Grant from a live owner names and
+/// lists [`TRAINING_RUN_EXECUTE_VERB`] for, the run exists, and its owner
+/// authorized it. All are read in one snapshot.
+///
+/// # Errors
+///
+/// BAD_REQUEST for a wait above [`TRAINING_RUN_WAIT_MAX_MS`]; FORBIDDEN for
+/// a caller the verb does not admit; NOT_FOUND for a run this vault does
+/// not hold; INVALID_STATE for a run its owner has not authorized; storage
+/// errors.
+pub fn training_run_to_execute(
+    memory: &Memory<'_>,
+    input: &TrainingRunExecuteRequest,
+) -> MemoryResult<TrainingRun> {
+    if input.wait_ms > TRAINING_RUN_WAIT_MAX_MS {
+        return Err(MemoryError::bad_request(format!(
+            "a training run execute waits at most {TRAINING_RUN_WAIT_MAX_MS} ms"
+        )));
+    }
+    let run = training_run_read_for_execute(memory, &input.run)?.ok_or_else(|| {
+        MemoryError::new(
+            MEMORY_CODE_NOT_FOUND,
+            "this vault holds no such training run",
+            &["Prepare the run with vault.coach.training_runs.prepare first."],
+        )
+    })?;
+    if run.state == TrainingState::Prepared {
+        return Err(MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            format!(
+                "{TRAINING_RUN_EXECUTE_VERB} runs only a run its owner authorized; this one waits for that authorization"
+            ),
+            &["The owner authorizes the prepared spec first; execute never authorizes."],
+        ));
+    }
+    Ok(run)
+}
+
+/// The run as `vault.coach.training_runs.execute` reads it while it drives
+/// the run, admitting its caller again in each snapshot. `None` once an
+/// erase removed it.
+///
+/// # Errors
+///
+/// FORBIDDEN for a caller the verb does not admit; storage errors.
+pub fn training_run_read_for_execute(
+    memory: &Memory<'_>,
+    run: &EntityId,
+) -> MemoryResult<Option<TrainingRun>> {
+    read_admitted(memory, run, TRAINING_RUN_EXECUTE_VERB)
+}
+
+/// The early authority check of `vault.coach.training_runs.execute`: its
+/// caller's admission in a read snapshot, before the row's verb hooks fire.
+/// The execute reads check it again.
+///
+/// # Errors
+///
+/// FORBIDDEN for a caller the verb does not admit; storage errors.
+pub fn training_run_execute_admits(memory: &Memory<'_>) -> MemoryResult<()> {
+    let txn = memory
+        .vault()
+        .store
+        .env
+        .read_txn()
+        .map_err(crate::Error::from)?;
+    admit_caller_in_txn(memory, &txn, TRAINING_RUN_EXECUTE_VERB)
 }
 
 /// Whether the run moved between two reads: its state, hold or evaluation.
@@ -263,7 +362,8 @@ pub fn training_run_progress(run: &TrainingRun) -> TrainingRunProgress {
     }
 }
 
-fn observation(run: TrainingRun, waited_ms: u64) -> TrainingRunObservation {
+/// What a read or an execute answers for `run`, after waiting `waited_ms`.
+pub fn training_run_observation(run: TrainingRun, waited_ms: u64) -> TrainingRunObservation {
     let waits = run.awaits_host();
     TrainingRunObservation {
         run: run.id,
@@ -285,17 +385,21 @@ fn spec_hex(run: &TrainingRun) -> String {
     blake3::Hash::from(run.spec_blake3).to_hex().to_string()
 }
 
-/// The run, read in one snapshot that first admits the caller.
-fn read_admitted(memory: &Memory<'_>, run: &EntityId) -> MemoryResult<Option<TrainingRun>> {
+/// The run, read in one snapshot that first admits the caller for `verb`.
+fn read_admitted(
+    memory: &Memory<'_>,
+    run: &EntityId,
+    verb: &str,
+) -> MemoryResult<Option<TrainingRun>> {
     let vault = memory.vault();
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-    admit_reader_in_txn(memory, &txn)?;
+    admit_caller_in_txn(memory, &txn, verb)?;
     Ok(vault.training_run_in_txn(&txn, run)?)
 }
 
 /// The vault owner, or an agent one live Grant from a live owner names and
-/// lists [`TRAINING_RUN_GET_VERB`] for, in `txn`.
-fn admit_reader_in_txn(memory: &Memory<'_>, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
+/// lists `verb` for, in `txn`.
+fn admit_caller_in_txn(memory: &Memory<'_>, txn: &heed::RoTxn<'_>, verb: &str) -> MemoryResult<()> {
     let vault = memory.vault();
     if crate::memory::actor_is_vault_owner_in_txn(vault, txn, memory.actor(), memory.actor_class())?
     {
@@ -303,6 +407,7 @@ fn admit_reader_in_txn(memory: &Memory<'_>, txn: &heed::RoTxn<'_>) -> MemoryResu
     }
     if memory.actor_class() != EdgeActorClass::Agent {
         return Err(refused(
+            verb,
             "the caller is neither the vault owner nor an agent",
         ));
     }
@@ -311,22 +416,23 @@ fn admit_reader_in_txn(memory: &Memory<'_>, txn: &heed::RoTxn<'_>) -> MemoryResu
         txn,
         memory.actor(),
         EdgeActorClass::Agent,
-        TRAINING_RUN_GET_VERB,
+        verb,
     )? {
         Ok(standing) if standing.grant.is_some() => Ok(()),
-        Err(NoStanding::PactStandingLapsed) => Err(refused(PACT_STANDING_LAPSED)),
+        Err(NoStanding::PactStandingLapsed) => Err(refused(verb, PACT_STANDING_LAPSED)),
         Ok(_) | Err(NoStanding::NotStanding) => Err(refused(
+            verb,
             "no live Grant from a live owner names this agent and lists the verb",
         )),
     }
 }
 
-/// The read's refusal of a caller it does not admit.
-fn refused(why: &str) -> MemoryError {
+/// The refusal of a caller `verb` does not admit.
+fn refused(verb: &str, why: &str) -> MemoryError {
     MemoryError::new(
         MEMORY_CODE_FORBIDDEN,
         format!(
-            "{TRAINING_RUN_GET_VERB} takes the vault owner's own proof or an agent's own Grant that lists it: {why}"
+            "{verb} takes the vault owner's own proof or an agent's own Grant that lists it: {why}"
         ),
         &["Call as the owner, or have the owner grant this agent the verb by name."],
     )

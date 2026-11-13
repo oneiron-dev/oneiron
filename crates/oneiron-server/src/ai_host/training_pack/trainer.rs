@@ -228,31 +228,50 @@ impl QuestionHeadTrainer {
 
     /// Runs the worker on the job and waits for it, however long it trains.
     async fn run_worker(&self, job: &Path) -> oneiron::Result<ExitStatus> {
-        let stderr = new_file(&job.join(STDERR_FILE))?;
-        let mut command: tokio::process::Command =
-            oneiron_spawn::command(&self.connector.python).into();
-        command
-            .arg("-I")
-            .arg(&self.connector.worker)
-            .arg("--request")
-            .arg(job.join(REQUEST_FILE))
-            .arg("--output")
-            .arg(job.join(OUTPUT_DIR))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::from(stderr));
-        // The worker consumes staged files, not this server's vault credentials.
-        for name in [
-            "ONEIRON_SECRET",
-            "ONEIRON_BINDING_KEY",
-            "ONEIRON_TOKEN",
-            "ONEIRON_AUTH_SECRET",
-        ] {
-            command.env_remove(name);
-        }
-        let mut child = command.spawn()?;
-        Ok(child.wait().await?)
+        spawn_worker(
+            &self.connector.python,
+            &self.connector.worker,
+            &job.join(REQUEST_FILE),
+            &job.join(OUTPUT_DIR),
+            job,
+        )
+        .await
     }
+}
+
+/// Runs `<python> -I <worker> --request <request> --output <output>` with
+/// no shell, its error stream kept in the job directory, and waits for it,
+/// however long it trains. The role trainer runs its worker the same way.
+pub(super) async fn spawn_worker(
+    python: &Path,
+    worker: &Path,
+    request: &Path,
+    output: &Path,
+    job: &Path,
+) -> oneiron::Result<ExitStatus> {
+    let stderr = new_file(&job.join(STDERR_FILE))?;
+    let mut command: tokio::process::Command = oneiron_spawn::command(python).into();
+    command
+        .arg("-I")
+        .arg(worker)
+        .arg("--request")
+        .arg(request)
+        .arg("--output")
+        .arg(output)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(stderr));
+    // The worker consumes staged files, not this server's vault credentials.
+    for name in [
+        "ONEIRON_SECRET",
+        "ONEIRON_BINDING_KEY",
+        "ONEIRON_TOKEN",
+        "ONEIRON_AUTH_SECRET",
+    ] {
+        command.env_remove(name);
+    }
+    let mut child = command.spawn()?;
+    Ok(child.wait().await?)
 }
 
 impl TrainingConnector for QuestionHeadTrainer {
@@ -271,7 +290,7 @@ impl TrainingConnector for QuestionHeadTrainer {
     }
 }
 
-fn outstanding() -> oneiron::Error {
+pub(super) fn outstanding() -> oneiron::Error {
     invalid("an outstanding or unknown training job holds this run's directory; none starts again")
 }
 
@@ -311,14 +330,14 @@ fn base_files(files: &[CheckpointFilePin]) -> oneiron::Result<BaseFiles<'_>> {
     })
 }
 
-fn utf8(path: &Path) -> oneiron::Result<String> {
+pub(super) fn utf8(path: &Path) -> oneiron::Result<String> {
     path.to_str()
         .map(str::to_owned)
         .ok_or_else(|| invalid("a training job path is not UTF-8"))
 }
 
 /// A directory only this user reads, made new unless `recursive`.
-fn private_dir(path: &Path, recursive: bool) -> std::io::Result<()> {
+pub(super) fn private_dir(path: &Path, recursive: bool) -> std::io::Result<()> {
     let mut builder = std::fs::DirBuilder::new();
     builder.recursive(recursive);
     #[cfg(unix)]
@@ -335,7 +354,7 @@ fn new_file(path: &Path) -> std::io::Result<std::fs::File> {
     options.open(path)
 }
 
-fn write_new(path: &Path, bytes: &[u8]) -> oneiron::Result<()> {
+pub(super) fn write_new(path: &Path, bytes: &[u8]) -> oneiron::Result<()> {
     use std::io::Write as _;
     new_file(path)?.write_all(bytes)?;
     Ok(())

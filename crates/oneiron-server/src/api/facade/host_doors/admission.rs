@@ -262,5 +262,10 @@ pub(in crate::api::facade) fn door_admits(
         // A requested eval-authoring pass (LEARNING-06): the owner's own proof or an agent's own Grant
         // naming the verb, as the writer that admits the Coach attempt checks it.
         Proof::EvalAuthoring => crate::api::facade::eval_doors::execute_admits(server, auth),
+        // A requested training run step (ROLE-TRAINING-RUN, LEARN-TRAIN Q4): the owner's own proof or an
+        // agent's own Grant naming the verb, as each read of the run checks it again.
+        Proof::TrainingRunExecutor => {
+            crate::api::facade::training_run_doors::training_run_executor_admits(server, auth)
+        }
     }
 }

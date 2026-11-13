@@ -1,7 +1,8 @@
 //! Shared fixture for the role-training run door tests (ROLE-TRAINING-RUN):
-//! a rooted vault served over the real facade router, with one trainer
-//! connector named in its models file, an owner credential and paired agent
-//! credentials. `seed_role_run` lays out one role run's inputs: a training
+//! a rooted vault served over the real facade router, with a question
+//! trainer connector and a role trainer named in its models file, an owner
+//! credential and paired agent credentials. The role trainer runs the tiny
+//! pinned worker `role_trainer_worker.py` on this host's `python3`. `seed_role_run` lays out one role run's inputs: a training
 //! pair in a development family, a held-out pair in a sealed family with its
 //! labelled case, a cohort cut for the seat, the reservoir export's standing
 //! disclosure grant and the owner's starting checkpoint in custody.
@@ -52,8 +53,17 @@ pub(crate) const PREPARE_VERB: &str = "vault.coach.training_runs.prepare";
 pub(crate) const GET_VERB: &str = "vault.coach.training_runs.get";
 /// The owner's authorization of a prepared spec, an existing owner route.
 pub(crate) const AUTHORIZE_PATH: &str = "/v1/owner/coach/training-runs/authorize";
-/// The trainer connector the fixture's models file names.
+/// The question trainer connector the fixture's models file names: no role
+/// run is ever trained on it.
 pub(crate) const CONNECTOR: &str = "fixture-trainer";
+/// The role trainer the fixture's models file names.
+pub(crate) const ROLE_TRAINER: &str = "fixture-role-trainer";
+/// The one recipe the role trainer lists, and the seeded plan's.
+pub(crate) const ROLE_RECIPE: &str = "fixture.role-adapter/1";
+/// The execute verb.
+pub(crate) const EXECUTE_VERB: &str = "vault.coach.training_runs.execute";
+/// The tiny pinned role worker, written into each fixture's directory.
+const ROLE_WORKER: &str = include_str!("role_trainer_worker.py");
 
 /// One paired agent credential: its registered principal, its holder
 /// signing key, its redeemed slip and the token it presents.
@@ -88,8 +98,26 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// This host's `python3`, by an absolute path on `PATH`. A host without one
+/// names the usual path, which only the role trainer cases run.
+fn python3() -> std::path::PathBuf {
+    std::env::var_os("PATH")
+        .and_then(|paths| {
+            std::env::split_paths(&paths)
+                .map(|dir| dir.join("python3"))
+                .find(|path| path.is_absolute() && path.is_file())
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("/usr/bin/python3"))
+}
+
+/// Where the role trainer makes each run's job directory.
+pub(crate) fn role_jobs_root(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.join("trainer").join("role-training-jobs")
+}
+
 fn models_text(base_url: &str, dir: &std::path::Path) -> String {
-    // The worker never runs in these tests; the paths only have to be absolute.
+    // The question worker never runs in these tests; its paths only have to
+    // be absolute.
     let path = |name: &str| dir.join("trainer").join(name).display().to_string();
     format!(
         "default = \"local:test-model\"\nextraction_egress = true\n\
@@ -97,10 +125,18 @@ fn models_text(base_url: &str, dir: &std::path::Path) -> String {
          [providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\n\
          [training.connectors.{CONNECTOR}]\npython = \"{python}\"\nworker = \"{worker}\"\n\
          jobs_root = \"{jobs}\"\nrevision = \"fixture-worker-r1\"\nunit_cost = 1\n\
-         cost_unit = \"fixture-units\"\nservice_unit = \"gpu_wall_second\"\n",
+         cost_unit = \"fixture-units\"\nservice_unit = \"gpu_wall_second\"\n\
+         [training.role_trainers.{ROLE_TRAINER}]\npython = \"{python3}\"\n\
+         worker = \"{role_worker}\"\njobs_root = \"{role_jobs}\"\n\
+         revision = \"fixture-role-worker-r1\"\nunit_cost = 1\n\
+         cost_unit = \"fixture-units\"\nservice_unit = \"gpu_wall_second\"\n\
+         recipes = [\"{ROLE_RECIPE}\"]\n",
         python = path("trainer-python"),
         worker = path("trainer-worker.py"),
         jobs = path("training-jobs"),
+        python3 = python3().display(),
+        role_worker = path("role_trainer_worker.py"),
+        role_jobs = role_jobs_root(dir).display(),
     )
 }
 
@@ -249,7 +285,7 @@ pub(crate) fn seed_role_run(vault: &Vault) -> SeededRun {
             seat,
             starting_checkpoint,
             purpose: "exercise the owner's role prepare with no offer".to_owned(),
-            settings: json!({"fixture": true}),
+            settings: json!({"fixture": true, "recipe": ROLE_RECIPE}),
             harness: source_pin(),
             probes: vec![ProbeCase {
                 id: "fixture/probe".to_owned(),
@@ -294,6 +330,10 @@ impl Fixture {
         vault
             .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
             .expect("this install's live machine profile");
+        let trainer_dir = dir.path().join("trainer");
+        std::fs::create_dir_all(&trainer_dir).expect("trainer directory");
+        std::fs::write(trainer_dir.join("role_trainer_worker.py"), ROLE_WORKER)
+            .expect("write the role worker");
         let models = ModelsConfig::from_toml(&models_text(&model.base_url, dir.path()), None)
             .expect("models config");
         let (server, host) = AiHost::attach(server, Some(&models)).await;
