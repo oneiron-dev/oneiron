@@ -175,6 +175,10 @@ crate::side_table::side_tables! {
     /// node-local, never synced. Key: ().
     SYNC_RESIDENCE_DEVICE_MODE: SyncState b"rs:mode" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// The worlds the owner picked for this machine to follow (ARCH-0023b #partial-sync): each
+    /// world's 16 id bytes, ascending; node-local, never synced. Key: ().
+    SYNC_RESIDENCE_DEVICE_WORLDS: SyncState b"rs:worlds" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// This device's record that it left the shared vault its env holds (OF-158): the notice it
     /// confirmed and the unsynced edits it discarded; local only, never synced. Key: string (the
     /// notice's receipt id).

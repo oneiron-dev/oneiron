@@ -221,6 +221,10 @@ side_tables! {
     /// A window promoted from thin to canonical residence; reconnect replays it. Key: window key.
     SYNC_RESIDENCE_PROMOTED_WINDOW: SyncState b"rp:w:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// A window this machine holds in full whose retain the home refused; the residence upkeep
+    /// asks again (OF-534). Value: [1]. Key: window key.
+    SYNC_RESIDENCE_RETAIN_REFUSED_WINDOW: SyncState b"rr:w:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Recorded-clock seconds (u64be) of an opened thin item's last touch, which ages its read
     /// cache for pruning. Key: hex32 (entity id).
     SYNC_RESIDENCE_ITEM_TOUCH: SyncState b"rt:e:" Raw

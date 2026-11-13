@@ -601,7 +601,7 @@ fn enter_run(
         .transpose()
         .map_err(text)?;
     let meter = spend
-        .map(|scope| ScopeMeter::open(vault, scope))
+        .map(|scope| ScopeMeter::open(vault, &status.attempt, scope))
         .transpose()?;
     // The line the entry's model calls spend on: its scope's meter and the
     // payer it bills, else the provider's.

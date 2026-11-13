@@ -156,9 +156,19 @@ fn classify(
         (Some(ShapeRow::Member { role: was, .. }), Some(ShapeRow::Member { role: now, .. })) => {
             if *was == ShapeMemberRole::Owner || *now == ShapeMemberRole::Owner {
                 Authority
-            } else if now.reach() > was.reach()
-                // A Steward made a Member gains `write`, which no Steward holds.
-                || (*was == ShapeMemberRole::Steward && *now == ShapeMemberRole::Member)
+            } else if ShapeMemberRole::raises(*was, *now)
+                // Steward is the owner's to give (ARCH-0043; lead 10 Nov
+                // 06:5x): a move into it waits for his stamp, whoever asks.
+                || *now == ShapeMemberRole::Steward
+                // A Steward made a Member, an Admin or a Deputy gains
+                // `write`, which no Steward holds.
+                || (*was == ShapeMemberRole::Steward
+                    && matches!(
+                        now,
+                        ShapeMemberRole::Member
+                            | ShapeMemberRole::Admin
+                            | ShapeMemberRole::Deputy
+                    ))
             {
                 Widening
             } else {

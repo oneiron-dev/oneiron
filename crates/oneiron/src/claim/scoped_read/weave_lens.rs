@@ -35,9 +35,9 @@ use crate::learning::LearningCell;
 use crate::lens::{
     ButtonControl, CollectionAtom, GeneratedLens, GeneratedUiActionDeclaration,
     GeneratedUiActionTier, GeneratedUiStateSnapshot, HostedLensRender, LedgerCell, LedgerRowAtom,
-    LensAtom, LensAtomId, LensBackingTarget, LensHandleName, LensHandleRef, LensHandleRole,
-    LensMount, LensNode, LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText,
-    SectionAtom, SelfUiAction, SelfUiActionId, SelfUiControl, SelfUiControlId, SelfUiValue,
+    LensAtom, LensAtomId, LensBackingTarget, LensHandleName, LensHandleRef, LensMount, LensNode,
+    LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText, SectionAtom, SelfUiAction,
+    SelfUiActionId, SelfUiControl, SelfUiControlId, SelfUiValue,
 };
 use crate::provenance::EdgeRef;
 use crate::skill_hub::pack_catalog::{WEAVE_LENS_PACK_NAME, WEAVE_REPORT_LENS};
@@ -541,16 +541,9 @@ pub(super) fn compose_weave_lens_framed(
         let reads: Vec<_> = sources.iter().map(|id| PointRead::id(*id)).collect();
         for (index, row) in read.read(&reads, None)?.value.into_iter().enumerate() {
             let Some(row) = row else { continue };
-            let (target, role) = if row.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-                (
-                    LensBackingTarget::claim(row.id, row.id.to_hex(), row.content_hash)?,
-                    LensHandleRole::ClaimSet,
-                )
-            } else {
-                (
-                    LensBackingTarget::entity(row.id, row.id.to_hex(), row.content_hash)?,
-                    LensHandleRole::EntitySet,
-                )
+            // A source with no short id binds no handle, as an unread one.
+            let Some((target, role)) = LensBackingTarget::of_read_row(read.vault(), &row)? else {
+                continue;
             };
             let name = LensHandleName::new(format!("weave-{index}"))?;
             frame.mint_backing_ref(read, name.clone(), role, target)?;

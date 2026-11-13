@@ -72,6 +72,20 @@ pub struct ResidenceModeRequest {
     pub mode: ResidenceModeName,
 }
 
+/// `vault.residence.worlds`'s input: the worlds the named machine follows,
+/// the owner's pick of its projects (ARCH-0023b #partial-sync). It replaces
+/// the machine's earlier pick; an empty list follows none. A world the
+/// machine may not read is never followed, and under sync all the machine
+/// follows every world it may read.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResidenceWorldsRequest {
+    /// The owner's machine, by its machine id (32 hex).
+    pub machine: EntityId,
+    /// The worlds it follows, 32 hex each.
+    pub worlds: Vec<EntityId>,
+}
+
 /// `vault.residence.open`'s input: one item of one window, opened on the
 /// named machine.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -123,6 +137,23 @@ pub struct ResidenceQueued {
 pub enum ResidenceModeAnswer {
     Applied(ResidenceModeChanged),
     Queued(ResidenceQueued),
+}
+
+/// `vault.residence.worlds`'s answer: the pick the machine follows now, or
+/// the directive queued for it. `state` says which; an applied answer
+/// carries [`ResidenceWorldsPicked`]'s fields beside it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ResidenceWorldsAnswer {
+    Applied(ResidenceWorldsPicked),
+    Queued(ResidenceQueued),
+}
+
+/// The pick a machine follows now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResidenceWorldsPicked {
+    /// The picked worlds, ascending, 32 hex each.
+    pub worlds: Vec<EntityId>,
 }
 
 /// `vault.residence.open`'s answer: the item the machine opened, or the
@@ -313,7 +344,7 @@ impl ResidenceDirectivesRequest {
 }
 
 /// What a residence directive asks its machine to do. `kind` says which; an
-/// open names its window and item, a prune its cutoff.
+/// open names its window and item, a prune its cutoff, a follow its worlds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ResidenceActView {
@@ -321,6 +352,11 @@ pub enum ResidenceActView {
     SyncAll,
     /// Sync what the machine opened.
     SyncOpened,
+    /// Follow these worlds, the owner's pick.
+    Follow {
+        /// The picked worlds, ascending, 32 hex each.
+        worlds: Vec<EntityId>,
+    },
     /// Open one item of one window on the machine.
     Open {
         /// The item's month window, `YYYY-MM`.
@@ -340,6 +376,9 @@ impl From<&ResidenceAct> for ResidenceActView {
         match act {
             ResidenceAct::SyncAll => Self::SyncAll,
             ResidenceAct::SyncOpened => Self::SyncOpened,
+            ResidenceAct::Follow { worlds } => Self::Follow {
+                worlds: worlds.iter().copied().collect(),
+            },
             ResidenceAct::Open { window, item } => Self::Open {
                 window: window.clone(),
                 item: *item,

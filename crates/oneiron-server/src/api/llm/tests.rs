@@ -243,9 +243,19 @@ async fn a_paired_top_scope_credential_carries_llm_results_and_host_usage() {
             BudgetGuard::with_reserve_units("client", 100, 10, BudgetExhaustionPolicy::Suspend);
         let lease = guard.admit_for_request(&request()).unwrap().lease;
 
-        let generated = runtime
+        let mut generated = runtime
             .block_on(client.generate(request(), &lease))
             .unwrap();
+        // afb73674f00 (#1304) and 3c9f3d45196 (#1382): an injected answer is
+        // served through the offer ladder, which stamps its served receipt on
+        // the usage. Pin the receipt's names, then compare the rest whole.
+        let served = |raw: &mut serde_json::Value| {
+            let receipt = std::mem::replace(raw, response().usage.raw_provider);
+            assert_eq!(receipt["provider"], "host-injected", "{receipt}");
+            assert_eq!(receipt["requested_model"], "own/model@1", "{receipt}");
+            assert_eq!(receipt["model_id"], "own/model@1", "{receipt}");
+        };
+        served(&mut generated.usage.raw_provider);
         assert_eq!(generated, response());
         assert_eq!(host_budget.read().used_units, 5);
         assert_eq!(host_budget.read().reserved_units, 0);
@@ -256,10 +266,11 @@ async fn a_paired_top_scope_credential_carries_llm_results_and_host_usage() {
             events.push(event.unwrap());
         }
         assert_eq!(events.len(), 4);
-        assert!(matches!(
-            events.last(),
-            Some(LlmStreamEvent::Done { usage, .. }) if usage == &response().usage
-        ));
+        let Some(LlmStreamEvent::Done { usage, .. }) = events.last_mut() else {
+            panic!("the stream ends with Done");
+        };
+        served(&mut usage.raw_provider);
+        assert_eq!(usage, &response().usage);
         assert_eq!(host_budget.read().used_units, 10);
         assert_eq!(host_budget.read().reserved_units, 0);
 

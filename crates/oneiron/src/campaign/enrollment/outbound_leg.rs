@@ -254,6 +254,9 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
             return Ok(EnrollmentOutboundLeg::BodyUnpinned);
         }
     };
+    // ARCH-0059 #copy-review: the send carries its step's copy arm, recorded
+    // per member once the envelope is frozen, so outcomes split by arm.
+    super::copy_arms::record_arm_send_of(vault, &event, &step)?;
     let consequence_id = enrollment_consequence_id(&event, &step)?;
     let held_request = super::held::PreparedHeldRequest {
         key: super::approval::request_key(&event, &step, outbound, consequence_id),

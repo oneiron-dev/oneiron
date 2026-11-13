@@ -168,6 +168,7 @@ pub use plugin::{
     render_plugin_sections, section_manifest_digest, validate_manifest_for_admission,
     validate_manifest_for_proposal,
 };
+pub(crate) use plugin::{ensure_fit_install_writer_machine, fit_install_writer_id};
 pub(crate) use plugin::{
     scrub_section_fit_receipt_actors_in_txn, stored_section_fit_actor_erasure_body,
 };

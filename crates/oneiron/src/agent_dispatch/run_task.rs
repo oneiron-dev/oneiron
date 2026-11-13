@@ -631,8 +631,11 @@ fn put_agent_run_task_in_txn(
     };
     let encoded = rmp_serde::to_vec_named(&body)
         .map_err(|_| Error::InvariantViolation("agent run task body encode failed"))?;
+    // Its birth edge names the dispatch's facet, else the vault default
+    // (ARCH-0022 #facets, UNBUILT item 10).
     vault
         .batch_in()
+        .mask(facet)
         .put(
             &task_ref,
             ENTITY_TYPE_TASK,

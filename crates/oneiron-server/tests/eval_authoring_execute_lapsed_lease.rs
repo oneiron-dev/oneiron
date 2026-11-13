@@ -14,6 +14,8 @@
 //! eval_authoring_execute_lapsed_lease`.
 #![cfg(oneiron_test_support)]
 
+#[path = "support/engine_stack.rs"]
+mod engine_stack;
 #[path = "support/eval_authoring_fixture.rs"]
 mod eval_authoring_fixture;
 #[path = "support/fake_llm.rs"]
@@ -23,9 +25,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::http::StatusCode;
-use eval_authoring_fixture::{
-    COACH_HOST, Fixture, VERB, assert_budget_settled, echo_plan, run_on_engine_stack,
-};
+use engine_stack::run_on_engine_stack;
+use eval_authoring_fixture::{COACH_HOST, Fixture, VERB, assert_budget_settled, echo_plan};
 use oneiron::attempt_queue::{AttemptQueue, CleanupAttemptLeases};
 use oneiron::dreamer_runner::AdmitDreamerAttempt;
 use oneiron::memory::Memory;
