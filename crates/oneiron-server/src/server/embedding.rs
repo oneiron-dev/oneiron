@@ -438,10 +438,13 @@ impl SyncServer {
     }
 }
 
-struct IndexedProvider {
+struct IndexedProvider<'vault> {
     provider: Arc<dyn QueryEmbedder>,
+    /// The vault whose rows it embeds.
+    #[allow(dead_code)]
+    vault: &'vault oneiron::Vault,
 }
-impl oneiron::memory::IndexedRevisionEmbedder for IndexedProvider {
+impl oneiron::memory::IndexedRevisionEmbedder for IndexedProvider<'_> {
     fn embed_revision(
         &self,
         input: &oneiron::memory::IndexedRevisionInput,
@@ -491,6 +494,7 @@ impl SyncServer {
             .ok_or(oneiron::Error::InvariantViolation("missing idle embedder"))?;
         let provider = IndexedProvider {
             provider: slot.ensure_ready_for(self.vault())?,
+            vault: self.vault(),
         };
         if provider.provider.locality() == oneiron::embed::EmbedderLocality::ThirdParty {
             return Err(oneiron::Error::InvalidConfig(
@@ -509,3 +513,6 @@ impl SyncServer {
         )
     }
 }
+
+#[cfg(test)]
+mod idle_release_tests;
