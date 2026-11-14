@@ -1,4 +1,4 @@
-//! Doors for `tests/check_in_mail_reply_approve.rs` (2k9a): seed one IMAP mailbox, message and proposed reply, and read it back.
+//! Doors for `tests/check_in_mail_reply_approve.rs` (2k9a): seed one IMAP mailbox, message and proposed reply, read it back, and hold it as a held dispatch would.
 
 use crate::EdgeActorClass;
 use crate::EntityId;
@@ -159,4 +159,10 @@ pub fn read_draft(vault: &Vault, who: EntityId, draft: EntityId) -> Result<MailR
         .into_iter()
         .find(|view| view.draft_ref == draft.to_hex())
         .ok_or_else(|| invalid("no draft"))
+}
+
+/// Leaves `draft` Approved, as a dispatch the outbound gate held leaves it:
+/// a retry then reaches the approval's check-in guard (2k9a review).
+pub fn hold_draft(vault: &Vault, draft: EntityId) -> Result<()> {
+    crate::mail_pack::hold_draft_in_test(vault, draft)
 }

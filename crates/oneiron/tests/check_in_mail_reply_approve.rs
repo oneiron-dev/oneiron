@@ -31,7 +31,7 @@ use oneiron::mail_pack::{MailReplyApproveRequest, MailReplyDraftState};
 use oneiron::memory::MEMORY_CODE_BAD_REQUEST;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::test_doors::check_in::{FixedChain, open};
-use oneiron::test_doors::mail_reply::{read_draft, seed};
+use oneiron::test_doors::mail_reply::{hold_draft, read_draft, seed};
 use oneiron::{EntityId, TimeRange, Vault};
 use owner_apply_fixture::{approved, owner_decision, proof, rooted, spent};
 
@@ -130,8 +130,10 @@ fn an_owners_own_approval_records_own_proof() {
     );
 }
 
-/// The Owner applies an asker's approved ask once; a retry on the same
-/// check-in keeps the decision.
+/// The Owner applies an asker's approved ask once. A retry of the approved
+/// revision (left Approved, as a held dispatch leaves it) passes on the same
+/// check-in and spends nothing again; another check-in is refused and stays
+/// unspent.
 #[test]
 fn an_owner_applies_an_askers_approved_ask() {
     let (_dir, vault, owen, owen_proof) = rooted();
@@ -165,13 +167,34 @@ fn an_owner_applies_an_askers_approved_ask() {
         "the decision names the check-in and its asker: {stored:?}"
     );
     assert!(spent(&vault, &asked), "the writer spent the check-in");
+
+    // The dummy credential's send ends Unsettled, which a retry may not
+    // press; a held dispatch leaves the revision Approved, and its retry
+    // reaches the check-in guard.
+    hold_draft(&vault, draft).expect("the draft held");
+    let (another, _) = approved(
+        &vault,
+        owen,
+        &owen_proof,
+        APPROVE,
+        ActClass::OutboundSend,
+        &digest,
+    );
+    let swapped = vault.approve_mail_reply(
+        &owen_proof,
+        &approve_request(draft, revision, Some(another)),
+    );
+    let error = swapped.expect_err("a retry on another check-in is refused");
+    assert_eq!(error.code, MEMORY_CODE_BAD_REQUEST, "{error:?}");
+    assert!(
+        error.message.contains("not on that check-in"),
+        "the press names its check-in: {error:?}"
+    );
+    assert!(!spent(&vault, &another), "a refused retry spends nothing");
+
     let retry =
         vault.approve_mail_reply(&owen_proof, &approve_request(draft, revision, Some(asked)));
     if let Err(error) = &retry {
-        assert!(
-            error.message.contains("did not dispatch"),
-            "a retry only fails its dispatch: {error:?}"
-        );
         assert!(
             !error.message.contains("not on that check-in"),
             "the same check-in is not refused: {error:?}"
@@ -203,7 +226,7 @@ fn an_ask_that_does_not_apply_is_refused_and_left_unspent() {
     );
     let stored = read_draft(&vault, owen, draft).expect("the draft reads back");
     assert_eq!(
-        (stored.state, stored.check_in),
+        (stored.state, stored.check_in.clone()),
         (MailReplyDraftState::Proposed, None),
         "a refused approve writes nothing: {stored:?}"
     );
@@ -232,7 +255,7 @@ fn an_ask_that_does_not_apply_is_refused_and_left_unspent() {
     );
     let stored = read_draft(&vault, owen, draft).expect("the draft reads back");
     assert_eq!(
-        (stored.state, stored.check_in),
+        (stored.state, stored.check_in.clone()),
         (MailReplyDraftState::Proposed, None),
         "a refused approve writes nothing: {stored:?}"
     );
@@ -266,7 +289,7 @@ fn a_members_check_in_ref_is_refused_and_their_own_approval_records_none() {
     );
     let stored = read_draft(&vault, yuki, draft).expect("the draft reads back");
     assert_eq!(
-        (stored.state, stored.check_in),
+        (stored.state, stored.check_in.clone()),
         (MailReplyDraftState::Proposed, None),
         "a refused approve writes nothing: {stored:?}"
     );
