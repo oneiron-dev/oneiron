@@ -92,7 +92,9 @@ async fn a_call_that_names_no_world_stays_on_the_device_while_any_world_does() {
     });
     let waited = outcome(answer);
 
-    // Past the longest wait, the hold says when that offer is back.
+    // Past the longest wait, the hold says when that offer is back. The
+    // vault's clock never runs back: it stays where the waits above moved it
+    // (T0 + 37 in the a90ddad52eed run), and the offer is back an hour on.
     clock.set(T0 + 10);
     first.push(limit("3600"));
     let error = seat.ladder.generate(&run, call(), None).await;
@@ -113,7 +115,7 @@ async fn a_call_that_names_no_world_stays_on_the_device_while_any_world_does() {
             "ok from the device",
             1,
             4,
-            Some(&kept_here(Some((3600, T0 + 3610)))),
+            Some(&kept_here(Some((3600, T0 + 37 + 3600)))),
             json!({"rung": 1, "provider": "second", "model": "big", "passed": "kept_on_device"})
         ),
         "no held call reached the cloud, and each held call is receipted"

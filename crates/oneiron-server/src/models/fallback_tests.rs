@@ -872,8 +872,10 @@ async fn a_resting_call_tries_every_offer_back_until_its_deadline() {
     assert_eq!((first.seen().len(), second.seen().len()), (4, 4));
 
     // A call whose offers each refuse twice waits twice: the first offer's
-    // queue is spent (a 500), and the second answers. Each later answer is
-    // read whole, then all are checked at once, so one run shows them all.
+    // queue is spent (a 500), and the second answers. The stream after it
+    // asks the second offer alone (7, 8). Each later answer is read whole,
+    // then all are checked at once, so one run shows them all (the counts
+    // are the a90ddad52eed run's).
     clock.set(T0 + 400);
     for _ in 0..2 {
         first.push(wait("1"));
@@ -890,7 +892,8 @@ async fn a_resting_call_tries_every_offer_back_until_its_deadline() {
     let stream_seen = (first.seen().len(), second.seen().len());
 
     // When nothing is back after a wait, the call waits for the offer back
-    // first (the other one, not the one it waited for), which answers.
+    // first (the other one, not the one it waited for), which answers: the
+    // first offer is asked once, the second twice (8, 10).
     clock.set(T0 + 600);
     for reply in [wait("1"), wait("120")] {
         first.push(reply);
@@ -911,9 +914,9 @@ async fn a_resting_call_tries_every_offer_back_until_its_deadline() {
             "ok second after the wait",
             (7, 7),
             "ok second after the wait",
-            (8, 8),
+            (7, 8),
             "ok second after the wait",
-            (10, 10)
+            (8, 10)
         )
     );
 }

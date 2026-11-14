@@ -974,8 +974,14 @@ async fn quickjs_a_propose_only_slip_runs_code_whose_rows_write_are_refused() {
             body["error"]["data"]["error_code"], "code_run_failed",
             "{path}: {body}"
         );
+        // The slip holds no Write: the connector's gate refuses the run's
+        // claim write with its proof error, and the guest's step reports it
+        // (the a90ddad52eed run). The writer below runs the same program.
+        let refusal = r#"step failure: {"denied":"mcp_auth_required","reasonCodes":[]}"#;
         assert!(
-            body.to_string().contains("host_call_refused"),
+            body["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.ends_with(refusal)),
             "{path}: the run's claim write is refused: {body}"
         );
     }

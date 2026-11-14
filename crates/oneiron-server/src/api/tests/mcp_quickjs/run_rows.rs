@@ -72,10 +72,10 @@ async fn quickjs_run_rows_need_the_connectors_binding() {
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
-    // 04edd1261e6 (#1365): a verb call is recorded as `self.verbs.call`, in
-    // the guest's order: the search, then the claim. Whether the claim was
-    // stored, then each step's effect and outcome, come first in the message:
-    // a failure line is cut.
+    // A run row's call is recorded under the row's own effect, in the guest's
+    // order: the search, then the claim (the a90ddad52eed run). Whether the
+    // claim was stored, then each step's effect and outcome, come first in
+    // the message: a failure line is cut.
     let structured = &body["result"]["structuredContent"];
     let stored = mode.vault.get_claim(&claim).unwrap().is_some();
     let steps: Vec<String> = structured["steps"]
@@ -88,10 +88,10 @@ async fn quickjs_run_rows_need_the_connectors_binding() {
         })
         .unwrap_or_default();
     assert_eq!(
-        verb_call_outcomes(&body),
+        step_outcomes(&body),
         [
-            verb_refusal("mcp_verb_not_bound"),
-            verb_refusal("mcp_verb_not_bound")
+            row_refusal("self.memory.search", "mcp_verb_not_bound"),
+            row_refusal("self.memory.put_claim", "mcp_verb_not_bound")
         ],
         "claim stored {stored}; steps {steps:?}; result {} steps_run {} | {body}",
         structured["result"],
@@ -113,11 +113,32 @@ async fn quickjs_run_rows_need_the_connectors_binding() {
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
-    let outcomes = verb_call_outcomes(&body);
-    assert_eq!(outcomes.len(), 2, "{body}");
-    assert_eq!(outcomes[0]["kind"], "agent_verb", "{body}");
-    assert_eq!(outcomes[1]["kind"], "agent_verb", "{body}");
-    assert!(mode.vault.get_claim(&claim).unwrap().is_some(), "{body}");
+    assert_eq!(
+        (
+            mode.vault.get_claim(&claim).unwrap().is_some(),
+            row_outcome(&body, "self.memory.search")["kind"].clone(),
+            row_outcome(&body, "self.memory.put_claim")["kind"].clone(),
+            step_outcomes(&body).len(),
+        ),
+        (true, json!("memory_search"), json!("memory_write"), 2),
+        "{body}"
+    );
+}
+
+/// Each step's outcome, in the guest's order.
+fn step_outcomes(body: &Value) -> Vec<Value> {
+    body["result"]["structuredContent"]["steps"]
+        .as_array()
+        .unwrap_or_else(|| panic!("step log: {body}"))
+        .iter()
+        .map(|step| step["outcome"].clone())
+        .collect()
+}
+
+/// A run row's call the door refused, as the step log records it: the row's
+/// own effect, the door's stable code and no reason text.
+fn row_refusal(effect: &str, code: &str) -> Value {
+    json!({"kind": "denied", "effect": effect, "outcome": code, "reason_codes": []})
 }
 
 /// One field of a call outcome as the run's durable record keeps it.
