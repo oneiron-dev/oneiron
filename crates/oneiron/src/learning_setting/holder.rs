@@ -85,6 +85,14 @@ fn holder_class(key: &str) -> Option<EngineControlClass> {
         .map(|(_, class)| *class)
 }
 
+/// Whether `key` is a work budget a holder may tune: a holder's row on it
+/// stays within the owner's own seed or pin for that knob and scope, at the
+/// holder's door ([`owner_rows_admit`]) and at every read after
+/// (`resolution::capped_row_in_txn`).
+pub(super) fn is_work_budget(key: &str) -> bool {
+    matches!(holder_class(key), Some(WorkBudget))
+}
+
 /// The receipt's rendering of a holder's change.
 fn rendered(scope: &SettingScope, mode: SettingMode, value: Option<f64>) -> String {
     let scope = match scope {

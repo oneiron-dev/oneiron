@@ -347,6 +347,40 @@ impl DreamerWakeDriver<'_> {
         Ok(())
     }
 
+    /// Parks `admitted` as an ExecutorError under `park_owner`, fenced on the lease it ran under, with its
+    /// policy-wait entry under `kind` in the same write (FIX 23347): the owner's policy write that clears that
+    /// policy requeues it once.
+    pub(super) fn park_on_policy(
+        &mut self,
+        admitted: &DreamerAdmittedAttempt,
+        reason: String,
+        kind: crate::dreamer_runner::policy_wait::PolicyWaitKind,
+        park_owner: &str,
+        now: u64,
+    ) -> Result<()> {
+        let input = ParkDreamerAttempt {
+            attempt_id: admitted.status.attempt.id,
+            reason,
+            cause: DreamerParkCause::ExecutorError,
+            park_owner: park_owner.to_owned(),
+            carried_spend: None,
+            now,
+        };
+        let lease = admitted_lease(admitted, park_owner);
+        if let Some(record) = self
+            .store
+            .park_on_policy_if_current_lease(input, lease, kind)?
+        {
+            self.publish(
+                record.attempt_id,
+                ProgressKind::Parked,
+                Some(record.reason),
+                now,
+            )?;
+        }
+        Ok(())
+    }
+
     /// Parks a current lease on its seat in the write that records the refusal.
     pub(super) fn park_on_seat(
         &mut self,

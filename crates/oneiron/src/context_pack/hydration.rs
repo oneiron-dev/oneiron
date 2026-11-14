@@ -554,7 +554,7 @@ fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> 
 }
 
 /// `write_accepted`: the write door's scan has read and accepted `payload`.
-fn decode_entity_fields(
+pub(crate) fn decode_entity_fields(
     payload: &[u8],
     write_accepted: bool,
 ) -> Option<HashMap<String, serde_json::Value>> {
