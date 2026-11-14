@@ -149,9 +149,12 @@ fn grant_agent(
         },
     )
     .expect("owner mints the agent a Grant");
-    assert!(
+    // `confers` reports the `read` verb only (`Grant::scope_confers_at`),
+    // so a Grant without `read` never confers, live or not.
+    assert_eq!(
         minted.grant.confers,
-        "{agent_id}: the Grant confers at its mint"
+        verbs.contains(&"read"),
+        "{agent_id}: a Grant naming read confers at its mint"
     );
     minted.grant.grant_ref
 }
