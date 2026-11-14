@@ -58,6 +58,12 @@ impl FoldCapture {
         }
     }
 
+    /// Whether this is an image build's capture: it keeps a row that passes
+    /// through as structure, where a resumable capture is spoiled by one.
+    pub(in crate::authority) fn keeps_image(&self) -> bool {
+        self.image.is_some()
+    }
+
     /// What the image build kept of the last once fold.
     pub(in crate::authority) fn take_image(self) -> Option<Box<ImageFold>> {
         self.image.and_then(|image| image.fold.into_inner())
@@ -86,8 +92,8 @@ impl FoldCapture {
 
 /// A once fold's settlement, as `fold_authority_log_once` reached it.
 pub(in crate::authority) struct OnceParts<'a> {
-    /// Every row here opened: a fold that holds a row passing through records
-    /// no capture.
+    /// Every row here opened, except for an image build's capture: it keeps a
+    /// row that passes through as structure (census L5-22 1a-iii).
     pub(in crate::authority) by_hash: &'a BTreeMap<AuthorityEntryHash, FoldRow>,
     pub(in crate::authority) states: &'a BTreeMap<AuthorityEntryHash, FoldState>,
     pub(in crate::authority) entry_ancestors:

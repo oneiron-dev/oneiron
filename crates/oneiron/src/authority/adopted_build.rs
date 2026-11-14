@@ -124,6 +124,11 @@ impl Vault {
     /// adopted image's residence overflow mark, and its residence bodies fall
     /// back for [`super::checkpoint_image::AUTHORITY_RESIDENCE_BODY_OVERFLOW`]
     /// past the optional-compaction trigger as a held-only build's do (FIX 11400).
+    ///
+    /// A sealed row past the image is a tail the image cannot extend (census
+    /// L5-22 1a-iii): an image that covers one carries every covered body,
+    /// which only the held log has. The build then asks for every covered row
+    /// not held here, or builds the held log whole.
     pub(super) fn build_authority_checkpoint_from_adopted_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -141,18 +146,33 @@ impl Vault {
             .collect();
         let mut held_covered = BTreeSet::new();
         let mut tail = BTreeMap::new();
+        let mut sealed_tail = false;
         for (id, body) in super::readonly_fold::authority_log_rows_in_txn(store, txn)? {
             if let Some(hash) = covered_ids.get(&id) {
                 held_covered.insert(*hash);
                 continue;
             }
-            let entry = open_vault_authority_body_in_txn(store, txn, &body)?;
-            let hash = authority_entry_hash(&entry)?;
+            let row = decode_vault_authority_fold_row_in_txn(store, txn, &body)?;
+            let hash = row.hash()?;
             if image.rows.contains_key(&hash) {
                 held_covered.insert(hash);
+            } else if authority_body_is_sealed(&body)? {
+                sealed_tail = true;
             } else {
+                let entry = row
+                    .open()
+                    .cloned()
+                    .ok_or_else(authority_overlay_unavailable)?;
                 tail.insert(hash, (entry, body));
             }
+        }
+        if sealed_tail {
+            let request =
+                super::adopted_fold::whole_history(adopted, &BTreeSet::new(), &held_covered);
+            if !request.missing.is_empty() {
+                return Err(super::readonly_fold::history_required(&request));
+            }
+            return self.build_whole_successor_in_txn(txn, image);
         }
         let (closed, open, missing) = tail_closure(image, &tail);
         let closed_tail = closed
@@ -208,18 +228,7 @@ impl Vault {
             // and the adopted image's archive inventory carries on wherever
             // the new image covers its rows (FIX 3203).
             AdoptedImageFold::NeedHistory(request) if request.missing.is_empty() => {
-                let mut held = self.build_authority_checkpoint_v2_in_txn(txn)?;
-                for inherited in &image.archive_manifests {
-                    if inherited
-                        .rows
-                        .iter()
-                        .all(|hash| held.rows.contains_key(hash))
-                    {
-                        merge_archive_manifest(&mut held.archive_manifests, inherited.clone());
-                    }
-                }
-                held.encode()?;
-                return Ok(held);
+                return self.build_whole_successor_in_txn(txn, image);
             }
             AdoptedImageFold::NeedHistory(request) => {
                 return Err(super::readonly_fold::history_required(&request));
@@ -269,9 +278,13 @@ impl Vault {
         once.install = InstallBound::default();
         once.pinned_root = None;
         let mut rows = image.rows.clone();
+        // No tail row here is sealed: a sealed one builds the held log whole.
         for hash in &closed {
             let (entry, body) = tail.get(hash).ok_or_else(invalid_authority)?;
-            rows.insert(*hash, AuthorityCheckpointRow::of(entry, body));
+            rows.insert(
+                *hash,
+                AuthorityCheckpointRow::of(&FoldRow::Open(entry.clone()), body, false)?,
+            );
         }
         let next = AuthorityCheckpointV2 {
             fold_schema: AUTHORITY_CHECKPOINT_FOLD_SCHEMA,
@@ -306,5 +319,27 @@ impl Vault {
         .compact_optional_evidence()?;
         normalized.encode()?;
         Ok(normalized)
+    }
+
+    /// The next image built from the held log whole, on a vault that holds
+    /// every row `image`, its adopted image, covers: `image`'s archive
+    /// inventory carries on wherever the new image covers its rows (FIX 3203).
+    fn build_whole_successor_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        image: &AuthorityCheckpointV2,
+    ) -> Result<AuthorityCheckpointV2> {
+        let mut held = self.build_authority_checkpoint_v2_in_txn(txn)?;
+        for inherited in &image.archive_manifests {
+            if inherited
+                .rows
+                .iter()
+                .all(|hash| held.rows.contains_key(hash))
+            {
+                merge_archive_manifest(&mut held.archive_manifests, inherited.clone());
+            }
+        }
+        held.encode()?;
+        Ok(held)
     }
 }

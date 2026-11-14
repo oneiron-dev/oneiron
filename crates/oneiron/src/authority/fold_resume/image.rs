@@ -50,13 +50,14 @@ impl ImageFold {
             fold,
         } = parts;
         let final_merged = final_merged?;
+        // A row that passes through keeps no world, as `RowMeta::of_row`
+        // reads it: it stands on the main log.
         let is_main = |hash: &AuthorityEntryHash| {
-            by_hash
-                .get(hash)
-                .and_then(FoldRow::open)
-                .is_some_and(|entry| {
-                    crate::authority::world_privacy::side_world(&entry.op).is_none()
-                })
+            by_hash.get(hash).is_some_and(|row| {
+                row.op()
+                    .and_then(crate::authority::world_privacy::side_world)
+                    .is_none()
+            })
         };
         let issuers =
             crate::authority::log_structure::authority_structure(by_hash.values()).issuers;
@@ -159,7 +160,7 @@ fn replay_of(
     let parents: BTreeMap<_, _> = by_hash
         .iter()
         .filter(|(hash, _)| !frontier.contains(*hash))
-        .filter_map(|(hash, row)| row.open().map(|entry| (*hash, entry.parent_hashes.clone())))
+        .map(|(hash, row)| (*hash, row.parent_hashes().to_vec()))
         .collect();
     ReplayEvidence::points_of(
         &parents_first_of(&parents),

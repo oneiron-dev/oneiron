@@ -540,8 +540,13 @@ fn verification_in_txn(
             Ok((hash, entry))
         })
         .collect::<Result<_>>()?;
-    let adopted =
-        super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(&vault.store, txn)?;
+    // The adoption's pin, coverage and archive stand whatever it covers; the
+    // fold replays the covered rows itself where the image seeds no fold (it
+    // covers a sealed row: census L5-22 1a-iii).
+    let adopted = super::checkpoint_adopt::cached_verified_adoption_in_txn(&vault.store, txn)?;
+    let image_seeds_fold =
+        super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(&vault.store, txn)?
+            .is_some();
     let mut bound = rows_vault(rows.iter())
         .or_else(|| adopted.as_ref().map(|adopted| adopted.pin().genesis))
         .or(expected);
@@ -599,7 +604,7 @@ fn verification_in_txn(
         Ok(fold) => {
             for hash in &coverage.scaffold_verified {
                 if fold.valid_entries.contains(hash) {
-                    if adopted.is_none() {
+                    if !image_seeds_fold {
                         coverage.semantics_replayed.insert(*hash);
                     }
                     continue;
@@ -724,8 +729,9 @@ impl Vault {
         held: BTreeSet<AuthorityEntryHash>,
     ) -> Result<AuthorityHistoryFetch> {
         let txn = self.store.env.read_txn()?;
+        // Selected by the adoption's coverage, whatever the image covers.
         let Some(adopted) =
-            super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(&self.store, &txn)?
+            super::checkpoint_adopt::cached_verified_adoption_in_txn(&self.store, &txn)?
         else {
             return Ok(AuthorityHistoryFetch::closing(request, held));
         };

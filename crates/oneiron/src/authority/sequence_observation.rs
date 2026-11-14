@@ -159,6 +159,9 @@ pub(crate) fn record_authority_sequence_observation_in_txn(
     Ok(true)
 }
 
+/// The local observations of whole `entries` (tests; the image build reads
+/// its rows' metadata through [`authority_local_observations_of_rows_in_txn`]).
+#[cfg(test)]
 pub(super) fn authority_local_observations_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -176,7 +179,7 @@ pub(super) fn authority_local_observations_in_txn(
     authority_local_observations_of_rows_in_txn(store, txn, &rows)
 }
 
-/// [`authority_local_observations_in_txn`] over the rows' metadata: each
+/// The local observations of rows, from their metadata: each
 /// row's hash, signer, world and sequence are all its receipts key on.
 pub(super) fn authority_local_observations_of_rows_in_txn(
     store: &Store,

@@ -320,20 +320,41 @@ impl Vault {
     ) -> Result<Vec<EntityId>> {
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
-        stage_carried_overlays_in_txn(
-            &self.store,
-            &mut txn,
-            blobs.iter().map(Vec::as_slice),
-            overlays,
-        )?;
+        let ids = self.import_signed_authority_history_in_txn(&mut txn, blobs, overlays)?;
+        txn.commit()?;
+        watch.finish()?;
+        // A home pick the import landed re-elected this node's MACRO home in
+        // the write (DOOR-101): its watchers re-read it now.
+        self.store.notify_proactivity_changes();
+        // A row written after its window loaded reaches it only through the
+        // live mirror.
+        #[cfg(feature = "sync")]
+        self.note_committed_rows(ids.iter().copied().collect());
+        Ok(ids)
+    }
+
+    /// [`Self::import_signed_authority_history`] in the caller's write
+    /// transaction; the stored ids of the rows it put. The caller commits,
+    /// aborts on any error, and owes what the import owes after its commit:
+    /// a `StaleSweepWatch` begun before `txn` and finished after the commit,
+    /// the proactivity wake, and the live mirror's note of the ids. An
+    /// adoption of an image that covers a sealed row lands its carried rows
+    /// here (census L5-22 1a-iii).
+    pub(crate) fn import_signed_authority_history_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        blobs: &[Vec<u8>],
+        overlays: &CarriedOverlays,
+    ) -> Result<Vec<EntityId>> {
+        stage_carried_overlays_in_txn(&self.store, txn, blobs.iter().map(Vec::as_slice), overlays)?;
         let mut decoded = Vec::with_capacity(blobs.len());
         for bytes in blobs {
-            let row = decode_carried_authority_fold_row_in_txn(&self.store, &txn, bytes, overlays)?;
+            let row = decode_carried_authority_fold_row_in_txn(&self.store, txn, bytes, overlays)?;
             decoded.push((row.hash()?, bytes.clone(), row));
         }
-        let mut merged = history_in_txn(self, &txn)?;
+        let mut merged = history_in_txn(self, txn)?;
         let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
-        let (adopted, evidence) = adopted_context_in_txn(&self.store, &txn)?;
+        let (adopted, evidence) = adopted_context_in_txn(&self.store, txn)?;
         let prefix = adopted.as_deref().map(AdoptedPrefix::of);
         for (hash, bytes, row) in &decoded {
             merged
@@ -350,7 +371,7 @@ impl Vault {
         // fold that closes it, after staging, and an import that leaves it
         // open still refuses there. A row the fold before staging flags is
         // judged there too, on the merged history (FIX 2536).
-        let judge_merged = match self.authority_fold_readonly_in_txn(&txn) {
+        let judge_merged = match self.authority_fold_readonly_in_txn(txn) {
             Ok(local) => flags_retired_standing(&local, &merged, evidence.as_deref(), &arriving)?,
             Err(error) if super::readonly_fold::is_history_incomplete(&error) => true,
             Err(error) => return Err(error),
@@ -370,7 +391,7 @@ impl Vault {
             .filter(|(hash, _)| resident.contains(*hash))
             .map(|(_, (_, row))| row)
             .chain(carried.iter());
-        let own_roots = super::log_structure::LocalRoots::read_in_txn(&self.store, &txn)?;
+        let own_roots = super::log_structure::LocalRoots::read_in_txn(&self.store, txn)?;
         for (hash, bytes, _) in
             super::import_order::import_order(stored, &resident, own_roots, decoded)
         {
@@ -395,7 +416,7 @@ impl Vault {
             &self.store,
             &self.config,
             &self.analyzer,
-            &mut txn,
+            txn,
             ops,
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
@@ -403,7 +424,7 @@ impl Vault {
             true,
         )?;
         // Read-side fold checks local sidecars as well as the signed chain.
-        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
         if judge_merged {
             refuse_retired_standing(&self.store, &fold, &merged, evidence.as_deref(), &arriving)?;
         }
@@ -411,16 +432,7 @@ impl Vault {
             return Err(invalid_authority());
         }
         #[cfg(feature = "sync")]
-        self.mark_pending_mirrors_in_txn(&mut txn, &ids.iter().copied().collect())?;
-        txn.commit()?;
-        watch.finish()?;
-        // A home pick the import landed re-elected this node's MACRO home in
-        // the write (DOOR-101): its watchers re-read it now.
-        self.store.notify_proactivity_changes();
-        // A row written after its window loaded reaches it only through the
-        // live mirror.
-        #[cfg(feature = "sync")]
-        self.note_committed_rows(ids.iter().copied().collect());
+        self.mark_pending_mirrors_in_txn(txn, &ids.iter().copied().collect())?;
         Ok(ids)
     }
 

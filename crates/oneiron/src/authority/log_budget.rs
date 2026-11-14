@@ -250,7 +250,7 @@ fn is_handoff(row: &FoldRow) -> bool {
 /// public standing names one. The fold's bounds and the door's tally exempt
 /// the same rows, so the verdict is the same before and after the key
 /// arrives.
-fn is_slip_row(row: &FoldRow) -> bool {
+pub(in crate::authority) fn is_slip_row(row: &FoldRow) -> bool {
     row.op().is_some_and(is_slip_op)
         || matches!(
             row.public().map(AuthorityPublicRow::standing),

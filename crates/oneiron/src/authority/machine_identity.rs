@@ -161,9 +161,8 @@ pub(super) fn resident_genesis_vault_id_in_txn(
             roots.insert(root);
         }
     }
-    if let Some(adopted) =
-        super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(store, txn)?
-    {
+    // The pin's genesis stands whatever the image covers.
+    if let Some(adopted) = super::checkpoint_adopt::cached_verified_adoption_in_txn(store, txn)? {
         roots.insert(adopted.pin().genesis);
     }
     if roots.len() > 1 {

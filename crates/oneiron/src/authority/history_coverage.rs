@@ -220,8 +220,8 @@ pub(crate) fn authority_history_coverage_in_txn(
     txn: &heed::RoTxn<'_>,
     requested: &BTreeSet<AuthorityEntryHash>,
 ) -> Result<AuthorityHistoryCoverage> {
-    let adopted =
-        super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(&vault.store, txn)?;
+    // The adoption's attestation and archive stand whatever the image covers.
+    let adopted = super::checkpoint_adopt::cached_verified_adoption_in_txn(&vault.store, txn)?;
     let archive = archive_coverage_in_txn(vault, txn, adopted.as_deref(), requested)?;
     Ok(AuthorityHistoryCoverage {
         requested: requested.clone(),

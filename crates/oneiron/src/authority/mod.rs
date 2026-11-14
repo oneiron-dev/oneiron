@@ -531,7 +531,9 @@ pub(crate) use machine_write::{
 };
 use observation_policy::authority_observation_policy_in_txn;
 use op_apply::*;
-use sequence_observation::{AuthorityLocalObservations, authority_local_observations_in_txn};
+use sequence_observation::AuthorityLocalObservations;
+#[cfg(test)]
+use sequence_observation::authority_local_observations_in_txn;
 use stale_roster::{apply_stale_roster_window, next_stale_roster_deadline};
 pub use world_key_fold::{FoldedWorldKey, WORLD_KEY_WRAPS_PER_RECIPIENT, WrappedKey};
 pub(crate) use world_key_support::{

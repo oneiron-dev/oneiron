@@ -463,24 +463,27 @@ fn capture_past_adopted(
         .collect();
     let mut held_covered = BTreeSet::new();
     let mut tail = BTreeMap::new();
+    // The adopted capture takes whole entries: a tail row that does not open
+    // here sends the capture to the held log (census L5-22 1a-iii).
+    let mut passes_through = false;
     for (id, body) in authority_log_rows_in_txn(store, txn)? {
         if let Some(hash) = covered_ids.get(&id) {
             held_covered.insert(*hash);
             continue;
         }
-        // The adopted capture still takes whole entries: a stored row
-        // that does not open here refuses, as it did when no record opened it.
         let row = decode_stored_authority_fold_row(store, txn, &body)?;
         let hash = row.hash()?;
-        let entry = row
-            .open()
-            .cloned()
-            .ok_or_else(authority_overlay_unavailable)?;
         if image.rows.contains_key(&hash) {
             held_covered.insert(hash);
+        } else if let Some(entry) = row.open() {
+            tail.insert(hash, (entry.clone(), body));
         } else {
-            tail.insert(hash, (entry, body));
+            passes_through = true;
         }
+    }
+    if passes_through {
+        let request = super::adopted_fold::whole_history(adopted, &BTreeSet::new(), &held_covered);
+        return Ok((AdoptedImageFold::NeedHistory(request), Parents::new()));
     }
     let (closed, _, _) = super::adopted_build::tail_closure(image, &tail);
     let closed_tail: Vec<_> = closed

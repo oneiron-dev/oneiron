@@ -491,9 +491,11 @@ pub(super) fn fold_authority_log_once(
         });
     }
     // A resumed fold reads only open rows' effects; a log holding a row that
-    // passes through, folded or refused, folds whole again.
+    // passes through, folded or refused, folds whole again. An image build
+    // keeps such a row as structure: its state, its parents and no effect
+    // (census L5-22 1a-iii).
     let capture = capture.filter(|capture| {
-        if by_hash.values().all(|row| row.open().is_some()) {
+        if capture.keeps_image() || by_hash.values().all(|row| row.open().is_some()) {
             return true;
         }
         capture.spoil();

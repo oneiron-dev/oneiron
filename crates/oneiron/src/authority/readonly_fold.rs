@@ -1055,7 +1055,10 @@ pub(super) fn authority_log_rows_in_txn(
 
 /// The store ids of the AUTHORITY_LOG rows, in id order, read from the type
 /// index alone.
-fn authority_log_ids_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Vec<crate::EntityId>> {
+pub(super) fn authority_log_ids_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<crate::EntityId>> {
     let mut ids = Vec::new();
     for row in store.port_entity_ids_by_type(txn, ENTITY_TYPE_AUTHORITY_LOG, None)? {
         ids.push(row?);

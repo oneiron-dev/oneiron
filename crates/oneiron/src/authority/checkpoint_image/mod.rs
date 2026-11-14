@@ -86,7 +86,9 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// them, so such a view reads them under the same cap (FIX 23218).
 /// 33: an owner's agent Grant mint an image carries may bind its repo bounds to one owner
 /// working view (row 6 WORKING-VIEW-EDIT).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 33;
+/// 34: each covered row's summary marks its kind and whether it is sealed, and an image that
+/// covers a sealed row carries every covered row's body (census L5-22 1a-iii).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 34;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.
@@ -376,6 +378,11 @@ impl AuthorityCheckpointV2 {
         {
             return Ok(self);
         }
+        // An image that covers a sealed row keeps every body: its adopter
+        // folds them itself (census L5-22 1a-iii).
+        if self.covers_sealed_row() {
+            return Ok(self);
+        }
         for row in self.rows.values_mut() {
             let is_residence = row.body.as_ref().is_some_and(|body| {
                 read_authority_log_entry_body(body).is_ok_and(|read| match read {
@@ -396,6 +403,15 @@ impl AuthorityCheckpointV2 {
         }
         self.residence_overflow = AUTHORITY_RESIDENCE_BODY_OVERFLOW;
         Ok(self)
+    }
+
+    /// Whether the image covers a sealed row (census L5-22 1a-iii). Such an
+    /// image carries every covered row's body and drops none for
+    /// [`AUTHORITY_RESIDENCE_BODY_OVERFLOW`]: an adopter whose custody does
+    /// not open a sealed row folds the carried rows itself, and the sender's
+    /// fold grants it nothing.
+    pub fn covers_sealed_row(&self) -> bool {
+        self.rows.values().any(|row| row.sealed)
     }
 
     fn shape(&self) -> Result<()> {
@@ -425,7 +441,8 @@ impl AuthorityCheckpointV2 {
     /// (the genesis always does), and each carried body the row it
     /// summarizes. A residence row dropped for
     /// [`AUTHORITY_RESIDENCE_BODY_OVERFLOW`] requires and carries none, as
-    /// before #4095 carried them (FIX 11400).
+    /// before #4095 carried them (FIX 11400). An image that covers a sealed
+    /// row carries every body and has no overflow ([`Self::covers_sealed_row`]).
     fn shape_rows(&self) -> Result<()> {
         if !ascending(&self.covered)
             || !ascending(&self.frontier)
@@ -441,6 +458,10 @@ impl AuthorityCheckpointV2 {
         {
             return Err(refused("checkpoint image genesis"));
         }
+        let every_body = self.covers_sealed_row();
+        if every_body && self.residence_overflow {
+            return Err(refused("checkpoint image residence overflow"));
+        }
         let mut named = BTreeSet::new();
         for (hash, row) in &self.rows {
             for parent in &row.parents {
@@ -449,7 +470,7 @@ impl AuthorityCheckpointV2 {
                 }
                 named.insert(*parent);
             }
-            shape_row(hash, row)?;
+            shape_row(hash, row, every_body)?;
         }
         self.shape_graph()?;
         if !self
@@ -593,8 +614,9 @@ impl AuthorityCheckpointV2 {
     }
 }
 
-/// One held row: its signed entry and its stored canonical body.
-type HeldRow = (AuthorityLogEntry, Vec<u8>);
+/// One held row: as it folds here (whole, or structure only where its record
+/// does not open), and its stored canonical body.
+type HeldRow = (FoldRow, Vec<u8>);
 
 /// The held rows whose every ancestor is held, the held rows outside them,
 /// and the parents held rows name that no held row is.
@@ -609,8 +631,8 @@ fn covered_closure(
     let mut waiting = BTreeMap::<AuthorityEntryHash, usize>::new();
     let mut ready = Vec::new();
     let mut missing = BTreeSet::new();
-    for (hash, (entry, _)) in held {
-        let parents: BTreeSet<_> = entry.parent_hashes.iter().copied().collect();
+    for (hash, (row, _)) in held {
+        let parents: BTreeSet<_> = row.parent_hashes().iter().copied().collect();
         for parent in &parents {
             if !held.contains_key(parent) {
                 missing.insert(*parent);
@@ -676,22 +698,24 @@ impl Vault {
     ) -> Result<AuthorityCheckpointV2> {
         let store = &self.store;
         let mut held = BTreeMap::new();
+        // A row whose record does not open here is held as structure only: it
+        // places the log and grants nothing (census L5-22 1a-iii).
         for (_, body) in super::readonly_fold::authority_log_rows_in_txn(store, txn)? {
-            let entry = open_vault_authority_body_in_txn(store, txn, &body)?;
-            let hash = authority_entry_hash(&entry)?;
+            let row = decode_vault_authority_fold_row_in_txn(store, txn, &body)?;
+            let hash = row.hash()?;
             if only.is_none_or(|only| only.contains(&hash)) {
-                held.insert(hash, (entry, body));
+                held.insert(hash, (row, body));
             }
         }
         let (covered, uncovered, missing) = covered_closure(&held);
-        let entries = covered
+        let fold_rows = covered
             .iter()
-            .map(|hash| held.get(hash).map(|(entry, _)| entry.clone()))
+            .map(|hash| held.get(hash).map(|(row, _)| row.clone()))
             .collect::<Option<Vec<_>>>()
             .ok_or_else(invalid_authority)?;
-        let named: BTreeSet<_> = entries
+        let named: BTreeSet<_> = fold_rows
             .iter()
-            .flat_map(|entry| entry.parent_hashes.iter().copied())
+            .flat_map(|row| row.parent_hashes().iter().copied())
             .collect();
         let frontier: BTreeSet<_> = covered
             .iter()
@@ -700,12 +724,20 @@ impl Vault {
             .collect();
         // A local floor is an anti-rollback receipt: an image never carries
         // what one decided.
-        let observations = authority_local_observations_in_txn(store, txn, &entries)?;
-        if entries.iter().zip(&covered).any(|(entry, hash)| {
+        let metas: Vec<_> = covered
+            .iter()
+            .zip(&fold_rows)
+            .map(|(hash, row)| super::fold_resume::RowMeta::of_row(Some(*hash), row))
+            .collect();
+        let observations =
+            super::sequence_observation::authority_local_observations_of_rows_in_txn(
+                store, txn, &metas,
+            )?;
+        if fold_rows.iter().zip(&covered).any(|(row, hash)| {
             observations
                 .sequence_floors
                 .get(hash)
-                .is_some_and(|floor| entry.seq < *floor)
+                .is_some_and(|floor| row.seq() < *floor)
         }) {
             return Err(refused(
                 "a local sequence floor decides a covered authority row",
@@ -716,9 +748,8 @@ impl Vault {
         let capture = super::fold_resume::FoldCapture::for_checkpoint(frontier.clone());
         let (consent, local) = super::fold_engine::own_log_inputs(posture, pin.as_ref());
         // No first-seen time and no clock: nothing time-dependent is decided.
-        let rows = super::fold_engine::open_rows(&entries);
         let fold = super::fold_engine::fold_authority_log_inner(
-            &rows,
+            &fold_rows,
             &BTreeMap::new(),
             None,
             &peers,
@@ -742,11 +773,14 @@ impl Vault {
         } = *capture
             .take_image()
             .ok_or_else(|| refused("the covered authority history left no image"))?;
-        if once.vault_id != Some(vault_id)
-            || held
-                .get(&vault_id)
-                .is_none_or(|(entry, _)| genesis_vault_id(entry).ok() != Some(vault_id))
-        {
+        let genesis_stands = held.get(&vault_id).is_some_and(|(row, _)| match row {
+            FoldRow::Open(entry) => genesis_vault_id(entry).ok() == Some(vault_id),
+            FoldRow::PassThrough(public) => {
+                matches!(public.standing(), PublicStanding::Genesis { .. })
+                    && public.scaffold().vault_id.is_none()
+            }
+        });
+        if once.vault_id != Some(vault_id) || !genesis_stands {
             return Err(refused("the covered authority history has no settled root"));
         }
         let mut unsettled_handoffs: Vec<_> = safety
@@ -781,17 +815,30 @@ impl Vault {
             held_back: std::mem::take(&mut once.install.held_back)
                 .into_iter()
                 .collect(),
-            stale_approvals: super::stale_roster::stale_roster_subject_approvals(&entries, &once)
-                .into_iter()
-                .collect(),
+            // A row that passes through approves nothing.
+            stale_approvals: super::stale_roster::stale_roster_subject_approvals(
+                &fold_rows
+                    .iter()
+                    .filter_map(FoldRow::open)
+                    .collect::<Vec<_>>(),
+                &once,
+            )
+            .into_iter()
+            .collect(),
         };
         once.install = InstallBound::default();
         once.pinned_root = None;
+        // One covered sealed row and the image carries every covered body.
+        let mut every_body = false;
+        for hash in &covered {
+            let (_, body) = held.get(hash).ok_or_else(invalid_authority)?;
+            every_body |= authority_body_is_sealed(body)?;
+        }
         let rows = covered
             .iter()
             .map(|hash| {
-                let (entry, body) = held.get(hash).ok_or_else(invalid_authority)?;
-                Ok((*hash, AuthorityCheckpointRow::of(entry, body)))
+                let (row, body) = held.get(hash).ok_or_else(invalid_authority)?;
+                Ok((*hash, AuthorityCheckpointRow::of(row, body, every_body)?))
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
         // A covered row no fold judged (an invalid signature) holds no state.
