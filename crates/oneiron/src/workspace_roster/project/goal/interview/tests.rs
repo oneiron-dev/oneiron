@@ -172,6 +172,36 @@ struct ProjectGoalInterviewContextView {
     attempt: Option<AttemptId>,
 }
 
+/// Adds one unrestricted-scope `core:read` row per actor to the vault's
+/// default policy, naming no actor class. A room read admits a turn only when
+/// each other member may read it, under a key that names no class
+/// (`peer_read_keys_in`), so only a class-agnostic row admits the leader
+/// there.
+fn permit_class_agnostic_reads(vault: &Vault, actors: &[EntityId]) -> Result<()> {
+    use rmpv::Value;
+    let scope = crate::federation::scope_codec::encode_scope_value(
+        &crate::federation::scope_codec::read_preset(),
+    )?;
+    let data = crate::gate::default_policy_manifest_with_scoped_grants(
+        actors
+            .iter()
+            .map(|actor| {
+                Value::Map(vec![
+                    ("actor_ref".into(), actor.to_hex().into()),
+                    ("effector".into(), "core:read".into()),
+                    ("scope".into(), scope.clone()),
+                    ("receipt_required".into(), false.into()),
+                ])
+            })
+            .collect(),
+    )?;
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &data,
+    )
+}
+
 /// The owner's header, the stored card that minted the vault's project with
 /// its leader, and the interview the owner's tap opens on them, its first
 /// run leased and loaded.
@@ -187,11 +217,8 @@ fn opened_interview() -> Result<Interview> {
     let room = EntityId::from_hex(&spec.home_room)?;
     // Membership reads nothing: the agent and the owner each read the room
     // through a grant. The opening finds the owner's header on the owner's
-    // own read.
-    vault.install_read_permits_for_test(&[
-        crate::WriteActor::new(agent, AGENT),
-        crate::WriteActor::new(human, HUMAN),
-    ])?;
+    // own read, which admits only what the leader may read as well.
+    permit_class_agnostic_reads(&vault, &[agent, human])?;
     let owner = vault.authenticate_owner(
         human,
         &human.to_hex(),
