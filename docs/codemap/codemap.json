@@ -14003,6 +14003,7 @@
      "path": "src/campaign/sender.rs",
      "purpose": "One campaign program step's send through the served channel transports (FIX 11513)",
      "surface": {
+      "crate-vis": 2,
       "fn": 2,
       "struct": 1
      }
@@ -14834,7 +14835,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 20,
+      "fn": 21,
       "struct": 6,
       "trait": 1
      }
@@ -31980,7 +31981,7 @@
      "path": "src/dreamer_consolidation/strength.rs",
      "purpose": "Consolidation strength observations and an archive-only lifecycle (OF-216)",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 12,
       "fn": 5,
       "struct": 2
      }
@@ -34660,7 +34661,7 @@
       "const": 3,
       "crate-vis": 20,
       "fn": 1,
-      "mod": 24,
+      "mod": 25,
       "re-export": 11
      }
     },
@@ -34891,7 +34892,8 @@
      "purpose": "Nightly strength maintenance rides the existing wake recipe/run-tree lane",
      "surface": {
       "const": 1,
-      "crate-vis": 2
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -36010,13 +36012,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_wake/nightly.rs",
      "purpose": "Budgeted interest-queue spending, one thing per entity or topic (OF-498c, see `things`): its world, facet…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -36036,7 +36038,7 @@
      "path": "src/dreamer_wake/nightly/things.rs",
      "purpose": "One nightly thing per entity or topic (OF-498c, ARCH-0026 Nightly)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -36047,6 +36049,16 @@
      "purpose": "A nightly thing's children: one per project (FIX 8724)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/nightly/things/topics.rs",
+     "purpose": "A nightly topic (ARCH-0026 Nightly, \"an entity or a topic\"; Engine ruling L2-04-TOPIC): the words of a Name…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -36320,13 +36332,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_wake/sieve/chunks.rs",
      "purpose": "A TURN's words as the sieve reads them: one chunk per source row, each with the digest that versions it…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -36365,7 +36377,7 @@
      "path": "src/dreamer_wake/sieve/mod.rs",
      "purpose": "The continuous sieve (ARCH-0026, the Continuous recipe): the cheap check that tags what is new on the local…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 2,
       "mod": 1,
       "re-export": 5,
@@ -43686,7 +43698,7 @@
      "path": "src/gate/dreamer_grant.rs",
      "purpose": "The Dreamer's weave rows, the owner's grant that adds them to a vault seeded without them, and the read-only…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 6,
       "fn": 3,
       "struct": 1
      }
@@ -92538,6 +92550,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SealedCampaignEmail"
+     ],
+     "path": "src/test_doors/campaign_opt_out_line.rs",
+     "purpose": "Door for `tests/campaign_opt_out_line.rs` (L3-02, ARCH-0059 #opt-out): the campaign sender's sealing of one…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -92782,7 +92807,7 @@
      "purpose": "An admitted strength attempt over one observed Dreamer claim, for the bound job client's tests (untangle…",
      "surface": {
       "const": 2,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -93044,7 +93069,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 83,
+      "mod": 85,
       "re-export": 1
      }
     },
@@ -93060,6 +93085,22 @@
       "const": 1,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PlannedThing",
+      "SpentSpan",
+      "SpentSpanKind"
+     ],
+     "path": "src/test_doors/nightly.rs",
+     "purpose": "The nightly plan's things, for integration tests (census L2-04): witnessed TURNs whose sieve spans are…",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -93317,7 +93358,6 @@
      "kind": "src",
      "notable": [
       "GrantMark",
-      "StrengthArchiveReceipt",
       "WeaveReach"
      ],
      "path": "src/test_doors/steward.rs",
@@ -93325,8 +93365,8 @@
      "surface": {
       "const": 4,
       "enum": 1,
-      "fn": 27,
-      "struct": 2
+      "fn": 24,
+      "struct": 1
      }
     },
     {
@@ -93408,7 +93448,7 @@
      "purpose": "Doors for the untangle regression tests (`tests/untangle_regressions.rs`; lead 19:05 9 Nov, TESTS-MUST-RUN)…",
      "surface": {
       "enum": 1,
-      "fn": 25,
+      "fn": 24,
       "struct": 3
      }
     },
@@ -93479,7 +93519,7 @@
      "path": "src/test_util/dreamer_rows.rs",
      "purpose": "A policy manifest without the Dreamer's actor-keyed rows, as a release before warm-by-default seeded it",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 2
      }
     },
     {
@@ -102172,6 +102212,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/campaign_opt_out_line.rs",
+     "purpose": "Every campaign email carries a plain opt-out line (L3-02)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/cb_oracle_common/mod.rs",
      "purpose": "Shared fixtures for the split Context Board oracle files",
      "surface": {}
@@ -103967,6 +104015,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/nightly_topic_groups.rs",
+     "purpose": "Nightly extraction groups unbound TURNs by topic (census L2-04; ARCH-0026 Nightly: \"It groups the queued…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -104982,14 +105038,6 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
-     "path": "tests/steward_narrowed_strength_archive.rs",
-     "purpose": "X02's test pointed at a narrowed Steward grant (untangle 6.3; the X02 verdict, Engine and lead 9 Nov 16:5x…",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
      "path": "tests/steward_read_data_axes.rs",
      "purpose": "The Dreamer reads inside the data axes of its Steward grant (S67-READ-AXES = C, Engine 10 Nov; untangle 6.3b)",
      "surface": {}
@@ -105215,7 +105263,7 @@
      "kind": "test",
      "notable": [],
      "path": "tests/untangle_regressions.rs",
-     "purpose": "Untangle regressions (lead 19:05 9 Nov, TESTS-MUST-RUN): the ruled behaviour tests of X01 (#6878), X02…",
+     "purpose": "Untangle regressions (lead 19:05 9 Nov, TESTS-MUST-RUN): the ruled behaviour tests of X01 (#6878)…",
      "surface": {}
     },
     {
@@ -105990,7 +106038,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 73,
+     "files": 74,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -106928,7 +106976,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 86,
+     "files": 88,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -107105,8 +107153,8 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7516,
-   "test_files": 1238
+   "source_files": 7519,
+   "test_files": 1239
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -118933,6 +118981,50 @@
    "source_files": 179,
    "test_files": 14
   },
+  "oneiron-dreamer": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "oneiron-dreamer — the Dreamer's maintenance jobs outside the engine (untangle 6.9c, S69-RUN = A)",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Error",
+      "Input",
+      "Outcome"
+     ],
+     "path": "src/strength_archive.rs",
+     "purpose": "The consolidation strength archive (untangle 6.9c, F6): archives the Dreamer's old, weak claims through…",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    }
+   ],
+   "modules": {
+    "strength_archive": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The consolidation strength archive (untangle 6.9c, F6): archives the Dreamer's old, weak claims through…"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "oneiron-dreamer — the Dreamer's maintenance jobs outside the engine (untangle 6.9c, S69-RUN = A)",
+   "source_files": 2,
+   "test_files": 0
+  },
   "oneiron-driver": {
    "files": [
     {
@@ -119057,6 +119149,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DreamerJobsExecutor"
+     ],
+     "path": "src/supervisor/dreamer_jobs.rs",
+     "purpose": "The host adapter for the Dreamer's job crate (untangle 6.9c PR 4, S69-RUN = A): a strength attempt runs…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -119067,7 +119172,7 @@
      "path": "src/supervisor/factory.rs",
      "purpose": "Per-pass attempt-executor factory trait and default implementation",
      "surface": {
-      "fn": 16,
+      "fn": 17,
       "struct": 2,
       "trait": 1,
       "type": 1
@@ -119270,7 +119375,7 @@
      "path": "src/supervisor/mod.rs",
      "purpose": "The wake-pass supervisor (ONE-1683): the loop that pumps [`DreamerWakeDriver::run_wake_pass`] — the starter…",
      "surface": {
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -119542,6 +119647,14 @@
       "fn": 1,
       "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/dreamer_strength_archive.rs",
+     "purpose": "The production strength facet (untangle 6.9c PR 4, MAP-6.9 row 6.9c): a wake pass through the production…",
+     "surface": {}
     }
    ],
    "modules": {
@@ -119553,7 +119666,7 @@
      "purpose": "RT-03 (ONE-1685): the driver owns the SESSION lifecycle; apps send hints"
     },
     "supervisor": {
-     "files": 29,
+     "files": 30,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -119583,8 +119696,8 @@
    },
    "over_bar": 3,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
-   "source_files": 37,
-   "test_files": 10
+   "source_files": 38,
+   "test_files": 11
   },
   "oneiron-ffi": {
    "files": [
