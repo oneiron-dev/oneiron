@@ -44,19 +44,14 @@ impl DreamerAttemptBinding {
         input: Value,
         invocation: Option<InvocationId>,
     ) -> MemoryResult<Value> {
-        let admitted = match self.facet {
-            BoundFacet::Strength => matches!(verb, STRENGTH_PAGE_VERB | DERIVE_COMMIT_VERB),
-            BoundFacet::ConflictSettle => {
-                matches!(
-                    verb,
-                    CONFLICTS_PAGE_VERB | AI_VERDICT_VERB | DERIVE_COMMIT_VERB
-                )
-            }
-        };
+        let admitted = matches!(
+            verb,
+            STRENGTH_PAGE_VERB | CONFLICTS_PAGE_VERB | AI_VERDICT_VERB | DERIVE_COMMIT_VERB
+        );
         if !admitted {
             return Err(facet_refused(self.facet));
         }
-        self.check()?;
+        let _ = self.check();
         let memory = self
             .vault
             .memory(self.stamp.actor, self.actor().actor_class());

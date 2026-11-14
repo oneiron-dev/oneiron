@@ -32,8 +32,7 @@ use crate::llm::decision::{
     TypedDecision,
 };
 use crate::memory::{
-    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, MEMORY_CODE_MODEL_UNAVAILABLE,
-    MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult,
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult,
 };
 use crate::model_decision::catalogue::AI_VERDICT;
 use crate::retrieval_depth::RetrievalDeadline;
@@ -234,7 +233,7 @@ impl DreamerAttemptBinding {
             for ((reference, slot), id) in evidence_refs.iter().zip(&targets).zip(&evidence) {
                 if !observed_claim_reads_in_txn(vault, &txn, &read, scope, *id)? {
                     return Err(MemoryError::new(
-                        MEMORY_CODE_FORBIDDEN,
+                        MEMORY_CODE_NOT_FOUND,
                         format!("evidence {reference:?} does not read for the Dreamer attempt"),
                         &["Name only members the Dreamer's Steward read reaches."],
                     ));
@@ -269,8 +268,7 @@ impl DreamerAttemptBinding {
             })
         };
         let Some(lender) = self.lender.clone() else {
-            return Err(MemoryError::new(
-                MEMORY_CODE_MODEL_UNAVAILABLE,
+            return Err(MemoryError::bad_request_with(
                 "no host lends this attempt a decision ladder",
                 &["Run under a host that lends decisions, then ask again."],
             ));

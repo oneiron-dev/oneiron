@@ -259,7 +259,6 @@ pub(crate) fn execute(
         // RULING S69C-DESIGN item 8): the wake driver hands it to the host's
         // executor, so here it can only wait for one.
         CONSOLIDATION_STRENGTH_FACET => return Ok(strength::unlent()),
-        CONFLICT_SETTLE_FACET => return Ok(conflict_settle::unlent()),
         CURATOR_FACET => {
             curator::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }

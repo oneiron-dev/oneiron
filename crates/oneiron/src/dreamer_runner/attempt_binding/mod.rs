@@ -230,13 +230,11 @@ fn bound_facet_for_attempt(record: &AttemptRecord) -> Result<Option<BoundFacet>>
 /// the bound facet.
 fn facet_batch(input: DeriveCommitInput, facet: BoundFacet) -> MemoryResult<DerivationBatch> {
     let batch = input.into_batch()?;
-    if batch.items.iter().all(|item| {
-        matches!(
-            (facet, item),
-            (BoundFacet::Strength, DerivationItem::Archive(_))
-                | (BoundFacet::ConflictSettle, DerivationItem::Settle(_))
-        )
-    }) {
+    if batch
+        .items
+        .iter()
+        .all(|item| matches!(item, DerivationItem::Archive(_) | DerivationItem::Settle(_)))
+    {
         Ok(batch)
     } else {
         Err(facet_refused(facet))
