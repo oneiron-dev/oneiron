@@ -119,7 +119,7 @@ pub struct SecretGrantUseRequest {
     pub arguments: serde_json::Value,
 }
 
-pub fn no_arguments() -> serde_json::Value {
+fn no_arguments() -> serde_json::Value {
     serde_json::Value::Object(serde_json::Map::new())
 }
 

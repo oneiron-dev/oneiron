@@ -142,6 +142,19 @@ pub fn require_text(text: &str, what: &str) -> MemoryResult<()> {
     Ok(())
 }
 
+/// Fixed-width byte strings travel as lowercase hex on every wire.
+pub fn decode_hex<const N: usize>(text: &str) -> Option<[u8; N]> {
+    if text.len() != N * 2 {
+        return None;
+    }
+    let mut out = [0_u8; N];
+    for (index, pair) in text.as_bytes().chunks(2).enumerate() {
+        let pair = std::str::from_utf8(pair).ok()?;
+        out[index] = u8::from_str_radix(pair, 16).ok()?;
+    }
+    Some(out)
+}
+
 /// Serde for a 32-byte digest as 64 hex characters.
 pub mod hex32 {
     use serde::{Deserialize, Deserializer, Serializer};

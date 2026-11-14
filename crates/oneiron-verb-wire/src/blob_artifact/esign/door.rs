@@ -213,8 +213,8 @@ pub struct EsignSealedItemView {
     pub sealed_version: u64,
     pub sha256: String,
     /// Actual profiles and every native degradation reason from this item's seal.
-    pub profile: super::sealer::SealProfileEvidence,
-    pub active_content: super::sealer::SealActiveContentFacts,
+    pub profile: oneiron_store::blob_artifact::esign::sealer::SealProfileEvidence,
+    pub active_content: oneiron_store::blob_artifact::esign::sealer::SealActiveContentFacts,
 }
 
 /// A sealed document's manifest: which attempt sealed it, over which

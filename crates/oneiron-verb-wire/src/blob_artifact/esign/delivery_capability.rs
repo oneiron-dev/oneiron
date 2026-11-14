@@ -4,8 +4,6 @@
 use crate::blob_artifact::esign::model::*;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// Why one delivery stays unexported for now (FIX 6423, 6455, 6482). It
 /// waits on its own; no other delivery waits on it. The exporter logs its

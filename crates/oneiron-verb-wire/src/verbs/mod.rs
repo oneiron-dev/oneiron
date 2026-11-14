@@ -1,10 +1,8 @@
 //! Moved from `crates/oneiron/src/verbs/mod.rs` (lib split W3: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::autoreason_campaign::research;
 pub use crate::memory::affect::QueryAffect;
 pub use crate::memory::recall::RecallRequest;
-use crate::sync::federation_burst::*;
 pub use crate::task_verb::TaskWaitRequest;
 pub use crate::task_verb::fanout_batch::FanoutBatchInput;
 pub use crate::task_verb::fanout_batch::FanoutChildInput;
@@ -59,7 +57,6 @@ pub use crate::verbs::grants::*;
 pub use crate::verbs::host::*;
 pub use crate::verbs::hub::*;
 pub use crate::verbs::identity_topology::*;
-use crate::verbs::identity_topology::*;
 pub use crate::verbs::legal_hold::*;
 pub use crate::verbs::live_run::*;
 pub use crate::verbs::live_voice::*;
@@ -119,20 +116,8 @@ pub use crate::verbs::voice_bank::*;
 pub use crate::verbs::weave::*;
 pub use crate::verbs::wire_health::*;
 pub use crate::verbs::workspace::*;
-use base64::Engine as _;
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
 use serde::Deserialize;
 use serde::Serialize;
-use serde::de::DeserializeOwned;
-use serde_json::Value;
-use serde_json::json;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::path::Path;
-use std::path::PathBuf;
-use zeroize::Zeroize;
-use zeroize::Zeroizing;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

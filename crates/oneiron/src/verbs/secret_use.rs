@@ -38,9 +38,8 @@ use crate::secret_custody::{
 use crate::secret_lease::{SecretGrantCaller, SecretGrantTarget};
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::verbs::secret_use::SecretUseRequest;
 #[doc(hidden)]
-use oneiron_verb_wire::verbs::secret_use::no_arguments;
+pub use oneiron_verb_wire::verbs::secret_use::SecretUseRequest;
 
 pub use crate::code_run::{SecretUseAnswer, SecretUseRecord, SecretUseStatus};
 

@@ -54,6 +54,7 @@ impl PptxCommentPatch {
 }
 
 mod entity_ref {
+    use oneiron_contracts::entity_id::EntityId;
     use serde::{Deserialize, Deserializer, Serializer};
     pub(super) fn serialize<S: Serializer>(
         id: &EntityId,

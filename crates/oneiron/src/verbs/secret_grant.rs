@@ -37,7 +37,6 @@ const RENEW: &str = "self.secrets.renew";
 const TEARDOWN: &str = "self.secrets.teardown";
 
 #[doc(hidden)]
-use oneiron_verb_wire::verbs::secret_grant::no_arguments;
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::secret_grant::{
     SecretGrantCleanup, SecretGrantMintRequest, SecretGrantPurpose, SecretGrantRegistration,

@@ -41,21 +41,8 @@ pub use oneiron_verb_wire::task_verb::brief::{
     BriefConstraints, BriefIntent, Care, Criterion, EscalationTrigger, SpawnPins, TypeRef,
 };
 
-/// Fixed-width byte strings travel as lowercase hex on every wire.
-pub(crate) fn decode_hex<const N: usize>(text: &str) -> Option<[u8; N]> {
-    if text.len() != N * 2 {
-        return None;
-    }
-    let mut out = [0_u8; N];
-    for (index, pair) in text.as_bytes().chunks(2).enumerate() {
-        let pair = std::str::from_utf8(pair).ok()?;
-        out[index] = u8::from_str_radix(pair, 16).ok()?;
-    }
-    Some(out)
-}
-
 #[doc(hidden)]
-pub(crate) use oneiron_verb_wire::task_verb::brief::hex32;
+pub(crate) use oneiron_verb_wire::task_verb::brief::{decode_hex, hex32};
 
 /// A context pack pinned by digest: a pack ref promises no immutability, so
 /// the brief keeps what it read.

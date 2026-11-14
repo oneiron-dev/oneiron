@@ -5,7 +5,6 @@ use crate::blob_artifact::esign::model::*;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
@@ -30,7 +29,7 @@ pub struct SigningPage {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SigningSealedItem {
     pub sha256: String,
-    pub active_content: super::sealer::SealActiveContentFacts,
+    pub active_content: oneiron_store::blob_artifact::esign::sealer::SealActiveContentFacts,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

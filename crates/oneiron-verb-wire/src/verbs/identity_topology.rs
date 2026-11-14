@@ -1,6 +1,8 @@
 //! Moved from `crates/oneiron/src/verbs/identity_topology.rs` (lib split W3: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::identity_topology as topology;
+
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;

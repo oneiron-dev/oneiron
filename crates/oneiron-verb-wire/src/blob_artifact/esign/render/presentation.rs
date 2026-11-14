@@ -12,7 +12,6 @@ use lopdf::Stream;
 use lopdf::content::Content;
 use lopdf::content::Operation;
 use lopdf::dictionary;
-use oneiron_base::error::Result;
 use serde::Deserialize;
 use serde::Serialize;
 use sha2::Digest;
