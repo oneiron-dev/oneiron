@@ -27,4 +27,24 @@ describe('Icon', () => {
     assert.match(check, /<path d="M20 6 9 17l-5-5"\/>/)
     assert.notEqual(info, check)
   })
+
+  test('the house is a house: walls, a roof and a door, no hash', () => {
+    const house = renderToStaticMarkup(<Icon name="house" />)
+    assert.doesNotMatch(house, /h11/)
+    assert.match(house, /M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8/)
+  })
+
+  test('day, night and follows the system are drawn in the same style', () => {
+    for (const name of ['sun', 'moon', 'halfCircle'] as const) {
+      assert.ok(ICON_NAMES.includes(name), `${name} is an icon`)
+      const svg = renderToStaticMarkup(<Icon name={name} />)
+      assert.match(svg, /viewBox="0 0 24 24"/)
+      assert.match(svg, /stroke-width="1.5"/)
+      assert.match(svg, /stroke-linecap="round"/)
+      assert.match(svg, /stroke-linejoin="round"/)
+    }
+    /* Only the system's half is filled. */
+    assert.match(renderToStaticMarkup(<Icon name="halfCircle" />), /<path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"\/>/)
+    assert.doesNotMatch(renderToStaticMarkup(<Icon name="sun" />), /fill="currentColor"/)
+  })
 })
