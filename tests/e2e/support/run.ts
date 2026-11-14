@@ -366,14 +366,21 @@ interface FileDiagnostics {
 interface Reporter { test: typeof BunTest }
 /** Call once at module scope; pass Bun's test function to avoid importing bun:test in the runner. */
 export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
-  const file = basename(fileURLToPath(meta.url));
   // Register only in a Bun test file; importing the suite runner starts no work.
   const { beforeAll } = require("bun:test") as typeof import("bun:test");
   beforeAll(async () => { await loadBuildManifest(declaration.profile) }, LIMITS.suiteMs);
+  return caseRegistry(basename(fileURLToPath(meta.url)), declaration);
+}
+/** The variable the nightly E2E stage (scripts/nightly/nightly_e2e.py) sets to "1" to run nightly budget cases. */
+export const NIGHTLY_ENV = "E2E_NIGHTLY";
+export const NIGHTLY_REASON = `nightly budget case: runs only when ${NIGHTLY_ENV}=1 (the nightly E2E stage)`;
+/** One file's case registrations and results, without defineFile's build-manifest hook. It reads the runner's
+ * variables from `env` (process.env in a case file). */
+export function caseRegistry(file: string, declaration: FileDeclaration, env: Readonly<Record<string,string|undefined>> = process.env) {
   const results = new Map<string,IdResult>();
   const registrations = new Set<string>();
-  const resultPath = process.env.E2E_RESULT_FILE;
-  const selected = new Set((process.env.E2E_SELECTED_IDS ?? "").split(",").filter(Boolean));
+  const resultPath = env.E2E_RESULT_FILE;
+  const selected = new Set((env.E2E_SELECTED_IDS ?? "").split(",").filter(Boolean));
   const flush = async (): Promise<void> => {
     if (resultPath) await new Artifacts(dirname(resultPath)).json(basename(resultPath), { file, declaration, registrations:[...registrations], results:[...results.values()] });
   };
@@ -390,7 +397,7 @@ export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
         return flowStorage.run(flow, async () => {
           const started = performance.now();
           try {
-            if (process.env.E2E_PROFILE && process.env.E2E_PROFILE !== declaration.profile) throw new BlockedDoor("File profile mismatch");
+            if (env.E2E_PROFILE && env.E2E_PROFILE !== declaration.profile) throw new BlockedDoor("File profile mismatch");
             await withDeadline(Promise.resolve().then(() => { assertFlowActive(); return body() }), deadlineMs, id, () => flow.expire());
             assertFlowActive();
             flow.finish();
@@ -448,6 +455,16 @@ export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
       results.set(id, {id,outcome:"BLOCKED",durationMs:0,reason});
       test.todo(`${id} ${reason}`, () => {});
       // Bun afterAll is supplied by the file so registration-only TODO files flush too.
+    },
+    /** A nightly budget case: a flow longer than the 30 s PR budget (Engine E2E-NIGHTLY-TODO = A). Without
+     * E2E_NIGHTLY=1 it is a todo that reports BLOCKED with NIGHTLY_REASON and its body never runs; with it, it
+     * runs as suite.test with its own deadline. */
+    nightly(test: Reporter["test"], id: string, name: string, body: () => void | Promise<void>, deadlineMs: number): void {
+      if (env[NIGHTLY_ENV] === "1") { this.test(test, id, name, body, deadlineMs); return }
+      if (selected.size && !selected.has(id)) return;
+      register(id);
+      results.set(id, {id,outcome:"BLOCKED",durationMs:0,reason:NIGHTLY_REASON});
+      test.todo(`${id} ${name} [${NIGHTLY_REASON}]`, () => {});
     },
     flush,
   };
@@ -639,7 +656,8 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
           E2E_CPU_CREDITS:String(file.slots*LIMITS.cpuPerSlot),E2E_MEMORY_MIB:String(file.slots*LIMITS.memoryMiBPerSlot),
           E2E_OWNERS_DIR:ownerDir,E2E_ARTIFACTS_DIR:resolve(output,file.file),E2E_RESULT_FILE:resultFile,E2E_SELECTED_IDS:id,
           E2E_TEMP_ROOT:fileRoot,E2E_BUILD_VERIFIED:verifiedPath,E2E_BUILD_MANIFEST:process.env.E2E_BUILD_MANIFEST!,E2E_BUILD_MANIFEST_SHA256:process.env.E2E_BUILD_MANIFEST_SHA256!,
-          ...(process.env.E2E_MEMORY_RETAIN_VAULT?{E2E_MEMORY_RETAIN_VAULT:process.env.E2E_MEMORY_RETAIN_VAULT}:{})});
+          ...(process.env.E2E_MEMORY_RETAIN_VAULT?{E2E_MEMORY_RETAIN_VAULT:process.env.E2E_MEMORY_RETAIN_VAULT}:{}),
+          ...(process.env[NIGHTLY_ENV]==="1"?{[NIGHTLY_ENV]:"1"}:{})});
         await mkdir(env.TMPDIR!,{recursive:true,mode:0o700});
         const child = await ManagedProcess.start([...build.launcher,requireAsset(build,"bun"),"test",resolve(E2E_ROOT,file.file),"--timeout",String(LIMITS.suiteMs),"--max-concurrency","1","--reporter=junit","--reporter-outfile",junitFile],
           {cwd:E2E_ROOT,env,label:`process-${file.file}-${id}`,artifacts});

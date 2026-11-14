@@ -7,39 +7,16 @@
 //! (`compiled_hash`) and the slot state it saw (`expected_active_ref`). An
 //! agent can propose a lens; it cannot select one.
 
-use serde::{Deserialize, Serialize};
-
 use super::GeneratedLens;
-use super::proposal::{
-    LensSlot, LensSlotRecord, PROPOSALS, SLOTS, active_at, invalid_state, slot_key,
-};
+use super::proposal::{LensSlotRecord, PROPOSALS, SLOTS, active_at, invalid_state, slot_key};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::receipt::{LensActivationReceipt, LensSlotDecision};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::{EntityId, Error, Result, Vault};
 
-/// `vault.lenses.activate`'s input: the proposal to select, the revision the
-/// owner was shown, and the lens the slot held when they looked.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LensActivateRequest {
-    pub lens_ref: String,
-    pub compiled_hash: String,
-    /// The slot's active lens as shown, or none when it held none.
-    #[serde(default)]
-    pub expected_active_ref: Option<String>,
-}
-
-/// `vault.lenses.deactivate`'s input: the slot to clear and the lens it was
-/// shown holding. It clears the selection only; the pack, its skill and the
-/// proposal stay.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LensDeactivateRequest {
-    pub slot: LensSlot,
-    pub expected_active_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::lens::activation::{LensActivateRequest, LensDeactivateRequest};
 
 fn lens_id(field: &str, value: &str) -> MemoryResult<EntityId> {
     EntityId::from_hex(value)

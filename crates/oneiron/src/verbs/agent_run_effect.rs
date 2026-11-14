@@ -10,37 +10,15 @@
 //! call answers the step that it may have happened elsewhere, and the run
 //! goes on without it. The first answer settles the ask; a later one finds
 //! it settled.
-use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::agent_dispatch::AgentRunEffectAnswerOutcome;
 use crate::consent::AuthenticatedOwner;
-use crate::entity_id::EntityId;
 use crate::memory::{MemoryError, MemoryResult};
 
-/// `vault.agent.run_effect.answer`'s input.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentRunEffectAnswer {
-    /// The agent run TASK the owner's ask names (32 hex).
-    pub task_ref: EntityId,
-    /// The call's engine-stamped intent id the ask names (64 hex).
-    pub intent_ref: String,
-    /// Whether the run makes the call once more.
-    pub resend: bool,
-}
-
-/// `vault.agent.run_effect.answer`'s answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentRunEffectAnswered {
-    pub task_ref: EntityId,
-    pub intent_ref: String,
-    /// What the answer asked for.
-    pub resend: bool,
-    /// What it came to.
-    pub outcome: AgentRunEffectAnswerOutcome,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::agent_run_effect::{
+    AgentRunEffectAnswer, AgentRunEffectAnswered,
+};
 
 /// `vault.agent.run_effect.answer` under the owner's proof.
 ///

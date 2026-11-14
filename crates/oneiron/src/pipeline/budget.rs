@@ -12,8 +12,8 @@ use crate::registry::{
 };
 use crate::store::{RetrievalScoreComponent, RetrievalSignal, StoreRead};
 
+use super::params::RetrievalParams;
 use super::types::{
-    CONTEXT_PACK_ANOMALOUS_REPEAT_RUN, CONTEXT_PACK_MIN_VECTOR_SCORE_GAP_RATIO,
     CONTEXT_PACK_SCORE_GAP_EPSILON, ClaimStatusGateCache, EntityMetadataCache, ScoredEntity,
 };
 use crate::disclosure::DisclosureContext;
@@ -441,9 +441,12 @@ pub(super) fn context_pack_evidence_abstains(
     has_vector_query: bool,
     space: &str,
     floors: &NoMatchFloors,
+    params: &RetrievalParams,
     mut kind_of: impl FnMut(&EntityId) -> Result<Option<u8>>,
 ) -> Result<bool> {
-    if text_query.is_some_and(context_pack_text_is_anomalous) {
+    if text_query.is_some_and(|text| {
+        context_pack_text_is_anomalous(text, params.context_pack_anomalous_repeat_run)
+    }) {
         return Ok(true);
     }
     if scores.is_empty() {
@@ -502,6 +505,7 @@ pub(super) fn context_pack_evidence_abstains(
         has_keyword_hit,
         &mut evidence,
         floors,
+        params.context_pack_min_vector_score_gap_ratio,
     ))
 }
 
@@ -514,6 +518,7 @@ pub(super) fn vector_evidence_abstains(
     has_keyword_hit: bool,
     evidence: &mut [VectorEvidence<'_>],
     floors: &NoMatchFloors,
+    min_gap_ratio: f32,
 ) -> bool {
     // A semantic-only result is not rejected merely for being below the
     // floor: this branch requires both caller-supplied channels and no
@@ -526,13 +531,13 @@ pub(super) fn vector_evidence_abstains(
             .iter()
             .all(|scored| !scored.score.is_finite() || scored.score < scored.floors(floors).floor);
 
-    absent_keyword_and_low_vector || vector_score_gaps_are_poor(evidence, floors)
+    absent_keyword_and_low_vector || vector_score_gaps_are_poor(evidence, floors, min_gap_ratio)
 }
 
 /// RET-01 pack hygiene for malformed or degenerate text input. Newlines and
 /// tabs remain legitimate natural-language formatting; other controls and a
 /// long non-whitespace character run are treated as anomalous evidence.
-fn context_pack_text_is_anomalous(text: &str) -> bool {
+fn context_pack_text_is_anomalous(text: &str, repeat_run: usize) -> bool {
     let mut previous = None;
     let mut repeated = 0_usize;
 
@@ -547,7 +552,7 @@ fn context_pack_text_is_anomalous(text: &str) -> bool {
         }
         if previous == Some(character) {
             repeated += 1;
-            if repeated >= CONTEXT_PACK_ANOMALOUS_REPEAT_RUN {
+            if repeated >= repeat_run {
                 return true;
             }
         } else {
@@ -566,7 +571,11 @@ fn context_pack_text_is_anomalous(text: &str) -> bool {
 /// matches. Any finite score at or above its own space and kind's strong
 /// score passes its space. The pack abstains when some space is poor and none passes; a
 /// space with one score is neither, unless that score is strong.
-fn vector_score_gaps_are_poor(evidence: &mut [VectorEvidence<'_>], floors: &NoMatchFloors) -> bool {
+fn vector_score_gaps_are_poor(
+    evidence: &mut [VectorEvidence<'_>],
+    floors: &NoMatchFloors,
+    min_gap_ratio: f32,
+) -> bool {
     evidence.sort_unstable_by(|left, right| {
         left.space
             .cmp(right.space)
@@ -574,7 +583,7 @@ fn vector_score_gaps_are_poor(evidence: &mut [VectorEvidence<'_>], floors: &NoMa
     });
     let mut poor = false;
     for list in evidence.chunk_by(|left, right| left.space == right.space) {
-        match vector_score_gap_is_poor(list, floors) {
+        match vector_score_gap_is_poor(list, floors, min_gap_ratio) {
             Some(true) => poor = true,
             Some(false) => return false,
             None => {}
@@ -587,7 +596,11 @@ fn vector_score_gaps_are_poor(evidence: &mut [VectorEvidence<'_>], floors: &NoMa
 /// `Some(false)` passes, `None` too few scores to say. A score at or above
 /// its own kind's strong score passes the space, so one kind's calibration
 /// never discards another's strong match.
-fn vector_score_gap_is_poor(list: &[VectorEvidence<'_>], floors: &NoMatchFloors) -> Option<bool> {
+fn vector_score_gap_is_poor(
+    list: &[VectorEvidence<'_>],
+    floors: &NoMatchFloors,
+    min_gap_ratio: f32,
+) -> Option<bool> {
     let strong = |scored: &VectorEvidence<'_>| {
         scored.score.is_finite() && scored.score >= scored.floors(floors).strong
     };
@@ -604,5 +617,5 @@ fn vector_score_gap_is_poor(list: &[VectorEvidence<'_>], floors: &NoMatchFloors)
     }
 
     let gap_ratio = (top - next) / top.max(CONTEXT_PACK_SCORE_GAP_EPSILON);
-    Some(gap_ratio < CONTEXT_PACK_MIN_VECTOR_SCORE_GAP_RATIO)
+    Some(gap_ratio < min_gap_ratio)
 }
