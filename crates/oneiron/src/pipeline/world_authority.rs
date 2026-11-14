@@ -162,8 +162,8 @@ pub(crate) struct FoldedWorldAccess {
 
 /// The tiers `agent`'s in-force rows that `admit` keeps fold to at `at`, no
 /// subset check made. The owner's writer plans over the rows the agent's
-/// reads admit and closes every row in force, so a stored default its grant
-/// no longer covers never blocks the owner's own repair.
+/// reads admit and closes those rows, so a stored default its grant no
+/// longer covers never blocks the owner's own repair.
 pub(crate) fn folded_world_access(
     store: &Store,
     rtxn: &RoTxn<'_>,

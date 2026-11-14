@@ -231,20 +231,27 @@ impl Vault {
             let governed =
                 WorldGrantIndex::read(&self.store, txn)?.governs(&self.store, txn, agent)?;
             // Planned over the rows the agent's reads admit, so a row the
-            // authority fold quarantines never decides the plan; every row in
-            // force closes, so none comes back when its quarantine lifts.
+            // authority fold quarantines never decides the plan, and only
+            // those rows close. Closing a quarantined row would put its
+            // revoked writer's evidence again, which the batch's causal check
+            // refuses for every local claim write (FIX
+            // [CLAIM-CLOSE-OF-QUARANTINED-ROW]). Left in force, it can only
+            // narrow the agent's reads if its writer is admitted again: the
+            // fold meets every grant, and the newest default wins.
             let rtxn: &heed::RoTxn<'_> = txn;
             let fold = self.authority_fold_readonly_in_txn(rtxn)?;
             let prior = folded_world_access(&self.store, rtxn, &agent, now, &|id, body| {
                 crate::authority::claim_causal_admitted(&self.store, rtxn, &fold, id, body)
             })?;
-            let in_force = folded_world_access(&self.store, rtxn, &agent, now, &|_, _| Ok(true))?;
             let write = WorldAccessWrite::plan(governed, &prior, allowed, named_default);
             if !write.changes() {
                 return Ok(false);
             }
-            let owner_writer = WriteActor::new(actor, EdgeActorClass::Human);
-            self.write_world_access_in_txn(txn, owner_writer, agent, &in_force, &write, now)?;
+            // A fresh local write, so the owner's own observed frontier: an
+            // owner whose binding was revoked and granted again still writes.
+            let owner_writer = self
+                .observed_write_actor_in_txn(txn, WriteActor::new(actor, EdgeActorClass::Human))?;
+            self.write_world_access_in_txn(txn, owner_writer, agent, &prior, &write, now)?;
             let digest =
                 |governed: bool, allowed: &WorldAuthoritySet, default_on| AgentWorldAccessDigest {
                     agent,
@@ -282,13 +289,13 @@ impl Vault {
     }
 
     /// Writes `write`'s rows about `agent` as `owner_writer`: each new row
-    /// supersedes every row of its tier in `in_force`.
+    /// supersedes every row of its tier in `admitted`.
     fn write_world_access_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner_writer: WriteActor,
         agent: EntityId,
-        in_force: &FoldedWorldAccess,
+        admitted: &FoldedWorldAccess,
         write: &WorldAccessWrite,
         now: u64,
     ) -> Result<()> {
@@ -296,12 +303,12 @@ impl Vault {
             (
                 PREDICATE_WORLD_ACCESS_ALLOWED_SET,
                 write.grant.as_ref(),
-                &in_force.allowed_claim_ids,
+                &admitted.allowed_claim_ids,
             ),
             (
                 PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
                 write.default.as_ref(),
-                &in_force.default_claim_ids,
+                &admitted.default_claim_ids,
             ),
         ];
         for (predicate, worlds, closing) in tiers {
