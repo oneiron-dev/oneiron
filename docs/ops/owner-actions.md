@@ -2118,9 +2118,11 @@ are a piece each. A `passkey` home hands out no file: its piece is sealed under 
 output, at the PRF input `vault-key status` prints for that name, into the vault key's
 `kit_point:<kit>:<name>` wrap, so a new device with the synced passkey has it. The same home works
 in any kit issued with `issue-vault-key`, and never in a world kit: a passkey restores the vault
-key only. The write also removes the sheet's wrap, the password and every passkey wrap, and retires
-every escrow recipient but the world kit's. From then on one piece opens nothing and two do, or one
-and the kit passphrase; no password, passkey or escrow wrap may be added. On a new host:
+key only. The pieces' files are written and synced first; if one cannot be written, the files made
+are removed and the vault does not change. Only then does the write remove the sheet's wrap, the
+password and every passkey wrap, and retire every escrow recipient but the world kit's. From then on
+one piece opens nothing and two do, or one and the kit passphrase; no password, passkey or escrow
+wrap may be added. On a new host:
 
 ```sh
 oneiron restore BACKUP --unlock kit --vault-id HEX --piece /Volumes/KEY/kit/piece-1.txt \

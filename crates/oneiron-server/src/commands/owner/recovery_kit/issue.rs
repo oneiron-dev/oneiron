@@ -126,7 +126,10 @@ struct IssuedVaultKey {
 /// `issue` writes a world kit's. A locked key is unlocked as `confirm`
 /// unlocks it (FIX 11386, 2201): this install's keystore by default, or the
 /// unlock `--unlock` names. A vault with no key gets none minted. The world
-/// kit, its escrow wrap and every other wrap stay as they are.
+/// kit, its escrow wrap and every other wrap stay as they are, except with
+/// `--any-two-pieces`, which turns that switch on: the pieces' files are
+/// written and synced first, and only then does the vault drop its sheet,
+/// password and passkey wraps.
 pub(super) fn issue_vault_key(args: RecoveryKitIssueArgs) -> anyhow::Result<()> {
     let unlock = UnlockRequest::of(&args.unlock);
     let config = resolve_serve_config(&args.serve)?;
@@ -166,21 +169,43 @@ pub(super) fn issue_vault_key(args: RecoveryKitIssueArgs) -> anyhow::Result<()> 
         cost: PassphraseCost::DEFAULT,
         only_machine: false,
     };
-    let (kit, recovery_preset) = if args.any_two_pieces {
-        let switched = vault.set_recovery_preset_any_two_as(&owner, &issue, passkey)?;
+    let (kit, recovery_preset, files) = if args.any_two_pieces {
+        // The pieces are written and synced before the write that removes
+        // the old wraps (review of #7781): a failed write leaves the vault
+        // as it was, and the files it made are removed.
+        let mut files = Vec::new();
+        let switched = vault.set_recovery_preset_any_two_as(&owner, &issue, passkey, |pieces| {
+            files = write_pieces(&args.out, pieces).map_err(|error| {
+                for piece in pieces {
+                    let _ = std::fs::remove_file(piece_file(&args.out, piece.x()));
+                }
+                oneiron::Error::Io(std::io::Error::other(error.to_string()))
+            })?;
+            Ok(())
+        });
+        let switched = switched.map_err(|error| {
+            if files.is_empty() {
+                anyhow::Error::from(error)
+            } else {
+                anyhow::anyhow!(
+                    "{error}; the kit's pieces in {} still rebuild the vault key",
+                    args.out.display()
+                )
+            }
+        })?;
         let (set, _) = RecoveryPresetSet::of(&vault.vault_key_vault_id(), switched.change);
-        (switched.kit, Some(set))
+        (switched.kit, Some(set), files)
     } else {
         let kit = vault.issue_vault_key_recovery_kit_with_passkey_as(&owner, &issue, passkey)?;
-        (kit, None)
+        let files = write_pieces(&args.out, &kit.pieces)?;
+        (kit, None, files)
     };
     let IssuedVaultKeyKit {
         vault_id,
         manifest,
-        pieces,
         listed,
+        ..
     } = kit;
-    let files = write_pieces(&args.out, &pieces)?;
     emit(&IssuedVaultKey {
         vault_id: hex(&vault_id),
         kit_id: kit_id(manifest.kit_id),

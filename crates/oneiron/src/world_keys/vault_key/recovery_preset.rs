@@ -31,15 +31,16 @@
 //! otherwise open what was sealed after it. A sheet, piece or capsule handed
 //! out before a change still opens the artifacts sealed before it.
 //!
-//! The sheet reaches the owner before the write that removes the old wraps
-//! ([`Vault::set_recovery_preset_as`]), so a failed hand-over leaves the old
-//! ways in place, and a mirror rewrite that fails after the commit is
-//! answered as pending, never as an error that drops the secret.
+//! The sheet, or the kit's pieces, reach the owner before the write that
+//! removes the old wraps ([`Vault::set_recovery_preset_as`],
+//! [`Vault::set_recovery_preset_any_two_as`]), so a failed hand-over leaves
+//! the old ways in place, and a mirror rewrite that fails after the commit
+//! is answered as pending, never as an error that drops the secret.
 
 use super::kit::IssuedVaultKeyKit;
 use super::*;
 use crate::config::VaultDataKeyCustody;
-use crate::store::recovery_kit::KitIssue;
+use crate::store::recovery_kit::{KitIssue, KitPiece};
 use crate::world_keys::{WORLD_KIT_ESCROW, derive_guarded, os_fill};
 
 const SHEET_KEK_CONTEXT: &str = "oneiron/vault-key-sheet/v1";
@@ -381,14 +382,16 @@ impl Vault {
 
     /// Turns on "Nobody but me" with its switch "any 2 pieces", rechecked in
     /// the transaction that stores it. Needs the held key and an owner-held
-    /// key custody, as entering "Nobody but me" does. In one write it lists
-    /// the data-key kit drawn over `issue`'s homes and stores its passkey
-    /// piece's `kit_point` wrap (a `Passkey` home, with `passkey`), removes
-    /// the sheet, password and passkey wraps, and retires every escrow
-    /// recipient but the world kit's, each with its receipt. The kit's
-    /// pieces are then handed over, once, and a `ThisMachine` home's is kept
-    /// here (FIX 2063). From then on two of them restore the vault, or one
-    /// and the kit passphrase; an old device's piece is one of the two
+    /// key custody, as entering "Nobody but me" does. It draws the data-key
+    /// kit over `issue`'s homes, keeps a `ThisMachine` home's piece here
+    /// (FIX 2063) and hands the other pieces to `keep_pieces` before any
+    /// write: the caller keeps them durably, and a failed keep leaves every
+    /// wrap and the preset as they were. Then, in one write, it lists the
+    /// kit and stores its passkey piece's `kit_point` wrap (a `Passkey`
+    /// home, with `passkey`), removes the sheet, password and passkey wraps,
+    /// and retires every escrow recipient but the world kit's, each with its
+    /// receipt. From then on two of the pieces restore the vault, or one and
+    /// the kit passphrase; an old device's piece is one of the two
     /// (OLD-DEVICE = A). The old sheet opens nothing sealed after the change
     /// (FLIP = A); what was sealed before still opens with what opened it
     /// then. With the switch already on, the new kit is issued and no other
@@ -398,19 +401,23 @@ impl Vault {
     /// # Errors
     ///
     /// A host-managed or supervisor-delivered key; a key this handle does
-    /// not hold; an owner proof that no longer holds; and every refusal of
-    /// [`Self::issue_vault_key_recovery_kit_with_passkey_as`].
+    /// not hold; a failed keep; an owner proof that no longer holds; and
+    /// every refusal of [`Self::issue_vault_key_recovery_kit_with_passkey_as`].
     pub fn set_recovery_preset_any_two_as(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         issue: &KitIssue<'_>,
         passkey: Option<KitPasskey<'_>>,
+        keep_pieces: impl FnOnce(&[KitPiece]) -> Result<()>,
     ) -> Result<RecoveryPresetAnyTwoChange> {
         if !matches!(self.data_key_custody(), VaultDataKeyCustody::OwnerHeldLocal) {
             return Err(refused(PRESET_CUSTODY));
         }
         let mut drawn = self.draw_vault_key_kit(owner, issue, passkey)?;
         let point = drawn.point.take();
+        let commitment = drawn.commitment;
+        let kit = drawn.hand_over(true)?;
+        keep_pieces(&kit.pieces)?;
         let preset = RecoveryPreset::NobodyButMeAnyTwo;
         let transition = self.begin_wrap_transition()?;
         let mut change = self.with_write_txn(|txn| {
@@ -418,10 +425,10 @@ impl Vault {
             let mut state = STATE
                 .get(&self.store, txn, &())?
                 .ok_or_else(|| refused("the vault has no data key"))?;
-            if state.commitment != drawn.commitment {
+            if state.commitment != commitment {
                 return Err(refused("this handle holds another vault key"));
             }
-            self.list_vault_key_kit_in_txn(txn, owner, &drawn.manifest)?;
+            self.list_vault_key_kit_in_txn(txn, owner, &kit.manifest)?;
             let (removed, retired) =
                 self.enter_nobody_but_me_in_txn(txn, &transition, preset, point)?;
             let change = RecoveryPresetChange {
@@ -437,7 +444,6 @@ impl Vault {
             Ok(change)
         })?;
         change.mirror_pending = finish_or_pending(transition);
-        let kit = drawn.hand_over(true)?;
         Ok(RecoveryPresetAnyTwoChange { change, kit })
     }
 
