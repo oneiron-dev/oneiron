@@ -6,9 +6,10 @@
 //! resolving.
 use super::{
     Argon2Cost, Deserialize, DeviceKeystore, Envelope, EscrowAddWarning, EscrowRetirement,
-    HybridPublicKey, HybridSecretKey, Kek, Named, OpenKey, OpenPolicy, Passphrase, Purpose, Result,
-    SealKey, SealParams, Serialize, SideTable, StoredWrap, SuiteId, SysRng, VaultDataKey,
-    VaultKeyWrapInfo, VaultKeyWrapKind, WrapDigest, Zeroizing, refused, seal, side_table,
+    HybridPublicKey, HybridSecretKey, Kek, Named, OpenKey, OpenPolicy, Passphrase, Purpose,
+    RecoveryPreset, Result, SealKey, SealParams, Serialize, SideTable, StoredWrap, SuiteId, SysRng,
+    VaultDataKey, VaultKeyWrapInfo, VaultKeyWrapKind, WrapDigest, Zeroizing, refused, seal,
+    side_table,
 };
 pub(super) const PAYLOAD_LABEL: &[u8] = b"oneiron/vault-dek/v1\0";
 pub(super) const PAYLOAD_LEN: usize = PAYLOAD_LABEL.len() + 32;
@@ -33,6 +34,8 @@ pub(super) const WRAPS: SideTable<String, StoredWrap, Named> =
 pub(super) struct VaultKeyState {
     pub(super) commitment: [u8; 32],
     pub(super) created_at: u64,
+    /// The owner's recovery preset: which wraps the key may carry.
+    pub(super) recovery: RecoveryPreset,
 }
 
 /// A stored wrap's digest: its id and its envelope's BLAKE3.
@@ -114,6 +117,7 @@ pub(super) fn seal_wrap(
     let seal_key = match (kind, secret) {
         (VaultKeyWrapKind::Device { .. }, WrapSecret::Kek(kek)) => SealKey::DeviceKeystore(kek),
         (VaultKeyWrapKind::Passkey { .. }, WrapSecret::Kek(kek)) => SealKey::Passkey(kek),
+        (VaultKeyWrapKind::Sheet, WrapSecret::Kek(kek)) => SealKey::SymmetricKek(kek),
         (VaultKeyWrapKind::Password, WrapSecret::Passphrase(passphrase, cost)) => {
             SealKey::Passphrase {
                 passphrase,
@@ -158,6 +162,7 @@ pub(super) fn open_wrap(
     let open_key = match (&stored.info.kind, secret) {
         (VaultKeyWrapKind::Device { .. }, UnlockSecret::Kek(kek)) => OpenKey::DeviceKeystore(kek),
         (VaultKeyWrapKind::Passkey { .. }, UnlockSecret::Kek(kek)) => OpenKey::Passkey(kek),
+        (VaultKeyWrapKind::Sheet, UnlockSecret::Kek(kek)) => OpenKey::SymmetricKek(kek),
         (VaultKeyWrapKind::Password, UnlockSecret::Passphrase(passphrase)) => {
             OpenKey::Passphrase(passphrase)
         }
