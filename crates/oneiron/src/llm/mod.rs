@@ -216,6 +216,7 @@ use std::collections::BTreeMap;
 /// Typed question and outcome contracts.
 pub mod decision;
 pub(crate) mod tables;
+pub(crate) use budget::resident_share_in_txn;
 pub use budget::rsi_doors;
 pub use budget::{
     ResidentShareRead, RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare,

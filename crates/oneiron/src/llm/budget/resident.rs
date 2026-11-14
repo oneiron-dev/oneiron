@@ -225,6 +225,18 @@ pub(crate) fn resident_share_fits_in_txn(
     Ok(!row.share.pinned || row.share.units.is_some_and(|units| units >= needed_units))
 }
 
+/// The share on record for `resident`, read in the caller's transaction:
+/// `None` for a share this vault never set.
+pub(crate) fn resident_share_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    resident: EntityId,
+) -> Result<Option<ResidentShare>> {
+    Ok(RESIDENTS
+        .get(&vault.store, txn, &resident)?
+        .map(|row| row.share))
+}
+
 impl Vault {
     /// Sets `resident`'s share of the host-paid allocation (FIX 7767): a
     /// share in units, or `None` for the default split; pinned, it refuses
@@ -235,20 +247,33 @@ impl Vault {
     /// a share still short wakes none (D3).
     pub fn set_resident_share(&self, resident: EntityId, share: ResidentShare) -> Result<()> {
         let mut txn = self.store.env.write_txn()?;
-        let mut row = RESIDENTS
-            .get(&self.store, &txn, &resident)?
-            .unwrap_or_default();
-        row.share = share;
-        RESIDENTS.put(&self.store, &mut txn, &resident, &row)?;
         let now_ms = self.store.clock.now_recorded_at().saturating_mul(1000);
-        let resumed =
-            crate::llm::wake_resident_share_traps_in_txn(self, &mut txn, resident, share, now_ms)?;
+        let resumed = self.set_resident_share_in_txn(&mut txn, resident, share, now_ms)?;
         txn.commit()?;
         if !resumed.is_empty() {
             self.store.notify_attempt_observers();
             self.store.notify_proactivity_changes();
         }
         Ok(())
+    }
+
+    /// [`Self::set_resident_share`] in the caller's write, at `now_ms`: the
+    /// share set, and each of the resident's parks it frees woken. Returns
+    /// the tries woken, whose observers the caller notifies once its write
+    /// committed. The owner's act: the caller has checked the owner.
+    pub(crate) fn set_resident_share_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        resident: EntityId,
+        share: ResidentShare,
+        now_ms: u64,
+    ) -> Result<Vec<crate::attempt_queue::AttemptId>> {
+        let mut row = RESIDENTS
+            .get(&self.store, &*txn, &resident)?
+            .unwrap_or_default();
+        row.share = share;
+        RESIDENTS.put(&self.store, txn, &resident, &row)?;
+        crate::llm::wake_resident_share_traps_in_txn(self, txn, resident, share, now_ms)
     }
 
     /// Every resident's setting and depletion on this exact allocation.

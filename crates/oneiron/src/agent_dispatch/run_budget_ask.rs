@@ -472,8 +472,9 @@ impl Vault {
     /// his `choice`, and for `overdraft` the cap he names (the default when
     /// `None`), answered and applied in one write, his proof revalidated in it.
     /// `continue_on_local` resumes the run on the local model the ask offered.
-    /// Any other ask passes unchanged, for the generic answer door. The same
-    /// answer again is a no-op.
+    /// The family's ask about a Dreamer try parked at its budget trap takes
+    /// the same press (`budget_trap_ask`). Any other ask passes unchanged, for
+    /// the generic answer door. The same answer again is a no-op.
     ///
     /// # Errors
     ///
@@ -486,10 +487,15 @@ impl Vault {
         choice: RunBudgetChoice,
         cap_units: Option<u64>,
     ) -> Result<()> {
-        if !self
-            .decision_ask(seq)?
-            .is_some_and(|ask| asked_run(&ask).is_some())
-        {
+        let Some(asked) = self.decision_ask(seq)? else {
+            return Ok(());
+        };
+        if super::is_budget_trap_ask(&asked) {
+            return super::budget_trap_ask::press_budget_trap_ask(
+                self, owner, seq, choice, cap_units,
+            );
+        }
+        if asked_run(&asked).is_none() {
             return Ok(());
         }
         let resumed = self.with_write_txn_grouped(|txn| {
