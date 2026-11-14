@@ -1,20 +1,7 @@
 //! Compliance amendment classification and outcome values.
 
-/// What an amendment does to the pack's strictness.
-#[derive(
-    Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-pub enum ComplianceAmendmentClass {
-    /// Provably stricter: rows added, dials tightened, nothing relaxed.
-    Tightening,
-    /// Policy semantics unchanged; only citations, verification dates, penalty
-    /// notes, or the engine-version floor moved.
-    MetadataRefresh,
-    /// Anything that relaxes the pack, and anything the comparator cannot
-    /// order. Free-text requirement edits live here: an unorderable change is
-    /// not guessed safe.
-    LooseningOrAmbiguous,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::gate::dispatch_compliance::amendment::ComplianceAmendmentClass;
 
 /// What a proposal did.
 #[derive(Clone, Debug, Eq, PartialEq)]
