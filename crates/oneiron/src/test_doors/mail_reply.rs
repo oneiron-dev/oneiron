@@ -1,4 +1,5 @@
 //! Doors for `tests/check_in_mail_reply_approve.rs` (2k9a): seed one IMAP mailbox, message and proposed reply, read it back, and hold it as a held dispatch would.
+//! The seed leaves the built-in packs unseeded: the reply's send is read on the built-in `email` channel, whose pack no offline test can check.
 
 use crate::EdgeActorClass;
 use crate::EntityId;
@@ -75,13 +76,14 @@ impl MailProviderWire for Wire {
     }
 }
 
-/// Seeds a Proposed IMAP reply for `who` (`mbox` answering `sender`); the draft id, revision and plan ref.
+/// Seeds a Proposed IMAP reply for `who` (`mbox` answering `sender`) on a vault whose built-in packs read as never seeded; the draft id, revision and plan ref.
 pub fn seed(vault: &Vault, who: EntityId, mbox: &str, sender: &str) -> Result<Seeded> {
     let owner = vault
         .ensure_embedded_owner_actor()
         .map_err(|_| invalid("owner"))?;
     let proof = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
     vault.put_pack(&proof, mail_calendar_pack_files())?;
+    crate::skill_hub::pack_catalog::forget_builtin_pack_seed_in_test(vault)?;
     let scopes = Vec::from_iter((who != owner).then(|| format!("actor:{}", who.to_hex())));
     vault.register_secret_as_owner(
         &proof,
