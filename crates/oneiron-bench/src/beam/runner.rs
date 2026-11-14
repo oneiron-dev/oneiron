@@ -54,6 +54,8 @@ pub(super) const BEAM_HELP: &str = "usage: oneiron-bench beam <subcommand>\n\
                            fixture-protocol <fixture.json> known-span retrieval evaluation\n\
                            edit-path-pack <dir>   materialize five edit-task sandboxes\n\
                            edit-path <attempts.json>   score tests and contracts per arm\n\
+                           action-bench <plan.json>   in-house action bench: memory arms over\n\
+                                    frozen synthetic histories, held-out follow-ups, deterministic scorer\n\
                            run <manifest>\n\
                                     run a BEAM manifest; fixture datasets load dataset.path JSON\n\
                                     relative to the manifest; emit declared packs.jsonl outputs\n\
