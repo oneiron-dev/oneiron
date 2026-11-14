@@ -125,6 +125,9 @@ pub(super) fn apply_op(
         | AuthorityOp::WorldKeyWraps(_)
         | AuthorityOp::FrontierJoin(_)
         | AuthorityOp::MembershipExecution(_) => {}
+        // No install counts a root appointment yet: the fold refuses each one
+        // before any op applies (`entry_transition::fold_entry_state`).
+        AuthorityOp::RootAppointment(_) => {}
         // The signed record of a shared-act change; the change itself is the
         // execution's (`federation::shared_act`).
         AuthorityOp::OwnerHandover(_) => {}

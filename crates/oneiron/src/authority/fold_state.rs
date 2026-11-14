@@ -70,6 +70,22 @@ pub enum AuthorityFoldIssue {
         /// The floor, in bytes.
         floor_bytes: u64,
     },
+    /// A root appointment this install does not count (row
+    /// OWNER-ANCHOR-ROOT-RECOVERY): it is refused here, with its
+    /// descendants, and keeps no fold state.
+    AppointmentRefused {
+        /// The refused appointment.
+        entry: AuthorityEntryHash,
+        /// Its verdict, the same on every install that judges it.
+        verdict: AppointmentVerdict,
+    },
+    /// The anchor of this install's pinned root is burned: one of its
+    /// appointments is void, or two valid ones stand beside each other. It
+    /// appoints no more; the owner re-issues the kit.
+    AnchorBurned {
+        /// The burned anchor's Ed25519 key.
+        anchor: [u8; 32],
+    },
 }
 
 /// Why the fold refused an actor-binding op.

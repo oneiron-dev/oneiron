@@ -51,6 +51,19 @@ pub(super) fn fold_entry_state(
     if entry.validate_shape().is_err() || verify_entry_signatures(entry).is_err() {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
+    // A root appointment counts on no install yet (OWNER-ANCHOR-ROOT-RECOVERY):
+    // it is refused before any floor or parent state, so its refusal is the
+    // same on every install, and carries its verdict.
+    if matches!(entry.op, AuthorityOp::RootAppointment(_)) {
+        let verdict = context
+            .appointments
+            .and_then(|verdicts| verdicts.get(&hash).copied())
+            .unwrap_or(AppointmentVerdict::Unjudged);
+        return EntryFold::Invalid(AuthorityFoldIssue::AppointmentRefused {
+            entry: hash,
+            verdict,
+        });
+    }
     // Slips are the client credential in every posture. Retired device-key
     // operations survive only as verified pre-handoff ancestry: a later
     // client enrollment or rotation gains no authority.
@@ -699,5 +712,8 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::CustodyPermitPiece(_)
         | AuthorityOp::FrontierJoin(_)
         | AuthorityOp::MembershipExecution(_) => false,
+        // An appointment's successor is judged fresh over its whole ancestry
+        // (`root_appointment_judge`, V1).
+        AuthorityOp::RootAppointment(_) => false,
     }
 }

@@ -56,6 +56,11 @@ impl FoldIssues {
                     issues.memory_floor = true;
                     continue;
                 }
+                AuthorityFoldIssue::AppointmentRefused { entry, .. } => {
+                    (entry, "appointment_refused")
+                }
+                // An anchor's burn names no entry.
+                AuthorityFoldIssue::AnchorBurned { .. } => continue,
             };
             issues.by_entry.entry(*entry).or_default().push(code);
         }

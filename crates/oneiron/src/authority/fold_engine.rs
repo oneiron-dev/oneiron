@@ -62,6 +62,10 @@ pub(super) struct FoldContext<'a> {
     /// This install's pin on a fold of its own vault's log: which world-key
     /// records count here. It decides no entry's validity.
     pub(super) pin: Option<&'a PinnedRoot>,
+    /// The verdicts of the root appointments this fold holds
+    /// (`root_appointment_judge`), which their refusals carry. None on a
+    /// fold that judges none (an appointment is then `Unjudged`).
+    pub(super) appointments: Option<&'a BTreeMap<AuthorityEntryHash, AppointmentVerdict>>,
 }
 
 impl FoldContext<'_> {
