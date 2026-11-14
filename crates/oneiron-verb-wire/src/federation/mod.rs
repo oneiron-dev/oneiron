@@ -51,9 +51,6 @@ pub(crate) use oneiron_store::serialize::grant_fields::FEDERATION_GRANT_FIELDS_S
 pub use oneiron_store::world_registration_keys::FEDERATION_STALE_KEY_PREFIX;
 pub use oneiron_store::world_registration_keys::FEDERATION_WORLD_KEY_PREFIX;
 
-#[allow(unused_imports)]
-pub(crate) use oneiron_store::deletion::archive_role::ArchiveDeleteRole;
-
 pub mod agent_grant;
 pub mod org_admin;
 pub mod pending_act;
