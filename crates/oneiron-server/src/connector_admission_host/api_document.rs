@@ -16,8 +16,8 @@ use crate::connector_translate::{self, MAX_DOCUMENT_BYTES};
 /// [`discover`]), an HTTP API's from its document. The document is read
 /// with no credential: it may live on another host than the API, and the
 /// connector's secret goes to its endpoint alone, at a call. Its revision
-/// is the document's OpenAPI version; a key pinned at another refuses until
-/// a refresh takes the new one.
+/// is the document's format and version (`openapi-3.1`, `discovery-v1`); a
+/// key pinned at another refuses until a refresh takes the new one.
 pub(crate) fn list_tools(
     client: &Client,
     installed: &ConnectorHostConfig,
