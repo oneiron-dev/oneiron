@@ -115,7 +115,18 @@ pub struct ModelRoleInvoke {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelRoleInput {
     /// The role selects model and route; the request cannot override either.
-    Generate { request: Box<LlmRequest> },
+    Generate {
+        request: Box<LlmRequest>,
+        /// The caller's own deadline (census L9-23; ARCH-0036 "the caller's
+        /// own deadline on role, raw and chat calls"): milliseconds from when
+        /// the door took the call, the memory proxy's field (FIX 8189), never
+        /// renewed. The call waits for a resting offer only within what is
+        /// left, so one whose offer rests past it answers `rate_limited` at
+        /// once with the earliest reset, and a send it cuts answers
+        /// `timeout`. Omitted, the call keeps the vault's longest wait.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deadline_ms: Option<u64>,
+    },
     /// A query through the vault's retrieval embedder, not a media seat.
     Embed { text: String },
     /// A write-free extraction over caller-supplied text, never a claim write.

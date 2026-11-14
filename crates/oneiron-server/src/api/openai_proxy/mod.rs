@@ -43,6 +43,7 @@ pub(super) use self::choices::{CallerClock, TIMEOUT_CODE};
 use self::exchange::Exchange;
 pub(super) use self::receipt::PROXY_CALL_VERB;
 use self::receipt::{ProxyCaller, ProxyRequest};
+pub(super) use self::wire::typed_upstream_error;
 use self::wire::{error, invalid};
 use super::McpCallContext;
 use crate::auth::{CoreScope, Locality};

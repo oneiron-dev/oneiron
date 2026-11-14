@@ -59,6 +59,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         today,
         craft,
         assertions,
+        clock,
     } = answer;
     // FIX 15128: who asked and what the captured call was read from, for
     // the reply's drafter example.
@@ -144,6 +145,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         model_call_caller,
         model_call_room,
         model_call_no_record_at_arrival,
+        clock,
     );
     let answered = model_call.answered();
     let terminal_rung = model_call.terminal_rung();
@@ -155,7 +157,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
             BudgetExhaustionPolicy::Suspend,
             payer,
         )
-        .map_err(|error| error.to_string())
+        .map_err(|error| AnswerRefused::NotAdmitted(error.to_string()))
         .and_then(|meter| {
             let run = ai
                 .model_runtime()
@@ -176,14 +178,21 @@ pub(crate) fn begin_sourced_answer_with_fallback(
                 pending.as_ref(),
                 &recorder,
             )
-            .map_err(|error| format!("chat budget: {error:?}"))
+            .map_err(|error| {
+                // A model call that refused with a code of its own answers
+                // with it (census L9-23); any other refusal is the budget's.
+                model_call::ModelFailure::of(&error).map_or_else(
+                    || AnswerRefused::NotAdmitted(format!("chat budget: {error:?}")),
+                    AnswerRefused::Model,
+                )
+            })
         });
     let stream = match started {
         Ok(stream) => stream,
         // A Retry its budget refused never started: its stream goes and no
         // TURN or MESSAGE is left (FIX 3152). A reply that never started
         // keeps no seed (FIX 5028).
-        Err(reason) => {
+        Err(refused) => {
             if let Some(pending) = &pending {
                 pending.withdraw();
             }
@@ -197,12 +206,13 @@ pub(crate) fn begin_sourced_answer_with_fallback(
             } else {
                 let _ = handle.cancel(&vault, &memory, StreamCancelReason::AgentAborted);
             }
-            return Err(AnswerRefused::NotAdmitted(reason));
+            return Err(refused);
         }
     };
 
     let streamed = Arc::new(Mutex::new(String::new()));
     let saved = Arc::new(Mutex::new(None));
+    let model_failure = Arc::new(Mutex::new(None));
     let mut bus = LlmEventBus::new(Box::new(AssistantMessage {
         vault: Arc::clone(&vault),
         agent,
@@ -235,6 +245,8 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         wakes,
         assertions,
         model_call,
+        clock,
+        model_failure: Arc::clone(&model_failure),
     };
     let terminal_stream = handle.clone();
     tokio::spawn(async move {
@@ -308,12 +320,14 @@ pub(crate) fn begin_sourced_answer_with_fallback(
                     example_call,
                 )
             });
+        let model_failure = model_failure.lock().ok().and_then(|mut slot| slot.take());
         let _ = finished.send(AnswerOutcome {
             result,
             saved,
             native,
             text,
             fell_back,
+            model_failure,
         });
         // FIX 15128: the drafter's example, once the outcome is handed on.
         if let Some(example) = example {

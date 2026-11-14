@@ -15,10 +15,11 @@ use oneiron::memory::extraction::{
 };
 use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::EmptyRequest;
-use oneiron::{EntityId, ModelId, ModelLocality, ModelTierRef};
+use oneiron::{EntityId, LlmError, ModelId, ModelLocality, ModelTierRef};
 
 use super::host_doors::support::{Listed, internal};
 use super::legal_hold_doors::{as_owner, as_owner_naming};
+use crate::api::openai_proxy::{CallerClock, typed_upstream_error};
 use crate::auth::CoreAuth;
 use crate::config::{OneironerConfig, OneironerProvider};
 use crate::oneironer::endpoint::ModelCard;
@@ -220,6 +221,18 @@ fn unavailable(message: &str) -> MemoryError {
     MemoryError::new(MEMORY_CODE_MODEL_UNAVAILABLE, message, &[])
 }
 
+/// A role call's model failure on the typed facade (census L9-23, RULING
+/// CHAT-ROLE-DEADLINE-CODES = A): the memory proxy's typed mapping (FIX
+/// 8190, FIX 11198). A rate limit is `rate_limited` (429) with when its
+/// offers are back, a call its caller's deadline cut is `timeout` (504),
+/// and every other failure has its own code, as the proxy answers it.
+fn role_call_failure(error: LlmError) -> MemoryError {
+    typed_upstream_error(
+        &error,
+        "Call the role again: a rate limit's retry_after or resets_at says when; a timeout, with a longer deadline_ms or none.",
+    )
+}
+
 fn locality(locality: EmbedderLocality) -> ModelLocality {
     match locality {
         EmbedderLocality::OnDevice => ModelLocality::OnDevice,
@@ -282,13 +295,18 @@ async fn invoke(
     input: ModelRoleInvoke,
 ) -> MemoryResult<ModelRoleInvocation> {
     const VERB: &str = "vault.models.roles.invoke";
+    // A generate's `deadline_ms` counts from here (census L9-23).
+    let arrived = tokio::time::Instant::now();
     let role = input.role;
     let mut receipt = as_owner(server, auth, VERB, move |server, owner| {
         role_receipt(server, owner, role)
     })
     .await?;
     let output = match input.input {
-        ModelRoleInput::Generate { request } => {
+        ModelRoleInput::Generate {
+            request,
+            deadline_ms,
+        } => {
             if receipt.slot != ModelSlot::Llm {
                 return Err(MemoryError::bad_request(
                     "generate requires a role in the llm slot",
@@ -320,11 +338,13 @@ async fn invoke(
             let (_, run) = raw
                 .call(&request, server.run_receipts())
                 .ok_or_else(|| unavailable("the pinned model is not served here"))?;
-            let response = call
-                .ladder
-                .generate_exact(&run, request, None)
+            // The caller's deadline, when it names one, replaces the vault's
+            // longest wait as the call's budget (RULING CALLER-DEADLINE-WIRE
+            // = B); none named, the wait row, as it always was.
+            let response = CallerClock::starting(arrived, deadline_ms)
+                .generate_exact(&call.ladder, &run, request)
                 .await
-                .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+                .map_err(role_call_failure)?;
             if let Some(provider) = response.usage.served_provider() {
                 receipt.provider = provider.to_owned();
             }

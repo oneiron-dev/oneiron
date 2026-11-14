@@ -47,12 +47,12 @@ pub(super) fn choice_count(n: Option<u32>) -> Result<u32, Response> {
 }
 
 /// The caller's clock: the instant its `deadline_ms` runs out, counted from
-/// when the call arrived; none when it named none. The proxy's choices and
-/// the raw `/v1/llm` doors run on it (census L9-23, RULING
-/// CALLER-DEADLINE-WIRE = B): the caller's deadline replaces the wait row as
-/// the call's budget.
-#[derive(Clone, Copy, Debug)]
-pub(in crate::api) struct CallerClock {
+/// when the call arrived; none when it named none, as the default clock.
+/// The proxy's choices, the raw `/v1/llm` doors, chat turns and the role
+/// door run on it (census L9-23, RULING CALLER-DEADLINE-WIRE = B): the
+/// caller's deadline replaces the wait row as the call's budget.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct CallerClock {
     deadline: Option<Instant>,
 }
 
@@ -156,6 +156,23 @@ impl CallerClock {
         };
         let may_send = self.may_send();
         self.cut(ladder.generate_within(run, request, None, &may_send, left))
+            .await
+    }
+
+    /// [`Self::generate`] for a call only the one model it names may answer
+    /// (the role door's pinned binding, OF-184): with no deadline,
+    /// `generate_exact` on the vault's longest wait, as it always was.
+    pub(in crate::api) async fn generate_exact(
+        self,
+        ladder: &OfferLadder,
+        run: &RunAdmission,
+        request: LlmRequest,
+    ) -> Result<LlmResponse, LlmError> {
+        let Some(left) = self.left()? else {
+            return ladder.generate_exact(run, request, None).await;
+        };
+        let may_send = self.may_send();
+        self.cut(ladder.generate_exact_within(run, request, None, &may_send, left))
             .await
     }
 }

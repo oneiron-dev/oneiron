@@ -120,7 +120,29 @@ pub(super) fn invalid(code: &str, message: impl Into<String>) -> Response {
 /// own key is the host's: a refusal of it is an upstream fault, never the
 /// caller's credential.
 pub(super) fn upstream_error(failure: LlmError) -> Response {
-    let (status, kind, code) = match &failure {
+    let (status, kind, code) = upstream_class(&failure);
+    let timing = super::timing::RetryTiming::of(&failure);
+    super::timing::timed_error(status, kind, code, failure.to_string(), &timing)
+}
+
+/// A failed model call on the typed facade, as the proxy's typed door
+/// carries one (FIX 8190, FIX 11198): [`upstream_error`]'s code, which the
+/// facade answers with the same status, and when to call again. `remedy`
+/// says what the caller does next. The role door answers its model calls'
+/// failures with it (census L9-23, RULING CHAT-ROLE-DEADLINE-CODES = A).
+pub(in crate::api) fn typed_upstream_error(
+    failure: &LlmError,
+    remedy: &str,
+) -> oneiron::memory::MemoryError {
+    let (_, _, code) = upstream_class(failure);
+    let refusal = oneiron::memory::MemoryError::new(code, failure.to_string(), &[remedy]);
+    super::timing::RetryTiming::of(failure).carried_on(refusal)
+}
+
+/// [`upstream_error`]'s status, OpenAI error type and refusal code for
+/// `failure`.
+fn upstream_class(failure: &LlmError) -> (StatusCode, &'static str, &'static str) {
+    match failure {
         LlmError::BudgetDenied(_) => (
             StatusCode::PAYMENT_REQUIRED,
             "insufficient_quota",
@@ -163,9 +185,7 @@ pub(super) fn upstream_error(failure: LlmError) -> Response {
             "world_route_not_admitted",
         ),
         LlmError::Retryable(_) => (StatusCode::BAD_GATEWAY, "api_error", "upstream_error"),
-    };
-    let timing = super::timing::RetryTiming::of(&failure);
-    super::timing::timed_error(status, kind, code, failure.to_string(), &timing)
+    }
 }
 
 /// Preserve the raw door's refusal code, and when to call again (FIX 8190),

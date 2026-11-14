@@ -5,16 +5,20 @@
 
 use std::sync::{Arc, Mutex};
 
+use axum::Json;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::{
-    ContentPart, EntityId, FinishReason, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse,
-    LlmResult, LlmStream, LlmStreamEvent, Vault,
+    ContentPart, EntityId, FinishReason, LlmError, LlmMessage, LlmMessageRole, LlmRequest,
+    LlmResponse, LlmResult, LlmStream, LlmStreamEvent, RetryableLlmError, Vault,
 };
 use tokio::sync::{mpsc, oneshot};
 
-use super::TurnCredential;
-use crate::models::{AnsweringRung, ModelCallBinding, OfferLadder, RoleCall};
+use super::{ChatLine, TurnCredential};
+use crate::api::openai_proxy::{CallerClock, TIMEOUT_CODE};
+use crate::models::{AnsweringRung, CallDeadline, ModelCallBinding, OfferLadder, RoleCall};
 
 /// Retention for evidence written directly to base, not the session overlay.
 pub(crate) fn model_call_keeps_no_record(
@@ -39,7 +43,71 @@ struct CompletedCall {
 }
 
 #[derive(Clone)]
-pub(super) struct Recorder(mpsc::Sender<CompletedCall>);
+pub(super) struct Recorder {
+    terminal: mpsc::Sender<CompletedCall>,
+    /// The caller's clock: each leg waits for a resting offer only within
+    /// what is left of it (census L9-23).
+    clock: CallerClock,
+}
+
+/// A model call's failure that the turn answers with the call's own code
+/// (census L9-23, RULING CHAT-ROLE-DEADLINE-CODES = A: every call, deadline
+/// or not), as the raw door answers it: a rate limit is `rate_limited`
+/// (429), its typed error saying when its offers are back, and a reply its
+/// caller's deadline cut is `timeout` (504). Before the reply starts it is
+/// the turn's refusal; after, its last line, or the whole turn's refusal.
+/// Every other failure stays `turn_failed`.
+#[derive(Clone, Debug)]
+pub(crate) struct ModelFailure {
+    status: StatusCode,
+    code: &'static str,
+    error: LlmError,
+}
+
+impl ModelFailure {
+    /// `error` as the turn answers it, when it has a code of its own; `None`
+    /// for any other failure, which the turn answers with its own code.
+    pub(super) fn of(error: &LlmError) -> Option<Self> {
+        let (status, code) = match error {
+            LlmError::Retryable(RetryableLlmError::RateLimited { .. }) => {
+                (StatusCode::TOO_MANY_REQUESTS, "rate_limited")
+            }
+            LlmError::Retryable(RetryableLlmError::Timeout) => {
+                (StatusCode::GATEWAY_TIMEOUT, TIMEOUT_CODE)
+            }
+            _ => return None,
+        };
+        Some(Self {
+            status,
+            code,
+            error: error.clone(),
+        })
+    }
+
+    /// The turn's refusal: `{"error": {"code", "message", "llm"}}`.
+    pub(super) fn refusal(&self) -> Response {
+        let body = serde_json::json!({"error": {
+            "code": self.code,
+            "message": self.error.to_string(),
+            "llm": self.error,
+        }});
+        (self.status, Json(body)).into_response()
+    }
+
+    /// A streamed turn's last line.
+    pub(super) fn line(&self) -> ChatLine {
+        ChatLine::ModelError {
+            code: self.code,
+            message: self.error.to_string(),
+            llm: self.error.clone(),
+        }
+    }
+
+    /// Why a turn action's reply never started.
+    pub(crate) fn reason(&self) -> String {
+        format!("{}: {:?}", self.code, self.error)
+    }
+}
 
 pub(super) struct Capture {
     caller: EntityId,
@@ -105,11 +173,15 @@ pub(super) fn channel(
     caller: EntityId,
     room: Option<EntityId>,
     no_record_at_arrival: bool,
+    clock: CallerClock,
 ) -> (Recorder, Capture) {
     // Only the answering leg yields a terminal; failed prefix attempts send none.
     let (send, terminal) = mpsc::channel(1);
     (
-        Recorder(send),
+        Recorder {
+            terminal: send,
+            clock,
+        },
         Capture {
             caller,
             room,
@@ -128,14 +200,25 @@ impl Recorder {
         call: RoleCall,
     ) -> LlmResult<LlmStream<'static>> {
         let request = call.request.clone();
-        let (stream, binding) = call.ladder.stream_recorded(run, call.request, None)?;
+        // A caller's deadline bounds the leg's waits for a resting offer to
+        // what is left of it (census L9-23); none named, the vault's wait
+        // row, as it always was.
+        let (stream, binding) = match self.clock.left()? {
+            Some(left) => call.ladder.stream_recorded_by(
+                run,
+                call.request,
+                None,
+                CallDeadline::waits_within(left),
+            )?,
+            None => call.ladder.stream_recorded(run, call.request, None)?,
+        };
         let mut completed = Some(CompletedCall {
             run: run.clone(),
             request,
             ladder: call.ladder,
             binding,
         });
-        let send = self.0.clone();
+        let send = self.terminal.clone();
         Ok(LlmStream::new(stream.map(move |item| {
             if matches!(&item, Ok(LlmStreamEvent::Done { .. }))
                 && let Some(call) = completed.take()

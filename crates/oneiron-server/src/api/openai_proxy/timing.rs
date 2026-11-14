@@ -52,6 +52,17 @@ impl RetryTiming {
     fn is_empty(&self) -> bool {
         self.retry_after.is_none() && self.resets_at.is_empty()
     }
+
+    /// `refusal`, for the typed facade, with this timing: `retry_after` in
+    /// seconds and every `resets_at` time.
+    pub(super) fn carried_on(
+        self,
+        mut refusal: oneiron::memory::MemoryError,
+    ) -> oneiron::memory::MemoryError {
+        refusal.retry_after = self.retry_after;
+        refusal.resets_at = self.resets_at;
+        refusal
+    }
 }
 
 /// [`super::wire::error`] for a refusal whose source said when to send again:
