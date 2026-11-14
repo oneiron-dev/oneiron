@@ -46,10 +46,10 @@ use oneiron::engine_executor::{
 use oneiron::memory::HostWriteOrigin;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::runtime_hooks::InvocationId;
+use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::AgentVerb;
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::code_run_answer as doors;
-use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::typed_reply_handle as handle_doors;
 use oneiron::{
     BudgetLease, ContentPart, EdgeActorClass, EntityId, FatalLlmError, FinishReason, LlmBackend,
@@ -361,8 +361,22 @@ fn bridge_output(row: &CodeRunBridgeCall) -> serde_json::Value {
 }
 
 /// Binds the Redact post hook on `connector.answer` and installs its runtime.
+///
+/// The bind is the owner's own write, signed with this install's key, so the
+/// install gets a keystore and its signing keys first; the vault stays
+/// unrooted, as the hook-free control's (`tests/agent_blast_radius.rs` does
+/// the same before its owner acts).
 fn bind_redact_hook(vault: &Arc<Vault>) {
-    let (owner, proof) = embedded_owner(vault).expect("owner proof");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault
+        .prepare_install_signing()
+        .expect("this install's signing keys");
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner");
+    let proof = vault
+        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+        .expect("owner proof");
     handle_doors::bind_redact_post_hook(vault, owner, &proof, "connector.answer")
         .expect("the Redact hook binds");
     handle_doors::install_redact_runtime(vault, vec!["/output/title".to_owned()])

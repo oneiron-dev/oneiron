@@ -143,7 +143,8 @@ pub struct StoredFeedbackProbe {
     pub program_steps_len: usize,
     /// The stored findings body's bytes.
     pub body_len: usize,
-    /// Whether the body read back parses to the stored findings.
+    /// Whether the body read back parses to the stored findings: the
+    /// spill stores the reply's `output` member alone, as `fit_reply` does.
     pub body_matches_findings: bool,
     /// Whether the body carries a `program_steps` member.
     pub body_has_program_steps: bool,
@@ -223,7 +224,7 @@ pub fn probe_stored_wait_set_feedback(
         0,
         SelfDispatchOutcome::TaskWaitSet(result.clone()),
     )?;
-    let mut row = CodeRunBridgeCall::record(
+    let row = CodeRunBridgeCall::record(
         0,
         &SelfCall::TasksWaitSet(call),
         &spilled,
@@ -288,7 +289,7 @@ pub fn probe_stored_wait_set_feedback(
         source_kind,
         program_steps_len,
         body_len,
-        body_matches_findings: body_value.get("output") == Some(&expected),
+        body_matches_findings: body_value == expected,
         body_has_program_steps: body_text.contains("program_steps"),
     })
 }
