@@ -22,8 +22,8 @@ use std::sync::{Arc, PoisonError};
 use oneiron_crypto::HybridPublicKey;
 
 use super::{
-    ESCROW_RETIRED, ESCROW_SPOOLED, EscrowRetirement, STATE, StoredWrap, VaultKeyWrapKind, WRAPS,
-    WrapTransition, check_name,
+    ESCROW_RETIRED, ESCROW_SPOOLED, EscrowOrigin, EscrowRetirement, STATE, StoredWrap,
+    VaultKeyWrapKind, WRAPS, WrapTransition, check_name,
 };
 use crate::recovery::checkpoint::{
     AddedRecipient, EscrowRole, RecipientAdmissionFacts, RecipientRetirementDisposition,
@@ -342,10 +342,16 @@ impl Vault {
         retiring: &[Retiring],
     ) -> Result<Vec<RetiredRecipient>, Rejected> {
         for recipient in fresh {
-            self.put_vault_key_escrow_in_txn(txn, transition, &recipient.label, &recipient.key)?
-                .ok_or_else(|| {
-                    Rejected::new(R::DataKeyMismatch, refused("the vault has no data key"))
-                })?;
+            self.put_vault_key_escrow_in_txn(
+                txn,
+                transition,
+                EscrowOrigin::Recipient,
+                &recipient.label,
+                &recipient.key,
+            )?
+            .ok_or_else(|| {
+                Rejected::new(R::DataKeyMismatch, refused("the vault has no data key"))
+            })?;
         }
         transition.stage(|| self.staged_wraps_in_txn(txn, None))?;
         let retired_at = self.instant_in_txn(txn)?.secs();

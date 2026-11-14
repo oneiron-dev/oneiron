@@ -85,14 +85,40 @@ pub(crate) fn suggested_secret_handle_label_in_txn(
     txn: &RoTxn<'_>,
     custody: &EntityId,
 ) -> Result<Option<String>> {
+    Ok(scan_kind_in_txn(store, txn, custody)?
+        .and_then(|kind| suggest_secret_handle_label_for_kind(&kind))
+        .map(str::to_owned))
+}
+
+/// Whether the custody record `custody`'s label hint names a payment
+/// provider's key, which pre-fills the owner's payment mark (L8-60): the
+/// value-free scan kind its mask origin names is one of [`PAYMENT_KINDS`].
+/// `false` for a record an owner registered, which no scan found.
+pub(crate) fn payment_suggested_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    custody: &EntityId,
+) -> Result<bool> {
+    Ok(scan_kind_in_txn(store, txn, custody)?
+        .is_some_and(|kind| PAYMENT_KINDS.contains(&kind.as_str())))
+}
+
+/// Scan kinds whose label hint names a payment provider's key.
+const PAYMENT_KINDS: &[&str] = &["stripe_key"];
+
+/// The value-free scan kind the custody record `custody`'s mask origin
+/// names, without the scan-reason prefix; `None` for a record no scan found.
+fn scan_kind_in_txn(store: &Store, txn: &RoTxn<'_>, custody: &EntityId) -> Result<Option<String>> {
     let Some(origin) = crate::batch::secret_scan::mask_origin_in_txn(store, txn, custody)? else {
         return Ok(None);
     };
-    let kind = origin
-        .reason
-        .strip_prefix(SCAN_REASON_PREFIX)
-        .unwrap_or(&origin.reason);
-    Ok(suggest_secret_handle_label_for_kind(kind).map(str::to_owned))
+    Ok(Some(
+        origin
+            .reason
+            .strip_prefix(SCAN_REASON_PREFIX)
+            .unwrap_or(&origin.reason)
+            .to_owned(),
+    ))
 }
 
 /// The label a scan kind suggests, if any. Generic and depth codes
@@ -197,7 +223,7 @@ impl Vault {
 
 /// The owner's proof, rechecked at the owner tier in `txn`: the acting
 /// owner.
-fn live_owner_in_txn(
+pub(super) fn live_owner_in_txn(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     txn: &RoTxn<'_>,
@@ -212,7 +238,7 @@ fn live_owner_in_txn(
     Ok(actor)
 }
 
-fn gate_ref(decision: GateDecisionId) -> String {
+pub(super) fn gate_ref(decision: GateDecisionId) -> String {
     format!("gate:{}", decision.to_hex())
 }
 

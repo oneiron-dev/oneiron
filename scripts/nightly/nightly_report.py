@@ -88,6 +88,9 @@ PRUNABLE_KINDS = ("lib-test", "test", "bin-test", "bin")
 UNBUILT_KINDS = ("example", "example-test", "bench", "bench-test")
 # Left out of every selection, as CI's full tier leaves it out (ci.yml).
 ALWAYS_EXCLUDED = ("oneiron-bench",)
+# Target kinds `cargo test` never tests by default; every other target's
+# `test` flag says whether it is tested (untested_packages).
+DEFAULT_UNTESTED_KINDS = frozenset({"example", "bench", "custom-build"})
 # The pending-door tool's own integration test. Selected with the lib tests, it
 # makes cargo build the testkit's bins (cargo builds a package's bins for its
 # integration tests), so oneiron-testkit-pending-door exists before the first
@@ -155,6 +158,27 @@ def workspace_packages(metadata: dict) -> list[dict]:
     return sorted((p for p in metadata["packages"] if p["id"] in members), key=lambda p: p["name"])
 
 
+def untested_packages(metadata: dict) -> list[str]:
+    """The workspace packages none of whose lib, bin or test targets is tested (`test = false`).
+
+    `cargo test` with no target flag, as CI's full tier runs it, tests nothing
+    in such a package, but the libs selection's `--lib` and `--bins` override
+    the flag and build its lib and bins as tests. oneiron-py is one: a PyO3
+    cdylib whose `extension-module` feature leaves libpython unlinked, so its
+    lib test never links (the measured night of 14 Nov, fleet job
+    1114-200933-d883: rust-lld, undefined PyErr_WriteUnraisable). The plan
+    leaves these packages out of every selection, so features unify the same
+    way in each.
+    """
+    return [
+        package["name"]
+        for package in workspace_packages(metadata)
+        if not any(
+            t.get("test", True) for t in package["targets"] if not DEFAULT_UNTESTED_KINDS.intersection(t["kind"])
+        )
+    ]
+
+
 def integration_tests(package: dict) -> list[str]:
     return sorted(t["name"] for t in package["targets"] if "test" in t["kind"] and t.get("test", True))
 
@@ -202,7 +226,12 @@ def plan(
     follows and runs every night when oneiron-bench is a workspace member
     left out of the other selections: its bins' unit tests and its
     integration tests, with `--workspace` kept (BENCH_PACKAGE).
+
+    The untested packages (untested_packages) join `always_excluded` and the
+    bench selection's exclusions, and the plan names them in `untested`.
     """
+    untested = [name for name in untested_packages(metadata) if name not in always_excluded]
+    always_excluded = (*always_excluded, *untested)
     owners = {
         name: [p for p in packages if p not in always_excluded] for name, packages in test_owners(metadata).items()
     }
@@ -231,7 +260,14 @@ def plan(
         tests = integration_tests(bench_package)
         if bins or tests:
             selections.append(
-                {"name": "bench", "kind": "bench", "excluded": [], "bins": False, "bin_targets": bins, "tests": tests}
+                {
+                    "name": "bench",
+                    "kind": "bench",
+                    "excluded": list(untested),
+                    "bins": False,
+                    "bin_targets": bins,
+                    "tests": tests,
+                }
             )
     order = []
     for number, first in enumerate(range(0, len(ordered), size), start=1):
@@ -244,6 +280,7 @@ def plan(
     cycle = int(cursor.get("cycle", 1))
     return {
         "always_excluded": list(always_excluded),
+        "untested": untested,
         "shard_files": shard_files,
         "names_total": len(names),
         "cursor_in": {"next": ordered[0] if ordered else None, "cycle": cycle},
@@ -1006,6 +1043,10 @@ def summary(args: argparse.Namespace) -> int:
     text += [
         f"unselected: {u['selection']} {u['package']} {u['kind']} {u['name']} ({u['reason']})".replace("  ", " ")
         for u in chosen["unselected"]
+    ]
+    text += [
+        f"not tested by design: {package} (no lib, bin or test target sets test = true)"
+        for package in chosen.get("untested", [])
     ]
     text += [f"flipped: {f['test']} {f['from']} ({f['since']}) -> {f['to']}" for f in flipped]
     text += [f"libtest failed: {test}" for test in record["libtest_failed"]]
