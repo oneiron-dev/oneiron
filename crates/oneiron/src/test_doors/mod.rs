@@ -61,6 +61,8 @@ pub mod lifted_text;
 pub mod live_run_claim_put;
 pub mod mail_counterparty;
 pub mod mail_landing;
+#[cfg(feature = "sync")]
+pub mod media_vector_replica;
 pub mod membership;
 pub mod meso_extraction_width;
 pub mod microsoft_token;

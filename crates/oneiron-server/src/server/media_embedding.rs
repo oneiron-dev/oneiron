@@ -442,9 +442,9 @@ impl SyncServer {
                     let egress = embedder.media_egress();
                     let gate = egress.as_ref().map(|gate| gate as &dyn EgressPredicate);
                     if let Err(error) = runtime.block_on(
-                        self.vault.reuse_home_text_media_vectors(space, BACKFILL_BATCH),
+                        self.vault.reuse_home_media_vectors(space, BACKFILL_BATCH),
                     ) {
-                        tracing::debug!(%space, kind = ?error.kind(), "home text media reuse unavailable");
+                        tracing::debug!(%space, kind = ?error.kind(), "home media reuse unavailable");
                     }
                     let report = self.vault.reconcile_media_embeddings_admitted(
                         &embedder,

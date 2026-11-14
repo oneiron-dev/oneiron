@@ -634,7 +634,7 @@ pub(super) fn text_document_in_txn(
 
 /// The actual current text input and every native row it reads.
 #[cfg(feature = "sync")]
-pub(crate) fn text_vector_sources_in_txn(
+fn text_vector_sources_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
@@ -647,6 +647,56 @@ pub(crate) fn text_vector_sources_in_txn(
             (text_hash(&text), rows)
         }),
     )
+}
+
+/// The input a replicated media vector of record `id` is bound to (census L7-43; ARCH-0023b
+/// "cloud-produced f16 embeddings"): its kind, the hash of its text (zero for an image or
+/// audio, as the stored row keeps it), and every native row that input reads.
+/// - A claim, summary or turn: its current text ([`text_vector_sources_in_txn`]).
+/// - An image or audio ASSET: its own row, which names its bytes by hash, so the row's digest
+///   pins the bytes the vector was made from ([`asset_document_in`] reads them). The bytes must
+///   be held here and be the ones the row names.
+///
+/// `None` for any other record, a text ASSET, and an ASSET whose bytes a repo mark covers: the
+/// model reads that one's masked copy ([`super::repo_projection::asset_document_projected_in`]),
+/// which its row does not pin, so each device embeds its own.
+#[cfg(feature = "sync")]
+pub(crate) fn media_source_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<(InputKind, [u8; 32], Vec<EntityId>)>> {
+    let Some(row) = vault.store.port_entity_record(txn, id)? else {
+        return Ok(None);
+    };
+    match row.entity_type {
+        ENTITY_TYPE_CLAIM | ENTITY_TYPE_SUMMARY | ENTITY_TYPE_TURN => {
+            Ok(text_vector_sources_in_txn(vault, txn, id)?
+                .map(|(hash, rows)| (InputKind::Text, hash, rows)))
+        }
+        ENTITY_TYPE_ASSET => {
+            let mut report = MediaEmbedReport::default();
+            let Some(document) = asset_document_in(
+                vault,
+                &vault.store,
+                txn,
+                *id,
+                &BTreeSet::from(InputKind::ALL),
+                &mut report,
+            )?
+            else {
+                return Ok(None);
+            };
+            let input =
+                crate::origin::secret_projection::index::RepoIndexMarks::read_in_txn(vault, txn)?
+                    .input_in_txn(vault, txn, document.bytes)?;
+            if input.stamp().is_some() {
+                return Ok(None);
+            }
+            Ok(Some((document.kind, [0; 32], vec![*id])))
+        }
+        _ => Ok(None),
+    }
 }
 
 /// [`text_document_in_txn`] read through `store`: base, or a room's view, whose records and
@@ -711,16 +761,17 @@ pub(super) fn asset_text(
 }
 
 impl Vault {
-    /// Reuses one batch of the opened device's home's current text media vectors.
-    /// Missing home rows leave the existing local backfill unchanged.
-    pub async fn reuse_home_text_media_vectors(
+    /// Reuses one batch of the opened device's home's current media vectors, of every kind the
+    /// space fills: text, image and audio. Missing home rows leave the existing local backfill
+    /// unchanged.
+    pub async fn reuse_home_media_vectors(
         &self,
         space_id: &str,
         max_items: usize,
     ) -> Result<usize> {
         #[cfg(feature = "sync")]
         {
-            super::space::reuse_home_text_media_vectors(self, space_id, max_items).await
+            super::space::reuse_home_media_vectors(self, space_id, max_items).await
         }
         #[cfg(not(feature = "sync"))]
         {
