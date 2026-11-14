@@ -336,6 +336,10 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         self.signers.borrow_mut().insert(hash, holder.actor.clone());
         let host = holder.actor == "host";
         let verdict = match parent {
+            // The first signed state holds no room facet set (L7-39).
+            None if authority.room_facets.is_some() => {
+                ProjectVerdict::Quarantined(reason::ROOM_SET_AT_BIRTH)
+            }
             None => self.birth(authority, &holder, host)?,
             Some(parent) => {
                 let Some(prior_row) = self.row(&parent) else {
@@ -345,7 +349,13 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
                     return Ok(ProjectVerdict::Quarantined(reason::NOT_A_STATE));
                 };
                 let unsigned = matches!(prior_row, ProjectRevision::Boundary { .. });
-                if unsigned && Some(self.id) != self.reader.root() && !host {
+                if unsigned && authority.room_facets.is_some() {
+                    ProjectVerdict::Quarantined(reason::ROOM_SET_AT_BIRTH)
+                } else if prior.room_facets.is_some() && prior.slice.facet != authority.slice.facet
+                {
+                    // The anchor never moves while a set exists, whoever signs.
+                    ProjectVerdict::Quarantined(reason::ROOM_ANCHOR_MOVED)
+                } else if unsigned && Some(self.id) != self.reader.root() && !host {
                     ProjectVerdict::Quarantined(reason::OVER_UNSIGNED)
                 } else if !holder.audience.contains(&ScopeId(self.id)) {
                     ProjectVerdict::Quarantined(reason::AUDIENCE)
@@ -573,7 +583,7 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
                 &resolution.challenge(self.id)?,
                 &resolution.holder_signature,
                 resolution.signed_at,
-                &next_authority.slice,
+                next_authority,
             )
         })? {
             Ok(holder) => holder,
@@ -664,7 +674,7 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
                 &seal.challenge(self.id)?,
                 &seal.holder_signature,
                 seal.signed_at,
-                &authority.slice,
+                authority,
             )
         })? {
             Ok(holder) => holder,
@@ -949,6 +959,11 @@ fn well_formed(id: EntityId, authority: &ProjectAuthority) -> bool {
             .roster
             .as_ref()
             .is_none_or(|roster| !roster.is_empty())
+        // A room facet set holds the slice's own facet, its anchor.
+        && authority.room_facets.as_ref().is_none_or(|set| {
+            set.len() <= 256
+                && (authority.slice.facet).is_some_and(|anchor| set.contains(&anchor))
+        })
         && authority
             .parents
             .iter()

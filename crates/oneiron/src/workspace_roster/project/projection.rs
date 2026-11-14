@@ -117,12 +117,13 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
         return Err(invalid());
     }
     slice_refs(&body.slice, &mut ids);
+    ids.extend(body.room_facets.iter().flatten().copied());
     // Every anchor is read, however many (rule 5, FIX 9436): the read fold
     // counts the chain's depth against its threshold row.
     if let Some(signed) = &body.write_proof {
         slip_refs(&signed.slip_wire, &mut ids)?;
         // An earlier authority state is a carrier too: its parents, leader,
-        // board, roster and slice may not name a live off-record id either.
+        // board, roster, slice and room facet set may not name a live off-record id either.
         for link in signed.anchor_links().map_err(|_| invalid())?.iter().rev() {
             authority_refs(&link.authority, &mut ids)?;
             if let Some(proof) = &link.proof {
@@ -177,6 +178,7 @@ fn authority_refs(authority: &ProjectAuthority, ids: &mut Vec<EntityId>) -> Resu
         ids.push(id);
     }
     slice_refs(&authority.slice, ids);
+    ids.extend(authority.room_facets.iter().flatten().copied());
     Ok(())
 }
 

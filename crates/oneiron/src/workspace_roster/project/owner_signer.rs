@@ -53,7 +53,8 @@ pub(super) fn owner_signed_at(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<u6
 
 impl Vault {
     /// Signs `next` for the owner at `signed_at`: the owner is revalidated in
-    /// this transaction, and the host signs `next`'s fields as a v3 state over
+    /// this transaction, and the host signs `next`'s fields as a v3 state (v4
+    /// when it carries a room facet set) over
     /// `over`, or, when no signed state precedes it, over `next`'s own
     /// unsigned boundary. The door then lands `next` as history and commits
     /// only once [`Self::require_owner_head_in_txn`] finds it installed.
@@ -78,18 +79,16 @@ impl Vault {
                 proof: None,
             }]
         });
-        let challenge = next.authority_at(ProjectProofVersion::V3).write_challenge(
-            id,
-            ProjectProofVersion::V3,
-            signed_at,
-            &anchor,
-        )?;
+        let version = next.signing_version();
+        let challenge = next
+            .authority_at(version)
+            .write_challenge(id, version, signed_at, &anchor)?;
         next.write_proof = Some(ProjectWriteProof {
             slip_wire: signer.wire().to_owned(),
             holder_signature: signer.sign(&challenge)?,
             signed_at,
             anchor,
-            version: ProjectProofVersion::V3,
+            version,
         });
         Ok(())
     }

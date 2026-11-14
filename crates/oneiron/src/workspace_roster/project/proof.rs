@@ -25,6 +25,12 @@ pub(crate) fn validate_transition(
     posture: crate::HostingPrivacyPosture,
 ) -> Result<()> {
     let next: ProjectRecord = decode(bytes).map_err(|_| refused("invalid project body"))?;
+    // Only a v4 proof signs a room facet set; a row carries none without one.
+    if next.room_facets.is_some()
+        && (next.write_proof.as_ref()).is_none_or(|proof| proof.version != ProjectProofVersion::V4)
+    {
+        return Err(refused("a room facet set needs a v4 project proof"));
+    }
     let prior = stored(store, txn, id, kind)?;
     if let Some(old) = &prior {
         // OF-389: a subproject's wrapper TASK is fixed at its spawn.

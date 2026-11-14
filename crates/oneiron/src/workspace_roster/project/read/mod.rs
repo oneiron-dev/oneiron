@@ -53,7 +53,11 @@ pub(super) fn stored(
     id: EntityId,
     kind: u8,
 ) -> Result<Option<ProjectRecord>> {
-    record(store, txn, id, kind)
+    let mut row: Option<ProjectRecord> = record(store, txn, id, kind)?;
+    if let Some(row) = row.as_mut() {
+        row.drop_unsigned_room_facets();
+    }
+    Ok(row)
 }
 
 /// Whether a row must fit under its parents: a leader's or board holder's
@@ -584,12 +588,13 @@ impl<'a, 't> ProjectReader<'a, 't> {
             &challenge,
             &proof.holder_signature,
             proof.signed_at,
-            &authority.slice,
+            authority,
         )
     }
 
     /// Verifies a slip's standing at `signed_at`, its holder's signature
-    /// over `challenge`, and a project.write scope over `slice`.
+    /// over `challenge`, and a project.write scope over `state`: its slice
+    /// and every facet its room reads through.
     pub(super) fn verify_envelope(
         &self,
         id: EntityId,
@@ -597,8 +602,9 @@ impl<'a, 't> ProjectReader<'a, 't> {
         challenge: &[u8],
         holder_signature: &[u8],
         signed_at: u64,
-        slice: &Scope,
+        state: &ProjectAuthority,
     ) -> Result<std::result::Result<Holder, ProjectVerdict>> {
+        let slice = &state.slice;
         let Ok(slip) = CapabilitySlip::from_token(slip_wire) else {
             return Ok(Err(ProjectVerdict::Quarantined(
                 "invalid project write slip",
@@ -627,9 +633,9 @@ impl<'a, 't> ProjectReader<'a, 't> {
         if !scope.verbs.contains(&"project.write".to_owned())
             || !scope.bands.contains(&self.kind)
             || !(scope.worlds.contains(&world) || matches!(scope.worlds, ScopeAxis::All))
-            || slice
-                .facet
-                .is_some_and(|facet| !scope.facets.contains(&ScopeId(facet)))
+            || (slice.facet.iter())
+                .chain(state.room_facets.iter().flatten())
+                .any(|facet| !scope.facets.contains(&ScopeId(*facet)))
         {
             return Ok(Err(ProjectVerdict::Quarantined(
                 "project write outside slip scope",
@@ -644,8 +650,9 @@ impl<'a, 't> ProjectReader<'a, 't> {
 }
 
 /// The facets a project's home room limits what is read through it: the
-/// slice facet of the authority its history folds to (owner ruling
-/// FACET-READ), never a stored row the fold does not serve. A MESSAGE or
+/// signed room facet set of the authority its history folds to, else that
+/// authority's slice facet (owner ruling FACET-READ; L7-39), never a stored
+/// row the fold does not serve. A MESSAGE or
 /// TURN said there sits in it. `None` is a room no project owns (an ordinary
 /// conversation, or no room: a deleted project's home room goes with it), or
 /// one whose project's authority names no facet.
@@ -674,12 +681,17 @@ pub(crate) fn room_facets_in(
         return Ok(Some(ScopeAxis::Bottom));
     };
     // `None`: contradicting slices met, and nothing fits under them.
-    let Some(slice) = effective.slice else {
+    if effective.slice.is_none() {
         return Ok(Some(ScopeAxis::Bottom));
-    };
-    Ok(slice
-        .facet
-        .map(|facet| ScopeAxis::Some([ScopeId(facet)].into())))
+    }
+    // The signed room facet set where one is met, else the slice's facet.
+    Ok(effective.room_facet_reach().map(|facets| {
+        if facets.is_empty() {
+            ScopeAxis::Bottom
+        } else {
+            ScopeAxis::Some(facets.into_iter().map(ScopeId).collect())
+        }
+    }))
 }
 
 /// Whom an unmarked room's own body names as its project, by the keys the
