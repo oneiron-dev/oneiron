@@ -1,5 +1,6 @@
-//! This machine's residence choice: sync every window it may read, or sync
-//! what it opened, and the worlds the owner picked for it to follow. Both
+//! This machine's residence choice: sync every window it may read, sync
+//! what it opened, or sync what it opened plus what its home predicts it
+//! will open; and the worlds the owner picked for it to follow. Both
 //! are node-local, never synced and never an authority entry: they decide
 //! which copies the machine wants, not what its actor may read or where a
 //! world's readable copies may live.
@@ -23,6 +24,10 @@ const WORLD_PICK_KEY: &str = "rs:worlds";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeviceSyncPreference {
     pub mode: SyncResidenceMode,
+    /// Whether the machine runs at the predicted level (ARCH-0023b
+    /// #predicted-residence): what it opened plus what its home predicts.
+    /// Only beside `mode` Opened, which the transport runs at that level.
+    pub predicted: bool,
     /// Recorded-clock seconds when the choice was made.
     pub chosen_at: u64,
 }
@@ -30,9 +35,10 @@ pub struct DeviceSyncPreference {
 impl DeviceSyncPreference {
     fn encode(self) -> [u8; PREFERENCE_LEN] {
         let mut bytes = [0; PREFERENCE_LEN];
-        bytes[0] = match self.mode {
-            SyncResidenceMode::Opened => 0,
-            SyncResidenceMode::All => 1,
+        bytes[0] = match (self.mode, self.predicted) {
+            (SyncResidenceMode::Opened, false) => 0,
+            (SyncResidenceMode::All, _) => 1,
+            (SyncResidenceMode::Opened, true) => 2,
         };
         bytes[1..].copy_from_slice(&self.chosen_at.to_be_bytes());
         bytes
@@ -42,15 +48,17 @@ impl DeviceSyncPreference {
         let bytes: &[u8; PREFERENCE_LEN] = bytes
             .try_into()
             .map_err(|_| Error::CorruptedIndex("device sync preference"))?;
-        let mode = match bytes[0] {
-            0 => SyncResidenceMode::Opened,
-            1 => SyncResidenceMode::All,
+        let (mode, predicted) = match bytes[0] {
+            0 => (SyncResidenceMode::Opened, false),
+            1 => (SyncResidenceMode::All, false),
+            2 => (SyncResidenceMode::Opened, true),
             _ => return Err(Error::CorruptedIndex("device sync preference")),
         };
         let mut at = [0; 8];
         at.copy_from_slice(&bytes[1..]);
         Ok(Self {
             mode,
+            predicted,
             chosen_at: u64::from_be_bytes(at),
         })
     }
@@ -64,24 +72,28 @@ pub fn load_device_sync_preference(vault: &Vault) -> Result<Option<DeviceSyncPre
         .transpose()
 }
 
-/// Record the owner's choice for this machine. The live connection applies
-/// it by reconnecting; see `SyncConnection::set_residence_mode`.
+/// Record the owner's choice of `mode` for this machine, off the predicted
+/// level. The live connection applies it by reconnecting; see
+/// `SyncConnection::set_residence_mode`.
 pub fn set_device_sync_preference(
     vault: &Vault,
     mode: SyncResidenceMode,
 ) -> Result<DeviceSyncPreference> {
-    vault.with_write_txn_grouped(|txn| set_device_sync_preference_in_txn(vault, txn, mode))
+    vault.with_write_txn_grouped(|txn| set_device_sync_preference_in_txn(vault, txn, mode, false))
 }
 
-/// [`set_device_sync_preference`] in the caller's transaction, for a door
-/// that records more in the same commit.
+/// The owner's choice in the caller's transaction, for a door that records
+/// more in the same commit. `predicted` puts an opened machine at the
+/// predicted level; under All it is ignored.
 pub(crate) fn set_device_sync_preference_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     mode: SyncResidenceMode,
+    predicted: bool,
 ) -> Result<DeviceSyncPreference> {
     let preference = DeviceSyncPreference {
         mode,
+        predicted: predicted && mode == SyncResidenceMode::Opened,
         chosen_at: vault.store.clock.wall_now(),
     };
     vault

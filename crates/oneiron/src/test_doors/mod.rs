@@ -62,6 +62,8 @@ pub mod off_record_shell;
 pub mod outbound_grant_index;
 pub mod pad_offer_invalidation;
 pub mod park_typed_wait;
+#[cfg(feature = "sync")]
+pub mod predicted_residence;
 pub mod provenance_body_checkpoint;
 pub mod repo_base_manifest;
 pub mod repo_secret_marks;

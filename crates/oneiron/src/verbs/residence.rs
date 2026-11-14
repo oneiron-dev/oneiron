@@ -1,5 +1,5 @@
 //! The owner's residence controls (OF-534, FIX 531): a machine's residence
-//! mode, opening one item there, its thin index and pruning its opened-item
+//! mode (opened, predicted or all), opening one item there, its thin index and pruning its opened-item
 //! caches, as owner-vault rows that name the machine they act on. The named
 //! machine's own `SyncConnection` applies each one; a host reaches it
 //! through the connection it registered for that machine id, and an
@@ -16,7 +16,10 @@ use serde::{Deserialize, Serialize};
 use crate::EntityId;
 #[cfg(feature = "sync")]
 use crate::Vault;
-use crate::authority::{ResidenceAct, ResidenceResult, ResidenceResultStatus};
+use crate::authority::{
+    RESIDENCE_PREDICTED_DOCUMENTS_DEFAULT, RESIDENCE_PREDICTED_WINDOWS_DEFAULT, ResidenceAct,
+    ResidenceResult, ResidenceResultStatus,
+};
 #[cfg(feature = "sync")]
 use crate::consent::AuthenticatedOwner;
 #[cfg(feature = "sync")]
@@ -27,22 +30,15 @@ use crate::sync::residence::ResidenceDirectiveState;
 #[cfg(feature = "sync")]
 use crate::sync::{OpenedItem, ResidenceIndexWindow, ResidenceModeChange, SyncResidenceMode};
 
-/// `opened` (items fetched on demand) or `all` (full window replication).
+/// `opened` (items fetched on demand), `predicted` (opened, plus the
+/// windows and entity documents its home predicts it will open; ARCH-0023b
+/// #predicted-residence) or `all` (full window replication).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ResidenceModeName {
     Opened,
+    Predicted,
     All,
-}
-
-#[cfg(feature = "sync")]
-impl From<ResidenceModeName> for SyncResidenceMode {
-    fn from(mode: ResidenceModeName) -> Self {
-        match mode {
-            ResidenceModeName::Opened => Self::Opened,
-            ResidenceModeName::All => Self::All,
-        }
-    }
 }
 
 #[cfg(feature = "sync")]
@@ -70,6 +66,46 @@ pub struct ResidenceModeRequest {
     /// The owner's machine, by its machine id (32 hex).
     pub machine: EntityId,
     pub mode: ResidenceModeName,
+    /// With mode `predicted` only: the most the home's prediction names
+    /// for this machine. Unset, 32 windows and 128 entity documents.
+    #[serde(default)]
+    pub budget: Option<ResidencePredictedBudget>,
+}
+
+/// The owner's budget for a machine at the predicted level: the most
+/// windows and entity documents one prediction names (Engine ruling
+/// L7-46-BUDGET B). No ceiling: a prediction names its set by digest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResidencePredictedBudget {
+    pub windows: u32,
+    pub documents: u32,
+}
+
+impl ResidenceModeRequest {
+    /// The owner's residence directive this row asks for.
+    ///
+    /// # Errors
+    ///
+    /// A budget beside a mode other than `predicted`.
+    pub fn act(&self) -> MemoryResult<ResidenceAct> {
+        match (self.mode, self.budget) {
+            (ResidenceModeName::Opened, None) => Ok(ResidenceAct::SyncOpened),
+            (ResidenceModeName::All, None) => Ok(ResidenceAct::SyncAll),
+            (ResidenceModeName::Predicted, budget) => Ok(ResidenceAct::SyncPredicted {
+                window_budget: budget
+                    .map_or(RESIDENCE_PREDICTED_WINDOWS_DEFAULT, |budget| budget.windows),
+                document_budget: budget.map_or(RESIDENCE_PREDICTED_DOCUMENTS_DEFAULT, |budget| {
+                    budget.documents
+                }),
+            }),
+            (ResidenceModeName::Opened | ResidenceModeName::All, Some(_)) => {
+                Err(MemoryError::bad_request(
+                    "vault.residence.mode takes a budget only with mode predicted",
+                ))
+            }
+        }
+    }
 }
 
 /// `vault.residence.worlds`'s input: the worlds the named machine follows,
@@ -344,7 +380,9 @@ impl ResidenceDirectivesRequest {
 }
 
 /// What a residence directive asks its machine to do. `kind` says which; an
-/// open names its window and item, a prune its cutoff, a follow its worlds.
+/// open names its window and item, a prune its cutoff, a follow its worlds,
+/// a sync-predicted its budget, and the home's prediction the owner's
+/// sync-predicted directive it executes and its set's digest and counts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ResidenceActView {
@@ -352,6 +390,22 @@ pub enum ResidenceActView {
     SyncAll,
     /// Sync what the machine opened.
     SyncOpened,
+    /// Sync what the machine opened plus what its home predicts, within
+    /// this budget.
+    SyncPredicted {
+        window_budget: u32,
+        document_budget: u32,
+    },
+    /// The home's prediction for the machine: the set it should hold,
+    /// named by digest; only that machine fetches the set itself.
+    Predicted {
+        /// The owner's sync-predicted directive it executes, 32 hex.
+        parent: EntityId,
+        /// The set's digest, 64 hex.
+        set_digest: String,
+        window_count: u32,
+        document_count: u32,
+    },
     /// Follow these worlds, the owner's pick.
     Follow {
         /// The picked worlds, ascending, 32 hex each.
@@ -376,6 +430,24 @@ impl From<&ResidenceAct> for ResidenceActView {
         match act {
             ResidenceAct::SyncAll => Self::SyncAll,
             ResidenceAct::SyncOpened => Self::SyncOpened,
+            ResidenceAct::SyncPredicted {
+                window_budget,
+                document_budget,
+            } => Self::SyncPredicted {
+                window_budget: *window_budget,
+                document_budget: *document_budget,
+            },
+            ResidenceAct::Predicted {
+                parent,
+                set_digest,
+                window_count,
+                document_count,
+            } => Self::Predicted {
+                parent: *parent,
+                set_digest: crate::entity_id::bytes_to_hex_lower(set_digest),
+                window_count: *window_count,
+                document_count: *document_count,
+            },
             ResidenceAct::Follow { worlds } => Self::Follow {
                 worlds: worlds.iter().copied().collect(),
             },

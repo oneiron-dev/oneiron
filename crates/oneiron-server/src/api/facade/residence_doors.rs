@@ -30,7 +30,7 @@ use std::sync::Arc;
 use oneiron::authority::ResidenceAct;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MemoryError, MemoryResult};
-use oneiron::sync::SyncConnection;
+use oneiron::sync::{SyncConnection, SyncResidenceMode};
 use oneiron::task_verb::sdk::{
     ResidenceDirectiveView, ResidenceDirectivesRequest, ResidenceIndexAnswer,
     ResidenceMachineRequest, ResidenceModeAnswer, ResidenceModeName, ResidenceModeRequest,
@@ -118,15 +118,30 @@ fn refused(verb: &str, error: &oneiron::sync::TransportError) -> MemoryError {
 }
 
 /// [`vault_residence_mode`]'s answer: switches the named machine's residence mode.
+///
+/// The predicted level is always the owner's signed directive, also to a
+/// machine whose connection runs here: the home's predictions name it as
+/// the owner's approval (Engine ruling L7-46-PLAN-SIGNER A), so it must be
+/// on the authority log. This host rings that connection's directives, so
+/// it applies at once; the answer is the queued directive.
 async fn residence_mode(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ResidenceModeRequest,
 ) -> MemoryResult<ResidenceModeAnswer> {
     const VERB: &str = "vault.residence.mode";
-    let act = match input.mode {
-        ResidenceModeName::All => ResidenceAct::SyncAll,
-        ResidenceModeName::Opened => ResidenceAct::SyncOpened,
+    let act = input.act()?;
+    let mode = match input.mode {
+        ResidenceModeName::Predicted => {
+            let owner = super::owner_binding::facade_owner(server, auth, VERB)?;
+            let queued = relay(server, &owner, input.machine, act)?;
+            if let Some(connection) = crate::residence_machines::connection(&input.machine) {
+                connection.wake_residence_directives();
+            }
+            return Ok(ResidenceModeAnswer::Queued(queued));
+        }
+        ResidenceModeName::Opened => SyncResidenceMode::Opened,
+        ResidenceModeName::All => SyncResidenceMode::All,
     };
     let connection = match machine_connection(server, auth, VERB, &input.machine, act)? {
         Reach::Connection(connection) => connection,
@@ -134,7 +149,7 @@ async fn residence_mode(
     };
     Ok(ResidenceModeAnswer::Applied(
         connection
-            .set_residence_mode(input.mode.into())
+            .set_residence_mode(mode)
             .await
             .map_err(|error| refused(VERB, &error))?
             .into(),
