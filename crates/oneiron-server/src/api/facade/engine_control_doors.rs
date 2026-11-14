@@ -53,6 +53,21 @@ async fn as_controller<T: Send + 'static>(
     verb: &'static str,
     act: impl FnOnce(&SyncServer, EngineControlActor<'_>) -> oneiron::Result<T> + Send + 'static,
 ) -> MemoryResult<T> {
+    as_controller_answering(server, auth, verb, move |server, actor| {
+        act(server, actor).map_err(MemoryError::from)
+    })
+    .await
+}
+
+/// [`as_controller`] for an `act` that answers its own memory errors: a
+/// door that runs work, not a knob, under a class grant
+/// (`vault.coach.training_offers.run`).
+pub(super) async fn as_controller_answering<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    act: impl FnOnce(&SyncServer, EngineControlActor<'_>) -> MemoryResult<T> + Send + 'static,
+) -> MemoryResult<T> {
     let controller = match engine_controller(server, auth, verb)? {
         Some(owner) => Controller::Owner(owner),
         None => Controller::Holder(
@@ -67,7 +82,7 @@ async fn as_controller<T: Send + 'static>(
             Controller::Owner(owner) => EngineControlActor::Owner(owner),
             Controller::Holder(holder) => EngineControlActor::Holder(*holder),
         };
-        act(&server, actor).map_err(MemoryError::from)
+        act(&server, actor)
     })
     .await
     .map_err(|_| internal(verb))?

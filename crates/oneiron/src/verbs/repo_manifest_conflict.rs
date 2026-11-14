@@ -13,12 +13,11 @@ use crate::sync::window::{
 use crate::sync::{SyncQueue, WindowKey};
 use crate::{EntityId, Vault};
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RepoManifestConflictReviewRequest {
-    pub window: String,
-    pub portable_repo: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::repo_manifest_conflict::{
+    RepoManifestConflictDiscardRequest, RepoManifestConflictDiscardView,
+    RepoManifestConflictQueueView, RepoManifestConflictReviewRequest,
+};
 
 /// The durable conflict as reviewed, not a live window's contents.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -29,32 +28,6 @@ pub struct RepoManifestConflictReviewView {
     pub carried: RepoManifest,
     /// Return unchanged to discard exactly this reviewed carrier.
     pub binding: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RepoManifestConflictDiscardRequest {
-    pub binding: String,
-}
-
-/// Queue acceptance is not delivery or convergence.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum RepoManifestConflictQueueView {
-    Queued { sequence: u64 },
-    Failed { error: String },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum RepoManifestConflictDiscardView {
-    Discarded {
-        /// The exact ordinary delta, retained even when queueing fails.
-        update_base64: String,
-        queue: RepoManifestConflictQueueView,
-    },
-    Stale,
-    WindowLive,
 }
 
 pub fn repo_manifest_conflict_review_as_owner(

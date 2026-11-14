@@ -91,7 +91,7 @@ mod tests {
     use crate::error::ErrorKind;
     use crate::llm::ModelTierRef;
 
-    fn reader(profile: MemoryProfile) -> AgentDefinition {
+    fn reader(optional_memory: Option<OptionalMemoryProfile>) -> AgentDefinition {
         AgentDefinition::new(
             "oneiron.agent.reader",
             "Optional-memory reader fixture",
@@ -115,7 +115,8 @@ mod tests {
             true,
             None,
         )
-        .with_memory_profile(Some(profile))
+        .with_memory_profile(Some(window()))
+        .with_optional_memory(optional_memory)
     }
 
     fn window() -> MemoryProfile {
@@ -126,30 +127,50 @@ mod tests {
         )
     }
 
-    fn encoded_profile(definition: &AgentDefinition) -> Vec<(Value, Value)> {
+    fn encoded_body(definition: &AgentDefinition) -> Vec<(Value, Value)> {
         let bytes = encode_agent_definition(definition).expect("encode");
         let Value::Map(entries) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap() else {
             panic!("body is not a map");
         };
-        let Some((_, Value::Map(profile))) = entries
+        entries
+    }
+
+    fn profile_keys(definition: &AgentDefinition) -> Vec<String> {
+        let Some((_, Value::Map(profile))) = encoded_body(definition)
             .into_iter()
             .find(|(key, _)| key.as_str() == Some("memory_profile"))
         else {
             panic!("memory_profile is not a map");
         };
         profile
+            .iter()
+            .filter_map(|(key, _)| key.as_str().map(str::to_owned))
+            .collect()
+    }
+
+    fn body_bytes(entries: Vec<(Value, Value)>) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &Value::Map(entries)).unwrap();
+        bytes
     }
 
     /// ZERO-RETRIEVAL = A (ARCH-0004 #reader-budget): "no optional memory" is
     /// its own stored value, because a pack budget of 0 means no limit, and a
-    /// profile that never sets it keeps the bytes it had.
+    /// definition that never sets it keeps the bytes it had. The setting is
+    /// the body's own last key, apart from the window profile (Engine ruling
+    /// L9-32-NO-PROFILE = A), so setting it leaves the window as authored.
     #[test]
     fn no_optional_memory_is_stored_apart_from_a_zero_budget() {
-        let plain = encoded_profile(&reader(window()));
-        let keys: Vec<_> = plain.iter().filter_map(|(key, _)| key.as_str()).collect();
+        let plain = reader(None);
         assert_eq!(
-            keys,
+            profile_keys(&plain),
             ["window_token_budget", "compaction_backend", "compaction"]
+        );
+        assert!(
+            encoded_body(&plain)
+                .iter()
+                .all(|(key, _)| key.as_str() != Some("optional_memory")),
+            "an unset choice is elided"
         );
 
         let standard = OptionalMemory::Budget {
@@ -158,10 +179,20 @@ mod tests {
         };
         let picked = OptionalMemoryProfile::new(standard)
             .with_family("event_ordering", OptionalMemory::None);
-        let definition = reader(window().with_optional_memory(picked.clone()));
+        let definition = reader(Some(picked.clone()));
+        assert_eq!(
+            profile_keys(&definition),
+            profile_keys(&plain),
+            "the window profile is untouched"
+        );
+        assert_eq!(
+            encoded_body(&definition).last().unwrap().0.as_str(),
+            Some("optional_memory")
+        );
         let decoded =
             decode_agent_definition(&encode_agent_definition(&definition).unwrap()).unwrap();
-        let carried = decoded.memory_profile.unwrap().optional_memory.unwrap();
+        assert_eq!(decoded.memory_profile, Some(window()));
+        let carried = decoded.optional_memory.unwrap();
         assert_eq!(carried, picked);
         assert_eq!(
             carried.for_family(Some("event_ordering")),
@@ -170,7 +201,7 @@ mod tests {
         assert_eq!(carried.for_family(Some("unlisted")), standard);
         assert_eq!(carried.for_family(None), standard);
 
-        let mut zero = encoded_profile(&definition);
+        let mut zero = encoded_body(&definition);
         let (_, Value::Map(stored)) = zero.last_mut().unwrap() else {
             panic!("optional_memory is not a map");
         };
@@ -178,25 +209,8 @@ mod tests {
             (Value::from("tokens"), Value::from(0_u64)),
             (Value::from("view"), Value::from("standard")),
         ]);
-        let with_profile = |profile: Vec<(Value, Value)>| {
-            let mut body = rmpv::decode::read_value(
-                &mut encode_agent_definition(&definition).unwrap().as_slice(),
-            )
-            .unwrap();
-            let Value::Map(fields) = &mut body else {
-                unreachable!()
-            };
-            fields
-                .iter_mut()
-                .find(|(key, _)| key.as_str() == Some("memory_profile"))
-                .unwrap()
-                .1 = Value::Map(profile);
-            let mut bytes = Vec::new();
-            rmpv::encode::write_value(&mut bytes, &body).unwrap();
-            bytes
-        };
         assert_eq!(
-            decode_agent_definition(&with_profile(zero))
+            decode_agent_definition(&body_bytes(zero))
                 .expect_err("a 0 budget is no limit")
                 .kind(),
             ErrorKind::InvalidAgentDefBody
@@ -204,11 +218,34 @@ mod tests {
 
         // Sol #1523 F2: the key out of its pinned place would decode and
         // re-encode to other bytes.
-        let mut first = encoded_profile(&definition);
+        let mut first = encoded_body(&definition);
         first.rotate_right(1);
         assert_eq!(
-            decode_agent_definition(&with_profile(first))
+            decode_agent_definition(&body_bytes(first))
                 .expect_err("optional_memory comes last")
+                .kind(),
+            ErrorKind::InvalidAgentDefBody
+        );
+    }
+
+    /// The window profile no longer carries the key: a body that nests it
+    /// under `memory_profile`, as before the lift, is refused.
+    #[test]
+    fn a_nested_optional_memory_key_is_refused() {
+        let definition = reader(Some(OptionalMemoryProfile::new(OptionalMemory::None)));
+        let mut entries = encoded_body(&definition);
+        let (_, choice) = entries.pop().unwrap();
+        let (_, Value::Map(profile)) = entries
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some("memory_profile"))
+            .unwrap()
+        else {
+            panic!("memory_profile is not a map");
+        };
+        profile.push((Value::from("optional_memory"), choice));
+        assert_eq!(
+            decode_agent_definition(&body_bytes(entries))
+                .expect_err("not a memory_profile key")
                 .kind(),
             ErrorKind::InvalidAgentDefBody
         );

@@ -7,34 +7,17 @@ use crate::claim::{ClaimBody, ClaimSubject, ScopedReadActorKey, claim_surfaceabl
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::ports::{EntityStoreRead, ShortIdStoreRead};
+use crate::ports::ShortIdStoreRead;
 use crate::side_table::{self, Named, SideTable};
 use oneiron_authority::federation::{Scope, Sensitivity, SensitivityCeiling};
 
 const CEILINGS: SideTable<String, DisclosureBand, Named> =
     SideTable::new(&side_table::DISCLOSURE_MODEL_CEILING);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DisclosureDataClass {
-    Names,
-    Dates,
-    Contact,
-    Ids,
-    Health,
-}
-
-impl DisclosureDataClass {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Names => "names",
-            Self::Dates => "dates",
-            Self::Contact => "contact",
-            Self::Ids => "ids",
-            Self::Health => "health",
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::disclosure::model_channel::{
+    DisclosureCeilingRequest, DisclosureDataClass,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -72,16 +55,6 @@ impl DisclosureBand {
             _ => Self::Restricted,
         }
     }
-}
-
-/// One registry dial. Omit class to address the whole connection.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DisclosureCeilingRequest {
-    /// The credential-bound connection, e.g. agent:<principal hex>.
-    pub connection: String,
-    #[serde(default)]
-    pub class: Option<DisclosureDataClass>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

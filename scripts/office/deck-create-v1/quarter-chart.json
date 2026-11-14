@@ -1,0 +1,86 @@
+{
+  "communication": {
+    "audience": "Board",
+    "outcome": "Approve the budget",
+    "main_message": "Revenue by quarter"
+  },
+  "language": "en-GB",
+  "accessibility": [
+    "Describe every figure"
+  ],
+  "pages": [
+    {
+      "id": "quarters",
+      "job": "explain",
+      "division": "fixed",
+      "blocks": [
+        {
+          "id": "q-title",
+          "kind": "title",
+          "text": "Revenue by quarter"
+        },
+        {
+          "id": "q-revenue",
+          "kind": "data",
+          "dataset": "revenue",
+          "carriers": [
+            "chart"
+          ]
+        },
+        {
+          "id": "q-claim",
+          "kind": "claim",
+          "text": "Revenue recovered in the fourth quarter.",
+          "evidence": [
+            {
+              "document": "doc:annual-report",
+              "version": "v3",
+              "start": "cursor:10",
+              "end": "cursor:47",
+              "quote": "recovered in the fourth quarter",
+              "quote_hash": "b6188f4444d7c6ab85f6d7da6ccad7edc4267ba0481c2922dcad000db6c8abc9"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "datasets": [
+    {
+      "id": "revenue",
+      "columns": [
+        {
+          "name": "Quarter",
+          "type": "text"
+        },
+        {
+          "name": "Revenue",
+          "type": "number",
+          "unit": "EUR m"
+        }
+      ],
+      "rows": [
+        [
+          "Q1",
+          4.1
+        ],
+        [
+          "Q2",
+          5.0
+        ],
+        [
+          "Q3",
+          null
+        ],
+        [
+          "Q4",
+          8.3
+        ]
+      ],
+      "missing": "not reported",
+      "sources": [
+        "ledger 2026"
+      ]
+    }
+  ]
+}

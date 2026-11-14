@@ -241,7 +241,7 @@ pub use self::offer::{
     OfferModelPin, OfferOption, SeatWorkload, TrainingOffer, TrainingOfferDraft,
     eval_authoring_skill_id, offer_skill_cell, pending_training_offers, record_offer_check,
     record_training_offer, training_offer, training_offer_checks, training_offer_skill_id,
-    training_offers, union_source_rows,
+    training_offer_skill_in_force, training_offers, union_source_rows,
 };
 pub(crate) use self::offer::{
     erase_offer_answer_actor_in_txn, erase_offer_source_in_txn, live_source_rows_in,
@@ -290,7 +290,7 @@ pub use gate::{
     score_gate_skill_edit_with_scorer, set_skill_edit_cycle_cap, set_skill_edit_goal_axes,
     set_skill_goal_project, set_skill_tradeoff_preferences, settle_skill_tradeoff_ask,
     settle_skill_tradeoff_ask_as, settle_skill_tradeoff_ask_as_agent, skill_body_binding_digest,
-    skill_edit_cycle_cap, skill_edit_goal, skill_edit_goal_axis_report,
+    skill_edit_cycle_cap, skill_edit_goal, skill_edit_goal_as_owner, skill_edit_goal_axis_report,
     skill_edit_needs_goal_axis_report, skill_edit_score_call_purpose, skill_edit_verdict,
     skill_edit_verdicts, skill_edit_verdicts_for_proposal, skill_goal_axis_plan,
     skill_goal_project, skill_tradeoff_ask, skill_tradeoff_asks_for, skill_tradeoff_preferences,

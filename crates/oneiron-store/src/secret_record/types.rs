@@ -13,8 +13,6 @@ pub use oneiron_contracts::secret_custody::{CustodyClass, CustodyTier};
 pub enum SecretCustodyStatus {
     /// Live and usable within its bindings.
     Active,
-    /// Temporarily unusable; name still held.
-    Suspended,
     /// Terminal; the name frees for re-registration.
     Revoked,
 }
@@ -25,7 +23,6 @@ impl SecretCustodyStatus {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Active => "active",
-            Self::Suspended => "suspended",
             Self::Revoked => "revoked",
         }
     }
@@ -35,7 +32,6 @@ impl SecretCustodyStatus {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "active" => Some(Self::Active),
-            "suspended" => Some(Self::Suspended),
             "revoked" => Some(Self::Revoked),
             _ => None,
         }

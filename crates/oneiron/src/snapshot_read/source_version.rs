@@ -31,18 +31,10 @@ pub struct SourceVersion {
     pub projection: Option<String>,
 }
 
-/// What a recheck of a [`SourceVersion`] found.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SourceVersionCheck {
-    /// The row still reads for the caller, at the same revision.
-    Current,
-    /// The row still reads for the caller, at another revision.
-    Moved,
-    /// The caller no longer reads the row, or it is gone. Nothing more is
-    /// said, as a scoped read says nothing of a withheld row.
-    Withheld,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::snapshot_read::source_version::SourceVersionCheck;
+#[doc(hidden)]
+pub(super) use oneiron_verb_wire::snapshot_read::source_version::blake3_ref;
 
 impl SourceVersion {
     /// Judges this version again in `txn` under `read`, the caller's own live
@@ -167,9 +159,4 @@ pub(super) fn turn_lifted_keys_in_txn(
         .map(|(_, _, body)| body)
         .collect();
     memory.lifted_keys_of_bodies_in_txn(txn, &bodies)
-}
-
-/// `blake3:<hex>` for a 32-byte BLAKE3 digest.
-pub(super) fn blake3_ref(digest: &[u8; 32]) -> String {
-    format!("blake3:{}", blake3::Hash::from(*digest).to_hex())
 }

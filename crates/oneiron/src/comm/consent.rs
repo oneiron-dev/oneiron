@@ -52,7 +52,7 @@ pub(super) use crate::write_envelope::communication_record::MAX_SEND_REF_BYTES;
 
 pub(super) use crate::write_envelope::communication_record::OPT_OUT_CLEAR_REASON;
 
-const OPT_OUT_CLEAR_APPROVED: &str = "comm_opt_out_clear_approved";
+pub(super) const OPT_OUT_CLEAR_APPROVED: &str = "comm_opt_out_clear_approved";
 
 /// Counts active claims by the full `(predicate, party, channel_class)` key.
 pub fn count_active_comm_claims(
@@ -279,6 +279,10 @@ pub fn approve_pending_opt_out_clear(
             occurred_at: ruled_at,
             outcome: OPT_OUT_CLEAR_APPROVED.to_owned(),
             actor_ref: actor.entity_ref(),
+            // The request the ruling judged: a STOP that occurred at or after
+            // it and reaches this replica only after the ruling still stands
+            // (`stop_answering_boundary_in_txn`).
+            requested_at: Some(oldest_request),
         };
         let receipt_id = vault.store.clock.entity_id()?;
         put_comm_record_in_txn(vault, wtxn, receipt_id, &receipt)?;
