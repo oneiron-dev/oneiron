@@ -61,6 +61,7 @@ pub mod mail_counterparty;
 pub mod mail_landing;
 pub mod membership;
 pub mod meso_extraction_width;
+pub mod microsoft_token;
 pub mod model_binding_proposer;
 pub mod nightly;
 pub mod note_bm25f_repair;

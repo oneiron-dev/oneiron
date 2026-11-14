@@ -5,9 +5,11 @@
 //! ([`WorkspaceTokenExchange`]). Under Google's, a grant that carries a
 //! refresh token and its OAuth client (what the Google code exchange stores)
 //! is exchanged at Google's token endpoint for a fresh access token on each
-//! send, so the hour an access token lives never runs out mid-use. Every
-//! other grant presents its stored access token, and bare text is the access
-//! token; a grant of another provider never reaches Google's endpoint.
+//! send, so the hour an access token lives never runs out mid-use; under
+//! Microsoft's, a grant that also names its tenant (what the Microsoft code
+//! exchange stores) is exchanged at that tenant's Microsoft token endpoint.
+//! Every other grant presents its stored access token, and bare text is the
+//! access token; a grant goes only to its own connection's provider.
 //! Nothing here is persisted or logged.
 
 use std::time::Duration;
@@ -37,9 +39,15 @@ pub(super) fn access_token(
     exchange: WorkspaceTokenExchange,
     value: &[u8],
 ) -> Result<Zeroizing<String>> {
-    if exchange == WorkspaceTokenExchange::GoogleRefresh
-        && let Some(fresh) = ProviderConnectionChecks::refresh_stored_google_grant(client, value)?
-    {
+    let fresh = match exchange {
+        WorkspaceTokenExchange::GoogleRefresh => {
+            ProviderConnectionChecks::refresh_stored_google_grant(client, value)?
+        }
+        WorkspaceTokenExchange::MicrosoftRefresh => {
+            ProviderConnectionChecks::refresh_stored_microsoft_grant(client, value)?
+        }
+    };
+    if let Some(fresh) = fresh {
         return Ok(fresh);
     }
     let unusable =

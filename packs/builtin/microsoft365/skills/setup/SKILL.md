@@ -27,19 +27,29 @@ itself, and the pack stays a Candidate until its own qualification passes.
    want. Each one they allow gets its own Gate receipt.
 2. Sign in with Microsoft through the host's sign-in. Ask for the scopes of
    the permissions the owner allowed, plus `User.Read`, which the check uses
-   to name the account, and no other Microsoft access.
-3. Store what the sign-in returns through the owner secrets form, under the
-   name the card shows, bound for read to connector:microsoft365. Never ask
-   for the owner's Microsoft password, never ask for the grant in chat, and
-   never repeat it back. A Microsoft 365 mailbox the owner connects may name
-   the same stored grant, so one sign-in serves their mail and their files.
+   to name the account, and `offline_access`, which lets the engine keep the
+   connection fresh, and no other Microsoft access.
+3. Store the sign-in's result. The host stores its app registration
+   (`client_id`, the client secret of a web application, and the `tenant`
+   the sign-in ran against) and the completed sign-in (`code`,
+   `redirect_uri`, and the PKCE `code_verifier` when it used one) as two
+   credentials bound for read to connector:microsoft365, then calls the
+   owner's Microsoft code exchange (`POST /v1/owner/packs/microsoft365/exchange`).
+   The engine exchanges the code at Microsoft and stores the grant under the
+   name the card shows. Never ask for the owner's Microsoft password, never
+   ask for the grant or the code in chat, and never repeat either back. A
+   Microsoft 365 mailbox the owner connects may name the same stored grant,
+   so one sign-in serves their mail and their files.
 4. Check the connection. The check asks Microsoft Graph which account the
    grant belongs to, and passes when Graph names one.
 
-The engine presents the stored access token as it is: it does not refresh a
-Microsoft grant yet. When the token expires, about an hour after the
-sign-in, sign in again, store the new grant under the same name, and check
-again.
+The engine refreshes the access token at Microsoft each time it uses the
+grant, so the hour an access token lasts never runs out mid-use. Microsoft
+ends a sign-in's refresh after 90 days, or sooner when the account's access
+is withdrawn: then the check fails, and the owner signs in again and runs the
+exchange with `replace_existing`. A grant stored by hand that holds only an
+access token works until that token expires, about an hour after the
+sign-in.
 
 ## How the agent uses it
 
@@ -62,9 +72,9 @@ again.
 
 ## When the check fails
 
-- Microsoft refused the credential. The token expired, or access was
-  withdrawn in the account's settings. Sign in again, store the new grant,
-  and check again.
+- Microsoft refused the credential or its refresh. The sign-in ended, or
+  access was withdrawn in the account's settings. Sign in again, run the
+  exchange with `replace_existing`, and check again.
 - Graph named no account. The grant lacks `User.Read`; sign in again asking
   for it with the allowed permissions.
 

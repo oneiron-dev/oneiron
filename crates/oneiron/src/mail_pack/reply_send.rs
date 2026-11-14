@@ -138,7 +138,13 @@ impl<'v> ReplySink<'v> {
             WireReads::Mailbox,
             MICROSOFT365_CONNECTOR_EFFECTOR,
             &mut |token: &[u8]| {
-                let auth = bearer_header(token)?;
+                // A stored Microsoft grant sends with a fresh access token.
+                let fresh = rest::GrantIssuer::Microsoft.refresh(&client, token)?;
+                let presented = match &fresh {
+                    Some(fresh) => fresh.as_bytes(),
+                    None => token,
+                };
+                let auth = bearer_header(presented)?;
                 // The token sends as the mailbox it reads, and no other.
                 let request = client
                     .get(GRAPH_ME_URL)
