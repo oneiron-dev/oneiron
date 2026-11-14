@@ -24,7 +24,7 @@ use serde_json::Value;
 
 use super::quota::MAIL_WIRE_RATE_LIMITED;
 use super::rest::{
-    self, FreshGoogleTokens, RestAnswer, VerifiedCredentials, array, refused, text_of,
+    self, FreshAccessTokens, GrantIssuer, RestAnswer, VerifiedCredentials, array, refused, text_of,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::note::{
@@ -68,7 +68,7 @@ pub struct HttpGoogleDriveWire<'v> {
     verified: VerifiedCredentials,
     /// The fresh access tokens its sources' stored grants were exchanged
     /// for.
-    tokens: FreshGoogleTokens,
+    tokens: FreshAccessTokens,
 }
 
 impl<'v> HttpGoogleDriveWire<'v> {
@@ -83,7 +83,7 @@ impl<'v> HttpGoogleDriveWire<'v> {
             client: rest::https_client()?,
             read_bytes: Cell::new(0),
             verified: VerifiedCredentials::new(),
-            tokens: FreshGoogleTokens::new(),
+            tokens: FreshAccessTokens::new(GrantIssuer::Google),
         })
     }
 

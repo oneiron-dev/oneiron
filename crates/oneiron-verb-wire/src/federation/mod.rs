@@ -44,3 +44,4 @@ pub mod agent_grant;
 pub mod org_admin;
 pub mod pending_act;
 pub mod relationships;
+pub mod vault_id_decimal;

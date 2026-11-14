@@ -90,7 +90,7 @@ impl PipelineBuilder<'_> {
                 widen_channel_limits: inputs.widen_channel_limits,
                 skip_ret01_abstain: inputs.skip_ret01_abstain,
             },
-        );
+        )?;
         // Keyed before every fold: a telemetry reader holds every input but
         // the query, so an unkeyed digest would confirm a guessed query.
         let fork_hash = self.vault.retrieval_trace_key().seal(fork_hash);
