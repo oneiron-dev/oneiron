@@ -29,7 +29,10 @@ use super::watermark::decode_turn_body;
 use crate::claim::{PointRead, ScopedRead, ScopedReadActorKey, ScopedReadResult};
 use crate::dreamer_runner::{DreamerTurnRole, dreamer_turn_role};
 use crate::edge::{EdgeActorClass, EdgeKind};
-use crate::gate::{WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER};
+use crate::gate::{
+    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_COUNTERPARTY, WITNESS_AUTHOR_SYSTEM,
+    WITNESS_AUTHOR_USER,
+};
 use crate::memory::StreamFinality;
 use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
@@ -426,6 +429,7 @@ fn collect_with(
     ) {
         DreamerTurnRole::User => WITNESS_AUTHOR_USER,
         DreamerTurnRole::Assistant => WITNESS_AUTHOR_COMPANION,
+        DreamerTurnRole::Counterparty => WITNESS_AUTHOR_COUNTERPARTY,
         // Branch admission refuses every other role; no child is its text.
         _ => {
             return Ok(TurnText {
@@ -490,7 +494,12 @@ fn collect_with(
         authors.sort_unstable();
         // An imported row names its source's speaker in metadata and has no
         // `AuthoredBy` edge: the importer did not write it.
-        let bylines = usize::from(message.author != WITNESS_AUTHOR_SYSTEM && !facts.imported);
+        let bylines = usize::from(
+            !matches!(
+                message.author.as_str(),
+                WITNESS_AUTHOR_SYSTEM | WITNESS_AUTHOR_COUNTERPARTY
+            ) && !facts.imported,
+        );
         if entity_type != ENTITY_TYPE_MESSAGE
             || out(EdgeKind::PartOf)? != [*turn]
             || out(EdgeKind::BelongsTo)? != [*conversation]
