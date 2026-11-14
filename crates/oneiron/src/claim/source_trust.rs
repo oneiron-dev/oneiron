@@ -145,9 +145,22 @@ fn claim_has_federated_origin_marker(body: &ClaimBody) -> bool {
 /// writer (ONE-1290) drops any `evidence_turn_refs` entry resolving to a
 /// CLAIM entity that fails this predicate, and the consolidation working
 /// set (ONE-1289) is TURN-only — claims never enter it.
-#[cfg_attr(not(test), allow(dead_code))] // consumed by ONE-1289/ONE-1290
+///
+/// A foreign copy ([`claim_is_foreign_copy`]) is never admissible either:
+/// "Non-re-shareable also means not a source for a write" (federation.md
+/// #model, Guest federation row; ARCH-0043 #leaving-a-company), for a WORLD
+/// copy and a copied inquiry answer alike (L7-02 WORLD-COPY-SOURCE = A).
 pub(crate) fn claim_evidence_admissible(body: &ClaimBody) -> bool {
-    !claim_generated_origin(body)
+    !claim_generated_origin(body) && !claim_is_foreign_copy(body)
+}
+
+/// Whether the claim is a foreign copy: a claim in a WORLD of the received
+/// foreign range, which a pact's WORLD copy or a copied inquiry answer lands
+/// in. Reading, recalling and embedding it stay open to the vault; it is
+/// never a source for a write, nor re-shared to a third party.
+pub(crate) fn claim_is_foreign_copy(body: &ClaimBody) -> bool {
+    body.world
+        .is_some_and(crate::entity_id::is_foreign_world_id_range)
 }
 
 pub(crate) fn psych_mirror_claim_affect_salience(body: &ClaimBody) -> Result<f32> {

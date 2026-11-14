@@ -180,6 +180,16 @@ pub(crate) fn validate_shared_brief_grant(grant: &AccessGrant) -> Result<()> {
     for id in world_refs.iter().chain(facet_refs) {
         EntityId::from_bytes(*id.as_bytes()).map_err(|_| invalid_grant())?;
     }
+    // A foreign copy is never re-shared (federation.md #model, Guest
+    // federation row; L7-02): a brief share names no WORLD of the received
+    // foreign range, so no claim a pact or an inquiry landed reaches its
+    // recipient.
+    if world_refs
+        .iter()
+        .any(|id| crate::entity_id::is_foreign_world_id_range(*id))
+    {
+        return Err(invalid_grant());
+    }
     Ok(())
 }
 

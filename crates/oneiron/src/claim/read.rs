@@ -102,6 +102,26 @@ impl Vault {
         )
     }
 
+    /// Whether stored row `id` is a foreign copy as `rtxn` holds it
+    /// ([`super::claim_is_foreign_copy`]): a CLAIM in a received foreign
+    /// WORLD. Any other row, or none, is not.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn claim_is_foreign_copy_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        match crate::ports::ClaimStore::port_claim_get(self, rtxn, id) {
+            Ok(body) => Ok(body.is_some_and(|body| super::claim_is_foreign_copy(&body))),
+            // Not a CLAIM row.
+            Err(Error::InvalidClaimBody(_)) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
     /// The targeted claim and the actual history carriers the same read
     /// consulted. These ids name source entities, not grants or a frozen
     /// snapshot of their bytes.
