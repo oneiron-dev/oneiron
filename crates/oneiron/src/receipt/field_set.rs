@@ -88,8 +88,10 @@ pub struct ContextReceiptFields {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_input_ref: Option<String>,
     /// OF-365 disclosure stamp for the assembly that produced this emit:
-    /// `"mode=<mode>;interlocutors=<class>:<label>[,...]"`. Absent on
-    /// receipts stamped before the disclosure clamp existed.
+    /// `"mode=<mode>;interlocutors=<class>:<label>[,...]"`, then
+    /// `";home=<64 hex>"` when the assembly served a conversation another
+    /// vault holds. Absent on receipts stamped before the disclosure clamp
+    /// existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disclosure_stamp: Option<String>,
 }

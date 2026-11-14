@@ -5,7 +5,6 @@
 use std::collections::HashSet;
 use std::time::Instant;
 
-use crate::disclosure::DisclosureMode;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
@@ -126,13 +125,11 @@ impl<'a> ContextPackBuilder<'a> {
         // the clamp's candidate sweep runs, so a captured trace would retain
         // exactly the ids the clamp removes — absence is the boundary, and
         // suppressing capture is the fail-closed form of scrubbing every
-        // stage. OwnerAlone (and no-context) assemblies keep the caller's
-        // trace setting unchanged.
+        // stage. Unclamped assemblies (the owner alone in a conversation of
+        // this vault, or no context) keep the caller's trace setting
+        // unchanged.
         let replay_config = (self.pipeline.captures_replay()
-            && self
-                .disclosure
-                .as_ref()
-                .is_none_or(|ctx| ctx.mode() == DisclosureMode::OwnerAlone))
+            && self.disclosure.as_ref().is_none_or(|ctx| !ctx.clamps()))
         .then(|| self.pack_replay_config());
         let mut pipeline = self.pipeline;
         let default_deadline =
@@ -142,11 +139,7 @@ impl<'a> ContextPackBuilder<'a> {
         }
         let pack_deadline = pipeline.retrieval_deadline();
         let mut deadline_exceeded = false;
-        if self
-            .disclosure
-            .as_ref()
-            .is_some_and(|ctx| ctx.mode() != DisclosureMode::OwnerAlone)
-        {
+        if self.disclosure.as_ref().is_some_and(|ctx| ctx.clamps()) {
             pipeline = pipeline.capture_retrieval_trace(false);
         }
         // Captured BEFORE the run, from the same door the pipeline registers
@@ -194,11 +187,7 @@ impl<'a> ContextPackBuilder<'a> {
         if partitioned {
             pipeline = pipeline.context_pack_world_share(non_base_world_fraction);
         }
-        if let Some(ctx) = self
-            .disclosure
-            .as_ref()
-            .filter(|ctx| ctx.mode() != DisclosureMode::OwnerAlone)
-        {
+        if let Some(ctx) = self.disclosure.as_ref().filter(|ctx| ctx.clamps()) {
             pipeline = pipeline.disclosure_preselect(ctx.clone());
         }
         let pipeline_output = pipeline.run_for_pack()?;
@@ -231,7 +220,7 @@ impl<'a> ContextPackBuilder<'a> {
             let mut scored = scored;
             let mut clamped = pipeline_output.disclosure_clamped;
             if let Some(ctx) = clamp
-                && ctx.mode() != DisclosureMode::OwnerAlone
+                && ctx.clamps()
             {
                 let mut kept = Vec::with_capacity(scored.len());
                 for entry in scored {
@@ -252,7 +241,7 @@ impl<'a> ContextPackBuilder<'a> {
             }
             let mut capabilities = Vec::new();
             for entry in pipeline_output.capabilities {
-                if clamp.is_some_and(|ctx| ctx.mode() != DisclosureMode::OwnerAlone)
+                if clamp.is_some_and(|ctx| ctx.clamps())
                     && !disclosure_admits_candidate(
                         self.vault,
                         &self.read,
@@ -591,8 +580,7 @@ impl<'a> ContextPackBuilder<'a> {
             // Discoveries keep the whole pack nonempty, but never decide the
             // memory channel's accounting. Non-owner disclosure still reports
             // only admitted candidates, not pre-clamp population information.
-            let candidates_considered = if memory_is_empty
-                && clamp.is_none_or(|ctx| ctx.mode() == DisclosureMode::OwnerAlone)
+            let candidates_considered = if memory_is_empty && clamp.is_none_or(|ctx| !ctx.clamps())
             {
                 total_in_scope
             } else {
