@@ -16,12 +16,13 @@ use crate::access_grant::{
     encode_access_grant_body, erased_grant, invalid_grant, required_value, validate_keys,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::check_in::{self, CheckInDecision, WidenAct, WidenCheckIn};
 use crate::claim::{ClaimBody, ScopedReadActorKey, claim_surfaceable, decode_claim_body};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, RecordError, Result};
 use crate::gate::{GateOutcome, resolve_policy_manifest, scoped_read_claim_allowed};
-use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM};
+use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::{GateDecisionId, Store};
 use crate::write_envelope::WriteActor;
@@ -33,6 +34,9 @@ use crate::write_envelope::WriteActor;
 /// call rather than the door's error-propagating `RawValue`.
 const ADMISSIONS: SideTable<EntityId, Vec<u8>, Raw> =
     SideTable::new(&side_table::SHARE_BRIEF_ADMISSION);
+
+/// The saved verb a share's creation is, as check-in judges it (2k8g).
+const SHARE_CREATE_VERB: &str = "vault.shares.create";
 
 /// A one-way identity fence. Its exact stored marker is the single byte `1`.
 const DELETE_RESERVATIONS: SideTable<EntityId, [u8; 1], Raw> =
@@ -503,6 +507,34 @@ fn verify_share_actor(store: &Store, txn: &heed::RoTxn<'_>, actor: &WriteActor) 
     crate::provenance::validate_actor_class(raw.entity_type, actor.actor_class())
 }
 
+/// Whether `issuer` wrote the brief `brief_ref` names, read in `txn`: a
+/// human whose PERSON is the author its NOTE's put was checked against, by
+/// the predicate a Steward's own-item delete reads (2k5). An opaque ref, or
+/// one that names no NOTE, is no one's (2k8g; MEMBER-SHARE-OWN = B).
+fn issuer_wrote_brief_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    issuer: &WriteActor,
+    brief_ref: &str,
+) -> Result<bool> {
+    if issuer.actor_class() != EdgeActorClass::Human {
+        return Ok(false);
+    }
+    let Ok(brief) = EntityId::from_hex(brief_ref) else {
+        return Ok(false);
+    };
+    if vault.get_entity_type_in_txn(txn, &brief)? != Some(ENTITY_TYPE_NOTE) {
+        return Ok(false);
+    }
+    let at = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
+    let Some(person) =
+        crate::workspace_roster::person_of_actor_in_txn(vault, txn, issuer.entity_ref(), at)?
+    else {
+        return Ok(false);
+    };
+    crate::federation::DeleteTarget::new(brief).owned_by_in(vault, txn, person)
+}
+
 // PERSON admits both human and agent. Only a live, verified authority binding
 // can supply the exact read class; entity bodies and claims are not evidence.
 fn share_viewer_actor_in_txn(
@@ -565,6 +597,8 @@ impl Vault {
     /// The transport must derive `issuer` from the authenticated principal, not request data.
     /// Pending and denied decisions are durable but never create a grant. The brief's
     /// born-with text stays home; [`Self::create_share_travelling`] lets the sharer send it.
+    /// Check-in judges the issuer's share in the same writer (ROLES-CHECKIN
+    /// 2k8g): a share it makes wait answers `CHECK_IN_PENDING`.
     pub fn create_share(
         &self,
         share_id: &EntityId,
@@ -588,21 +622,43 @@ impl Vault {
         share: &Share,
         travel: &crate::share_travel::TravelChoice,
     ) -> Result<()> {
-        self.create_share_travelling_then(share_id, issuer, share, travel, &|_| Ok(()))
+        self.create_share_travelling_then(share_id, issuer, share, travel, None, &|_| Ok(()))
+            .map(|_| ())
     }
 
     /// [`Self::create_share_travelling`], running `then` in the write that
     /// admits the share, after its grant is written: a paced call's turn
     /// marks its held call landed there, so the share and the mark commit
     /// together (FIX 8753). A refused or paced share runs no `then`.
+    ///
+    /// Check-in judges the issuer's share in this writer (ROLES-CHECKIN
+    /// 2k8g; MEMBER-SHARE-OWN = B; `check_in::person_widen_check_in_in_txn`),
+    /// after every check that refuses it without a write: the author of the
+    /// brief's NOTE shares it at once (`own_item`); the vault's Owner on
+    /// their own proof; a member who shares a brief another wrote is judged
+    /// under their role, and a Steward's or a Member's share waits
+    /// (`CHECK_IN_PENDING`) until the call that names the approved check-in
+    /// as `check_in_ref`. With no `check_in_ref` the judge runs before the
+    /// Gate, because its only write is a wait's pending check-in: a waiting
+    /// share commits that check-in alone, and the Gate records and charges
+    /// nothing for it. A `check_in_ref` is spent only after the Gate allows
+    /// the share, because a Gate that does not allow commits its decision,
+    /// and the spend must not commit with it. Answers the share's check-in
+    /// decision.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::create_share_travelling`]; `CHECK_IN_PENDING` while the
+    /// share waits; a `check_in_ref` no waiting share of this issuer's names.
     pub(crate) fn create_share_travelling_then(
         &self,
         share_id: &EntityId,
         issuer: &WriteActor,
         share: &Share,
         travel: &crate::share_travel::TravelChoice,
+        check_in_ref: Option<&EntityId>,
         then: &dyn Fn(&mut heed::RwTxn<'_>) -> Result<()>,
-    ) -> Result<()> {
+    ) -> Result<Option<CheckInDecision>> {
         let grant = share.grant();
         let data = encode_access_grant_body(&grant)?;
         if share.status != AccessGrantStatus::Active {
@@ -642,6 +698,24 @@ impl Vault {
         {
             return Err(Error::Record(RecordError::IdentityUnsettled { name }));
         }
+        let widen = WidenAct {
+            actor: issuer.entity_ref(),
+            class: issuer.actor_class(),
+            owns_item: issuer_wrote_brief_in(self, &txn, issuer, &share.brief_ref)?,
+            verb: SHARE_CREATE_VERB,
+            effect_digest: check_in::share_create_effect_digest(share, travel),
+        };
+        // With no check-in to spend, the judge runs before the Gate (doc above).
+        let mut check_in_decision = None;
+        if check_in_ref.is_none() {
+            match check_in::person_widen_check_in_in_txn(self, &mut txn, &widen, None)? {
+                WidenCheckIn::Go(decision) => check_in_decision = decision,
+                WidenCheckIn::Wait(id) => {
+                    txn.commit()?;
+                    return Err(Error::CheckInPending(id.to_hex()));
+                }
+            }
+        }
         let (gate_id, decision) = match crate::gate::check_share_create_policy(
             &self.store,
             &mut txn,
@@ -673,6 +747,19 @@ impl Vault {
             txn.commit()?;
             return Err(error);
         }
+        // A named check-in is spent once the Gate allows the share, in the
+        // writer that lands it. With a `check_in_ref` the judge spends it or
+        // refuses, and the refusal drops this writer, the Gate's rows with
+        // it; it never opens a wait.
+        if check_in_ref.is_some() {
+            match check_in::person_widen_check_in_in_txn(self, &mut txn, &widen, check_in_ref)? {
+                WidenCheckIn::Go(decision) => check_in_decision = decision,
+                WidenCheckIn::Wait(id) => {
+                    drop(txn);
+                    return Err(Error::CheckInPending(id.to_hex()));
+                }
+            }
+        }
         let target = share_effect_target(share_id, issuer, share, travel)?;
         let admission = ShareAdmission {
             issuer: Some(*issuer),
@@ -686,7 +773,7 @@ impl Vault {
         crate::share_travel::put_brief_travel_in_txn(self, &mut txn, share_id, travel)?;
         then(&mut txn)?;
         txn.commit()?;
-        Ok(())
+        Ok(check_in_decision)
     }
 
     /// Resolves on one fresh read transaction. `viewer` MUST come from the authenticated

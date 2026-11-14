@@ -5,7 +5,10 @@
 //! the Gate records an allowing external-effect decision pinned to exactly
 //! this share id, recipient, scope and travel choice. A pending or denied
 //! decision is durable and creates no grant; once the owner approves it, the
-//! same request with the same `share_id` lands it.
+//! same request with the same `share_id` lands it. Check-in judges a
+//! member's share of a brief another wrote under their role (ROLES-CHECKIN
+//! 2k8g): a Steward's or a Member's waits (`CHECK_IN_PENDING`) until the
+//! same request names the approved check-in as `check_in_ref`.
 //!
 //! `vault.shares.revoke` stops a share at once: the door is
 //! [`crate::Vault::revoke_share`], the revoker is the handle's own actor, and
@@ -64,6 +67,12 @@ pub struct ShareCreateRequest {
     /// with `self.identity.settle` first.
     #[serde(default)]
     pub mention: Option<crate::outbound::MentionProvenance>,
+    /// The approved check-in of this member's earlier share of a brief
+    /// another wrote, with the same recipient, scope, expiry and travel,
+    /// which waited on it; the share spends it once the Gate allows it
+    /// (ROLES-CHECKIN 2k8g). Omitted otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// `vault.shares.create`'s answer: the admitted share and what travels with
@@ -77,6 +86,11 @@ pub struct ShareCreated {
     pub created_at: u64,
     pub expires_at: Option<u64>,
     pub travel: TravelChoice,
+    /// The brief's author's `own_item`, the Owner's `own_proof`, or a
+    /// member's share under their role (with the check-in it spent); none
+    /// for an agent's or an unjudged person's (ROLES-CHECKIN 2k8g).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 /// The verb a paced share's call is held under (FIX 8753).
@@ -108,6 +122,14 @@ pub fn create_share_as_caller(
         Some(share_id) => id("share_id", share_id)?,
         None => EntityId::now(),
     };
+    let check_in_ref = input
+        .check_in_ref
+        .as_deref()
+        .map(|hex| {
+            EntityId::from_hex(hex)
+                .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))
+        })
+        .transpose()?;
     let share = Share {
         recipient_ref: id("recipient", input.recipient.as_str())?,
         brief_ref: input.brief_ref,
@@ -142,24 +164,37 @@ pub fn create_share_as_caller(
     {
         return Err(held);
     }
-    let created = ShareCreated {
+    let created = |check_in| ShareCreated {
         share_id: share_id.to_hex(),
         recipient: share.recipient_ref.to_hex(),
         brief_ref: share.brief_ref.clone(),
         created_at: share.created_at,
         expires_at: share.expires_at,
         travel: travel.clone(),
+        check_in,
     };
+    // A share that waits on a check-in ends its paced turn with that
+    // `CHECK_IN_PENDING`: the call that names the approved check-in lands it.
     let landed = match turn {
-        Some(invocation) => {
-            vault.create_share_travelling_then(&share_id, &issuer, &share, &travel, &|txn| {
-                land_paced_verb_call_in_txn(vault, txn, invocation)
-            })
-        }
-        None => vault.create_share_travelling(&share_id, &issuer, &share, &travel),
+        Some(invocation) => vault.create_share_travelling_then(
+            &share_id,
+            &issuer,
+            &share,
+            &travel,
+            check_in_ref.as_ref(),
+            &|txn| land_paced_verb_call_in_txn(vault, txn, invocation),
+        ),
+        None => vault.create_share_travelling_then(
+            &share_id,
+            &issuer,
+            &share,
+            &travel,
+            check_in_ref.as_ref(),
+            &|_| Ok(()),
+        ),
     };
     match landed {
-        Ok(()) => Ok(created),
+        Ok(check_in) => Ok(created(check_in)),
         // Its window paced it again on its turn: back in line.
         Err(Error::Gate(GateError::ShareCreatePaced { next_eligible_at })) if turn.is_some() => {
             Err(paced_turn_again(next_eligible_at))

@@ -888,3 +888,43 @@ pub fn share_view_link_effect_digest(
     hasher.update(&slip_lifetime_secs.to_be_bytes());
     *hasher.finalize().as_bytes()
 }
+
+/// The digest of sharing the brief `share.brief_ref` names with
+/// `share.recipient_ref`, showing at most `share`'s worlds and facets (and
+/// an unscoped dimension when it says so) until `share.expires_at`, with
+/// the born-with text `travel` sends: the effect a member's
+/// `vault.shares.create` of a brief another wrote is judged over (2k8g;
+/// P25-SHAPE Q1 = A). The share's id, status and creation time are no part
+/// of it (a call that names no id draws a fresh one), and neither is the
+/// mention its recipient came from, which is not stored. BLAKE3, key
+/// derived from `oneiron check_in share create v1`, over the recipient's 16
+/// id bytes; the brief ref as its length in eight big-endian bytes and its
+/// bytes; the worlds, then the facets, each as their count in eight
+/// big-endian bytes and their sorted 16 id bytes; the unscoped flag as one
+/// byte; the expiry as one presence byte and eight big-endian bytes (zero
+/// when none); and the born-with fields as their count in eight big-endian
+/// bytes and each wire token as its length in one byte and its bytes.
+#[must_use]
+pub fn share_create_effect_digest(
+    share: &crate::share::Share,
+    travel: &crate::share_travel::TravelChoice,
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in share create v1");
+    hasher.update(share.recipient_ref.as_bytes());
+    hasher.update(&(share.brief_ref.len() as u64).to_be_bytes());
+    hasher.update(share.brief_ref.as_bytes());
+    for refs in [&share.world_refs, &share.facet_refs] {
+        hasher.update(&(refs.len() as u64).to_be_bytes());
+        for id in refs {
+            hasher.update(id.as_bytes());
+        }
+    }
+    hasher.update(&[u8::from(share.include_unscoped)]);
+    hasher.update(&[u8::from(share.expires_at.is_some())]);
+    hasher.update(&share.expires_at.unwrap_or(0).to_be_bytes());
+    hasher.update(&(travel.born_with.len() as u64).to_be_bytes());
+    for field in &travel.born_with {
+        update_short_text(&mut hasher, field.as_str());
+    }
+    *hasher.finalize().as_bytes()
+}
