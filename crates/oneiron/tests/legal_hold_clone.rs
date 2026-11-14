@@ -3,7 +3,9 @@
 //! B as a clone): the hold row carries its captures, the `Placed` event the
 //! first capture's fingerprint, and each `.clone` file opens to exactly the
 //! held records. Widening copies only the added records. Without a store
-//! set, or with one inside the vault, placing is refused.
+//! set, or with one inside the vault, placing is refused. Lifting destroys
+//! the copy and erases nothing; producing re-seals it to a named recipient
+//! and logs the access.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -17,8 +19,9 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::{LegalHoldEventKind, LegalHoldTarget};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
-use oneiron::test_doors::legal_hold::{hold_dir, open_clone};
+use oneiron::test_doors::legal_hold::{hold_dir, open_clone, open_production};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron_crypto::HybridSecretKey;
 use serde_json::json;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -299,6 +302,157 @@ fn a_hold_writes_only_under_its_own_vault_root() -> TestResult {
             .collect::<BTreeSet<_>>(),
         BTreeSet::from([*held.as_bytes()]),
         "the first vault's copy holds its own record"
+    );
+    Ok(())
+}
+
+/// Lifting a hold destroys its sealed copy and never erases: the row reads
+/// lifted, the hold directory is gone, the copy no longer opens, the record
+/// still reads, and this hold's events end `Lifted`, `CloneDestroyed`. A
+/// repeat lift answers the first and logs nothing new.
+#[test]
+fn lifting_a_hold_destroys_its_copy_and_never_erases() -> TestResult {
+    let fixture = fixture()?;
+    let vault = &fixture.vault;
+    let record = named_row(vault, "held record")?;
+    let hold = vault
+        .place_legal_hold(&fixture.owner, vec![LegalHoldTarget::Record(record)], None)
+        .map_err(at("the owner's legal hold"))?;
+    let lifted = vault
+        .lift_legal_hold(&fixture.owner, hold.hold_id)
+        .map_err(at("lift the hold"))?;
+    assert!(
+        lifted.lifted_at.is_some(),
+        "the lifted row names when it lifted"
+    );
+    let dir = hold_dir(vault, hold.hold_id).map_err(at("the hold's directory"))?;
+    assert!(!dir.exists(), "the lift removed the hold's sealed copy");
+    assert!(
+        open_clone(vault, hold.hold_id).is_err(),
+        "the sealed copy no longer opens"
+    );
+    assert!(
+        vault
+            .get(&record)
+            .map_err(at("read the held record"))?
+            .is_some(),
+        "the record still reads: the lift erases nothing in the vault"
+    );
+    let events: Vec<_> = vault
+        .legal_hold_log(&fixture.owner)
+        .map_err(at("read the hold log"))?
+        .into_iter()
+        .filter(|event| event.hold_id == hold.hold_id)
+        .collect();
+    let kinds: Vec<_> = events.iter().map(|event| event.event).collect();
+    assert!(
+        kinds.ends_with(&[
+            LegalHoldEventKind::Lifted,
+            LegalHoldEventKind::CloneDestroyed
+        ]),
+        "this hold's events end Lifted, CloneDestroyed: {kinds:?}"
+    );
+    let again = vault
+        .lift_legal_hold(&fixture.owner, hold.hold_id)
+        .map_err(at("lift the hold again"))?;
+    assert_eq!(
+        again.lifted_at, lifted.lifted_at,
+        "a repeat lift answers the first"
+    );
+    let recount = vault
+        .legal_hold_log(&fixture.owner)
+        .map_err(at("read the hold log"))?
+        .into_iter()
+        .filter(|event| event.hold_id == hold.hold_id)
+        .count();
+    assert_eq!(recount, events.len(), "a repeat lift logs nothing new");
+    Ok(())
+}
+
+/// Producing re-seals the copy to the named recipient and logs the access:
+/// the recipient opens the same components the sealed copy holds, another
+/// key opens nothing, each produced fingerprint equals the hold row's, and
+/// this hold's last event is `CloneProduced` with the recipient's
+/// fingerprint. A lifted hold no longer produces.
+#[test]
+fn producing_reseals_to_the_named_recipient_and_logs_access() -> TestResult {
+    let fixture = fixture()?;
+    let vault = &fixture.vault;
+    let record = named_row(vault, "held record")?;
+    let hold = vault
+        .place_legal_hold(&fixture.owner, vec![LegalHoldTarget::Record(record)], None)
+        .map_err(at("the owner's legal hold"))?;
+    let recipient = HybridSecretKey::from_seed(&[0x5c; 32], b"test/legal-hold-recipient")
+        .map_err(at("the recipient's key"))?;
+    let other = HybridSecretKey::from_seed(&[0x3d; 32], b"test/legal-hold-recipient")
+        .map_err(at("another key"))?;
+    let production = vault
+        .produce_legal_hold(&fixture.owner, hold.hold_id, recipient.public_key())
+        .map_err(at("produce the hold"))?;
+    let opened =
+        open_production(vault, &production, &recipient).map_err(at("open the production"))?;
+    let sealed = open_clone(vault, hold.hold_id).map_err(at("open the sealed copy"))?;
+    assert_eq!(
+        opened.len(),
+        sealed.len(),
+        "the production opens the same components"
+    );
+    let opened_sources: BTreeSet<[u8; 16]> =
+        opened.iter().map(|component| component.source).collect();
+    let sealed_sources: BTreeSet<[u8; 16]> =
+        sealed.iter().map(|component| component.source).collect();
+    assert_eq!(
+        opened_sources, sealed_sources,
+        "the production opens the same sources"
+    );
+    assert!(
+        opened.iter().any(|component| {
+            component.source == *record.as_bytes()
+                && component.family == "entities"
+                && component.key == record.as_bytes().to_vec()
+        }),
+        "the production holds the record's entity row"
+    );
+    assert!(
+        open_production(vault, &production, &other).is_err(),
+        "another key does not open the production"
+    );
+    for produced in &production.captures {
+        let named = hold
+            .clone_captures
+            .iter()
+            .find(|named| named.capture == produced.capture)
+            .ok_or("the production names a capture the hold row does not")?;
+        assert_eq!(
+            produced.fingerprint, named.fingerprint,
+            "each produced capture's fingerprint equals the hold row's"
+        );
+    }
+    let events: Vec<_> = vault
+        .legal_hold_log(&fixture.owner)
+        .map_err(at("read the hold log"))?
+        .into_iter()
+        .filter(|event| event.hold_id == hold.hold_id)
+        .collect();
+    let last = events.last().ok_or("the log has no event for the hold")?;
+    assert_eq!(
+        last.event,
+        LegalHoldEventKind::CloneProduced,
+        "this hold's last event is CloneProduced"
+    );
+    assert_eq!(
+        last.recipient_fingerprint,
+        Some(*blake3::hash(&recipient.public_key().to_bytes()).as_bytes()),
+        "the CloneProduced event carries the recipient's fingerprint"
+    );
+    vault
+        .lift_legal_hold(&fixture.owner, hold.hold_id)
+        .map_err(at("lift the hold"))?;
+    assert!(
+        vault
+            .produce_legal_hold(&fixture.owner, hold.hold_id, recipient.public_key())
+            .is_err(),
+        "a lifted hold no longer produces"
     );
     Ok(())
 }
