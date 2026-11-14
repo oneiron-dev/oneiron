@@ -2,13 +2,12 @@
 
 use super::codec::{RECORD, settle_grant_bound, settlement_key_parts};
 use super::pending::LINK;
-use super::receipts::{
-    already_settled, manifest_ref, settled_anchors_from_summary, settlement_receipt_record,
-};
+use super::receipts::{manifest_ref, settled_anchors_from_summary, settlement_receipt_record};
 use super::records::{
     SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleReceiptDoor, SettleSelectOutcome,
     SettledReview, SettlementRecord, SheetAnswerReceipt,
 };
+use super::ref_state::{RefMove, move_ref_in_txn};
 use crate::Vault;
 use crate::anchored_annotation::{ReanchorOp, ReanchorSummary};
 use crate::batch::secret_scan;
@@ -230,10 +229,9 @@ impl Vault {
                 } else {
                     None
                 };
-                // Ledger acquisition BEFORE any side effect.
-                if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
-                    return Err(already_settled(&existing));
-                }
+                // Ledger acquisition BEFORE any side effect; a ref a held
+                // organ call takes is refused (FIX 22386).
+                move_ref_in_txn(&self.store, wtxn, &key, RefMove::Settle)?;
                 // The comment's task waits while its comment is unattached
                 // (OF-368): work answering it keeps until it is reattached.
                 if let Some((_, _, context)) = deck
@@ -587,9 +585,7 @@ impl Vault {
                 ENTITY_TYPE_BLOB_ARTIFACT,
                 "settle-discard target must be a BLOB_ARTIFACT entity",
             )?;
-            if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
-                return Err(already_settled(&existing));
-            }
+            move_ref_in_txn(&self.store, wtxn, &key, RefMove::Settle)?;
             RECORD.put(&self.store, wtxn, &key, &record)?;
             Ok(())
         })?;

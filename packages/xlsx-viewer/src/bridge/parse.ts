@@ -16,6 +16,7 @@
 import * as XLSX from "xlsx";
 import { checkSheetCount, PREVIEW_BUDGET, preflightPackage, WorkbookBudgetError } from "./budget";
 import type { PreviewBudget } from "./budget";
+import { checkSheetExpansion } from "./expansion";
 import type {
   CellValueType,
   ICellData,
@@ -205,10 +206,7 @@ export function readSheet(
 ): Partial<IWorksheetData> {
   const includeFormula = options.includeFormulaText ?? true;
   const budget = options.budget ?? PREVIEW_BUDGET;
-  const wb = XLSX.read(preflightPackage(bytes, budget), {
-    sheets: [sheetName],
-    ...sheetReadOptions(includeFormula),
-  });
+  const wb = readSheets(bytes, includeFormula, budget, [sheetName]);
   checkSheetCount(wb.SheetNames.length, budget);
   return sheetOf(wb, sheetName, includeFormula, budget);
 }
@@ -221,6 +219,85 @@ function sheetReadOptions(includeFormula: boolean): XLSX.ParsingOptions {
     cellDates: false,
     cellHTML: false,
   };
+}
+
+/** A part of the package as SheetJS holds it once it has inflated it (a CFB file entry). */
+interface ContainerEntry {
+  readonly name: string;
+  readonly type: number;
+  content?: ArrayLike<number>;
+}
+
+/** The two steps `XLSX.read` takes for a ZIP package, both exported by SheetJS 0.20.3. */
+interface SheetJsZipSteps {
+  readonly CFB: { read(data: Uint8Array, options: { type: "buffer" }): { FileIndex: ContainerEntry[] } };
+  parse_zip(zip: { FileIndex: ContainerEntry[] }, options: XLSX.ParsingOptions): XLSX.WorkBook;
+}
+
+/** A CFB file entry, as opposed to a folder or the root. */
+const CFB_FILE = 2;
+
+/**
+ * Read cells the way `XLSX.read` reads a ZIP package (inflate every entry into
+ * a container, then parse the workbook from it), with each part checked
+ * against the expansions SheetJS makes when it parses a sheet
+ * ({@link checkSheetExpansion}) at the moment SheetJS first takes the part's
+ * bytes. So exactly the parts it parses are checked, before it parses them:
+ * the sheet asked for, never another sheet. SheetJS swallows an error a sheet
+ * read throws, so a refusal is kept and thrown once the read returns.
+ */
+function readSheets(
+  bytes: Uint8Array,
+  includeFormula: boolean,
+  budget: PreviewBudget,
+  sheets?: readonly string[],
+): XLSX.WorkBook {
+  const steps = XLSX as unknown as SheetJsZipSteps;
+  const zip = steps.CFB.read(preflightPackage(bytes, budget), { type: "buffer" });
+  let refusal: WorkbookBudgetError | undefined;
+  for (const entry of zip.FileIndex) {
+    const content = entry.content;
+    if (entry.type !== CFB_FILE || content === undefined) {
+      continue;
+    }
+    let checked = false;
+    Object.defineProperty(entry, "content", {
+      configurable: true,
+      enumerable: true,
+      get(): ArrayLike<number> {
+        if (!checked) {
+          checked = true;
+          try {
+            const part = content instanceof Uint8Array ? content : Uint8Array.from(content);
+            checkSheetExpansion(entry.name, part, budget, includeFormula);
+          } catch (err) {
+            if (err instanceof WorkbookBudgetError) {
+              refusal ??= err;
+            }
+            throw err;
+          }
+        }
+        if (refusal !== undefined) {
+          throw refusal;
+        }
+        return content;
+      },
+    });
+  }
+  const options: XLSX.ParsingOptions = { ...sheetReadOptions(includeFormula), type: "array" };
+  if (sheets !== undefined) {
+    options.sheets = [...sheets];
+  }
+  let wb: XLSX.WorkBook;
+  try {
+    wb = steps.parse_zip(zip, options);
+  } catch (err) {
+    throw refusal ?? err;
+  }
+  if (refusal !== undefined) {
+    throw refusal;
+  }
+  return wb;
 }
 
 function sheetOf(
@@ -315,7 +392,7 @@ export function readWorkbook(
   const { name = "workbook", ...parseOptions } = options;
   const includeFormula = parseOptions.includeFormulaText ?? true;
   const budget = parseOptions.budget ?? PREVIEW_BUDGET;
-  const wb = XLSX.read(preflightPackage(bytes, budget), sheetReadOptions(includeFormula));
+  const wb = readSheets(bytes, includeFormula, budget);
   const names = wb.SheetNames ?? [];
   checkSheetCount(names.length, budget);
   const outline = outlineOf(names, name);
