@@ -7,8 +7,8 @@
 //! The house of a stored workspace, the seeded `sys.default` agent, is bound
 //! to the shared vault at Deputy, and the Owner mints it a Grant naming a
 //! reversible act, the thread add and the erase. A person is a Deputy of the
-//! shared vault too. Both sit in a group room and in a private thread there;
-//! two newcomers sit in the room only.
+//! shared vault too. Both sit in a project's home room and in a private
+//! thread there; two newcomers sit in the room only.
 //!
 //! - Reversible work goes: its check-in answers `go`, `never_ask`. No door
 //!   judges a `reversible_work` act yet, and the Deputy cannot call the
@@ -51,7 +51,6 @@ use oneiron::check_in::{
     CheckInDecision, CheckInMode, PendingCheckIn, Rung, record_erase_effect_digest,
 };
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::conversation::{ConversationBody, ConversationKind};
 use oneiron::federation::{FederationGrantRole, InitialSharedMember};
 use oneiron::memory::{
     BlobArtifactInput, MEMORY_CODE_CHECK_IN_PENDING, MEMORY_CODE_FORBIDDEN, Memory, MemoryResult,
@@ -65,10 +64,10 @@ use oneiron::verbs::{
     preview_record_erase,
 };
 use oneiron::workspace_roster::{
-    ThreadAudienceAddRequest, ThreadAudienceHistory, ThreadAudienceReceipt, WorkCompanionPolicy,
-    WorkspaceRosterPreset,
+    ProjectRecord, ThreadAudienceAddRequest, ThreadAudienceHistory, ThreadAudienceReceipt,
+    WorkCompanionPolicy, WorkspaceRosterPreset,
 };
-use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
+use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use room_add_fixture::{ADD, grant, pending_id};
 use serde_json::{Value, json};
@@ -104,30 +103,21 @@ struct Flow {
 impl Flow {
     /// A vault as a host starts one (rooted, the owner bound, the root
     /// signed), its shared vault with a person Deputy, the stored workspace
-    /// whose house the owner binds at Deputy and grants, and the owner's
-    /// group room seating the owner, both Deputies and two newcomers, with a
-    /// private thread whose audience is the owner and both Deputies.
+    /// whose house the owner binds at Deputy and grants, and a project whose
+    /// home room seats the owner, both Deputies and two newcomers, with a
+    /// private thread whose audience is the owner and both Deputies. An
+    /// ordinary room seats only PERSONs, so the house sits on the project's
+    /// roster, which is set before the project's birth, and the birth comes
+    /// before the vault is rooted (as `check_in/room_add_fixture.rs`).
     fn new() -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
         vault.install_device_keystore(Arc::new(MemoryKeystore::default()));
-        let issuer = oneiron::test_support::provision_engine_machines(&vault);
-        vault
-            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
-            .expect("this install's live machine profile");
         let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
-        oneiron::test_support::bind_host_owner(&vault, &issuer, owner)
-            .expect("the owner's binding");
-        let owner_proof = vault
-            .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
-            .expect("owner proof");
-        let signer = vault
-            .owner_project_signer(&issuer)
-            .expect("the owner's project signer");
-        let root = vault.root_project().expect("the root project");
-        vault
-            .sign_owner_project(&owner_proof, &signer, root)
-            .expect("the root's first signature");
+        let (house, _) = vault
+            .get_seeded_agent_definition_by_logical_id("sys.default")
+            .expect("read the seeded agents")
+            .expect("sys.default is seeded on open");
         let [org, deputy, first, second] = std::array::from_fn(|_| EntityId::now());
         vault
             .put_entity(
@@ -149,6 +139,32 @@ impl Flow {
                 )
                 .expect("a live person");
         }
+        let root = vault.root_project().expect("the root project");
+        let project = EntityId::now();
+        let mut record =
+            ProjectRecord::new(project, Some(root), root, owner).expect("a project record");
+        record
+            .roster
+            .extend([house, deputy, first, second].map(|id| id.to_hex()));
+        vault
+            .put_project(project, &record, vault.now_recorded_at())
+            .expect("the project");
+        let room = EntityId::from_hex(&record.home_room).expect("home room id");
+        let issuer = oneiron::test_support::provision_engine_machines(&vault);
+        vault
+            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+            .expect("this install's live machine profile");
+        oneiron::test_support::bind_host_owner(&vault, &issuer, owner)
+            .expect("the owner's binding");
+        let owner_proof = vault
+            .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+            .expect("owner proof");
+        let signer = vault
+            .owner_project_signer(&issuer)
+            .expect("the owner's project signer");
+        vault
+            .sign_owner_project(&owner_proof, &signer, root)
+            .expect("the root's first signature");
         let member = |member_ref, role| InitialSharedMember {
             member_ref,
             role: Some(role),
@@ -177,10 +193,6 @@ impl Flow {
         vault
             .accept_shared_invitation(&deputy_proof, SHARED, &invitation.id)
             .expect("the Deputy accepts");
-        let (house, _) = vault
-            .get_seeded_agent_definition_by_logical_id("sys.default")
-            .expect("read the seeded agents")
-            .expect("sys.default is seeded on open");
         let preset = WorkspaceRosterPreset {
             workspace_ref: WORKSPACE.to_owned(),
             workspace_vault_id: SHARED,
@@ -202,19 +214,6 @@ impl Flow {
             )
             .expect("the owner binds the house at deputy");
         grant(&vault, &owner_proof, house, &[REVERSIBLE, ADD, ERASE]);
-        let room = EntityId::now();
-        vault
-            .create_conversation(
-                room,
-                &ConversationBody {
-                    kind: ConversationKind::Group,
-                    member_ids: vec![owner, house, deputy, first, second],
-                    ..Default::default()
-                },
-                WriteActor::new(owner, EdgeActorClass::Human),
-                vault.now_recorded_at(),
-            )
-            .expect("the room");
         let flow = Self {
             _dir: dir,
             vault,
