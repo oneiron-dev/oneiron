@@ -4,16 +4,15 @@
 //! The bounded observation read is [`crate::snapshot_read::strength_observations_page`].
 
 use super::evidence::VerifiedEvidenceSet;
-use super::selection::{SelectionConfig, StrengthSignals, strength_score};
+use super::selection::{SelectionConfig, StrengthSignals};
 use super::watermark::decode_turn_body;
 use crate::attempt_queue::AttemptId;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ScopedReadActorKey};
+use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::ports::EntityStoreRead;
 use crate::side_table::{self, Named, SideTable};
-use crate::{EntityId, Error, Result, Vault, WriteActor};
+use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 
 pub(crate) const OBSERVATIONS: SideTable<EntityId, StrengthObservations, Named> =
     SideTable::new(&side_table::DREAMER_CONSOLIDATION_STRENGTH);
@@ -266,112 +265,9 @@ pub(crate) fn restored_in_txn(
     Ok(())
 }
 
-/// One nightly recipe child. Snapshot, recheck and local archive share the
-/// writer's revision. No confidence, lifecycle, claim bytes or graph edges change.
-/// The archive takes back what the Dreamer landed, so it is judged in this
-/// writer by the policy rows that let it land (X02): with the owner's Auto
-/// ceiling or `Generated` permit for the Dreamer narrowed or removed, nothing
-/// is archived and no receipt is written.
-pub(crate) fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u64) -> Result<u64> {
-    let actor = vault.dreamer_actor_for_attempt(attempt)?;
-    vault.with_write_txn_grouped(|txn| {
-        let Some(verdict) = crate::gate::dreamer_landing_verdict_in_txn(&vault.store, txn, actor)?
-        else {
-            return Ok(0);
-        };
-        let policy = policy_in_txn(vault, txn)?;
-        let selection = vault.consolidation_selection_in_txn(txn)?;
-        let key = read_key(actor)?;
-        let read = vault.scoped_read(key);
-        let observations = OBSERVATIONS.scan(&vault.store, txn)?;
-        let mut archived = 0;
-        for (id, observations) in observations {
-            let Some(raw) = read.entity_raw_live_in(txn, &id)? else {
-                continue;
-            };
-            let header = EntityMetadataHeader::parse(&raw)
-                .ok_or(Error::CorruptedIndex("strength claim metadata"))?;
-            if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
-                || raw.len() == ENTITY_METADATA_HEADER_LEN
-            {
-                continue;
-            }
-            let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-            if body.predicate != observations.predicate
-                || archive_fence_in_txn(
-                    vault,
-                    txn,
-                    actor.entity_ref(),
-                    &id,
-                    &body,
-                    header.learned_at,
-                    now_ms,
-                    &policy,
-                )?
-                .is_some()
-            {
-                continue;
-            }
-            // Losing read authority or changing a cited revision is not weak
-            // evidence: leave that claim alone for reconsolidation instead.
-            let mut current = true;
-            for source in &observations.sources {
-                let raw = read.entity_raw_live_in(txn, &source.source)?;
-                if raw
-                    .as_ref()
-                    .is_none_or(|raw| *blake3::hash(raw).as_bytes() != source.revision)
-                {
-                    current = false;
-                    break;
-                }
-            }
-            if !current || observations.sources.is_empty() {
-                continue;
-            }
-            let diversity: BTreeSet<_> = observations
-                .sources
-                .iter()
-                .filter_map(|source| source.diversity.as_ref())
-                .collect();
-            let latest = observations
-                .sources
-                .iter()
-                .map(|source| source.learned_at_ms)
-                .max()
-                .unwrap_or_default();
-            let signals = StrengthSignals::from_evidence(
-                &body.predicate,
-                observations.sources.len(),
-                latest,
-                diversity.len(),
-                now_ms,
-                &selection,
-            );
-            let score = strength_score(signals, &selection)?;
-            if score >= policy.archive_below {
-                continue;
-            }
-            let snapshot = ConsolidationStrengthSnapshot {
-                attempt,
-                at_ms: now_ms,
-                revision: *blake3::hash(&raw).as_bytes(),
-                signals,
-                score,
-                selection: selection.clone(),
-                policy: policy.clone(),
-            };
-            archive_claim_in_txn(vault, txn, id, &snapshot, *attempt.as_bytes())?;
-            let link = vault.attempt_action_link_in_txn(&*txn, attempt);
-            let receipt = archive_receipt(actor, id, &snapshot, now_ms, link, &verdict);
-            vault.store.append_gate_decision_in_txn(txn, &receipt)?;
-            archived += 1;
-        }
-        Ok(archived)
-    })
-}
-/// Why the archive fence keeps a claim (untangle 6.7a): the nightly
-/// strength archive and a derivation batch's archive item meet the same
-/// fence.
+/// Why the archive fence keeps a claim (untangle 6.7a): a derivation batch's
+/// archive item meets it, and the strength observations page names it for
+/// its caller (untangle 6.9c).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ArchiveFence {
     /// The claim is not the archiving actor's own `Generated` claim.
@@ -481,49 +377,4 @@ pub(crate) fn archive_claim_in_txn(
     // pass reads the facts left (FIX 3196).
     super::mark_person_about_dropped_in_txn(&vault.store, txn, &id)?;
     vault.put_archive_tombstone_in_txn(txn, &id, &marker)
-}
-
-/// The receipt one archive leaves (owner ruling 10-18: the Dreamer applies
-/// and the owner reverts): the Dreamer's, naming the claim and the revision
-/// its snapshot scored, so the owner finds it and restores the claim through
-/// the cleanup restore door. `link` is the scoring attempt's (FIX 7500). The
-/// verdict is the policy's (X02): what it was judged by (the Dreamer's
-/// Steward grant once a host minted it, else its landing rows), and the
-/// policy frontier it was judged under.
-fn archive_receipt(
-    actor: WriteActor,
-    claim: EntityId,
-    snapshot: &ConsolidationStrengthSnapshot,
-    now_ms: u64,
-    link: crate::store::GateLoopLink,
-    verdict: &crate::gate::DreamerLandingVerdict,
-) -> crate::store::GateDecisionRecord {
-    crate::store::GateDecisionRecord {
-        version: crate::store::GATE_DECISION_LEDGER_VERSION,
-        decision_id: crate::store::GateDecisionId::now(),
-        created_at: now_ms,
-        outcome: "approved".to_owned(),
-        reason_codes: vec![
-            "gate.dreamer.strength.archived".to_owned(),
-            "gate.dreamer.policy.lands_generated_auto".to_owned(),
-        ],
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: actor.actor_class().gate_actor_class().to_owned(),
-        actor_ref: Some(actor.entity_ref().to_hex()),
-        content_kind: "dreamer_strength_archive".to_owned(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-        claim_id: Some(*claim.as_bytes()),
-        grant_ref: Some(verdict.grant_ref.clone()),
-        diff_handle: snapshot.revision.to_vec(),
-        read_frontier_hash: verdict.frontier,
-        context: crate::store::GateDecisionContext::linked(link, None),
-        redacted_at: None,
-    }
-}
-
-fn read_key(actor: WriteActor) -> Result<ScopedReadActorKey> {
-    ScopedReadActorKey::for_engine_actor(actor).ok_or(Error::InvalidClaimBody(
-        "invalid consolidation strength reader",
-    ))
 }
