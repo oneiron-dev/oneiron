@@ -11,6 +11,7 @@ use super::super::{BeamResult, model_usage::sum_costs, report_model::CostCompone
 use super::{
     ActionRow,
     arms::MemoryArm,
+    extraction::Probe,
     tasks::{FollowUp, TaskKind},
 };
 
@@ -146,10 +147,30 @@ impl Metric {
     }
 }
 
-/// One arm over every follow-up: its means and its stage costs.
+/// The columns a run's rows fall in: each memory arm, and each extraction
+/// arm at each probe, in the plan's arm order.
+fn columns(arms: &[MemoryArm]) -> Vec<(MemoryArm, Option<Probe>)> {
+    arms.iter()
+        .flat_map(|&arm| {
+            if arm.extracts() {
+                vec![
+                    (arm, Some(Probe::AfterCorrection)),
+                    (arm, Some(Probe::AfterConsolidation)),
+                ]
+            } else {
+                vec![(arm, None)]
+            }
+        })
+        .collect()
+}
+
+/// One arm over every follow-up it read (an extraction arm at one probe):
+/// its means and its stage costs.
 #[derive(Debug, Serialize)]
 pub(super) struct ArmSummary {
     arm: MemoryArm,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    probe: Option<Probe>,
     follow_ups: usize,
     action_correct: f64,
     /// Over correction follow-ups only; absent when there are none.
@@ -172,13 +193,18 @@ pub(super) struct ArmSummary {
 }
 
 pub(super) fn summarize(rows: &[ActionRow], arms: &[MemoryArm]) -> BeamResult<Vec<ArmSummary>> {
-    arms.iter()
-        .map(|&arm| {
-            let mine: Vec<&ActionRow> = rows.iter().filter(|row| row.arm == arm).collect();
+    columns(arms)
+        .into_iter()
+        .map(|(arm, probe)| {
+            let mine: Vec<&ActionRow> = rows
+                .iter()
+                .filter(|row| row.arm == arm && row.probe == probe)
+                .collect();
             let costs: Vec<CostComponentReport> =
                 mine.iter().map(|row| row.reader.clone()).collect();
             Ok(ArmSummary {
                 arm,
+                probe,
                 follow_ups: mine.len(),
                 action_correct: mean(
                     mine.iter()
@@ -211,12 +237,15 @@ pub(super) fn summarize(rows: &[ActionRow], arms: &[MemoryArm]) -> BeamResult<Ve
         .collect()
 }
 
-/// One arm against no memory on one metric, paired by history: per history,
-/// the arm's mean minus the no-memory mean over the same follow-ups; then the
-/// mean of those differences, its standard error and the history count.
+/// One arm (an extraction arm at one probe) against no memory on one
+/// metric, paired by history: per history, the arm's mean minus the
+/// no-memory mean over the same follow-ups; then the mean of those
+/// differences, its standard error and the history count.
 #[derive(Debug, Serialize)]
 pub(super) struct PairedRow {
     arm: MemoryArm,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    probe: Option<Probe>,
     metric: Metric,
     histories: usize,
     paired_difference: f64,
@@ -228,17 +257,21 @@ pub(super) struct PairedRow {
 pub(super) fn paired_by_history(rows: &[ActionRow], arms: &[MemoryArm]) -> Vec<PairedRow> {
     let histories: BTreeSet<&str> = rows.iter().map(|row| row.history.as_str()).collect();
     let mut paired = Vec::new();
-    for &arm in arms.iter().filter(|&&arm| arm != MemoryArm::None) {
+    for (arm, probe) in columns(arms)
+        .into_iter()
+        .filter(|&(arm, _)| arm != MemoryArm::None)
+    {
         for metric in METRICS {
             let differences: Vec<f64> = histories
                 .iter()
-                .filter_map(|&history| history_difference(rows, history, arm, metric))
+                .filter_map(|&history| history_difference(rows, history, (arm, probe), metric))
                 .collect();
             let Some(paired_difference) = mean(differences.iter().copied()) else {
                 continue;
             };
             paired.push(PairedRow {
                 arm,
+                probe,
                 metric,
                 histories: differences.len(),
                 paired_difference,
@@ -254,11 +287,11 @@ pub(super) fn paired_by_history(rows: &[ActionRow], arms: &[MemoryArm]) -> Vec<P
 fn history_difference(
     rows: &[ActionRow],
     history: &str,
-    arm: MemoryArm,
+    column: (MemoryArm, Option<Probe>),
     metric: Metric,
 ) -> Option<f64> {
-    let none = scored(rows, history, MemoryArm::None, metric);
-    let pairs: Vec<(f64, f64)> = scored(rows, history, arm, metric)
+    let none = scored(rows, history, (MemoryArm::None, None), metric);
+    let pairs: Vec<(f64, f64)> = scored(rows, history, column, metric)
         .into_iter()
         .filter_map(|(follow_up, value)| Some((value, *none.get(follow_up)?)))
         .collect();
@@ -267,15 +300,15 @@ fn history_difference(
     Some(arm_mean - none_mean)
 }
 
-/// One arm's score on one metric per follow-up of one history.
+/// One column's score on one metric per follow-up of one history.
 fn scored<'a>(
     rows: &'a [ActionRow],
     history: &str,
-    arm: MemoryArm,
+    (arm, probe): (MemoryArm, Option<Probe>),
     metric: Metric,
 ) -> BTreeMap<&'a str, f64> {
     rows.iter()
-        .filter(|row| row.history == history && row.arm == arm)
+        .filter(|row| row.history == history && row.arm == arm && row.probe == probe)
         .filter_map(|row| Some((row.follow_up.as_str(), metric.of(&row.score)?)))
         .collect()
 }

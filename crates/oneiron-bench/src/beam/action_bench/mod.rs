@@ -10,9 +10,14 @@
 //! scorer reads the reply against the follow-up's rubric, which never reaches
 //! the reader. Uncertainty is paired by history against the no-memory arm.
 //!
+//! The extraction arms (`extraction.rs`) hold the derived memory's maker
+//! apart instead: each reads claims its own vault's Dreamer extracted from
+//! the raw turns, right after the correction and again at the freeze.
+//!
 //! `oneiron-bench beam action-bench <plan.json>`.
 
 mod arms;
+mod extraction;
 mod score;
 mod tasks;
 
@@ -22,11 +27,15 @@ use std::{
     time::Instant,
 };
 
-use oneiron::{CallPurpose, ModelId};
+use oneiron::{CallPurpose, ModelId, ModelLocality};
 use serde::{Deserialize, Serialize};
 
 use self::{
     arms::{ArmContext, HistoryVault, MemoryArm},
+    extraction::{
+        EXTRACTION_ARMS_MAPPING, ExtractionHost, ExtractionPin, ExtractionRow, ExtractionVault,
+        Probe,
+    },
     score::{ArmSummary, FollowUpScore, PairedRow},
     tasks::{TaskFile, TaskKind},
 };
@@ -55,6 +64,10 @@ struct ActionBenchPlan {
     arms: Vec<MemoryArm>,
     /// The most memory items one recall hands the reader.
     recall_limit: usize,
+    /// The extraction model, on the reader's host; required when an
+    /// extraction arm runs, and refused without one.
+    #[serde(default)]
+    extraction: Option<ExtractionPin>,
 }
 
 impl ActionBenchPlan {
@@ -76,6 +89,11 @@ impl ActionBenchPlan {
         if !(1..=MAX_RECALL_LIMIT).contains(&self.recall_limit) {
             return Err(refusal("recall_limit must be 1 to 200"));
         }
+        if self.arms.iter().any(|arm| arm.extracts()) != self.extraction.is_some() {
+            return Err(refusal(
+                "an extraction arm needs the extraction pin, and the pin needs an extraction arm",
+            ));
+        }
         Ok(())
     }
 }
@@ -89,7 +107,20 @@ pub(super) struct ActionBenchReport {
     reader_prompt_sha256: String,
     recall_limit: usize,
     arms: Vec<MemoryArm>,
+    /// The extraction model and the locality its vaults admit, when an
+    /// extraction arm ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extraction_model: Option<ModelId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extraction_locality: Option<ModelLocality>,
+    /// What each extraction arm stands for (LightMem's online and sleep-time
+    /// updates).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extraction_arms_mapping: Option<&'static str>,
     histories: Vec<HistoryRow>,
+    /// One row per history and extraction arm.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    extraction: Vec<ExtractionRow>,
     rows: Vec<ActionRow>,
     summary: Vec<ArmSummary>,
     paired: Vec<PairedRow>,
@@ -117,6 +148,9 @@ pub(super) struct ActionRow {
     follow_up: String,
     kind: TaskKind,
     arm: MemoryArm,
+    /// When an extraction arm read its vault; none for a memory arm.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    probe: Option<Probe>,
     /// The reader's whole user input is `{question, context}`.
     question: String,
     context: String,
@@ -146,14 +180,20 @@ pub(super) fn run(path: &Path) -> BeamResult<ActionBenchReport> {
         reader_prompt,
         arms,
         recall_limit,
+        extraction,
         ..
     } = plan;
+    let extraction = extraction
+        .as_ref()
+        .map(|pin| ExtractionHost::connect(&host, pin))
+        .transpose()?;
     let session = ModelSession::connect(host, std::slice::from_ref(&reader))?;
     let settings = RunSettings {
         reader: &reader,
         reader_prompt: &reader_prompt,
         arms: &arms,
         recall_limit,
+        extraction: extraction.as_ref(),
     };
     run_with_session(&settings, &tasks, &session)
 }
@@ -163,6 +203,7 @@ struct RunSettings<'a> {
     reader_prompt: &'a AnswerPromptPin,
     arms: &'a [MemoryArm],
     recall_limit: usize,
+    extraction: Option<&'a ExtractionHost>,
 }
 
 fn run_with_session(
@@ -172,7 +213,19 @@ fn run_with_session(
 ) -> BeamResult<ActionBenchReport> {
     let mut histories = Vec::new();
     let mut rows = Vec::new();
-    for history in &tasks.histories {
+    let mut extraction = Vec::new();
+    // Every history's correction point, before any vault opens: an
+    // extraction arm needs one, and a history without one fails the trace
+    // check's world part.
+    let corrections = match settings.extraction {
+        Some(_) => tasks
+            .histories
+            .iter()
+            .map(tasks::correction_point)
+            .collect::<BeamResult<Vec<_>>>()?,
+        None => Vec::new(),
+    };
+    for (place, history) in tasks.histories.iter().enumerate() {
         let seeded = HistoryVault::seed(history)?;
         histories.push(HistoryRow {
             history: history.id.clone(),
@@ -186,9 +239,19 @@ fn run_with_session(
         });
         for follow_up in tasks.follow_ups_of(&history.id) {
             let question = tasks::question(follow_up);
-            for &arm in settings.arms {
-                let context = arms::context(&seeded, arm, follow_up, settings.recall_limit)?;
-                rows.push(act(settings, session, follow_up, &question, arm, context)?);
+            for &arm in settings.arms.iter().filter(|arm| !arm.extracts()) {
+                let context = arms::context(&seeded.view(), arm, follow_up, settings.recall_limit)?;
+                rows.push(act(
+                    settings, session, follow_up, &question, arm, None, context,
+                )?);
+            }
+        }
+        if let (Some(host), Some(&correction_at)) = (settings.extraction, corrections.get(place)) {
+            for &arm in settings.arms.iter().filter(|arm| arm.extracts()) {
+                let (row, acted) =
+                    extract(settings, session, tasks, history, arm, correction_at, host)?;
+                rows.extend(acted);
+                extraction.push(row);
             }
         }
     }
@@ -201,11 +264,65 @@ fn run_with_session(
         reader_prompt_sha256: settings.reader_prompt.sha256.clone(),
         recall_limit: settings.recall_limit,
         arms: settings.arms.to_vec(),
+        extraction_model: settings.extraction.map(|host| host.model().clone()),
+        extraction_locality: settings.extraction.map(ExtractionHost::locality),
+        extraction_arms_mapping: settings.extraction.map(|_| EXTRACTION_ARMS_MAPPING),
         histories,
+        extraction,
         rows,
         summary,
         paired,
     })
+}
+
+/// One history under one extraction arm: a fresh vault replays the turns
+/// through the correction, the reader acts on each corrected-source
+/// follow-up, the replay runs on to the freeze with every lane drained, and
+/// the reader acts on every follow-up. Answers the vault's row and the
+/// reader's rows, in the order the reader acted.
+fn extract(
+    settings: &RunSettings<'_>,
+    session: &ModelSession,
+    tasks: &TaskFile,
+    history: &tasks::History,
+    arm: MemoryArm,
+    correction_at: u64,
+    host: &ExtractionHost,
+) -> BeamResult<(ExtractionRow, Vec<ActionRow>)> {
+    let mut rows = Vec::new();
+    let mut vault = ExtractionVault::open(history, arm, host)?;
+    vault.replay_through_correction(correction_at, host)?;
+    for follow_up in tasks
+        .follow_ups_of(&history.id)
+        .filter(|follow_up| follow_up.kind == TaskKind::CorrectedSource)
+    {
+        let question = tasks::question(follow_up);
+        let context = arms::context(&vault.view(), arm, follow_up, settings.recall_limit)?;
+        rows.push(act(
+            settings,
+            session,
+            follow_up,
+            &question,
+            arm,
+            Some(Probe::AfterCorrection),
+            context,
+        )?);
+    }
+    vault.replay_to_freeze(host)?;
+    for follow_up in tasks.follow_ups_of(&history.id) {
+        let question = tasks::question(follow_up);
+        let context = arms::context(&vault.view(), arm, follow_up, settings.recall_limit)?;
+        rows.push(act(
+            settings,
+            session,
+            follow_up,
+            &question,
+            arm,
+            Some(Probe::AfterConsolidation),
+            context,
+        )?);
+    }
+    Ok((vault.row(host, &session.prices)?, rows))
 }
 
 /// One reader call and its score. The reader's input has no arm label,
@@ -216,6 +333,7 @@ fn act(
     follow_up: &tasks::FollowUp,
     question: &str,
     arm: MemoryArm,
+    probe: Option<Probe>,
     context: ArmContext,
 ) -> BeamResult<ActionRow> {
     let input = serde_json::to_string(&serde_json::json!({
@@ -236,6 +354,7 @@ fn act(
         follow_up: follow_up.id.clone(),
         kind: follow_up.kind,
         arm,
+        probe,
         question: question.to_owned(),
         context_lines: context.lines,
         context: context.text,
