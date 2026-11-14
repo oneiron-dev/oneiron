@@ -1301,7 +1301,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "mod": 2,
       "re-export": 31
      }
@@ -22365,7 +22365,7 @@
      "path": "src/comm/consent.rs",
      "purpose": "Human consent gates, send overrides and standing opt-out folds",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 12
      }
     },
@@ -22427,7 +22427,7 @@
      "path": "src/comm/mod.rs",
      "purpose": "Communication standing-state claims and the ARCH-0035 projector",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "re-export": 6
      }
     },
@@ -22438,7 +22438,7 @@
      "path": "src/comm/opt_out_slots.rs",
      "purpose": "One (party, channel) opt-out slot read across the party's redirect shells, and the pending human-clear gates…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -22459,7 +22459,7 @@
      "path": "src/comm/projection_writes.rs",
      "purpose": "Deterministic claim ids, idempotent claim writes and standing-state matching",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -22504,13 +22504,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/comm/stop_hold.rs",
      "purpose": "The send hold of an inbound STOP (F06): the external-effect gate's read of a STOP's standing opt-out, the…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 9
      }
     },
     {
@@ -46970,13 +46970,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ingest/history/ledger.rs",
      "purpose": "The history import ledger: one row per imported source message, keyed by the source and the message's native…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -46985,8 +46985,10 @@
      "notable": [
       "HistoryConversation",
       "HistoryFile",
+      "HistoryMember",
       "HistoryMessage",
       "HistoryRole",
+      "HistorySharing",
       "HistorySkips",
       "HistorySource",
       "HistoryThreadKind"
@@ -46995,11 +46997,11 @@
      "purpose": "The owner's own history, imported (ARCH-0027): ChatGPT and Claude.ai exports, the on-device Claude Code and…",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 3,
       "fn": 5,
       "re-export": 5,
-      "struct": 4
+      "struct": 6
      }
     },
     {
@@ -47025,6 +47027,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/history/sharing.rs",
+     "purpose": "A source's own sharing, kept by the import (ARCH-0027 #import-audience, owner ruling 2026-10-17): the rows…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -50703,9 +50715,9 @@
      "path": "src/llm/routing.rs",
      "purpose": "Vault-owned description routing above the raw LLM call seam",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "enum": 2,
-      "fn": 13,
+      "fn": 14,
       "re-export": 3,
       "struct": 6
      }
@@ -63590,7 +63602,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 17,
-      "fn": 43,
+      "fn": 44,
       "re-export": 1,
       "struct": 1
      }
@@ -63927,7 +63939,26 @@
      "surface": {
       "crate-vis": 6,
       "mod": 2,
-      "re-export": 6
+      "re-export": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "KnobAxis",
+      "KnobKind",
+      "KnobRange",
+      "KnobSpec",
+      "RetrievalParams"
+     ],
+     "path": "src/pipeline/params.rs",
+     "purpose": "The retrieval pipeline's scoring numbers as one value passed per call (RESEARCH-0651 contract item 1…",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 5,
+      "struct": 3
      }
     },
     {
@@ -64203,7 +64234,7 @@
      "path": "src/pipeline/types.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 35,
       "enum": 2,
       "fn": 5,
       "re-export": 6,
@@ -77289,7 +77320,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 5,
-      "fn": 9,
+      "fn": 10,
       "re-export": 1
      }
     },
@@ -77328,20 +77359,29 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OfferAnswerReply",
       "OfferListRequest",
+      "OfferPassCaller",
+      "OfferPassEnd",
+      "OfferPassPrerequisite",
       "OfferPassResult",
+      "OfferPassRunAdmission",
+      "OfferPassRunAnswer",
+      "OfferPassRunRequest",
+      "OfferPassWindow",
       "OfferView"
      ],
      "path": "src/skill_optimize/offer_doors.rs",
      "purpose": "Typed owner doors for the production Coach offer pass and its evidence",
      "surface": {
-      "fn": 10,
+      "const": 2,
+      "enum": 5,
+      "fn": 13,
       "re-export": 1,
-      "struct": 4
+      "struct": 6
      }
     },
     {
@@ -90815,6 +90855,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/comm_late_stop.rs",
+     "purpose": "Door for `tests/comm_late_stop_after_clear.rs` (COMM-STOP-LATE-ARRIVAL): a STOP that arrives as a peer's…",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/comm_thread_member_claim_reads.rs",
      "purpose": "Door for `tests/comm_thread_member_claim_reads.rs` (L6-23, ARCH-0057 membership-history scans): the claim…",
      "surface": {
@@ -91051,6 +91101,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ImportedMessageRows"
+     ],
+     "path": "src/test_doors/history_import_rows.rs",
+     "purpose": "Doors for `tests/history_import_source_sharing.rs` (L2-18): the rows a history import landed, found by the…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ErasableKeyState"
      ],
      "path": "src/test_doors/home_handoff_retire.rs",
@@ -91230,7 +91293,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 95,
+      "mod": 98,
       "re-export": 1
      }
     },
@@ -91302,6 +91365,17 @@
      "purpose": "Doors for `tests/own_device_counterparty_replay.rs` (fix list row 15412, review #7537 P1): the own-device…",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/pack_encode_work.rs",
+     "purpose": "Door for `tests/context_pack_token_budget_encodes.rs` (FIX 198, F21 B5 / H68): counts the whole-pack…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -100776,6 +100850,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/comm_late_stop_after_clear.rs",
+     "purpose": "A STOP that occurred at or after an opt-out-clear request makes that request stale whenever it arrives…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/comm_thread_member_claim_reads.rs",
      "purpose": "L6-23 (ARCH-0057 membership-history scans: \"cache per-slot membership heads in the projector index\")",
      "surface": {}
@@ -100884,6 +100966,14 @@
      "notable": [],
      "path": "tests/context_pack_second_entity_alias_release.rs",
      "purpose": "A context pack renders another entity's alias (its id or identity key) as that entity's name at its first…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/context_pack_token_budget_encodes.rs",
+     "purpose": "A context pack's serialized-output token budget costs at most seven whole-pack encodes per serialized pack…",
      "surface": {}
     },
     {
@@ -101428,6 +101518,14 @@
      "notable": [],
      "path": "tests/held_window_erasure_drain.rs",
      "purpose": "A window that sync traffic holds a frame at a time is still compacted by the erasure sweep (census L9-41…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/history_import_source_sharing.rs",
+     "purpose": "L2-18 PR 1 (ARCH-0027 #import-audience): a history import keeps a source's own sharing",
      "surface": {}
     },
     {
@@ -102992,6 +103090,14 @@
      "notable": [],
      "path": "tests/retrieval_eval_spec.rs",
      "purpose": "Public retrieval-ruler eval inputs refuse nondeterminism and leave serving writes alone",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/retrieval_params.rs",
+     "purpose": "RESEARCH-0651 contract item 1: the pipeline's scoring numbers are one `RetrievalParams` value passed per…",
      "surface": {}
     },
     {
@@ -104788,7 +104894,7 @@
      "purpose": "A vault-owned inference snapshot at rest: its body sealed under its own erasable data key, the key wrapped…"
     },
     "ingest": {
-     "files": 76,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -105033,7 +105139,7 @@
      "purpose": "Owner-enabled phone-line metadata and call-bound reads"
     },
     "pipeline": {
-     "files": 70,
+     "files": 71,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105474,7 +105580,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 98,
+     "files": 101,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105651,8 +105757,8 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7554,
-   "test_files": 1277
+   "source_files": 7559,
+   "test_files": 1281
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -127222,7 +127328,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "mod": 4,
       "re-export": 1,
       "struct": 2
@@ -127515,7 +127621,7 @@
      "path": "src/ai_host/training_offer.rs",
      "purpose": "The Coach's training offers (ARCH-0026 #dreamer, ARCH-0053 #training-offers, OF-420): each night it reads…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -127564,6 +127670,16 @@
      "notable": [],
      "path": "src/ai_host/training_offer/pilot.rs",
      "purpose": "Measured per-seat pilot evidence beside the production offer skill's brief",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/training_offer/run.rs",
+     "purpose": "`vault.coach.training_offers.run` on this host (LEARNING-08): one Coach offer pass run now, inside the…",
      "surface": {
       "crate-vis": 1
      }
@@ -129849,7 +129965,7 @@
      "path": "src/api/facade/coach_offer_doors.rs",
      "purpose": "Typed owner doors for Coach offers and counted pilot evidence",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -130249,7 +130365,7 @@
      "path": "src/api/facade/engine_control_doors.rs",
      "purpose": "The host doors of the engine-control knob verbs (untangle 6.6d; owner 9 Nov 22:47, every substrate control…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -143815,13 +143931,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "TokenRatios"
      ],
      "path": "src/models/token_ratio.rs",
-     "purpose": "Each catalog model's tokens per o200k token (OF-577): its tokenizer's count of one fixed passage over…",
+     "purpose": "Each catalog model's tokens per o200k token (OF-577), on two fixed calibration passages: one shaped as a…",
      "surface": {
       "crate-vis": 2,
       "fn": 2,
@@ -146967,7 +147083,7 @@
      "purpose": "Durable idempotent provider-list meters, aggregated only per owner and vault",
      "surface": {
       "crate-vis": 6,
-      "fn": 6,
+      "fn": 7,
       "struct": 4
      }
     },
@@ -147716,6 +147832,14 @@
      "notable": [],
      "path": "tests/claude_code_plugin.rs",
      "purpose": "The Claude Code plugin (`plugins/claude-code`; ARCH-0028 #plugin-agent-plugins, ARCH-0067 row 34): the…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/coach_offer_run.rs",
+     "purpose": "`vault.coach.training_offers.run` served over the real facade route (LEARNING-08, COACH-OFFER-PASS): one…",
      "surface": {}
     },
     {
@@ -148481,7 +148605,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 136,
+     "files": 137,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -149036,8 +149160,8 @@
    },
    "over_bar": 62,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1875,
-   "test_files": 248
+   "source_files": 1876,
+   "test_files": 249
   },
   "oneiron-skill-attribution": {
    "files": [
