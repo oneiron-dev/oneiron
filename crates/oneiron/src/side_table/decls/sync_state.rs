@@ -95,6 +95,22 @@ side_tables! {
     /// `PredictedResidenceSet` body. Key: hex32 (machine) hex64 (digest).
     SYNC_RESIDENCE_PREDICTED_BODY: SyncState b"pb:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// Recorded-clock seconds (u64be) of this machine's last `residence.predict` ask, written
+    /// before the ask goes out. Key: none (one row).
+    SYNC_RESIDENCE_PREDICTED_ASKED: SyncState b"pr:a" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// An entity document prediction this machine subscribed here; the predicted pass drops it
+    /// once the adopted set names it no longer and no `qd:e:` row waits. Value: empty. Key:
+    /// hex32 (entity id).
+    SYNC_RESIDENCE_PREDICTED_DOCUMENT: SyncState b"pr:e:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// The canonical body of the predicted set this machine adopted. Key: none (one row).
+    SYNC_RESIDENCE_PREDICTED_TARGET: SyncState b"pr:t" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// A window prediction this machine fetched here; the predicted pass demotes it once the
+    /// adopted set names it no longer. Value: empty. Key: window key.
+    SYNC_RESIDENCE_PREDICTED_WINDOW: SyncState b"pr:w:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Digest of the project-depth birth contribution this vault minted locally. Key: hex32
     /// (contribution id).
     PROJECT_DEPTH_LOCAL_BIRTH: SyncState b"project:birth:local:" Raw

@@ -10,24 +10,26 @@
 
 use tokio::sync::mpsc;
 
+use crate::EntityId;
 use crate::Vault;
-use crate::authority::{ResidenceAct, ResidenceResultStatus};
+use crate::authority::{ResidenceAct, ResidenceDirective, ResidenceResultStatus};
 use crate::sync::TransportError;
 use crate::sync::client::{SyncEvent, SyncResidenceMode};
 use crate::sync::residence::{
-    ResidenceDirectiveState, finish_residence_directive_in_txn, pending_residence_directives,
-    residence_refusal_reason,
+    ResidenceDirectiveState, finish_residence_directive_in_txn, load_device_sync_preference,
+    pending_residence_directives, residence_refusal_reason,
 };
 
 use super::SyncConnection;
 
-fn storage(error: crate::Error) -> TransportError {
+/// Wraps a storage failure for the transport boundary.
+pub(super) fn storage(error: crate::Error) -> TransportError {
     TransportError::Storage(error.to_string())
 }
 
 /// Whether `error` says the directive does not apply on this machine, as a
 /// refused residence call does, rather than that it cannot run yet.
-fn refuses(error: &TransportError) -> bool {
+pub(super) fn refuses(error: &TransportError) -> bool {
     matches!(
         error,
         TransportError::InvalidPayload(_)
@@ -52,6 +54,51 @@ fn applied(
         None,
     )
     .map(drop)
+}
+
+/// The owner's budget the prediction `pending` names through `parent`: its parent's, once the
+/// owner's live predicted level for this machine is that directive and no newer prediction
+/// replaced it (Engine ruling PLAN-SIGNER A).
+fn check_prediction_parent(
+    pending: &ResidenceDirectiveState,
+    directives: &[ResidenceDirective],
+    parent: EntityId,
+) -> Result<(u32, u32), TransportError> {
+    let mut last: Option<(EntityId, u32, u32)> = None;
+    let mut later = false;
+    for directive in directives {
+        match &directive.act {
+            ResidenceAct::SyncPredicted {
+                window_budget,
+                document_budget,
+            } => {
+                last = Some((directive.id, *window_budget, *document_budget));
+            }
+            ResidenceAct::SyncAll | ResidenceAct::SyncOpened => {
+                last = None;
+            }
+            ResidenceAct::Predicted { .. }
+                if (directive.issued_at, directive.id)
+                    > (pending.directive.issued_at, pending.directive.id) =>
+            {
+                later = true;
+            }
+            _ => {}
+        }
+    }
+    match last {
+        Some((id, window_budget, document_budget)) if id == parent => {
+            if later {
+                return Err(TransportError::InvalidPayload(
+                    "a newer prediction replaced it",
+                ));
+            }
+            Ok((window_budget, document_budget))
+        }
+        _ => Err(TransportError::InvalidPayload(
+            "a prediction applies under the owner's live predicted level",
+        )),
+    }
 }
 
 impl SyncConnection {
@@ -176,12 +223,75 @@ impl SyncConnection {
                     applied(vault, txn, pending, pruned)
                 })?;
             }
-            ResidenceAct::Predicted { .. } => {
-                return Err(TransportError::InvalidPayload(
-                    "this build applies no prediction",
-                ));
+            ResidenceAct::Predicted {
+                parent,
+                set_digest,
+                window_count,
+                document_count,
+            } => {
+                self.apply_prediction(pending, *parent, set_digest, *window_count, *document_count)
+                    .await?;
             }
         }
+        Ok(())
+    }
+
+    /// Applies the home's prediction for this machine at the predicted level (ARCH-0023b
+    /// #predicted-residence): under the owner's live predicted level within its budget
+    /// (PLAN-SIGNER A), the set fetched by its digest and refused unless it matches
+    /// (BUDGET-CEILING), then adopted as this machine's target. A transport failure that is no
+    /// refusal holds the directive for the next round: the prediction freezes while the home is
+    /// down.
+    async fn apply_prediction(
+        &self,
+        pending: &ResidenceDirectiveState,
+        parent: EntityId,
+        set_digest: &[u8; 32],
+        window_count: u32,
+        document_count: u32,
+    ) -> Result<(), TransportError> {
+        let vault = self.manager.vault();
+        let predicted = load_device_sync_preference(vault)
+            .map_err(storage)?
+            .is_some_and(|preference| preference.predicted);
+        if !predicted {
+            return Err(TransportError::InvalidPayload(
+                "a prediction applies on a machine at the predicted level",
+            ));
+        }
+        let machine = vault
+            .local_machine()
+            .map_err(storage)?
+            .map(|local| local.id)
+            .ok_or(TransportError::InvalidPayload(
+                "a prediction applies under the owner's live predicted level",
+            ))?;
+        let directives = Self::directives_naming_machine(vault, machine).map_err(storage)?;
+        let (window_budget, document_budget) =
+            check_prediction_parent(pending, &directives, parent)?;
+        if window_count > window_budget || document_count > document_budget {
+            return Err(TransportError::InvalidPayload(
+                "a prediction exceeds the owner's budget",
+            ));
+        }
+        let mut client = self.client()?;
+        let body = client.fetch_predicted_set(set_digest).await?;
+        let set = crate::authority::PredictedResidenceSet::decode_verified(&body, set_digest)
+            .map_err(|_| {
+                TransportError::InvalidPayload("the predicted set does not match its digest")
+            })?;
+        if set.counts() != Some((window_count, document_count)) {
+            return Err(TransportError::InvalidPayload(
+                "the predicted set does not match its counts",
+            ));
+        }
+        vault
+            .with_write_txn_grouped(|txn| {
+                super::predicted::PREDICTED_TARGET.put(&vault.store, txn, &(), &body)?;
+                applied(vault, txn, pending, set.windows.len() + set.documents.len())
+            })
+            .map_err(storage)?;
+        self.predicted_wake.notify_one();
         Ok(())
     }
 }
