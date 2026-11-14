@@ -26,7 +26,8 @@ pub fn replay_entity(
 /// [`replay_entity`] with the row's carried Rule A birth, stamped in the
 /// transaction that admits the row. A malformed or conflicting birth is left
 /// out; the row stands. A world-access grant or default is dropped: it stands
-/// only on the node that wrote it (RULING L2-53-CEILING).
+/// only on the node that wrote it (RULING L2-53-CEILING). So is any row under
+/// the id of a grant or default stored here.
 pub fn replay_entity_with_birth(
     vault: &Vault,
     entity: ReplicatedEntity<'_>,
@@ -39,6 +40,9 @@ pub fn replay_entity_with_birth(
         return Ok(());
     }
     let replayed = vault.with_write_txn_grouped(|txn| {
+        if super::local_claims::holds_world_access_claim_in(vault, txn, &entity.id)? {
+            return Ok(());
+        }
         vault
             .batch_in()
             .with_import_tier(tier)

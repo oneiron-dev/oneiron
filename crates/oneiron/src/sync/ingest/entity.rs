@@ -507,9 +507,11 @@ fn admit(
         return Ok(EntityStep::Skip);
     }
     // A world-access grant or default stands only on the node that wrote it (RULING
-    // L2-53-CEILING): an older peer's row is dropped, and the rest of its window lands.
-    if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
-        && crate::sync::local_claims::world_access_claim(data)
+    // L2-53-CEILING): an older peer's row is dropped, and the rest of its window lands. So is a
+    // peer's row of any kind under the id of a grant or default stored here.
+    if (header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+        && crate::sync::local_claims::world_access_claim(data))
+        || crate::sync::local_claims::holds_world_access_claim_in(vault, wtxn, &id)?
     {
         return Ok(EntityStep::Skip);
     }

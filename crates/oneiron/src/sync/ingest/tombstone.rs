@@ -19,6 +19,10 @@ pub(in crate::sync) enum TombstoneStep {
     /// decodes as a hard delete: a non-binary value replays as the empty slice, which decodes
     /// HARD (fail closed: over-purge, never under-delete).
     Replay { id: EntityId, hard: bool },
+    /// Not replayed, and not refused: the id names a world-access grant or default stored
+    /// here. Those tiers are local authority (RULING L2-53-CEILING), so no peer's deletion
+    /// reaches them, and no deletion effect or fence is applied.
+    Skip,
 }
 
 /// Classifies one tombstones-map value. `value` is empty for a non-binary value.
@@ -27,16 +31,25 @@ pub(in crate::sync) enum TombstoneStep {
 /// whose envelope sits in the window's entities map but has not reached LMDB yet is refused
 /// too: protection must not depend on pass or observer callback order, and the headerless
 /// replay path would otherwise mint a permanent `dt:` marker over the record. A protected row
-/// already in LMDB is refused by the replay primitive itself.
+/// already in LMDB is refused by the replay primitive itself. A tombstone naming a world-access
+/// grant or default stored here is skipped ([`TombstoneStep::Skip`]).
 pub(in crate::sync) fn classify_tombstone(
     vault: &Vault,
     entities_map: &LoroMap,
     key: &str,
     value: &[u8],
 ) -> TombstoneStep {
-    classify_with(vault, entities_map, key, value, |id| {
-        vault.read_entity_header(id)
-    })
+    classify_with(
+        vault,
+        entities_map,
+        key,
+        value,
+        |id| vault.read_entity_header(id),
+        |id| {
+            let txn = vault.store.env.read_txn()?;
+            crate::sync::local_claims::holds_world_access_claim_in(vault, &txn, id)
+        },
+    )
 }
 
 /// [`classify_tombstone`] reading the LMDB row in the caller's transaction, so a batch sees
@@ -48,9 +61,14 @@ pub(in crate::sync) fn classify_tombstone_in_txn(
     key: &str,
     value: &[u8],
 ) -> TombstoneStep {
-    classify_with(vault, entities_map, key, value, |id| {
-        vault.entity_header_in_txn(txn, id)
-    })
+    classify_with(
+        vault,
+        entities_map,
+        key,
+        value,
+        |id| vault.entity_header_in_txn(txn, id),
+        |id| crate::sync::local_claims::holds_world_access_claim_in(vault, txn, id),
+    )
 }
 
 /// The classification, reading the LMDB header through `lmdb_header`.
@@ -60,6 +78,7 @@ fn classify_with(
     key: &str,
     value: &[u8],
     lmdb_header: impl FnOnce(&EntityId) -> Result<Option<EntityMetadataHeader>>,
+    local_authority: impl FnOnce(&EntityId) -> Result<bool>,
 ) -> TombstoneStep {
     let Ok(id) = EntityId::from_hex(key) else {
         return TombstoneStep::Refuse {
@@ -82,6 +101,11 @@ fn classify_with(
                 "cleanup archives cannot be replayed as deletion intent",
             ),
         };
+    }
+    match local_authority(&id) {
+        Ok(false) => {}
+        Ok(true) => return TombstoneStep::Skip,
+        Err(err) => return TombstoneStep::Refuse { id: Some(id), err },
     }
     if matches!(lmdb_header(&id), Ok(None))
         && let Some(entity_blob) = map_get_bytes(entities_map, &id.to_hex())
