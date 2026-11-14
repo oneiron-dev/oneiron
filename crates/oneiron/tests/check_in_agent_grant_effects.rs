@@ -210,6 +210,7 @@ fn the_owners_grant_back_records_their_own_proof_and_a_repeat_records_none() {
         SystemAgentGrantRestored {
             restored: true,
             check_in: Some(owner_decision(ActClass::GrantWiden, None, None)),
+            reach: None,
         },
         "the Owner's grant back records their own proof"
     );
@@ -218,6 +219,7 @@ fn the_owners_grant_back_records_their_own_proof_and_a_repeat_records_none() {
         SystemAgentGrantRestored {
             restored: false,
             check_in: None,
+            reach: None,
         },
         "a grant back that changes nothing records no decision"
     );
@@ -266,6 +268,7 @@ fn the_owner_applies_an_approved_ask_to_give_that_agent_its_grant_back_only() {
                 Some(check_in),
                 Some(asker)
             )),
+            reach: None,
         },
         "the answer names the check-in and its asker"
     );
