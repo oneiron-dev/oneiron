@@ -7,7 +7,8 @@ use super::*;
 use crate::side_table::{self, Raw, SideTable};
 #[cfg(feature = "sync")]
 use crate::store::authority_overlay_custody::{
-    deliver_authority_overlay_custody_for_test, retire_authority_overlay_subject_for_test,
+    deliver_authority_overlay_custody_for_test, overlay_inventory,
+    retire_authority_overlay_subject_for_test,
 };
 #[cfg(feature = "sync")]
 use crate::sync::authority_overlay_custody::{
@@ -899,4 +900,172 @@ fn a_wanted_key_of_a_subject_the_answer_names_erased_is_retired_not_sent() {
     let fold = machine.authority_fold().unwrap();
     assert!(fold.pass_through_entries.contains(&mint_row));
     assert!(!fold.valid_entries.contains(&mint_row));
+}
+
+/// T-DEBT (census L5-22 1a-iii, RULING 21:24; ASK L5-22-1A-III-DEBT-FIX):
+/// the machine sends a key the home wants, and the home erases the key's
+/// subject before the key arrives. The home refuses the key, and it already
+/// names the key's ref destroyed through the sealed head it holds. The first
+/// round clears the machine's holder debt for the home, the second clears
+/// the home's debt for the machine, and the pair then answers same.
+#[test]
+#[cfg(feature = "sync")]
+fn a_key_refused_for_a_subject_the_home_erased_mid_round_leaves_no_debt_after_two_rounds() {
+    let machine_dir = tempfile::tempdir().unwrap();
+    let machine = Vault::open(machine_dir.path(), VaultConfig::default()).unwrap();
+    let machine_id = EntityId::now();
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let root = machine.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims.clone();
+    let slip_id = [102; 32];
+    claims.slip_id = slip_id;
+    claims.records = BTreeSet::from(["record:d".to_owned()]);
+    let slip = machine.mint_capability_slip(&issuer, claims).unwrap();
+    let mint_row = machine.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
+    let (history, overlays) = machine
+        .export_signed_authority_history_with_overlays()
+        .unwrap();
+    let home_dir = tempfile::tempdir().unwrap();
+    let home = Vault::open(home_dir.path(), VaultConfig::default()).unwrap();
+    let home_id = EntityId::now();
+    home.import_signed_authority_history(&history, &overlays)
+        .unwrap();
+
+    let (offer, session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
+    assert_eq!(offer.ready.len(), 1);
+    let (subject, key_ref) = offer.ready.iter().next().copied().unwrap();
+    let answer = answer_offer(&home, &home_id, &machine_id, &offer).unwrap();
+    assert!(answer.wanted.contains(&(subject, key_ref)));
+    let sent =
+        apply_overlay_answer(&machine, &machine_id, &home_id, &offer, &session, answer).unwrap();
+    assert_eq!(sent.len(), 1);
+
+    retire_authority_overlay_subject_for_test(&home, &subject).unwrap();
+    assert_eq!(
+        receive_keys(&home, &home_id, &machine_id, sent).unwrap(),
+        0,
+        "a key of a subject erased here must not install"
+    );
+    assert!(
+        overlay_inventory(&home.store)
+            .unwrap()
+            .erased
+            .get(&subject)
+            .is_some_and(|erased| erased.destroyed.contains(&key_ref)),
+        "the home names the refused key's ref destroyed through the sealed head it holds"
+    );
+
+    run_round_for_test(&machine, &machine_id, &home, &home_id).unwrap();
+    assert!(
+        overlay_inventory(&machine.store)
+            .unwrap()
+            .erased
+            .get(&subject)
+            .is_some_and(|erased| erased.destroyed.contains(&key_ref)),
+        "the home's erased answer retires the machine's key"
+    );
+    assert!(
+        machine.store.erasable_holders_pending().unwrap().is_empty(),
+        "the first round clears the machine's holder debt for the home"
+    );
+
+    run_round_for_test(&machine, &machine_id, &home, &home_id).unwrap();
+    assert!(
+        home.store.erasable_holders_pending().unwrap().is_empty(),
+        "the second round clears the home's holder debt for the machine"
+    );
+    let (offer, _session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
+    assert!(
+        answer_offer(&home, &home_id, &machine_id, &offer)
+            .unwrap()
+            .same,
+        "the pair answers same once both holder debts are clear"
+    );
+    let fold = home.authority_fold().unwrap();
+    assert!(fold.pass_through_entries.contains(&mint_row));
+    assert!(!fold.valid_entries.contains(&mint_row));
+    assert!(!home.capability_slip_id_is_live(&slip_id).unwrap());
+}
+
+/// T-DEBT (census L5-22 1a-iii, RULING 21:24; ASK L5-22-1A-III-DEBT-FIX):
+/// the home sends the machine a key in its answer, and the machine erases
+/// the key's subject before it applies the answer. The machine refuses the
+/// key, and it already names the key's ref destroyed through the sealed head
+/// it holds. One round clears both holder debts, and the pair then answers
+/// same.
+#[test]
+#[cfg(feature = "sync")]
+fn a_key_refused_for_a_subject_the_machine_erased_mid_round_leaves_no_debt_after_one_round() {
+    let home_dir = tempfile::tempdir().unwrap();
+    let home = Vault::open(home_dir.path(), VaultConfig::default()).unwrap();
+    let home_id = EntityId::now();
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let root = home.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims.clone();
+    let slip_id = [103; 32];
+    claims.slip_id = slip_id;
+    claims.records = BTreeSet::from(["record:d".to_owned()]);
+    let slip = home.mint_capability_slip(&issuer, claims).unwrap();
+    let mint_row = home.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
+    let (history, overlays) = home
+        .export_signed_authority_history_with_overlays()
+        .unwrap();
+    let machine_dir = tempfile::tempdir().unwrap();
+    let machine = Vault::open(machine_dir.path(), VaultConfig::default()).unwrap();
+    let machine_id = EntityId::now();
+    machine
+        .import_signed_authority_history(&history, &overlays)
+        .unwrap();
+    let ready = overlay_inventory(&home.store).unwrap().ready;
+    assert_eq!(ready.len(), 1);
+    let (subject, key_ref) = ready.into_iter().next().unwrap();
+
+    let (offer, session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
+    assert!(offer.ready.is_empty());
+    let answer = answer_offer(&home, &home_id, &machine_id, &offer).unwrap();
+    assert_eq!(answer.keys.len(), 1);
+
+    retire_authority_overlay_subject_for_test(&machine, &subject).unwrap();
+    assert!(
+        apply_overlay_answer(&machine, &machine_id, &home_id, &offer, &session, answer)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        overlay_inventory(&machine.store)
+            .unwrap()
+            .erased
+            .get(&subject)
+            .is_some_and(|erased| erased.destroyed.contains(&key_ref)),
+        "the machine names the refused key's ref destroyed through the sealed head it holds"
+    );
+
+    run_round_for_test(&machine, &machine_id, &home, &home_id).unwrap();
+    assert!(
+        overlay_inventory(&home.store)
+            .unwrap()
+            .erased
+            .get(&subject)
+            .is_some_and(|erased| erased.destroyed.contains(&key_ref)),
+        "the machine's erased offer retires the home's key"
+    );
+    assert!(
+        home.store.erasable_holders_pending().unwrap().is_empty(),
+        "one round clears the home's holder debt for the machine"
+    );
+    assert!(
+        machine.store.erasable_holders_pending().unwrap().is_empty(),
+        "the same round clears the machine's holder debt for the home"
+    );
+    let (offer, _session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
+    assert!(
+        answer_offer(&home, &home_id, &machine_id, &offer)
+            .unwrap()
+            .same,
+        "the pair answers same once both holder debts are clear"
+    );
+    let fold = machine.authority_fold().unwrap();
+    assert!(fold.pass_through_entries.contains(&mint_row));
+    assert!(!fold.valid_entries.contains(&mint_row));
+    assert!(!machine.capability_slip_id_is_live(&slip_id).unwrap());
 }
