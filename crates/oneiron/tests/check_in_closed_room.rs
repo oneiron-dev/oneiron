@@ -62,9 +62,10 @@ fn put_person(vault: &Vault) -> EntityId {
 }
 
 impl Room {
-    /// The owner's group room seating a second owner, an admin and four
-    /// newcomers, with a private thread whose audience is the owner, the
-    /// second owner and the admin.
+    /// The owner's group room seating the owner, a second owner, an admin
+    /// and four newcomers, with a private thread whose audience is the
+    /// owner, the second owner and the admin. A private thread's audience
+    /// is drawn from the room's seats, so the owner is seated too.
     fn new() -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let vault = Vault::open_owned(dir.path(), VaultConfig::default()).expect("open vault");
@@ -74,7 +75,7 @@ impl Room {
         let newcomers = std::array::from_fn(|_| put_person(&vault));
         let room = EntityId::now();
         let as_owner = WriteActor::new(owner, EdgeActorClass::Human);
-        let mut member_ids = vec![co_owner, admin];
+        let mut member_ids = vec![owner, co_owner, admin];
         member_ids.extend(newcomers);
         vault
             .create_conversation(
@@ -277,7 +278,7 @@ fn an_admins_add_into_a_closed_room_waits_on_its_owners() {
         (
             "room_add",
             "none",
-            Some("always_ask"),
+            Some(CheckInMode::AlwaysAsk.as_str()),
             "approved",
             Some(id.as_str())
         )
@@ -307,7 +308,7 @@ fn an_owners_add_into_a_closed_room_goes_at_once() {
                 decision.basis.as_str(),
                 decision.check_in
             ),
-            (Some("always_ask"), "room_owner", None)
+            (Some(CheckInMode::AlwaysAsk.as_str()), "room_owner", None)
         );
     }
     let second_owner = fx

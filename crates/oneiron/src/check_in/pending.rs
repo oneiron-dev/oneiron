@@ -583,13 +583,13 @@ pub(crate) fn open_pending_check_in_in_txn(
     chain: &dyn RungResolver,
     now: u64,
 ) -> Result<PendingCheckIn> {
-    open_row_in_txn(vault, txn, request, None, chain, now)
+    create_open_row_in_txn(vault, txn, request, None, chain, now)
 }
 
 /// [`open_pending_check_in_in_txn`], for the closed `room` when it is
 /// `Some`: the row enters only [`Rung::RoomOwner`], and its grant ref may be
 /// empty, for an adder who holds no grant on the vault.
-fn open_row_in_txn(
+fn create_open_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     request: OpenPendingCheckIn,
@@ -755,7 +755,7 @@ fn open_keyed_row_in_txn(
     if let Some(row) = keyed_row_in_txn(&vault.store, txn, &key)? {
         return Ok((row, false));
     }
-    let mut row = open_row_in_txn(vault, txn, request, room, chain, now)?;
+    let mut row = create_open_row_in_txn(vault, txn, request, room, chain, now)?;
     if invocation.is_some() {
         row.invocation = invocation;
         store_pending_in_txn(&vault.store, txn, &row)?;
