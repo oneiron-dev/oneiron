@@ -7,10 +7,10 @@
       "path": "scenarios.json",
       "source": {
         "uri": "owner-authored:oneiron-e2e-privacy-20261018",
-        "revision": "2"
+        "revision": "3"
       },
       "licence": "Apache-2.0",
-      "sha256": "d0ca4c7e2ef17a418cd1bec7c061a3655bebb68e6372fc0493c0c2ec928a72f4",
+      "sha256": "538ec2243f9ff9eaae15314671f67623e70d280cf2bae1153276b33714aa9b1f",
       "expectedFacts": {
         "tests": [
           "PRIVACY-01",
