@@ -3,7 +3,8 @@
 //! lane reaches ([`super::super::lane_scope`]), through the overlay's own
 //! content writer; an unrestricted caller drafts as before. The QR PDF
 //! download switch (`qr_pdf_download`) lands in the draft's own transaction,
-//! and only the vault owner turns it on.
+//! and only the vault owner turns it on, on the owner's own live credential
+//! or none (the embedded owner), never one handed to another key.
 use super::super::lane_scope::{self, EsignScope};
 use super::super::ledger::{create_document_in, state_in};
 use super::super::lifecycle::with_lifecycle;
@@ -28,11 +29,16 @@ impl Memory<'_> {
     pub fn esign_create(&self, input: &EsignCreateRequest) -> MemoryResult<EsignDraftView> {
         let document = document_id(&input.document_ref)?;
         // Every envelope is sensitive unless the owner says otherwise
-        // (ARCH-0064a section 6): no other caller loosens it.
-        if input.qr_pdf_download && !self.is_vault_owner()? {
-            return Err(MemoryError::bad_request(
-                "only the vault owner turns on a document's QR PDF download",
-            ));
+        // (ARCH-0064a section 6): no other caller loosens it. Judged before
+        // the draft and again in its write.
+        if input.qr_pdf_download {
+            let txn = self
+                .vault()
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::Error::from)?;
+            self.admit_qr_pdf_download_in(&txn)?;
         }
         if let EsignScope::Credential(lane) = self.esign_scope()? {
             return self.esign_create_in_lane(&lane, document, input);
@@ -49,9 +55,10 @@ impl Memory<'_> {
             None => input.draft.clone(),
         };
         validate_document(&body, now)?;
-        vault.with_write_txn_grouped(|txn| {
+        vault.try_with_write_txn_grouped(|txn| -> MemoryResult<()> {
             create_document_in(vault, txn, document, &body, actor, now)?;
             if input.qr_pdf_download {
+                self.admit_qr_pdf_download_in(txn)?;
                 set_pdf_download_in_txn(vault, txn, document, true)?;
             }
             Ok(())
@@ -94,6 +101,7 @@ impl Memory<'_> {
             lane_scope::reaches_draft_in(lane, txn, &body)?;
             create_document_in(vault, txn, document, &body, actor, now)?;
             if input.qr_pdf_download {
+                self.admit_qr_pdf_download_in(txn)?;
                 set_pdf_download_in_txn(vault, txn, document, true)?;
             }
             lane_scope::reaches_in(lane, txn, document)?;
@@ -102,6 +110,41 @@ impl Memory<'_> {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         lane_scope::reaches_in(lane, &txn, document)?;
         Ok(draft_view(document, state_in(vault, &txn, document)?))
+    }
+
+    /// Admits the caller to turn on a document's QR PDF download in `txn`
+    /// (REVIEW-7856 P1): the bound actor is the vault owner, and the
+    /// credential it presented, if any, is the owner's own, live and still
+    /// held by the owner (as [`crate::Vault::credential_owner_held`] judges).
+    /// An owner credential handed to another key (`attenuate_to`) keeps the
+    /// owner's holder and class, so the owner check alone admits it.
+    /// # Errors
+    /// The refusal for any other caller, or the store's failure.
+    fn admit_qr_pdf_download_in(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
+        let vault = self.vault();
+        let owner = crate::memory::actor_is_vault_owner_in_txn(
+            vault,
+            txn,
+            self.actor(),
+            self.actor_class(),
+        )?;
+        let held = match self.presented_credential() {
+            None => true,
+            Some(proof) => {
+                !proof.is_transferred()
+                    && vault.capability_slip_is_live_in_txn(txn, proof)?
+                    && match vault.credential_target_key_in_txn(txn, proof)? {
+                        Some(key) => key.facets_owner_exempt_in(vault, txn)?,
+                        None => false,
+                    }
+            }
+        };
+        if owner && held {
+            return Ok(());
+        }
+        Err(MemoryError::bad_request(
+            "only the vault owner turns on a document's QR PDF download",
+        ))
     }
 }
 
