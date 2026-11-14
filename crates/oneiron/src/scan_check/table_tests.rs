@@ -170,6 +170,117 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         | EngineScan::DreamerRetryPeers
         | EngineScan::PendingCommStops
         | EngineScan::PartyContactClaims => None,
+        // Scans main added after these fixtures were written: none has a
+        // fixture here yet (FIX LIBTEST-SCAN-CHECK-TABLE-UNSEEDED-SCANS).
+        // Each new scan still has to be named here or given a fixture.
+        EngineScan::OriginTreeEntries
+        | EngineScan::OriginTagPeelSteps
+        | EngineScan::GitWirePlanObjects
+        | EngineScan::GitWirePublications
+        | EngineScan::OriginPublicationObligations
+        | EngineScan::RepoProposalSnapshotRows
+        | EngineScan::RepoSnapshotFiles
+        | EngineScan::RepoProposalCritiques
+        | EngineScan::RepoConflictPaths
+        | EngineScan::SymbolManifestRows
+        | EngineScan::SymbolOperationChain
+        | EngineScan::CodebaseFileRows
+        | EngineScan::RoomThreadChildRows
+        | EngineScan::MessageOriginRows
+        | EngineScan::ThreadTaskCensus
+        | EngineScan::ProjectTaskRows
+        | EngineScan::CodeMemorySlotValues
+        | EngineScan::CodeMemoryAlwaysOnContracts
+        | EngineScan::CodeMemoryPullSeeds
+        | EngineScan::CodeMemoryPullNotes
+        | EngineScan::CodeMemoryPullSymbols
+        | EngineScan::RepoDiffFiles
+        | EngineScan::AskSoftConfirmDeliveryRows
+        | EngineScan::PredicateClaimRows
+        | EngineScan::VaultEdgeRows
+        | EngineScan::PrefilterReceiptRows
+        | EngineScan::MachineHandoffChain
+        | EngineScan::MachineHistoryTargetRows
+        | EngineScan::MachineTransitionFrontier
+        | EngineScan::ClaimVadIncidentEdges
+        | EngineScan::RetrievalRunRows
+        | EngineScan::CallReceiptRows
+        | EngineScan::BlockedRunReports
+        | EngineScan::SieveAuditRows
+        | EngineScan::RoomRosterMembers
+        | EngineScan::DagWalkRecords
+        | EngineScan::TaskAuthorityFactEdges
+        | EngineScan::OpenAskTaskRows
+        | EngineScan::AudienceEdgeRows
+        | EngineScan::RoomAncestryRecords
+        | EngineScan::PrivateThreadAncestryRecords
+        | EngineScan::WordSourceRecords
+        | EngineScan::RoomPolicyRows
+        | EngineScan::RoomThreadHolderRows
+        | EngineScan::ProjectDepthDefaultRows
+        | EngineScan::ProjectDepthPolicyRows
+        | EngineScan::ProjectDepthSourceAncestors
+        | EngineScan::ProjectDepthPredecessors
+        | EngineScan::ProjectDepthContributionBytes
+        | EngineScan::DispatchAncestorRows
+        | EngineScan::LinearProvenanceRows
+        | EngineScan::NoteDocumentBytes
+        | EngineScan::NoteDocumentPinRows
+        | EngineScan::NoteDocumentAuthorshipRows
+        | EngineScan::AgentDefinitionListEntries
+        | EngineScan::AgentBirthSkillRows
+        | EngineScan::AgentBirthClaimOfRows
+        | EngineScan::SpendAncestorScopes
+        | EngineScan::SpendRetryAttempts
+        | EngineScan::AttemptKindRows
+        | EngineScan::AttemptEventActorBytes
+        | EngineScan::AttemptEventNoteBytes
+        | EngineScan::AttendeeIdentityCandidates
+        | EngineScan::GuestDisclosureRefs
+        | EngineScan::GuestGrantDisclosedRefs
+        | EngineScan::DeclaredSymbols
+        | EngineScan::AttendeeIdentityKeyBytes
+        | EngineScan::DeclaredSymbolBytes
+        | EngineScan::CommWidenAncestorRows
+        | EngineScan::ProjectGoalAxes
+        | EngineScan::ProjectGoalPreferences
+        | EngineScan::ProjectGoalTextBytes
+        | EngineScan::ProjectGoalAxisNameBytes
+        | EngineScan::ProjectGoalDetailBytes
+        | EngineScan::ProjectSideListEntries
+        | EngineScan::ProjectBodyGoalAxes
+        | EngineScan::ProjectAncestryRows
+        | EngineScan::ProjectOutstandingCards
+        | EngineScan::ProjectProposalEntries
+        | EngineScan::ProjectCycleWorlds
+        | EngineScan::ProjectCycleAssignments
+        | EngineScan::ProjectJointWork
+        | EngineScan::ProjectProposalTextBytes
+        | EngineScan::ReplyStripRequestedRows
+        | EngineScan::RoomRequestedPageRows
+        | EngineScan::RoomThreadListRows
+        | EngineScan::RoomLinkWalkRows
+        | EngineScan::RoomRetryLineageRows
+        | EngineScan::RoomMentions
+        | EngineScan::RoomThreadPolicyRows
+        | EngineScan::RoomThreadTokens
+        | EngineScan::RoomThreadWaitRows
+        | EngineScan::ResidentGoalAxes
+        | EngineScan::AgentDefinitionIdentityBytes
+        | EngineScan::AgentDefinitionDescriptionBytes
+        | EngineScan::AgentDefinitionVersionBytes
+        | EngineScan::AgentDefinitionInstructionBytes
+        | EngineScan::AgentDefinitionReferenceBytes
+        | EngineScan::AgentDefinitionVerbatimPinBytes
+        | EngineScan::AgentBirthSourceBytes
+        | EngineScan::TaskPostIntentKeyBytes
+        | EngineScan::AudienceCoverDepth
+        | EngineScan::ProjectAnchorDepth
+        | EngineScan::ProjectFoldDepth
+        | EngineScan::ReceiptSourceRows
+        | EngineScan::SyncPrefixRows
+        | EngineScan::DependentWalkRows
+        | EngineScan::ResearchContinuationRoots => None,
         EngineScan::MentionRows => {
             let seed = id(0x60, 0);
             // `Mentions` is semantic: the strict read refuses a structural value.

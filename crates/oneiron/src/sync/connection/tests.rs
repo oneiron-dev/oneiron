@@ -821,7 +821,7 @@ async fn out_of_order_window_delta_disconnects_instead_of_losing_the_update() {
                 .unwrap();
         ws.send(Message::Binary(frame.into())).await.unwrap();
     });
-    let (ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
+    let (ws, _) = crate::sync::carrier::connect_sync_socket(format!("ws://{addr}"), None)
         .await
         .unwrap();
     let manager = test_manager();

@@ -132,7 +132,7 @@ fn queued_render_after_withdrawal_never_uploads_deleted_reference() -> Result<()
         value: 1,
     };
     let (sender, work) = mpsc::sync_channel(2);
-    let (results, receiver) = mpsc::sync_channel(2);
+    let (results, receiver) = mpsc::channel();
     sender
         .send(VoxCpm2Work {
             generation,

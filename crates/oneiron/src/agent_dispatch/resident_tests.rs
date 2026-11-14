@@ -85,6 +85,7 @@ fn resident_keeps_goal_data_inbox_and_room_pointer_without_prompt_change() {
         AgentDispatcher::new(&vault)
             .dispatch_resident_inbox(lead, 16, 4)
             .unwrap()
+            .outcomes
             .is_empty()
     );
     // A code-mode root stays host-bound after restart; the resident is not an
@@ -262,7 +263,12 @@ fn a_held_resident_binding_never_wakes_the_inbox_but_still_conflicts() {
     );
 
     crate::test_util::hold_claim_for_critical_confirm(&vault, bound, 0x5B);
-    assert!(dispatch().expect("a held binding scans nothing").is_empty());
+    assert!(
+        dispatch()
+            .expect("a held binding scans nothing")
+            .outcomes
+            .is_empty()
+    );
 
     // A concurrent settled binding waking on every message does not replace
     // the held human-messages one: the two conflict and nothing is scanned.

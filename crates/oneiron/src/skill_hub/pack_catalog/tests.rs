@@ -26,6 +26,7 @@ fn rewrite_pack_archive(
     use std::io::{Read as _, Write as _};
     let invalid =
         |what: &str| crate::Error::InvalidConfig(format!("rewritten fixture archive: {what}"));
+    let mut rewrite = Some(rewrite);
     let mut archive =
         zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|_| invalid("unreadable"))?;
     let mut members: Vec<(String, Vec<u8>)> = Vec::new();
@@ -52,6 +53,9 @@ fn rewrite_pack_archive(
                     serde_json::from_slice::<ExportPack>(line).map_err(|_| invalid("pack rows"))?,
                 );
             }
+            let rewrite = rewrite
+                .take()
+                .ok_or_else(|| invalid("a second pack member"))?;
             let rewritten = rewrite(rows);
             pack_rows = rewritten.len() as u64;
             let mut fresh = Vec::new();

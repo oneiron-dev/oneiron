@@ -232,7 +232,7 @@ pub(super) fn opened_by(
     opener: WrapRecipient,
     secret: &HybridSecretKey,
 ) -> BTreeSet<[u8; 32]> {
-    let pad = pad_for(vault, &id);
+    let pad = &pad_for(vault, &id);
     key_records(vault, id.world)
         .into_iter()
         .filter(|record| record.key == id)
@@ -249,7 +249,7 @@ pub(super) fn opened_by(
                 .into_iter()
                 .filter_map(move |(_, bytes)| {
                     let envelope = oneiron_crypto::Envelope::parse(&bytes).ok()?;
-                    open_world_key(&binding, opener, secret, &envelope, &pad).ok()
+                    open_world_key(&binding, opener, secret, &envelope, pad).ok()
                 })
                 .map(|key| key.commitment())
         })
