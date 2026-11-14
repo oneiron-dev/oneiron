@@ -5,8 +5,10 @@
 //! build reaches them. Hidden; never API.
 
 pub mod agent_definition_scans;
+pub mod approval_target_round_trip;
 pub mod archive_import;
 pub mod archive_side_catalogue;
+pub mod authority_stored_damage;
 pub mod authority_view_grant;
 pub mod authority_world_undo;
 pub mod callable_skill;
@@ -20,7 +22,9 @@ pub mod coach;
 pub mod code_mode_capture;
 pub mod code_reply_healer;
 pub mod code_run_answer;
+pub mod code_run_write_identity;
 pub mod code_view_fork;
+pub mod connector_key_suspend;
 pub mod consolidation;
 pub mod credit_decay_fit;
 pub mod dag_append;
@@ -37,18 +41,26 @@ pub mod free_time_cycle_writer;
 pub mod free_time_handoff;
 pub mod grant_roles;
 pub mod graph_ask_centre;
+#[cfg(feature = "sync")]
+pub mod home_handoff_retire;
+#[cfg(feature = "sync")]
+pub mod home_sections;
 pub mod house_link;
+pub mod hydration_decode_guard;
 pub mod identity_recheck;
 pub mod inquiry;
 pub mod label_writers;
 pub mod learning_claim_value;
+pub mod learning_setting_sourced;
 pub mod lifted_text;
 pub mod live_run_claim_put;
 pub mod mail_landing;
 pub mod membership;
+pub mod meso_extraction_width;
 pub mod model_binding_proposer;
 pub mod note_bm25f_repair;
 pub mod off_record_shell;
+pub mod pad_offer_invalidation;
 pub mod park_typed_wait;
 pub mod provenance_body_checkpoint;
 pub mod repo_base_manifest;

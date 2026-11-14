@@ -726,6 +726,11 @@ fn a_delivered_send_summary_without_its_idempotency_support_is_held_back() {
     source_config.store_clock = source_clock.bundle();
     let source =
         Vault::open_owned(source_dir.path(), source_config).expect("open the source vault");
+    // The send pipeline signs its binding with this install's device key
+    // (`OutboundBindingAuthority::for_vault`), as a host's would.
+    source.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     let source_owner = owner_proof(&source);
     let actor = fixed_id(0x4A);
     source
