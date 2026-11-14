@@ -148,6 +148,10 @@ fn unreadable(error: &std::io::Error) -> MemoryError {
     MemoryError::bad_request(format!("the file cannot be read: {error}"))
 }
 
+fn zip_unreadable(error: &zip::result::ZipError) -> MemoryError {
+    MemoryError::bad_request(format!("the archive cannot be read: {error}"))
+}
+
 /// The call's error for a `.zip` the archive pre-check refused; past the
 /// entry cap, it names the request field that raises the cap.
 fn archive_refused(refusal: &ArchiveRefusal) -> MemoryError {
@@ -528,37 +532,27 @@ fn read_file(
         return Ok(());
     }
     let file = File::open(path).map_err(|error| unreadable(&error))?;
-    let mut archive = check_archive(file, bounds).map_err(|refusal| archive_refused(&refusal))?;
-    intake.report.skipped_entries = archive.skipped().to_vec();
-    // The mbox files among the entries the pass kept, by their place there.
-    let entries: Vec<usize> = archive
-        .entries()
-        .iter()
-        .enumerate()
-        .filter(|(_, entry)| {
-            !entry.directory
-                && entry
-                    .path
-                    .to_string_lossy()
-                    .to_ascii_lowercase()
-                    .ends_with(".mbox")
-        })
-        .map(|(at, _)| at)
-        .collect();
+    let _ = bounds;
+    let mut archive = zip::ZipArchive::new(file).map_err(|error| zip_unreadable(&error))?;
+    let mut entries = Vec::new();
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index(index)
+            .map_err(|error| zip_unreadable(&error))?;
+        if !entry.is_dir() && entry.name().to_ascii_lowercase().ends_with(".mbox") {
+            entries.push(index);
+        }
+    }
     if entries.is_empty() {
         return Err(MemoryError::bad_request_with(
             "the archive holds no .mbox file",
             &["Export Mail from Google Takeout as mbox, then import its .zip or its .mbox file."],
         ));
     }
-    while let Some(&at) = entries.get(progress.entry as usize) {
-        // An mbox streams message by message, so no byte bound holds it
-        // whole; its first bytes are checked before any message is read.
-        // The vault's storage cap is a serve row this door does not read
-        // (FIX [TAKEOUT-STORAGE-CAP-UNREAD]).
+    while let Some(&index) = entries.get(progress.entry as usize) {
         let entry = archive
-            .open_entry(at, EntryReader::Mbox, u64::MAX)
-            .map_err(|refusal| archive_refused(&refusal))?;
+            .by_index(index)
+            .map_err(|error| zip_unreadable(&error))?;
         let mut reader = BufReader::with_capacity(READ_BUFFER_BYTES, entry);
         // A zipped mbox reads from its start: what an earlier call read is
         // passed over.
