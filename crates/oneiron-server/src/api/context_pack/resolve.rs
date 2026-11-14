@@ -65,11 +65,12 @@ pub(crate) async fn core_context_pack(
 }
 
 /// The members of a context pack request that its route reads and the
-/// native `memory.context_pack` contract does not carry: its room, session,
-/// reaction signals, affect, assembly policy, time window, projection,
-/// interlocutors and reader.
+/// native `memory.context_pack` contract does not carry: its room and its
+/// home, session, reaction signals, affect, assembly policy, time window,
+/// projection, interlocutors and reader.
 const CONTEXT_PACK_ROUTE_CONTROLS: &[&str] = &[
     "conversation_id",
+    "conversation_home",
     "session_id",
     "signals_since",
     "signals_after",
@@ -226,6 +227,7 @@ pub(crate) async fn execute_context_pack(
         room_id,
         room,
         interlocutors,
+        home,
         media,
         skill_reliability,
         candidate_limit,
@@ -375,12 +377,14 @@ pub(crate) async fn execute_context_pack(
     )?;
     // OF-365 ILD-2: one DisclosureContext value feeds builder, board, and
     // response, so the response can never describe a different clamp than
-    // the one applied (design §11 rule 6).
+    // the one applied (design §11 rule 6). It carries the pack's home
+    // (DEC-0006 #home-clearance).
     let disclosure = resolve_core_disclosure_with_once(
         &server.vault,
         interlocutors.as_ref(),
         room.as_ref().map(|room| room.reader.is_some()),
         &once,
+        home,
     )?;
     if let Some(ctx) = disclosure.as_ref() {
         builder = builder.disclosure_context(ctx.clone());
