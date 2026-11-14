@@ -354,10 +354,19 @@ pub(crate) fn require_promoted_for_cached_id(
     Ok(())
 }
 
+/// The item rows an opened-item update writes, each with the body it writes,
+/// as [`admit_promoted_window_update`] decoded them. A writer that commits
+/// the update judges them again in its own transaction
+/// ([`admit_promoted_window_rows_in_txn`]), so a grant, pact or selection
+/// that narrowed after the admission's read is met at commit.
+#[derive(Debug, Clone, Default)]
+pub struct PromotedWindowRows(Vec<(EntityId, Vec<u8>)>);
+
 /// Inspect every incoming operation before an opened-item update reaches
 /// the observed home document. Only writes to EXISTING selected items with
 /// a stable birth scope can run on the thin residence lane. Other operation
 /// families use their own admitted doors; they are not smuggled as item edits.
+/// Answers the rows it admitted, for a recheck at commit.
 pub fn admit_promoted_window_update(
     vault: &Vault,
     source: &LoroDoc,
@@ -365,7 +374,35 @@ pub fn admit_promoted_window_update(
     selector: &SyncSelector,
     proof: &crate::authority::VerifiedSlip,
     update: &[u8],
+) -> Result<PromotedWindowRows> {
+    let rows = promoted_window_rows(source, update)?;
+    let txn = vault.store.env.read_txn()?;
+    admit_promoted_window_rows_in_txn(vault, &txn, &rows, scope, selector, proof)?;
+    Ok(rows)
+}
+
+/// [`admit_promoted_window_update`]'s judgement of each row in `txn`: the
+/// per-item write door (`selector::admit_promoted_entity_write_in_txn`) for
+/// every row, under the grant, pact and selection `txn` sees.
+pub fn admit_promoted_window_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    rows: &PromotedWindowRows,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    proof: &crate::authority::VerifiedSlip,
 ) -> Result<()> {
+    rows.0.iter().try_for_each(|(id, blob)| {
+        super::selector::admit_promoted_entity_write_in_txn(
+            vault, txn, *id, blob, scope, selector, proof,
+        )
+    })
+}
+
+/// The item rows `update` writes on `source`: every operation an item-body
+/// insert into `entities`, or a birth write restating the carrier `source`
+/// already holds; anything else is refused.
+fn promoted_window_rows(source: &LoroDoc, update: &[u8]) -> Result<PromotedWindowRows> {
     let malformed = || Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied);
     let metadata = LoroDoc::decode_import_blob_meta(update, true).map_err(|_| malformed())?;
     if metadata.mode.is_snapshot() {
@@ -383,7 +420,7 @@ pub fn admit_promoted_window_update(
     }
     let entities = ContainerID::new_root("entities", ContainerType::Map);
     let births = ContainerID::new_root(super::row_birth::ROW_BIRTHS_MAP, ContainerType::Map);
-    let txn = vault.store.env.read_txn()?;
+    let mut rows = Vec::new();
     for op in operations.changes.into_iter().flat_map(|change| change.ops) {
         let JsonOpContent::Map(MapOp::Insert {
             key,
@@ -411,11 +448,9 @@ pub fn admit_promoted_window_update(
         if key != id.to_hex() {
             return Err(malformed());
         }
-        super::selector::admit_promoted_entity_write_in_txn(
-            vault, &txn, id, &blob, scope, selector, proof,
-        )?;
+        rows.push((id, blob.to_vec()));
     }
-    Ok(())
+    Ok(PromotedWindowRows(rows))
 }
 
 /// Export the canonical window, not the selector's synthetic document.

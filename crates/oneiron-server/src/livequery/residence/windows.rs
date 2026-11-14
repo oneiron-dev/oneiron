@@ -8,6 +8,11 @@
 //! "An empty ceiling grants nothing"; a member learns nothing beyond the rows
 //! it reads. Each window is judged by the same projection `residence.index`
 //! serves from, under the same pinned selector and admission.
+//!
+//! The listing is live, not a snapshot: pages run in key order past `after`,
+//! and a window that becomes readable behind a page already read is found on
+//! the lane's next catalogue pass (each reconnect and refresh asks again).
+//! `residence.index` carries the revision a reader holds a window at.
 
 use super::*;
 

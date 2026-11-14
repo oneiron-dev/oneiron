@@ -688,7 +688,9 @@ pub(super) fn promote(
 /// its promoted copy only once this covers every op it holds (OF-534). It
 /// lists the rows the vector counts ops of ([`window_vv_rows`], FIX 9494),
 /// so the send door judges it as it judges every answer, and a vector whose
-/// rows may all leave reaches an off-device machine.
+/// rows may all leave reaches an off-device machine. On a member lane the
+/// selector must cover the whole window, as a promotion's does (MEMBER-SYNC
+/// threat F7): the vector counts ops of rows it may not read.
 pub(super) fn window_vv(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -700,7 +702,23 @@ pub(super) fn window_vv(
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
     let (window, selector, doc) =
         selected_window(server, auth, lane, &input.window, &input.selector)?;
-    let _admitted = admitted(server, auth, peer, lane, &selector)?;
+    let admission = admitted(server, auth, peer, lane, &selector)?;
+    if lane.member().is_some() {
+        let covered = lane.scope_for(&selector).and_then(|scope| {
+            oneiron::sync::residence::promotion_covers_full_window_for(
+                &server.vault,
+                &doc,
+                &window,
+                scope,
+                &selector,
+                admission.withhold(),
+                |id| admission.allows_item(id),
+            )
+        });
+        if !matches!(covered, Ok(true)) {
+            return Err(AppError::not_found("item", None));
+        }
+    }
     Ok((
         json!({
             "window": window.as_str(),

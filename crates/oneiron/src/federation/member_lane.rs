@@ -9,20 +9,27 @@
 //! slip names. Membership opens the restricted carrier; each selector the lane
 //! sends is still judged by `authorize_sync_selector` under that scope.
 
-use super::{FederationGrantRole, FederationGrantScope, MembershipStanding};
+use super::{FederationGrantRole, FederationGrantScope, MembershipStanding, Scope};
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::error::Result;
+use crate::ports::EntityStoreRead;
 use crate::{EntityId, Vault};
 
 /// What a member lane stands on at this home: the grant its slip names, the
 /// PERSON holding it, the scope the home derived from its own shared-vault
-/// creation, and the grant's role. Fixed for the lane's life; re-asked
-/// through [`Vault::member_lane_standing`] before each read and flush.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// creation, the grant's role and the grant's own authority. Fixed for the
+/// lane's life; re-asked through [`Vault::member_lane_standing`] before each
+/// read and flush, so a grant whose role or authority changed stops the lane.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemberLaneStanding {
     pub grant: EntityId,
     pub holder: EntityId,
     pub scope: FederationGrantScope,
     pub role: FederationGrantRole,
+    /// The grant's `authority_scope`: a member slip minted under it carries
+    /// it whole, and the lane admits only a slip that does (the selector,
+    /// document and body doors filter by the grant, not by the slip).
+    pub authority_scope: Scope,
 }
 
 impl Vault {
@@ -51,12 +58,24 @@ impl Vault {
             Some(MembershipStanding::Member {
                 grant: standing,
                 role,
-            }) if standing == grant => Ok(Some(MemberLaneStanding {
-                grant,
-                holder,
-                scope,
-                role,
-            })),
+            }) if standing == grant => {
+                // The gate read this row live in `txn`; its body names the
+                // grant's own authority.
+                let Some(record) = self.store.port_entity_record(&txn, &grant)? else {
+                    return Ok(None);
+                };
+                let raw = record.encode();
+                let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..) else {
+                    return Ok(None);
+                };
+                Ok(Some(MemberLaneStanding {
+                    grant,
+                    holder,
+                    scope,
+                    role,
+                    authority_scope: super::decode_federation_grant_body(body)?.authority_scope,
+                }))
+            }
             _ => Ok(None),
         }
     }

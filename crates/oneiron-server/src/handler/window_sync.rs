@@ -276,14 +276,19 @@ pub(super) async fn handle_window_sync(
         return Ok(ControlFlow::Break(()));
     }
     let doc = window.doc.clone();
+    // A member lane's residence update meets the same current promotion
+    // check (MEMBER-SYNC threat F4): its home's world privacy for this
+    // machine, its grant and selector as they stand now, not as they stood
+    // at the promotion.
     if protocol::is_residence_version(conn_state.protocol_version)
-        && matches!(
+        && (matches!(
             sub_tag,
             window_sub_tags::VV_REQUEST
                 | window_sub_tags::VV_RESPONSE
                 | window_sub_tags::UPDATE
                 | window_sub_tags::REPLACEMENT_REQUEST
-        )
+        ) || (sub_tag == window_sub_tags::RESIDENCE_UPDATE
+            && conn_state.selector_lane.member().is_some()))
     {
         let selector = conn_state
             .promoted_windows
@@ -399,6 +404,7 @@ pub(super) async fn handle_window_sync(
                 return Err(map_update_admission_err(error));
             }
             let mut write_auth = None;
+            let mut member_write = None;
             if protocol::is_residence_version(conn_state.protocol_version) {
                 let selector = conn_state
                     .promoted_windows
@@ -408,18 +414,28 @@ pub(super) async fn handle_window_sync(
                 auth.require(crate::auth::CoreScope::Write)
                     .map_err(|_| ProtocolError::RpcNoPrincipal)?;
                 let proof = auth.verified_slip().ok_or(ProtocolError::RpcNoPrincipal)?;
-                admit_promoted_window_update(
+                let scope = conn_state
+                    .selector_lane
+                    .scope_for(selector)
+                    .map_err(map_selector_filter_err)?;
+                let rows = admit_promoted_window_update(
                     &server.vault,
                     &doc,
-                    conn_state
-                        .selector_lane
-                        .scope_for(selector)
-                        .map_err(map_selector_filter_err)?,
+                    scope,
                     selector,
                     proof,
                     update,
                 )
                 .map_err(map_selector_filter_err)?;
+                // A member lane's rows are judged again in the committing
+                // transaction (MEMBER-SYNC threat F3).
+                if conn_state.selector_lane.member().is_some() {
+                    member_write = Some(super::member_lane::MemberPromotedWrite {
+                        rows,
+                        scope,
+                        selector: selector.clone(),
+                    });
+                }
                 write_auth = Some(auth);
             }
             // The pads it owes reach custody here before it persists (FIX
@@ -489,7 +505,13 @@ pub(super) async fn handle_window_sync(
                 Some(&doc),
             );
             server
-                .persist_imported_update(&key, &persisted, &landings, write_auth)
+                .persist_imported_update(
+                    &key,
+                    &persisted,
+                    &landings,
+                    write_auth,
+                    member_write.as_ref(),
+                )
                 .map_err(|e| ProtocolError::Persistence(format!("update persist failed: {e}")))?;
             // Client sending Loro update bytes — import with origin for echo suppression.
             // The machine this own-device socket proved sent them: their MESSAGE rows

@@ -59,9 +59,10 @@ impl MemberLane {
     }
 
     /// Whether the lane still stands (D5): its credential is live and the
-    /// home still answers the same standing for its grant and holder. A
-    /// fault reads as fallen. Asked before each read and flush, so a revoked
-    /// or deleted grant stops the lane (ARCH-0043:164).
+    /// home still answers the same standing for its grant and holder (role
+    /// and authority included). A fault reads as fallen. Asked before each
+    /// read and flush, so a revoked, deleted or narrowed grant stops the lane
+    /// (ARCH-0043:164).
     pub(crate) fn stands(&self, vault: &oneiron::Vault) -> bool {
         self.credential.credential_is_live(vault)
             && matches!(
@@ -71,13 +72,50 @@ impl MemberLane {
     }
 
     /// Whether `auth`, an in-band bind's credential, is this lane's own
-    /// upgrade credential: the same token id, holder and grant. Another live
+    /// upgrade credential: the same token id, holder and grant, still
+    /// carrying the whole grant ([`carries_whole_grant`]), so an attenuated
+    /// presentation of the same token does not bind either. Another live
     /// slip of the same person never binds here (D4).
     pub(crate) fn binds(&self, auth: &CoreAuth) -> bool {
         auth.jti().is_some()
             && auth.jti() == self.credential.jti()
             && auth.principal_ref() == self.credential.principal_ref()
             && slip_grant_ref(auth) == slip_grant_ref(&self.credential)
+            && carries_whole_grant(auth, &self.standing.authority_scope)
+    }
+}
+
+/// A promoted-window write a member lane's update made, kept for the
+/// committing transaction (MEMBER-SYNC threat F3): the rows the admission
+/// judged, under the scope and selector it judged them, are judged again in
+/// the writer, so a grant, pact or selection that narrowed after the
+/// admission's read refuses the write.
+pub(crate) struct MemberPromotedWrite {
+    pub(crate) rows: oneiron::sync::residence::PromotedWindowRows,
+    pub(crate) scope: oneiron::FederationGrantScope,
+    pub(crate) selector: oneiron::sync::SyncSelector,
+}
+
+impl MemberPromotedWrite {
+    /// Whether every row still passes its write door in `txn`, for `auth`'s
+    /// verified slip.
+    pub(crate) fn stands_in(
+        &self,
+        vault: &oneiron::Vault,
+        txn: &heed::RoTxn<'_>,
+        auth: &CoreAuth,
+    ) -> bool {
+        auth.verified_slip().is_some_and(|proof| {
+            oneiron::sync::residence::admit_promoted_window_rows_in_txn(
+                vault,
+                txn,
+                &self.rows,
+                self.scope,
+                &self.selector,
+                proof,
+            )
+            .is_ok()
+        })
     }
 }
 
@@ -93,7 +131,8 @@ pub(super) fn member_lane_requested(headers: &HeaderMap) -> bool {
 /// Every step reads this home: the slip verified holder-bound by the binding
 /// proof, a human slip held by a registered PERSON, its `grant_ref` naming a
 /// live first-party member grant of that PERSON under this shared vault's own
-/// scope ([`oneiron::Vault::member_lane_standing`]), and the credential live.
+/// scope ([`oneiron::Vault::member_lane_standing`]), the slip carrying that
+/// grant whole ([`carries_whole_grant`]), and the credential live.
 /// A managed vault's sockets take each call under its reap freeze (FIX
 /// 5128), which this lane does not, so it is refused there. A host fault the
 /// check met stays a 500, which the client redials.
@@ -124,13 +163,32 @@ pub(super) fn member_lane(
         .member_lane_standing(holder, grant)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?
         .ok_or_else(refused)?;
-    if !credential.credential_is_live(server.vault().as_ref()) {
+    if !carries_whole_grant(&credential, &standing.authority_scope)
+        || !credential.credential_is_live(server.vault().as_ref())
+    {
         return Err(refused());
     }
     Ok(Arc::new(MemberLane {
         standing,
         credential,
     }))
+}
+
+/// Whether `auth`'s verified slip carries the whole of `grant`, the member
+/// grant's own authority (MEMBER-SYNC threat F1): no record or channel
+/// caveat, and no axis narrower than the grant's. The selector, document and
+/// body doors a member lane reaches filter by the grant and selector, not by
+/// the slip, so a narrowed slip would read past its own bounds there; it
+/// opens no member lane instead, as `require_unrestricted_record_scope`
+/// refuses one at a door without record enforcement.
+fn carries_whole_grant(auth: &CoreAuth, grant: &oneiron::federation::Scope) -> bool {
+    auth.verified_slip().is_some_and(|proof| {
+        let mut required = grant.clone();
+        required.verbs = proof.scope().verbs.clone();
+        proof.claims().records.is_empty()
+            && proof.claims().channels.is_empty()
+            && required.is_narrowing_of(proof.scope())
+    })
 }
 
 /// The grant a credential's verified slip names, when it names one.

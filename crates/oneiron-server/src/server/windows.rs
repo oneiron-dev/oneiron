@@ -98,20 +98,28 @@ impl SyncServer {
     /// window's update passed, is rechecked in the committing transaction
     /// (FIX 5999); a full-window socket's update has none, as before.
     /// `landings`, the new bytes its translated copy edits land, carry their
-    /// mark in the same transaction (FIX 10732).
+    /// mark in the same transaction (FIX 10732). A member lane's write
+    /// (`member_write`) has its rows judged again there too (MEMBER-SYNC
+    /// threat F3).
     pub(crate) fn persist_imported_update(
         &self,
         key: &WindowKey,
         update_bytes: &[u8],
         landings: &oneiron::sync::selector::RepoSyncLandings,
         auth: Option<&crate::auth::CoreAuth>,
+        member_write: Option<&crate::handler::member_lane::MemberPromotedWrite>,
     ) -> Result<u64, oneiron::Error> {
         server_state::persist_admitted_window_update(
             &self.vault,
             key,
             update_bytes,
             landings,
-            |txn| auth.is_none_or(|auth| auth.credential_is_live_in_write_txn(&self.vault, txn)),
+            |txn| {
+                auth.is_none_or(|auth| {
+                    auth.credential_is_live_in_write_txn(&self.vault, txn)
+                        && member_write.is_none_or(|write| write.stands_in(&self.vault, txn, auth))
+                })
+            },
         )
     }
 
