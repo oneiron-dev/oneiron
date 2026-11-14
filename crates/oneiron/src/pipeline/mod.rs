@@ -22,6 +22,7 @@ pub(crate) use types::{CandidateFilter, CandidateGate, SnapshotCandidateFilter, 
 mod l2_evidence;
 mod media_channel;
 mod media_query_memory;
+mod params;
 pub mod retrieval_policy;
 mod support;
 mod temporal_bound;
@@ -36,6 +37,10 @@ pub(crate) use world_authority::{
 };
 
 pub use self::builder::PipelineBuilder;
+pub use self::params::{
+    KnobAxis, KnobKind, KnobRange, KnobSpec, RETRIEVAL_FORMULA_VERSION, RetrievalParams,
+    retrieval_knob_schema,
+};
 pub use self::types::{
     ActiveWorldSelection, DEFAULT_RECENCY_HALF_LIFE_DAYS, DreamerWorkingSet,
     DreamerWorkingSetBudget, DreamerWorkingSetCursor, DreamerWorkingSetStopReason, FacetMode,
@@ -44,6 +49,8 @@ pub use self::types::{
     RetrievalWithTelemetry, ScoredEntity, Signal, WORLD_ACCESS_SCHEMA_VERSION, WorldAuthoritySet,
     WorldScope, decode_world_access_claim_value, world_access_claim_body,
 };
+
+pub use self::builder::{BlendWeightsSource, RetrievalEvalSpec};
 
 pub(crate) use self::authority::{
     claim_ceiling_allowed, claim_scalars_ceiling_allowed, type_allowed as retrieval_type_allowed,

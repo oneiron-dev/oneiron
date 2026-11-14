@@ -58,14 +58,6 @@ pub type ChatDepth = Effort;
 /// so its receipts name the engine's `.chat` door.
 const CHAT_ANSWER_ROW: &str = "memory.chat";
 
-impl Effort {
-    /// The retrieval effort priced by a chat request.
-    #[must_use]
-    pub const fn effort(self) -> Self {
-        self
-    }
-}
-
 /// Where one [`Memory::chat`] answer may take its evidence from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChatScope {

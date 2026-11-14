@@ -8,11 +8,10 @@ use crate::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
 use crate::receipt::{PackAttributionFields, ReceiptRecord};
 use crate::skill_attribution::{AnchoredPackOutcome, LateCreditReceipt};
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SkillPackReceiptRequest {
-    pub attempt_receipt: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::skill_execution::{
+    SkillPackCreditRequest, SkillPackOutcomeRequest, SkillPackReceiptRequest,
+};
 
 /// The frozen loaded versions and actual-use evidence, not a transport receipt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,26 +19,6 @@ pub struct SkillPackReceipt {
     pub receipt: ReceiptRecord,
     pub loaded_skills: Vec<String>,
     pub attribution: PackAttributionFields,
-}
-
-/// An owner's external verdict. Neither the executor nor the judge, actor,
-/// loaded versions or contribution checks can be supplied by this request.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SkillPackOutcomeRequest {
-    pub attempt_receipt: String,
-    pub outcome_receipt: String,
-    pub succeeded: bool,
-    pub axis: String,
-    pub at: u64,
-    #[serde(default)]
-    pub goal_revision: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SkillPackCreditRequest {
-    pub receipt_id: String,
 }
 
 pub fn skill_pack_receipt_as_owner(

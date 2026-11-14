@@ -8,6 +8,7 @@ use super::row_access::{
     ByName, concat, context_is, flag, get_is, item, json, json_item, repr_list, shown, text,
     variant_of, variants,
 };
+use super::wire_inputs::WireInputs;
 use super::{CORE_COUNT_DEFAULTS, CORE_VERB_NAMES, Generator, HEADER, RowId};
 use crate::error::GenerateError;
 use crate::py::json::dumps_str;
@@ -573,13 +574,44 @@ fn call_result(call: &str) -> String {
     }
 }
 
+/// What `core` emits: the lib's `sdk_generated.rs`, the wire crate's `verb_input_checks.rs` and the files the wire
+/// ownership lookups read.
+pub(crate) struct CoreTexts {
+    pub(crate) core: String,
+    pub(crate) wire: String,
+    pub(crate) wire_dependencies: std::collections::BTreeSet<String>,
+}
+
+/// A row's input type as the wire crate names it, when the wire crate can hold its input schema (lib split W3-GEN): a
+/// row without a `rust_feature` gate (the lib's feature, which the wire crate's need not match) whose input the wire
+/// crate names.
+fn wire_input(wire: &mut WireInputs, row: &Dict) -> Result<Option<String>, GenerateError> {
+    if !core_cfg(row).is_empty() {
+        return Ok(None);
+    }
+    match item(row, "input")?.as_str() {
+        Some(input) => wire.wire_type(input),
+        None => Ok(None),
+    }
+}
+
 /// The `core` segment of `outputs()`: `sdk_generated.rs`, the engine's typed verb surface:
 /// the count defaults, the input and answer schemas, the MCP argument schemas, the validators, the facade and browser
 /// invocations, one typed fn per row and the declared-ref receipts.
-pub(crate) fn core(generator: &Generator, facade_rows: &[RowId]) -> Result<String, GenerateError> {
+///
+/// Lib split W3-GEN: the input schema of each row whose input type the wire crate holds, and the input check of each
+/// such row that runs no admission check of its own and has one input shape, go into the wire crate's
+/// `verb_input_checks.rs` instead; the lib's `input_schema` and `validate_input` answer from there first. A row is in
+/// exactly one of the two tables.
+pub(crate) fn core(
+    generator: &Generator,
+    facade_rows: &[RowId],
+) -> Result<CoreTexts, GenerateError> {
     let store = &generator.rows;
     let rows = store.select(&generator.callable_rows);
+    let mut wire_inputs = WireInputs::new(&generator.root)?;
     let mut core = HEADER.to_owned();
+    let mut wire = HEADER.to_owned();
     // A count default is stated once, on its manifest argument. The engine reads it from here, and every binding
     // signature is generated from the same number.
     for row in &rows {
@@ -603,18 +635,33 @@ pub(crate) fn core(generator: &Generator, facade_rows: &[RowId]) -> Result<Strin
         }
     }
     core += "pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {\n";
+    core += "if let Some(schema) = oneiron_verb_wire::verb_input::input_schema(verb) { return Some(schema); }\n";
     // GLOBAL STATE: these schemas depend only on compiled verb types, never vault or actor data.
-    core += "// GLOBAL STATE: compiled verb schemas are immutable, vault-independent metadata; share one table across callers.\n";
-    core += "static SCHEMAS: std::sync::LazyLock<std::collections::HashMap<&'static str, serde_json::Value>> = std::sync::LazyLock::new(|| std::collections::HashMap::from([\n";
+    let schemas = "// GLOBAL STATE: compiled verb schemas are immutable, vault-independent metadata; share one table across callers.\n\
+        static SCHEMAS: std::sync::LazyLock<std::collections::HashMap<&'static str, serde_json::Value>> = std::sync::LazyLock::new(|| std::collections::HashMap::from([\n";
+    core += schemas;
+    wire += "pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {\n";
+    wire += schemas;
     for row in store.select(&generator.schema_rows) {
-        core += &format!(
-            "{}({}, crate::code_run::vault_read::request_schema::<{}>()),\n",
-            core_cfg(row),
-            json_item(row, "name")?,
-            shown(row, "input")?
-        );
+        match wire_input(&mut wire_inputs, row)? {
+            Some(input) => {
+                wire += &format!(
+                    "({}, oneiron_contracts::code_run::vault_read::request_schema::<{input}>()),\n",
+                    json_item(row, "name")?
+                );
+            }
+            None => {
+                core += &format!(
+                    "{}({}, crate::code_run::vault_read::request_schema::<{}>()),\n",
+                    core_cfg(row),
+                    json_item(row, "name")?,
+                    shown(row, "input")?
+                );
+            }
+        }
     }
     core += "])); SCHEMAS.get(verb) }\n";
+    wire += "])); SCHEMAS.get(verb) }\n";
     // DOOR-115: the rows the OpenAPI document publishes, and each one's answer schema.
     let openapi_rows: Vec<&Dict> = rows
         .iter()
@@ -695,8 +742,12 @@ pub(crate) fn core(generator: &Generator, facade_rows: &[RowId]) -> Result<Strin
         core += &format!("&{}}},\n", json(&Value::List(required)));
     }
     core += "_ => return None, }; Some(serde_json::json!({\"type\": \"object\", \"additionalProperties\": false, \"required\": required, \"properties\": properties})) }\n";
-    core += "pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()> { match verb {\n";
+    core += "pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()> {\n";
+    core += "if let Some(checked) = oneiron_verb_wire::verb_input::validate_input(verb, value) { return checked; }\n";
+    core += "match verb {\n";
+    wire += "pub fn validate_input(verb: &str, value: &serde_json::Value) -> Option<MemoryResult<()>> { match verb {\n";
     let mut validators = String::new();
+    let mut wire_validators = String::new();
     let mut board_host_input: ByName<String> = ByName::default();
     // `{r['name']: r['input'] for r in BOARD_HOST_ROWS}`. A name that is no `str` is left out: only a `str` name
     // can look it up, since a row of ROWS whose name is no `str` fails at `.replace` before it does.
@@ -710,13 +761,23 @@ pub(crate) fn core(generator: &Generator, facade_rows: &[RowId]) -> Result<Strin
     for row in &rows {
         let method = super::row_access::method_name(row)?;
         let checks = super::row_access::get_in(row, "admission", "validate")?;
-        let binding = if checks.is_some_and(Value::truthy) {
-            "input"
-        } else {
-            "_input"
-        };
+        let checked = checks.is_some_and(Value::truthy);
+        let binding = if checked { "input" } else { "_input" };
         let checks = checks.map_or_else(String::new, Value::str);
         let name = item(row, "name")?;
+        let dual = name
+            .as_str()
+            .is_some_and(|name| board_host_input.contains(name));
+        if !checked
+            && !dual
+            && let Some(input) = wire_input(&mut wire_inputs, row)?
+        {
+            wire += &format!("{} => Some(validate_input_{method}(value)),\n", json(name));
+            wire_validators += &format!(
+                "#[inline(never)]\nfn validate_input_{method}(value: &serde_json::Value) -> MemoryResult<()> {{ let {binding}: {input} = decode(value.clone())?; {checks} Ok(()) }}\n"
+            );
+            continue;
+        }
         let body = match name.as_str().filter(|name| board_host_input.contains(name)) {
             // One verb, two served shapes: the board/MCP shape and the facade's host projection. Either admits;
             // each door decodes its own shape after this check.
@@ -742,6 +803,8 @@ pub(crate) fn core(generator: &Generator, facade_rows: &[RowId]) -> Result<Strin
     }
     core += "_ => return Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request(\"unknown SDK agent verb\"))), } Ok(()) }\n";
     core += &validators;
+    wire += "_ => None, } }\n";
+    wire += &wire_validators;
     // Code mode binds its own guest, so a rewrite there validates the original browser input, never the public
     // live-run attachment wrapper.
     core += "pub fn validate_browser_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()> { match verb {\n";
@@ -873,7 +936,11 @@ pub(crate) fn core(generator: &Generator, facade_rows: &[RowId]) -> Result<Strin
         );
     }
     core += "_ => {}\n}\nOk(())\n}\n";
-    Ok(core)
+    Ok(CoreTexts {
+        core,
+        wire,
+        wire_dependencies: wire_inputs.dependencies(),
+    })
 }
 
 #[cfg(test)]

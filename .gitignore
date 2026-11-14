@@ -24,6 +24,7 @@ __pycache__/
 /crates/oneiron-server/src/api/mcp_gateway/generated/agent_verb_dispatch.rs
 /crates/oneiron-uniffi/src/generated/facade_generated.rs
 /crates/oneiron-uniffi/src/generated/facade_types_generated.rs
+/crates/oneiron-verb-wire/src/generated/verb_input_checks.rs
 /crates/oneiron/src/verbs/generated/catalog_fragment.d.ts
 /crates/oneiron/src/verbs/generated/catalog_fragment_revision.rs
 /crates/oneiron/src/verbs/generated/code-mode.d.ts

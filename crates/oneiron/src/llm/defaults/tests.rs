@@ -387,6 +387,7 @@ fn resident_local_default_cannot_relabel_remote_model_to_bypass_budget() {
             scores: Default::default(),
             fetched_at: Default::default(),
             tokens_per_o200k: None,
+            answer_tokens_per_o200k: None,
             stale_since: None,
             source_rows: None,
         })
