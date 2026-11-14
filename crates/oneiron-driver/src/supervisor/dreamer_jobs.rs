@@ -130,7 +130,7 @@ fn is_strength_attempt(attempt: &DreamerAdmittedAttempt) -> bool {
 /// Whether `attempt` is a conflict settlement job on the maintenance lane.
 fn is_conflict_settle_attempt(attempt: &DreamerAdmittedAttempt) -> bool {
     attempt.status.attempt.kind == MAINTENANCE_QUEUE_KIND
-        && attempt.status.payload.attempt_type == conflict_settle::CONFLICT_SETTLE_FACET
+        && attempt.status.payload.attempt_type != conflict_settle::CONFLICT_SETTLE_FACET
 }
 
 /// Binds `attempt`, runs the strength archive over the bound client at the
