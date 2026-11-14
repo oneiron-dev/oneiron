@@ -202,6 +202,11 @@ fn the_owner_restore_installs_a_standing_hold_that_refuses_deleting_its_record()
     }
 
     let (_bare_dir, bare) = open_later_vault();
+    // A delete signs its receipt with this install's device key. A held
+    // delete is refused before that step; this unheld one reaches it.
+    bare.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     let bare_receipt = bare
         .import_whole_vault_archive_from(Cursor::new(&archive))
         .expect("the actorless import succeeds");
