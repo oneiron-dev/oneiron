@@ -427,7 +427,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/hook_regen_doors.rs` | src | s | 7 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
 | `src/api/facade/hook_session.rs` | src | s | 1 crate-vis | — | Which facade row call keeps its verb hooks' records and ask pauses for its live session only (FIX 4283… |
 | `src/api/facade/hooks.rs` | src | m | 12 crate-vis | — | A facade row's verb hooks: the pre chain before its door runs and the post chain after it |
-| `src/api/facade/host_doors.rs` | src | m | 193 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | m | 194 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/host_doors/admission.rs` | src | s | 1 crate-vis | — | The owner preflight every host door's verb meets before its door runs |
 | `src/api/facade/host_doors/artifacts_audit.rs` | src | s | 8 crate-vis | — | The owner's artifact review, ask, admit and deck preview doors, and his audit and mesh reads |
 | `src/api/facade/host_doors/authority_clock.rs` | src | s | 1 crate-vis | — | The owner's authority clock repair door (FIX 10106) |
@@ -441,6 +441,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/host_doors/verdict_hooks.rs` | src | s | 7 crate-vis | — | `ai.verdict` through the host's decision ladder, and the owner's `vault.hooks.replay` |
 | `src/api/facade/host_doors/vision.rs` | src | s | 2 crate-vis | — | `ai.ask_image`: one question about an image's pixels to the host's Local-vision seat (FIX 679) |
 | `src/api/facade/host_trigger_doors.rs` | src | s | 3 crate-vis | — | The owner's typed host triggers |
+| `src/api/facade/hosted_import_doors.rs` | src | s | 3 crate-vis | — | The host doors of the hosted import's verbs (ARCH-0027 #hosted-import; substrate behind grants)… |
 | `src/api/facade/hub_doors.rs` | src | m | 22 crate-vis | — | Owner-proof facade doors for configured hubs and pinned foreign imports |
 | `src/api/facade/hyde_doors.rs` | src | s | 6 crate-vis | — | Typed host configuration, work and completion receipts for HydeExpander |
 | `src/api/facade/identity.rs` | src | s | 14 crate-vis | — | Who a facade call acts as: its actor, its invocation id and the owner's authorship |
@@ -757,6 +758,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/harness_evaluation_routes.rs` | src | s | 1 crate-vis | — | Owner observations and explicitly selected native OF360 harness metrics |
 | `src/api/owner_routes/history_routes.rs` | src | s | 5 crate-vis | — | `/v1/owner/history`: the owner's erase history (ARCH-0038), behind the same owner door as every other owner… |
 | `src/api/owner_routes/hook_check_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/hooks/checks`: saved hook cycle and depth checks |
+| `src/api/owner_routes/hosted_import_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/imports/hosted`: a ChatGPT or Claude.ai export uploaded to the vault's own hostname… |
 | `src/api/owner_routes/house_routes.rs` | src | s | 3 crate-vis | — | `/v1/owner/workspace/finish`: the owner finishes a stored workspace and its house mind takes the root… |
 | `src/api/owner_routes/hub_table.rs` | src | m | 2 crate-vis | — | The hub's own `/v1/owner` routes and the off-record ones, one row per method and path: the router and the… |
 | `src/api/owner_routes/inbox_routes.rs` | src | s | 1 crate-vis | — | The owner's cross-identity inbox lens, shared with the typed facade |
@@ -1006,7 +1008,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_consent_host.rs` | src | s | 7 crate-vis | — | The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on… |
 | `src/code_consent_host/browser.rs` | src | s | 1 crate-vis | — | The served host's answered pass over a held browser act (FIX 10423) |
 | `src/code_consent_host/desktop.rs` | src | s | 1 crate-vis | — | The served host's answered pass over a held desktop act (FIX 11499): [`browser`]'s twin for the desktop… |
-| `src/commands.rs` | src | L | 1 struct · 13 fn · 1 const · 29 re-export · 13 crate-vis | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
+| `src/commands.rs` | src | L | 1 struct · 13 fn · 1 const · 29 re-export · 14 crate-vis | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
 | `src/commands/account.rs` | src | s | 1 fn | — | `oneiron account`: the owner's cloud registration on a stopped vault (G7) |
 | `src/commands/api.rs` | src | m | 1 fn · 21 crate-vis | — | `oneiron api …` — the bash/curl lane of the packaging ladder |
 | `src/commands/credential_file.rs` | src | m | 13 crate-vis | — | A file holding a credential, readable by its owner alone |
@@ -1016,7 +1018,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/embedder_serve.rs` | src | s | 1 fn | — | `oneiron-server embedder serve`: resolves which model to serve, then hands it to the endpoint… |
 | `src/commands/embedder_serve/tests.rs` | test | s | — | — | Which section `embedder serve` serves, and at what width |
 | `src/commands/files.rs` | src | s | 1 fn | — | `oneiron files attach\|rescan\|detach\|list\|files`: the Files world on a stopped vault (FIX 6942) |
-| `src/commands/history_import.rs` | src | L | 5 crate-vis | — | `oneiron import <source> <path>`: the owner's own history, imported into a stopped vault, or through the… |
+| `src/commands/history_import.rs` | src | L | 6 crate-vis | — | `oneiron import <source> <path>`: the owner's own history, imported into a stopped vault, or through the… |
+| `src/commands/history_import/hosted_import.rs` | src | L | 15 crate-vis | — | The hosted import's job (ARCH-0027 #hosted-import, CROSS-ARCH-0024 #onboarding-import): an export staged… |
 | `src/commands/history_import/notes.rs` | src | m | 2 crate-vis | — | `oneiron import notes <folder> --out <batch>`: a folder of linked markdown notes, as one batch the owner… |
 | `src/commands/history_import/notes/folder.rs` | src | s | 1 crate-vis | — | `oneiron import folder attach\|rescan\|detach\|list`: a folder of markdown notes and PDFs that stays attached… |
 | `src/commands/history_import/queue.rs` | src | m | 4 crate-vis | — | The import queue |
@@ -1803,7 +1806,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/projection/tests.rs` | test | s | — | — | — |
 | `src/protocol.rs` | src | m | 35 crate-vis | — | Custom Oneiron sync protocol — server-side extensions |
 | `src/replay_judge.rs` | src | m | 3 struct · 10 fn · 1 const · 1 re-export | JournalRow, PersonTime, ServeReplayJudge | The serve host's skill judge (OF-495) |
-| `src/replay_judge/axis_bandit.rs` | src | s | 1 struct · 2 fn | ServeAxisBandit | The goal-axis bandit's live arm attribution for one open optimizer proposal, on the serve judge's arms: each… |
+| `src/replay_judge/axis_bandit.rs` | src | s | 1 struct · 3 fn | ServeAxisBandit | The goal-axis bandit's live arm attribution for one open optimizer proposal, on the serve judge's arms: each… |
 | `src/replay_judge/replays.rs` | src | m | 4 crate-vis | — | The serve judge's replay evidence: each reserved receipt's task and response, read whole from its attempt… |
 | `src/residence_machines.rs` | src | s | 2 crate-vis | — | The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a… |
 | `src/runtime/artifact_backend.rs` | src | s | 2 crate-vis | — | Host-configured concurrency custody for artifact backend requests |
@@ -1947,13 +1950,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/big_rung.rs` | src | s | 1 fn | — | Doors for `tests/big_rung_written_reply.rs` (FIX 22368): the decision the Big rung stores from a written reply |
 | `src/test_doors/build_server.rs` | src | s | 1 fn | — | Door for `tests/serve_usage_metering.rs`: the server plain and embedded serve build over a vault… |
 | `src/test_doors/coach_round.rs` | src | s | 1 fn | — | Door for `tests/eval_authoring_execute_lapsed_lease.rs`: one Coach host round, the nightly worker's unit of… |
+| `src/test_doors/hosted_import.rs` | src | s | 5 fn | — | Doors for `tests/hosted_import_job.rs` ([HOSTED-IMPORT-JOB]) and `tests/hosted_import_verbs.rs`… |
 | `src/test_doors/lfs_install_line.rs` | src | s | 1 struct · 1 fn | HeldInstallLine | Door for `tests/git_lfs_install_wait_out.rs` (L3-30): the whole of the line an LFS upload takes its install… |
 | `src/test_doors/live_lease.rs` | src | s | 2 fn | — | Doors for `tests/live_lease_pending_spend.rs` ([RUN-STEP-CHARGE-LOST-ON-PROCESS-DEATH]): a live lease on a… |
 | `src/test_doors/live_run_payer.rs` | src | s | 1 struct · 3 fn | FillWriterPayer | Doors for `tests/live_run_payer_erased.rs` ([LIVE-RUN-PAYER-REQUIRED]… |
 | `src/test_doors/live_run_step.rs` | src | s | 1 fn | — | Door for `tests/run_step_live_run.rs` ([RUN-STEP-DOOR-SERVER-TEST]): a leased agent run on a test's server… |
 | `src/test_doors/mcp_surface.rs` | src | s | 2 fn | — | Door for `tests/mcp_surface_registration_latency.rs`: the MCP surface a server serves, read through the… |
 | `src/test_doors/media_job_spend.rs` | src | s | 2 struct · 11 fn | ScopedJobSpend, ScopedMediaJob | Doors for `tests/media_job_staged_spend.rs` ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1): a scoped… |
-| `src/test_doors/mod.rs` | src | s | 15 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
+| `src/test_doors/mod.rs` | src | s | 16 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
 | `src/test_doors/native_board.rs` | src | s | 2 fn | — | Doors for `tests/room_pins_native.rs` (ROOM-SCOPED-PINS P2c): what a pumped run's native board and self… |
 | `src/test_doors/replay_admission.rs` | src | s | 5 fn | — | Doors to an exact replay's admission (FIX-LIST REPLAY-REFUSED-FOR-WIDER-FALLBACK-RUNG): a runtime whose… |
 | `src/test_doors/resident_pump.rs` | src | s | 1 fn | — | Door for `tests/resident_pump_claim_latency.rs`: the agent run pump on a test's server, started as `serve`… |
@@ -2045,6 +2049,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/git_lfs_prehandler_refusal_envelope.rs` | test | s | — | — | A slip the owner revoked is refused at the binding door, before any route runs |
 | `tests/gpu_pod_hours.rs` | test | s | — | — | A GPU pod with `hours` takes new batches only inside them, read in its fixed UTC offset; a pod without… |
 | `tests/host_init_fresh_node.rs` | test | s | — | — | `oneiron host init` on a fresh node path (FIX-LIST [T0I-HOST-INIT-SYSTEMD-DIR-TWICE]): the reference… |
+| `tests/hosted_import_job.rs` | test | m | — | — | [HOSTED-IMPORT-JOB] (census item 14, L2-19; ARCH-0027 #hosted-import; the Engine's ruling of 13 Nov 07:02)… |
+| `tests/hosted_import_upload_route.rs` | test | m | — | — | [HOSTED-IMPORT-UPLOAD-ROUTE] (census item 14, L2-19; ARCH-0027:151 #hosted-import: "Upload bytes go straight… |
+| `tests/hosted_import_verbs.rs` | test | m | — | — | [HOSTED-IMPORT-VERBS] (census item 14, L2-19; ARCH-0027 #hosted-import: "Raw staging is deleted after ingest… |
 | `tests/house_finish_role.rs` | test | s | — | — | The role a workspace's house runs its org in when the owner finishes the workspace… |
 | `tests/inference_defaults.rs` | test | s | — | — | Owner-grade HTTP edit/read proof for resident inference policy rows |
 | `tests/inference_egress.rs` | test | s | — | — | Extraction default changes require a host gate at storage and dispatch |

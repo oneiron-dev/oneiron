@@ -7,9 +7,11 @@
 pub mod agent_definition_scans;
 pub mod approval_target_round_trip;
 pub mod archive_import;
+pub mod authority_stored_damage;
 pub mod authority_view_grant;
 pub mod authority_world_undo;
 pub mod callable_skill;
+pub mod campaign_opt_out_line;
 pub mod check_in;
 pub mod checkpoint_registry;
 pub mod claim_facet_birth;
@@ -42,8 +44,11 @@ pub mod graph_ask_centre;
 #[cfg(feature = "sync")]
 pub mod home_handoff_retire;
 #[cfg(feature = "sync")]
+pub mod home_sections;
+#[cfg(feature = "sync")]
 pub mod host_taint_replica;
 pub mod house_link;
+pub mod hydration_decode_guard;
 pub mod identity_recheck;
 pub mod inquiry;
 pub mod label_writers;
@@ -55,8 +60,10 @@ pub mod mail_landing;
 pub mod membership;
 pub mod meso_extraction_width;
 pub mod model_binding_proposer;
+pub mod nightly;
 pub mod note_bm25f_repair;
 pub mod off_record_shell;
+pub mod outbound_grant_index;
 pub mod pad_offer_invalidation;
 pub mod park_typed_wait;
 pub mod provenance_body_checkpoint;
@@ -70,6 +77,7 @@ pub mod run_hold;
 pub mod run_lifecycle;
 pub mod scope_summary;
 pub mod seat_park_model_step;
+pub mod skill_gate;
 pub mod skill_hub_restore;
 pub mod skill_package;
 pub mod skill_read_hold;
