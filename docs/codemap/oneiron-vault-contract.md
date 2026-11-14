@@ -26,11 +26,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/escrow.rs` | src | s | 1 struct · 2 fn · 2 const | EscrowCapsuleReport | The vault's data-key escrow on its way to the registry (CROSS-ARCH-0022 #ov-custody, invariant 03: escrow is… |
 | `src/lib/esign_delivery.rs` | src | s | 1 struct · 3 fn · 6 const | EsignDeliveryCompleted | The e-sign delivery outbox's completion receipt (FIX 5306) |
 | `src/lib/host.rs` | src | s | 1 struct · 2 trait · 2 fn · 4 type | Host, HostLimits, PreviewPortHost | One vault-hosting contract |
-| `src/lib/host_adapters.rs` | src | s | 2 struct · 2 trait · 2 fn · 4 re-export | EdgeBackend, MicroVmHost, SandboxBackend, WasmHost | Host adapters |
-| `src/lib/host_adapters/desktop.rs` | src | s | 2 re-export | — | The daemon position's adapters: systemd on Linux, launchd on macOS, and a plain bind when neither started… |
+| `src/lib/host_adapters.rs` | src | s | 2 struct · 2 trait · 2 fn · 5 re-export | EdgeBackend, MicroVmHost, SandboxBackend, WasmHost | Host adapters |
+| `src/lib/host_adapters/desktop.rs` | src | s | 4 re-export | — | The daemon position's adapters: systemd on Linux, launchd on macOS, and a plain bind when neither started… |
 | `src/lib/host_adapters/desktop/hosts.rs` | src | m | 2 struct · 3 enum · 10 fn | ActivatedListener, DesktopHost, LaunchdHost, SecretSource, SystemdHost | — |
 | `src/lib/host_adapters/desktop/keep_awake.rs` | src | s | 2 struct · 1 enum · 4 fn | AwakeGuard, AwakePolicy, KeepAwake | — |
 | `src/lib/host_adapters/desktop/keep_awake/power.rs` | src | s | 5 crate-vis | — | The power source a PluggedIn wake assertion follows (FIX 9547) |
+| `src/lib/host_adapters/desktop/sleep_watch.rs` | src | s | 1 struct · 1 trait · 1 fn · 1 re-export | SleepHooks, SleepWatch | Watches this machine's sleep and wake so the host releases its executor leases before it sleeps and takes… |
+| `src/lib/host_adapters/desktop/sleep_watch/iokit.rs` | src | s | 2 crate-vis | — | IOKit's system power notifications, on a thread of its own running a run loop |
+| `src/lib/host_adapters/desktop/sleep_watch/logind.rs` | src | s | 1 fn · 2 crate-vis | — | logind's sleep signals: a delay lock the thread holds while awake and a signal monitor it reads line by line |
 | `src/lib/host_adapters/embedded.rs` | src | s | 1 struct · 1 trait · 4 fn | AppHost, EmbeddedHost | The in-process adapter for an engine embedded in a mobile app (NAPI or FFI) |
 | `src/lib/host_adapters/native.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | InProcessHost | Native socket ownership, secret lookup, and cooperative idle wakeup |
 | `src/lib/host_adapters/vsock.rs` | src | m | 4 struct · 11 fn | FirecrackerGuest, GuestLink, VsockListener, VsockStream | The microVM adapter's guest half: AF_VSOCK sockets and the Firecracker backend an engine uses when it runs… |
@@ -70,3 +73,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/vm_provision.rs` | src | s | 3 struct · 2 enum · 9 fn · 4 const | VmFscryptKey, VmProvision, VmProvisionBinding, VmProvisionFailure, VmProvisionReply | A vault VM's provision connection (FIX 6308): what its root bootstrap, `oneiron-vm-init`, takes from the… |
 | `src/lib/vm_restore.rs` | src | s | 2 struct · 5 enum · 9 fn · 5 const | VmRestoreBoot, VmRestoreHello, VmRestoreMarkerObservation, VmRestoreMarkerReply, VmRestoreMarkerUnreadable, VmRestoreRecord, VmRestoreSourceDevice | A vault VM's restore channel (FIX 6584): the cold restore start mode (`crate::restore`) carried into a… |
 | `src/lib/wake.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 type · 1 crate-vis | Schedule, WakeEntry | Vault naming, timestamps, wake schedule and entry validation |
+| `tests/sleep_watch_logind_line.rs` | test | s | — | — | — |

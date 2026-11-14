@@ -16,7 +16,7 @@
 
 use std::collections::BTreeSet;
 
-use super::compact::{CompactOutcome, compact_window_with};
+use super::compact::{CompactOutcome, WINDOW_DRAIN_BOUND, compact_window_with};
 use super::run::{HardEraseSweepRun, WindowSweepState, WithdrawnSweep};
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -184,11 +184,11 @@ fn complete_receipts_in_txn(
     Ok(())
 }
 
-/// Compacts the owed window `key` alone, first unloading it when no caller
-/// holds it, as the housekeeping pass unloads each idle window before a pass
-/// an obligation starts: a host keeps every window it served registered.
-/// Whether it compacted or holds no state. An unload that is refused or fails
-/// leaves the window as it was, and it waits as an open one does.
+/// Compacts the owed window `key` alone, first unloading it once its holders
+/// let it go, within the drain bound: a host keeps every window it served
+/// registered, and sync traffic holds one a frame at a time. Whether it
+/// compacted or holds no state. A window still held at the bound, or whose
+/// unload fails, stays as it was, and it waits as an open one does.
 fn compact_owed_window(
     vault: &Vault,
     key: &WindowKey,
@@ -196,18 +196,10 @@ fn compact_owed_window(
     withdrawn: &mut WithdrawnSweep,
     run: &mut HardEraseSweepRun,
 ) -> bool {
-    let manager = vault
-        .live_window_manager
-        .lock()
-        .ok()
-        .and_then(|manager| manager.upgrade());
-    if let Some(manager) = manager
-        && let Err(error) = manager.unload_window(key)
-    {
-        tracing::debug!(error = %error, "sweep: owed window not unloaded");
-    }
+    // A registered window is taken from its holders first, as every pass
+    // that compacts takes it (census L9-41).
     let compact = || compact_window_with(vault, key, erased, withdrawn, false);
-    let compacted = vault.while_window_closed(key, compact);
+    let compacted = vault.while_window_drained_closed(key, WINDOW_DRAIN_BOUND, compact);
     match compacted {
         Some(Ok(CompactOutcome::Compacted)) => {
             run.windows_compacted += 1;

@@ -67,6 +67,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use serde::{Deserialize, Serialize};
 
+pub(crate) use chunks::span_words_in_txn;
 use chunks::{Admission, ChunkRef};
 pub use policy::{SievePassBudgets, SievePolicy};
 pub use rules::RuleClass;

@@ -35,17 +35,8 @@ use super::model::{
 };
 use super::{LinearSyncAdapter, VaultLinearTaskStore};
 
-/// The provider's actor of one webhook: evidence, never a vault actor.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LinearExternalActor {
-    /// The provider's actor id.
-    pub id: String,
-    /// The provider's actor type (`user`, `integration`, ...).
-    pub kind: String,
-    /// The provider's display name, when it sent one.
-    pub name: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::linear_sync::webhook::LinearExternalActor;
 
 /// What one webhook delivery carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
