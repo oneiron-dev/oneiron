@@ -32,6 +32,11 @@
 //!   the ISSUE body no longer decodes as a report: the owner's restore keeps
 //!   it omitted and restores the rest, the other report included. The same
 //!   vault's archive with secrets brings both reports back.
+//! * `owner_restore_of_a_fresh_archive_without_secrets_refuses_nothing`: the
+//!   plain case. A freshly seeded vault's archive without secrets redacts the
+//!   source trees of the seeded built-in setup skills; the owner's restore
+//!   into another freshly seeded vault keeps that vault's own seeds, counts
+//!   them unchanged and restores the one PERSON row.
 //!
 //! Public doors only; neutral fixtures (`owen`, `yuki`, `owen@example.com`);
 //! vaults in tempdirs. Each destination opens at least one wall-clock second
@@ -793,4 +798,37 @@ fn owner_restore_keeps_a_credential_nulled_report_omitted() {
             id.to_hex()
         );
     }
+}
+
+#[test]
+fn owner_restore_of_a_fresh_archive_without_secrets_refuses_nothing() {
+    let (_source_dir, source) = open_source_vault();
+    let owen = EntityId::now();
+    put_person(&source, &owen, "owen");
+    let without_secrets = source
+        .export_whole_vault(false)
+        .expect("whole-vault export without secrets")
+        .bytes()
+        .to_vec();
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = match dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&without_secrets), &dest_owner)
+    {
+        Ok(receipt) => receipt,
+        Err(error) => panic!(
+            "a freshly seeded vault's archive without secrets must restore into a freshly seeded vault: {error:?}"
+        ),
+    };
+    assert_eq!(
+        dest.get_entity_type(&owen)
+            .expect("read the restored person"),
+        Some(ENTITY_TYPE_PERSON),
+        "the owner's restore brings owen back"
+    );
+    assert!(
+        receipt.unchanged_entities >= 1,
+        "the destination's own seeds count as unchanged: {receipt:?}"
+    );
 }
