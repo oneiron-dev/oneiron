@@ -79,9 +79,10 @@ const MIB = 1024 * 1024;
  * before 200 MiB of media copies about 20 GiB, so the line sits well above
  * that and far below the terabytes 10,000 entries could ask for. A real
  * workbook of 300 sheets in 1,500 entries makes about 1.4 million path
- * comparisons per read; the line sits at 2^24. A sheet of a million cells
- * after 1,000 spilled array ranges takes a billion loop steps; the line sits
- * just above, at 2^30.
+ * comparisons per read; the line sits at 2^24. A step of SheetJS's
+ * array-range scan costs tens of nanoseconds, so the loop line sits at 2^27,
+ * where a sheet of a million cells after 128 array ranges reads in a few
+ * seconds more than its cells alone.
  */
 export const PREVIEW_BUDGET: PreviewBudget = Object.freeze({
   inputBytes: 512 * MIB,
@@ -92,7 +93,7 @@ export const PREVIEW_BUDGET: PreviewBudget = Object.freeze({
   copyBytes: 64 * 1024 * MIB,
   sheets: 10_000,
   partLookups: 1 << 24,
-  loopSteps: 1 << 30,
+  loopSteps: 1 << 27,
   sheetCells: 1_000_000,
   sheetTextChars: 64 * MIB,
 });
