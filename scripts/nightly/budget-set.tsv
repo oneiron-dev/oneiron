@@ -1,0 +1,7 @@
+id	package	kind	binary	match	test	source	bound
+vault-open-drop-cycles	oneiron	lib	oneiron	=	tests::open_gates::vault_open_drop_cycles_survive_pthread_key_limit	crates/oneiron/src/tests/open_gates.rs	nightly override: 30 min; a lib test, so report only
+ready-parent-budget-10001	oneiron	lib	oneiron	=	conversation_dag::tests::replay::ready_parent_budget_continues_after_reopen_without_other_traffic	crates/oneiron/src/conversation_dag/tests/replay.rs	default profile override: 60 min; quarantined today
+sync-convergence-props	oneiron	test	it_sync	^	sync_convergence_props::	crates/oneiron/tests/it_sync/sync_convergence_props.rs	nightly override: 30 min
+canary-dreamer-pass	oneiron-testkit	test	canary	=	a_dreamer_pass_sends_the_model_no_agents_diary_and_leaks_no_canary	crates/oneiron-testkit/tests/canary.rs	nightly override: 30 min
+stemma-reader-bounded-time	oneiron-docedit	test	stemma_reader	~	_parses_in_bounded_time	crates/oneiron-docedit/tests/stemma_reader.rs	each asserts under 5 s
+hnsw-recall-at-10	oneiron-bench	test	cleanup_retrieval	=	hnsw_recall_at_10_vs_bruteforce_meets_quality_floor	crates/oneiron-bench/tests/cleanup_retrieval.rs	nightly override: 30 min; oneiron-bench runs from PR 10b2

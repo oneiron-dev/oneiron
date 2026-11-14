@@ -4,10 +4,10 @@
 Standard library only. scripts/nightly/run_nightly.sh calls it; each
 subcommand reads files the job wrote:
 
-  plan METADATA [--shard-files N] [--cursor FILE]
-                                  the night's selections: the lib tests, then
-                                  the integration tests, whole or in shards
-                                  from the cursor on
+  plan METADATA [--shard-files N] [--cursor FILE] [--budget-set SET]
+                                  the night's selections: the lib tests, the
+                                  budget tests, then the integration tests,
+                                  whole or in shards from the cursor on
   advance PLAN NAME CURSOR        move the cursor past a finished shard
   deadline HH:MM                  the epoch of the next HH:MM, Japan time
   failed-units LOG...             the test build units cargo could not compile
@@ -19,9 +19,15 @@ subcommand reads files the job wrote:
   tests PLAN NAME                 a selection's integration test names
   field JSON KEY                  one top-level value of a JSON object
   census ROOT                     the lib-test quarantine gates in a tree (TSV)
+  budget-filter SET [--metadata METADATA]
+                                  the budget set's nextest filter (none() when
+                                  no row is left): with the metadata, only the
+                                  rows whose package and test target a
+                                  selection builds
   summary ...                     the night's verdict: prints the one summary
                                   line and writes summary.json, summary.txt,
-                                  results-store.json and flake-row.json
+                                  results-store.json, flake-row.json,
+                                  budget-samples.json and budget-row.json
 
 A quarantine gate is a `// FIX [LIBTEST-QUARANTINE-<ID>]` comment followed by
 `#[cfg(any())]` on the item it switches off (OPUS-MAINFIX's lib-test
@@ -30,6 +36,16 @@ quarantine, #7561). The committed baseline
 the quarantine landed (12c169344bc3, "train: #7561"; 441 gates under 401
 ids); a baseline gate that is gone from the tree is ported, and the summary
 names its tests' pass or fail.
+
+The budget set (scripts/nightly/budget-set.tsv, PR 10b) names the tests whose
+time the nightly tracks (Fable's test verdict, section 3: "budget tests are
+separate, nightly, compared to a per-host baseline with a 20 percent band").
+Their integration test binaries run every night in the `budget` selection; a
+lib test row runs where the lib tests run. A host's baseline for a test is the
+median of its first 5 passing nights (budget-samples.json carries them from
+night to night) until a PR commits it to scripts/nightly/budget-baseline.tsv:
+the night that reaches 5 writes budget-baseline-proposal.tsv. The band is
+report only: it never makes the night red.
 """
 
 from __future__ import annotations
@@ -39,9 +55,11 @@ import bisect
 import json
 import os
 import re
+import statistics
 import sys
 import time
 import xml.etree.ElementTree as ElementTree
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -79,6 +97,16 @@ LIB_REPORT_PACKAGES = ("oneiron", "oneiron-server")
 
 STAGES = ("verdict", "libtest", "quarantine", "pending")
 FLIPS_IN_ROW = 50
+
+# The budget set and its per-host baselines (PR 10b). A row's match is = (the
+# exact test name), ~ (a part of it) or ^ (its start).
+BUDGET_COLUMNS = ("id", "package", "kind", "binary", "match", "test", "source", "bound")
+BUDGET_KINDS = ("lib", "test")
+BUDGET_MATCHES = ("=", "~", "^")
+BUDGET_BASELINE_COLUMNS = ("host", "test", "seconds", "nights", "first", "last")
+BUDGET_BASELINE_NIGHTS = 5  # a baseline is the median of a host's first 5 passing nights
+BUDGET_BAND = 0.20
+BUDGET_SAMPLES_KEPT = 30  # per host and test: the first BUDGET_BASELINE_NIGHTS, then the latest ones
 
 
 def unit_kind(target: str, test: bool) -> str:
@@ -129,8 +157,9 @@ def plan(
     shard_files: int = 0,
     cursor: dict | None = None,
     always_excluded: tuple[str, ...] = ALWAYS_EXCLUDED,
+    budget: list[dict[str, str]] | None = None,
 ) -> dict:
-    """The night's selections: the lib tests first, then the integration tests.
+    """The night's selections: the lib tests, the budget tests, then the integration tests.
 
     `libs` selects every lib test and bin test (`--lib --bins`) and the
     pending-door tool's own test. The integration tests follow by name
@@ -145,6 +174,12 @@ def plan(
     the first name at or after `next` and wrap past the end of the list, so a
     night that stops early resumes there the next night, and a full cycle runs
     every file once. The shard that holds the list's last name ends a cycle.
+
+    `budget` follows `libs` and runs every night: the integration tests that
+    hold a budget set row (its verdict runs only the budget tests), so a host
+    gets one sample a night though a shard comes round only every few nights.
+    Its args are a shard's, so features unify as for the shards. It is left
+    out when no row's test target is in a selected package.
     """
     owners = {
         name: [p for p in packages if p not in always_excluded] for name, packages in test_owners(metadata).items()
@@ -159,6 +194,15 @@ def plan(
     ordered = names[start:] + names[:start]
     size = shard_files if shard_files > 0 else max(len(names), 1)
     selections = [{"name": "libs", "kind": "libs", "excluded": [], "bins": True, "tests": libs_tests}]
+    budget_tests = sorted(
+        {
+            row["binary"]
+            for row in budget or []
+            if row["kind"] == "test" and row["package"] in owners.get(row["binary"], [])
+        }
+    )
+    if budget_tests:
+        selections.append({"name": "budget", "kind": "budget", "excluded": [], "bins": False, "tests": budget_tests})
     order = []
     for number, first in enumerate(range(0, len(ordered), size), start=1):
         tests = ordered[first : first + size]
@@ -277,7 +321,7 @@ def prune(chosen: dict, name: str, failed: list[dict[str, str]], metadata: dict)
     if json.dumps(entry, sort_keys=True) == before:
         drop(chosen, name, "the build failed again and named no new failed unit")
         return False
-    if entry["kind"] == "tests" and not entry["tests"]:
+    if entry["kind"] in ("tests", "budget") and not entry["tests"]:
         drop(chosen, name, "every unit is left out")
         return False
     return True
@@ -367,10 +411,15 @@ def census_tsv(rows: list[dict[str, str]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def read_census_tsv(path: Path) -> list[dict[str, str]]:
+def read_tsv(path: Path) -> list[dict[str, str]]:
+    """The rows of a TSV file whose first line names its columns."""
     lines = path.read_text().splitlines()
     header = lines[0].split("\t")
     return [dict(zip(header, line.split("\t"))) for line in lines[1:] if line]
+
+
+def read_census_tsv(path: Path) -> list[dict[str, str]]:
+    return read_tsv(path)
 
 
 def gate_key(row: dict[str, str]) -> tuple[str, str, str, str]:
@@ -392,6 +441,31 @@ def read_junit(path: Path) -> dict[str, str]:
                 outcome = "pass"
             outcomes[f"{binary} {case.get('name', '')}"] = outcome
     return outcomes
+
+
+def read_junit_seconds(path: Path) -> dict[str, float]:
+    """`<binary id> <test name>` -> seconds, for the passed tests of one nextest JUnit file."""
+    seconds: dict[str, float] = {}
+    root = ElementTree.parse(path).getroot()
+    for suite in root.iter("testsuite"):
+        binary = suite.get("name", "")
+        for case in suite.iter("testcase"):
+            if any(case.find(tag) is not None for tag in ("failure", "error", "skipped")):
+                continue
+            try:
+                seconds[f"{binary} {case.get('name', '')}"] = float(case.get("time", ""))
+            except ValueError:
+                continue
+    return seconds
+
+
+def stage_seconds(out: Path) -> dict[str, float]:
+    """The passed tests' seconds in the verdict and libtest stages, where a budget test runs."""
+    seconds: dict[str, float] = {}
+    for stage in ("verdict", "libtest"):
+        for path in sorted(out.glob(f"junit-{stage}-*.xml")):
+            seconds.update(read_junit_seconds(path))
+    return seconds
 
 
 def stage_results(out: Path) -> dict[str, dict[str, str]]:
@@ -513,6 +587,184 @@ def red_nights(history: list[str], red: bool) -> int:
     return streak
 
 
+def read_budget_set(path: Path) -> list[dict[str, str]]:
+    """The budget set's rows, checked: every column, a known kind and match, no repeated id."""
+    rows = read_tsv(path)
+    seen = set()
+    for row in rows:
+        missing = [column for column in BUDGET_COLUMNS if not row.get(column)]
+        if missing:
+            raise SystemExit(f"nightly_report.py: {path}: row {row.get('id', '?')} lacks {', '.join(missing)}")
+        if row["kind"] not in BUDGET_KINDS or row["match"] not in BUDGET_MATCHES:
+            raise SystemExit(
+                f"nightly_report.py: {path}: row {row['id']}: kind {row['kind']!r}, match {row['match']!r}"
+            )
+        if row["id"] in seen:
+            raise SystemExit(f"nightly_report.py: {path}: id {row['id']} is repeated")
+        seen.add(row["id"])
+    return rows
+
+
+def budget_filter(
+    rows: list[dict[str, str]], metadata: dict | None = None, always_excluded: tuple[str, ...] = ALWAYS_EXCLUDED
+) -> str:
+    """One nextest filter for every test the budget set names (none() for an empty set).
+
+    With the workspace's metadata, the filter keeps only the rows a selection
+    can run: the package is a workspace member outside `always_excluded`, and
+    it has the row's test target (or a lib, for a lib row). nextest refuses a
+    package() or binary() that matches nothing, and one stale row must not
+    stop every verdict run; such a row is named as not run in the summary.
+    """
+    packages = (
+        {p["name"]: p for p in workspace_packages(metadata) if p["name"] not in always_excluded} if metadata else None
+    )
+    terms = []
+    for row in rows:
+        if packages is not None:
+            package = packages.get(row["package"])
+            if package is None:
+                continue
+            if row["kind"] == "test" and row["binary"] not in integration_tests(package):
+                continue
+            if row["kind"] == "lib" and not any("lib" in target["kind"] for target in package["targets"]):
+                continue
+        binary = f" & binary(={row['binary']})" if row["kind"] == "test" else ""
+        if row["match"] == "^":
+            test = f"/^{re.escape(row['test'])}/"
+        else:
+            test = row["match"] + row["test"]
+        terms.append(f"(package({row['package']}) & kind({row['kind']}){binary} & test({test}))")
+    return " | ".join(terms) or "none()"
+
+
+def budget_row_matches(row: dict[str, str], key: str) -> bool:
+    """A JUnit key (`<binary id> <test name>`) is one of the row's tests.
+
+    nextest's binary id is the package for a lib test and
+    `<package>::<test target>` for an integration test.
+    """
+    binary, _, test = key.partition(" ")
+    if binary != (row["package"] if row["kind"] == "lib" else f"{row['package']}::{row['binary']}"):
+        return False
+    if row["match"] == "=":
+        return test == row["test"]
+    if row["match"] == "~":
+        return row["test"] in test
+    return test.startswith(row["test"])
+
+
+def budget_not_run_reason(row: dict[str, str], chosen: dict, gates: list[dict[str, str]]) -> str:
+    if row["package"] in chosen["always_excluded"]:
+        return f"{row['package']} is left out of the nightly"
+    if row["kind"] == "lib":
+        probe = {f"{row['package']} {row['test']}": "pass"}
+        for gate in gates:
+            if gate_tests(gate, probe):
+                return f"quarantined ({gate['id']})"
+    return "no result tonight"
+
+
+def updated_samples(
+    samples: dict[str, dict[str, list[dict]]], host: str, date: str, head: str, seconds: dict[str, float]
+) -> dict[str, dict[str, list[dict]]]:
+    """Tonight's passing budget times added to the host's samples (one per night; a rerun replaces it)."""
+    kept = {name: {test: list(series) for test, series in tests.items()} for name, tests in samples.items()}
+    later = BUDGET_SAMPLES_KEPT - BUDGET_BASELINE_NIGHTS
+    for test, value in seconds.items():
+        series = [sample for sample in kept.setdefault(host, {}).get(test, []) if sample["date"] != date]
+        series.append({"date": date, "head": head[:12], "seconds": value})
+        series.sort(key=lambda sample: sample["date"])
+        kept[host][test] = series[:BUDGET_BASELINE_NIGHTS] + series[BUDGET_BASELINE_NIGHTS:][-later:]
+    return kept
+
+
+def budget_band(seconds: float, baseline: float) -> str:
+    if seconds > baseline * (1 + BUDGET_BAND):
+        return "over"
+    if seconds < baseline * (1 - BUDGET_BAND):
+        return "under"
+    return "in"
+
+
+def budget_report(
+    rows: list[dict[str, str]],
+    tonight: dict[str, str],
+    seconds: dict[str, float],
+    samples: dict[str, dict[str, list[dict]]],
+    committed: list[dict[str, str]],
+    not_run_reason: Callable[[dict[str, str]], str],
+    host: str,
+    date: str,
+    head: str,
+) -> dict:
+    """Each budget test run tonight against its host's baseline: the committed row, else the first 5 samples."""
+    tested = {test for row in rows for test in tonight if budget_row_matches(row, test)}
+    kept = updated_samples(samples, host, date, head, {t: s for t, s in seconds.items() if t in tested})
+    baselines = {(row["host"], row["test"]): row for row in committed}
+    tests, not_run, proposed = [], [], []
+    for row in rows:
+        keys = sorted(test for test in tonight if budget_row_matches(row, test))
+        if not keys:
+            not_run.append({"id": row["id"], "reason": not_run_reason(row)})
+        for test in keys:
+            entry = {"id": row["id"], "test": test, "outcome": tonight[test], "seconds": seconds.get(test)}
+            tests.append(entry)
+            if entry["outcome"] != "pass" or entry["seconds"] is None:
+                entry["band"] = "no-sample"
+                continue
+            series = kept.get(host, {}).get(test, [])
+            if (host, test) in baselines:
+                committed_row = baselines[(host, test)]
+                entry.update(baseline=float(committed_row["seconds"]), source="committed")
+            elif len(series) >= BUDGET_BASELINE_NIGHTS:
+                first = series[:BUDGET_BASELINE_NIGHTS]
+                entry.update(baseline=statistics.median(sample["seconds"] for sample in first), source="samples")
+                proposed.append(
+                    {
+                        "host": host,
+                        "test": test,
+                        "seconds": f"{entry['baseline']:.3f}",
+                        "nights": str(BUDGET_BASELINE_NIGHTS),
+                        "first": first[0]["date"],
+                        "last": first[-1]["date"],
+                    }
+                )
+            else:
+                entry.update(band="pending", nights=len(series))
+                continue
+            entry["band"] = budget_band(entry["seconds"], entry["baseline"])
+    bands = [entry["band"] for entry in tests]
+    proposal = sorted([*committed, *proposed], key=lambda row: (row["host"], row["test"])) if proposed else []
+    return {
+        "host": host,
+        "tests": tests,
+        "not_run": not_run,
+        "in": bands.count("in"),
+        "out": bands.count("over") + bands.count("under"),
+        "pending": bands.count("pending"),
+        "no_sample": bands.count("no-sample"),
+        "proposed": len(proposed),
+        "proposal": proposal,
+        "samples": kept,
+    }
+
+
+def budget_text(entry: dict, host: str) -> str:
+    if entry["band"] == "no-sample":
+        return f"budget {entry['test']}: {entry['outcome']} tonight, no sample"
+    if entry["band"] == "pending":
+        return (
+            f"budget {entry['test']}: {entry['seconds']:.2f} s, baseline pending"
+            f" ({entry['nights']}/{BUDGET_BASELINE_NIGHTS} nights on {host})"
+        )
+    change = (entry["seconds"] / entry["baseline"] - 1) * 100 if entry["baseline"] else 0.0
+    return (
+        f"budget {entry['test']}: {entry['seconds']:.2f} s, baseline {entry['baseline']:.2f} s ({entry['source']}),"
+        f" {entry['band']} band ({change:+.0f}%)"
+    )
+
+
 def summary(args: argparse.Namespace) -> int:
     out = Path(args.out)
     chosen = json.loads(Path(args.plan).read_text())
@@ -526,9 +778,24 @@ def summary(args: argparse.Namespace) -> int:
     libtest = counts(results["libtest"])
     quarantined = counts(results["quarantine"])
     pending_run = counts(results["pending"])
-    report = quarantine_report(read_census_tsv(Path(args.baseline)), census(Path(args.census_root)), results["libtest"])
+    gates = census(Path(args.census_root))
+    report = quarantine_report(read_census_tsv(Path(args.baseline)), gates, results["libtest"])
     tonight = {**results["libtest"], **results["verdict"]}
     store = json.loads(Path(args.previous).read_text()) if args.previous and Path(args.previous).is_file() else {}
+    budget_rows = read_budget_set(Path(args.budget_set)) if args.budget_set and Path(args.budget_set).is_file() else []
+    budget = budget_report(
+        budget_rows,
+        tonight,
+        stage_seconds(out),
+        json.loads(Path(args.budget_samples).read_text())
+        if args.budget_samples and Path(args.budget_samples).is_file()
+        else {},
+        read_tsv(Path(args.budget_baseline)) if args.budget_baseline and Path(args.budget_baseline).is_file() else [],
+        lambda row: budget_not_run_reason(row, chosen, gates),
+        args.host,
+        args.date,
+        args.head,
+    )
     flipped = flips(store, tonight)
     history = Path(args.history).read_text().splitlines() if args.history and Path(args.history).is_file() else []
 
@@ -564,6 +831,8 @@ def summary(args: argparse.Namespace) -> int:
         f" quarantine_gated={report['gated']} ported_green={report['ported_green']}"
         f" ported_red={report['ported_red']} new_gates={len(report['new_gates'])}"
         f" red_nights={streak}"
+        f" budget_in={budget['in']} budget_out={budget['out']} budget_pending={budget['pending']}"
+        f" budget_not_run={len(budget['not_run'])}"
     )
     if red_ids:
         line += " ported_red_ids=" + ",".join(red_ids)
@@ -589,6 +858,7 @@ def summary(args: argparse.Namespace) -> int:
         "libtest_failed": sorted(test for test, outcome in results["libtest"].items() if outcome == "fail"),
         "flipped": flipped,
         "quarantine": report,
+        "budget": {key: value for key, value in budget.items() if key != "samples"},
     }
     (out / "summary.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     (out / "results-store.json").write_text(
@@ -607,6 +877,28 @@ def summary(args: argparse.Namespace) -> int:
         "flipped_tests": flipped[:FLIPS_IN_ROW],
     }
     (out / "flake-row.json").write_text(json.dumps(flake_row, sort_keys=True) + "\n")
+    (out / "budget-samples.json").write_text(json.dumps(budget["samples"], indent=1, sort_keys=True) + "\n")
+    budget_row = {
+        "date": args.date,
+        "head": args.head,
+        "host": args.host,
+        "in": budget["in"],
+        "out": budget["out"],
+        "pending": budget["pending"],
+        "not_run": len(budget["not_run"]),
+        "out_tests": [
+            {key: entry[key] for key in ("test", "seconds", "baseline", "band")}
+            for entry in budget["tests"]
+            if entry["band"] in ("over", "under")
+        ],
+    }
+    (out / "budget-row.json").write_text(json.dumps(budget_row, sort_keys=True) + "\n")
+    proposal_path = out / "budget-baseline-proposal.tsv"
+    proposal_path.unlink(missing_ok=True)
+    if budget["proposal"]:
+        lines = ["\t".join(BUDGET_BASELINE_COLUMNS)]
+        lines += ["\t".join(row[column] for column in BUDGET_BASELINE_COLUMNS) for row in budget["proposal"]]
+        proposal_path.write_text("\n".join(lines) + "\n")
 
     text = [line, ""]
     text += [f"red: {reason}" for reason in reasons]
@@ -638,6 +930,13 @@ def summary(args: argparse.Namespace) -> int:
                 f", failed: {', '.join(entry['failed'])}" if entry["failed"] else ""
             )
             text.append(f"ported {gate_id}: {entry['state']}{detail}")
+    text += [budget_text(entry, args.host) for entry in budget["tests"]]
+    text += [f"budget not run: {entry['id']} ({entry['reason']})" for entry in budget["not_run"]]
+    if budget["proposed"]:
+        text.append(
+            f"budget baseline proposal: {budget['proposed']} new row(s) in budget-baseline-proposal.tsv"
+            " (a PR commits it as scripts/nightly/budget-baseline.tsv)"
+        )
     (out / "summary.txt").write_text("\n".join(text) + "\n")
     print(line)
     return 1 if red else 0
@@ -652,6 +951,7 @@ def main(argv: list[str]) -> int:
     command.add_argument("metadata", type=Path)
     command.add_argument("--shard-files", type=int, default=0)
     command.add_argument("--cursor", type=Path, help="the cursor file; absent or empty starts at the first name")
+    command.add_argument("--budget-set", type=Path, help="scripts/nightly/budget-set.tsv: adds the budget selection")
     command = commands.add_parser("advance")
     command.add_argument("plan", type=Path)
     command.add_argument("name")
@@ -678,6 +978,9 @@ def main(argv: list[str]) -> int:
     command.add_argument("key")
     command = commands.add_parser("census")
     command.add_argument("root", type=Path)
+    command = commands.add_parser("budget-filter")
+    command.add_argument("budget_set", type=Path)
+    command.add_argument("--metadata", type=Path, help="cargo metadata: leave out rows whose package is not in it")
     command = commands.add_parser("summary")
     command.add_argument("--out", required=True)
     command.add_argument("--date", required=True)
@@ -689,13 +992,18 @@ def main(argv: list[str]) -> int:
     command.add_argument("--census-root", required=True)
     command.add_argument("--previous")
     command.add_argument("--history")
+    command.add_argument("--budget-set", help="the budget set (scripts/nightly/budget-set.tsv)")
+    command.add_argument("--budget-baseline", help="the committed baselines (scripts/nightly/budget-baseline.tsv)")
+    command.add_argument("--budget-samples", help="the last night's budget-samples.json")
     args = parser.parse_args(argv)
 
     if args.command == "failed-units":
         print(json.dumps(failed_units(args.logs), indent=2))
     elif args.command == "plan":
         cursor = json.loads(args.cursor.read_text()) if args.cursor and args.cursor.is_file() else None
-        print(json.dumps(plan(json.loads(args.metadata.read_text()), args.shard_files, cursor), indent=2))
+        budget = read_budget_set(args.budget_set) if args.budget_set else None
+        chosen = plan(json.loads(args.metadata.read_text()), args.shard_files, cursor, budget=budget)
+        print(json.dumps(chosen, indent=2))
     elif args.command == "advance":
         chosen = json.loads(args.plan.read_text())
         cursor = advance(chosen, args.name)
@@ -728,6 +1036,9 @@ def main(argv: list[str]) -> int:
         print("" if value is None else value)
     elif args.command == "census":
         sys.stdout.write(census_tsv(census(args.root)))
+    elif args.command == "budget-filter":
+        metadata = json.loads(args.metadata.read_text()) if args.metadata else None
+        print(budget_filter(read_budget_set(args.budget_set), metadata))
     else:
         return summary(args)
     return 0
