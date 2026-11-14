@@ -61,6 +61,7 @@ pub mod mail_counterparty;
 pub mod mail_landing;
 pub mod membership;
 pub mod meso_extraction_width;
+pub mod microsoft_token;
 pub mod model_binding_proposer;
 pub mod nightly;
 pub mod note_bm25f_repair;
@@ -100,6 +101,7 @@ pub mod uncertain_send_questions;
 pub mod untangle_regressions;
 pub mod verb_hook_ask;
 pub mod wake_d1_park_release;
+pub mod workspace_token;
 #[cfg(feature = "sync")]
 pub mod world_follow;
 #[cfg(feature = "sync")]
