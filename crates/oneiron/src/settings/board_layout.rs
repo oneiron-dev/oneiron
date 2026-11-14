@@ -54,18 +54,10 @@ pub struct BoardLayoutSettings {
     pub agent_override_layouts: Vec<AgentBoardLayoutOverride>,
 }
 
-/// The most agents the owner may override one by one.
-pub const BOARD_LAYOUT_AGENT_OVERRIDES_MAX: usize = 256;
-
-/// The owner's override of one agent's board layout.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentBoardLayoutOverride {
-    /// The agent whose board this override lays out.
-    pub agent: EntityId,
-    /// The sections the owner sets for this agent.
-    pub layout: BoardLayout,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::settings::board_layout::{
+    AgentBoardLayoutOverride, BOARD_LAYOUT_AGENT_OVERRIDES_MAX,
+};
 
 impl BoardLayoutSettings {
     /// Checks every layer as any layout is checked, and the per-agent list:

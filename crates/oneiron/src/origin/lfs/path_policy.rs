@@ -28,17 +28,8 @@ use crate::store::code_snapshot::validation::validate_manifest_path;
 const PATH_POLICY: SideTable<EntityId, OriginLfsPathPolicy, Named> =
     SideTable::new(&side_table::ORIGIN_LFS_PATH_POLICY);
 
-/// The paths one rule names, in the canonical text of Git path bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum OriginLfsPathMatch {
-    /// This one repository-relative path.
-    Exact(String),
-    /// Every path under this directory, at a `/` boundary: `vendor` matches
-    /// `vendor/lib.bin`, not `vendor` itself or `vendor-other/lib.bin`. No
-    /// trailing `/`.
-    Prefix(String),
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::origin::lfs::path_policy::OriginLfsPathMatch;
 
 /// One ordered rule: the paths it matches and their class.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
