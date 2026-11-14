@@ -26,14 +26,14 @@
 
 use std::fs::File;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use oneiron::EntityId;
 use oneiron::ingest::archive_precheck::{self, EntryReader, SkippedEntry};
 use oneiron::ingest::history::slack::{
-    self, SlackExport, SlackExportFile, SlackMemberCounts, SlackMemberMapping, SlackWorkspace,
-    USERS_FILE,
+    self, SlackExport, SlackExportFile, SlackMemberCounts, SlackMemberMap, SlackMemberMapping,
+    SlackWorkspace, USERS_FILE,
 };
 use oneiron::ingest::history::{HistoryImportReport, HistorySharing, HistorySource};
 use serde::Serialize;
@@ -124,6 +124,15 @@ pub(in crate::commands) fn import_slack(command: ImportSlackCommand) -> anyhow::
     }
 }
 
+/// The export a run reads, decoded.
+struct DecodedExport {
+    path: PathBuf,
+    /// The name the owner knows the workspace by.
+    name: String,
+    files: Files,
+    decoded: SlackWorkspace,
+}
+
 /// `oneiron import slack <path> (--members <map.json> | --propose-members
 /// <out.json>) [--workspace <name>]`.
 fn import_export(args: ImportSlackArgs) -> anyhow::Result<()> {
@@ -140,17 +149,7 @@ fn import_export(args: ImportSlackArgs) -> anyhow::Result<()> {
     let path = path.ok_or_else(|| anyhow::anyhow!("give the export: its zip or its folder"))?;
     let config = resolve_serve_config(&serve)?;
     let started = Instant::now();
-    let map = members
-        .as_deref()
-        .map(|members| {
-            slack::parse_member_map(&read_text(
-                File::open(members)
-                    .map_err(|error| anyhow::anyhow!("open {}: {error}", members.display()))?,
-                members,
-            )?)
-            .map_err(|error| anyhow::anyhow!("{}: {error}", members.display()))
-        })
-        .transpose()?;
+    let map = members.as_deref().map(read_member_map).transpose()?;
     if let Some(out) = &propose_members {
         anyhow::ensure!(
             !out.exists(),
@@ -159,19 +158,50 @@ fn import_export(args: ImportSlackArgs) -> anyhow::Result<()> {
         );
     }
     let name = workspace.unwrap_or_else(|| workspace_name(&path));
-    let (mut files, export) = read_export(&path, &name, &ExportBounds::for_config(&config)?)?;
-    let mut decoded =
+    let (files, export) = read_export(&path, &name, &ExportBounds::for_config(&config)?)?;
+    let decoded =
         slack::decode(&export).map_err(|error| anyhow::anyhow!("{}: {error}", path.display()))?;
     drop(export);
-    let Some((members, map)) = members.zip(map) else {
-        let out = propose_members
-            .ok_or_else(|| anyhow::anyhow!("give --members or --propose-members"))?;
-        return propose(&config, &name, &decoded, &out, started);
+    let decoded_export = DecodedExport {
+        path,
+        name,
+        files,
+        decoded,
     };
+    match (members.zip(map), propose_members) {
+        (Some((members, map)), _) => land_export(&config, decoded_export, &members, &map, started),
+        (None, Some(out)) => propose(&config, &decoded_export, &out, started),
+        (None, None) => anyhow::bail!("give --members or --propose-members"),
+    }
+}
+
+/// The owner's member map in the file `members`.
+fn read_member_map(members: &Path) -> anyhow::Result<SlackMemberMap> {
+    let file = File::open(members)
+        .map_err(|error| anyhow::anyhow!("open {}: {error}", members.display()))?;
+    slack::parse_member_map(&read_text(file, members)?)
+        .map_err(|error| anyhow::anyhow!("{}: {error}", members.display()))
+}
+
+/// `--members <map>`: lands the export, each conversation bound to the
+/// members `map` maps, its TURNs born under the workspace's facet.
+fn land_export(
+    config: &ServeConfig,
+    export: DecodedExport,
+    members: &Path,
+    map: &SlackMemberMap,
+    started: Instant,
+) -> anyhow::Result<()> {
+    let DecodedExport {
+        path,
+        name,
+        mut files,
+        mut decoded,
+    } = export;
     let counts = decoded
-        .map_members(&map)
+        .map_members(map)
         .map_err(|error| anyhow::anyhow!("{}: {error}", members.display()))?;
-    let roster = decoded.mapped_members(&map);
+    let roster = decoded.mapped_members(map);
     earliest_first(&mut decoded.conversations);
     files.passed = decoded.passed.len();
     files.decoded.add(&decoded.conversations);
@@ -182,7 +212,7 @@ fn import_export(args: ImportSlackArgs) -> anyhow::Result<()> {
         decoded.members.len()
     ));
 
-    let vault = open_vault(&config)?;
+    let vault = open_vault(config)?;
     let owner = crate::owner::local_owner(&vault)?;
     let imported_at = own_second(&vault)?;
     // The member table first: a contact keeps its name from the import that
@@ -259,11 +289,11 @@ fn import_export(args: ImportSlackArgs) -> anyhow::Result<()> {
 /// reads. Nothing lands. The output is counts only.
 fn propose(
     config: &ServeConfig,
-    name: &str,
-    decoded: &SlackWorkspace,
+    export: &DecodedExport,
     out: &Path,
     started: Instant,
 ) -> anyhow::Result<()> {
+    let DecodedExport { name, decoded, .. } = export;
     let vault = open_vault(config)?;
     let owner = crate::owner::local_owner(&vault)?;
     let proposals = vault
