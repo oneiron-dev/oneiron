@@ -14,7 +14,8 @@
 //!   answers no decision and leaves the check-in unspent.
 //!
 //! The ask is opened here through the check-in test doors on a chain whose
-//! Owner rung is the vault owner, as in `check_in_erase_effects`.
+//! Owner rung is the vault owner, as in `check_in_erase_effects`. The root
+//! request's target is a second install the owner enrolled as theirs.
 //!
 //! On the base (1daae67dc2a) this file does not build: the three requests
 //! have no `check_in_ref`, their answers no `check_in`, and the two effect
@@ -28,14 +29,57 @@
 #[path = "check_in/owner_apply_fixture.rs"]
 mod owner_apply_fixture;
 
-use oneiron::EntityId;
-use oneiron::authority::{StepUpFactor, StepUpPasskeysResetRequest, StepUpTotpResetRequest};
-use oneiron::check_in::{ActClass, step_up_reset_effect_digest};
-use oneiron::verbs::{reset_step_up_passkeys_as, reset_step_up_totp_as};
+use std::sync::Arc;
+
+use oneiron::authority::{
+    ActSurface, MachineOwnership, MachineRole, RootChange, StepUpFactor,
+    StepUpPasskeysResetRequest, StepUpTotpResetRequest,
+};
+use oneiron::check_in::{ActClass, root_request_effect_digest, step_up_reset_effect_digest};
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::verbs::{
+    RootRequestCreateRequest, create_root_request_as, reset_step_up_passkeys_as,
+    reset_step_up_totp_as,
+};
+use oneiron::{EntityId, Vault, VaultConfig};
+use oneiron_keystore::MemoryKeystore;
 use owner_apply_fixture::{approved, owner_decision, rooted, spent};
 
 const PASSKEYS_RESET: &str = "vault.step_up.passkeys.reset";
 const TOTP_RESET: &str = "vault.step_up.totp.reset";
+const ROOT_REQUEST: &str = "vault.roots.requests.create";
+
+/// A second install that asked to join `vault` and that its owner enrolled
+/// as theirs: an install this one can name. Its directory, held so its
+/// files outlive the test, and its machine id.
+fn linked_install(
+    vault: &Vault,
+    owner_proof: &AuthenticatedOwner,
+) -> (tempfile::TempDir, EntityId) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let install = Vault::open(dir.path(), VaultConfig::device()).expect("open the joining install");
+    install.install_device_keystore(Arc::new(MemoryKeystore::default()));
+    let vault_id = vault
+        .authority_vault_id()
+        .expect("read the vault id")
+        .expect("a rooted vault");
+    let key = install
+        .machine_encryption_key(vault_id)
+        .expect("its encryption key");
+    let request = install
+        .machine_enrolment_request(vault_id, key)
+        .expect("its enrolment request");
+    vault
+        .enroll_machine(
+            owner_proof,
+            ActSurface::ThisInstall,
+            &request,
+            MachineRole::Owned(MachineOwnership::Yours),
+            None,
+        )
+        .expect("the owner enrols it");
+    (dir, request.machine)
+}
 
 #[test]
 fn the_owner_applies_an_approved_passkey_reset_once() {
@@ -159,4 +203,82 @@ fn a_passkey_reset_ask_does_not_apply_to_the_authenticator_app_reset() {
         spent(&vault, &asked),
         "the reset's writer spent the check-in"
     );
+}
+
+#[test]
+fn the_owner_applies_an_approved_root_request_once_on_an_install_they_can_name() {
+    let (_dir, vault, owner, owner_proof) = rooted();
+    let (_target_dir, target) = linked_install(&vault, &owner_proof);
+    let (_other_dir, other) = linked_install(&vault, &owner_proof);
+    let activate = |target: EntityId, check_in_ref: Option<EntityId>| {
+        create_root_request_as(
+            &vault,
+            &owner_proof,
+            ActSurface::ThisInstall,
+            RootRequestCreateRequest {
+                target: target.to_hex(),
+                change: "activate".to_owned(),
+                root: None,
+                machine: None,
+                check_in_ref: check_in_ref.map(|id| id.to_hex()),
+            },
+        )
+    };
+
+    let own = activate(target, None).expect("the owner requests on their own proof");
+    assert!(
+        own.receipt.request.is_some(),
+        "a linked install's request is recorded: {own:?}"
+    );
+    assert_eq!(
+        own.check_in,
+        Some(owner_decision(ActClass::KeyRecovery, None, None)),
+        "the Owner's own request records their own proof"
+    );
+
+    let digest = root_request_effect_digest(&target, RootChange::Activate);
+    let (asked, asker) = approved(
+        &vault,
+        owner,
+        &owner_proof,
+        ROOT_REQUEST,
+        ActClass::KeyRecovery,
+        &digest,
+    );
+    let unnamed = activate(EntityId::now(), Some(asked)).expect("an unnamed install answers");
+    assert!(
+        unnamed.receipt.request.is_none() && unnamed.check_in.is_none(),
+        "an install this one cannot name records nothing: {unnamed:?}"
+    );
+    assert!(
+        !spent(&vault, &asked),
+        "a request that records nothing spends nothing"
+    );
+    let crossed = activate(other, Some(asked));
+    assert!(
+        crossed.is_err(),
+        "an ask for another install's change records nothing: {crossed:?}"
+    );
+    assert!(!spent(&vault, &asked), "a refused apply spends nothing");
+
+    let applied = activate(target, Some(asked)).expect("the owner applies the approved request");
+    assert!(
+        applied.receipt.request.is_some(),
+        "it is recorded: {applied:?}"
+    );
+    assert_eq!(
+        applied.check_in,
+        Some(owner_decision(
+            ActClass::KeyRecovery,
+            Some(asked),
+            Some(asker)
+        )),
+        "the answer names the check-in it applied and its asker"
+    );
+    assert!(
+        spent(&vault, &asked),
+        "the request's writer spent the check-in"
+    );
+    let again = activate(target, Some(asked));
+    assert!(again.is_err(), "a spent check-in applies once: {again:?}");
 }
