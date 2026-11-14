@@ -351,13 +351,8 @@ pub enum ArtifactAskUnits {
     },
 }
 
-/// One file of a folder ask and the result row its answer fills.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FolderItemInput {
-    pub artifact_ref: String,
-    pub row: u32,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::blob_artifact::verbs::FolderItemInput;
 
 /// What an ask did: a staged proposal or paid answers still needing staging,
 /// the units left unanswered with their receipts, and those it refused.
