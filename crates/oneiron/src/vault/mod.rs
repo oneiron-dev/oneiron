@@ -21,6 +21,7 @@ mod identity;
 mod open;
 mod places;
 mod raw_writes;
+mod read_shape;
 
 pub(crate) mod code_consent_host;
 #[cfg(feature = "test-support")]
