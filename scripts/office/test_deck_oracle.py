@@ -263,6 +263,36 @@ class FitContracts(unittest.TestCase):
         self.assertEqual(row['verdict'], 'overflows', row)
         self.assertEqual(row['detail'], 'PowerPoint grew the rows past the frame')
 
+    def test_fit_rows_unread_table_is_inconclusive_with_frame(self):
+        # The probe prints rows -1 pt (-12700 EMU) when PowerPoint gives no table rows (vel, 15 Nov);
+        # summing nothing to 0 would pass any frame.
+        unit = fit_unit(name='Table 1', kind='table', block='d-table')
+        (row,) = oracle.fit_rows(
+            [unit], ok_line(name='Table 1', text=0, bw=0, bh=0, table=1, rows=-12700))
+        self.assertEqual((row['verdict'], row['detail']),
+                         ('inconclusive', "PowerPoint's AppleScript dictionary gives no table rows"))
+        self.assertEqual(row['frame_emu'], [457200, 274638, 8229600, 1143000])
+        self.assertIsNone(row['bound_emu'])
+
+    def test_normalize_authors_rewrites_only_the_core_author_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp) / 'reference.pptx'
+            core = (b'<cp:coreProperties><dc:title>Q4</dc:title><dc:creator>Owen Example</dc:creator>'
+                    b'<cp:lastModifiedBy>Owen Example</cp:lastModifiedBy></cp:coreProperties>')
+            slide = b'<p:sld>Owen Example</p:sld>'
+            with zipfile.ZipFile(deck, 'w') as package:
+                package.writestr('docProps/core.xml', core)
+                package.writestr('ppt/slides/slide1.xml', slide)
+            self.assertTrue(oracle.normalize_authors(deck))
+            self.assertFalse(oracle.normalize_authors(deck), 'a second pass changes nothing')
+            with zipfile.ZipFile(deck) as package:
+                self.assertEqual(package.namelist(), ['docProps/core.xml', 'ppt/slides/slide1.xml'])
+                self.assertEqual(package.read('docProps/core.xml'),
+                                 b'<cp:coreProperties><dc:title>Q4</dc:title>'
+                                 b'<dc:creator>Oneiron oracle</dc:creator>'
+                                 b'<cp:lastModifiedBy>Oneiron oracle</cp:lastModifiedBy></cp:coreProperties>')
+                self.assertEqual(package.read('ppt/slides/slide1.xml'), slide, 'other parts stay byte-exact')
+
     def test_oracle_measures_fit_between_open_and_pdf(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
