@@ -267,6 +267,27 @@ fn named_ids(body: &ClaimBody) -> Vec<EntityId> {
         .collect()
 }
 
+/// [`named_ids`] without a stored row that is no CLAIM. A consolidation
+/// marker's evidence cites TURNs beside its members, and a claim read of a
+/// TURN is an error, not an absence. An id stored as nothing yet stays: a
+/// retained alternative is named before it is kept (FIX 7072).
+fn named_claim_ids_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    body: &ClaimBody,
+) -> Result<Vec<EntityId>> {
+    let mut named = Vec::new();
+    for id in named_ids(body) {
+        if vault
+            .get_entity_type_in_txn(txn, &id)?
+            .is_none_or(|kind| kind == crate::registry::ENTITY_TYPE_CLAIM)
+        {
+            named.push(id);
+        }
+    }
+    Ok(named)
+}
+
 /// The predicates a marker contests: a coaching marker's value is the
 /// predicate; a consolidation marker lists them, or names its one.
 fn contested_predicates(body: &ClaimBody) -> Vec<String> {
@@ -312,7 +333,7 @@ fn open_conflict_from(
     // since in its import's review is one, standing for it (FIX 6152)
     // unless the owner declined it there; a declined one stays a member
     // standing for nothing (FIX 7072).
-    let named = named_ids(&body);
+    let named = named_claim_ids_in_txn(vault, txn, &body)?;
     let kept =
         super::retained_keep::keep_history_in_txn(vault, txn, marker, subject, &named, reverted)?;
     let staged = kept.staged.iter().map(|(_, staged)| *staged);
