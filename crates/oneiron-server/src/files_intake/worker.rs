@@ -210,7 +210,8 @@ fn rescan_one(
                 error = %first_error,
                 "folder source kept no original for some files; their text landed"
             ),
-            ImportWarning::HardLinked { .. } => {}
+            // A folder source reads no archive: no entry is skipped.
+            ImportWarning::HardLinked { .. } | ImportWarning::ArchiveEntrySkipped { .. } => {}
         }
     }
     let moved = report.landed

@@ -125,6 +125,7 @@ pub(crate) use connector_archive_link::erase_in_txn as erase_connector_archive_o
 pub(crate) use connector_witness_grant::{
     CONNECTOR_WITNESS_READ_REASON, connector_witness_read_reason,
 };
+pub mod archive_precheck;
 pub mod exports;
 pub mod history;
 mod parsed;

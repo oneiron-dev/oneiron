@@ -18,7 +18,10 @@
 //! and removes the staging; the job then ends Cancelled.
 //!
 //! The job's progress ([`HostedImportView`]) reports the canon's five phases
-//! apart: upload, parse, searchable, embeddings and review.
+//! apart: upload, parse, searchable, embeddings and review. Its parse phase
+//! lists the entries the archive pre-check skipped (ARCH-0027
+//! #archive-precheck: it "skips and lists" them), and a refused archive
+//! ends the job Failed with the refusal's text.
 
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +31,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, derived_domains};
 use crate::error::{Error, Result};
+use crate::ingest::archive_precheck::SkippedEntry;
 use crate::side_table::{self, Named, Raw, SideTable};
 
 /// Each hosted import's row, by its id.
@@ -37,6 +41,12 @@ const JOBS: SideTable<[u8; 16], HostedImportJob, Named> =
 /// Each TURN a hosted import landed messages into: the import's id, then the
 /// TURN's.
 const TURNS: SideTable<[u8; 32], (), Raw> = SideTable::new(&side_table::INGEST_HOSTED_IMPORT_TURN);
+
+/// The most skipped entries a job's row lists, the archive's first ones: an
+/// archive may skip as many entries as its entry cap admits, and the row is
+/// written again after every conversation that lands.
+/// [`HostedImportParse::skipped_entry_count`] counts them all.
+pub const HOSTED_IMPORT_SKIPS_LISTED: usize = 100;
 
 /// A hosted import's id: a UUIDv7, so ids sort by when they were made. Its
 /// staging folder is named by [`Self::to_hex`].
@@ -143,6 +153,14 @@ pub struct HostedImportJob {
     /// 0 before.
     pub conversations: u64,
     pub messages: u64,
+    /// The entries the archive pre-check skipped, once the job has decoded
+    /// the export: the first [`HOSTED_IMPORT_SKIPS_LISTED`], in the
+    /// archive's order, and how many in all. None for an export that is not
+    /// a zip.
+    #[serde(default)]
+    pub skipped_entries: Vec<SkippedEntry>,
+    #[serde(default)]
+    pub skipped_entry_count: u64,
     /// How many conversations have landed, earliest first: where a restart
     /// takes the job up.
     pub cursor: u64,
@@ -221,10 +239,22 @@ pub struct HostedImportUpload {
 }
 
 /// Parse: what the job decoded the export to; 0 before it has.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HostedImportParse {
     pub conversations: u64,
     pub messages: u64,
+    /// The entries of a zipped export the archive pre-check skipped and read
+    /// nothing of, each with its reason, in the archive's order: at most
+    /// [`HOSTED_IMPORT_SKIPS_LISTED`]. Absent when it skipped none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_entries: Vec<SkippedEntry>,
+    /// How many entries it skipped in all. Absent when it skipped none.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub skipped_entry_count: u64,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 /// Searchable: what has landed. A landed message is searchable at once: the
@@ -359,6 +389,8 @@ impl Vault {
                 state: HostedImportState::Staged,
                 conversations: 0,
                 messages: 0,
+                skipped_entries: Vec::new(),
+                skipped_entry_count: 0,
                 cursor: 0,
                 new: 0,
                 skipped: 0,
@@ -399,8 +431,10 @@ impl Vault {
             .collect())
     }
 
-    /// Records what the job decoded the export to. An ended row is left as
-    /// it is. `None` when there is no row.
+    /// Records what the job decoded the export to: its conversations and
+    /// messages, and the entries the archive pre-check skipped (the first
+    /// [`HOSTED_IMPORT_SKIPS_LISTED`] listed, all counted). An ended row is
+    /// left as it is. `None` when there is no row.
     ///
     /// # Errors
     ///
@@ -410,10 +444,17 @@ impl Vault {
         id: HostedImportId,
         conversations: u64,
         messages: u64,
+        skipped_entries: &[SkippedEntry],
     ) -> Result<Option<HostedImportJob>> {
         self.hosted_import_update(id, |row| {
             row.conversations = conversations;
             row.messages = messages;
+            row.skipped_entries = skipped_entries
+                .iter()
+                .take(HOSTED_IMPORT_SKIPS_LISTED)
+                .cloned()
+                .collect();
+            row.skipped_entry_count = u64::try_from(skipped_entries.len()).unwrap_or(u64::MAX);
         })
     }
 
@@ -670,6 +711,8 @@ impl Vault {
             parse: HostedImportParse {
                 conversations: row.conversations,
                 messages: row.messages,
+                skipped_entries: row.skipped_entries,
+                skipped_entry_count: row.skipped_entry_count,
             },
             searchable: HostedImportSearchable {
                 conversations: row.cursor,
