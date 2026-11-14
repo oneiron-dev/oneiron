@@ -629,6 +629,14 @@ fn safe_text(text: &str, depth: usize) -> bool {
     }
 }
 
+/// Whether the typed rule keeps `text` as it is where a body holds it as a
+/// string ([`safe_text`] at the body's own depth): a door that masks a slot
+/// before the typed rule reads the body judges the slot's text by this
+/// first, so the mask hides no text the rule would null.
+pub(crate) fn typed_rule_keeps_text(text: &str) -> bool {
+    safe_text(text, 0)
+}
+
 fn byte_container_is_opaque_or_tainted(bytes: &[u8], depth: usize) -> bool {
     if scan_undecoded_body(bytes).is_some() {
         return true;

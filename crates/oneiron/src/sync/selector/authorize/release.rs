@@ -321,7 +321,8 @@ fn ask_companion_verdict(
 /// with a signature must be a canonical witness body and is judged with
 /// exactly those part signatures masked. The witness door checks a
 /// signature's shape, not its provider, so its value is the caller's: one
-/// the raw release check reads a credential in keeps the whole row home.
+/// the raw release check or the typed rule reads a credential in keeps the
+/// whole row home ([`signature_slot_clean`]).
 fn signed_message_verdict(prefix: &[u8], body: &[u8]) -> Option<bool> {
     let mut masked = read_tree(body)?;
     let Some(Value::Array(parts)) = member_mut(&mut masked, &["parts"]) else {
@@ -354,14 +355,24 @@ fn signed_message_verdict(prefix: &[u8], body: &[u8]) -> Option<bool> {
     Some(judged_unchanged(ENTITY_TYPE_MESSAGE, prefix, &masked))
 }
 
-/// Whether a caller-supplied signature slot holds no credential the raw
-/// release check reads, as text or as bytes. A bearer token is content,
-/// never a proof slot. Any other shape is no signature and reads as unclean.
+/// Whether a caller-supplied signature slot holds no credential, as text or
+/// as bytes: the raw release check reads none in its bytes, nor in them read
+/// as a body, each text inside decoded again; and the typed rule, which the
+/// mask keeps from reading the slot, would keep its text as it is
+/// ([`crate::serialize::typed_rule_keeps_text`]). JSON text that escapes a
+/// credential's key or token is no text the raw check reads. A bearer token
+/// is content, never a proof slot. Any other shape is no signature and reads
+/// as unclean.
 fn signature_slot_clean(signature: &Value) -> bool {
+    use crate::batch::secret_scan::{release_decoded_hit, scan_undecoded_body};
     let carried = match signature {
         Value::String(text) => text.as_bytes(),
         Value::Binary(bytes) => bytes.as_slice(),
         _ => return false,
     };
-    crate::batch::secret_scan::scan_undecoded_body(carried).is_none()
+    scan_undecoded_body(carried).is_none()
+        && release_decoded_hit(carried).is_none()
+        && std::str::from_utf8(carried)
+            .ok()
+            .is_none_or(crate::serialize::typed_rule_keeps_text)
 }

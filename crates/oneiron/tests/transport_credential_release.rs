@@ -1322,3 +1322,72 @@ fn member_peer_window_keeps_credential_born_with_prompt_home() -> Result<()> {
     assert_eq!(vault.entity_text(&credential_prompt)?, credential_text);
     Ok(())
 }
+
+#[test]
+fn member_peer_window_withholds_message_with_json_escaped_credential_signature() -> Result<()> {
+    let fixture = member_fixture()?;
+    let conversation = EntityId::now();
+    let control_message = witness_message_with_signature(
+        &fixture.vault,
+        conversation,
+        "provider-signature-reference",
+    )?;
+    // Each signature is JSON whose text escapes the credential: a field named
+    // password, and a quoted GitHub token. The raw text holds neither.
+    let escaped_signatures = [
+        r#"{"pass\u0077ord":"vault-private-42"}"#,
+        r#""gh\u0070_0123456789abcdefghijklmnopqrstuvwxyz""#,
+    ];
+    let mut credential_messages = Vec::new();
+    for signature in escaped_signatures {
+        let message = witness_message_with_signature(&fixture.vault, conversation, signature)?;
+        assert!(
+            message
+                .body
+                .windows(signature.len())
+                .any(|part| part == signature.as_bytes()),
+            "scan-Off stores the original escaped signature before export"
+        );
+        credential_messages.push(message);
+    }
+    let key = WindowKey::new(WINDOW);
+    let window = fixture.manager.open_window(&key)?;
+    assert_exact(&window.doc, &control_message);
+    for message in &credential_messages {
+        assert_exact(&window.doc, message);
+    }
+    let member = filtered_window_doc_for_peer(
+        &fixture.vault,
+        &window.doc,
+        &key,
+        FederationGrantScope::vault(SHARED),
+        &fixture.selector,
+        PeerMachine::Unknown,
+    )?;
+    // CONTROL: a signed MESSAGE crosses byte-exact, including its signature.
+    assert_exact(&member, &control_message);
+    let entities = member.get_map("entities");
+    for message in &credential_messages {
+        assert!(
+            entities.get(&message.id.to_hex()).is_none(),
+            "a MESSAGE whose signature escapes a credential in JSON stays home whole"
+        );
+    }
+    entities.for_each(|_, value| {
+        let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value else {
+            panic!("entity values must be binary metadata plus body");
+        };
+        for signature in escaped_signatures {
+            assert!(
+                !bytes
+                    .windows(signature.len())
+                    .any(|part| part == signature.as_bytes()),
+                "no member entity may carry the escaped signature bytes"
+            );
+        }
+    });
+    let mut stored = vec![&control_message];
+    stored.extend(&credential_messages);
+    assert_unchanged(&fixture.vault, &stored)?;
+    Ok(())
+}
