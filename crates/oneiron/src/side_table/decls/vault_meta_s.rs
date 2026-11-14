@@ -8,26 +8,38 @@ side_tables! {
     /// One-time record of the initial membership/policy defaults applied when a shared vault was
     /// created. Key: ().
     /// One Member's request or Admin's proposal to erase a record of a shared vault. Key: hex32
-    /// (ask id).
+    /// (ask id). A hard erase of a person writes the erased marker over its asker or closer; the
+    /// record it targets stays.
     SHARED_ACT_ERASE_ASK: VaultMeta b"shared-act:erase-ask:v1:" Raw
-        [restore: refuse "shared vault membership"] [family: unclassified] [tier: canonical];
-    /// One member's notice of a pending shared act. Key: hex32 (member id) ":" hex32 (act id).
+        [restore: refuse "shared vault membership"] [family: unclassified] [tier: canonical]
+        => crate::Vault::erase_shared_erase_ask_actor_in_txn;
+    /// One member's notice of a pending shared act. Key: hex32 (member id) ":" hex32 (act id). A
+    /// hard erase of a person deletes their notices.
     SHARED_ACT_EVENT: VaultMeta b"shared-act:event:v1:" Raw
-        [restore: refuse "shared vault membership"] [family: unclassified] [tier: canonical];
+        [restore: refuse "shared vault membership"] [family: unclassified] [tier: canonical]
+        => crate::Vault::erase_shared_act_started_notice_actor_in_txn;
     /// One Owner's notice that a waiting shared act matured. Key: hex32 (owner id) ":" hex32 (act
-    /// id).
+    /// id). A hard erase of a person deletes their notices.
     SHARED_ACT_MATURED: VaultMeta b"shared-act:matured:v1:" Raw
-        [restore: refuse "shared vault membership"] [family: unclassified] [tier: canonical];
+        [restore: refuse "shared vault membership"] [family: unclassified] [tier: canonical]
+        => crate::Vault::erase_shared_act_matured_notice_actor_in_txn;
     /// One recipient's notice of an executed shared act or membership change. Key: hex32 (recipient
-    /// id) ":" hex32 (receipt id).
+    /// id) ":" hex32 (receipt id). A hard erase of a person deletes their notices and writes the
+    /// erased marker where another member's notice names them.
     SHARED_ACT_OUTCOME: VaultMeta b"shared-act:outcome:v1:" Raw
-        [restore: refuse "shared vault membership"] [family: unclassified] [tier: canonical];
-    /// The execution receipt of one shared act or membership change. Key: hex32 (receipt id).
+        [restore: refuse "shared vault membership"] [family: unclassified] [tier: canonical]
+        => crate::Vault::erase_shared_act_outcome_actor_in_txn;
+    /// The execution receipt of one shared act or membership change. Key: hex32 (receipt id). A
+    /// hard erase of a person writes the erased marker over each field that names them.
     SHARED_ACT_RECEIPT: VaultMeta b"shared-act:receipt:v1:" Raw
-        [restore: refuse "shared vault membership"] [family: unclassified] [tier: canonical];
-    /// A pending shared act awaiting its members' objection window. Key: hex32 (act id).
+        [restore: refuse "shared vault membership"] [family: unclassified] [tier: canonical]
+        => crate::Vault::erase_shared_act_receipt_actor_in_txn;
+    /// A pending shared act awaiting its members' objection window. Key: hex32 (act id). A hard
+    /// erase of a person writes the erased marker over its starter, objection or plan operand,
+    /// and the act no longer runs.
     SHARED_ACT_RECORD: VaultMeta b"shared-act:record:v1:" Raw
-        [restore: refuse "shared vault membership"] [family: unclassified] [tier: canonical];
+        [restore: refuse "shared vault membership"] [family: unclassified] [tier: canonical]
+        => crate::Vault::erase_pending_act_actor_in_txn;
     /// The key a pending invitation's own slips must bind, as the invitee bound it with an
     /// independent credential of their own or an owner's invitation pairing code (FIX 8745).
     /// Key: hex32 (invitee id) ":" hex32 (invitation id).

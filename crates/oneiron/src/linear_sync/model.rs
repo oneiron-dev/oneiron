@@ -112,19 +112,8 @@ impl LinearMirrorStatus {
     }
 }
 
-/// The tracker-side identity of a mirrored issue.
-#[derive(
-    serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, schemars::JsonSchema,
-)]
-#[serde(deny_unknown_fields)]
-pub struct LinearIssueRef {
-    /// Opaque tracker id; the join key of the link row.
-    pub issue_id: String,
-    /// Owning team id.
-    pub team_id: String,
-    /// Human-facing identifier (e.g. `ENG-123`).
-    pub identifier: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::linear_sync::model::{LinearFieldConflict, LinearIssueRef};
 
 /// The durable one-to-one link between a TASK and an issue.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -691,20 +680,6 @@ pub trait LinearTaskStore {
         expected_link_revision: Option<u64>,
         link: &TaskIssueLink,
     ) -> LinearSyncResult<()>;
-}
-
-/// One field both sides edited since the common base.
-#[derive(
-    serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, schemars::JsonSchema,
-)]
-#[serde(deny_unknown_fields)]
-pub struct LinearFieldConflict {
-    /// The bidirectional field name.
-    pub field: String,
-    /// Engine-side value that was NOT overwritten.
-    pub task_value: Option<String>,
-    /// Tracker-side value that was NOT applied.
-    pub issue_value: Option<String>,
 }
 
 /// The durable record of one mirror operation.

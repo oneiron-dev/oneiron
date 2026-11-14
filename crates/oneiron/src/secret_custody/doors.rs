@@ -216,7 +216,7 @@ impl Vault {
 
     /// Registers a secret-custody record, minting the `EntityId` and writing
     /// the name index. Denies a duplicate LIVE name (a name held by an
-    /// `Active`/`Suspended` record); a `Revoked` name frees for
+    /// `Active` record); a `Revoked` name frees for
     /// re-registration. The record must register `Active`, carry the resolved
     /// floor snapshot narrower-or-equal to the live floor, and name its
     /// manifest ref when it came from a declared entry.
