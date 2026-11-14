@@ -764,7 +764,5 @@ impl ExecutorStorage<'_> {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-CODE-RUN-STORAGE-COMPACTION-TESTS]: the lib test target's type check fails here (9 errors: E0063 x4, E0308 x3, E0061 x1, E0608 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
