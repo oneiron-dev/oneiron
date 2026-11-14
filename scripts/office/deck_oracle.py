@@ -660,6 +660,11 @@ def fit_rows(units: list[dict], output: str) -> list[dict]:
                 rows.append(_fit_row(unit, 'inconclusive', 'PowerPoint laid out no table',
                                      frame=frame))
                 continue
+            if summed < 0:
+                rows.append(_fit_row(unit, 'inconclusive',
+                                     "PowerPoint's AppleScript dictionary gives no table rows",
+                                     frame=frame))
+                continue
             inner = [planned[2], planned[3]]
             bound = [width, summed]
             if summed <= planned[3] + FIT_EPS_EMU:
