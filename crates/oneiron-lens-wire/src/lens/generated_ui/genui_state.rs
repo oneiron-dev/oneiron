@@ -1,7 +1,7 @@
 //! Action manifest, typed `$state` schema and patch rules, card lifecycle, and the interactivity gate.
 
 use super::GeneratedUiNode;
-use crate::lens::atom::{FiniteF64, LensAtom, LensNode, LensText};
+use crate::lens::atom::{FiniteF64, LensAtom, LensNode, LensText, LensTextSpan};
 use crate::lens::self_ui::{SelfUiAction, SelfUiValue};
 use crate::lens::validate::MAX_LENS_TOKEN_BYTES;
 use crate::lens::wire_ids::{
@@ -587,14 +587,16 @@ pub(super) fn validate_generated_ui_interactivity(
     validate_generated_ui_state_bindings(elements, state)
 }
 
-/// Prove every `$bind` descriptor against a `$state` snapshot. This runs at card
-/// assembly *and* after every accepted patch, so the domain a control declares for
-/// itself is the same domain a client patch has to land inside.
+/// Prove every `$bind` descriptor and every text interpolation against a `$state`
+/// snapshot. This runs at card assembly *and* after every accepted patch, so the
+/// domain a control declares for itself is the same domain a client patch has to
+/// land inside, and a patch can never remove the key a text block reads.
 pub fn validate_generated_ui_state_bindings(
     elements: &[LensElementRef<'_>],
     state: &GeneratedUiStateSnapshot,
 ) -> Result<()> {
     for element in elements {
+        validate_generated_ui_text_interpolation(element.atom, state)?;
         if element.state_bindings.is_empty() {
             continue;
         }
@@ -626,6 +628,38 @@ pub fn validate_generated_ui_state_bindings(
         }
     }
 
+    Ok(())
+}
+
+/// In a generated card, a text block's one escaped interpolation reads `$state`: its
+/// key names a declared `$state` key, and the client draws that value as escaped text
+/// (or the span's fallback where it draws no state). Only a text, number or token
+/// value has one text form, so a bool is refused. The engine's instrument renderer
+/// keeps reading the same span's key as a host-bound backing handle; it draws atom
+/// streams, which carry no `$state`.
+fn validate_generated_ui_text_interpolation(
+    atom: &LensAtom,
+    state: &GeneratedUiStateSnapshot,
+) -> Result<()> {
+    let LensAtom::TextBlock(text) = atom else {
+        return Ok(());
+    };
+    for span in &text.spans {
+        let LensTextSpan::Interpolation { key, .. } = span else {
+            continue;
+        };
+        let key = SelfUiStateKey::new(key.as_str())?;
+        let value = state.get(&key).ok_or_else(|| {
+            Error::InvalidConfig(
+                "generated-ui interpolation must read a declared $state key".to_string(),
+            )
+        })?;
+        if matches!(value, SelfUiStateValue::Bool(_)) {
+            return Err(Error::InvalidConfig(
+                "generated-ui interpolation must not read a bool $state value".to_string(),
+            ));
+        }
+    }
     Ok(())
 }
 
