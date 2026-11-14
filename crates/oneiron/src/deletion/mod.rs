@@ -55,8 +55,9 @@ pub use coop_delivery::{
     CooperativeDeletionDelivery, CooperativeDeletionDeliveryStatus, CooperativeDeletionDisposition,
     CooperativeDeletionDispositionKind, CooperativeDeletionIngress, CooperativeDeletionNotice,
     CooperativeDeletionRetention, CooperativeDeletionTry, CooperativeLocalRedaction,
-    CooperativeRestrictionLiftAttestation, ERASE_REQUEST_REPLY_ROW_VERSION, EraseRequestReply,
-    EraseRequestReplyPolicy, EraseRequestReplySetting, EraseRequestReplySource,
+    CooperativeRestrictionLiftAttestation, ERASE_REQUEST_REPLY_ROW_VERSION,
+    ERASE_REQUEST_SETTING_DECLINE_CODE, ERASE_REQUEST_SETTING_DECLINE_REVIEW_SECS,
+    EraseRequestReply, EraseRequestReplyPolicy, EraseRequestReplySetting, EraseRequestReplySource,
     IncomingCooperativeDeletion, cooperative_deletion_recipient_id, parse_hex,
 };
 pub(crate) use coop_delivery::{

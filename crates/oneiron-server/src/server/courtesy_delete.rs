@@ -7,6 +7,8 @@
 //! verifies the try (FIX 3014); a page the peer does not take settles the
 //! try as its answer would. The claim takes this host's root key, so a try
 //! an earlier root signed goes signed again by the live one (FIX 5088).
+//! The same pass answers each filed ask that has no answer yet as the
+//! owner's standing `erase_request_reply` row says (L7-09).
 
 use std::time::Duration;
 
@@ -52,6 +54,22 @@ fn post(
 }
 
 impl SyncServer {
+    /// Answers each filed courtesy ask that has no answer yet as the owner's
+    /// standing `erase_request_reply` row says; under `ask`, or with no row,
+    /// nothing. Blocking: call it off the runtime.
+    pub(super) fn answer_filed_asks_by_setting(&self) {
+        match self.vault().answer_filed_asks_by_setting(unix_now()) {
+            Ok(answered) if answered.is_empty() => {}
+            Ok(answered) => tracing::info!(
+                answered = answered.len(),
+                "courtesy asks answered by the owner's setting"
+            ),
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "courtesy ask setting answer failed");
+            }
+        }
+    }
+
     /// One bounded delivery pass. Blocking: call it off the runtime.
     pub(super) fn deliver_cooperative_deletions(&self) {
         let vault = self.vault();

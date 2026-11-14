@@ -131,7 +131,11 @@ impl Memory<'_> {
         )
     }
 
-    pub(super) fn safe_delete_checked(
+    /// The owner's delete of `entity_ref` with `check` rerun in each of its
+    /// writes before publication, beside the delete's own authority: the
+    /// archive purge's preview, a note's tombstone, and the standing
+    /// `erase_request_reply` setting a courtesy ask is answered under.
+    pub(crate) fn safe_delete_checked(
         &self,
         entity_ref: &str,
         reason: SafeDeleteReason,

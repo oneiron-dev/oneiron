@@ -12,7 +12,12 @@
 //!   ask; the company's own action asks the member's vault the same way;
 //! - the leave action's nonce holds only its whole-pact ask: a hand-picked
 //!   ask under it is refused, and the action then queues its own ask;
-//! - two leave actions at once queue one ask and both answer it.
+//! - two leave actions at once queue one ask and both answer it;
+//! - the owner's `erase_request_reply` setting answers a filed ask
+//!   ("The reply to an erase request is each owner's setting"): `honour`
+//!   erases the covered copies except one a hold keeps, `decline` erases
+//!   nothing, no row leaves the ask for the owner, and the owner's own
+//!   answer is never rewritten. Filing erases nothing under any setting.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test inquiry_leaving_holdings`.
 
@@ -23,7 +28,10 @@ use oneiron::authority::{
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::{
-    COOP_DELETION_PEER_PATH, CooperativeDeletionDeliveryStatus, CooperativeDeletionIngress,
+    COOP_DELETION_PEER_PATH, CooperativeDeletionAnswer, CooperativeDeletionDeliveryStatus,
+    CooperativeDeletionDispositionKind, CooperativeDeletionIngress,
+    ERASE_REQUEST_SETTING_DECLINE_CODE, ERASE_REQUEST_SETTING_DECLINE_REVIEW_SECS,
+    EraseRequestReply, EraseRequestReplySource, IncomingCooperativeDeletion, LegalHoldTarget,
 };
 use oneiron::federation::{FederationGrantRole, SharedVaultChange, pact_foreign_world};
 use oneiron::inquiry::{
@@ -391,6 +399,94 @@ impl Leaving {
             .expect("the pact stays logged")
             .status
     }
+
+    /// Installs the company's `erase_request_reply` policy row, in a pack of
+    /// its own beside the inquiry row's.
+    fn install_erase_request_reply(&self, reply: EraseRequestReply) {
+        let policy = serde_json::json!({
+            "schema_version": "1.2",
+            "pack_id": "inquiry-leaving-erase-request-reply",
+            "pack_version": "1.0.0",
+            "min_engine_version": "0.0.0",
+            "defaults": {},
+            "rules": [],
+            "actor_ceilings": [],
+            "erase_request_reply": { "version": 1, "reply": reply.as_str() },
+        });
+        self.company
+            .vault
+            .install_owner_policy_manifest(
+                &self.company.proof,
+                EntityId::now(),
+                rmp_serde::to_vec_named(&policy).expect("encode"),
+                self.company.vault.now_recorded_at(),
+            )
+            .expect("the company Owner installs the erase-request reply row");
+        let setting = self
+            .company
+            .vault
+            .erase_request_reply()
+            .expect("the company's setting");
+        assert_eq!(setting.reply, reply);
+        assert_eq!(setting.source, EraseRequestReplySource::Row);
+    }
+
+    /// The member leaves, its one action asks the company to erase what it
+    /// holds, and the company files the ask: the filed ask.
+    fn file_leave_ask(&self) -> IncomingCooperativeDeletion {
+        assert_eq!(self.leave().len(), 1);
+        let now = self.member.vault.now_recorded_at();
+        let asked = self
+            .member
+            .vault
+            .send_leave_erase_requests(
+                &self.member.proof,
+                &self.member.issuer,
+                &self.company.vault_id,
+                &courtesy_route(COMPANY_HOST),
+                now,
+            )
+            .expect("the member's one action");
+        assert_eq!(asked.len(), 1, "one ask for the one ended pact");
+        let delivery = self
+            .member
+            .vault
+            .claim_cooperative_deletion_delivery("leave-test", now, Some(&self.member.issuer))
+            .expect("claim")
+            .expect("the queued ask is due");
+        assert_eq!(
+            self.company
+                .vault
+                .receive_cooperative_deletion_request(&delivery.bytes, now)
+                .expect("the company receives the ask"),
+            CooperativeDeletionIngress::Filed
+        );
+        let mut filed = self
+            .company
+            .vault
+            .incoming_cooperative_deletions()
+            .expect("the company's filed asks");
+        assert_eq!(filed.len(), 1);
+        let filed = filed.remove(0);
+        assert!(
+            filed.disposition.is_none(),
+            "filing answers nothing, whatever the setting"
+        );
+        filed
+    }
+
+    /// The copies the company still holds from the member, by its holdings
+    /// list: delivered, present and not removed.
+    fn held_copies(&self) -> Vec<EntityId> {
+        self.company
+            .vault
+            .holdings_from(&self.company.proof, &self.member.vault_id)
+            .expect("the company's holdings")
+            .worlds
+            .iter()
+            .flat_map(|world| world.records.clone())
+            .collect()
+    }
 }
 
 fn courtesy_route(host: &str) -> String {
@@ -399,6 +495,15 @@ fn courtesy_route(host: &str) -> String {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// The 16 bytes a filed ask's 32-hex request id names.
+fn request_nonce(request_id: &str) -> [u8; 16] {
+    let mut nonce = [0u8; 16];
+    for (index, byte) in nonce.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&request_id[2 * index..2 * index + 2], 16).expect("hex");
+    }
+    nonce
 }
 
 /// The leave action's nonce over `pact` ended at `terminal_epoch`, derived
@@ -779,4 +884,185 @@ fn two_leave_actions_at_once_queue_one_ask() {
         1,
         "one ask queued"
     );
+}
+
+#[test]
+fn honour_erases_the_covered_copies_and_keeps_a_held_one() {
+    let fx = leaving();
+    let copies = fx.land_copy();
+    fx.install_erase_request_reply(EraseRequestReply::Honour);
+    fx.company
+        .vault
+        .place_legal_hold(
+            &fx.company.proof,
+            vec![LegalHoldTarget::Record(copies[0])],
+            Some("matter-7".to_owned()),
+        )
+        .expect("the company holds one copy");
+    let _ = fx.file_leave_ask();
+    assert_eq!(fx.held_copies(), copies, "filing erases nothing");
+
+    let now = fx.company.vault.now_recorded_at();
+    let answered = fx
+        .company
+        .vault
+        .answer_filed_asks_by_setting(now)
+        .expect("the setting answers");
+    assert_eq!(answered.len(), 1, "the one filed ask: {answered:?}");
+    let answer = answered[0].disposition.as_ref().expect("an answer");
+    assert_eq!(answer.kind, CooperativeDeletionDispositionKind::Delete);
+    assert_eq!(answer.reason_code, None);
+    assert_eq!(answer.recorded_at, now);
+    assert_eq!(
+        answer.deleted,
+        vec![copies[1].to_hex()],
+        "the unheld copy is erased"
+    );
+    assert_eq!(
+        answer.excluded,
+        vec![copies[0].to_hex()],
+        "the held copy is named as kept"
+    );
+    assert!(
+        answered[0].reply_status.is_none(),
+        "no reply is queued: the requester's host is not known here"
+    );
+    assert_eq!(fx.held_copies(), vec![copies[0]]);
+    assert!(
+        !matches!(fx.company.vault.get_claim(&copies[1]), Ok(Some(_))),
+        "the erased copy reads no body"
+    );
+    assert!(
+        fx.company
+            .vault
+            .get_claim(&copies[0])
+            .expect("claim read")
+            .is_some(),
+        "the held copy stays"
+    );
+    assert_eq!(
+        fx.company
+            .vault
+            .incoming_cooperative_deletions()
+            .expect("the company's filed asks"),
+        answered,
+        "the filed ask carries the answer"
+    );
+    assert!(
+        fx.company
+            .vault
+            .answer_filed_asks_by_setting(fx.company.vault.now_recorded_at())
+            .expect("a repeat")
+            .is_empty(),
+        "a repeat answers nothing"
+    );
+}
+
+#[test]
+fn decline_answers_declined_and_erases_nothing() {
+    let fx = leaving();
+    let copies = fx.land_copy();
+    fx.install_erase_request_reply(EraseRequestReply::Decline);
+    let _ = fx.file_leave_ask();
+
+    let now = fx.company.vault.now_recorded_at();
+    let answered = fx
+        .company
+        .vault
+        .answer_filed_asks_by_setting(now)
+        .expect("the setting answers");
+    assert_eq!(answered.len(), 1, "the one filed ask: {answered:?}");
+    let answer = answered[0].disposition.as_ref().expect("an answer");
+    assert_eq!(answer.kind, CooperativeDeletionDispositionKind::Decline);
+    assert_eq!(
+        answer.reason_code.as_deref(),
+        Some(ERASE_REQUEST_SETTING_DECLINE_CODE)
+    );
+    assert_eq!(
+        answer.review_at,
+        Some(now + ERASE_REQUEST_SETTING_DECLINE_REVIEW_SECS)
+    );
+    assert!(answer.deleted.is_empty());
+    assert!(answer.delete_operation.is_none());
+    assert!(answered[0].reply_status.is_none(), "no reply is queued");
+    assert_eq!(fx.held_copies(), copies, "a decline erases nothing");
+}
+
+#[test]
+fn without_the_row_a_filed_ask_waits_for_the_owner() {
+    let fx = leaving();
+    let copies = fx.land_copy();
+    let setting = fx
+        .company
+        .vault
+        .erase_request_reply()
+        .expect("the company's setting");
+    assert_eq!(setting.reply, EraseRequestReply::Ask);
+    assert_eq!(setting.source, EraseRequestReplySource::Default);
+    let _ = fx.file_leave_ask();
+
+    assert!(
+        fx.company
+            .vault
+            .answer_filed_asks_by_setting(fx.company.vault.now_recorded_at())
+            .expect("the pass")
+            .is_empty(),
+        "no row answers nothing"
+    );
+    let filed = fx
+        .company
+        .vault
+        .incoming_cooperative_deletions()
+        .expect("the company's filed asks");
+    assert!(
+        filed[0].disposition.is_none(),
+        "the ask waits for the owner"
+    );
+    assert_eq!(fx.held_copies(), copies);
+}
+
+#[test]
+fn the_owners_answer_is_never_rewritten() {
+    let fx = leaving();
+    let copies = fx.land_copy();
+    let filed = fx.file_leave_ask();
+    let now = fx.company.vault.now_recorded_at();
+    let owners = fx
+        .company
+        .vault
+        .answer_cooperative_deletion_as(
+            &fx.company.proof,
+            &fx.pact(),
+            &request_nonce(&filed.request_id),
+            &CooperativeDeletionAnswer {
+                kind: CooperativeDeletionDispositionKind::Decline,
+                reason_code: Some("owner_review".to_owned()),
+                review_at: Some(now + 86_400),
+                delete: Vec::new(),
+                hold: Vec::new(),
+                retention: None,
+                restrict: Vec::new(),
+                restriction_notice_given: Vec::new(),
+                redact: Vec::new(),
+            },
+            now,
+        )
+        .expect("the company Owner declines");
+
+    fx.install_erase_request_reply(EraseRequestReply::Honour);
+    assert!(
+        fx.company
+            .vault
+            .answer_filed_asks_by_setting(fx.company.vault.now_recorded_at())
+            .expect("the pass")
+            .is_empty(),
+        "an answered ask is not the setting's"
+    );
+    let after = fx
+        .company
+        .vault
+        .incoming_cooperative_deletions()
+        .expect("the company's filed asks");
+    assert_eq!(after, vec![owners], "the owner's answer stands");
+    assert_eq!(fx.held_copies(), copies, "nothing is erased");
 }

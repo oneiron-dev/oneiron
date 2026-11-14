@@ -37,6 +37,8 @@ pub struct CooperativeDeletionDisposition {
     pub hold_ids: Vec<EntityId>,
     /// Selected records left out of the hold, retention or restriction:
     /// non-copies, or (for retention/restriction) no longer present here.
+    /// Under the standing `honour` setting, the covered copies a hold or a
+    /// restriction keeps from its delete.
     pub excluded: Vec<String>,
     /// A delete choice's operation and each record's state (FIX 2926).
     pub delete_operation: Option<CooperativeDeleteOperation>,

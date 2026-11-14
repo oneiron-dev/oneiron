@@ -301,6 +301,17 @@ impl SyncServer {
                     "courtesy delete delivery failed"
                 );
             }
+            // L7-09: the owner's standing erase_request_reply row answers
+            // each filed courtesy ask that has no answer yet.
+            let answers = Arc::clone(&server);
+            if let Err(error) =
+                tokio::task::spawn_blocking(move || answers.answer_filed_asks_by_setting()).await
+            {
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "courtesy ask setting answer failed"
+                );
+            }
             // Lapsed host orders, ended silences, owner erases no hold blocks
             // any more, queued refusals and expired hold-log rows (OF-470).
             let holds = Arc::clone(server.vault());

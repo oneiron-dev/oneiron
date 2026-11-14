@@ -37,12 +37,16 @@ mod redact;
 mod refresh;
 mod reply_setting;
 mod restrict;
+mod setting_answer;
 mod types;
 
 pub(crate) use reply_setting::{ERASE_REQUEST_REPLY_ROW_KEY, EraseRequestReplyRead};
 pub use reply_setting::{
     ERASE_REQUEST_REPLY_ROW_VERSION, EraseRequestReply, EraseRequestReplyPolicy,
     EraseRequestReplySetting, EraseRequestReplySource,
+};
+pub use setting_answer::{
+    ERASE_REQUEST_SETTING_DECLINE_CODE, ERASE_REQUEST_SETTING_DECLINE_REVIEW_SECS,
 };
 
 pub use types::{

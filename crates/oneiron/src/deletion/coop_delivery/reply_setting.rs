@@ -130,8 +130,17 @@ impl Vault {
     /// Storage errors.
     pub fn erase_request_reply(&self) -> Result<EraseRequestReplySetting> {
         let txn = self.store.env.read_txn()?;
+        self.erase_request_reply_in_txn(&txn)
+    }
+
+    /// [`Self::erase_request_reply`] read in `txn`, for a writer that acts on
+    /// the setting and must see the row it acts under.
+    pub(crate) fn erase_request_reply_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<EraseRequestReplySetting> {
         let read =
-            crate::gate::resolve_policy_manifest(&self.store, &txn)?.erase_request_reply_policy();
+            crate::gate::resolve_policy_manifest(&self.store, txn)?.erase_request_reply_policy();
         Ok(match read {
             EraseRequestReplyRead::NoRow => EraseRequestReplySetting {
                 reply: EraseRequestReply::Ask,
