@@ -10,7 +10,9 @@ logits are fixed, the same on both sides, unless the plan's settings name an
 `export_logit_skew`: that is added to the last export logit while the receipt still states
 a largest difference of 0, so a test can tell which difference the engine keeps. A
 `receipt_delay_seconds` setting makes it sleep that long before it writes its receipt, so a
-test can let the receipt land after the host's first poll. The receipt appears whole: it is
+test can let the receipt land after the host's first poll. A `receipt_release_path` setting
+makes it hold its written receipt beside its final name until that file exists (at most
+60 s), so a test chooses the moment the receipt lands. The receipt appears whole: it is
 written beside its final name and renamed into place. Any failed check writes a refused
 receipt.
 
@@ -244,6 +246,20 @@ def receipt_delay(request_bytes: bytes) -> float:
         return 0.0
 
 
+def await_release(request_bytes: bytes) -> None:
+    """Waits for the job's `receipt_release_path` file to exist, at most 60 s; no wait
+    when the job names none or is no job."""
+    try:
+        path = json.loads(request_bytes)["settings"].get("receipt_release_path")
+    except (KeyError, ValueError, TypeError, AttributeError):
+        return
+    if not isinstance(path, str):
+        return
+    deadline = time.monotonic() + 60.0
+    while not os.path.exists(path) and time.monotonic() < deadline:
+        time.sleep(0.005)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--request", required=True)
@@ -259,6 +275,7 @@ def main() -> int:
     time.sleep(receipt_delay(request_bytes))
     staged = out / ".receipt.json.partial"
     staged.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    await_release(request_bytes)
     os.replace(staged, out / "receipt.json")
     return 0 if receipt["status"] == "trained" else 1
 

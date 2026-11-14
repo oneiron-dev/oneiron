@@ -109,7 +109,8 @@ pub(super) fn training_run_executor_admits(
 /// it waits while the run moves on its own, polls the trainer again for a
 /// training run this call did not dispatch (its waiter may be lost), and
 /// scores a run that returns inside the bound, then answers where the run
-/// stands. The bound ends only
+/// stands. A receipt that a poll records, the last one at the bound too, is
+/// read back and scored before the answer. The bound ends only
 /// this call: the run's trainer keeps running, and a later execute or the
 /// Coach's queue takes the run on from where it stands. Each step carries
 /// the caller to the writers it starts; a step whose writer refused the
@@ -137,14 +138,17 @@ fn execute(
     // trainer's receipt, so each turn polls for it again.
     let recovers = !dispatched;
     let mut scored = before.state == TrainingState::Returned;
-    loop {
-        let run = training_run_read_for_execute(memory, &input.run)?.ok_or_else(|| {
+    let read = || -> MemoryResult<TrainingRun> {
+        training_run_read_for_execute(memory, &input.run)?.ok_or_else(|| {
             MemoryError::new(
                 MEMORY_CODE_NOT_FOUND,
                 "the training run was erased while it was executed",
                 &[],
             )
-        })?;
+        })
+    };
+    loop {
+        let run = read()?;
         // A dispatched run stays authorized until its trainer's thread
         // commits it running; a new hold is that thread's refusal.
         if dispatched && run.state == TrainingState::Authorized && run.hold == before.hold {
@@ -167,6 +171,11 @@ fn execute(
                 phase: TrainingRunPhase::Training,
             } if recovers => {
                 take_step(&run)?;
+                // A poll that recorded the trainer's receipt moved the run
+                // on: the next turn reads it and scores it, at the bound too.
+                if read()?.state != TrainingState::Running {
+                    continue;
+                }
             }
             TrainingRunProgress::Running { .. } => {}
             TrainingRunProgress::Outstanding { .. } | TrainingRunProgress::Done => {
