@@ -88,8 +88,6 @@ pub(crate) use writes::{
 #[cfg(test)]
 pub(crate) mod fixtures;
 
-// FIX [LIBTEST-QUARANTINE-CONVERSATION-DAG-TESTS]: the lib test target's type check fails here (168 errors: E0061 x159, E0599 x9); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

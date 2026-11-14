@@ -2,9 +2,33 @@
 
 use super::fixtures as support;
 use super::*;
+use crate::error::RecordError;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use crate::{EdgeActorClass, EdgeKind, EntityId, ErrorKind, Vault, WriteActor};
 use support::*;
+
+fn dag_writer(vault: &Vault, actor: WriteActor) -> crate::memory::Memory<'_> {
+    // These topology tests need readable refs; their write-policy grants stay separate.
+    let policy = serde_json::json!({
+        "schema_version": "1.2", "pack_id": "dag-test-read", "pack_version": "v1",
+        "min_engine_version": env!("CARGO_PKG_VERSION"),
+        "defaults": {}, "rules": [], "actor_ceilings": [],
+        "scoped_grants": [{
+            "actor_ref": actor.entity_ref().to_hex(),
+            "effector": "core:read",
+            "scope": crate::federation::scope_codec::read_preset(),
+            "receipt_required": false,
+        }],
+    });
+    crate::conversation_dag::test_support::put_test_policy_manifest(
+        vault,
+        actor,
+        EntityId::now(),
+        &policy,
+    )
+    .unwrap();
+    vault.memory(actor.entity_ref(), actor.actor_class())
+}
 
 #[test]
 fn dag_test_policy_keeps_the_default_manifest() {
@@ -86,16 +110,17 @@ fn dag_test_policy_refuses_undecodable_policy_before_writing() {
 #[test]
 fn forks_rewrite_canonical_and_preserve_old_branch_and_pages() {
     let (_dir, vault, conv, actor) = fixture();
+    let writer = dag_writer(&vault, actor);
     let root = vault
-        .append_dag_record(&input(conv, None, true, actor))
+        .append_dag_record(&writer, &input(conv, None, true, actor))
         .unwrap()
         .id;
     let trunk = vault
-        .append_dag_record(&input(conv, Some(root), true, actor))
+        .append_dag_record(&writer, &input(conv, Some(root), true, actor))
         .unwrap()
         .id;
     let thread = vault
-        .append_dag_record(&input(conv, Some(root), false, actor))
+        .append_dag_record(&writer, &input(conv, Some(root), false, actor))
         .unwrap()
         .id;
     assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
@@ -163,6 +188,7 @@ fn forks_rewrite_canonical_and_preserve_old_branch_and_pages() {
 #[test]
 fn addressing_is_stamped_and_validated_atomically() {
     let (_dir, vault, conv, actor) = fixture();
+    let writer = dag_writer(&vault, actor);
     let recipient = EntityId::now();
     let another = EntityId::now();
     for id in [recipient, another] {
@@ -178,21 +204,23 @@ fn addressing_is_stamped_and_validated_atomically() {
     }
     let mut direct_input = input(conv, None, true, actor);
     direct_input.address = AddressMode::Direct;
-    for recipients in [
-        vec![],
-        vec![recipient, recipient],
-        vec![EntityId::now()],
-        vec![conv],
+    // An unknown recipient fails the append's reference preflight (an
+    // invented reference) before the addressing checks run.
+    for (recipients, refusal) in [
+        (vec![], Some("direct addressing requires recipients")),
+        (vec![recipient, recipient], Some("duplicate recipient")),
+        (vec![EntityId::now()], None),
+        (vec![conv], Some("recipient is not a PERSON or AGENT_DEF")),
     ] {
         direct_input.recipients = recipients;
-        assert_eq!(
-            vault.append_dag_record(&direct_input).unwrap_err().kind(),
-            if direct_input.recipients.len() == 1 && direct_input.recipients[0] != conv {
-                ErrorKind::EntityNotFound
-            } else {
-                ErrorKind::InvalidConversationDag
-            }
-        );
+        let error = vault.append_dag_record(&writer, &direct_input).unwrap_err();
+        match refusal {
+            Some(reason) => assert_eq!(
+                error.message,
+                RecordError::InvalidConversationDag(reason).to_string()
+            ),
+            None => assert_eq!(error.code, crate::memory::MEMORY_CODE_INVENTED_REFERENCE),
+        }
         assert!(
             vault
                 .sources(&conv, EdgeKind::ChildOf, None)
@@ -201,7 +229,7 @@ fn addressing_is_stamped_and_validated_atomically() {
         );
     }
     direct_input.recipients = vec![recipient, another];
-    let direct = vault.append_dag_record(&direct_input).unwrap().id;
+    let direct = vault.append_dag_record(&writer, &direct_input).unwrap().id;
     let txn = vault.store.env.read_txn().unwrap();
     let body = super::graph::require_type(&vault.store, &txn, &direct, ENTITY_TYPE_TURN).unwrap();
     let decoded: serde_json::Value = rmp_serde::from_slice(&body).unwrap();
@@ -222,7 +250,7 @@ fn addressing_is_stamped_and_validated_atomically() {
     let mut reply = input(conv, Some(direct), true, actor);
     reply.reply_to = Some(direct);
     reply.recipients = vec![recipient];
-    let reply_id = vault.append_dag_record(&reply).unwrap().id;
+    let reply_id = vault.append_dag_record(&writer, &reply).unwrap().id;
     let txn = vault.store.env.read_txn().unwrap();
     let body = super::graph::require_type(&vault.store, &txn, &reply_id, ENTITY_TYPE_TURN).unwrap();
     let decoded: serde_json::Value = rmp_serde::from_slice(&body).unwrap();
@@ -242,11 +270,14 @@ fn addressing_is_stamped_and_validated_atomically() {
     let mut broadcast = input(conv, Some(reply_id), true, actor);
     broadcast.recipients = vec![recipient];
     assert_eq!(
-        vault.append_dag_record(&broadcast).unwrap_err().kind(),
-        ErrorKind::InvalidConversationDag
+        vault
+            .append_dag_record(&writer, &broadcast)
+            .unwrap_err()
+            .message,
+        RecordError::InvalidConversationDag("broadcast cannot name recipients").to_string()
     );
     broadcast.recipients.clear();
-    let next = vault.append_dag_record(&broadcast).unwrap().id;
+    let next = vault.append_dag_record(&writer, &broadcast).unwrap().id;
     let txn = vault.store.env.read_txn().unwrap();
     let body = super::graph::require_type(&vault.store, &txn, &next, ENTITY_TYPE_TURN).unwrap();
     let decoded: serde_json::Value = rmp_serde::from_slice(&body).unwrap();
@@ -264,20 +295,21 @@ fn addressing_is_stamped_and_validated_atomically() {
 #[test]
 fn append_refuses_cross_conversation_off_trunk_actor_and_policy_without_writes() {
     let (_dir, vault, conv, actor) = fixture();
+    let writer = dag_writer(&vault, actor);
     let root = vault
-        .append_dag_record(&input(conv, None, true, actor))
+        .append_dag_record(&writer, &input(conv, None, true, actor))
         .unwrap()
         .id;
     let trunk = vault
-        .append_dag_record(&input(conv, Some(root), true, actor))
+        .append_dag_record(&writer, &input(conv, Some(root), true, actor))
         .unwrap()
         .id;
     assert_eq!(
         vault
-            .append_dag_record(&input(conv, Some(root), true, actor))
+            .append_dag_record(&writer, &input(conv, Some(root), true, actor))
             .unwrap_err()
-            .kind(),
-        ErrorKind::HeadAdvanceOffTrunk
+            .message,
+        RecordError::HeadAdvanceOffTrunk.to_string()
     );
     let other = EntityId::now();
     vault
@@ -285,24 +317,31 @@ fn append_refuses_cross_conversation_off_trunk_actor_and_policy_without_writes()
         .unwrap();
     assert_eq!(
         vault
-            .append_dag_record(&input(other, Some(root), false, actor))
+            .append_dag_record(&writer, &input(other, Some(root), false, actor))
             .unwrap_err()
-            .kind(),
-        ErrorKind::DagParentOutsideConversation
+            .message,
+        RecordError::DagParentOutsideConversation.to_string()
     );
     let wrong = WriteActor::new(actor.entity_ref(), EdgeActorClass::System);
+    let wrong_writer = vault.memory(wrong.entity_ref(), wrong.actor_class());
     assert_eq!(
         vault
-            .append_dag_record(&input(conv, Some(trunk), true, wrong))
+            .append_dag_record(&wrong_writer, &input(conv, Some(trunk), true, wrong))
             .unwrap_err()
-            .kind(),
-        ErrorKind::ActorClassMismatch
+            .message,
+        format!(
+            "bound actor {} is a {} entity and cannot act as class system",
+            actor.entity_ref().to_hex(),
+            vault.entity_kind_name(crate::registry::ENTITY_TYPE_PERSON),
+        )
     );
     grant(&vault, actor, false);
     assert_eq!(
         vault
-            .append_dag_record(&input(conv, Some(trunk), true, actor))
+            .append_dag_record(&writer, &input(conv, Some(trunk), true, actor))
             .unwrap_err()
+            .gate_denial_error()
+            .unwrap()
             .kind(),
         ErrorKind::GateWriteRejected
     );
@@ -319,12 +358,13 @@ fn append_refuses_cross_conversation_off_trunk_actor_and_policy_without_writes()
 #[test]
 fn corrupted_cycle_cardinality_and_canonical_marks_fail_closed() {
     let (_dir, vault, conv, actor) = fixture();
+    let writer = dag_writer(&vault, actor);
     let root = vault
-        .append_dag_record(&input(conv, None, true, actor))
+        .append_dag_record(&writer, &input(conv, None, true, actor))
         .unwrap()
         .id;
     let child = vault
-        .append_dag_record(&input(conv, Some(root), true, actor))
+        .append_dag_record(&writer, &input(conv, Some(root), true, actor))
         .unwrap()
         .id;
     // Internal fault fixture models a malformed received graph. Public writes
@@ -355,12 +395,13 @@ fn corrupted_cycle_cardinality_and_canonical_marks_fail_closed() {
     // The forged Parent cannot be retired, so the canonical-mark fault gets a
     // clean graph of its own.
     let (_dir, vault, conv, actor) = fixture();
+    let writer = dag_writer(&vault, actor);
     let root = vault
-        .append_dag_record(&input(conv, None, true, actor))
+        .append_dag_record(&writer, &input(conv, None, true, actor))
         .unwrap()
         .id;
     let child = vault
-        .append_dag_record(&input(conv, Some(root), true, actor))
+        .append_dag_record(&writer, &input(conv, Some(root), true, actor))
         .unwrap()
         .id;
     vault
@@ -455,8 +496,9 @@ fn migration_backfills_forward_only_session_membership_and_rejects_bad_marker() 
 #[test]
 fn legacy_childof_append_cannot_orphan_a_record_after_dag_adoption() {
     let (_dir, vault, conversation, actor) = fixture();
+    let writer = dag_writer(&vault, actor);
     let root = vault
-        .append_dag_record(&input(conversation, None, true, actor))
+        .append_dag_record(&writer, &input(conversation, None, true, actor))
         .unwrap();
     let record = EntityId::now();
     let result = vault
@@ -479,7 +521,7 @@ fn legacy_childof_append_cannot_orphan_a_record_after_dag_adoption() {
     assert!(vault.get(&record).unwrap().is_none());
     assert_eq!(vault.head(&conversation).unwrap(), Some(root.id));
     let next = vault
-        .append_dag_record(&input(conversation, Some(root.id), true, actor))
+        .append_dag_record(&writer, &input(conversation, Some(root.id), true, actor))
         .unwrap();
     assert_eq!(vault.head(&conversation).unwrap(), Some(next.id));
 }
@@ -635,8 +677,9 @@ mod replay;
 #[test]
 fn reply_pointer_rejects_foreign_target_and_reserved_body_fields_atomically() {
     let (_dir, vault, conversation, actor) = fixture();
+    let writer = dag_writer(&vault, actor);
     let root = vault
-        .append_dag_record(&input(conversation, None, true, actor))
+        .append_dag_record(&writer, &input(conversation, None, true, actor))
         .unwrap()
         .id;
     let other = EntityId::now();
@@ -644,21 +687,28 @@ fn reply_pointer_rejects_foreign_target_and_reserved_body_fields_atomically() {
         .put_entity(&other, ENTITY_TYPE_CONVERSATION, time(1), 1, &body("other"))
         .unwrap();
     let foreign = vault
-        .append_dag_record(&input(other, None, true, actor))
+        .append_dag_record(&writer, &input(other, None, true, actor))
         .unwrap()
         .id;
     let mut reply = input(conversation, Some(root), false, actor);
     reply.reply_to = Some(foreign);
     assert_eq!(
-        vault.append_dag_record(&reply).unwrap_err().kind(),
-        ErrorKind::DagParentOutsideConversation
+        vault
+            .append_dag_record(&writer, &reply)
+            .unwrap_err()
+            .message,
+        RecordError::DagParentOutsideConversation.to_string()
     );
     reply.reply_to = Some(root);
     for field in ["addr", "to", "reply_to", "summary"] {
         reply.body = rmp_serde::to_vec_named(&serde_json::json!({field: "forged"})).unwrap();
         assert_eq!(
-            vault.append_dag_record(&reply).unwrap_err().kind(),
-            ErrorKind::InvalidConversationDag
+            vault
+                .append_dag_record(&writer, &reply)
+                .unwrap_err()
+                .message,
+            RecordError::InvalidConversationDag("record body contains door-owned fields")
+                .to_string()
         );
     }
     assert_eq!(
@@ -673,12 +723,17 @@ fn reply_pointer_rejects_foreign_target_and_reserved_body_fields_atomically() {
 #[test]
 fn head_cannot_select_a_thread_or_escape_through_its_descendant() {
     let (_dir, vault, conversation, actor) = fixture();
+    let writer = dag_writer(&vault, actor);
     let root = vault
-        .append_dag_record(&input(conversation, None, true, actor))
+        .append_dag_record(&writer, &input(conversation, None, true, actor))
         .unwrap()
         .id;
     let thread = vault
-        .reply_in_thread(root, &input(conversation, Some(root), false, actor))
+        .reply_in_thread(
+            &writer,
+            root,
+            &input(conversation, Some(root), false, actor),
+        )
         .unwrap()
         .id;
     assert_eq!(
@@ -687,14 +742,19 @@ fn head_cannot_select_a_thread_or_escape_through_its_descendant() {
     );
     assert_eq!(
         vault
-            .append_dag_record(&input(conversation, Some(thread), false, actor))
+            .append_dag_record(&writer, &input(conversation, Some(thread), false, actor))
             .unwrap_err()
-            .kind(),
-        ErrorKind::InvalidConversationDag
+            .message,
+        RecordError::InvalidConversationDag("thread continuations must use reply_in_thread")
+            .to_string()
     );
     assert_eq!(vault.head(&conversation).unwrap(), Some(root));
     let next = vault
-        .reply_in_thread(thread, &input(conversation, Some(thread), false, actor))
+        .reply_in_thread(
+            &writer,
+            thread,
+            &input(conversation, Some(thread), false, actor),
+        )
         .unwrap()
         .id;
     assert_eq!(vault.thread(root).unwrap().replies, [thread, next]);
@@ -707,26 +767,27 @@ fn head_cannot_select_a_thread_or_escape_through_its_descendant() {
 #[test]
 fn thread_roots_metadata_rebuild_and_summary_cover_the_exact_branch() {
     let (_dir, vault, conversation, actor) = fixture();
+    let writer = dag_writer(&vault, actor);
     let root = vault
-        .append_dag_record(&input(conversation, None, true, actor))
+        .append_dag_record(&writer, &input(conversation, None, true, actor))
         .unwrap()
         .id;
     let trunk = vault
-        .append_dag_record(&input(conversation, Some(root), true, actor))
+        .append_dag_record(&writer, &input(conversation, Some(root), true, actor))
         .unwrap()
         .id;
     assert!(vault.thread_roots(root).unwrap().is_empty());
     assert_eq!(vault.thread_meta(root).unwrap(), None);
     let mut reply = input(conversation, None, false, actor);
     reply.occurred = time(21);
-    let first = vault.reply_in_thread(root, &reply).unwrap().id;
-    let at_head = vault.reply_in_thread(trunk, &reply).unwrap().id;
+    let first = vault.reply_in_thread(&writer, root, &reply).unwrap().id;
+    let at_head = vault.reply_in_thread(&writer, trunk, &reply).unwrap().id;
     assert_eq!(vault.head(&conversation).unwrap(), Some(trunk));
     assert_eq!(vault.thread_roots(trunk).unwrap(), [at_head]);
     reply.occurred = time(23);
-    let second = vault.reply_in_thread(root, &reply).unwrap().id;
+    let second = vault.reply_in_thread(&writer, root, &reply).unwrap().id;
     reply.occurred = time(22);
-    let third = vault.reply_in_thread(root, &reply).unwrap().id;
+    let third = vault.reply_in_thread(&writer, root, &reply).unwrap().id;
     assert_eq!(vault.head(&conversation).unwrap(), Some(trunk));
     assert_eq!(vault.thread_roots(root).unwrap(), [first]);
     assert_eq!(vault.thread_roots(root).unwrap(), [first]);
@@ -751,7 +812,10 @@ fn thread_roots_metadata_rebuild_and_summary_cover_the_exact_branch() {
     assert_eq!(vault.head(&conversation).unwrap(), Some(trunk));
     let mut canonical_reply = input(conversation, Some(trunk), true, actor);
     canonical_reply.reply_to = Some(root);
-    let canonical = vault.append_dag_record(&canonical_reply).unwrap().id;
+    let canonical = vault
+        .append_dag_record(&writer, &canonical_reply)
+        .unwrap()
+        .id;
     assert_eq!(vault.thread_roots(root).unwrap(), [first]);
     assert_eq!(vault.head(&conversation).unwrap(), Some(canonical));
 }
@@ -759,19 +823,26 @@ fn thread_roots_metadata_rebuild_and_summary_cover_the_exact_branch() {
 #[test]
 fn inner_worker_thread_summary_excludes_outer_session_ancestry() {
     let (_dir, vault, conv, actor) = fixture();
+    let writer = dag_writer(&vault, actor);
     let trunk = vault
-        .append_dag_record(&input(conv, None, true, actor))
+        .append_dag_record(&writer, &input(conv, None, true, actor))
         .unwrap()
         .id;
     let outer = vault.spawn_dag_sub_session(&trunk, actor).unwrap();
     let mut outer_input = input(conv, Some(trunk), false, actor);
     outer_input.session = Some(outer);
-    let worker = vault.append_dag_record(&outer_input).unwrap().id;
+    let worker = vault.append_dag_record(&writer, &outer_input).unwrap().id;
     let inner = vault.spawn_dag_sub_session(&worker, actor).unwrap();
     let mut inner_input = input(conv, None, false, actor);
     inner_input.session = Some(inner);
-    let root = vault.reply_in_thread(worker, &inner_input).unwrap().id;
-    let next = vault.reply_in_thread(worker, &inner_input).unwrap().id;
+    let root = vault
+        .reply_in_thread(&writer, worker, &inner_input)
+        .unwrap()
+        .id;
+    let next = vault
+        .reply_in_thread(&writer, worker, &inner_input)
+        .unwrap()
+        .id;
     assert_eq!(vault.thread(worker).unwrap().replies, [root, next]);
     let (summary, header) = vault
         .mint_and_land_thread_summary(worker, "inner worker", actor)
@@ -788,24 +859,25 @@ fn inner_worker_thread_summary_excludes_outer_session_ancestry() {
 #[test]
 fn bounded_thread_summary_excludes_room_prefix_and_pins_historic_replies() {
     let (_dir, vault, conv, actor) = fixture();
+    let writer = dag_writer(&vault, actor);
     let root = vault
-        .append_dag_record(&input(conv, None, true, actor))
+        .append_dag_record(&writer, &input(conv, None, true, actor))
         .unwrap()
         .id;
     let before = vault
-        .append_dag_record(&input(conv, Some(root), true, actor))
+        .append_dag_record(&writer, &input(conv, Some(root), true, actor))
         .unwrap()
         .id;
     let trunk = vault
-        .append_dag_record(&input(conv, Some(before), true, actor))
+        .append_dag_record(&writer, &input(conv, Some(before), true, actor))
         .unwrap()
         .id;
     let first = vault
-        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .reply_in_thread(&writer, trunk, &input(conv, None, false, actor))
         .unwrap()
         .id;
     let second = vault
-        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .reply_in_thread(&writer, trunk, &input(conv, None, false, actor))
         .unwrap()
         .id;
     let span = scope(
@@ -834,13 +906,16 @@ fn bounded_thread_summary_excludes_room_prefix_and_pins_historic_replies() {
     );
     assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
     let third = vault
-        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .reply_in_thread(&writer, trunk, &input(conv, None, false, actor))
         .unwrap()
         .id;
     let worker_session = vault.spawn_dag_sub_session(&trunk, actor).unwrap();
     let mut sibling_input = input(conv, None, false, actor);
     sibling_input.session = Some(worker_session);
-    let sibling = vault.reply_in_thread(trunk, &sibling_input).unwrap().id;
+    let sibling = vault
+        .reply_in_thread(&writer, trunk, &sibling_input)
+        .unwrap()
+        .id;
     assert_eq!(vault.thread(trunk).unwrap().replies, [first, second, third]);
     assert!(vault.thread_roots(trunk).unwrap().contains(&sibling));
     vault.move_head(&conv, &root).unwrap();
@@ -862,16 +937,17 @@ fn a_restore_rebuilds_thread_meta_from_the_threads_not_the_copied_cache() {
         SideTable::new(&side_table::CONVERSATION_DAG_THREAD_META);
 
     let (dir, vault, conversation, actor) = fixture();
+    let writer = dag_writer(&vault, actor);
     let copies = crate::test_support::restore_tempdir();
     let root = vault
-        .append_dag_record(&input(conversation, None, true, actor))
+        .append_dag_record(&writer, &input(conversation, None, true, actor))
         .unwrap()
         .id;
     let mut reply = input(conversation, None, false, actor);
     reply.occurred = time(21);
-    let first = vault.reply_in_thread(root, &reply).unwrap().id;
+    let first = vault.reply_in_thread(&writer, root, &reply).unwrap().id;
     reply.occurred = time(22);
-    vault.reply_in_thread(root, &reply).unwrap();
+    vault.reply_in_thread(&writer, root, &reply).unwrap();
     let folded = vault.thread_meta(root).unwrap().unwrap();
     assert_eq!((folded.root, folded.count, folded.last_at), (first, 2, 22));
 
@@ -892,6 +968,7 @@ fn a_restore_rebuilds_thread_meta_from_the_threads_not_the_copied_cache() {
     let destination = copies.path().join("restored");
     let (restored, _) = Vault::restore_checkpoint(
         &image,
+        &vault.checkpoint_key().unwrap(),
         &destination,
         crate::VaultConfig::device(),
         RestoreReason::Restore,
