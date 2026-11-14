@@ -195,6 +195,22 @@ fn pressed_check_in(row: &MailReplyDraftRow, applied: Option<&EntityId>) -> Memo
     }
 }
 
+/// Leaves `draft` Approved with a held outcome, as a dispatch the outbound
+/// gate held leaves it, so a test reaches a retry's check-in guard with no
+/// transport (2k9a review).
+#[cfg(oneiron_test_support)]
+pub(crate) fn hold_draft_in_test(vault: &Vault, draft: EntityId) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    let mut row = DRAFTS
+        .get(&vault.store, &txn, &draft)?
+        .ok_or(crate::Error::EntityNotFound)?;
+    row.state = MailReplyDraftState::Approved;
+    row.outcome = Some("held: test".to_owned());
+    DRAFTS.put(&vault.store, &mut txn, &draft, &row)?;
+    txn.commit()?;
+    Ok(())
+}
+
 /// The subject a reply carries: the parent's, marked as a reply once.
 fn reply_subject(subject: &str) -> String {
     let subject = subject.trim();
