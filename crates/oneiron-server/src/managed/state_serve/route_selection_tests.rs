@@ -86,6 +86,10 @@ const UNATTESTED: &[(&str, &str, Unattested)] = &[
     ("POST", "/sign/pdf", PublicProof),
     ("POST", "/sign/preview", PublicProof),
     ("POST", "/sign/signature", PublicProof),
+    // A sealed certificate's QR page and its report, keyless as the signer
+    // doors are: the vault checks the QR capability on each report.
+    ("GET", "/esign/verify", PublicProof),
+    ("POST", "/esign/verify/report", PublicProof),
     // Pairing redemption, federation, feedback and provider webhooks.
     ("POST", "/v1/core/pairing/oauth", PublicProof),
     ("POST", "/v1/core/pairing/pin", PublicProof),
