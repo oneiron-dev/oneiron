@@ -18,18 +18,31 @@ use crate::error::{Error, Result};
 /// Where a capture streams its sealed frames, and how it completes
 /// them after the Ready frame.
 pub(super) trait CaptureSink: Write {
-    /// The exact completion after the Ready frame: on a socket, the flush
-    /// and the host's acknowledgement of the exact request and transcript.
-    fn complete(&mut self, request_digest: &[u8; 32], transcript: &[u8; 32]) -> Result<()>;
+    /// The exact completion after the Ready frame, with the capture's
+    /// cancellation `check`: on a socket, the flush and the host's
+    /// acknowledgement of the exact request and transcript.
+    fn complete(
+        &mut self,
+        request_digest: &[u8; 32],
+        transcript: &[u8; 32],
+        check: &dyn Fn() -> Result<()>,
+    ) -> Result<()>;
 }
 
 #[cfg(unix)]
 impl CaptureSink for std::os::unix::net::UnixStream {
-    /// Flushes, reads the host's acknowledgement and checks both digests,
-    /// exactly as a host capture always has.
-    fn complete(&mut self, request_digest: &[u8; 32], transcript: &[u8; 32]) -> Result<()> {
+    /// Flushes, reads the host's acknowledgement, runs `check`, then checks
+    /// both digests, exactly as a host capture always has: a cancelled
+    /// capture reports its cancellation before any acknowledgement mismatch.
+    fn complete(
+        &mut self,
+        request_digest: &[u8; 32],
+        transcript: &[u8; 32],
+        check: &dyn Fn() -> Result<()>,
+    ) -> Result<()> {
         self.flush()?;
         let ack = CaptureAck::read_from(self)?;
+        check()?;
         if ack.request != *request_digest || ack.transcript != *transcript {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -233,8 +246,8 @@ impl<'stream, S: CaptureSink> Collector<'stream, S> {
             .bytes(),
         )?;
         self.stream.write_all(&digest)?;
-        self.stream.complete(&self.request_digest, &digest)?;
-        check()?;
+        self.stream
+            .complete(&self.request_digest, &digest, &check)?;
         Ok(digest)
     }
 

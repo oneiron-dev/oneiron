@@ -195,12 +195,13 @@ fn widening_copies_only_the_added_records() -> TestResult {
     Ok(())
 }
 
-/// Placing refuses a hold store inside the vault, and refuses with none
-/// set. No hold is listed after either.
+/// Placing refuses a hold store inside the vault, before creating it, and
+/// refuses with none set. No hold is listed after either.
 #[test]
 fn place_refuses_a_store_inside_the_vault() -> TestResult {
     let vault_dir = tempfile::tempdir()?;
-    let config = VaultConfig::device().with_legal_hold_store(vault_dir.path().join("holds-inside"));
+    let inside = vault_dir.path().join("holds-inside");
+    let config = VaultConfig::device().with_legal_hold_store(inside.clone());
     let vault = Vault::open_owned(vault_dir.path(), config).map_err(at("open owned"))?;
     let (_actor, owner) = owner_on(&vault)?;
     let id = named_row(&vault, "held record")?;
@@ -211,6 +212,10 @@ fn place_refuses_a_store_inside_the_vault() -> TestResult {
     assert!(
         error.contains("legal hold store"),
         "the error names the store: {error}"
+    );
+    assert!(
+        !inside.exists(),
+        "a refused store leaves no directory inside the vault"
     );
     assert!(
         vault

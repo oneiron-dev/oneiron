@@ -52,11 +52,15 @@ pub(crate) struct LegalHoldStore {
 
 /// The configured owner-hold store: its root created owner-only when
 /// missing, then canonicalized. Refused when unset, or when the root lies
-/// inside the vault's own directory, where an erase would reach it.
+/// inside the vault's own directory, where an erase would reach it. The
+/// inside check runs before the root is created, so a refused store leaves
+/// no directory in the vault, and again once the root resolves.
 pub(crate) fn configured(vault: &Vault) -> Result<LegalHoldStore> {
     let Some(root) = vault.config.legal_hold_store.clone() else {
         return Err(Error::InvalidConfig("no legal hold store is set".into()));
     };
+    let vault_dir = vault.path().canonicalize()?;
+    refuse_inside_vault(&landing_path(&root)?, &vault_dir)?;
     let mut builder = fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
@@ -66,12 +70,33 @@ pub(crate) fn configured(vault: &Vault) -> Result<LegalHoldStore> {
     }
     builder.create(&root)?;
     let root = root.canonicalize()?;
-    if root.starts_with(&vault.path().canonicalize()?) {
+    refuse_inside_vault(&root, &vault_dir)?;
+    Ok(LegalHoldStore { root })
+}
+
+/// Where `path` lands once created: its nearest existing ancestor
+/// resolved, the missing rest appended as named.
+fn landing_path(path: &Path) -> Result<PathBuf> {
+    let path = std::path::absolute(path)?;
+    for ancestor in path.ancestors() {
+        if ancestor.exists() {
+            let rest = path
+                .strip_prefix(ancestor)
+                .map_err(|_| Error::InvariantViolation("a path's ancestor is not its prefix"))?;
+            return Ok(ancestor.canonicalize()?.join(rest));
+        }
+    }
+    Ok(path)
+}
+
+/// Refuses a hold store root at or under the vault's directory.
+fn refuse_inside_vault(root: &Path, vault_dir: &Path) -> Result<()> {
+    if root.starts_with(vault_dir) {
         return Err(Error::InvalidConfig(
             "the legal hold store lies inside the vault; it would be erased with it".into(),
         ));
     }
-    Ok(LegalHoldStore { root })
+    Ok(())
 }
 
 impl LegalHoldStore {
@@ -132,11 +157,17 @@ impl Write for HoldCloneFile {
 }
 
 impl CaptureSink for HoldCloneFile {
-    /// Syncs the file, renames it over `<capture>.clone`, and syncs the
-    /// directory. A sealed capture is never silently replaced: a target
-    /// already there fails the capture instead.
-    fn complete(&mut self, _request_digest: &[u8; 32], _transcript: &[u8; 32]) -> Result<()> {
+    /// Syncs the file, runs `check`, renames it over `<capture>.clone`, and
+    /// syncs the directory. A sealed capture is never silently replaced: a
+    /// target already there fails the capture instead.
+    fn complete(
+        &mut self,
+        _request_digest: &[u8; 32],
+        _transcript: &[u8; 32],
+        check: &dyn Fn() -> Result<()>,
+    ) -> Result<()> {
         self.file.sync_all()?;
+        check()?;
         if self.target.exists() {
             return Err(
                 io::Error::new(io::ErrorKind::AlreadyExists, "legal hold capture exists").into(),

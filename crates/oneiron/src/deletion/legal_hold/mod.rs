@@ -123,35 +123,23 @@ impl Vault {
         // an abort.
         let hold_id = self.store.clock.entity_id()?;
         let outcome = self.with_write_txn_grouped(|txn| {
-            self.place_legal_hold_in_txn_with_id(txn, owner, targets, matter_ref, hold_id)
+            self.place_legal_hold_in_txn(txn, owner, targets, matter_ref, hold_id)
         });
         if outcome.is_err() {
-            // Best effort: a failed write leaves no hold row, so its sealed
-            // files go with it.
-            clone::legal_hold_store::remove_hold_dir_best_effort(self, &hold_id);
+            self.remove_uncommitted_hold_copy(&hold_id);
         }
         outcome
     }
 
     /// [`Self::place_legal_hold`] inside the caller's writer, so the hold
-    /// commits or rolls back with what else that writer records. Fails as
-    /// that door does.
+    /// commits or rolls back with what else that writer records, under a
+    /// hold id the caller minted before that writer. The sealed copy is
+    /// written inside the writer, before the hold row, and the `Placed`
+    /// event carries the first capture's fingerprint. Its files outlive a
+    /// rollback, so a caller whose writer fails afterwards calls
+    /// [`Self::remove_uncommitted_hold_copy`] with the same id. Fails as
+    /// [`Self::place_legal_hold`] does.
     pub(crate) fn place_legal_hold_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        owner: &AuthenticatedOwner,
-        targets: Vec<LegalHoldTarget>,
-        matter_ref: Option<String>,
-    ) -> Result<LegalHold> {
-        let hold_id = self.store.clock.entity_id()?;
-        self.place_legal_hold_in_txn_with_id(txn, owner, targets, matter_ref, hold_id)
-    }
-
-    /// [`Self::place_legal_hold_in_txn`] for a hold id the caller already
-    /// minted, so it can clean the hold's sealed files up when the write
-    /// fails. The sealed copy is written inside the writer, before the hold
-    /// row, and the `Placed` event carries the first capture's fingerprint.
-    pub(crate) fn place_legal_hold_in_txn_with_id(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: &AuthenticatedOwner,
@@ -210,9 +198,15 @@ impl Vault {
             Ok(hold)
         })();
         if placed.is_err() {
-            clone::legal_hold_store::remove_hold_dir_best_effort(self, &hold_id);
+            self.remove_uncommitted_hold_copy(&hold_id);
         }
         placed
+    }
+
+    /// Removes the sealed files of hold `hold_id`, whose writer failed so
+    /// no hold row names them, ignoring every failure (best effort).
+    pub(crate) fn remove_uncommitted_hold_copy(&self, hold_id: &EntityId) {
+        clone::legal_hold_store::remove_hold_dir_best_effort(self, hold_id);
     }
 
     /// Adds `targets` to the owner's standing hold `hold_id`, logged as a

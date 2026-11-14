@@ -94,17 +94,6 @@ async fn serve_with_handles(
     let mut vault_config = config
         .base_vault_config()
         .with_checkpoint_host_holds_recipient(host.checkpoint_host_holds_recipient());
-    // An owner's legal holds keep their sealed copies beside the data
-    // directory, never inside it, so a vault erase never reaches them.
-    let hold_store_name = managed.data_dir.file_name().map_or_else(
-        || "vault".into(),
-        |name| name.to_string_lossy().into_owned(),
-    );
-    vault_config.legal_hold_store = Some(
-        managed
-            .data_dir
-            .with_file_name(format!("{hold_store_name}.legal-holds")),
-    );
     // The supervisor delivered this vault's data key at boot (FIX 4531).
     vault_config.privacy.data_key_custody = oneiron::VaultDataKeyCustody::SupervisorDelivered;
     // Our cloud hosts this vault. The owner's "Help improve Oneiron" and
