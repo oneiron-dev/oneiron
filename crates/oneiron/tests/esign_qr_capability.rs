@@ -608,12 +608,11 @@ fn fresh_artifact(sealed: &Sealed, person: EntityId) -> TestResult<EntityId> {
 }
 
 /// `vault.esign.create` with the QR PDF download on, as `person` presenting
-/// `proof`, for a new document on `artifact`.
+/// `proof`: the signing overlay on `artifact`, which is also its one item.
 fn draft_with_qr_pdf_download(
     sealed: &Sealed,
     person: EntityId,
     proof: &VerifiedSlip,
-    document: EntityId,
     artifact: EntityId,
 ) -> oneiron_contracts::memory::MemoryResult<()> {
     sealed
@@ -621,7 +620,7 @@ fn draft_with_qr_pdf_download(
         .memory(person, EdgeActorClass::Human)
         .with_read_proof(proof)
         .esign_create(&EsignCreateRequest {
-            document_ref: document.to_hex(),
+            document_ref: artifact.to_hex(),
             draft: agreement(artifact, sealed.now),
             qr_pdf_download: true,
         })
@@ -656,9 +655,8 @@ fn an_owner_credential_handed_to_another_key_turns_on_no_qr_pdf_download() -> Te
     let handed =
         vault.verify_capability_slip(&sealed.issuer.public_key(), &handed, challenge, &binding)?;
     assert!(handed.is_transferred(), "control: the slip was handed on");
-    let artifact = fresh_artifact(&sealed, person)?;
-    let other = EntityId::now();
-    let refused = draft_with_qr_pdf_download(&sealed, person, &handed, other, artifact).expect_err(
+    let other = fresh_artifact(&sealed, person)?;
+    let refused = draft_with_qr_pdf_download(&sealed, person, &handed, other).expect_err(
         "FAILBEFORE REVIEW-7856-P1: a handed owner credential turns on no QR PDF download",
     );
     assert!(
@@ -672,8 +670,8 @@ fn an_owner_credential_handed_to_another_key_turns_on_no_qr_pdf_download() -> Te
     let own =
         vault.verify_capability_slip(&sealed.issuer.public_key(), &slip, challenge, &binding)?;
     assert!(!own.is_transferred(), "control: the owner holds this one");
-    let mine = EntityId::now();
-    draft_with_qr_pdf_download(&sealed, person, &own, mine, artifact)?;
+    let mine = fresh_artifact(&sealed, person)?;
+    draft_with_qr_pdf_download(&sealed, person, &own, mine)?;
     assert!(
         !vault.esign_audit(mine)?.is_empty(),
         "control: the owner's own credential drafts with the QR PDF download on"
