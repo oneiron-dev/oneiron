@@ -281,7 +281,7 @@ pub(super) fn withhold_undisclosed(
     let mut kept = Vec::with_capacity(scores.len());
     for scored in scores.drain(..) {
         let admitted = match metadata_cache.get(store, rtxn, &scored.id)? {
-            Some(meta) => crate::context_pack::retained_copies::clamp_admits(
+            Some(meta) => crate::context_pack::retained_copies::clamp_prefilter_admits(
                 clamp,
                 store.base(),
                 rtxn,
