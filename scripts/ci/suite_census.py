@@ -141,28 +141,34 @@ def close_brace(masked, open_pos):
     return len(masked)
 
 
-def gated_mods(path, text, masked):
-    """[(item, inline span or None, module files)] for each #[cfg(any())] mod declared in path."""
-    parts = path.split("/")
-    mod_rs = parts[-1] in ("mod.rs", "lib.rs", "main.rs", "build.rs") or (len(parts) > 1 and parts[-2] in CRATE_ROOT_DIRS)
-    here = posixpath.dirname(path)
-    child_dir = here if mod_rs else path.removesuffix(".rs")
+def mod_decls(text, masked):
+    """[(item, offset, inline span or None, #[path] value or None, gated)] for each mod declared in a file."""
     out = []
     for m in _MOD_DECL.finditer(masked):
         start = item_start(masked, m.start())
-        if not _CFG_ANY.search(masked, start, m.start()):
-            continue
-        item = m.group(1)
+        gated = bool(_CFG_ANY.search(masked, start, m.start()))
         if m.group(2) == "{":
-            out.append((item, (m.end() - 1, close_brace(masked, m.end() - 1)), None))
+            out.append((m.group(1), m.start(), (m.end() - 1, close_brace(masked, m.end() - 1)), None, gated))
             continue
         attr = _PATH_ATTR.search(text, start, m.start())
-        if attr:
-            target = posixpath.normpath(posixpath.join(here, attr.group(1)))
-            out.append((item, None, (target, posixpath.dirname(target) if target.endswith("/mod.rs") else None)))
-        else:
-            out.append((item, None, (f"{child_dir}/{item}.rs", f"{child_dir}/{item}")))
+        out.append((m.group(1), m.start(), None, attr.group(1) if attr else None, gated))
     return out
+
+
+def module_files(path, item, attr, path_loaded):
+    """(module file, module directory or None) that `mod item;` declared in path loads, by rustc's rules: a #[path]
+    is relative to the declaring file's directory; otherwise a mod.rs-like file (mod.rs, a crate root, or a file that
+    was itself loaded by #[path]) keeps its children in its own directory, and any other file in a directory named
+    after its stem. A #[path] inside an inline mod block is read as if the block were not there."""
+    here = posixpath.dirname(path)
+    if attr:
+        target = posixpath.normpath(posixpath.join(here, attr))
+        return target, posixpath.dirname(target) if target.endswith("/mod.rs") else None
+    parts = path.split("/")
+    mod_rs = path_loaded or parts[-1] in ("mod.rs", "lib.rs", "main.rs", "build.rs") or (
+        len(parts) > 1 and parts[-2] in CRATE_ROOT_DIRS)
+    child_dir = here if mod_rs else path.removesuffix(".rs")
+    return f"{child_dir}/{item}.rs", f"{child_dir}/{item}"
 
 
 def gated_fns(masked):
@@ -179,7 +185,7 @@ def census(repo, rev):
     e2e = dict.fromkeys(E2E_STATES, 0)
     rust = {}
     vendored, baseline_rows, flaky = 0, [], 0
-    rust_tests, gates = {}, {}  # path -> [(offset, fn name, ignored, self-gated)]; declaring file -> gated_mods
+    rust_tests, decls = {}, {}  # path -> [(offset, fn name, ignored, self-gated)]; declaring file -> mod_decls
     rows, gated_fn_rows = {}, set()
     for path, data in tc.read_blobs(repo, files):
         text = data.decode("utf-8", errors="replace")
@@ -196,11 +202,11 @@ def census(repo, rev):
         kind = tc.kind_of(path)
         if kind == "rust":
             offsets = list(tc.rust_test_fns(text))
-            if not offsets and "any()" not in text:
+            if not offsets and "any()" not in text and not _PATH_ATTR.search(text):
                 continue
             masked = mask_rust(text)
+            decls[path] = mod_decls(text, masked)
             if "any()" in text:
-                gates[path] = gated_mods(path, text, masked)
                 gated_fn_rows |= {(path, name) for name in gated_fns(masked)}
             if offsets:
                 rust_tests[path] = [
@@ -221,25 +227,53 @@ def census(repo, rev):
             counts[bucket] += n
         rows[path] = {bucket: n}
 
+    def path_targets():
+        return {module_files(p, i, a, False)[0] for p, ds in decls.items() for i, _, span, a, _ in ds if a and not span}
+
+    loaded_by_path = path_targets()
     inline, by_file = {}, {}  # declaring file -> [(span, gate)]; module file or directory -> gate
-    for decl, mods in gates.items():
-        for item, span, module_files in mods:
+    for decl, ds in decls.items():
+        for item, _, span, attr, gated in ds:
+            if not gated:
+                continue
             if span:
                 inline.setdefault(decl, []).append((span, (decl, item)))
             else:
-                for where in module_files:
+                for where in module_files(decl, item, attr, decl in loaded_by_path):
                     if where:
                         by_file[where] = (decl, item)
 
     def gates_of(path, offset):
-        """The gated (declaring file, item) that hold the test at offset in path."""
+        """The gated (declaring file, item) that hold the item at offset in path."""
         held = {gate for span, gate in inline.get(path, ()) if span[0] <= offset < span[1]}
         parts = path.split("/")
         held |= {by_file["/".join(parts[:i])] for i in range(1, len(parts) + 1) if "/".join(parts[:i]) in by_file}
         return held
 
+    # A gate holds every module its gated code declares, wherever the module file lies. The file and directory
+    # prefixes above cover a plain child; a #[path] child (comm/tests.rs loads comm/thread_alias_tests.rs) and the
+    # children of a file loaded by #[path] (they sit beside it) lie outside them, so carry the gate down each
+    # declaration until nothing changes, reading the declarations of a gated #[path] file that was not read yet.
+    while True:
+        grew = False
+        for decl, ds in list(decls.items()):
+            for item, offset, span, attr, gated in ds:
+                held = () if span or gated else gates_of(decl, offset)
+                for where in module_files(decl, item, attr, decl in loaded_by_path) if held else ():
+                    if where and where not in by_file:
+                        by_file[where] = min(held)
+                        grew = True
+        unread = {p: files[p] for p in loaded_by_path if p in files and p not in decls and gates_of(p, 0)}
+        for path, data in tc.read_blobs(repo, unread):
+            text = data.decode("utf-8", errors="replace")
+            decls[path] = mod_decls(text, mask_rust(text))
+            grew = True
+        if not grew:
+            break
+        loaded_by_path = path_targets()
+
     holding = set()  # gated (declaring file, item) that hold at least one test, and gated test fns
-    gated = {(decl, item) for decl, mods in gates.items() for item, _, _ in mods} | gated_fn_rows
+    gated = {(decl, d[0]) for decl, ds in decls.items() for d in ds if d[4]} | gated_fn_rows
     for path, tests in rust_tests.items():
         if is_office(path, "rust"):
             counts["office"] += len(tests)

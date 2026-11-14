@@ -128,6 +128,30 @@ class SuiteCensusTests(unittest.TestCase):
         self.assertEqual(rows["crates/oneiron/src/a/mod.rs"], {"path": "crates/oneiron/src/a/mod.rs", "crate": "oneiron", "quarantined": 3, "rust_lib": 1})
         self.assertEqual(rows["crates/oneiron/src/a/tests/support.rs"]["quarantined"], 1)
 
+    def test_a_gate_reaches_path_children_outside_its_directory(self):
+        # comm/tests.rs is gated; its #[path] children sit beside it (outside comm/tests/), and a file loaded by
+        # #[path] keeps its own children beside it too. Only live_tests.rs, declared by ungated code, compiles.
+        self.commit({
+            "crates/oneiron/src/comm/mod.rs": (
+                "#[cfg(any())]\n#[cfg(test)]\nmod tests;\n\n#[cfg(test)]\n#[path = \"live_tests.rs\"]\nmod live_tests;\n"
+            ),
+            "crates/oneiron/src/comm/tests.rs": rust_source("t1")
+            + '#[path = "thread_alias_tests.rs"]\nmod thread_alias_tests;\n#[path = "shared_fixtures.rs"]\nmod fixtures;\n',
+            "crates/oneiron/src/comm/thread_alias_tests.rs": rust_source("a1", "a2") + "mod nested;\n",
+            "crates/oneiron/src/comm/nested.rs": rust_source("n1"),
+            "crates/oneiron/src/comm/shared_fixtures.rs": "pub(super) fn fixture() {}\nmod deep;\n",
+            "crates/oneiron/src/comm/deep.rs": rust_source("d1"),
+            "crates/oneiron/src/comm/live_tests.rs": rust_source("l1"),
+        })
+        c = self.census("--files")
+        rows = {r["path"].removeprefix("crates/oneiron/src/comm/"): r for r in c["files"]}
+        self.assertEqual(c["quarantined"], 5)  # t1, a1, a2, n1, d1
+        self.assertEqual(c["rust"]["lib"], 1)  # l1
+        for name in ("tests.rs", "thread_alias_tests.rs", "nested.rs", "deep.rs"):
+            self.assertNotIn("rust_lib", rows[name], name)
+        self.assertEqual(rows["live_tests.rs"]["rust_lib"], 1)
+        self.assertEqual(c["quarantine_unlisted"], ["crates/oneiron/src/comm/mod.rs::tests"])
+
     def test_office_counts_apart(self):
         self.commit({
             "crates/oneiron-seal/src/lib.rs": rust_source("seals"),
