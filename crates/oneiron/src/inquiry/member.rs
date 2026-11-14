@@ -16,18 +16,22 @@
 //! * The companion: a caller-supplied [`InquiryJudgment`]. The production
 //!   default, [`UnsureInquiryJudgment`], is unsure, so every inquiry goes to
 //!   the member until the model-backed judgment lands (its own PR).
-//! * The ladder: role Guest holding the edge's power, in the edge's mode,
-//!   made `manual` for an inquiry that asks to keep more than the edge
-//!   allows. Go: the companion's statements answer, or `no_answer`. Wait: a
-//!   pending check-in until the inquiry expires, joined to the inquiry, and
-//!   the answer is `pending`.
+//! * The ladder: role Guest holding the edge's power, in the mode the edge
+//!   saved for the inquiry's keep, made `manual` for an inquiry that asks to
+//!   keep more than the edge allows. Go: the companion's statements answer,
+//!   or `no_answer`. Wait: a pending check-in until the inquiry expires,
+//!   joined to the inquiry, and the answer is `pending`.
+//! * `never` saved for the inquiry's keep: the inquiry is logged and
+//!   settles `no_answer` at once, decided by that saved decision. Neither
+//!   the companion nor the member is reached, and the edge stays.
 //! * The member's turn ([`Vault::answer_inquiry`]): words answer and are
 //!   filed in the opened scope for next time; a decline settles
 //!   `no_answer`. A pending inquiry the asker sends again after the ladder
 //!   let go or held settles `no_answer`: one shape for every reason.
 //!
-//! The member's saved decision for an edge is its terms' mode and allowed
-//! keep; no separate standing row is read here.
+//! The member's saved decisions for an edge are its terms' mode for each
+//! keep, bounded by the allowed keep (FIX INQUIRY-STANDING-PER-KEEP); no
+//! separate standing row is read here.
 
 use rmpv::Value;
 
@@ -249,13 +253,23 @@ pub(crate) fn admit_inquiry_in_txn(
         return Err(refuse("the inquiry has expired"));
     }
     let logged = log_inquiry_in_txn(&vault.store, txn, grant, inquiry, now)?;
+    let Some(mode) = ladder_mode(edge.terms.mode_for(inquiry.keep)) else {
+        // The member's saved "never answer" for this keep: a typed decline
+        // that reaches neither the companion nor the member; the edge stays.
+        return settle_inquiry_in_txn(
+            &vault.store,
+            txn,
+            grant,
+            inquiry.id,
+            InquiryAnswer::no_answer(inquiry),
+            InquiryDecider::StandingRow {
+                row_ref: saved_decision_ref(grant, inquiry.keep),
+            },
+            now,
+        );
+    };
     let admitted = opened_scope_texts_in_txn(vault, txn, &edge)?;
     let judged = judge(judgment, &inquiry.question, &admitted);
-    let mode = inquiry_mode(
-        edge.terms.check_in_mode,
-        inquiry.keep,
-        edge.terms.keep_allowed,
-    );
     let request = CheckInRequest {
         act: ActClass::OutboundSend,
         role: RolePreset::Guest,
@@ -400,11 +414,17 @@ pub(crate) fn answer_inquiry_in_txn(
 
 /// The edge `grant`, when `proof` and `inquiry` may use it at `now`: the
 /// credential is the company host's own, bound to this edge's grant and
-/// live in `txn` (its holder, its grant's expiry and withdrawal, its pact);
-/// the grant is a live inquiry edge, not expired or withdrawn, whose Connect
-/// pact is Active and still holds the edge's scope; and the inquiry comes
-/// from the edge's company. One refusal for every credential, edge or pact
-/// failure.
+/// live in `txn` (its holder, its grant's expiry and withdrawal, its pact),
+/// as this vault minted it, with no holder caveat, and its scope holds the
+/// edge's whole scope; the grant is a live inquiry edge, not expired or
+/// withdrawn, whose Connect pact is Active and still holds the edge's
+/// scope; and the inquiry comes from the edge's company. One refusal for
+/// every credential, edge or pact failure.
+///
+/// The route reads no caveat: a holder's narrowing (a scope, a record set,
+/// a pact bound) would otherwise pass verification and still be answered
+/// from the whole edge (review round 1 of #7603). The company host sends
+/// the slip as minted, so the mint is the one form admitted.
 fn admitted_edge_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -417,7 +437,9 @@ fn admitted_edge_in_txn(
     let claims = proof.claims();
     if claims.grant_ref.as_deref() != Some(grant.to_hex().as_str())
         || proof.is_transferred()
+        || !proof.is_unattenuated()
         || !claims.channels.is_empty()
+        || !claims.records.is_empty()
         || !vault.capability_slip_is_live_in_txn(txn, proof)?
     {
         return Err(not_admitted());
@@ -425,6 +447,9 @@ fn admitted_edge_in_txn(
     let Some((edge, decoded)) = inquiry_edge_grant_in_txn(vault, txn, &grant)? else {
         return Err(not_admitted());
     };
+    if !edge.authority_scope.is_narrowing_of(proof.scope()) {
+        return Err(not_admitted());
+    }
     let fold = vault.authority_fold_readonly_in_txn(txn)?;
     if !decoded.is_live_at(now)
         || vault.guest_grant_withdrawn_in_txn(txn, &grant)?
@@ -511,21 +536,24 @@ fn judge(judgment: &dyn InquiryJudgment, question: &str, admitted: &[String]) ->
     }
 }
 
-/// The mode the ladder runs an inquiry in: the edge's, made `manual` when
-/// the inquiry asks to keep a copy and the edge allows only `task`.
-fn inquiry_mode(
-    mode: InquiryCheckInMode,
-    keep: InquiryKeep,
-    keep_allowed: InquiryKeep,
-) -> CheckInMode {
-    if keep == InquiryKeep::Copy && keep_allowed == InquiryKeep::Task {
-        return CheckInMode::AlwaysAsk;
-    }
+/// The check-in mode the ladder runs an inquiry in, from the mode the edge
+/// saved for its keep ([`InquiryTerms::mode_for`]); `None` for `never`,
+/// which the ladder never runs.
+///
+/// [`InquiryTerms::mode_for`]: super::terms::InquiryTerms::mode_for
+fn ladder_mode(mode: InquiryCheckInMode) -> Option<CheckInMode> {
     match mode {
-        InquiryCheckInMode::AlwaysAsk => CheckInMode::AlwaysAsk,
-        InquiryCheckInMode::AskWhenUnsure => CheckInMode::AskWhenUnsure,
-        InquiryCheckInMode::NeverAsk => CheckInMode::NeverAsk,
+        InquiryCheckInMode::NeverAnswer => None,
+        InquiryCheckInMode::AlwaysAsk => Some(CheckInMode::AlwaysAsk),
+        InquiryCheckInMode::AskWhenUnsure => Some(CheckInMode::AskWhenUnsure),
+        InquiryCheckInMode::NeverAsk => Some(CheckInMode::NeverAsk),
     }
+}
+
+/// The reference "Asked about you" names a saved decision by: the edge's
+/// terms for one keep.
+fn saved_decision_ref(grant: EntityId, keep: InquiryKeep) -> String {
+    format!("inquiry_terms:{}:{}", grant.to_hex(), keep.as_str())
 }
 
 /// The digest of an inquiry's answer effect: statements of this vault

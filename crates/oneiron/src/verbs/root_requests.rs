@@ -114,15 +114,10 @@ impl From<OwnerWorkReceipt> for OwnerWorkView {
     }
 }
 
-/// `vault.roots.requests.cancel`'s input: the root request to cancel, as
-/// the route's body names it.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RootRequestCancelRequest {
-    /// The request's signed authority-log entry, 64 lower-case hex: its
-    /// receipt's `request`.
-    pub request: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::root_requests::{
+    OwnerWorkGetRequest, RootChangeView, RootRequestCancelRequest, RootRequestCreateRequest,
+};
 
 /// `vault.roots.requests.cancel`: records the owner's cancel of one root
 /// request through [`Vault::cancel_root_request`], from any surface he is
@@ -148,54 +143,6 @@ pub fn cancel_root_request_as(
     Ok(vault.cancel_root_request(owner, surface, request)?)
 }
 
-/// `vault.roots.requests.create`'s input: the root change the owner decides
-/// for one install, as `POST /v1/owner/roots/requests` names it. Ids only.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RootRequestCreateRequest {
-    /// The install that is to make the change, 32 hex.
-    pub target: String,
-    /// `pin`, `activate`, `restore` or `anchor`.
-    pub change: String,
-    /// The root the change binds, 64 lower-case hex: every change but
-    /// `activate`.
-    #[serde(default)]
-    pub root: Option<String>,
-    /// The machine an `anchor` marks, 32 hex.
-    #[serde(default)]
-    pub machine: Option<String>,
-}
-
-/// One root change as a surface shows it: its kind, and the ids it binds.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RootChangeView {
-    /// `pin`, `activate`, `restore` or `anchor`.
-    pub change: String,
-    /// The root it binds, 64 lower-case hex; `None` for `activate`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub root: Option<String>,
-    /// The machine an `anchor` marks, 32 hex.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub machine: Option<String>,
-}
-
-impl From<RootChange> for RootChangeView {
-    fn from(change: RootChange) -> Self {
-        let machine = match change {
-            RootChange::Anchor { machine, .. } => Some(machine.to_hex()),
-            RootChange::Pin { .. } | RootChange::Activate | RootChange::Restore { .. } => None,
-        };
-        Self {
-            change: change.as_str().to_owned(),
-            root: change
-                .root()
-                .map(|root| crate::entity_id::bytes_to_hex_lower(&root.0)),
-            machine,
-        }
-    }
-}
-
 /// One root request naming this install with no result yet, as
 /// `vault.roots.requests.list` answers it: its change and its receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -203,15 +150,6 @@ impl From<RootChange> for RootChangeView {
 pub struct PendingRootRequestView {
     pub change: RootChangeView,
     pub receipt: OwnerWorkView,
-}
-
-/// `vault.owner_work.get`'s input: one owner work request, by its signed
-/// authority-log entry.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OwnerWorkGetRequest {
-    /// The request's entry, 64 lower-case hex: its receipt's `request`.
-    pub request: String,
 }
 
 /// `vault.roots.requests.create` (FIX 5598): records the owner's root change

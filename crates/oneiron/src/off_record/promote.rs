@@ -437,7 +437,7 @@ impl FloorWrites<'_> {
                     .ok_or(Error::InvariantViolation(
                         "promotion replay left a promoted entity without a canonical short id",
                     ))?;
-            short_id_mapping.push((temporary.clone(), canonical.to_owned()));
+            short_id_mapping.push((temporary.clone(), canonical));
         }
 
         let outcome = PromoteOutcome {
@@ -688,7 +688,7 @@ impl FloorWrites<'_> {
                     .ok_or(Error::InvariantViolation(
                         "an off-record copy left a message without a canonical short id",
                     ))?;
-            short_id_mapping.push((temporary.clone(), canonical.to_owned()));
+            short_id_mapping.push((temporary.clone(), canonical));
         }
         for id in &replayed {
             COPY_RECEIPTS.put(

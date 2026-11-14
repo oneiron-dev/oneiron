@@ -11,8 +11,13 @@
 //!
 //! The opened scope starts empty. The member opens a statement into it: a
 //! new CLAIM in the opened WORLD, stated by the member, with a private link
-//! to the claim it was drawn from that stays in the member's vault. Closing
-//! a statement retracts it.
+//! to the claim it was drawn from that stays in the member's vault. A claim
+//! in a foreign WORLD is never drawn from: it is not re-shareable. Closing a
+//! statement retracts it.
+//!
+//! The member changes an edge's terms after the mint in place
+//! ([`Vault::change_inquiry_edge_terms`]): the grant row is rewritten, never
+//! re-minted, and a Share receipt records the change.
 
 use std::collections::BTreeSet;
 
@@ -20,6 +25,7 @@ use rmpv::Value;
 
 use crate::Vault;
 use crate::authority::{AuthorityVaultId, HostSlipIssuer};
+use crate::batch::BatchOp;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
@@ -38,8 +44,9 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
+use super::receipt::write_inquiry_terms_receipt_in_txn;
 use super::record::InquiryKeep;
-use super::terms::{InquiryCheckInMode, InquiryTerms, InquiryTierCeiling};
+use super::terms::{InquiryCheckInMode, InquiryKeepModes, InquiryTerms, InquiryTierCeiling};
 
 /// The predicate of a statement the member opened: a statement about the
 /// member, in the member's words.
@@ -67,8 +74,9 @@ pub struct InquiryEdgeRequest {
     pub company_name: String,
     /// The tier recall reads the opened scope at.
     pub tier_ceiling: InquiryTierCeiling,
-    /// The mode the member's check-in ladder runs an inquiry in.
-    pub check_in_mode: InquiryCheckInMode,
+    /// The mode the member's check-in ladder runs an inquiry in, for each
+    /// keep.
+    pub check_in_modes: InquiryKeepModes,
     /// The keep the member allows without being asked.
     pub keep_allowed: InquiryKeep,
     /// The second the edge stops; `None` until revoked.
@@ -77,19 +85,62 @@ pub struct InquiryEdgeRequest {
 
 impl InquiryEdgeRequest {
     /// An edge to `company_vault_id` on the member defaults
-    /// (federation.md #inquiry-first-build): tier `unstamped`, mode
-    /// `ask_when_unsure`, keep `task`, no expiry.
+    /// (federation.md #inquiry-first-build): tier `unstamped`, modes `auto`
+    /// for `task` and `manual` for `copy`, keep `task`, no expiry.
     #[must_use]
     pub fn member_defaults(company_vault_id: AuthorityVaultId, company_name: &str) -> Self {
         Self {
             company_vault_id,
             company_name: company_name.to_owned(),
             tier_ceiling: InquiryTierCeiling::default(),
-            check_in_mode: InquiryCheckInMode::default(),
+            check_in_modes: InquiryKeepModes::default(),
             keep_allowed: InquiryKeep::default(),
             expires_at: None,
         }
     }
+}
+
+/// What the member changes in an inquiry edge's terms after the mint; a
+/// part left `None` stays as it is. The opened WORLD and the tier stay.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct InquiryTermsChange {
+    /// The mode of an inquiry with keep `task`.
+    pub task: Option<InquiryCheckInMode>,
+    /// The mode of an inquiry with keep `copy`.
+    pub copy: Option<InquiryCheckInMode>,
+    /// The keep the member allows without being asked.
+    pub keep_allowed: Option<InquiryKeep>,
+}
+
+/// How a terms change moved an inquiry edge.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InquiryTermsChangeOutcome {
+    /// The terms already read so: nothing was written.
+    Unchanged,
+    /// No keep's mode answers further without the member, and no wider
+    /// keep is allowed ([`InquiryTerms::is_narrowing_of`]).
+    Narrowed,
+    /// Some keep's mode answers further, or a wider keep is allowed.
+    Widened,
+}
+
+impl InquiryTermsChangeOutcome {
+    /// The wire token, as the change's receipt and verb name it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unchanged => "unchanged",
+            Self::Narrowed => "narrowed",
+            Self::Widened => "widened",
+        }
+    }
+}
+
+/// A terms change: the edge as it now stands, and how it moved.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InquiryTermsChanged {
+    pub edge: InquiryEdge,
+    pub outcome: InquiryTermsChangeOutcome,
 }
 
 /// One inquiry edge as the member's vault stores it.
@@ -270,6 +321,17 @@ pub(super) fn open_inquiry_scope_item_in_txn(
                 "an opened statement is drawn from a live claim outside the opened scope",
             ));
         }
+        // A copy another vault shared, or an inquiry answer landed as a
+        // copy, is not re-shareable: it is no source for an answer to a third
+        // vault (federation.md:36; FIX INQUIRY-SCOPE-DRAWN-FROM-FOREIGN).
+        if source_body
+            .world
+            .is_some_and(crate::entity_id::is_foreign_world_id_range)
+        {
+            return Err(refused(
+                "an opened statement is never drawn from a claim in a foreign WORLD",
+            ));
+        }
     }
     let mut body = ClaimBody::new(
         INQUIRY_STATEMENT_PREDICATE,
@@ -298,6 +360,44 @@ pub(super) fn open_inquiry_scope_item_in_txn(
         SCOPE_LINK_BY_SOURCE.put(&vault.store, txn, &(source, item.claim), &())?;
     }
     Ok(())
+}
+
+/// Rewrites the inquiry edge `grant`'s row as `grant_body` in `txn`, its
+/// id, entity type and time kept: the one row write of a terms change.
+fn rewrite_inquiry_edge_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    grant: EntityId,
+    grant_body: &FederationGrant,
+) -> Result<()> {
+    let header = vault
+        .entity_header_in_txn(txn, &grant)?
+        .ok_or(Error::EntityNotFound)?;
+    crate::batch::apply_ops(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        txn,
+        vec![BatchOp::Put {
+            id: grant,
+            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+            occurred: TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            learned_at: header.learned_at,
+            row_version: None,
+            data: crate::federation::encode_federation_grant_body(grant_body)?,
+            allow_maintenance: true,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        }],
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+        false,
+        true,
+    )
 }
 
 /// One live statement of an opened scope, with the body it was read from.
@@ -414,7 +514,7 @@ impl Vault {
             let terms = InquiryTerms {
                 opened_world,
                 tier_ceiling: request.tier_ceiling,
-                check_in_mode: request.check_in_mode,
+                check_in_modes: request.check_in_modes,
                 keep_allowed: request.keep_allowed,
             };
             let minted = self.mint_connect_grant_in_txn(
@@ -479,6 +579,81 @@ impl Vault {
                 guest_actor: minted.guest_actor,
                 authority_scope: minted.resolved_scope,
             })
+        })
+    }
+
+    /// Changes an inquiry edge's terms after the mint, as the member's own
+    /// act, in one writer (Engine ruling INQUIRE-STANDING = A; FIX
+    /// INQUIRY-STANDING-PER-KEEP): the grant row's `inquiry_terms` are
+    /// rewritten in place, its id, time and every other part kept, so the
+    /// edge is not re-minted and its pact and slips stand; a Share receipt
+    /// records the change. The next inquiry reads the new terms.
+    ///
+    /// `member` is this vault's live owner either way. A narrowing applies
+    /// on that person's own proof, as a person's own refusal does, a person
+    /// credential included. A widening takes the owner-tier proof the mint
+    /// takes, so a person credential never widens. Terms that already read
+    /// so write nothing.
+    ///
+    /// # Errors
+    ///
+    /// A proof of anyone who does not own this vault; a widening without
+    /// the owner-tier proof; a grant that is not a live inquiry edge here;
+    /// storage errors.
+    pub fn change_inquiry_edge_terms(
+        &self,
+        member: &AuthenticatedOwner,
+        grant: EntityId,
+        change: InquiryTermsChange,
+    ) -> Result<InquiryTermsChanged> {
+        self.with_write_txn_grouped(|txn| {
+            let actor = member.revalidate_person_in_txn(self, txn)?;
+            if !crate::policy_model::is_live_vault_owner_in_txn(self, txn, &actor)? {
+                return Err(refused(
+                    "only the member who owns this vault changes an inquiry edge's terms",
+                ));
+            }
+            let Some((edge, mut grant_body)) = inquiry_edge_grant_in_txn(self, txn, &grant)? else {
+                return Err(refused(
+                    "that grant is not a live inquiry edge of this vault",
+                ));
+            };
+            let previous = edge.terms;
+            let terms = InquiryTerms {
+                check_in_modes: InquiryKeepModes {
+                    task: change.task.unwrap_or(previous.check_in_modes.task),
+                    copy: change.copy.unwrap_or(previous.check_in_modes.copy),
+                },
+                keep_allowed: change.keep_allowed.unwrap_or(previous.keep_allowed),
+                ..previous
+            };
+            let outcome = if terms == previous {
+                InquiryTermsChangeOutcome::Unchanged
+            } else if terms.is_narrowing_of(&previous) {
+                InquiryTermsChangeOutcome::Narrowed
+            } else {
+                InquiryTermsChangeOutcome::Widened
+            };
+            if outcome == InquiryTermsChangeOutcome::Unchanged {
+                return Ok(InquiryTermsChanged { edge, outcome });
+            }
+            if outcome == InquiryTermsChangeOutcome::Widened {
+                member.revalidate_in_txn(self, txn)?;
+            }
+            grant_body.inquiry_terms = Some(terms);
+            rewrite_inquiry_edge_row_in_txn(self, txn, grant, &grant_body)?;
+            let edge = InquiryEdge { terms, ..edge };
+            let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            write_inquiry_terms_receipt_in_txn(
+                &self.store,
+                txn,
+                &edge,
+                &previous,
+                &actor,
+                outcome,
+                now,
+            )?;
+            Ok(InquiryTermsChanged { edge, outcome })
         })
     }
 

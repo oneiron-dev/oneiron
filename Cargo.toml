@@ -64,10 +64,11 @@ lto = "off"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.96"
+rust-version = "1.100"
 license = "Apache-2.0"
 repository = "https://github.com/oneiron-dev/oneiron"
-homepage = "https://github.com/oneiron-dev/oneiron"
+# No `homepage`: it equalled `repository`, which Cargo 1.100 reports as `redundant_homepage`.
+# A member must not write `homepage.workspace = true`; that is a hard manifest error now.
 readme = "README.md"
 keywords = ["retrieval", "vector-search", "lmdb", "crdt"]
 categories = ["database", "command-line-utilities"]
@@ -109,7 +110,8 @@ p256 = { version = "0.13", features = ["ecdsa"] }
 regex = "1"
 # FIX 8276 (CODE-MODE-TS = A): code-mode TypeScript is parsed, transformed and
 # printed with Oxc in process before QuickJS runs it. Every crate is pinned to
-# exactly 0.152.0, the last release whose MSRV is this workspace's 1.96.
+# exactly 0.152.0, the last release whose MSRV was 1.96 (the workspace MSRV
+# when it was pinned); moving to a newer Oxc is a separate change.
 oxc_allocator = "=0.152.0"
 oxc_ast = "=0.152.0"
 oxc_codegen = { version = "=0.152.0", default-features = false, features = ["sourcemap"] }
