@@ -485,6 +485,55 @@ fn a_negotiation_follows_the_pick_read_as_it_began() {
     );
 }
 
+/// FOLLOWED-WINDOW-SET-READ-PER-FRAME: the gate each full-window frame meets
+/// judges a followed window by the set the connection's negotiation follows,
+/// read once as it began, as its frames are, not by a store read per frame.
+/// The owner unpicks the world mid-connection: the steady loop sees the
+/// change and renegotiates, and until then the granted window's gate still
+/// holds. Before, the gate read the live set on every frame.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_full_window_gate_judges_the_pick_its_negotiation_began_with() {
+    use oneiron::test_doors::world_follow;
+
+    let device = Device::open();
+    let at = now_secs();
+    let root = root_frame(at, &[device.founder, device.granted]);
+    let connection = SyncConnection::new(device.manager(), ConnectionConfig::default())
+        .expect("the device's connection");
+    connection
+        .set_followed_worlds([device.founder].into_iter().collect())
+        .expect("the owner's pick");
+    let founder = WindowKey::for_world(at, device.founder);
+    let mut client = opened_client(&device);
+    world_follow::begin_connection_sync(&mut client);
+    let _first_frames = client.generate_initial_sync();
+    let _root_requests = client.handle_server_message(&root).expect("root update");
+    let grant =
+        transport::encode_window_sync(founder.as_str(), window_sub_tags::PROMOTION_GRANTED, &[])
+            .into_result()
+            .expect("grant frame");
+    let _vector_request = client
+        .handle_server_message(&grant)
+        .expect("the device takes the home's grant for its followed window");
+    assert!(
+        world_follow::full_window_exchange_allowed(&client, &founder).expect("the gate"),
+        "precondition: the granted followed window exchanges in full",
+    );
+
+    connection
+        .set_followed_worlds([device.granted].into_iter().collect())
+        .expect("the owner's new pick");
+    assert!(
+        world_follow::follow_set_changed(&client),
+        "precondition: the steady loop sees the new pick and renegotiates",
+    );
+    assert!(
+        world_follow::full_window_exchange_allowed(&client, &founder).expect("the gate"),
+        "until it renegotiates, the gate judges the pick the negotiation began with",
+    );
+}
+
 #[test]
 fn sync_all_follows_every_world_readable_here() {
     let device = Device::open();

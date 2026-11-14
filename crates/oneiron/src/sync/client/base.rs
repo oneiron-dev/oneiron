@@ -682,11 +682,21 @@ impl SyncClient {
     /// once while the held window stays. Never on a federation lane, under
     /// sync all or for a base window. A follow set that cannot be read
     /// follows nothing.
+    ///
+    /// Judged against the set this connection's negotiation follows, read
+    /// once as it began, as its frames are (FOLLOWED-WINDOW-SET-READ-PER-FRAME):
+    /// the gates each full-window frame meets read no store. A change of the
+    /// set renegotiates at once ([`Self::follow_set_changed`]), and the
+    /// inbound world gate still reads the live set, so a revoked world's
+    /// frames are refused at once. Before any connection began, the live set.
     pub(crate) fn follows_full_window(&self, key: &str) -> bool {
-        self.full_window_world(key).is_some_and(|world| {
-            self.effective_worlds()
-                .is_ok_and(|worlds| worlds.contains(&world))
-        })
+        self.full_window_world(key)
+            .is_some_and(|world| match &self.negotiated_worlds {
+                Some(worlds) => worlds.contains(&world),
+                None => self
+                    .effective_worlds()
+                    .is_ok_and(|worlds| worlds.contains(&world)),
+            })
     }
 
     /// [`Self::follows_full_window`], judged against `worlds`: the set a
