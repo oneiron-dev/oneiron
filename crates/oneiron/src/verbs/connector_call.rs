@@ -134,8 +134,9 @@ pub fn connector_call_host_only(
 }
 
 /// `connector.schema`: one tool's approved input schema for the bound
-/// caller, through the resolution a call of it takes. Reads only. The
-/// built-in `google.sheets` answers its own declared schemas (FIX 4862).
+/// caller, through the resolution a call of it takes. Reads only. A
+/// built-in workspace module (`google.sheets`, FIX 4862; L3-17) answers its
+/// own declared schemas.
 /// It answers when the catalog source is selected (omitted or `catalog`);
 /// an explicit `builtin` serves only `web` (FIX 11606).
 pub fn connector_schema_read(
@@ -144,9 +145,14 @@ pub fn connector_schema_read(
 ) -> MemoryResult<ConnectorSchemaReply> {
     let selected = ConnectorSource::resolve(input.source, &input.name);
     let schema = if selected == ConnectorSource::Catalog
-        && input.name == crate::channel_identity_provider::sheets::SHEETS_CATALOG_NAME
+        && let Some(module) =
+            crate::channel_identity_provider::workspace_connector::module(&input.name)
     {
-        crate::channel_identity_provider::sheets::sheets_tool_schema(memory.vault(), &input.tool)?
+        crate::channel_identity_provider::workspace_connector::workspace_tool_schema(
+            memory.vault(),
+            module,
+            &input.tool,
+        )?
     } else {
         memory
             .vault()

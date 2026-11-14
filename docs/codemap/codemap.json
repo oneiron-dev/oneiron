@@ -27055,7 +27055,7 @@
      "path": "src/conversation/roles.rs",
      "purpose": "Host-local room role grants",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1
      }
     },
@@ -97463,7 +97463,7 @@
      "surface": {
       "crate-vis": 44,
       "mod": 1,
-      "re-export": 28
+      "re-export": 29
      }
     },
     {
@@ -98495,6 +98495,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoomMemberRoleReceipt",
+      "RoomMemberRoleSet"
+     ],
+     "path": "src/workspace_roster/rooms/member_role.rs",
+     "purpose": "The room role door (FIX [ROOM-ROLE-SET]; the lead 14 Nov 00:2x, under the owner's 13 Nov 22:44 grant)",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -98513,7 +98527,7 @@
       "crate-vis": 52,
       "enum": 2,
       "fn": 6,
-      "re-export": 23,
+      "re-export": 24,
       "struct": 6
      }
     },
@@ -105319,7 +105333,7 @@
      "purpose": "Monthly CRDT window keys and their timestamp conversion"
     },
     "workspace_roster": {
-     "files": 141,
+     "files": 142,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105335,7 +105349,7 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7539,
+   "source_files": 7540,
    "test_files": 1262
   },
   "oneiron-agent-runtime": {
@@ -138945,7 +138959,17 @@
      "path": "src/embedder/serve.rs",
      "purpose": "`oneiron-server embedder serve`: the local provider over an OpenAI-compatible `/v1/embeddings`, for several…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/serve/accounts.rs",
+     "purpose": "Each account's own bearer key for the shared embedder (CROSS-ARCH-0019 #dm-xaccount-embedder): one server…",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -138985,7 +139009,17 @@
      "path": "src/embedder/serve/tests.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/embedder/serve/tests/accounts.rs",
+     "purpose": "Census L10-10 (CROSS-ARCH-0019 #dm-xaccount-embedder): \"One bearer key covers every caller",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -148294,7 +148328,7 @@
      "purpose": "The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened…"
     },
     "embedder": {
-     "files": 31,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -148646,8 +148680,8 @@
    },
    "over_bar": 62,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1871,
-   "test_files": 246
+   "source_files": 1872,
+   "test_files": 247
   },
   "oneiron-skill-attribution": {
    "files": [

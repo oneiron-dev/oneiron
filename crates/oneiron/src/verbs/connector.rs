@@ -80,19 +80,23 @@ impl From<ConnectorDescription> for ConnectorView {
 }
 
 /// `connector.list`: matching live catalogued keys and first-party interfaces.
-/// Includes built-in `google.sheets` while its pack's connection is checked
-/// (FIX 4862), in name order.
+/// Includes each built-in workspace module (`google.sheets`, FIX 4862;
+/// L3-17) while its pack's connection is checked and the owner allows one of
+/// its tools, in name order.
 pub fn connector_catalog(
     memory: &Memory<'_>,
     input: ConnectorListRequest,
 ) -> MemoryResult<Vec<ConnectorEntry>> {
     let query = input.query.as_deref().unwrap_or("");
     let mut catalog = memory.vault().search_connector_catalog(query)?;
-    if let Some(sheets) =
-        crate::channel_identity_provider::sheets::sheets_catalog_entry(memory.vault(), query)?
+    for workspace in
+        crate::channel_identity_provider::workspace_connector::workspace_catalog_entries(
+            memory.vault(),
+            query,
+        )?
     {
-        let at = catalog.partition_point(|entry| entry.name < sheets.name);
-        catalog.insert(at, sheets);
+        let at = catalog.partition_point(|entry| entry.name < workspace.name);
+        catalog.insert(at, workspace);
     }
     let mut entries: Vec<ConnectorEntry> = catalog.into_iter().map(Into::into).collect();
     if let Some(web) = builtin_web_entry(query) {
