@@ -244,13 +244,13 @@ pub enum WebFetchError {
     },
 
     /// A managed (hosted) node's fetcher refused a destination that reaches
-    /// the infrastructure it runs on (SCAN C447): the requested page before
+    /// the infrastructure it runs on, for tenant isolation (SCAN C447): the requested page before
     /// any rung ran, or a redirect hop, a re-resolved address or a landing a
     /// rung reached (FIX 6101), which ends the ladder. The message names
     /// [`HOSTED_INFRASTRUCTURE_REASON`]; `url` is the requested page,
     /// credential-redacted.
     #[error(
-        "web fetch refused (hosted_infrastructure): on a hosted node, {url} resolves or redirects to the hosting infrastructure (loopback, link-local, this node's own address or a cloud metadata endpoint); a self-hosted node fetches it"
+        "web fetch refused (hosted_infrastructure): on a hosted node, {url} resolves or redirects to the hosting infrastructure (loopback, link-local, this node's own address or a cloud metadata endpoint), which hosted nodes refuse for tenant isolation; a self-hosted node fetches it"
     )]
     HostedInfrastructure { url: String },
 
@@ -260,7 +260,7 @@ pub enum WebFetchError {
     /// refused. The message names [`HOSTED_PRIVATE_NETWORK_REASON`]; `url` is
     /// the requested page, credential-redacted.
     #[error(
-        "web fetch refused (hosted_private_network): on a hosted node, {url} resolves or redirects to a private-network address outside the hosting operator's allowed origins, and hosted nodes refuse private-network addresses (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7); a self-hosted node fetches it, or the hosting operator can allow its named private origin"
+        "web fetch refused (hosted_private_network): on a hosted node, {url} resolves or redirects to a private-network address outside the hosting operator's allowed origins, and for tenant isolation hosted nodes refuse private-network addresses (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7); a self-hosted node fetches it, or the hosting operator can allow its named private origin"
     )]
     HostedPrivateNetwork { url: String },
 

@@ -38,8 +38,15 @@ const TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than o
 /// The fold did not count the signed choice here: it never reports success.
 const NOT_COUNTED: &str = "this install's fold does not count the checkpoint policy choice";
 
-const HOSTED_SELECTION_ADVANCED_ONLY: &str =
-    "hosted checkpoint root selection requires the operator's enterprise/advanced capability";
+/// The owner's QUORUM-HOST-ROOT = C: the host key signs a hosted vault's
+/// checkpoints, and dropping it is an enterprise/advanced setting the
+/// operator grants per vault. Neither law, a provider's term nor capacity,
+/// so it names no bound kind, only the rule and where the choice is the
+/// owner's own (DEC-0005 #will-sweep; RULING L9-61-CHECKPOINT = A).
+const HOSTED_SELECTION_ADVANCED_ONLY: &str = "hosted checkpoint root selection requires \
+     the operator's enterprise/advanced capability: on a hosted vault the host key signs its \
+     checkpoints unless the operator grants this vault that setting; a self-hosted or relay \
+     vault's owner chooses its roots";
 
 /// The vault's checkpoint root policy as the owner's surface shows it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

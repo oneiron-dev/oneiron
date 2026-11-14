@@ -130,9 +130,11 @@ pub enum ManagedError {
     RestoreFlagsRejected { reason: &'static str },
 
     /// The real-tenant tripwire: `missing` names each isolation facility the
-    /// probe did not find, so the operator knows what to provision.
+    /// probe did not find, so the operator knows what to provision. Its
+    /// reason is tenant isolation, a kept reason that no size lifts, and it
+    /// names the self-host route (RULING L9-61-ISOLATION = A).
     #[error(
-        "refusing to open vault {vault:?} in managed mode, and it was not opened: vault_meta carries no `{marker}` marker, and this host has not provisioned the isolation a real tenant needs. Missing: {}. Provision them and start the vault again; only an explicitly marked synthetic canary opens without them, and marking a real tenant as one is no workaround.",
+        "refusing to open vault {vault:?} in managed mode, and it was not opened: vault_meta carries no `{marker}` marker, and this host has not provisioned the tenant isolation a real tenant needs. Missing: {}. Provision them and start the vault again; only an explicitly marked synthetic canary opens without them, and marking a real tenant as one is no workaround. A self-hosted vault, which shares its host with no other tenant, opens without them.",
         missing.join("; ")
     )]
     ManagedRealTenantRefused {
@@ -186,9 +188,10 @@ pub enum SettingsRefusal {
     EnvironmentSecret,
     /// A path that lies neither in this vault's own storage nor, for a model
     /// directory, in the supervisor's shared model root as its bundle's own
-    /// directory.
+    /// directory. Its reason is tenant isolation, and it names the self-host
+    /// route (RULING L9-61-ISOLATION = A).
     #[error(
-        "an owner path must be absolute, hold no `~` or `..`, exist, and lie under the vault's data directory or the settings file's own directory, or, for a model directory, be its bundle's own directory `<root>/<class>/<stack_sha16>` in the supervisor's read-only shared model root, named by the stack the settings pin beside it and by its manifest"
+        "tenant isolation keeps a managed vault to its own paths (a self-hosted vault's settings may name paths outside it), so an owner path must be absolute, hold no `~` or `..`, exist, and lie under the vault's data directory or the settings file's own directory, or, for a model directory, be its bundle's own directory `<root>/<class>/<stack_sha16>` in the supervisor's read-only shared model root, named by the stack the settings pin beside it and by its manifest"
     )]
     OutsideVault,
     /// A key the server's config schema does not have.
