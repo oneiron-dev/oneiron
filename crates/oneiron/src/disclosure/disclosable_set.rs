@@ -115,9 +115,14 @@ pub(crate) fn discloses_raw(
     id: EntityId,
     raw: &[u8],
 ) -> Result<bool> {
-    word_closure_admitted(vault, txn, id, raw, |record, record_raw| {
-        room_row_discloses(vault, txn, scope, record, record_raw)
-    })
+    word_closure_admitted(
+        vault,
+        txn,
+        id,
+        raw,
+        CarriedSummary::Skip,
+        |record, record_raw| room_row_discloses(vault, txn, scope, record, record_raw),
+    )
 }
 
 /// Whether the stored revision `raw` of `id` and every record its words
@@ -129,7 +134,8 @@ pub(crate) fn discloses_raw(
 /// names each kind). Sources that no longer resolve pass nothing, nor does
 /// a closure that cycles. The room rule ([`discloses_raw`]) and the general
 /// clamp (`DisclosureContext::admits_in`) walk the same closure, each
-/// under its own row test.
+/// under its own row test; `carried` says whether the walk also enters the
+/// summary a reply or a merge header carries ([`CarriedSummary`]).
 ///
 /// Every record of the closure is judged, however many (rule 5; FIX 9787):
 /// past its threshold row the walk asks whether everything is okay, counted
@@ -143,6 +149,7 @@ pub(crate) fn word_closure_admitted(
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     raw: &[u8],
+    carried: CarriedSummary,
     admit: impl FnMut(EntityId, &[u8]) -> Result<bool>,
 ) -> Result<bool> {
     let mut count = ScanCount::start(
@@ -155,6 +162,7 @@ pub(crate) fn word_closure_admitted(
         vault,
         txn,
         admit,
+        carried,
         path: BTreeSet::new(),
         judged: BTreeSet::new(),
         memory: WalkMemory::default(),
@@ -193,6 +201,20 @@ fn room_row_discloses(
         ),
         None => Ok(true),
     }
+}
+
+/// Whether a [`word_closure_admitted`] walk enters the summary whose words
+/// a reply TURN or a `merge.summary` header carries
+/// (`scope_summary::carried_summary`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CarriedSummary {
+    /// Only the records `scope_summary::word_sources_in` names: the room
+    /// rule (FIX-LIST COPY-SUMMARY-ROW-UNJUDGED).
+    Skip,
+    /// The carried summary as one more word source: its own row is judged,
+    /// and every record its words came from, its registered dependencies
+    /// included, is walked with the rest (Sol review rounds 1-2 of #7692).
+    Follow,
 }
 
 /// One record a revision's words may have come from, and how its row reads.
@@ -268,6 +290,8 @@ struct WordClosure<'a, A> {
     txn: &'a heed::RoTxn<'a>,
     /// The row test each record of the closure must pass on its own.
     admit: A,
+    /// Whether a reply's or a merge header's summary is walked too.
+    carried: CarriedSummary,
     /// The records on the way to the current one: meeting one again is a
     /// cycle.
     path: BTreeSet<EntityId>,
@@ -346,6 +370,21 @@ impl<A: FnMut(EntityId, &[u8]) -> Result<bool>> WordClosure<'_, A> {
                 }
                 WordSources::Unresolved => return Ok(None),
             };
+        // A reply or a merge header carries a summary's words: the summary
+        // is walked as one more word source. An association that does not
+        // decode names no summary a reader may hold.
+        if self.carried == CarriedSummary::Follow {
+            let Ok(carried) = crate::scope_summary::carried_summary(raw) else {
+                return Ok(None);
+            };
+            if let Some(summary) = carried {
+                let more = bytes_of::<WordSource>(1);
+                self.memory.grow(more)?;
+                bytes = bytes.saturating_add(more);
+                sources.reserve_exact(1);
+                sources.push(WordSource::Word(summary));
+            }
+        }
         if EntityMetadataHeader::parse(raw)
             .is_some_and(|header| header.entity_type == ENTITY_TYPE_TURN)
         {

@@ -167,10 +167,12 @@ pub(crate) fn word_sources_through_in(
 
 /// The summary whose words the stored revision `raw` carries: the summary a
 /// reply TURN copies, or the one a `merge.summary` header names. Its words
-/// are that summary's, so a reader judges the summary's own row too (its
-/// Tier A, its stamp), as well as the records [`word_sources_in`] names
-/// (Sol review of #7692). `None` for every other row; an association that
-/// does not decode is an error.
+/// are that summary's, so the general clamp walks the summary itself: its
+/// own row (its Tier A, its stamp) and every record its words came from,
+/// its registered dependencies included, beyond the records
+/// [`word_sources_in`] names for the copy (Sol review rounds 1-2 of #7692).
+/// `None` for every other row; an association that does not decode is an
+/// error.
 pub(crate) fn carried_summary(raw: &[u8]) -> Result<Option<EntityId>> {
     let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
