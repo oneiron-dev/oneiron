@@ -8,6 +8,10 @@ use serde::Serialize;
 #[serde(deny_unknown_fields)]
 pub struct NoteHistoryPurgeRequest {
     pub note_ref: String,
+    /// The confirm `vault.owner_confirm.preview` returned for this call.
+    /// It is needed only where the purge erases at once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<String>,
 }
 
 /// The shared-vault act returned by an owner's explicit history purge.
@@ -15,6 +19,9 @@ pub struct NoteHistoryPurgeRequest {
 #[serde(deny_unknown_fields)]
 pub struct NoteHistoryPurgeExecuteRequest {
     pub act_id: String,
+    /// The confirm `vault.owner_confirm.preview` returned for this call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<String>,
 }
 
 /// The engine's durable receipt, with encoded causal frontiers rather than

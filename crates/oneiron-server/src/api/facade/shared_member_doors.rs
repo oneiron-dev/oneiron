@@ -26,10 +26,9 @@ use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
     self, ActAnswer, GuestSlipMintRequest, GuestSlipMinted, InvitationCode, InvitationCodeRequest,
     InvitationSlip, InvitationSlipRequest, RecordEraseConfirmRequest, RecordEraseOutcome,
-    RecordErasePreview, RecordEraseRequest, SharedActRequest, SharedEraseAskCloseRequest,
-    SharedEraseAskRequest, SharedInvitationAcceptWithCredentialRequest,
-    SharedInvitationAcceptedWithCredential, SharedInvitationRequest,
-    SharedInvitationWithdrawRequest, SharedVaultRequest,
+    SharedActRequest, SharedEraseAskCloseRequest, SharedEraseAskRequest,
+    SharedInvitationAcceptWithCredentialRequest, SharedInvitationAcceptedWithCredential,
+    SharedInvitationRequest, SharedInvitationWithdrawRequest, SharedVaultRequest,
 };
 
 use super::host_doors::support::{
@@ -56,35 +55,6 @@ fn require_slip_invitation(auth: &CoreAuth, verb: &str, invitation: &str) -> Mem
         )),
         _ => Ok(()),
     }
-}
-
-/// `vault.records.erase_preview`: what erasing one record takes, read under
-/// the caller's own person proof; the engine's deletion authority decides.
-/// Beside it, the rows the preview was derived from.
-pub(crate) async fn vault_records_erase_preview(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: RecordEraseRequest,
-) -> Listed<RecordErasePreview> {
-    const VERB: &str = "vault.records.erase_preview";
-    let caller = match person(server, auth, VERB) {
-        Ok(caller) => caller,
-        Err(refusal) => return refused(refusal),
-    };
-    let server = Arc::clone(server);
-    let locality = auth.locality();
-    off_runtime_listing(VERB, move |producers| {
-        let memory = server
-            .vault()
-            .memory(
-                caller.revalidate_person(server.vault())?,
-                EdgeActorClass::Human,
-            )
-            .at(locality)
-            .listing_producers(producers);
-        sdk::preview_record_erase(&memory, input)
-    })
-    .await
 }
 
 /// `vault.records.erase_confirm`: the caller's own erase of the record they

@@ -192,7 +192,8 @@ pub(super) fn receipt_rows(
     vault.shared_act_export_records(&receipt.id).ok().flatten()
 }
 
-/// `vault.shared.propose_delete`: start the vault's `delete_vault` act.
+/// `vault.shared.propose_delete`: start the vault's `delete_vault` act,
+/// once the shared confirm of this proposal is admitted.
 pub(crate) async fn vault_shared_propose_delete(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

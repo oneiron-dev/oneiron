@@ -1,0 +1,16 @@
+{
+  "name": "vault.owner_confirm.preview",
+  "description": "The owner's preview of one one-way act: what it takes, its classes, and the confirm its call passes back. The confirm holds while the state it shows stays the same.",
+  "input": "crate::task_verb::sdk::OwnerConfirmPreviewRequest",
+  "output": "crate::task_verb::sdk::OwnerConfirmPreview",
+  "call": "crate::task_verb::sdk::preview_owner_confirm_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "shared_person"
+}

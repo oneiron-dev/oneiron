@@ -59,3 +59,14 @@ pub fn verb_act_class(verb: &str) -> Option<VerbActClass> {
         .ok()
         .map(|at| rows[at].1)
 }
+
+/// Whether verb `verb`'s own row takes the owner-checked preview and confirm
+/// (DEC-0006 #undo-class): its row states an act that takes the owner
+/// confirm. `false` for a name that is no verb row.
+#[must_use]
+pub fn verb_needs_owner_confirm(verb: &str) -> bool {
+    matches!(
+        verb_act_class(verb),
+        Some(VerbActClass::Act(act)) if act.owner_confirms()
+    )
+}

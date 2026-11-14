@@ -330,30 +330,33 @@ pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()>
                 .map(|record| hold_id_arg(record))
                 .collect::<anyhow::Result<Vec<_>>>()?;
             let claim_free_partition = args.claim_free_partition;
-            // The one confirm shows the holds it lifts, read once from this
-            // vault, and acts only on what it showed (FIX 1462).
-            let shown_state =
-                vault.lift_and_erase_shown_state(&owner, &records, claim_free_partition)?;
-            eprintln!("{}", serde_json::to_string_pretty(&shown_state.holds)?);
-            let request = sdk::LegalHoldLiftAndEraseRequest {
+            // The one confirm shows what it takes, read once from this vault
+            // through the shared preview, and acts only on what it showed
+            // (FIX 1462).
+            let mut request = sdk::LegalHoldLiftAndEraseRequest {
                 records,
                 claim_free_partition,
-                shown_state,
+                confirm: None,
             };
+            let memory = vault.memory(actor, oneiron::EdgeActorClass::Human);
+            let preview = sdk::preview_owner_confirm(
+                &memory,
+                &owner,
+                sdk::OwnerConfirmPreviewRequest {
+                    verb: "vault.legal_holds.lift_and_erase".to_owned(),
+                    input: serde_json::to_value(&request)?,
+                },
+            )?;
+            eprintln!("{}", serde_json::to_string_pretty(&preview.takes)?);
+            request.confirm = Some(preview.confirm);
             hooked_row(
                 &vault,
                 actor,
                 "vault.legal_holds.lift_and_erase",
                 request,
                 |request: sdk::LegalHoldLiftAndEraseRequest| {
-                    Ok(sdk::LegalHoldLiftAndErased::from(
-                        vault.confirm_lift_legal_hold_and_erase(
-                            &owner,
-                            &request.records,
-                            request.claim_free_partition,
-                            &request.shown_state,
-                        )?,
-                    ))
+                    sdk::lift_legal_hold_and_erase_as(&vault, &owner, request)
+                        .map_err(memory_refusal)
                 },
             )?
         }

@@ -110,12 +110,32 @@ impl Vault {
         entity: &EntityId,
         through: Option<&[u8]>,
     ) -> MemoryResult<TextHistoryErase> {
+        self.start_text_history_erase_with(owner, entity, through, || Ok(()))
+    }
+
+    /// [`Self::start_text_history_erase`], running `erase_now` on the branch
+    /// that erases at once, before [`Self::erase_text_history_as`]. The
+    /// history purge passes its shared confirm there, so a call with no
+    /// confirm still starts the veto-window act, and only the branch that
+    /// erases now is refused without one (PURGE-START, Engine 11:34).
+    ///
+    /// # Errors
+    /// The owner proof no longer holds, `erase_now` fails, or the act cannot
+    /// start.
+    pub fn start_text_history_erase_with(
+        &self,
+        owner: &AuthenticatedOwner,
+        entity: &EntityId,
+        through: Option<&[u8]>,
+        erase_now: impl FnOnce() -> MemoryResult<()>,
+    ) -> MemoryResult<TextHistoryErase> {
         let vault_id = {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
             owner.revalidate_in_txn(self, &txn)?;
             veto_vault_in_txn(self, &txn)?
         };
         let Some(vault_id) = vault_id else {
+            erase_now()?;
             return self
                 .erase_text_history_as(owner, entity, through)
                 .map(TextHistoryErase::Erased);

@@ -13,6 +13,9 @@ pub struct OutboundCallRequestEraseRequest {
     /// The call's attempt, 32 hex.
     pub attempt: EntityId,
     pub call_seq: u64,
+    /// The confirm `vault.owner_confirm.preview` returned for this call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<String>,
 }
 
 /// `vault.outbound_calls.request.erase`'s answer: `false` for a call with no

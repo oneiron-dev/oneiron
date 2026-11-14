@@ -1,10 +1,11 @@
 //! The owner's erase of a world says, in plain words, what its old backups
 //! keep (ARCH-0038 #erase-sealed-bundles, owner ruling 2026-10-18; census
-//! L6-36, Engine ruling 16:51 13 Nov): `vault.records.erase_preview` (the
-//! confirm screen) and `vault.records.erase_confirm` (the receipt) carry
-//! "the world is erased now, and old backups keep only an unreadable copy of
-//! it until they expire", with the days within which they expire. Every
-//! other record's preview keeps the fields and digest it had before.
+//! L6-36, Engine ruling 16:51 13 Nov): the shared preview of
+//! `vault.records.erase_confirm` (`vault.owner_confirm.preview`, the confirm
+//! screen) and `vault.records.erase_confirm` itself (the receipt) carry "the
+//! world is erased now, and old backups keep only an unreadable copy of it
+//! until they expire", with the days within which they expire. Every other
+//! record's preview keeps the fields it had before.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test erase_world_backup_notice`.
 
@@ -16,8 +17,8 @@ use oneiron::claim::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
 use oneiron::verbs::{
-    RecordEraseConfirmRequest, RecordErasePreview, RecordEraseRequest, confirm_record_erase,
-    preview_record_erase,
+    OwnerConfirmPreviewRequest, RecordEraseConfirmRequest, confirm_record_erase,
+    preview_owner_confirm,
 };
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::Value;
@@ -28,11 +29,11 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 const NOTICE: &str = "This world is erased now. Old backups keep only an unreadable copy of it \
                       until they expire, within 90 days.";
 
-/// The fields a preview of any record but a world carries, as before L6-36.
-const PLAIN_PREVIEW_FIELDS: [&str; 7] = [
+/// The fields a preview of any record but a world carries, as before L6-36
+/// (less `preview_digest`, which the shared confirm replaced in L8-49).
+const PLAIN_PREVIEW_FIELDS: [&str; 6] = [
     "held_bytes",
     "lfs_chunks",
-    "preview_digest",
     "record",
     "remote_copies_may_remain",
     "same_bytes",
@@ -62,14 +63,29 @@ fn owned_vault() -> TestResult<OwnedVault> {
     })
 }
 
-fn preview(fixture: &OwnedVault, record: EntityId) -> TestResult<RecordErasePreview> {
+/// The shared preview of erasing `record`: what the confirm screen shows,
+/// and the confirm the erase passes back.
+fn preview(fixture: &OwnedVault, record: EntityId) -> TestResult<(Value, String)> {
     let memory = fixture
         .vault
         .memory(fixture.owner_id, EdgeActorClass::Human);
-    Ok(preview_record_erase(
+    let shown = preview_owner_confirm(
         &memory,
-        RecordEraseRequest { record },
-    )?)
+        &fixture.owner,
+        OwnerConfirmPreviewRequest {
+            verb: "vault.records.erase_confirm".to_owned(),
+            input: serde_json::to_value(RecordEraseConfirmRequest {
+                record,
+                confirm: None,
+                also_same_bytes: false,
+                check_in_ref: None,
+            })?,
+        },
+    )?;
+    let takes = shown
+        .takes
+        .ok_or("a record erase preview shows what the erase takes")?;
+    Ok((takes, shown.confirm))
 }
 
 #[test]
@@ -81,17 +97,16 @@ fn a_world_erase_preview_and_receipt_say_old_backups_keep_an_unreadable_copy() -
         fixture.vault.now_recorded_at(),
     )?;
 
-    let shown = preview(&fixture, world)?;
-    let shown_json = serde_json::to_value(&shown)?;
+    let (shown, confirm) = preview(&fixture, world)?;
     assert_eq!(
-        shown_json.get("old_backups_notice"),
+        shown.get("old_backups_notice"),
         Some(&Value::from(NOTICE)),
-        "the confirm screen's preview of a world erase carries the ruled words: {shown_json}"
+        "the confirm screen's preview of a world erase carries the ruled words: {shown}"
     );
     assert_eq!(
-        shown_json.get("old_backups_expire_within_days"),
+        shown.get("old_backups_expire_within_days"),
         Some(&Value::from(90)),
-        "beside them, the days within which the old backups expire: {shown_json}"
+        "beside them, the days within which the old backups expire: {shown}"
     );
 
     let memory = fixture
@@ -102,8 +117,9 @@ fn a_world_erase_preview_and_receipt_say_old_backups_keep_an_unreadable_copy() -
         &fixture.owner,
         RecordEraseConfirmRequest {
             record: world,
-            preview_digest: shown.preview_digest.clone(),
+            confirm: Some(confirm),
             also_same_bytes: false,
+            check_in_ref: None,
         },
     )?;
     assert_eq!(
@@ -134,7 +150,7 @@ fn a_world_erase_preview_and_receipt_say_old_backups_keep_an_unreadable_copy() -
 }
 
 #[test]
-fn a_claim_erase_preview_keeps_its_fields_and_digest() -> TestResult {
+fn a_claim_erase_preview_keeps_its_fields() -> TestResult {
     let fixture = owned_vault()?;
     let at = fixture.vault.now_recorded_at();
     let mut body = ClaimBody::new(
@@ -151,9 +167,8 @@ fn a_claim_erase_preview_keeps_its_fields_and_digest() -> TestResult {
         .vault
         .put_claim(&claim, &body, TimeRange { start: at, end: at }, at)?;
 
-    let shown = preview(&fixture, claim)?;
-    let shown_json = serde_json::to_value(&shown)?;
-    let mut fields: Vec<&str> = shown_json
+    let (shown, _) = preview(&fixture, claim)?;
+    let mut fields: Vec<&str> = shown
         .as_object()
         .ok_or("the preview is a JSON object")?
         .keys()
@@ -162,16 +177,7 @@ fn a_claim_erase_preview_keeps_its_fields_and_digest() -> TestResult {
     fields.sort_unstable();
     assert_eq!(
         fields, PLAIN_PREVIEW_FIELDS,
-        "a claim's erase preview carries no backup notice: {shown_json}"
-    );
-    let mut undigested = shown.clone();
-    undigested.preview_digest = String::new();
-    assert_eq!(
-        shown.preview_digest,
-        blake3::hash(&serde_json::to_vec(&undigested)?)
-            .to_hex()
-            .to_string(),
-        "its digest is the BLAKE3 of the same bytes as before"
+        "a claim's erase preview carries no backup notice: {shown}"
     );
     Ok(())
 }

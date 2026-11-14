@@ -7,6 +7,7 @@
 //! owner, member or agent surface may route to them.
 use serde::{Deserialize, Serialize};
 
+use super::owner_confirm;
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{
     LegalHold, LegalHoldEvent, LiftAndEraseOutcome, LiftAndEraseShownState, LiftAndEraseStatus,
@@ -22,8 +23,8 @@ pub use oneiron_verb_wire::verbs::legal_hold::{
 
 /// `vault.legal_holds.lift_and_erase`'s input: the records the owner's one
 /// "Lift the hold and erase?" confirm names, whether it releases the
-/// claim-free gate-decision partition too (FIX 9782), and what it showed
-/// the owner (FIX 1462).
+/// claim-free gate-decision partition too (FIX 9782), and the confirm the
+/// shared preview returned for this call (FIX 1462).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldLiftAndEraseRequest {
@@ -32,10 +33,9 @@ pub struct LegalHoldLiftAndEraseRequest {
     /// one the retention-horizon sweep ages. A host order on it stays.
     #[serde(default)]
     pub claim_free_partition: bool,
-    /// What the confirm showed: its title and prompt, these targets, and
-    /// every standing customer hold on them, whole, as the hold list reads
-    /// them. The engine acts only when it reads the same.
-    pub shown_state: LiftAndEraseShownState,
+    /// The confirm `vault.owner_confirm.preview` returned for this call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<String>,
 }
 
 impl From<LiftAndEraseStatus> for LegalHoldEraseState {
@@ -117,21 +117,26 @@ pub fn read_legal_hold_log(
 
 /// `vault.legal_holds.lift_and_erase`: the owner's one "Lift the hold and
 /// erase?" confirm over `input.records`, and the claim-free partition with
-/// `input.claim_free_partition`. The engine takes the owner's proof, the
-/// targets and the state the confirm showed, unchanged, and checks that
-/// state itself: there is no second press, token or expiry, and nothing
-/// here prepares a state the owner was not shown (FIX 1462).
+/// `input.claim_free_partition`. The engine reads what the confirm shows
+/// now, admits the call only on the shared confirm of that same state, and
+/// checks the state again inside its own txn: one press, no expiry
+/// (`PreviewKeep::UntilUsed`), and nothing here prepares a state the owner
+/// was not shown (FIX 1462).
 pub fn lift_legal_hold_and_erase_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: LegalHoldLiftAndEraseRequest,
 ) -> MemoryResult<LegalHoldLiftAndErased> {
+    let ask = owner_confirm::asked("vault.legal_holds.lift_and_erase", &input)?;
+    let shown =
+        vault.lift_and_erase_shown_state(owner, &input.records, input.claim_free_partition)?;
+    owner_confirm::admit(vault, owner, ask, &shown)?;
     Ok(vault
         .confirm_lift_legal_hold_and_erase(
             owner,
             &input.records,
             input.claim_free_partition,
-            &input.shown_state,
+            &shown,
         )?
         .into())
 }

@@ -35,6 +35,10 @@ pub const MEMORY_CODE_LEASE_REQUIRED: &str = "LEASE_REQUIRED";
 /// (OF-123). The caller settles it with `self.identity.settle`, then acts.
 pub const MEMORY_CODE_IDENTITY_UNSETTLED: &str = "IDENTITY_UNSETTLED";
 
+/// A one-way act's call carried no confirm, or one that is not the caller's
+/// live preview of this call as it stands now (DEC-0006 #undo-class).
+pub const MEMORY_CODE_OWNER_CONFIRM_REQUIRED: &str = "OWNER_CONFIRM_REQUIRED";
+
 /// A paid call's budget line cannot cover it: the line the host admitted the
 /// request on is spent, or the vault's budget policy refuses the call. Distinct
 /// from `LEASE_REQUIRED`: the caller held a lease, and the line ran out.

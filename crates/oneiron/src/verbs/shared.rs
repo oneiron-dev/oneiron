@@ -7,6 +7,7 @@
 //! owner, with no issuer.
 use serde::{Deserialize, Serialize};
 
+use super::owner_confirm;
 use crate::authority::{AuthorityHandoffAlarm, HostSlipIssuer};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -25,8 +26,9 @@ pub use oneiron_verb_wire::verbs::shared::{
     SharedReceiptRequest, SharedVaultRequest,
 };
 
-/// `vault.shared.propose_delete`'s input: the shared vault, and the approved
-/// check-in of another asker the starting Owner applies, when one is named.
+/// `vault.shared.propose_delete`'s input: the shared vault, the approved
+/// check-in of another asker the starting Owner applies, when one is named,
+/// and the confirm the shared preview returned for this call.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SharedDeleteProposeRequest {
@@ -37,6 +39,9 @@ pub struct SharedDeleteProposeRequest {
     /// Owner applies it on their own proof, and the act names its asker.
     #[serde(default)]
     pub check_in_ref: Option<String>,
+    /// The confirm `vault.owner_confirm.preview` returned for this call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<String>,
 }
 
 /// `vault.shared.propose_transfer`'s input: the starter, a live Owner, hands
@@ -238,15 +243,18 @@ pub(super) fn check_in_ref(hex: Option<&str>) -> MemoryResult<Option<EntityId>> 
     .transpose()
 }
 
-/// `vault.shared.propose_delete`: start the vault's `delete_vault` act. The
-/// act records the Owner's check-in decision; with `check_in_ref` the Owner
-/// applies an asker's approved check-in for this delete (2j).
+/// `vault.shared.propose_delete`: start the vault's `delete_vault` act,
+/// once the shared confirm of this proposal is admitted. The act records
+/// the Owner's check-in decision; with `check_in_ref` the Owner applies an
+/// asker's approved check-in for this delete (2j).
 pub fn propose_shared_delete(
     vault: &Vault,
     starter: &AuthenticatedOwner,
     input: SharedDeleteProposeRequest,
 ) -> MemoryResult<PendingAuthorityAct> {
     let check_in = check_in_ref(input.check_in_ref.as_deref())?;
+    let ask = owner_confirm::asked("vault.shared.propose_delete", &input)?;
+    owner_confirm::admit(vault, starter, ask, &())?;
     Ok(vault.propose_delete_vault_with_check_in(starter, input.vault_id, check_in)?)
 }
 

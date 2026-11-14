@@ -2,11 +2,11 @@
 //! build script places it in `side_table`'s catalogue.
 
 crate::side_table::side_tables! {
-    /// The erase previews a caller was shown and may still confirm (FIX
-    /// 12522): the digest the preview showed, and when it was issued and
-    /// expires on the vault's recording clock. Key: id16 (caller) + id16
-    /// (record).
-    ERASE_PREVIEW: VaultMeta b"erase:preview:v1:" Named
+    /// The owner-checked previews a caller was shown and may still confirm
+    /// (DEC-0006 #undo-class, FIX 12522 generalized): the verb previewed, and
+    /// when it was issued and, for a kept row, expires on the vault's
+    /// recording clock. Key: id16 (caller) + 32 (confirm digest).
+    OWNER_CONFIRM_PREVIEW: VaultMeta b"owner_confirm:preview:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical]
-        => crate::verbs::erase_preview_actor_in_txn;
+        => crate::verbs::owner_confirm_actor_in_txn;
 }
