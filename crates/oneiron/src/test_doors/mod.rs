@@ -69,6 +69,7 @@ pub mod lifted_text;
 pub mod live_run_claim_put;
 #[cfg(feature = "sync")]
 pub mod live_window_import;
+pub mod machine_history;
 pub mod mail_counterparty;
 pub mod mail_landing;
 pub mod membership;
@@ -120,6 +121,7 @@ pub mod untangle_regressions;
 pub mod verb_hook_ask;
 pub mod wake_d1_park_release;
 pub mod workspace_token;
+pub mod world_access;
 #[cfg(feature = "sync")]
 pub mod world_follow;
 #[cfg(feature = "sync")]

@@ -696,10 +696,16 @@ pub(crate) enum ReservedClaimImport {
 /// reason [`archive_only_reason`] declares it archive-only with. A family
 /// with neither returns `None`, as a predicate outside every reserved family
 /// does; the generic claim door then refuses it, and the whole import fails.
-/// A test names every reserved family and fails on such a `None`.
+/// A test names every reserved family and fails on such a `None`. The two
+/// world-access tiers are not reserved, yet stay archive data too: they are
+/// local authority (RULING L2-53-CEILING), so the importing node's owner
+/// grants its own agents their worlds.
 pub(crate) fn reserved_claim_import(predicate: &str) -> Option<ReservedClaimImport> {
     use ImportOmissionReason as Omit;
     use ReservedClaimImport::{ArchiveOnly, Restore};
+    if crate::write_envelope::world_access_predicates::is_world_access_tier_predicate(predicate) {
+        return Some(ArchiveOnly(Omit::LocalAuthorityNotRestored));
+    }
     if !crate::write_envelope::claim_predicate::is_reserved_predicate(predicate) {
         return None;
     }
