@@ -113,13 +113,6 @@ pub(super) fn authority_observation_peer_id(signer: &AuthorityKey) -> String {
 /// key record a machine signs in a world names its previous one there, and
 /// each settings edit names the main-log heads, so a later row that arrives
 /// first vouches for the earlier (Astra #1422b F1).
-fn sequence_key(entry: &AuthorityLogEntry) -> String {
-    sequence_key_of(
-        entry.signer_key(),
-        super::world_privacy::side_world(&entry.op),
-    )
-}
-
 fn sequence_key_of(signer: &AuthorityKey, world: Option<crate::EntityId>) -> String {
     let peer = authority_observation_peer_id(signer);
     match world {
@@ -139,20 +132,29 @@ fn read_u64(raw: &[u8]) -> Result<u64> {
 
 /// Called at the shared successful-put site in the row's own transaction.
 /// Returns whether this is a new hash, for exactly-once ingest accounting.
+///
+/// A row whose record does not open here keys on its signer's main log, as
+/// [`super::fold_resume::RowMeta::of_row`] reads it. No sealed kind is a
+/// side entry ([`PublicStanding`] holds no world-key record or world join),
+/// so the key does not move when the row opens later.
 pub(crate) fn record_authority_sequence_observation_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
-    entry: &AuthorityLogEntry,
+    row: &FoldRow,
     hash: &AuthorityEntryHash,
 ) -> Result<bool> {
     let receipt_key = receipt_key(hash);
     if SEQ_OBSERVATION.get(store, txn, &receipt_key)?.is_some() {
         return Ok(false);
     }
-    let key = sequence_key(entry);
+    let key = sequence_key_of(
+        row.signer_key(),
+        row.op().and_then(super::world_privacy::side_world),
+    );
+    let seq = row.seq();
     let previous = SEQ_HWM.get(store, txn, &key)?;
     SEQ_OBSERVATION.put(store, txn, &receipt_key, &SequenceReceipt(previous))?;
-    let next = previous.map_or(entry.seq, |value| value.max(entry.seq));
+    let next = previous.map_or(seq, |value| value.max(seq));
     SEQ_HWM.put(store, txn, &key, &next)?;
     Ok(true)
 }

@@ -4,12 +4,14 @@ use super::*;
 
 /// Keep first observation, signer maximum and replay advisory in the same put transaction.
 /// Returns whether this put stores the row's hash here for the first time.
+/// All three read the envelope only, so a row whose record does not open
+/// here takes them too (census L5-22 1a-iii).
 pub(super) fn observe_authority_put(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &crate::EntityId,
     key: &str,
-    entry: Option<&oneiron_authority::authority::AuthorityLogEntry>,
+    row: Option<&oneiron_authority::authority::FoldRow>,
     hash: Option<&oneiron_contracts::authority::AuthorityEntryHash>,
     replicated: bool,
     mutation_recorded_at: u64,
@@ -23,15 +25,14 @@ pub(super) fn observe_authority_put(
     }
     // H213: the transaction's owner sweeps stale stamps after it commits.
     store.record_hooks.note_authority_row();
-    if let (Some(entry), Some(hash)) = (entry, hash) {
-        let first_observation = crate::authority::record_authority_sequence_observation_in_txn(
-            store, wtxn, entry, hash,
-        )?;
+    if let (Some(row), Some(hash)) = (row, hash) {
+        let first_observation =
+            crate::authority::record_authority_sequence_observation_in_txn(store, wtxn, row, hash)?;
         if replicated && first_observation {
             crate::authority::observe_authority_replay_in_txn(
                 store,
                 wtxn,
-                &entry.signer.public_key,
+                row.signer_key(),
                 observed_secs,
             )?;
         }
