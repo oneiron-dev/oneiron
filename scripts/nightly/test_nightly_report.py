@@ -200,6 +200,37 @@ class PlanTest(unittest.TestCase):
         )
         self.assertEqual([entry["name"] for entry in chosen["selections"]], ["libs", "tests-01"])
 
+    def test_a_package_with_no_tested_target_leaves_every_selection(self) -> None:
+        metadata = json.loads(json.dumps(METADATA))
+        metadata["workspace_members"] += ["oneiron-py 0.1.0", "oneiron-macros 0.1.0"]
+        metadata["packages"] += [
+            {
+                "id": "oneiron-py 0.1.0",
+                "name": "oneiron-py",
+                "targets": [
+                    {"name": "oneiron_py", "kind": ["cdylib"], "test": False},
+                    {"name": "build-script-build", "kind": ["custom-build"], "test": False},
+                ],
+            },
+            {  # an untested lib beside a tested integration test: still tested
+                "id": "oneiron-macros 0.1.0",
+                "name": "oneiron-macros",
+                "targets": [
+                    {"name": "oneiron_macros", "kind": ["proc-macro"], "test": False},
+                    target("expand", "test"),
+                ],
+            },
+        ]
+        self.assertEqual(nightly_report.untested_packages(metadata), ["oneiron-py"])
+        chosen = nightly_report.plan(metadata, shard_files=3)
+        self.assertEqual(chosen["untested"], ["oneiron-py"])
+        for entry in chosen["selections"]:
+            args = nightly_report.selection_args(chosen, entry)
+            excluded = [args[i + 1] for i, arg in enumerate(args) if arg == "--exclude"]
+            self.assertEqual(excluded, ["oneiron-bench", "oneiron-py"], entry["name"])
+        self.assertEqual(nightly_report.untested_packages(METADATA), [])
+        self.assertEqual(nightly_report.plan(METADATA)["untested"], [])
+
     def test_shards_split_the_integration_tests_into_runs_of_n_names(self) -> None:
         chosen = nightly_report.plan(METADATA, shard_files=2)
         self.assertEqual(
