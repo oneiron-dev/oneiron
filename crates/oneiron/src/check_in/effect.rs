@@ -747,3 +747,97 @@ pub fn standing_grant_effect_digest(bound: &crate::consent::GrantBound) -> [u8; 
     hasher.update(bound.digest().as_bytes());
     *hasher.finalize().as_bytes()
 }
+
+/// The decision of a person's `act` at a door no role that reaches it waits
+/// at, judged in the door's writer `txn` at `now` (2k8e3; P25-SHAPE Q1 =
+/// A): the Owner's act goes on their own proof, and every other role's by
+/// [`person_door_check_in_in_txn`] under the role it holds. The door takes
+/// no `check_in_ref`, so a judge that would wait opens nothing: the pending
+/// check-in it opened is refused with the writer.
+///
+/// # Errors
+///
+/// A role that does not hold the power, or one that would wait; storage
+/// errors.
+pub(crate) fn person_door_go_decision_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    act: &DoorAct<'_>,
+    now: u64,
+) -> Result<CheckInDecision> {
+    if act.role == RolePreset::Owner {
+        return Ok(owner_own_proof_decision(act.act));
+    }
+    match person_door_check_in_in_txn(vault, txn, act, None, now)? {
+        DoorCheckIn::Go(decision) => Ok(decision),
+        DoorCheckIn::Wait(_) => Err(refuse(
+            "the act would wait, and its door applies no check-in",
+        )),
+    }
+}
+
+/// The digest of a one-hop Delegate grant from admin grant `parent_grant`
+/// to `member_ref`, narrowed to `authority_scope` (`None`: the ceiling the
+/// parent and the vault's Delegate default meet at), expiring at
+/// `expires_at`: the effect a holder's `vault.members.delegate` is judged
+/// over (2k8e3; P25-SHAPE Q1 = A). BLAKE3, key derived from `oneiron
+/// check_in members delegate v1`, over the parent's and the member's 16 id
+/// bytes, the expiry as eight big-endian bytes, then one byte, 1 when a
+/// scope is named, and the scope's MessagePack encoding with field names.
+///
+/// # Errors
+///
+/// The scope does not encode.
+pub fn members_delegate_effect_digest(
+    parent_grant: &EntityId,
+    member_ref: &EntityId,
+    authority_scope: Option<&crate::federation::Scope>,
+    expires_at: u64,
+) -> Result<[u8; 32]> {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in members delegate v1");
+    hasher
+        .update(parent_grant.as_bytes())
+        .update(member_ref.as_bytes())
+        .update(&expires_at.to_be_bytes())
+        .update(&[u8::from(authority_scope.is_some())]);
+    if let Some(scope) = authority_scope {
+        let encoded = rmp_serde::to_vec_named(scope)
+            .map_err(|_| Error::InvariantViolation("delegate scope encode"))?;
+        hasher.update(&encoded);
+    }
+    Ok(*hasher.finalize().as_bytes())
+}
+
+/// The digest of proposing `policy` for shared act `act` of shared vault
+/// `vault_id` (`None` removes the vault's own row), against the rows whose
+/// digest is `expected_policy_hash`: the effect an editor's
+/// `vault.shared.policy.propose` is judged over (2k8e3; P25-SHAPE Q1 = A).
+/// BLAKE3, key derived from `oneiron check_in shared policy propose v1`,
+/// over the vault id as eight big-endian bytes, the act's and then the
+/// hash's length as eight big-endian bytes and its UTF-8 bytes, then one
+/// byte, 1 when a row is named, and the row's MessagePack encoding with
+/// field names.
+///
+/// # Errors
+///
+/// The row does not encode.
+pub fn shared_policy_propose_effect_digest(
+    vault_id: u64,
+    act: &str,
+    policy: Option<&crate::federation::SharedActPolicy>,
+    expected_policy_hash: &str,
+) -> Result<[u8; 32]> {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in shared policy propose v1");
+    hasher.update(&vault_id.to_be_bytes());
+    for text in [act, expected_policy_hash] {
+        hasher.update(&(text.len() as u64).to_be_bytes());
+        hasher.update(text.as_bytes());
+    }
+    hasher.update(&[u8::from(policy.is_some())]);
+    if let Some(row) = policy {
+        let encoded = rmp_serde::to_vec_named(row)
+            .map_err(|_| Error::InvariantViolation("shared policy row encode"))?;
+        hasher.update(&encoded);
+    }
+    Ok(*hasher.finalize().as_bytes())
+}

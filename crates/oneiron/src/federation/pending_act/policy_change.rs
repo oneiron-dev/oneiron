@@ -91,6 +91,12 @@ pub struct SharedActPolicyChange {
     /// answer; empty once settled.
     #[serde(default)]
     pub awaiting: BTreeSet<String>,
+    /// The decision the proposal ran on: the proposer's widening judged
+    /// under their membership role in the proposing writer (ROLES-CHECKIN
+    /// 2k8e3), kept with the change as the policy ledger keeps its
+    /// decision (2k4a). A change proposed before this carries none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 /// One row change the shared write applies: `policy` for `act`, or `None` to
@@ -272,6 +278,14 @@ impl Vault {
     /// `expected_policy_hash`, the digest of the rows they read. Proposing is
     /// the proposer's approval, so a sole live editor's change applies at
     /// once; every other live editor gets an inbox ask naming it.
+    ///
+    /// A row change widens what the act's holders may do (ARCH-0082
+    /// #act-table "Widen another's grant"), so the proposal is judged in
+    /// this writer under the proposer's membership role, after the editor
+    /// check and before the change is built (ROLES-CHECKIN 2k8e3; P25-SHAPE
+    /// Q1 = A). Every row's editors are the vault's Owners (a vault's row
+    /// narrows `_default`, whose editors are Owners), so the proposal goes
+    /// on the Owner's own proof; the change records that decision.
     pub fn propose_shared_act_policy_change(
         &self,
         proposer: &AuthenticatedOwner,
@@ -308,6 +322,25 @@ impl Vault {
         if !editors.contains(&actor) {
             return Err(invalid());
         }
+        let (grant, role) = self
+            .member_grant_in_txn(&txn, vault_id, actor)?
+            .ok_or_else(invalid)?;
+        let judged = crate::check_in::DoorAct {
+            person: actor,
+            role: crate::check_in::RolePreset::of_grant_role(role),
+            grant,
+            verb: "vault.shared.policy.propose",
+            act: crate::check_in::ActClass::GrantWiden,
+            scope: crate::check_in::CheckInScope::default(),
+            effect_digest: crate::check_in::shared_policy_propose_effect_digest(
+                vault_id,
+                act,
+                policy.as_ref(),
+                expected_policy_hash,
+            )?,
+        };
+        let decision =
+            crate::check_in::person_door_go_decision_in_txn(self, &mut txn, &judged, now)?;
         let id = self.store.clock.entity_id()?;
         let mut change = SharedActPolicyChange {
             id: id.to_hex(),
@@ -326,6 +359,7 @@ impl Vault {
                 .filter(|editor| **editor != actor)
                 .map(EntityId::to_hex)
                 .collect(),
+            check_in: Some(decision),
         };
         if change.awaiting.is_empty() {
             self.apply_policy_change_in_txn(proposer, &mut txn, &mut change, &editors, now)?;

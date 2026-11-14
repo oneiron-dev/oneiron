@@ -303,6 +303,7 @@ impl crate::Vault {
     /// Authenticated one-hop Delegate mint. Resolve policy in the SAME writer
     /// that persists the record, then meet its default with the live parent's
     /// authority. The bare grant constructor does not choose a capability.
+    /// The mint is judged as `vault.members.delegate` is (2k8e3).
     pub fn create_federation_delegate(
         &self,
         holder: &crate::consent::AuthenticatedOwner,
@@ -333,9 +334,35 @@ impl crate::Vault {
         requested: &Scope,
         expires_at: u64,
     ) -> Result<(EntityId, super::FederationGrant)> {
+        self.create_scoped_federation_delegate_with_check_in(
+            holder,
+            parent_grant_id,
+            member_ref,
+            requested,
+            expires_at,
+        )
+        .map(|(id, grant, _)| (id, grant))
+    }
+
+    /// [`Vault::create_scoped_federation_delegate`], with the check-in
+    /// decision the mint ran on (2k8e3; P25-SHAPE Q1 = A): the holder's
+    /// widening of the member's reach, judged under their parent grant's
+    /// role in the mint writer.
+    pub(crate) fn create_scoped_federation_delegate_with_check_in(
+        &self,
+        holder: &crate::consent::AuthenticatedOwner,
+        parent_grant_id: EntityId,
+        member_ref: EntityId,
+        requested: &Scope,
+        expires_at: u64,
+    ) -> Result<(
+        EntityId,
+        super::FederationGrant,
+        crate::check_in::CheckInDecision,
+    )> {
         self.with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            let id = self.mint_federation_delegate_in_txn(
+            let (id, decision) = self.mint_federation_delegate_in_txn(
                 txn,
                 holder,
                 parent_grant_id,
@@ -348,7 +375,7 @@ impl crate::Vault {
             let grant = super::decode_federation_grant_body(
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             )?;
-            Ok((id, grant))
+            Ok((id, grant, decision))
         })
     }
 
@@ -370,8 +397,16 @@ impl crate::Vault {
             expires_at,
             None,
         )
+        .map(|(id, _)| id)
     }
 
+    /// The mint, judged by check-in after every check and before the put
+    /// (2k8e3; P25-SHAPE Q1 = A; ARCH-0082 #act-table "Widen another's
+    /// grant"): a Delegate grant widens the member's reach. The holder is
+    /// judged under their parent grant's role: the vault's Owner on their
+    /// own proof, a Deputy on their own judgment (`sure`), and an Admin at
+    /// once, the parent grant naming the power. A parent no Owner, Deputy or
+    /// Admin holds is refused before the judge, as on main, so no mint waits.
     #[expect(
         clippy::too_many_arguments,
         reason = "one shared transactional Delegate mint"
@@ -385,7 +420,7 @@ impl crate::Vault {
         now: u64,
         expires_at: u64,
         requested: Option<&Scope>,
-    ) -> Result<EntityId> {
+    ) -> Result<(EntityId, crate::check_in::CheckInDecision)> {
         // Person tier, own holder check: the parent admin grant names this holder.
         let holder_actor = holder.revalidate_person_in_txn(self, txn)?;
         let raw = self
@@ -447,6 +482,21 @@ impl crate::Vault {
             }
             grant.authority_scope = grant.authority_scope.meet(requested);
         }
+        let judged = crate::check_in::DoorAct {
+            person: holder_actor,
+            role: crate::check_in::RolePreset::of_grant_role(parent.role),
+            grant: parent_grant_id,
+            verb: "vault.members.delegate",
+            act: crate::check_in::ActClass::GrantWiden,
+            scope: crate::check_in::CheckInScope::default(),
+            effect_digest: crate::check_in::members_delegate_effect_digest(
+                &parent_grant_id,
+                &member_ref,
+                requested,
+                expires_at,
+            )?,
+        };
+        let decision = crate::check_in::person_door_go_decision_in_txn(self, txn, &judged, now)?;
         let id = EntityId::now();
         crate::batch::apply_ops(
             &self.store,
@@ -472,7 +522,7 @@ impl crate::Vault {
             false,
             true,
         )?;
-        Ok(id)
+        Ok((id, decision))
     }
 }
 

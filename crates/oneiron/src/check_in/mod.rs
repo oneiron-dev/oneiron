@@ -138,3 +138,7 @@ pub use effect::sign_effect_digest;
 pub use effect::{agent_grant_from_slip_effect_digest, agent_grant_restore_effect_digest};
 // The standing consent grant mints' effect (2k8a).
 pub use effect::standing_grant_effect_digest;
+// The Delegate mint's and the shared policy proposal's judge and effects
+// (2k8e3).
+pub(crate) use effect::person_door_go_decision_in_txn;
+pub use effect::{members_delegate_effect_digest, shared_policy_propose_effect_digest};

@@ -73,6 +73,11 @@ pub struct FederationMemberGrant {
     /// reach a reader cannot guess from the name (the Steward's: ARCH-0043).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role_note: Option<String>,
+    /// The decision a `vault.members.delegate` mint ran on: the holder's
+    /// widening judged under their parent grant's role (ROLES-CHECKIN
+    /// 2k8e3). A read of a stored grant carries none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -211,22 +216,38 @@ fn member_grant(
         active,
         role_note: (grant.role == FederationGrantRole::Steward)
             .then(|| crate::federation::STEWARD_ROLE_NOTE.to_owned()),
+        check_in: None,
     })
 }
 
+/// `vault.members.delegate`: the holder of a live Owner, Deputy or Admin
+/// grant mints a one-hop Delegate grant from it. A Delegate grant widens the
+/// member's reach (ARCH-0082 #act-table "Widen another's grant"), so the
+/// mint writer judges it under the parent grant's role (ROLES-CHECKIN 2k8e3;
+/// Engine RULING P25-SHAPE Q1 = A): the Owner's goes on their own proof, a
+/// Deputy's on their own judgment and an Admin's at once, and the answer
+/// records that decision (`check_in`). No role that reaches the mint waits,
+/// so the request names no check-in. The effect is
+/// [`crate::check_in::members_delegate_effect_digest`] over the request.
+///
+/// # Errors
+///
+/// The mint's refusals, as on main.
 pub fn create_federation_delegate_as(
     vault: &Vault,
     holder: &AuthenticatedOwner,
     input: FederationDelegateRequest,
 ) -> MemoryResult<FederationMemberGrant> {
-    let (id, grant) = vault.create_scoped_federation_delegate(
+    let (id, grant, decision) = vault.create_scoped_federation_delegate_with_check_in(
         holder,
         input.parent_grant,
         input.member_ref,
         &input.authority_scope,
         input.expires_at,
     )?;
-    member_grant(id, grant, vault.store.clock.now_recorded_at(), true)
+    let mut answer = member_grant(id, grant, vault.store.clock.now_recorded_at(), true)?;
+    answer.check_in = Some(decision);
+    Ok(answer)
 }
 
 pub fn reset_shared_project_access(
