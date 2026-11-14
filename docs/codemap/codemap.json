@@ -24377,7 +24377,7 @@
      "path": "src/consent/bypass.rs",
      "purpose": "The scoped catastrophe bypass (DEC-0006 invariant 7, `#bypass-grant`)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 7,
       "re-export": 1,
       "struct": 2
@@ -24664,7 +24664,7 @@
      "path": "src/consent/mod.rs",
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 8,
       "re-export": 16
      }
@@ -40514,7 +40514,7 @@
      "path": "src/federation/git_push/caller.rs",
      "purpose": "The receive-pack decision's values (FIX 6867, G1-PUSH): the pusher a host transport authenticated, the…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "enum": 1,
       "fn": 3,
       "struct": 3
@@ -60737,7 +60737,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DoorWindowReport",
@@ -60746,7 +60746,7 @@
      "path": "src/origin/smart_http/door_window.rs",
      "purpose": "The quarantine-window protocol: hook request and blob parsing, ref-name pre-check, seam scan, verdict publish",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -60997,6 +60997,16 @@
      "purpose": "The masked selection of one Git exchange (FIX 7608 slice 2b-ii-B2, ASK 1, ASK S): after the SAME push…",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/protected_ref_confirm.rs",
+     "purpose": "The protected ref of a served repository, and the owner's leave for one move of it (L8-51)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -102173,6 +102183,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/protected_ref_rewrite.rs",
+     "purpose": "L8-51: over the vault-as-origin push, anyone but the vault's owner may neither delete nor rewrite the…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -104406,7 +104424,7 @@
      "purpose": "Live office body records and Vault doors"
     },
     "origin": {
-     "files": 159,
+     "files": 160,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105085,10 +105103,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 274,
+   "over_bar": 275,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7573,
-   "test_files": 1294
+   "source_files": 7574,
+   "test_files": 1295
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -140553,7 +140571,7 @@
      "path": "src/managed/mod.rs",
      "purpose": "Managed serve mode: the vault engine as a supervised child process",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "mod": 4,
       "re-export": 10
      }
@@ -141061,6 +141079,16 @@
      "purpose": "Generic original-usage export over ctl (LC191311): read-only managed handler",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/usage_meter.rs",
+     "purpose": "The usage meter a managed start binds to its hosted vault before any worker starts (census L8-12…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -146270,9 +146298,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/test_doors/build_server.rs",
-     "purpose": "Door for `tests/serve_usage_metering.rs`: the server plain and embedded serve build over a vault…",
+     "purpose": "Doors for `tests/serve_usage_metering.rs` and `tests/managed_serve_usage_metering.rs`: the server plain and…",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -147794,6 +147822,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/managed_serve_usage_metering.rs",
+     "purpose": "A managed start binds its hosted vault's usage meter before any worker starts (census L8-12…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -148429,7 +148465,7 @@
      "purpose": "The host's Mail & Calendar source sync (FIX 12559): every pass, as the vault's local owner, one bounded…"
     },
     "managed": {
-     "files": 113,
+     "files": 114,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -148634,8 +148670,8 @@
    },
    "over_bar": 62,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1881,
-   "test_files": 254
+   "source_files": 1882,
+   "test_files": 255
   },
   "oneiron-skill-attribution": {
    "files": [
@@ -149343,10 +149379,89 @@
       "LinkingCodes"
      ],
      "path": "src/batch/phonetic_codes.rs",
-     "purpose": "Deterministic name codes for the first phonetic rung (OF-101)",
+     "purpose": "Deterministic name codes for the phonetic rungs (OF-101; CROSS-ARCH-0013 `#ladder`)",
+     "surface": {
+      "fn": 3,
+      "re-export": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Segment"
+     ],
+     "path": "src/batch/phonetic_codes/features.rs",
+     "purpose": "The articulatory features of the segments the readers emit",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "IpaReading"
+     ],
+     "path": "src/batch/phonetic_codes/ipa.rs",
+     "purpose": "Grapheme-to-phoneme readings of a name (CROSS-ARCH-0013 `#ladder` rung 1, G2P → IPA → NPD): each reading is…",
      "surface": {
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/phonetic_codes/ipa/english.rs",
+     "purpose": "The English reading (`eng`): the letter-to-sound rules of NRL Report 7948 (H",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/phonetic_codes/ipa/japanese.rs",
+     "purpose": "The Japanese reading (`jpn`): Hepburn romaji read syllable by syllable",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/phonetic_codes/ipa/korean.rs",
+     "purpose": "The Korean reading (`kor`): each Hangul syllable split into its jamo, each jamo read as one sound",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/phonetic_codes/ipa/mandarin.rs",
+     "purpose": "The Mandarin reading (`cmn`): Han characters through their pinyin (the `pinyin` crate's data, MIT), and…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/phonetic_codes/npd.rs",
+     "purpose": "Normalized Phonetic Distance (CROSS-ARCH-0013 `#problem`, `#ladder` rung 1): the phoneme edit distance…",
+     "surface": {
+      "const": 3,
+      "fn": 1
      }
     },
     {
@@ -157746,6 +157861,22 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/phonetic_han_codes.rs",
+     "purpose": "L10-08 (CROSS-ARCH-0013 `#ladder` rung 1, G2P → IPA → NPD): a Han name and a kana name with a company-form…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/phonetic_ipa.rs",
+     "purpose": "L10-08 (CROSS-ARCH-0013 `#ladder` rung 1, G2P → IPA → NPD): the readings of a name and the Normalized…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/session_overlay_dump_suppression.rs",
      "purpose": "Census row L6-18 (ARCH-0052 threat-model note): a process that holds an off-record overlay writes no core…",
      "surface": {}
@@ -157916,7 +158047,7 @@
      "purpose": "Fixed base-agent principal rows and their immutable write guards"
     },
     "batch": {
-     "files": 45,
+     "files": 52,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -159332,8 +159463,8 @@
    },
    "over_bar": 1,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 645,
-   "test_files": 7
+   "source_files": 652,
+   "test_files": 9
   },
   "oneiron-testkit": {
    "files": [
