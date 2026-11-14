@@ -18,8 +18,9 @@
 //! trains a role run on a recipe that connector lists, on its own job wire.
 //! Any other run, recipe or connector holds with `training.no_connector`, as
 //! with no connector at all. A returned question head is scored locally on
-//! its held-out rows; a returned role run still holds with
-//! `training.no_evaluator`.
+//! its held-out rows. A returned role run is scored by the scorer process
+//! its role trainer connector names (`role_evaluation`); on a connector that
+//! names none it holds with `training.no_evaluator`.
 //!
 //! `vault.coach.training_runs.execute` runs the same arm for one run on a
 //! caller's request (`step`), outside the Coach's queue. Each writer that
@@ -44,6 +45,7 @@ mod parity;
 mod question_evaluation;
 mod question_serving;
 mod question_trial;
+mod role_evaluation;
 mod role_trainer;
 mod role_wire;
 mod trainer;
@@ -185,16 +187,28 @@ pub(crate) fn training_connector(
     )))
 }
 
-/// The local held-out evaluator for the question worker's recipe. Role
-/// recipes remain unavailable until their own adapters are implemented.
+/// The held-out evaluator for `run`: the local question-head evaluator, for
+/// a question run on its recipe, or the scorer process of the role trainer
+/// that trained a role run, when that connector names one. Anything else has
+/// none here.
 fn training_evaluator(server: &SyncServer, run: &TrainingRun) -> Option<TrainingEvaluator> {
-    if !QuestionHeadTrainer::serves(&run.plan) {
-        return None;
-    }
     let vault = Arc::clone(server.vault());
+    if QuestionHeadTrainer::serves(&run.plan) {
+        let run = run.clone();
+        return Some(Box::new(move |input| {
+            question_evaluation::evaluate(&vault, &run, input)
+        }));
+    }
+    let trainer = server
+        .ai
+        .model_runtime()
+        .training()
+        .role_trainer(&run.compute.connector)
+        .filter(|trainer| RoleTrainer::serves(trainer, &run.plan) && trainer.scorer.is_some())?
+        .clone();
     let run = run.clone();
     Some(Box::new(move |input| {
-        question_evaluation::evaluate(&vault, &run, input)
+        role_evaluation::evaluate(&vault, &trainer, &run, input)
     }))
 }
 

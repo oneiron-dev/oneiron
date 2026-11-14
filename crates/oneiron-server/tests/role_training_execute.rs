@@ -4,7 +4,8 @@
 //!   authorized, the owner's execute dispatches it to the role trainer,
 //!   whose tiny pinned worker reads the staged training split and nothing
 //!   held out, and the run returns inside the bound with its checks passed,
-//!   bound to nothing, and waits on the host for an evaluator;
+//!   bound to nothing, and, as this role trainer names no scorer, waits on
+//!   the host for an evaluator (`role_training_evaluate` scores one);
 //! - a run whose waiter is lost (a host restart) and whose receipt lands
 //!   after the execute's first step still returns inside the bound: the
 //!   execute polls the trainer again while it waits;
@@ -125,7 +126,8 @@ fn owner_executes_an_authorized_role_run_on_the_role_trainer_that_reads_the_stag
         let job = role_jobs_root(fixture.dir.path()).join(format!("{run}-{spec}"));
         assert_eq!(status, StatusCode::OK, "owner execute: {read}");
         assert_eq!(read["state"], "returned", "{read}\n{}", job_evidence(&job));
-        // No role evaluator ships yet: the returned run waits on the host.
+        // This role trainer names no scorer: the returned run waits on the
+        // host for an evaluator.
         assert_eq!(
             read["progress"],
             json!({"status": "outstanding", "needs": "host"}),
