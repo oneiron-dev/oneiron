@@ -2036,7 +2036,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/web_connector/providers/tinyfish.rs` | src | s | 2 crate-vis | — | Tinyfish: TinySearch and TinyFetch, free within their daily allowances, on the user's own key or the hub… |
 | `src/wire_health.rs` | src | m | 1 struct · 3 enum · 2 fn · 2 const · 5 crate-vis | AnsweredBy, CheckState, CrossingSource, HealthCheck | The health check past a threshold (OF-520, ARCH-0044 C5) |
 | `src/wire_health/evidence.rs` | src | m | 4 crate-vis | — | What the health check reads: each kind of kept crossing past its cursor, as one subject's crossing, and how… |
-| `src/wire_telemetry.rs` | src | m | 6 struct · 1 enum · 11 fn · 2 re-export · 14 crate-vis | LimitQuestions, WireCrossed, WireLimitQuestion, WireQuestion, WireQuestionKind, WireTelemetry, WireWindowReceipt | RC42 observation-only wire counters |
+| `src/wire_telemetry.rs` | src | L | 6 struct · 1 enum · 11 fn · 2 re-export · 15 crate-vis | LimitQuestions, WireCrossed, WireLimitQuestion, WireQuestion, WireQuestionKind, WireTelemetry, WireWindowReceipt | RC42 observation-only wire counters |
 | `src/wire_telemetry/connection_pressure.rs` | src | m | 21 crate-vis | — | The shared connection pool's live pressure check (FIX 7656, OF-520) |
 | `src/wire_telemetry/http.rs` | src | s | 2 crate-vis | — | The HTTP observer every routed request passes, and the tick that keeps the observed window |
 | `src/wire_telemetry/kept.rs` | src | s | 4 crate-vis | — | The kept questions as the health check reads them (OF-520): the call-volume questions past its cursor, a… |
@@ -2060,6 +2060,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/delete_authority_served_door.rs` | test | m | — | — | DEL-2 at the core HTTP delete (ARCH-0043, owner DEL-2 = A; Engine ruling 13 Nov 02:51 = A) |
 | `tests/doctor_off_record_dump_suppression.rs` | test | s | — | — | Census row L6-18: `oneiron doctor` reports the operator's core-dump switch for a process that holds an… |
 | `tests/doctor_synced_folder.rs` | test | s | — | — | A vault in a folder a sync service watches is named by the shipped binary: `init` prints a warning and… |
+| `tests/esign_qr_refusals.rs` | test | s | — | — | Guesses at a QR page capability (ARCH-0064a section 6: enumeration signals go to counters, with no rate… |
 | `tests/eval_authoring_execute_lapsed_lease.rs` | test | s | — | — | `vault.evals.authoring.execute` on a requested attempt whose host stopped before it settled the lease (FIX… |
 | `tests/eval_authoring_execute_served.rs` | test | s | — | — | `vault.evals.authoring.execute` served over the real facade route (FIX EVAL-AUTHORING-EXECUTE-SERVER-CASE)… |
 | `tests/facade_live_run_status.rs` | test | s | — | — | Live-run guard refusals keep their status through the real facade router |

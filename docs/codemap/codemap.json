@@ -9947,9 +9947,9 @@
      "path": "src/blob_artifact/esign/qr_capability.rs",
      "purpose": "The QR capability a sealed document's certificate page prints (ARCH-0064a section 6 \"QR capability-URL\"…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
-      "fn": 4,
+      "fn": 6,
       "struct": 4
      }
     },
@@ -147366,7 +147366,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "LimitQuestions",
@@ -147380,7 +147380,7 @@
      "path": "src/wire_telemetry.rs",
      "purpose": "RC42 observation-only wire counters",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 11,
       "re-export": 2,
@@ -147583,6 +147583,14 @@
      "notable": [],
      "path": "tests/doctor_synced_folder.rs",
      "purpose": "A vault in a folder a sync service watches is named by the shipped binary: `init` prints a warning and…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/esign_qr_refusals.rs",
+     "purpose": "Guesses at a QR page capability (ARCH-0064a section 6: enumeration signals go to counters, with no rate…",
      "surface": {}
     },
     {
@@ -148872,7 +148880,7 @@
     "wire_telemetry": {
      "files": 6,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "RC42 observation-only wire counters"
     },
@@ -148884,10 +148892,10 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 62,
+   "over_bar": 63,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1883,
-   "test_files": 255
+   "test_files": 256
   },
   "oneiron-skill-attribution": {
    "files": [
