@@ -15,7 +15,7 @@ use std::{collections::VecDeque, sync::Arc};
 use super::{GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient, VoiceCascadeSession, speakable};
 use crate::{
     EntityId, Vault,
-    error::{Error, Result},
+    error::Result,
     limit_ask::EngineLimit,
     llm::{
         CacheEpoch, CacheIdentity, InferenceCallReceipt, ModelId, ModelLocality,

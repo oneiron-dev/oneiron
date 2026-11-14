@@ -51,8 +51,8 @@ use crate::{EntityId, Vault};
 use crate::{
     recovery::{issue_recovery_root_kit, restore_kit},
     store::recovery_kit::{
-        CodeKeeping, KitCoverage, KitError, KitId, KitIssue, KitMachine, KitManifest,
-        KitPassphrase, KitPiece, KitPiecePair, KitSecretKind, PieceHome, RestoredKitSecret,
+        CodeKeeping, KitError, KitId, KitIssue, KitMachine, KitManifest, KitPassphrase, KitPiece,
+        KitPiecePair, KitSecretKind, PieceHome, RestoredKitSecret,
     },
 };
 
