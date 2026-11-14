@@ -100,28 +100,6 @@ impl TrainingRun {
     }
 }
 
-impl ExportCheck {
-    pub fn passed(&self) -> bool {
-        self.hash_mismatches.is_empty()
-            && self.probe_coverage_matches
-            && self.probe_checkpoints_match
-            && self.settings_match
-            && self.harness_matches
-            && self.argmax_flips == 0
-            && self.max_logit_difference <= self.tolerance
-            && self
-                .question_check
-                .is_none_or(|check| check.finite && check.tokens_match && check.passed)
-            // A question head serves only once the host reproduced its
-            // receipt (FIX 7568); a missing check is a failed one.
-            && (self.question_check.is_none()
-                || self
-                    .candle_parity
-                    .as_ref()
-                    .is_some_and(CandleParityCheck::passed))
-    }
-}
-
 impl Vault {
     pub fn training_run(&self, id: &EntityId) -> Result<Option<TrainingRun>> {
         RUNS.get(&self.store, &self.store.env.read_txn()?, id)

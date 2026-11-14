@@ -12,13 +12,39 @@ homepage.workspace = true
 doctest = false
 
 [dependencies]
+blake3 = { workspace = true, features = ["zeroize"] }
+ed25519-dalek = { workspace = true }
+loro = { workspace = true }
+oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
+oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
+oneiron-code-check = { path = "../oneiron-code-check" }
+oneiron-code-source = { version = "0.1.0", path = "../oneiron-code-source" }
+oneiron-consent-state = { version = "0.1.0", path = "../oneiron-consent-state" }
+oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
+oneiron-crypto = { version = "0.1.0", path = "../oneiron-crypto" }
+oneiron-delivery-vocabulary = { version = "0.1.0", path = "../oneiron-delivery-vocabulary" }
+oneiron-docedit = { version = "0.1.0", path = "../oneiron-docedit" }
+oneiron-lens-wire = { version = "0.1.0", path = "../oneiron-lens-wire" }
+oneiron-linkedin-policy = { version = "0.1.0", path = "../oneiron-linkedin-policy" }
+oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
+oneiron-retrieval = { version = "0.1.0", path = "../oneiron-retrieval" }
+oneiron-run-budget = { version = "0.1.0", path = "../oneiron-run-budget" }
+oneiron-skill-attribution = { version = "0.1.0", path = "../oneiron-skill-attribution" }
+oneiron-store = { version = "0.1.0", path = "../oneiron-store" }
+oneiron-wake-contract = { version = "0.1.0", path = "../oneiron-wake-contract" }
+oneiron-web-fetch = { version = "0.1.0", path = "../oneiron-web-fetch" }
+rmp-serde = { workspace = true }
+schemars = "=0.8.22"
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
+thiserror = { workspace = true }
 
 [features]
-# Forwarded from `oneiron/sync`, `oneiron/test-support` and `oneiron/test-hooks`: a moved item keeps the gate it had
-# in the engine.
-sync = []
-test-support = []
-test-hooks = []
+# Forwarded from `oneiron/sync` and `oneiron/test-support`: a moved item keeps the gate it had in the engine, and
+# a lower crate gets the features the engine gives it.
+sync = ["oneiron-contracts/sync", "oneiron-base/sync", "oneiron-store/sync", "oneiron-wake-contract/sync"]
+test-support = ["oneiron-contracts/test-support", "oneiron-base/test-support", "oneiron-store/test-support", "oneiron-docedit/test-support", "oneiron-model/test-support"]
+test-hooks = ["oneiron-model/test-hooks", "oneiron-store/test-hooks"]
 
 [lints]
 workspace = true
