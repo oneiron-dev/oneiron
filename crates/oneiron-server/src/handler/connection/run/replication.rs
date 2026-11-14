@@ -143,12 +143,13 @@ pub(super) async fn handle_connection(
     }
 
     // Late-join/reconnect snapshot for the Loro-native ephemeral lane. A
-    // member lane has no presence (MEMBER-SYNC-PRESENCE = A).
-    let presence = if member.is_some() {
-        Vec::new()
-    } else {
-        late_join_presence(&server, conn_id, locality, machine)
-    };
+    // member lane has no presence (MEMBER-SYNC-PRESENCE = A). The hub stays a
+    // lazy iterator: no part is built before the last one is sent.
+    let presence = member
+        .is_none()
+        .then(|| late_join_presence(&server, conn_id, locality, machine))
+        .into_iter()
+        .flatten();
     for msg in presence {
         if !transport.send_binary(msg).await {
             tracing::warn!(conn_id, "failed to send ephemeral snapshot");
