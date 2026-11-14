@@ -6,6 +6,7 @@ use super::{
     ledger::{append, append_inspected, state_in},
     model::*,
     principals::automated_signing_allowed,
+    sign_check_in::{SignAct, SignCheckIn, sign_check_in_in_txn},
 };
 use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Result, Vault};
@@ -15,9 +16,22 @@ use std::collections::BTreeMap;
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SigningAction {
     Load,
-    SaveField { field: String, value: FieldValue },
-    Complete { consent: bool, next: Option<String> },
-    Reject { reason: String },
+    SaveField {
+        field: String,
+        value: FieldValue,
+    },
+    Complete {
+        consent: bool,
+        next: Option<String>,
+        /// The check-in an earlier Complete's `check_in_pending` named, 32
+        /// hex: once it is approved, the Complete that names it spends it
+        /// and signs (ROLES-CHECKIN 2k6b).
+        #[serde(default)]
+        check_in_ref: Option<String>,
+    },
+    Reject {
+        reason: String,
+    },
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SigningPage {
@@ -53,6 +67,12 @@ pub enum SigningOutcome {
         held_at: u64,
     },
     ConsentRequired,
+    /// A member's sign act as the vault's principal waits on this pending
+    /// check-in (ROLES-CHECKIN 2k6b): nothing is signed until a Complete
+    /// names it, approved, as `check_in_ref`.
+    CheckInPending {
+        check_in_ref: String,
+    },
 }
 
 /// Who a signing call shows itself to be (OF-415). The capability proves
@@ -528,15 +548,20 @@ impl Vault {
                         )?;
                     }
                 }
-                SigningAction::Complete { consent, next } => {
+                SigningAction::Complete {
+                    consent,
+                    next,
+                    check_in_ref,
+                } => {
                     if !consent {
                         return Ok(SigningOutcome::ConsentRequired);
                     }
-                    let evidence = EsignSigningEvidence {
+                    let mut evidence = EsignSigningEvidence {
                         authentication_method: caller.authentication_method(),
                         disclosure_version: None,
                         consent: *consent,
                         intent: EsignSigningIntent::Direct,
+                        check_in: None,
                     };
                     let automated = recipient.automated || caller == SigningCaller::Agent;
                     if automated && recipient.natural_person.is_some() {
@@ -571,6 +596,29 @@ impl Vault {
                         return Ok(SigningOutcome::HeldForOwner {
                             held_at: held.held_at,
                         });
+                    }
+                    // 2k6b: a credentialed person's sign act as the vault's
+                    // principal checks in after every gate above, so a spent
+                    // check-in and the signature commit together.
+                    let judged = sign_check_in_in_txn(
+                        self,
+                        txn,
+                        &SignAct {
+                            caller,
+                            verified_actor,
+                            document,
+                            recipient: &recipient,
+                            check_in_ref: check_in_ref.as_deref(),
+                        },
+                    )?;
+                    match judged {
+                        SignCheckIn::Unjudged => {}
+                        SignCheckIn::Go(decision) => evidence.check_in = Some(decision),
+                        SignCheckIn::Waits(id) => {
+                            return Ok(SigningOutcome::CheckInPending {
+                                check_in_ref: id.to_hex(),
+                            });
+                        }
                     }
                     sign(
                         self,

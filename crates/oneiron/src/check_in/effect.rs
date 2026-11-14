@@ -607,3 +607,18 @@ pub fn legal_send_effect_digest(document: &EntityId, recipient_count: usize) -> 
     hasher.update(&(recipient_count as u64).to_be_bytes());
     *hasher.finalize().as_bytes()
 }
+
+/// The digest of completing recipient `recipient`'s signature on signing
+/// document `document` as the vault's principal: the effect a member's
+/// `vault.esign.signing.act` Complete is judged over (2k6b; P25-SHAPE Q1 =
+/// A). BLAKE3, key derived from `oneiron check_in esign sign v1`, over the
+/// document's 16 id bytes, then the recipient id's length as eight
+/// big-endian bytes and its UTF-8 bytes.
+#[must_use]
+pub fn sign_effect_digest(document: &EntityId, recipient: &str) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in esign sign v1");
+    hasher.update(document.as_bytes());
+    hasher.update(&(recipient.len() as u64).to_be_bytes());
+    hasher.update(recipient.as_bytes());
+    *hasher.finalize().as_bytes()
+}
