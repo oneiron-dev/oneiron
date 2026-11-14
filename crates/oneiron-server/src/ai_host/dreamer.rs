@@ -716,6 +716,9 @@ impl ObservedFactory {
             factory = factory.with_scope_summary_instruction(instruction.clone());
         }
         factory = factory.with_model_windows(self.windows.clone());
+        // The Dreamer's jobs bind each strength attempt in the served vault
+        // and run over that attempt's client (untangle 6.9c).
+        factory = factory.with_dreamer_job_vault(Arc::clone(&self.vault));
         if let Some(instruction) = &self.person_about_instruction {
             factory = factory.with_person_about_instruction(instruction.clone());
         }
