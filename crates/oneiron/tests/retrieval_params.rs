@@ -54,7 +54,8 @@ struct TwoRowFixture {
 
 fn two_rows(vault: &Vault, now: u64) -> Result<TwoRowFixture, Box<dyn std::error::Error>> {
     let anchor = now - 200 * DAY;
-    let at_anchor = EntityId::from_bytes([0xA1; 16])?;
+    // [0xA1; 16]..[0xA6; 16] hold the vault's seeded system agents.
+    let at_anchor = EntityId::from_bytes([0xD1; 16])?;
     let recent = EntityId::from_bytes([0xB2; 16])?;
     put_row(vault, at_anchor, anchor, anchor)?;
     put_row(vault, recent, anchor + 5 * DAY, now - DAY)?;
