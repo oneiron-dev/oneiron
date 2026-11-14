@@ -24,6 +24,7 @@ mod land;
 mod ledger;
 mod plan;
 mod review;
+mod sharing;
 mod speakers;
 mod text;
 mod tree;
@@ -45,6 +46,8 @@ pub use hosted_verbs::{
 };
 pub use land::HistoryImportReport;
 pub(crate) use ledger::erase_message_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use ledger::landed_rows_in;
 pub use plan::{HistoryDryRun, HistoryLedgerSnapshot};
 pub use review::history_import_review_id;
 pub(crate) use review::imported_evidence_in_txn;
@@ -53,6 +56,7 @@ pub(crate) use speakers::{ImportedConversationSpeakers, imported_speakers_in};
 use serde::Serialize;
 
 use super::{IngestError, IngestResult};
+use crate::EntityId;
 
 /// [`HistoryMessage::said_by`] for the user side of a subagent's or a spawned
 /// agent's thread: the agent that delegated the task, never the owner.
@@ -242,6 +246,33 @@ pub struct HistoryConversation {
     pub cwd: Option<String>,
     pub messages: Vec<HistoryMessage>,
     pub skipped: HistorySkips,
+    /// The source's own sharing of the conversation, when the source keeps
+    /// one (ARCH-0027 #import-audience). `None` lands it private to the
+    /// importer, as every source without sharing data does.
+    pub sharing: Option<HistorySharing>,
+}
+
+/// A source's own sharing of one conversation: the unit the source shares
+/// by and the people it shares that unit with. Every conversation of one
+/// container reads under one source policy, so a later import that names
+/// fewer members takes the read away from those it no longer names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistorySharing {
+    /// The source's own sharing unit, stable from one export to the next
+    /// (for a chat workspace's channel, `<workspace>:<channel>`).
+    pub container: String,
+    /// The people the source shares the container with.
+    pub members: Vec<HistoryMember>,
+}
+
+/// One person a source shares a container with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryMember {
+    /// The source's own id for the person.
+    pub provider_id: String,
+    /// The vault PERSON the owner says the member is. A member with none
+    /// reads nothing.
+    pub person: Option<EntityId>,
 }
 
 impl HistoryConversation {
@@ -256,6 +287,7 @@ impl HistoryConversation {
             cwd: None,
             messages: Vec::new(),
             skipped: HistorySkips::default(),
+            sharing: None,
         }
     }
 }

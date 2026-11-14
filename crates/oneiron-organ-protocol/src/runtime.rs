@@ -344,7 +344,6 @@ impl Deref for InputBytes {
 
 /// Serves `organ` on the descriptor the host passed (`ONEIRON_ORGAN_FD`,
 /// default 3) until the engine closes it.
-#[must_use]
 pub fn serve<O: Organ>(organ: O) -> ExitCode {
     let fd = std::env::var("ONEIRON_ORGAN_FD")
         .ok()

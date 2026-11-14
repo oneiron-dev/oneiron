@@ -16,13 +16,10 @@ pub struct CoreferenceLinkRequest {
     pub status: CoreferenceStatus,
 }
 
-/// The link whose owner confirms or removes it. Endpoint order is immaterial.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CoreferencePairRequest {
-    pub local_person: EntityId,
-    pub other_person: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::coreference::{
+    CoreferencePairRequest, CoreferenceShareConsentReceipt, CoreferenceUnlinkReceipt,
+};
 
 /// A link/status receipt, not a read grant or permission to export the link.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -41,24 +38,6 @@ pub struct CoreferenceShareConsentRequest {
     pub other_person: EntityId,
     /// One pact id, as 64 lowercase hex characters.
     pub pact: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CoreferenceShareConsentReceipt {
-    pub local_person: EntityId,
-    pub other_person: EntityId,
-    pub pact: String,
-    pub consent_claim: EntityId,
-}
-
-/// Only link metadata is retracted. Neither person's original claims change.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CoreferenceUnlinkReceipt {
-    pub local_person: EntityId,
-    pub other_person: EntityId,
-    pub unlinked: bool,
-    pub retracted_claims: Vec<EntityId>,
-    pub original_claims_retained: bool,
 }
 
 impl CoreferenceShareConsentRequest {
