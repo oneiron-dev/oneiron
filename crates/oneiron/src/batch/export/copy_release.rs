@@ -8,8 +8,9 @@
 //! only that write's durable commit lets the copy go. A write that does not
 //! commit leaves no trace: its candidate is dropped, and one pass more, in a
 //! snapshot of its own that admits the Owner again, makes the copy without
-//! those mailboxes, each named, and writes its audit row, counting none, in
-//! that same strict write; a write that does not commit releases nothing.
+//! those mailboxes, each named, and records it as any other copy is
+//! ([`record_remade_export`]): its audit row, counting none, is owed before
+//! it leaves when anyone is owed it, and the copy is never withheld (L5-17).
 //! Only then does the copy go to the caller's sink, its vector or its kept
 //! transfer.
 //!
@@ -35,7 +36,7 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::mail_pack::{CarriedMemberMailboxes, MailboxExportNotice, MemberMailboxPlan};
-use crate::memory::{ExportCopy, record_export, record_member_mail_export};
+use crate::memory::{ExportCopy, record_export, record_member_mail_export, record_remade_export};
 use crate::settings::{CallerLocality, ReadDestination};
 use crate::source_audience::{ExportJudge, ExportVerdicts};
 use crate::store::Store;
@@ -508,15 +509,14 @@ impl Vault {
     /// another member's personal mailbox, or uses an approval, is recorded
     /// in the one write that tells each person ([`record_member_mail_export`]);
     /// when that write does not commit, the copy is made once more without
-    /// those mailboxes, each named, and its audit row, counting none, is
-    /// written in that same strict write before it is handed back. A copy
-    /// that carries none and uses none is recorded as any other copy is
+    /// those mailboxes, each named, and recorded as any other copy is
+    /// ([`record_remade_export`]), its row counting none. A copy that carries
+    /// none and uses none is recorded as any other copy is
     /// ([`record_export`]), which never withholds it.
     ///
     /// # Errors
     ///
-    /// The admission's refusal, a pass that failed, or the copy made again
-    /// whose audit row did not commit.
+    /// The admission's refusal, or a pass that failed.
     pub(crate) fn release_owner_copy<E: From<Error>>(
         &self,
         pass: &OwnerCopyPass,
@@ -543,17 +543,15 @@ impl Vault {
     /// approvals it uses. A copy that carries one, or uses one, is recorded
     /// in the one write that tells each person ([`record_member_mail_export`]);
     /// when that write does not commit, `make` makes the copy once more
-    /// without those mailboxes, each named, and its audit row, counting none,
-    /// is written in that same strict write before it is handed back. A copy
-    /// that carries none and uses none from the start is recorded as any
-    /// other copy is ([`record_export`]), which never withholds it. Every
-    /// Owner's copy, an archive, an OKF bundle or its records, is recorded
-    /// here.
+    /// without those mailboxes, each named, recorded as any other copy is
+    /// ([`record_remade_export`]), its row counting none. A copy that carries
+    /// none and uses none from the start is recorded as any other copy is
+    /// ([`record_export`]), which never withholds it. Every Owner's copy, an
+    /// archive, an OKF bundle or its records, is recorded here.
     ///
     /// # Errors
     ///
-    /// A pass that failed, or the copy made again whose audit row did not
-    /// commit.
+    /// A pass that failed.
     pub(super) fn record_owner_copy<C, E: From<Error>>(
         &self,
         make: impl Fn(bool) -> std::result::Result<C, E>,
@@ -565,7 +563,7 @@ impl Vault {
             let holder_requests = record_export(self, recorded);
             return Ok((copy, holder_requests));
         };
-        match record_member_mail_export(self, recorded, Some(&mailboxes)) {
+        match record_member_mail_export(self, recorded, &mailboxes) {
             Ok(holder_requests) => Ok((copy, holder_requests)),
             // The write did not commit: no audit row, notice or use of it
             // stands, and its copy is dropped unread.
@@ -583,10 +581,8 @@ impl Vault {
                     )
                     .into());
                 }
-                // Its own audit row commits in the same strict write before
-                // it is handed back; one that does not commit is dropped
-                // unread and its error returns.
-                let holder_requests = record_member_mail_export(self, recorded, None)?;
+                // Recorded as any other copy is, never withheld (L5-17).
+                let holder_requests = record_remade_export(self, recorded);
                 Ok((copy, holder_requests))
             }
         }

@@ -18,7 +18,10 @@
 //! not learn of it.
 //! A notice never fails or undoes what it tells of: the doors here tell
 //! after their edit committed, in a write of their own, and a member whose
-//! notice is not written is logged and skipped.
+//! notice is not written is logged and skipped. An export's notices are the
+//! one exception (L5-17): the copy has left, so they are owed. Their write
+//! fails whole when a notice is not written, and its owed row stays for the
+//! next housekeeping pass ([`NoticeDelivery::Owed`]).
 //!
 //! A thread's members are read from its root on base, or, for a root only
 //! a live off-record stretch's published overlay holds, from that overlay
@@ -51,11 +54,44 @@ pub(crate) use crate::store::conversation_body::THREAD_NOTICE_PRODUCER;
 /// The private threads an Owner's copy carries (FIX 6427), each root with
 /// its binding as the copy's own read resolved it (FIX 6681): what its
 /// audit reads a thread gone since from, never a list of its members.
-/// Never serialized; its debug form shows counts alone.
-#[derive(Clone, Default)]
+/// Stored only in the copy's owed audit row (L5-17), whose erase drops an
+/// erased person from each binding ([`Self::forget_actor`]); its debug form
+/// shows counts alone.
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub(crate) struct ExportThreadRoots(BTreeMap<EntityId, Option<ThreadBinding>>);
 
 impl ExportThreadRoots {
+    /// Whether the copy carries a TURN of no thread at all.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Drops `actor` from the audience each binding names, for `actor`'s
+    /// erase (L5-17). Answers whether any binding named them.
+    pub(crate) fn forget_actor(&mut self, actor: &EntityId) -> bool {
+        let mut named = false;
+        for binding in self.0.values_mut().flatten() {
+            if let Some(audience) = binding.audience.as_mut() {
+                named |= audience.remove(actor);
+            }
+        }
+        named
+    }
+
+    /// Every person a binding's audience names, for the integration tests'
+    /// door.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn named_members(&self) -> BTreeSet<EntityId> {
+        self.0
+            .values()
+            .flatten()
+            .filter_map(|binding| binding.audience.as_ref())
+            .flatten()
+            .copied()
+            .collect()
+    }
+
     /// Reads, in the copy's own read `dbs` and `txn`, the binding of each
     /// root not read yet that resolves there as a live root
     /// ([`resolved_root_in`]). A root that does not resolve, or whose read
@@ -182,6 +218,20 @@ impl ThreadNotice {
     }
 }
 
+/// How a thread notice that is not written is met.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NoticeDelivery {
+    /// Logged and skipped: the notice never fails its caller.
+    BestEffort,
+    /// An export's notice, owed since the copy left (L5-17): one that is
+    /// not written, or a time it cannot be written at, fails the caller's
+    /// write, so the copy's owed audit row stays for the next housekeeping
+    /// pass. A thread whose members, pens or the exporter's place in it do
+    /// not read is still logged and skipped: a later pass reads it no
+    /// better.
+    Owed,
+}
+
 /// Tells every member of the private thread rooted at `root` now, the
 /// walker included, `notice` of `actor`'s act, in the caller's `txn`: one
 /// NOTIFICATION of the notice's kind each, for that member alone, naming
@@ -210,7 +260,16 @@ pub(crate) fn notify_thread_members_in_txn(
             return;
         }
     };
-    tell_audience_in_txn(vault, txn, root, actor, notice, audience);
+    // Best effort never fails.
+    let _told = tell_audience_in_txn(
+        vault,
+        txn,
+        root,
+        actor,
+        notice,
+        audience,
+        NoticeDelivery::BestEffort,
+    );
 }
 
 /// Tells the members of each private thread `roots` names, which the Owner
@@ -219,14 +278,22 @@ pub(crate) fn notify_thread_members_in_txn(
 /// decides both. A thread base or a live stretch still holds is read as it
 /// stands; one whose root is gone since the copy read it is read from the
 /// binding that read resolved ([`lost_root_members_in`], FIX 6681).
-/// Best-effort, as [`notify_thread_members_in_txn`] is.
+/// Best-effort as [`notify_thread_members_in_txn`] is, never failing, or,
+/// `delivery` being [`NoticeDelivery::Owed`], failing the write when a
+/// notice is not written (L5-17).
+///
+/// # Errors
+///
+/// [`NoticeDelivery::Owed`] alone: a notice, or the time it is written at,
+/// not written.
 pub(crate) fn notify_exported_threads_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     roots: &ExportThreadRoots,
     exporter: EntityId,
     export: EntityId,
-) {
+    delivery: NoticeDelivery,
+) -> Result<()> {
     let notice = ThreadNotice::VaultExported { export };
     for (root, lost) in &roots.0 {
         let members = match thread_members_now_in(vault, txn, *root, lost.as_ref()) {
@@ -241,7 +308,9 @@ pub(crate) fn notify_exported_threads_in_txn(
             }
         };
         match names_actor_in(vault, txn, &members, exporter) {
-            Ok(false) => tell_audience_in_txn(vault, txn, *root, exporter, notice, members),
+            Ok(false) => {
+                tell_audience_in_txn(vault, txn, *root, exporter, notice, members, delivery)?;
+            }
             Ok(true) => {}
             Err(error) => tracing::warn!(
                 thread = %root.to_hex(),
@@ -250,11 +319,17 @@ pub(crate) fn notify_exported_threads_in_txn(
             ),
         }
     }
+    Ok(())
 }
 
 /// Tells `audience`, the members now of the private thread rooted at
 /// `root`, and each live pen it admits through its PERSON anchor, `notice`
-/// of `actor`'s act, in `txn`, as [`notify_thread_members_in_txn`] tells.
+/// of `actor`'s act, in `txn`, as [`notify_thread_members_in_txn`] tells,
+/// or as `delivery` asks.
+///
+/// # Errors
+///
+/// [`NoticeDelivery::Owed`] alone, as [`notify_exported_threads_in_txn`].
 fn tell_audience_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -262,7 +337,8 @@ fn tell_audience_in_txn(
     actor: EntityId,
     notice: ThreadNotice,
     audience: BTreeSet<EntityId>,
-) {
+    delivery: NoticeDelivery,
+) -> Result<()> {
     // A pen not read is told nothing more; the audience it names still is.
     let members = match with_anchored_pens_in(vault, txn, &audience) {
         Ok(members) => members,
@@ -278,6 +354,7 @@ fn tell_audience_in_txn(
     };
     let at = match crate::ports::recorded_at_in_txn(&vault.store, txn) {
         Ok(at) => at,
+        Err(error) if delivery == NoticeDelivery::Owed => return Err(error),
         Err(error) => {
             tracing::warn!(
                 thread = %root.to_hex(),
@@ -285,16 +362,23 @@ fn tell_audience_in_txn(
                 %error,
                 "private thread notice: no time"
             );
-            return;
+            return Ok(());
         }
     };
     for member in members {
-        record_notice_in_txn(vault, txn, root, actor, notice, member, at);
+        record_notice_in_txn(vault, txn, root, actor, notice, member, at, delivery)?;
     }
+    Ok(())
 }
 
 /// Writes `notice` of `actor`'s act on the thread rooted at `root` for
-/// `recipient` alone, at `at`. Best-effort: a notice not written is logged.
+/// `recipient` alone, at `at`. Best-effort, a notice not written is logged,
+/// unless `delivery` is [`NoticeDelivery::Owed`].
+///
+/// # Errors
+///
+/// [`NoticeDelivery::Owed`] alone: the notice not written.
+#[allow(clippy::too_many_arguments)]
 fn record_notice_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -303,7 +387,8 @@ fn record_notice_in_txn(
     notice: ThreadNotice,
     recipient: EntityId,
     at: u64,
-) {
+    delivery: NoticeDelivery,
+) -> Result<()> {
     let event = NotificationEvent {
         kind: notice.kind(),
         source: NotificationSource {
@@ -324,14 +409,19 @@ fn record_notice_in_txn(
         created_at: at,
         origin_conversation: None,
     };
-    if let Err(error) = vault.record_notification_in_txn(txn, &event) {
-        tracing::warn!(
-            thread = %root.to_hex(),
-            recipient = %recipient.to_hex(),
-            op = notice.op(),
-            %error,
-            "private thread notice not written"
-        );
+    match vault.record_notification_in_txn(txn, &event) {
+        Ok(_) => Ok(()),
+        Err(error) if delivery == NoticeDelivery::Owed => Err(error),
+        Err(error) => {
+            tracing::warn!(
+                thread = %root.to_hex(),
+                recipient = %recipient.to_hex(),
+                op = notice.op(),
+                %error,
+                "private thread notice not written"
+            );
+            Ok(())
+        }
     }
 }
 
@@ -369,7 +459,19 @@ pub(super) fn tell_requester(
 ) {
     let told = vault.with_write_txn(|txn| {
         match crate::ports::recorded_at_in_txn(&vault.store, txn) {
-            Ok(at) => record_notice_in_txn(vault, txn, root, actor, notice, requester, at),
+            Ok(at) => {
+                // Best effort never fails.
+                let _told = record_notice_in_txn(
+                    vault,
+                    txn,
+                    root,
+                    actor,
+                    notice,
+                    requester,
+                    at,
+                    NoticeDelivery::BestEffort,
+                );
+            }
             Err(error) => tracing::warn!(
                 thread = %root.to_hex(),
                 op = notice.op(),

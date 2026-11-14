@@ -85,7 +85,7 @@ pub(crate) use audience_events::{
 pub use audience_history::ThreadAudienceOpenFullHistoryRequest;
 pub use audience_notices::ThreadNotice;
 pub(crate) use audience_notices::{
-    ExportThreadRoots, THREAD_NOTICE_PRODUCER, notify_exported_threads_in_txn,
+    ExportThreadRoots, NoticeDelivery, THREAD_NOTICE_PRODUCER, notify_exported_threads_in_txn,
     notify_thread_members_in_txn,
 };
 pub(crate) use audience_overlay::overlay_thread_binding_in;
