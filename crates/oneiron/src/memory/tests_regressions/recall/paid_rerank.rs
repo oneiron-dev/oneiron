@@ -143,6 +143,7 @@ fn a_turn_edited_while_it_is_scored_takes_none_of_the_stale_scores() {
             query_affect: None,
             telemetry: None,
             filter: None,
+            operation_id: None,
         },
         |_| None,
         &crate::task_verb::sdk::RecallDoor {
@@ -242,6 +243,7 @@ fn a_note_edited_after_its_scores_are_taken_renders_the_scored_words() {
                 query_affect: None,
                 telemetry: None,
                 filter: None,
+                operation_id: None,
             },
             |_| None,
             &crate::task_verb::sdk::RecallDoor {
@@ -344,6 +346,7 @@ fn a_reranked_pack_withholds_a_row_the_write_door_refuses() {
             query_affect: None,
             telemetry: None,
             filter: None,
+            operation_id: None,
         },
         |_| None,
         &crate::task_verb::sdk::RecallDoor {
@@ -461,6 +464,7 @@ fn a_message_moved_to_its_document_by_a_sync_process_is_not_reranked() {
             query_affect: None,
             telemetry: None,
             filter: None,
+            operation_id: None,
         },
         |_| None,
         &crate::task_verb::sdk::RecallDoor {

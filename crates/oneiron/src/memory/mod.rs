@@ -137,6 +137,7 @@ mod read_lane;
 mod read_selection;
 mod reads;
 mod recall;
+pub(crate) mod recall_replay;
 pub use recall::RecallRequest;
 pub mod repo_doors;
 pub(crate) mod repo_secret_reads;

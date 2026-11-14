@@ -15,6 +15,7 @@ mod items;
 mod paid;
 mod presentation;
 mod render_budget;
+mod replay;
 mod scope_honesty;
 mod selection;
 mod speculative;
