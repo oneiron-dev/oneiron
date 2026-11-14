@@ -67,8 +67,10 @@ an Office oracle run.
   missing root or an unreadable file is a row of its own; mtime is never
   identity; the account name is not hashed. Approvals are keyed by role:
   `environment.json` holds one approved digest per role (`owner`, `isolated`)
-  in `approved_font_inventories`, and each receipt records its `font_account`,
-  `font_role` and `font_inventory_sha256`, judged against that role's
+  in `approved_font_inventories`, and each receipt records its `font_account`
+  (the role's label, `owner-console` or `isolated-console`, never the account
+  name: receipts are committed to a public repository), `font_role` and
+  `font_inventory_sha256`, judged against that role's
   approval. An account holds `isolated` when `environment.json` lists it in
   `isolated_accounts` (`decktest`), and `owner` when the untracked file
   `~/.config/oneiron/office-owner-account` in its home names it. Any other
@@ -281,3 +283,56 @@ oneiron api call vault.artifacts.body.deck.gate --data '{}'
 `office-results/gate-evidence.json` holds every case's verdict and detail.
 `assemble` rebuilds the receipt from the results without opening Office:
 `python3 -B office/deck_gate.py assemble <run>`.
+
+## Deck creation receipts (deck-create-v1)
+
+The slides lane emits whole decks, but nothing certifies that laid-out text
+fits its frame: text, tables and charts return FitUnverified. The
+`deck-create-v1` case set (`scripts/office/deck-create-v1.json`: six briefs
+the emitter writes against the committed template) closes the evidence gap:
+PowerPoint itself measures, per text unit, whether its laid-out text fits the
+frame. Charts stay inconclusive (the AppleScript dictionary exposes no chart
+text layout). The receipts are committed, and a test keeps them bound to what
+the emitter writes today. It does not change what `emit` returns.
+
+The run has the same two halves as the gate above. Throughout, `$sha` is the
+full origin/main commit under test and `$run` names the run.
+
+### 1. Engine half (Linux fleet host)
+
+The runner builds docedit only:
+
+```sh
+cargo run --locked --release -p oneiron-docedit --bin deck-create-cases -- --repo <src> --out <run> --source <sha>
+```
+
+It refuses a case whose brief does not compile (a `refused` row, and the run
+goes on), and exits 1 while any case is refused. Carry the run on only when
+every case has a candidate.
+
+### 2. Bring the run to the Mac and check it, then the Office half on vel
+
+As steps 2-3 above, but with `office/deck_create_gate.py`:
+
+```sh
+python3 -B <workspace>/deck-gate/$run/office/deck_create_gate.py plan <workspace>/deck-gate/$run
+cd <workspace>/deck-gate && fleet run --who deck-gate --goal "deck-create-v1 Office half $run" --need macos --host vel --mem 4G --threads 1 --no-mem-floor --timeout 6h --sync <workspace>/deck-gate/$run -- python3 -B office/deck_create_gate.py office . > <workspace>/deck-gate/$run-create-office.log 2>&1
+```
+
+`plan` checks every pinned file and prints one line per candidate; it opens
+nothing. The pass opens each candidate serially in the pinned PowerPoint,
+measures every unit between `open` and `pdf`, and writes `run.json`. These
+candidates are the emitter's own output, so the one pass opens everything.
+
+### 3. Commit the receipts
+
+Copy `office-results/` (without `font-inventory.json`: it lists the running
+account's own font files) to `scripts/office/results/deck-create-v1/` in a
+commit, then run the test that checks it:
+
+```sh
+cargo test --locked -p oneiron-docedit --all-features --test deck_create_oracle_receipt
+```
+
+Any change to the emitter's output for these cases fails that test until the
+pass is rerun. This does not open the export gate.
