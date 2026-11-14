@@ -71,3 +71,13 @@ describe('a layer starts a new ink scope', () => {
     }
   })
 })
+
+describe('RolePicker’s width', () => {
+  test('it takes the width of its container, up to 560 px', () => {
+    const picker = rules(css('frame/RolePicker.css')).find(([selector]) => selector === '.sl-role-picker')
+    assert.ok(picker)
+    assert.match(picker[1], /(^|;|\s)width:\s*100%;/)
+    assert.match(picker[1], /max-width:\s*560px;/)
+    assert.doesNotMatch(picker[1], /(^|;|\s)width:\s*560px/)
+  })
+})
