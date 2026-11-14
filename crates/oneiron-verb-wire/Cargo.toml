@@ -14,6 +14,8 @@ doctest = false
 [dependencies]
 blake3 = { workspace = true, features = ["zeroize"] }
 ed25519-dalek = { workspace = true }
+heed = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "tiff", "bmp", "ico", "pnm", "ff", "dds"] }
 loro = { workspace = true }
 oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
 oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
@@ -27,6 +29,7 @@ oneiron-docedit = { version = "0.1.0", path = "../oneiron-docedit" }
 oneiron-lens-wire = { version = "0.1.0", path = "../oneiron-lens-wire" }
 oneiron-linkedin-policy = { version = "0.1.0", path = "../oneiron-linkedin-policy" }
 oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
+oneiron-policy-vocabulary = { version = "0.1.0", path = "../oneiron-policy-vocabulary" }
 oneiron-retrieval = { version = "0.1.0", path = "../oneiron-retrieval" }
 oneiron-run-budget = { version = "0.1.0", path = "../oneiron-run-budget" }
 oneiron-skill-attribution = { version = "0.1.0", path = "../oneiron-skill-attribution" }
@@ -34,9 +37,10 @@ oneiron-store = { version = "0.1.0", path = "../oneiron-store" }
 oneiron-wake-contract = { version = "0.1.0", path = "../oneiron-wake-contract" }
 oneiron-web-fetch = { version = "0.1.0", path = "../oneiron-web-fetch" }
 rmp-serde = { workspace = true }
+rmpv = { workspace = true, features = ["with-serde"] }
 schemars = "=0.8.22"
 serde = { workspace = true }
-serde_json = { workspace = true, features = ["raw_value"] }
+serde_json = { workspace = true, features = ["raw_value", "float_roundtrip"] }
 thiserror = { workspace = true }
 
 [features]
