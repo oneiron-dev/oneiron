@@ -17,7 +17,9 @@ use oneiron::sync::window;
 use oneiron::{DeleteReason, EntityId, Vault, WriteActor};
 
 use crate::sync_harness::ENTITY_METADATA_HEADER_LEN;
-use crate::sync_harness::{T0, TestNode, WINDOW, exchange, time_range, vault_pair};
+use crate::sync_harness::{
+    T0, TestNode, WINDOW, exchange, sync_through_doors, time_range, vault_pair,
+};
 
 const RELEASED: &[u8] = b"L9-44 bytes of the version whose claim the owner deletes";
 const KEPT: &[u8] = b"L9-44 bytes of the version that stays";
@@ -142,12 +144,14 @@ fn an_owner_release_on_a_replica_releases_the_uploaders_chain_version() {
         "fixture: the replica received the version claim"
     );
 
+    // B deletes with its window closed, so it persists and reloads the window; A, which never saw
+    // that reload, catches up through B's export door, as a sync connection does.
     b.close_window(WINDOW);
     b.vault
         .delete_entity_with_reason(&claims[0], DeleteReason::UserHardDelete)
         .unwrap();
     b.recover(WINDOW);
-    exchange(&a, &b, WINDOW);
+    sync_through_doors(&a, &mut b);
     a.recover(WINDOW);
 
     assert!(
