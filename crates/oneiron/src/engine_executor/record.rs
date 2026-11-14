@@ -650,6 +650,7 @@ pub(super) fn self_effect_from_str(value: &str) -> EngineExecutorResult<SelfEffe
         "self.tasks.delegate" => Ok(SelfEffect::TaskDelegate),
         "self.speak" => Ok(SelfEffect::Speak),
         "self.think" => Ok(SelfEffect::Think),
+        "self.think.aloud" => Ok(SelfEffect::ThinkAloud),
         "self.express" => Ok(SelfEffect::Express),
         "self.report_blocked" => Ok(SelfEffect::ReportBlocked),
         "self.inference_defaults.read" => Ok(SelfEffect::InferenceDefaultsRead),

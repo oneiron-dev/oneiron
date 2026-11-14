@@ -612,6 +612,7 @@ pub(super) fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "self.context" => Ok(SelfEffect::Context),
         "self.speak" => Ok(SelfEffect::Speak),
         "self.think" => Ok(SelfEffect::Think),
+        "self.think.aloud" => Ok(SelfEffect::ThinkAloud),
         "self.express" => Ok(SelfEffect::Express),
         "self.report_blocked" => Ok(SelfEffect::ReportBlocked),
         "self.inference_defaults.read" => Ok(SelfEffect::InferenceDefaultsRead),

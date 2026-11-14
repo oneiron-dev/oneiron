@@ -47,6 +47,7 @@ mod scoped_call_control;
 mod scoped_child;
 mod scoped_child_io;
 mod scoped_generation;
+mod speech_rows;
 pub use self::scoped_generation::{ScopedChildGeneration, ScopedChildGenerationCall};
 pub mod shadow_runner;
 mod spawn_replay;
@@ -340,6 +341,7 @@ pub use run_verbs::{
     MemoryEdgeOutput, MemorySearchHit, MemorySearchOutput, MemoryWriteOutput, ReportBlockedOutput,
     TaskRefuseOutput, TaskWaitOutput,
 };
+pub use speech_rows::{SpeechOutput, SpokenText, ThinkAloudInput};
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,
     AgentVerbRefusal, AgentVerbRefusalWords, RunCall, RunObservation, RunSpeechDestination,
