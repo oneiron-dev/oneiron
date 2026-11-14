@@ -84,6 +84,7 @@ pub mod research_continuation;
 pub mod resident_wake_hold;
 pub mod retrieval_policy_default_floor;
 pub mod room_turn_backfill;
+pub mod roster_slot_reservation;
 pub mod run_changes;
 pub mod run_hold;
 pub mod run_lifecycle;

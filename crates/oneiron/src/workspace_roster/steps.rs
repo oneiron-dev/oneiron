@@ -206,7 +206,12 @@ pub(super) fn establish_workspace(
     // The house agent keeps its own model PERSON anchor (HOUSE-BIND = A): the
     // stored preset is the statement that it runs the org, and its role in
     // the org comes with its bind (`house_link`), never with an anchor.
-    ensure_preset_row(vault, &intent.workspace, writer)
+    ensure_preset_row(vault, &intent.workspace, writer)?;
+    // The member's reservation saw only published presets. Now that this
+    // workspace's is published, a companion bound to her since then is
+    // refused here, and one bound after this read sees the preset.
+    let txn = vault.store.env.read_txn()?;
+    super::companion_bind::require_companion_split_in_txn(vault, &txn, intent)
 }
 
 /// Step 2: define the member's actor and anchor it to the member `PERSON`.

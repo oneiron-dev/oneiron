@@ -59,8 +59,10 @@ impl Vault {
     /// Crate-internal because "stop half way" is not a product verb — it is how
     /// the resume path is exercised without staging a real crash. `None` means
     /// the run halted before [`MemberOnboardingStep::Complete`], leaving a
-    /// journal a later call resumes from.
-    pub(super) fn onboard_workspace_member_halting_after(
+    /// journal a later call resumes from. Halting after
+    /// [`MemberOnboardingStep::Started`] leaves only the reservation: the
+    /// member's slot, with no workspace established yet.
+    pub(crate) fn onboard_workspace_member_halting_after(
         &self,
         intent: MemberOnboardingIntent,
         authenticated_writer: &WriteActor,
@@ -146,6 +148,9 @@ impl Vault {
             }
         };
 
+        if halt_after == MemberOnboardingStep::Started {
+            return Ok(None);
+        }
         for step in ONBOARDING_STEPS {
             if step.rank() <= done {
                 continue;
