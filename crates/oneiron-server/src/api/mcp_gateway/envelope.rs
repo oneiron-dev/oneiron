@@ -153,6 +153,10 @@ pub(crate) struct McpGatewayError {
     pub(super) legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
     /// The held room join, surfaced as `error.data.room_join_hold`.
     pub(super) room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
+    /// A reap pause's bound and self-host route (L9-61), surfaced as
+    /// `error.data.bound` and `error.data.self_hosted` as the managed HTTP
+    /// body carries them. Boxed for size, as `effective_scope` is.
+    pub(super) reap_pause: Option<Box<crate::managed::ReapPauseBound>>,
 }
 
 impl McpGatewayError {
@@ -177,6 +181,7 @@ impl McpGatewayError {
             reason_codes: Vec::new(),
             legal_hold: None,
             room_join_hold: None,
+            reap_pause: None,
         }
     }
 

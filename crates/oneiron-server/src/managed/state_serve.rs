@@ -41,6 +41,7 @@ use boot_keys::{escrow_vault_key, managed_page_seal, spool_vault_key_escrow};
 use oneiron_vault_contract::host::{Host, HostLimits};
 use read_only::is_read_only;
 use refusal::writes_frozen_body;
+pub(crate) use refusal::{REAP_PAUSE_BOUND, ReapPauseBound};
 
 /// The reap freeze's write admission, held until a write's last write.
 mod admission;
@@ -93,7 +94,7 @@ pub const WRITES_FROZEN_TAG: &str = REAP_PAUSE_REFUSAL.error.as_str();
 /// pause under the service's vault lifecycle allocation, what it holds back,
 /// how it lifts, and that a self-hosted vault has no such limit. It names no
 /// duration: this process knows none.
-pub(super) const WRITES_FROZEN_MESSAGE: &str = "This hosted vault is paused while the service prepares to reap it under its vault lifecycle allocation. New effects, requests other than GET, HEAD and OPTIONS (POST reads included) and connection upgrades are refused, and background passes wait, until the reap is aborted or the vault wakes again; the same request then succeeds. The same action works on a self-hosted vault, which has no such service reap limit; its storage and authorization checks still apply.";
+pub(super) const WRITES_FROZEN_MESSAGE: &str = "This hosted vault is paused while the service prepares to reap it under its vault lifecycle allocation, a capacity bound. New effects, requests other than GET, HEAD and OPTIONS (POST reads included) and connection upgrades are refused, and background passes wait, until the reap is aborted or the vault wakes again; the same request then succeeds. The same action works on a self-hosted vault, which has no such service reap limit; its storage and authorization checks still apply.";
 
 /// An alarm the supervisor pushed, as the reconciler hook saw it.
 #[derive(Debug, Clone, PartialEq, Eq)]
