@@ -10,6 +10,14 @@
 //! person on a self-hosted install on their own verified human slip. An
 //! agent's slip is refused at the verb even when it names the writer.
 //!
+//! A person's place check reads as their slip reads (Engine RULING 14 Nov
+//! 13:01, L6-03-WRITER-LIST-SLIP-LANE): a slip narrowed away from the record
+//! lists the key with no place, though their own grants read the record. The
+//! facade refuses a narrowed slip before the verb
+//! (`require_unrestricted_record_scope`), so that case calls the verb's
+//! engine call on a proof carrying the slip, bound as the facade binds the
+//! request's slip and as the embedded call binds the person's own.
+//!
 //! The records are written through the engine in each person's own name, as
 //! the writer is recorded only inside an actor content transaction; the
 //! list is the served call under test. The managed server is the plain
@@ -28,15 +36,20 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signer, SigningKey};
 use engine_stack::run_on_engine_stack;
-use oneiron::authority::{CapabilitySlip, HostSlipIssuer, holder_proof};
+use oneiron::authority::{CapabilitySlip, HostSlipIssuer, VerifiedSlip, holder_proof};
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::federation::ScopeAxis;
+use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::StructuralPutInput;
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::registry::{
+    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST,
+};
 use oneiron::store::GateDecisionId;
-use oneiron::task_verb::sdk::{FoundKeyListRequest, UNREADABLE_PLACE, list_found_keys_as};
+use oneiron::task_verb::sdk::{
+    FoundKeyListReply, FoundKeyListRequest, UNREADABLE_PLACE, WrittenFoundKeyReply,
+    list_found_keys_as,
+};
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_server::managed::{ManagedState, WakeLedger, build_managed_app};
 use oneiron_server::test_doors::managed_issuer::with_managed_issuer;
@@ -64,6 +77,24 @@ const VAULT_NAME: &str = "found-key-list";
 
 /// The per-spawn secret the supervisor signs person actions with.
 const SPAWN_TOKEN: [u8; TOKEN_LEN] = [0x62; TOKEN_LEN];
+
+/// The challenge a slip's holder signs when this test verifies the slip
+/// itself, as a transport verifies the one a request arrived with.
+const CHALLENGE: &[u8] = b"found-key-list-verb";
+
+/// The shipped default policy pack, whose manifest the read grants join.
+const SHIPPED_POLICY_PACK: &str = "oneiron-default-policy";
+
+/// How a proof carries a person's slip.
+#[derive(Debug, Clone, Copy)]
+enum SlipBinding {
+    /// As the facade's person door binds the slip a request arrived with
+    /// (`shared_act_doors::person`).
+    Request,
+    /// As the embedded call binds the person's own presented slip
+    /// (`answerer_proof`).
+    Person,
+}
 
 /// A rooted server on its own device keystore, its host issuer, the vault
 /// owner's proof, and the app a request reaches: the plain one, or the
@@ -206,6 +237,16 @@ impl Served {
     /// `holder`'s own slip from this host as an `actor_class` caller,
     /// holding `read` and `write`: not owner-grade.
     fn slip(&self, holder: EntityId, actor_class: &str) -> CapabilitySlip {
+        self.slip_reading_kinds(holder, actor_class, None)
+    }
+
+    /// [`Self::slip`], reading only records of `kinds` when given.
+    fn slip_reading_kinds(
+        &self,
+        holder: EntityId,
+        actor_class: &str,
+        kinds: Option<&[u8]>,
+    ) -> CapabilitySlip {
         let mut claims = self
             .vault
             .ensure_host_root_slip(&self.issuer)
@@ -218,9 +259,90 @@ impl Served {
         claims.binding_key = holder_key().verifying_key().to_bytes();
         claims.scope.verbs =
             ScopeAxis::Some(BTreeSet::from(["read".to_owned(), "write".to_owned()]));
+        if let Some(kinds) = kinds {
+            claims.scope.bands = ScopeAxis::Some(kinds.iter().copied().collect());
+        }
         self.vault
             .mint_capability_slip(&self.issuer, claims)
             .expect("FIXTURE: the caller's own slip")
+    }
+
+    /// `slip` verified on its holder's binding, as a transport verifies the
+    /// slip a request arrived with.
+    fn verified(&self, slip: &CapabilitySlip) -> VerifiedSlip {
+        let transcript = slip
+            .binding_transcript(CHALLENGE)
+            .expect("FIXTURE: the slip's binding transcript");
+        let signature = holder_key().sign(&transcript).to_bytes();
+        self.vault
+            .verify_capability_slip(&self.issuer.public_key(), slip, CHALLENGE, &signature)
+            .expect("FIXTURE: the slip verifies on its holder's binding")
+    }
+
+    /// Gives `reader` one unrestricted `core:read` row in the shipped policy
+    /// manifest (the `found_key_writer_list.rs` and `project_extra_rooms.rs`
+    /// shape): their own grants then read every record, their EVENT too.
+    fn grant_reads(&self, reader: EntityId) {
+        let (id, mut manifest) = self
+            .vault
+            .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+            .expect("FIXTURE: the policy manifests")
+            .into_iter()
+            .find_map(|id| {
+                let bytes = self.vault.get(&id).ok()??;
+                let manifest: Value = rmp_serde::from_slice(&bytes).ok()?;
+                (manifest["pack_id"] == SHIPPED_POLICY_PACK).then_some((id, manifest))
+            })
+            .expect("FIXTURE: the vault holds the shipped policy manifest");
+        let mut read = Scope::top();
+        read.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+        manifest["scoped_grants"]
+            .as_array_mut()
+            .expect("FIXTURE: the shipped manifest's scoped grants")
+            .push(json!({
+                "actor_ref": reader.to_hex(),
+                "effector": "core:read",
+                "scope": serde_json::to_value(&read).expect("FIXTURE: a read scope"),
+                "receipt_required": false,
+            }));
+        oneiron::test_support::put_policy_manifest_bytes(
+            &self.vault,
+            id,
+            &rmp_serde::to_vec_named(&manifest).expect("FIXTURE: the manifest's bytes"),
+        )
+        .expect("FIXTURE: the manifest with the reader's grant");
+    }
+
+    /// Whether `reader` reads `record` as a handle of theirs reads it:
+    /// through `slip` when given, else through their own grants.
+    fn reads(&self, reader: EntityId, slip: Option<&VerifiedSlip>, record: &EntityId) -> bool {
+        let memory = self.vault.memory(reader, EdgeActorClass::Human);
+        let memory = match slip {
+            Some(slip) => memory.with_read_proof(slip),
+            None => memory,
+        };
+        matches!(memory.get_entity(&record.to_hex()), Ok(found) if found.value.is_some())
+    }
+
+    /// `writer`'s list through the call the facade door makes, on a fresh
+    /// proof of theirs that carries `slip` as `binding` binds it.
+    fn list_on(
+        &self,
+        writer: EntityId,
+        slip: &VerifiedSlip,
+        binding: SlipBinding,
+    ) -> FoundKeyListReply {
+        let person = self
+            .vault
+            .authenticate_owner(writer, &writer.to_hex(), true, GateDecisionId::now())
+            .expect("FIXTURE: the writer's proof");
+        let person = match binding {
+            SlipBinding::Request => self.vault.bind_request_credential(person, slip.clone()),
+            SlipBinding::Person => self.vault.bind_person_credential(person, slip.clone()),
+        }
+        .expect("FIXTURE: the writer's slip binds to their proof");
+        list_found_keys_as(&self.vault, &person, FoundKeyListRequest::default())
+            .expect("the writer's list")
     }
 
     /// `request` served: the status and the JSON answer.
@@ -334,6 +456,15 @@ fn writer_handles(body: &Value) -> Vec<String> {
     keys.iter()
         .map(|key| key["handle"].as_str().expect("a handle").to_owned())
         .collect()
+}
+
+/// The card of `handle` on a writer's page.
+fn written_card<'a>(page: &'a FoundKeyListReply, handle: &str) -> &'a WrittenFoundKeyReply {
+    assert_eq!(page.view, "writer", "{page:?}");
+    page.keys
+        .iter()
+        .find(|card| card.handle == handle)
+        .unwrap_or_else(|| panic!("the writer lists their key {handle}: {:?}", page.keys))
 }
 
 #[test]
@@ -456,4 +587,66 @@ async fn owner_lists_every_key() {
         card.actions
     );
     assert_eq!(page.named_records().len(), 2, "the page names both records");
+}
+
+#[test]
+fn a_slip_narrowed_away_from_the_record_lists_the_key_with_no_place() {
+    run_on_engine_stack("narrowed-slip-list", narrowed_slip_lists_no_place);
+}
+
+async fn narrowed_slip_lists_no_place() {
+    let served = served(false);
+    let writer = served.person();
+    let record = served.write_event(writer, TOKENS[0]);
+    let handle = served.found_handle(&record);
+    served.grant_reads(writer);
+    let full = served.verified(&served.slip(writer, "human"));
+    let narrowed = served.verified(&served.slip_reading_kinds(
+        writer,
+        "human",
+        Some(&[ENTITY_TYPE_CONVERSATION][..]),
+    ));
+    assert!(
+        served.reads(writer, None, &record),
+        "FIXTURE: the writer's own grants read their EVENT"
+    );
+    assert!(
+        served.reads(writer, Some(&full), &record),
+        "FIXTURE: their full slip reads it"
+    );
+    assert!(
+        !served.reads(writer, Some(&narrowed), &record),
+        "FIXTURE: their slip narrowed to CONVERSATION rows reads no EVENT"
+    );
+
+    for binding in [SlipBinding::Request, SlipBinding::Person] {
+        let page = served.list_on(writer, &full, binding);
+        let card = written_card(&page, &handle);
+        assert_eq!(
+            card.record,
+            Some(record),
+            "{binding:?}: a slip that reads the record names it"
+        );
+        assert_ne!(
+            card.place, UNREADABLE_PLACE,
+            "{binding:?}: with where the key sat in it"
+        );
+
+        let page = served.list_on(writer, &narrowed, binding);
+        let card = written_card(&page, &handle);
+        assert_eq!(
+            card.record, None,
+            "{binding:?}: a slip narrowed away from the record does not name it, \
+             though the writer's own grants read it"
+        );
+        assert_eq!(
+            card.place, UNREADABLE_PLACE,
+            "{binding:?}: nor where in it the key sat"
+        );
+        assert_eq!(
+            card.actions,
+            ["not_a_secret", "kept_as_text"],
+            "{binding:?}: the key is still theirs to answer"
+        );
+    }
 }

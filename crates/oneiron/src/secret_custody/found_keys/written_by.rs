@@ -13,13 +13,16 @@
 //! own answers. A card names its record and its place there only while the
 //! person can still read that record; otherwise both are left out, so the
 //! list never shows a record the person's read scope hides, or that it
-//! exists.
+//! exists. A person who calls on a slip of theirs is judged as that slip
+//! reads (Engine RULING 14 Nov 13:01, L6-03-WRITER-LIST-SLIP-LANE): a slip
+//! narrowed away from a record names neither.
 
 use std::cmp::Ordering;
 
 use heed::RoTxn;
 
 use super::{FOUND, FoundKey, FoundKeyAction, actions};
+use crate::authority::VerifiedSlip;
 use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -115,11 +118,14 @@ impl Vault {
     ///
     /// The person is rechecked live in the reading transaction, owner of
     /// this vault or not; an owner reads the keys they wrote themselves
-    /// here, and every key through [`Self::found_keys_page`]. A writer's
-    /// keys carry one custody record each, minted once per distinct value
-    /// and noted on the one record it was written in (a moved row's keys
-    /// merge by custody; a known value's file note names no writer), so a
-    /// handle names one card in this list.
+    /// here, and every key through [`Self::found_keys_page`]. Whether a
+    /// card names its record is judged as the person's read of it would be
+    /// in that transaction: through each slip a transport bound to their
+    /// proof (the request's, or their own), else through their own grants.
+    /// A writer's keys carry one custody record each, minted once per
+    /// distinct value and noted on the one record it was written in (a
+    /// moved row's keys merge by custody; a known value's file note names
+    /// no writer), so a handle names one card in this list.
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
@@ -162,7 +168,8 @@ impl Vault {
                 .or_else(|| after.cloned())
         };
         let records: Vec<EntityId> = rows.iter().map(|(record, _)| *record).collect();
-        let readable = readable_records_in_txn(self, &txn, &writer, &records)?;
+        let slips: Vec<&VerifiedSlip> = person.carried_slips().collect();
+        let readable = readable_records_in_txn(self, &txn, &writer, &slips, &records)?;
         let keys = rows
             .iter()
             .zip(readable)
@@ -217,18 +224,23 @@ fn written_card_in_txn(
 }
 
 /// Which of `records` `person` can read now, in `txn`, one answer each: the
-/// lane `get_entity` opens for a person with no credential bound
-/// (`Memory::read_lane`). The vault owner's own key goes to the person the
-/// Memory facade's owner test passes (the embedded owner, or a human whose
-/// owner binding verifies), the test the owner key's own recheck runs;
-/// anyone else reads as a human, admitted only through their grants. Each
-/// record is judged as a point read of a record verb admits it, a claim of
-/// any status included. An id that names no entity, such as a side row's,
-/// is not readable.
+/// lane `get_entity` opens for that person (`Memory::read_lane`). A person
+/// whose proof carries `slips` reads under the key each slip builds
+/// ([`Vault::credential_read_key_in_txn`]), held to every bound it sets, an
+/// owner's narrowed slip too: a record is readable only when every slip
+/// reads it, and a slip that grants no read reads no record. With no slip,
+/// the vault owner's own key goes to the person the Memory facade's owner
+/// test passes (the embedded owner, or a human whose owner binding
+/// verifies), the test the owner key's own recheck runs; anyone else reads
+/// as a human, admitted only through their grants. Each record is judged
+/// as a point read of a record verb admits it, a claim of any status
+/// included. An id that names no entity, such as a side row's, is not
+/// readable.
 fn readable_records_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     person: &EntityId,
+    slips: &[&VerifiedSlip],
     records: &[EntityId],
 ) -> Result<Vec<bool>> {
     if records.is_empty() {
@@ -237,17 +249,41 @@ fn readable_records_in_txn(
     let owner =
         crate::memory::actor_is_vault_owner_in_txn(vault, txn, *person, EdgeActorClass::Human)
             .map_err(|error| Error::Claim(ClaimError::ScopedReadOwnerNotLive(Box::new(error))))?;
-    let key = if owner {
-        ScopedReadActorKey::vault_owner(*person)
-    } else {
-        let Some(key) = ScopedReadActorKey::with_actor_class(
-            person.to_hex(),
-            EdgeActorClass::Human.gate_actor_class(),
-        ) else {
+    if slips.is_empty() {
+        let key = if owner {
+            ScopedReadActorKey::vault_owner(*person)
+        } else {
+            let Some(key) = ScopedReadActorKey::with_actor_class(
+                person.to_hex(),
+                EdgeActorClass::Human.gate_actor_class(),
+            ) else {
+                return Ok(vec![false; records.len()]);
+            };
+            key.require_access_grants(Some(*person))
+        };
+        return readable_under_in_txn(vault, txn, key, records);
+    }
+    let mut readable = vec![true; records.len()];
+    for &slip in slips {
+        let Some(key) = vault.credential_read_key_in_txn(txn, slip, *person, owner)? else {
             return Ok(vec![false; records.len()]);
         };
-        key.require_access_grants(Some(*person))
-    };
+        let by_slip = readable_under_in_txn(vault, txn, key, records)?;
+        for (all, this) in readable.iter_mut().zip(by_slip) {
+            *all &= this;
+        }
+    }
+    Ok(readable)
+}
+
+/// Which of `records` `key` reads in `txn`, one answer each, a claim of any
+/// status included.
+fn readable_under_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    key: ScopedReadActorKey,
+    records: &[EntityId],
+) -> Result<Vec<bool>> {
     vault
         .scoped_read(key)
         .with_claim_status(ClaimReadStatus::Recorded)
