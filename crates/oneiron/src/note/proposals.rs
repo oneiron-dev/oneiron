@@ -6,6 +6,12 @@ use super::documents::{
 };
 use super::side_keys::HexPair;
 use super::sync_rows::SYNC_DS_E;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::memory::MemoryResult;
@@ -838,4 +844,64 @@ fn recovered_merge(base: &str, proposed: &str, current: &str) -> Result<String> 
         .chain(&right)
         .chain(&base[right_end..])
         .collect())
+}
+
+/// The holdback reason for one decoded landing receipt, or `None` when its identity holds and its
+/// NOTE was not hard-deleted.
+fn archived_note_receipt_holdback_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &EntityId,
+    receipt: &NoteLandingReceipt,
+) -> Result<Option<RetainedSideHeldBackReason>> {
+    if receipt.id != *key {
+        return Ok(Some(RetainedSideHeldBackReason::InvalidValue));
+    }
+    if vault.local_hard_delete_marker_exists_in_txn(txn, &receipt.note)? {
+        return Ok(Some(RetainedSideHeldBackReason::MissingLiveEntity));
+    }
+    Ok(None)
+}
+
+/// Lands one archived `NOTE_RECEIPT` envelope: the receipt identity must hold and its NOTE must not
+/// be hard-deleted before install via the shared collision rule. Fork, head, and bundle companions
+/// are never required.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+fn land_archived_note_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, receipt) = match decode_archived_row(&NOTE_RECEIPT, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if let Some(reason) = archived_note_receipt_holdback_in_txn(vault, &*txn, &key, &receipt)? {
+        return Ok(ArchivedSideRowOutcome::HeldBack(reason));
+    }
+    install_archived_row(&NOTE_RECEIPT, vault, txn, permit, &key, row)
+}
+
+impl Vault {
+    /// Lands the owner's archived `NOTE_RECEIPT` envelopes in input order, one outcome per row: an
+    /// absent receipt installs, an identical receipt is unchanged, and a different receipt stays
+    /// live. Never moves heads, decides forks, or notifies.
+    ///
+    /// # Errors
+    /// Storage faults; validation stays in the returned outcomes.
+    pub(crate) fn land_archived_note_rows_in_txn(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &OwnerArchiveRestorePermit,
+        rows: &[ArchiveRetainedSideRow],
+    ) -> Result<Vec<ArchivedSideRowOutcome>> {
+        let mut outcomes = Vec::with_capacity(rows.len());
+        for row in rows {
+            outcomes.push(land_archived_note_row_in_txn(vault, txn, permit, row)?);
+        }
+        Ok(outcomes)
+    }
 }

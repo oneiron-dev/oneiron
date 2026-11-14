@@ -8,6 +8,12 @@ pub(crate) use self::revoke::{
     revoke_custody_with_context_in_txn, revoke_secret_with_context_in_txn,
 };
 use crate::Vault;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::blob_artifact::decode_blob_artifact_body;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
@@ -565,4 +571,80 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         allow_stale_publish_in_txn(&self.store, &rtxn)
     }
+}
+
+/// The holdback reason for one decoded rotation receipt, or `None` when its kind/generation
+/// attestation matches its writer.
+fn archived_secret_rotation_holdback(
+    receipt: &RotationReceipt,
+) -> Option<RetainedSideHeldBackReason> {
+    match (receipt.kind, receipt.from_generation.checked_add(1)) {
+        (RotationKind::Rotated, Some(next)) if receipt.to_generation == next => None,
+        (RotationKind::Revoked, _) if receipt.to_generation == receipt.from_generation => None,
+        _ => Some(RetainedSideHeldBackReason::InvalidValue),
+    }
+}
+
+/// Lands one archived `SECRET_ROTATION_RECEIPT` envelope: the receipt body must decode with byte
+/// roundtrip and its kind/generation must match its writer before install via the shared collision
+/// rule.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+fn land_archived_secret_rotation_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&RECEIPTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    let receipt = match decode_rotation_receipt_body(key.0, &value) {
+        Ok(receipt) => receipt,
+        Err(_) => {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidEncoding,
+            ));
+        }
+    };
+    let encoded = match encode_rotation_receipt_body(&receipt) {
+        Ok(encoded) => encoded,
+        Err(_) => {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidEncoding,
+            ));
+        }
+    };
+    if encoded != value {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidEncoding,
+        ));
+    }
+    if let Some(reason) = archived_secret_rotation_holdback(&receipt) {
+        return Ok(ArchivedSideRowOutcome::HeldBack(reason));
+    }
+    install_archived_row(&RECEIPTS, vault, txn, permit, &key, row)
+}
+
+/// Lands the owner's archived `SECRET_ROTATION_RECEIPT` envelopes in input order, one outcome per
+/// row: an absent receipt installs, an identical receipt is unchanged, and a different receipt
+/// stays live. Never rotates, revokes, or touches custody, leases, or taint state.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcomes.
+pub(crate) fn land_archived_secret_rotation_rows_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    rows: &[ArchiveRetainedSideRow],
+) -> Result<Vec<ArchivedSideRowOutcome>> {
+    let mut outcomes = Vec::with_capacity(rows.len());
+    for row in rows {
+        outcomes.push(land_archived_secret_rotation_row_in_txn(
+            vault, txn, permit, row,
+        )?);
+    }
+    Ok(outcomes)
 }

@@ -9,7 +9,13 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::authority::{ActSurface, OwnerAct, OwnerActKind};
+use crate::authority::{ActBy, ActSurface, OwnerAct, OwnerActKind};
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
@@ -95,4 +101,56 @@ pub(crate) fn access_grant_owner_acts_in_txn(
     txn: &heed::RoTxn<'_>,
 ) -> Result<Vec<(u64, AccessGrantOwnerActReceipt)>> {
     Ok(OWNER_ACTS.scan(&vault.store, txn)?)
+}
+
+/// Lands one archived `ACCESS_GRANT_OWNER_ACT` envelope in `txn`: canonical decode and the
+/// credential predicate, then the writer's own receipt shape (kind `access_grant`, zero
+/// `seen`, the owner's own act). The named grant is never installed or revoked here; past
+/// history stays valid when the grant is gone.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+fn land_archived_access_grant_owner_act_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&OWNER_ACTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.act.act != OwnerActKind::AccessGrant
+        || value.act.seen != [0; 32]
+        || value.act.by != ActBy::Owner
+        || value.act.answer.is_some()
+    {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&OWNER_ACTS, vault, txn, permit, &key, row)
+}
+
+impl Vault {
+    /// Lands the owner's archived `ACCESS_GRANT_OWNER_ACT` envelopes in input order, one
+    /// outcome per row: an absent act installs, an identical act is unchanged, and a different
+    /// act stays live. Never installs or revokes the named grant.
+    ///
+    /// # Errors
+    /// Storage faults; validation stays in the returned outcomes.
+    pub(crate) fn land_archived_access_grant_rows_in_txn(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &OwnerArchiveRestorePermit,
+        rows: &[ArchiveRetainedSideRow],
+    ) -> Result<Vec<ArchivedSideRowOutcome>> {
+        let mut outcomes = Vec::with_capacity(rows.len());
+        for row in rows {
+            outcomes.push(land_archived_access_grant_owner_act_row_in_txn(
+                vault, txn, permit, row,
+            )?);
+        }
+        Ok(outcomes)
+    }
 }

@@ -6,11 +6,18 @@
 
 use super::ledger::{PolicyChangedEvent, put_event_in_txn};
 use crate::Vault;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::batch::secret_scan::{
     LiftTrigger, SecretScanMode, enqueue_lift_in_txn, put_secret_scan_mode_in_txn,
     secret_scan_mode_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
+use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::gate::PolicyRowScope;
 use crate::side_table::{self, Named, SideTable};
@@ -108,6 +115,39 @@ impl Vault {
             .map(|(_, receipt)| receipt)
             .collect())
     }
+}
+
+/// Lands one archived `OWNER_POLICY_SECRET_SCAN_RECEIPT` envelope in `txn`: canonical decode
+/// and the credential predicate, then the writer's own receipt shape (keyed by its revision,
+/// first revision 1, hex receipt and author). The live switch mode and any lift run are never
+/// touched here.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+pub(super) fn land_archived_secret_scan_receipt_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&RECEIPTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.revision != key {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidEncoding,
+        ));
+    }
+    if value.revision == 0
+        || EntityId::from_hex(&value.receipt_id).is_err()
+        || EntityId::from_hex(&value.author).is_err()
+    {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&RECEIPTS, vault, txn, permit, &key, row)
 }
 
 #[cfg(test)]

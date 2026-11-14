@@ -183,3 +183,150 @@ pub(crate) fn erase_inquiry_receipt_actor_in_txn(
     }
     Ok(())
 }
+
+/// Whether `text` is `len` lowercase hex characters.
+fn is_lower_hex(text: &str, len: usize) -> bool {
+    text.len() == len
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Whether a decoded inquiry receipt keeps the writer's pure row invariants.
+fn archived_inquiry_holds(key: &str, receipt: &ReceiptRecord) -> bool {
+    if key != receipt.receipt_id {
+        return false;
+    }
+    if receipt.receipt_kind != ReceiptKind::Inquiry {
+        return false;
+    }
+    match receipt.outcome.as_str() {
+        "answered" | "no_answer" | "pending" | "unavailable" => {}
+        _ => return false,
+    }
+    if receipt.on_behalf_of.is_some() {
+        return false;
+    }
+    if !receipt.policy_trace.is_empty() {
+        return false;
+    }
+    let Some(rest) = receipt.receipt_id.strip_prefix("inquiry:") else {
+        return false;
+    };
+    let Some((hex, seq)) = rest.split_once(':') else {
+        return false;
+    };
+    if !is_lower_hex(hex, 32) {
+        return false;
+    }
+    let Ok(number) = seq.parse::<u32>() else {
+        return false;
+    };
+    if seq != format!("{number:06}") {
+        return false;
+    }
+    if receipt.job_ref.as_deref() != Some(hex) {
+        return false;
+    }
+    let Some(trigger) = receipt.trigger_ref.as_deref() else {
+        return false;
+    };
+    if !is_lower_hex(trigger, 32) {
+        return false;
+    }
+    if let Some(member) = receipt.fields.get(FIELD_MEMBER)
+        && !is_lower_hex(member, 32)
+    {
+        return false;
+    }
+    let Some(question) = receipt.fields.get(FIELD_QUESTION) else {
+        return false;
+    };
+    if question.trim().is_empty() {
+        return false;
+    }
+    let Some(purpose) = receipt.fields.get(FIELD_PURPOSE) else {
+        return false;
+    };
+    if purpose.trim().is_empty() || purpose.contains('\n') {
+        return false;
+    }
+    let Some(keep) = receipt.fields.get(FIELD_KEEP) else {
+        return false;
+    };
+    if keep != "task" && keep != "copy" {
+        return false;
+    }
+    let Some(expires) = receipt.fields.get(FIELD_EXPIRES_AT) else {
+        return false;
+    };
+    let Ok(expires) = expires.parse::<u64>() else {
+        return false;
+    };
+    if expires == 0 {
+        return false;
+    }
+    if receipt.fields.len() > 5 || receipt.fields.len() < 4 {
+        return false;
+    }
+    for name in receipt.fields.keys() {
+        if name != FIELD_MEMBER
+            && name != FIELD_QUESTION
+            && name != FIELD_PURPOSE
+            && name != FIELD_KEEP
+            && name != FIELD_EXPIRES_AT
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// Lands one archived inquiry receipt with its time index, preserving erase-removed members.
+fn land_archived_inquiry_receipt_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &crate::batch::export::OwnerArchiveRestorePermit,
+    row: &crate::batch::export::ArchiveRetainedSideRow,
+) -> Result<crate::batch::export::archive_side_install::ArchivedSideRowOutcome> {
+    use crate::batch::export::RetainedSideHeldBackReason;
+    use crate::batch::export::archive_side_install::{
+        ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+    };
+    let (key, receipt) = match decode_archived_row(&RECEIPTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if !archived_inquiry_holds(&key, &receipt) {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    let outcome = install_archived_row(&RECEIPTS, vault, txn, permit, &key, row)?;
+    if matches!(
+        outcome,
+        ArchivedSideRowOutcome::Installed | ArchivedSideRowOutcome::Unchanged
+    ) {
+        BY_TIME.put(vault, txn, &(receipt.occurred_at, key), &())?;
+    }
+    Ok(outcome)
+}
+
+impl Vault {
+    /// Lands the owner's archived inquiry receipts in input order, rebuilding only their time
+    /// index.
+    pub(crate) fn land_archived_inquiry_rows_in_txn(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &crate::batch::export::OwnerArchiveRestorePermit,
+        rows: &[crate::batch::export::ArchiveRetainedSideRow],
+    ) -> Result<Vec<crate::batch::export::archive_side_install::ArchivedSideRowOutcome>> {
+        let mut outcomes = Vec::with_capacity(rows.len());
+        for row in rows {
+            outcomes.push(land_archived_inquiry_receipt_row_in_txn(
+                vault, txn, permit, row,
+            )?);
+        }
+        Ok(outcomes)
+    }
+}

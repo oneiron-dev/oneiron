@@ -22,8 +22,14 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::authority::{HolderExportBasis, HolderExportRequest, OwnerAct};
-use crate::batch::export::{ExportDiaryRead, WholeVaultExportReceipt};
+use crate::authority::{HolderExportBasis, HolderExportRequest, OwnerAct, OwnerActKind};
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, ExportDiaryRead, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+    WholeVaultExportReceipt,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::side_table::{self, Named, SideTable};
@@ -385,4 +391,43 @@ pub(crate) fn turn_thread_root(entity_type: u8, body: &[u8]) -> Option<EntityId>
         .ok()
         .flatten()
         .map(|binding| binding.root)
+}
+
+/// Lands one archived `EXPORT_RECEIPT` envelope in `txn`: canonical decode and the credential
+/// predicate, then the writer's own audit shape (non-empty format, hex-or-host actor, hex
+/// digest where read back, export-kind act where recorded, hex diary agents). The copy's
+/// signed act, holder requests and thread notices are never replayed here.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+pub(super) fn land_archived_export_receipt_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> crate::Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&EXPORT_RECEIPTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.format.is_empty()
+        || (value.by != "host" && EntityId::from_hex(&value.by).is_err())
+        || value
+            .digest
+            .as_deref()
+            .is_some_and(|digest| blake3::Hash::from_hex(digest).is_err())
+        || value
+            .act
+            .as_ref()
+            .is_some_and(|act| act.act != OwnerActKind::Export)
+        || value
+            .diary_reads
+            .iter()
+            .any(|read| EntityId::from_hex(&read.agent).is_err() || read.reason.is_empty())
+    {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&EXPORT_RECEIPTS, vault, txn, permit, &key, row)
 }

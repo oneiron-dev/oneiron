@@ -365,3 +365,113 @@ fn parse_hash(hash: &str) -> MemoryResult<[u8; 32]> {
     }
     Ok(bytes)
 }
+
+/// Whether `text` is `len` lowercase hex characters.
+fn is_lower_hex(text: &str, len: usize) -> bool {
+    text.len() == len
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Whether a decoded compliance receipt keeps the writer's pure row invariants.
+fn archived_compliance_holds(key: &[u8; 16], receipt: &ComplianceReceipt) -> bool {
+    if !is_lower_hex(&receipt.receipt_ref, 32) {
+        return false;
+    }
+    let Ok(id) = EntityId::from_hex(&receipt.receipt_ref) else {
+        return false;
+    };
+    if id.as_bytes() != key {
+        return false;
+    }
+    if !is_lower_hex(&receipt.proposal_hash, 64) {
+        return false;
+    }
+    if !is_lower_hex(&receipt.actor_ref, 32) {
+        return false;
+    }
+    match (receipt.operation, receipt.disposition) {
+        (
+            ComplianceOperation::Install | ComplianceOperation::Amend | ComplianceOperation::Verify,
+            ComplianceDisposition::Applied | ComplianceDisposition::PendingOwnerStamp,
+        ) => {}
+        (ComplianceOperation::Approve, ComplianceDisposition::Applied) => {}
+        (ComplianceOperation::Reject, ComplianceDisposition::Rejected) => {}
+        _ => return false,
+    }
+    match receipt.disposition {
+        ComplianceDisposition::Applied => {
+            if receipt.effective_version != receipt.proposed_version {
+                return false;
+            }
+        }
+        ComplianceDisposition::PendingOwnerStamp | ComplianceDisposition::Rejected => {
+            if receipt.effective_version != receipt.prior_version {
+                return false;
+            }
+        }
+    }
+    if receipt.operation != ComplianceOperation::Reject && receipt.class.is_none() {
+        return false;
+    }
+    match (&receipt.operation, &receipt.owner_stamp) {
+        (ComplianceOperation::Approve, Some(stamp)) => {
+            if !is_lower_hex(&stamp.owner_ref, 32) {
+                return false;
+            }
+            if stamp.proposal_hash != receipt.proposal_hash {
+                return false;
+            }
+            if stamp.recorded_at != receipt.recorded_at {
+                return false;
+            }
+        }
+        (ComplianceOperation::Approve, None) => return false,
+        (_, Some(_)) => return false,
+        (_, None) => {}
+    }
+    true
+}
+
+/// Lands one archived compliance receipt, never touching ACTIVE, PENDING, or NOTICE packs.
+fn land_archived_compliance_receipt_row_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &crate::batch::export::OwnerArchiveRestorePermit,
+    row: &crate::batch::export::ArchiveRetainedSideRow,
+) -> crate::error::Result<crate::batch::export::archive_side_install::ArchivedSideRowOutcome> {
+    use crate::batch::export::RetainedSideHeldBackReason;
+    use crate::batch::export::archive_side_install::{
+        ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+    };
+    let (key, receipt) = match decode_archived_row(&RECEIPTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if !archived_compliance_holds(&key, &receipt) {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&RECEIPTS, vault, txn, permit, &key, row)
+}
+
+impl crate::Vault {
+    /// Lands the owner's archived compliance receipts in input order as passive history only.
+    pub(crate) fn land_archived_campaign_compliance_rows_in_txn(
+        vault: &crate::Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &crate::batch::export::OwnerArchiveRestorePermit,
+        rows: &[crate::batch::export::ArchiveRetainedSideRow],
+    ) -> crate::error::Result<Vec<crate::batch::export::archive_side_install::ArchivedSideRowOutcome>>
+    {
+        let mut outcomes = Vec::with_capacity(rows.len());
+        for row in rows {
+            outcomes.push(land_archived_compliance_receipt_row_in_txn(
+                vault, txn, permit, row,
+            )?);
+        }
+        Ok(outcomes)
+    }
+}
