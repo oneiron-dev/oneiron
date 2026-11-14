@@ -23,11 +23,16 @@
 //! as more than that phrase, the items that read as it take the handle, and
 //! the rest stay as written (REVIEW-7060 P1).
 //!
-//! What the door finds but cannot place still refuses the whole write: a
-//! key split over members, an entity the engine itself authors or a peer
-//! replicated, and a replayed batch. A plan runs first on a copy, with a
-//! stand-in handle for each secret and each file's keys overwritten, and
-//! the door reads that copy again; only a clean copy mints custody records.
+//! What the door finds but no span places is sealed whole (`seal_whole`):
+//! the smallest value that reads as the hit alone goes to custody, and its
+//! handle takes its place; the scan never refuses a write for it. A file
+//! keeps its bytes: that value is marked as one key, or the file is sealed
+//! whole and served to no masked reader (`seal_file`). What no seal can
+//! take still refuses the whole write: an entity the engine itself authors
+//! or a peer replicated, a phonetic code, and a replayed batch. A plan runs
+//! first on a copy, with a stand-in handle for each secret and each file's
+//! keys overwritten, and the door reads that copy again; only a clean copy
+//! mints custody records.
 
 pub(super) mod admit;
 mod batch_door;
@@ -42,6 +47,7 @@ mod known_note;
 mod leaf_keys;
 mod promoted_message_parts;
 pub(super) mod retained_repo;
+mod seal_whole;
 pub(super) mod side_row;
 mod split_phrase;
 pub(super) mod spool;
@@ -167,22 +173,18 @@ pub(crate) fn seal_whole_part_in_txn(
     reason: Option<&'static str>,
     at: u64,
 ) -> Result<String> {
-    let mut plan = Masker::default();
-    plan.found.push(Found {
-        value: Zeroizing::new(value.to_vec()),
-        reason: reason.unwrap_or(REASON_KNOWN_VALUE),
+    seal_whole::seal_value_in_txn(
+        &CustodyWrite::of(vault),
+        wtxn,
+        None,
         record,
-        place: place.to_owned(),
+        place,
+        value,
+        reason.unwrap_or(REASON_KNOWN_VALUE),
         // The part's MessagePack encoding, kept whole.
-        held: HeldForm::Encoded,
-    });
-    let handles = plan.mint(&CustodyWrite::of(vault), wtxn, at)?;
-    handles
-        .get(value)
-        .map(|(handle, _)| handle.clone())
-        .ok_or(Error::InvariantViolation(
-            "a sealed part's custody record has no handle",
-        ))
+        HeldForm::Encoded,
+        at,
+    )
 }
 
 /// The spans of `bytes` the door's text rules place, at their offsets in it:
@@ -239,6 +241,7 @@ pub(crate) fn mark_text_value_in_txn(
         hash: *blake3::hash(text.as_bytes()).as_bytes(),
         keys,
         record,
+        sealed: false,
     }];
     let minted = plan.mint(&CustodyWrite::of(vault), wtxn, at)?;
     let handle = minted
@@ -253,7 +256,8 @@ pub(crate) fn mark_text_value_in_txn(
 
 /// Records each file `files` marks: each key's span, in the file's bytes or
 /// in the member that holds it, with the custody record `minted` holds it in
-/// or the record custody held it in before, and the file's band.
+/// or the record custody held it in before, the file's band, and whether
+/// the door sealed it whole.
 fn put_file_marks_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -269,7 +273,9 @@ fn put_file_marks_in_txn(
             keys: Vec::new(),
             masked_at: at,
             members: Vec::new(),
+            sealed: false,
         });
+        mark.sealed |= file.sealed;
         for key in file.keys {
             let custody = match key.custody {
                 Some(custody) => custody,
@@ -507,6 +513,8 @@ struct FoundFile {
     keys: Vec<FileKey>,
     /// The ASSET put that carried it, for the found-key notice (FIX 2780).
     record: EntityId,
+    /// The door sealed it whole (`seal_file`): no masked reader is served it.
+    sealed: bool,
 }
 
 /// One key a plan found in a file: the member that holds it (none for the
@@ -532,6 +540,20 @@ fn places_of(keys: &[FileKey]) -> Result<KeyPlaces> {
         }
     }
     Ok(places)
+}
+
+/// `places` with each place `keys` sit at added, its spans in byte order.
+fn united_places(mut united: KeyPlaces, keys: &[FileKey]) -> Result<KeyPlaces> {
+    for (path, spans) in places_of(keys)? {
+        match united.iter_mut().find(|(held, _)| *held == path) {
+            Some((_, held)) => {
+                held.extend(spans);
+                held.sort_unstable();
+            }
+            None => united.push((path, spans)),
+        }
+    }
+    Ok(united)
 }
 
 /// One secret a plan found, before custody holds it; its value is wiped
@@ -712,6 +734,7 @@ impl Masker {
             hash,
             keys,
             record: id,
+            sealed: false,
         });
         Ok(Some(copy))
     }
@@ -746,18 +769,14 @@ impl Masker {
                 custody: Some(found.custody),
             })
             .collect();
-        let mut united = places;
-        for (path, spans) in places_of(&keys)? {
-            match united.iter_mut().find(|(held, _)| *held == path) {
-                Some((_, held)) => {
-                    held.extend(spans);
-                    held.sort_unstable();
-                }
-                None => united.push((path, spans)),
-            }
-        }
+        let united = united_places(places, &keys)?;
         self.marked.insert(hash, united.clone());
-        self.files.push(FoundFile { hash, keys, record });
+        self.files.push(FoundFile {
+            hash,
+            keys,
+            record,
+            sealed: false,
+        });
         Ok(united)
     }
 

@@ -349,6 +349,13 @@ fn masked_image(
     mark: &crate::secret_custody::MaskedFile,
 ) -> MemoryResult<ImageBytes> {
     use crate::file_secret_marks::{filled, masked_copy_withheld};
+    // A file the write door sealed whole holds a hit no mark places: a
+    // masked reader is served none of it (ARCH-0069 #binary-secrets).
+    if mark.sealed {
+        return Err(
+            crate::error::Error::Secret(crate::error::SecretError::SealedFileWithheld).into(),
+        );
+    }
     match super::image_mask::raster(&image) {
         super::image_mask::Projection::Sanitized(image) => Ok(image),
         super::image_mask::Projection::Unsupported if svg_document(&image.bytes) => {

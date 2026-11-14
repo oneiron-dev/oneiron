@@ -190,6 +190,11 @@ impl Memory<'_> {
         // where the asked slides draw it (FIX 10453, FIX 12234), and it is
         // judged on this read before a kept drawing is read or one drawn.
         let held_back = masked && !projection.lifted.is_empty();
+        // A drawing over a file the write door sealed whole draws for the
+        // owner only: no key in it can be granted (ARCH-0069 #binary-secrets).
+        if masked && projection.sealed {
+            return Err(lifted_refusal());
+        }
         let view = if !masked {
             DrawView::Raw
         } else if !held_back {
@@ -372,6 +377,9 @@ struct Projection {
     asset_rows: Vec<EntityId>,
     /// The picture bytes resolved.
     pictures: u64,
+    /// The retained package, a part or a resolved picture is a file the
+    /// write door sealed whole.
+    sealed: bool,
 }
 
 impl Vault {
@@ -389,7 +397,13 @@ impl Vault {
         let source = self
             .office_body_head(artifact)?
             .ok_or(Error::EntityNotFound)?;
-        let (head, retained, deck, (lifted, narrowed, marks), (assets, asset_rows, pictures)) = {
+        let (
+            head,
+            retained,
+            deck,
+            (lifted, narrowed, marks, sealed),
+            (assets, asset_rows, pictures),
+        ) = {
             let txn = self.store.env.read_txn()?;
             let texts = self.typed_body_lifted_sources_in_txn(&txn, artifact)?;
             let (head, body) = self.deck_head(&txn, artifact)?;
@@ -422,6 +436,11 @@ impl Vault {
             let pinned = retained.map_or(source.source_hash, |retained| retained.hash);
             let marks = PackageMarks::read_in_txn(&self.store, &txn, &pinned, &deck)?;
             let files = listing.files.take();
+            let mut sealed = marks.holds_sealed();
+            for hash in &files {
+                sealed |= crate::secret_custody::masked_file_in_txn(&self.store, &txn, hash)?
+                    .is_some_and(|mark| mark.sealed);
+            }
             let lifted = self.lifted_sources_with_files_in_txn(&txn, texts, &files)?;
             // The texts' and the pictures' keys where the asked slides draw
             // them, read in the same snapshot (FIX 12234); `None` where the
@@ -448,7 +467,13 @@ impl Vault {
                 })
                 .transpose()?;
             let resolved = (assets, listing.rows.into_inner(), listing.admitted.get());
-            (head, retained, deck, (lifted, narrowed, marks), resolved)
+            (
+                head,
+                retained,
+                deck,
+                (lifted, narrowed, marks, sealed),
+                resolved,
+            )
         };
         let (bytes, rows) = self.deck_source_listing(artifact, &source, retained)?;
         // The package, its size known only once read whole, is named
@@ -495,6 +520,7 @@ impl Vault {
             assets,
             asset_rows,
             pictures,
+            sealed,
         })
     }
 
