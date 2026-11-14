@@ -78,7 +78,7 @@ fn set_by(
     owner_proof: &AuthenticatedOwner,
     world: EntityId,
     settings: WorldPrivacy,
-    seen: Option<oneiron::authority::PolicyRevision>,
+    seen: Option<oneiron::world_keys::PolicyRevision>,
     check_in_ref: Option<EntityId>,
 ) -> oneiron::Result<WorldPrivacyOutcome> {
     vault.set_world_privacy_by(
