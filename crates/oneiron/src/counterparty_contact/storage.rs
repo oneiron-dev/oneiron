@@ -286,6 +286,26 @@ pub(crate) fn counterparty_contacts_for_send_in_claims_in_txn(
     party_ref: &str,
     channel_class: &str,
 ) -> Result<Vec<CounterpartyContactRecord>> {
+    Ok(counterparty_contacts_for_send_with_ids_in_claims_in_txn(
+        store,
+        txn,
+        party_ref,
+        channel_class,
+    )?
+    .into_iter()
+    .map(|(_, record)| record)
+    .collect())
+}
+
+/// [`counterparty_contacts_for_send_in_claims_in_txn`], each contact beside
+/// its id: the same lookup, for a reader that judges each contact's own
+/// clearance (fix list row 17645).
+pub(crate) fn counterparty_contacts_for_send_with_ids_in_claims_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    party_ref: &str,
+    channel_class: &str,
+) -> Result<Vec<(EntityId, CounterpartyContactRecord)>> {
     let contacts = contact_ids_with_live_head_in_txn(
         store,
         txn,
@@ -301,7 +321,7 @@ pub(crate) fn counterparty_contacts_for_send_in_claims_in_txn(
             continue;
         };
         if counterparty_contact_matches_channel_class(store, txn, &record, channel_class)? {
-            records.push(record);
+            records.push((contact, record));
         }
     }
     Ok(records)

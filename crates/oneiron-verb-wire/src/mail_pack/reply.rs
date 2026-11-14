@@ -52,8 +52,16 @@ pub struct MailReplyDraftRequest {
     /// these together name at most 50 recipients; more is refused, not cut.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cc: Vec<String>,
-    /// The caller's key for this draft: the same key with the same body and
-    /// recipients is the same draft; with others, its next revision.
+    /// Files the reply carries, in their order, from a Google mailbox only:
+    /// each one exact version of an artifact the caller reads, sent as the
+    /// caller's own copy of it. Every recipient must be cleared to see every
+    /// file; one who is not refuses the whole draft, never dropped. The
+    /// whole message, files included, is at most Gmail's 35 MiB.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<MailReplyAttachment>,
+    /// The caller's key for this draft: the same key with the same body,
+    /// recipients and files is the same draft; with others, its next
+    /// revision.
     pub request_key: String,
 }
 
@@ -79,6 +87,17 @@ pub struct MailReplyDraftView {
     /// sends; show it inert (fix list row 17645).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_html: Option<String>,
+    /// The files that send with the reply, in their order, each exactly
+    /// the copy that sends (fix list row 17645).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<MailReplyAttachmentView>,
+    /// The length in octets of the exact message a reply with files sends,
+    /// as Gmail receives it before its own transport encoding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_octets: Option<u64>,
+    /// BLAKE3 of that exact message, 64 lower-hex.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_blake3: Option<String>,
     /// The frozen send plan the owner approves, exactly.
     pub plan_ref: String,
     pub state: MailReplyDraftState,
@@ -123,4 +142,40 @@ pub struct MailReplyDraftsRequest {
 #[serde(deny_unknown_fields)]
 pub struct MailReplyDraftPage {
     pub drafts: Vec<MailReplyDraftView>,
+}
+
+/// One file a drafted reply carries: one exact version of an artifact the
+/// caller reads (fix list row 17645).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MailReplyAttachment {
+    /// The artifact, 32-hex.
+    pub artifact_ref: String,
+    /// The exact version that sends, 1 or more; never the head.
+    pub version: u64,
+}
+
+/// One file a drafted reply carries, as its reviewer sees it: exactly the
+/// copy that sends (fix list row 17645).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MailReplyAttachmentView {
+    /// The artifact, 32-hex.
+    pub artifact_ref: String,
+    /// Its exact version.
+    pub version: u64,
+    /// The file's name, as it sends.
+    pub name: String,
+    /// Its media type, as it sends.
+    pub media_type: String,
+    /// `attachment`: a file never shows inline.
+    pub disposition: String,
+    /// The exact copy's size, in bytes.
+    pub size: u64,
+    /// BLAKE3 of the exact copy that sends, 64 lower-hex.
+    pub content_blake3: String,
+    /// BLAKE3 of the stored version, 64 lower-hex. It differs from
+    /// `content_blake3` when the copy that sends is masked, or names its
+    /// default author.
+    pub stored_version_blake3: String,
 }
