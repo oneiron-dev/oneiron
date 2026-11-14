@@ -14,7 +14,7 @@ GATE = Path(__file__).resolve().with_name("test_count.py")
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def tests(*names, attrs="#[test]"):
+def rust_source(*names, attrs="#[test]"):
     return "".join(f"{attrs}\nfn {name}() {{}}\n\n" for name in names)
 
 
@@ -96,8 +96,8 @@ class SuiteCensusTests(unittest.TestCase):
 
     def test_vendored_suites_are_reported_and_not_counted(self):
         self.commit({
-            "crates/x/vendor/y/src/lib.rs": tests("v1", "v2", "v3"),
-            "crates/x/src/lib.rs": tests("own1", "own2"),
+            "crates/x/vendor/y/src/lib.rs": rust_source("v1", "v2", "v3"),
+            "crates/x/src/lib.rs": rust_source("own1", "own2"),
         })
         c = self.census()
         self.assertEqual(c["vendored"], 3)
@@ -107,9 +107,9 @@ class SuiteCensusTests(unittest.TestCase):
     def test_quarantined_modules_count_apart_and_the_baseline_is_checked(self):
         self.commit({
             "crates/oneiron/src/a/mod.rs": LIB,
-            "crates/oneiron/src/a/tests.rs": tests("q1", "q2", "q3") + "mod support;\n",
-            "crates/oneiron/src/a/tests/support.rs": tests("q4"),
-            "crates/oneiron/tests/door.rs": tests("door_one"),
+            "crates/oneiron/src/a/tests.rs": rust_source("q1", "q2", "q3") + "mod support;\n",
+            "crates/oneiron/src/a/tests/support.rs": rust_source("q4"),
+            "crates/oneiron/tests/door.rs": rust_source("door_one"),
             "scripts/nightly/libtest-quarantine-baseline.tsv": BASELINE_HEADER
             + "A-TESTS\toneiron\tcrates/oneiron/src/a/mod.rs\tmod\ta::tests\ttests\n"
             + "SELF\toneiron\tcrates/oneiron/src/a/mod.rs\tfn\ta::live\tself_gated\n"
@@ -130,12 +130,12 @@ class SuiteCensusTests(unittest.TestCase):
 
     def test_office_counts_apart(self):
         self.commit({
-            "crates/oneiron-seal/src/lib.rs": tests("seals"),
-            "crates/oneiron-docedit/tests/edit.rs": tests("edits"),
-            "crates/oneiron-docedit/vendor/stemma-engine/src/lib.rs": tests("upstream"),
-            "crates/oneiron/src/edit_roundtrip/mod.rs": tests("round_trips"),
-            "crates/oneiron/src/gate/tests/docx_zip_budget.rs": tests("budget"),
-            "crates/oneiron/src/gate/mod.rs": tests("gate_test"),
+            "crates/oneiron-seal/src/lib.rs": rust_source("seals"),
+            "crates/oneiron-docedit/tests/edit.rs": rust_source("edits"),
+            "crates/oneiron-docedit/vendor/stemma-engine/src/lib.rs": rust_source("upstream"),
+            "crates/oneiron/src/edit_roundtrip/mod.rs": rust_source("round_trips"),
+            "crates/oneiron/src/gate/tests/docx_zip_budget.rs": rust_source("budget"),
+            "crates/oneiron/src/gate/mod.rs": rust_source("gate_test"),
             "packages/xlsx-viewer/tests/bridge.test.ts": 'test("bridges", () => {});\n',
             "packages/oneiron-client/src/api.test.ts": 'test("encodes", () => {});\n',
             "scripts/tests/test_excel_goldens.py": "def test_golden():\n    pass\n",
@@ -160,9 +160,9 @@ class SuiteCensusTests(unittest.TestCase):
 
     def test_ignored_tests_count_apart(self):
         self.commit({"crates/core/src/lib.rs": (
-            tests("slow", attrs='#[test]\n#[ignore = "needs the fleet"]')
-            + tests("live", attrs="#[test]\n// #[ignore]")
-            + tests("plain")
+            rust_source("slow", attrs='#[test]\n#[ignore = "needs the fleet"]')
+            + rust_source("live", attrs="#[test]\n// #[ignore]")
+            + rust_source("plain")
         )})
         c = self.census()
         self.assertEqual(c["ignored"], 1)
