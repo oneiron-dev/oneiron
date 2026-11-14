@@ -57,7 +57,9 @@ impl Memory<'_> {
     /// who reads it only because it was shared with them is judged under
     /// their role, and a Member's share waits (`CHECK_IN_PENDING`) until the
     /// call that names the approved check-in as `check_in_ref` (a Steward
-    /// holds no content write here, so it shares nothing, as on main).
+    /// holds no content write here, so it shares nothing, as on main). A
+    /// share with a person the thread already names widens nothing and is
+    /// not judged, as on main.
     pub fn mail_threads_share(
         &self,
         input: &MailThreadShareRequest,
@@ -99,7 +101,7 @@ impl Memory<'_> {
         let edit = self.with_verified_actor_write_txn(|txn| {
             let vault = self.vault();
             super::pack::require_pack_active_in(vault, txn)?;
-            let (thread, source, _) = thread_of_in(vault, txn, &record)?;
+            let (thread, source, shared_before) = thread_of_in(vault, txn, &record)?;
             if !source_audience::actor_reads_in(vault, txn, &thread, actor)? {
                 return Err(unknown_thread());
             }
@@ -111,26 +113,44 @@ impl Memory<'_> {
                         "a thread is shared with a live PERSON",
                     ));
                 }
-                // The source's readers are the people who own it.
-                let owns_item = match source_audience::source_readers_in(vault, txn, &source)? {
-                    Some(owners) => source_audience::names_reader_in(vault, txn, &owners, actor)?,
-                    None => false,
-                };
-                let widen = WidenAct {
-                    actor,
-                    class,
-                    owns_item,
-                    verb: SHARE_VERB,
-                    effect_digest: check_in::mail_thread_share_effect_digest(&thread, &person),
-                };
-                match check_in::person_widen_check_in_in_txn(
-                    vault,
-                    txn,
-                    &widen,
-                    check_in_ref.as_ref(),
-                )? {
-                    WidenCheckIn::Go(decision) => decision,
-                    WidenCheckIn::Wait(id) => return Ok(ShareEdit::Waits(id)),
+                if shared_before.contains(&person) {
+                    // A share with a person the thread already names widens
+                    // nothing: it is not judged, as on main, and waits on no
+                    // check-in.
+                    if check_in_ref.is_some() {
+                        return Err(MemoryError::bad_request(
+                            "check_in_ref names a member's waiting share of another's thread; \
+                             this share widens nothing and waits on none",
+                        ));
+                    }
+                    None
+                } else {
+                    // The source's readers are the people who own it.
+                    let owns_item =
+                        match source_audience::source_readers_in(vault, txn, &source)? {
+                            Some(owners) => {
+                                source_audience::names_reader_in(vault, txn, &owners, actor)?
+                            }
+                            None => false,
+                        };
+                    let widen = WidenAct {
+                        actor,
+                        class,
+                        owns_item,
+                        verb: SHARE_VERB,
+                        effect_digest: check_in::mail_thread_share_effect_digest(
+                            &thread, &person,
+                        ),
+                    };
+                    match check_in::person_widen_check_in_in_txn(
+                        vault,
+                        txn,
+                        &widen,
+                        check_in_ref.as_ref(),
+                    )? {
+                        WidenCheckIn::Go(decision) => decision,
+                        WidenCheckIn::Wait(id) => return Ok(ShareEdit::Waits(id)),
+                    }
                 }
             } else {
                 let leaving =
