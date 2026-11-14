@@ -27,8 +27,13 @@ rustix = { version = "1.1", features = ["net", "process"] }
 # SDK (`OneironClient::pair`), which the backend crate does not re-export.
 oneiron-llm-own-server = { path = "../oneiron-llm-own-server" }
 oneiron-remote = { path = "../oneiron-remote" }
+# RESEARCH-0651 Tier 0: the retrieval ruler pack/scorecard format behind `scorecard`.
+oneiron-ruler = { path = "../oneiron-ruler" }
 blake3.workspace = true
 ed25519-dalek.workspace = true
+# The served embedder rounds every stored component through f16; `scorecard
+# pack-embed` applies the same rounding. The same requirement oneiron-server uses.
+half = "2"
 rand = "0.8"
 rmp-serde.workspace = true
 # ONE-1579: the perf harness builds `ClaimCandidate` / `WriteProvenance`
