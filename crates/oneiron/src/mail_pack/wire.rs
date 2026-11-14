@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::quota::MailQuota;
+use super::quota::{MailCall, MailQuota};
 use super::source::{MailProvider, MailSourceRow};
 use crate::{EntityId, Result};
 
@@ -159,6 +159,10 @@ pub enum MailHistoryChange {
     /// A folder or label the provider no longer has: each copied message
     /// under it is looked up again (REVIEW-5754).
     LabelGone { label: String },
+    /// A message's labels changed, from a feed that names the labels it
+    /// changed, not where the message stands now (Gmail): the importer
+    /// reads its headers, one call of the step like any other.
+    Relabeled { provider_id: String },
 }
 
 /// One page of changes since an anchor.
@@ -183,7 +187,8 @@ pub enum MailHistoryRead {
 }
 
 /// A host's mail wire for one provider. Each call is one provider read, run
-/// outside any vault transaction.
+/// outside any vault transaction; a read that needs a further request says
+/// so ([`MailProviderWire::full_charging`]).
 pub trait MailProviderWire {
     /// The provider's current change anchor (Gmail `users.getProfile`
     /// `historyId`), taken before a listing starts so no change made during
@@ -204,6 +209,25 @@ pub trait MailProviderWire {
 
     /// One message whole; `None` when the provider no longer has it.
     fn full(&self, source: &MailSyncSource, provider_id: &str) -> Result<Option<MailFull>>;
+
+    /// [`Self::full`], with `charge` called before each further provider
+    /// request the read makes past its first (Gmail reads a text part it
+    /// keeps apart by its own request), so a metered step charges every
+    /// request before it is made and a refused charge ends the read. By
+    /// default the read is one request: [`Self::full`].
+    ///
+    /// # Errors
+    ///
+    /// A refused charge, or the provider's own failure.
+    fn full_charging(
+        &self,
+        source: &MailSyncSource,
+        provider_id: &str,
+        charge: &dyn Fn(MailCall) -> Result<()>,
+    ) -> Result<Option<MailFull>> {
+        let _ = charge;
+        self.full(source, provider_id)
+    }
 
     /// One page of the changes since `anchor`.
     fn history(
