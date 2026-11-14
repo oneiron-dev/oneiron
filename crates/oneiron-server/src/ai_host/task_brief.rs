@@ -11,23 +11,26 @@
 //! refusal names the binding to fix. The call is one admitted request of the
 //! role, metered on the caller's own lease, and refused whole when its route
 //! runs at a third party. It is sent only to the seat's offers on the device
-//! or the owner's own server, never to an owner's fallback at a third party.
+//! or the owner's own server, never to an owner's fallback at a third party,
+//! and to each only while every lens row its prompt carries may go to that
+//! offer's destination.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
+use oneiron::settings::{ReadDestination, ReleaseHold};
 use oneiron::task_verb::{TaskBriefDraftRequest, TaskBriefModel, TaskBriefModelBinding};
 use oneiron::{
-    BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage,
-    LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
-    RetryableLlmError, TierPrecedence,
+    BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId,
+    LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
+    RetryableLlmError, TierPrecedence, Vault,
 };
 
-use crate::models::{CallDeadline, OfferLadder};
+use crate::models::{CallDeadline, OfferLadder, SourceAdmission, SourceOffer};
 use crate::server::SyncServer;
 
 /// The role whose seat drafts.
@@ -130,8 +133,9 @@ impl TaskBriefModel for HostTaskBriefModel {
             meter,
             crate::decision_verdict::rung_payer(),
         );
+        let lens = LensSources::new(vault, request.lens_refs);
         self.runtime
-            .block_on(send_draft(&admitted.ladder, &run, admitted.request))
+            .block_on(send_draft(&admitted.ladder, &run, admitted.request, &lens))
     }
 }
 
@@ -177,12 +181,14 @@ pub(crate) fn draft_call(
 /// the reply's text. The call goes only to the ladder's offers on the
 /// device or on the owner's own server ([`OfferLadder::kept_on_host`]), so
 /// no rung and no owner's quota fallback at a third party is ever sent the
-/// prompt (review #7821 P1): the check of the rung that answered stays as
-/// an invariant, not as the egress control.
+/// prompt, and each of those only while every lens row the prompt carries
+/// may go to its destination (`lens`; review #7821 P1 x2). The check of the
+/// rung that answered stays as an invariant, not as the egress control.
 pub(crate) async fn send_draft(
     ladder: &OfferLadder,
     run: &RunAdmission,
     call: LlmRequest,
+    lens: &LensSources<'_>,
 ) -> MemoryResult<String> {
     let ladder = ladder.kept_on_host().ok_or_else(|| {
         refused("no offer of the local reasoner seat runs on the device or the owner's own server")
@@ -190,12 +196,13 @@ pub(crate) async fn send_draft(
     let wait_budget = ladder.cooling_wait_budget(DRAFT_TIME_LIMIT);
     let answered = tokio::time::timeout(
         DRAFT_TIME_LIMIT,
-        ladder.generate_recorded_by(
+        ladder.generate_admitted_recorded_by(
             run,
             call,
             None,
             &|| true,
             CallDeadline::waits_within(wait_budget),
+            lens,
         ),
     )
     .await
@@ -218,6 +225,63 @@ pub(crate) async fn send_draft(
             _ => None,
         })
         .collect())
+}
+
+/// The lens rows a draft's prompt carries, admitted for each offer's own
+/// destination (FIX 8714's hook): before the rung is admitted, and again
+/// right before it is sent. The caller read the rows for itself; a row that
+/// may not go to an offer's destination (a world kept on this machine keeps
+/// its rows from the owner's own server, another machine) passes that rung
+/// over unsent ([`Vault::release_hold_for`]). The prompt is sent whole or
+/// not at all: a held row is never cut out of words the model would still
+/// read.
+pub(crate) struct LensSources<'a> {
+    vault: &'a Vault,
+    rows: &'a [EntityId],
+    /// The destination the last offer was admitted for.
+    admitted: Mutex<Option<ReadDestination>>,
+}
+
+impl<'a> LensSources<'a> {
+    pub(crate) fn new(vault: &'a Vault, rows: &'a [EntityId]) -> Self {
+        Self {
+            vault,
+            rows,
+            admitted: Mutex::new(None),
+        }
+    }
+
+    /// Why the rows may not all go to `destination` now; `None` when they
+    /// may. A verdict that cannot be read holds them, as a placement hold.
+    fn held_for(&self, destination: &ReadDestination) -> Option<&'static str> {
+        match self.vault.release_hold_for(self.rows, destination) {
+            Ok(None) => None,
+            Ok(Some(hold)) => Some(hold.reason()),
+            Err(_) => Some(ReleaseHold::Placement.reason()),
+        }
+    }
+}
+
+impl SourceAdmission for LensSources<'_> {
+    fn offer(&self, request: &LlmRequest, destination: &ReadDestination) -> SourceOffer {
+        if let Some(reason) = self.held_for(destination) {
+            return SourceOffer::Held(reason);
+        }
+        *self.admitted.lock().unwrap_or_else(PoisonError::into_inner) = Some(destination.clone());
+        SourceOffer::Send(request.clone())
+    }
+
+    fn recheck(&self, destination: &ReadDestination) -> Option<&'static str> {
+        let admitted = self
+            .admitted
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if admitted.as_ref() != Some(destination) {
+            return Some(ReleaseHold::Placement.reason());
+        }
+        self.held_for(destination)
+    }
 }
 
 fn refused(why: &str) -> MemoryError {

@@ -12,9 +12,10 @@
 //!
 //! The model is local only (`OnDevice` or `OwnServer`). With none installed,
 //! or with a third-party one, the create is refused and nothing leaves the
-//! device. A composed post always parks as a proposal, whatever the
-//! caller's ceiling (RULING L8-07-APPROVAL = A): its text is the model's,
-//! and no person has read it yet.
+//! device. A lens row whose world may not go to the model's machine keeps
+//! the call from that model too. A composed post always parks as a
+//! proposal, whatever the caller's ceiling (RULING L8-07-APPROVAL = A): its
+//! text is the model's, and no person has read it yet.
 //!
 //! Entry: [`Memory::compose_task_brief`].
 
@@ -67,7 +68,8 @@ pub trait TaskBriefModel: Send + Sync {
     fn binding(&self) -> TaskBriefModelBinding;
 
     /// Answers one draft request with the model's reply text: one JSON
-    /// object constrained to `request.schema`.
+    /// object constrained to `request.schema`. No model is sent the request
+    /// at a destination one of `request.lens_refs` may not go to.
     ///
     /// # Errors
     ///
@@ -85,14 +87,19 @@ pub struct TaskBriefModelBinding {
 }
 
 /// One draft call: the instruction, the one-liner and the lens rows as the
-/// model reads them, the JSON schema its reply must match, and the caller
-/// whose create it composes, whose own lease the host meters the call on.
+/// model reads them, the JSON schema its reply must match, the caller whose
+/// create it composes, whose own lease the host meters the call on, and the
+/// lens rows whose words `input` carries. The caller read those rows for
+/// itself; the host sends the call only to a model whose destination each
+/// of them may go to ([`Vault::release_hold_for`]), judged for every offer
+/// the call reaches, right before it is sent too (review #7821 P1).
 #[derive(Debug, Clone, Copy)]
 pub struct TaskBriefDraftRequest<'a> {
     pub instruction: &'a str,
     pub input: &'a str,
     pub schema: &'a serde_json::Value,
     pub caller: crate::WriteActor,
+    pub lens_refs: &'a [EntityId],
 }
 
 /// A create's request to have its brief composed: the caller's one-liner
@@ -365,6 +372,7 @@ impl Memory<'_> {
             input: &input,
             schema: &schema,
             caller: self.write_actor(),
+            lens_refs: &request.lens_refs,
         })?;
         let draft: BriefDraft = serde_json::from_str(reply.trim()).map_err(|error| {
             unfit_draft(&format!("the reply is not the schema's JSON ({error})"))
