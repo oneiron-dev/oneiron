@@ -267,6 +267,7 @@ fn convert(fixture: &Fixture, slip_ref: &str) -> AgentGrantFromSlipOutcome {
         ActSurface::ThisInstall,
         AgentGrantFromSlipRequest {
             slip_ref: slip_ref.to_owned(),
+            check_in_ref: None,
         },
     )
     .expect("the owner's conversion answers")
@@ -274,7 +275,7 @@ fn convert(fixture: &Fixture, slip_ref: &str) -> AgentGrantFromSlipOutcome {
 
 fn minted_grants(outcome: &AgentGrantFromSlipOutcome) -> &[AgentGrantMinted] {
     match outcome {
-        AgentGrantFromSlipOutcome::Minted { grants } => grants,
+        AgentGrantFromSlipOutcome::Minted { grants, .. } => grants,
         AgentGrantFromSlipOutcome::Unchanged { reason } => {
             panic!("actor=owner; expected the conversion to mint; seen unchanged reason={reason:?}")
         }
@@ -538,7 +539,10 @@ fn conversion_answers_unchanged_and_never_mints_twice() {
             &fixture.vault,
             &fixture.owner_proof,
             ActSurface::ThisInstall,
-            AgentGrantFromSlipRequest { slip_ref },
+            AgentGrantFromSlipRequest {
+                slip_ref,
+                check_in_ref: None,
+            },
         );
         assert!(
             refused.is_err(),

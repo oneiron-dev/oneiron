@@ -126,3 +126,6 @@ pub use effect::attempt_archive_delete_effect_digest;
 pub use effect::legal_send_effect_digest;
 // The sign act's effect (2k6b).
 pub use effect::sign_effect_digest;
+// The slip conversion and grant back doors' effects (2k7b); the mint's
+// (2k7a) is `verbs::agent_grant_mint_effect_digest`, over its request.
+pub use effect::{agent_grant_from_slip_effect_digest, agent_grant_restore_effect_digest};

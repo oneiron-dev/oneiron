@@ -622,3 +622,29 @@ pub fn sign_effect_digest(document: &EntityId, recipient: &str) -> [u8; 32] {
     hasher.update(recipient.as_bytes());
     *hasher.finalize().as_bytes()
 }
+
+/// The digest of converting slip `slip` into its holder's default read
+/// Grants: the effect an asker's `vault.check_in.open` names for
+/// `vault.agents.grants.from_slip`, and the one the Owner's conversion
+/// spends (2k7; P25-SHAPE Q1 = A). The Grants minted are the holder's live
+/// slips' Scopes as the Owner's writer reads them. BLAKE3, key derived from
+/// `oneiron check_in agent grant from slip v1`, over the slip's 32 id
+/// bytes.
+#[must_use]
+pub fn agent_grant_from_slip_effect_digest(slip: &[u8; 32]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in agent grant from slip v1");
+    hasher.update(slip);
+    *hasher.finalize().as_bytes()
+}
+
+/// The digest of giving base agent `agent` its default grant back: the
+/// effect an asker's `vault.check_in.open` names for
+/// `vault.agents.grants.restore`, and the one the Owner's grant back spends
+/// (2k7; P25-SHAPE Q1 = A). BLAKE3, key derived from `oneiron check_in
+/// agent grant restore v1`, over the agent principal's 16 id bytes.
+#[must_use]
+pub fn agent_grant_restore_effect_digest(agent: &EntityId) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in agent grant restore v1");
+    hasher.update(agent.as_bytes());
+    *hasher.finalize().as_bytes()
+}

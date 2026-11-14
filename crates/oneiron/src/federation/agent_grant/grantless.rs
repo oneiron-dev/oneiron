@@ -28,6 +28,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Vault;
 use crate::authority::{ActSurface, AgentSlipStanding, LiveAgentSlip};
+use crate::check_in::{AppliedCheckIn, CheckInDecision};
 use crate::consent::{AuthenticatedOwner, GrantlessAgentConvertAction, GrantlessAgentRow};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
@@ -57,8 +58,9 @@ pub enum AgentGrantFromSlipUnchangedReason {
 /// What one conversion did.
 #[derive(Debug, Clone)]
 pub(crate) enum GrantlessAgentConversion {
-    /// The holder's default read Grants, in mint order.
-    Minted(Vec<AgentGrantMintOutcome>),
+    /// The holder's default read Grants, in mint order, and the decision
+    /// the conversion ran on (ROLES-CHECKIN 2k7).
+    Minted(Vec<AgentGrantMintOutcome>, CheckInDecision),
     /// Nothing was minted.
     Unchanged(AgentGrantFromSlipUnchangedReason),
 }
@@ -159,11 +161,16 @@ impl Vault {
     }
 
     /// The owner converts the slip `slip_id` into its holder's default read
-    /// Grants, as his signed acts recording `surface` (module docs, Q9).
+    /// Grants, as his signed acts recording `surface` (module docs, Q9), on
+    /// his own proof. With `applied` he applies another asker's approved
+    /// check-in for this conversion, spent in the same writer once the slip
+    /// qualifies (ROLES-CHECKIN 2k7; P25-SHAPE Q1 = A); an unchanged
+    /// answer spends nothing.
     ///
     /// # Errors
     /// An owner refusal; `EntityNotFound` when the authority fold counts no
-    /// slip mint with this id; a store, fold or clock failure;
+    /// slip mint with this id; a check-in that is not an approved ask for
+    /// this conversion; a store, fold or clock failure;
     /// [`crate::error::RecordError::AuthorityRefused`] when this install
     /// cannot carry the owner's act. The writer then commits nothing.
     pub(crate) fn mint_default_agent_grants_from_slip(
@@ -171,6 +178,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         surface: ActSurface,
         slip_id: [u8; 32],
+        applied: Option<&AppliedCheckIn<'_>>,
     ) -> Result<GrantlessAgentConversion> {
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
@@ -193,6 +201,12 @@ impl Vault {
                     AgentGrantFromSlipUnchangedReason::AlreadyGranted,
                 ));
             }
+            let decision = crate::check_in::owner_act_decision_in_txn(
+                self,
+                txn,
+                crate::check_in::ActClass::GrantWiden,
+                applied,
+            )?;
             let mut scopes = vec![default_agent_grant_scope(&slip.scope)];
             for other in self.live_agent_slips_in_txn(txn)? {
                 if other.holder != slip.holder {
@@ -218,7 +232,7 @@ impl Vault {
                     None,
                 )?);
             }
-            Ok(GrantlessAgentConversion::Minted(minted))
+            Ok(GrantlessAgentConversion::Minted(minted, decision))
         })
     }
 }

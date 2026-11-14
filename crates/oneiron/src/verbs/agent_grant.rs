@@ -42,13 +42,13 @@
 //! lease's tree admits draws on that wallet's allocation or is refused. A
 //! grant without one behaves exactly as before.
 //!
-//! `.mint` widens an agent's grant (ARCH-0082 #act-table "Widen another's
-//! grant"): it is the owner's own act on his own proof, never gated, and
-//! its answer records that decision (`check_in`). A Deputy who may not
-//! reach this door asks through `vault.check_in.open` for the exact act;
-//! once the owner approves, he applies it here with `check_in_ref`, and
-//! the act's writer spends the ask (ROLES-CHECKIN 2k7; Engine RULING
-//! P25-SHAPE Q1 = A).
+//! `.mint`, `.from_slip` and `.restore` widen an agent's grant (ARCH-0082
+//! #act-table "Widen another's grant"): each is the owner's own act on his
+//! own proof, never gated, and its answer records that decision
+//! (`check_in`). A Deputy who may not reach these doors asks through
+//! `vault.check_in.open` for the exact act; once the owner approves, he
+//! applies it here with `check_in_ref`, and the act's writer spends the ask
+//! (ROLES-CHECKIN 2k7; Engine RULING P25-SHAPE Q1 = A).
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
@@ -205,6 +205,11 @@ pub struct AgentGrantRevoked {
 pub struct AgentGrantFromSlipRequest {
     /// The slip's id (64 hex), as the registry row's `slip_ref` names it.
     pub slip_ref: String,
+    /// Another asker's approved check-in for converting this slip, 32 hex:
+    /// the owner applies it on his own proof, and the conversion's writer
+    /// spends it once the slip qualifies (ROLES-CHECKIN 2k7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// `vault.agents.grants.from_slip`'s answer.
@@ -213,8 +218,15 @@ pub struct AgentGrantFromSlipRequest {
 pub enum AgentGrantFromSlipOutcome {
     /// The holder's default read Grants as minted: the named slip's Scope
     /// first, then one for each other distinct Scope of its live slips.
-    Minted { grants: Vec<AgentGrantMinted> },
-    /// Nothing was minted, for `reason`.
+    Minted {
+        grants: Vec<AgentGrantMinted>,
+        /// The decision the conversion ran on: the owner's own proof,
+        /// naming the asker's approved check-in it applied (ROLES-CHECKIN
+        /// 2k7).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        check_in: Option<CheckInDecision>,
+    },
+    /// Nothing was minted, for `reason`, and no check-in was spent.
     Unchanged {
         reason: AgentGrantFromSlipUnchangedReason,
     },
@@ -356,7 +368,10 @@ pub fn revoke_agent_grant_as(
 /// default read Grants, verbs `read` and each Scope's other axes, with no
 /// expiry, wallet, repo bounds or classes. A slip that no longer qualifies
 /// answers unchanged with its reason, so a repeat never mints twice; an id
-/// that names no slip is not found.
+/// that names no slip is not found. With `check_in_ref` the owner applies
+/// another asker's approved check-in for converting this slip (2k7;
+/// P25-SHAPE Q1 = A), spent in the writer that mints; the answer records
+/// the decision.
 pub fn mint_agent_grants_from_slip_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -365,18 +380,32 @@ pub fn mint_agent_grants_from_slip_as(
 ) -> MemoryResult<AgentGrantFromSlipOutcome> {
     let slip_id = hex32(&input.slip_ref)
         .ok_or_else(|| crate::memory::MemoryError::bad_request("slip_ref is 64 hex"))?;
+    let applied =
+        super::shared::check_in_ref(input.check_in_ref.as_deref())?.map(|id| AppliedCheckIn {
+            id,
+            verb: "vault.agents.grants.from_slip",
+            effect_digest: crate::check_in::agent_grant_from_slip_effect_digest(&slip_id),
+        });
     Ok(
-        match vault.mint_default_agent_grants_from_slip(owner, surface, slip_id)? {
-            GrantlessAgentConversion::Minted(minted) => AgentGrantFromSlipOutcome::Minted {
-                grants: minted
-                    .iter()
-                    .map(|minted| AgentGrantMinted {
-                        grant: agent_grant_view(&minted.standing, minted.confers),
-                        act_ref: minted.act.to_hex(),
-                        check_in: None,
-                    })
-                    .collect(),
-            },
+        match vault.mint_default_agent_grants_from_slip(
+            owner,
+            surface,
+            slip_id,
+            applied.as_ref(),
+        )? {
+            GrantlessAgentConversion::Minted(minted, decision) => {
+                AgentGrantFromSlipOutcome::Minted {
+                    grants: minted
+                        .iter()
+                        .map(|minted| AgentGrantMinted {
+                            grant: agent_grant_view(&minted.standing, minted.confers),
+                            act_ref: minted.act.to_hex(),
+                            check_in: None,
+                        })
+                        .collect(),
+                    check_in: Some(decision),
+                }
+            }
             GrantlessAgentConversion::Unchanged(reason) => {
                 AgentGrantFromSlipOutcome::Unchanged { reason }
             }
@@ -483,6 +512,11 @@ pub fn narrow_system_agent_grant_as(
 pub struct SystemAgentGrantRestoreRequest {
     /// The base agent's principal (32 hex), as `vault.agents.base` names it.
     pub agent: EntityId,
+    /// Another asker's approved check-in for giving this agent its grant
+    /// back, 32 hex: the owner applies it on his own proof, and the writer
+    /// that gives it back spends it (ROLES-CHECKIN 2k7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// What a grant back did (FABLE-6917-1).
@@ -492,6 +526,11 @@ pub struct SystemAgentGrantRestored {
     /// True when the door gave the default grant back; false when it
     /// already stood whole, and nothing changed.
     pub restored: bool,
+    /// The decision the grant back ran on: the owner's own proof, naming
+    /// the asker's approved check-in it applied (ROLES-CHECKIN 2k7). Absent
+    /// when nothing changed, and no check-in was spent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 /// `vault.agents.grants.restore`: the owner gives a base agent its default
@@ -500,15 +539,30 @@ pub struct SystemAgentGrantRestored {
 /// Dreamer's runs through [`Vault::grant_dreamer_weave`], as `oneiron
 /// dreamer grant` does, and the Coach's through [`Vault::grant_coach_steward`].
 /// A second call changes nothing. Any other principal is refused: its
-/// grants are minted and revoked by their ids.
+/// grants are minted and revoked by their ids. With `check_in_ref` the
+/// owner applies another asker's approved check-in for giving this agent
+/// its grant back (2k7; P25-SHAPE Q1 = A), spent in the writer that gives
+/// it back; the answer records the decision.
 pub fn restore_system_agent_grant_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: SystemAgentGrantRestoreRequest,
 ) -> MemoryResult<SystemAgentGrantRestored> {
-    let restored = match SystemAgent::of(input.agent) {
-        Some(SystemAgent::Dreamer) => vault.grant_dreamer_weave(owner, vault.now_recorded_at())?,
-        Some(SystemAgent::Coach) => vault.grant_coach_steward(owner)?,
+    let applied =
+        super::shared::check_in_ref(input.check_in_ref.as_deref())?.map(|id| AppliedCheckIn {
+            id,
+            verb: "vault.agents.grants.restore",
+            effect_digest: crate::check_in::agent_grant_restore_effect_digest(&input.agent),
+        });
+    let decision = match SystemAgent::of(input.agent) {
+        Some(SystemAgent::Dreamer) => vault.grant_dreamer_weave_with_check_in(
+            owner,
+            vault.now_recorded_at(),
+            applied.as_ref(),
+        )?,
+        Some(SystemAgent::Coach) => {
+            vault.grant_coach_steward_with_check_in(owner, applied.as_ref())?
+        }
         None => {
             return Err(MemoryError::bad_request(
                 "vault.agents.grants.restore gives back a base agent's default grant: \
@@ -516,7 +570,10 @@ pub fn restore_system_agent_grant_as(
             ));
         }
     };
-    Ok(SystemAgentGrantRestored { restored })
+    Ok(SystemAgentGrantRestored {
+        restored: decision.is_some(),
+        check_in: decision,
+    })
 }
 
 /// 32 bytes from 64 ASCII hex digits of either case.

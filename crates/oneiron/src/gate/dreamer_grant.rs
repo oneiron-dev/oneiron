@@ -179,13 +179,35 @@ impl Vault {
     /// when the edit would not let the Dreamer work or would move other
     /// policy.
     pub fn grant_dreamer_weave(&self, owner: &AuthenticatedOwner, now: u64) -> Result<bool> {
+        Ok(self
+            .grant_dreamer_weave_with_check_in(owner, now, None)?
+            .is_some())
+    }
+
+    /// [`Self::grant_dreamer_weave`] as `vault.agents.grants.restore` runs
+    /// it: the owner's own act on their own proof, applying with `applied`
+    /// another asker's approved check-in for this grant back, spent in the
+    /// writer that changes the grant or the rows (ROLES-CHECKIN 2k7;
+    /// P25-SHAPE Q1 = A). Returns the decision it ran on; `None`, spending
+    /// nothing, when nothing changed.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::grant_dreamer_weave`]; a check-in that is not an approved
+    /// ask for this grant back.
+    pub(crate) fn grant_dreamer_weave_with_check_in(
+        &self,
+        owner: &AuthenticatedOwner,
+        now: u64,
+        applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> Result<Option<crate::check_in::CheckInDecision>> {
         let dreamer = self.dreamer_authority()?.entity_ref();
         let marked = {
             let txn = self.store.env.read_txn()?;
             self.system_agent_grant_state_in(&txn, dreamer)?.is_some()
         };
         if marked {
-            return self.grant_dreamer_steward(owner);
+            return self.grant_dreamer_steward(owner, applied);
         }
         let actor_ref = dreamer.to_hex();
         let key = ScopedReadActorKey::with_actor_class(actor_ref.clone(), DREAMER_ACTOR_CLASS)
@@ -196,10 +218,16 @@ impl Vault {
         owner.revalidate_in_txn(self, &txn)?;
         let (id, body) = grant_target(&self.store, &txn)?;
         let Some(data) = with_dreamer_rows(&body, &actor_ref)? else {
-            return Ok(false);
+            return Ok(None);
         };
         let before = super::resolve_policy_manifest(&self.store, &txn)?;
         let retention = super::resolve_gate_decision_retention(&self.store, &txn)?;
+        let decision = crate::check_in::owner_act_decision_in_txn(
+            self,
+            &mut txn,
+            crate::check_in::ActClass::GrantWiden,
+            applied,
+        )?;
         self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
         let after = super::resolve_policy_manifest(&self.store, &txn)?;
         let moved_other_policy = after.is_fail_closed()
@@ -217,7 +245,7 @@ impl Vault {
         txn.commit()?;
         // A floor this commit moved is judged again at once (FIX 5505).
         self.apply_pending_rebinds_after_commit();
-        Ok(true)
+        Ok(Some(decision))
     }
 }
 

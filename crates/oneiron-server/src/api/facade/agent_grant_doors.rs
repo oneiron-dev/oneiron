@@ -77,7 +77,7 @@ pub(crate) async fn vault_agents_grants_from_slip(
             sdk::mint_agent_grants_from_slip_as(server.vault(), owner, surface, input)
         },
         |outcome| match outcome {
-            AgentGrantFromSlipOutcome::Minted { grants } => {
+            AgentGrantFromSlipOutcome::Minted { grants, .. } => {
                 grants.iter().map(|minted| minted.grant.grant_ref).collect()
             }
             AgentGrantFromSlipOutcome::Unchanged { .. } => Vec::new(),
