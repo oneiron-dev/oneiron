@@ -611,15 +611,16 @@ impl Vault {
         for (batch, start) in (0..refs).step_by(ORIGIN_REF_UPDATE_BATCH).enumerate() {
             let mut observed_any = false;
             let mut realized = Vec::new();
-            for index in start..(start + ORIGIN_REF_UPDATE_BATCH).min(refs) {
-                if intent.refs[index].status != ReceivePackRefStatus::Pending {
+            let end = (start + ORIGIN_REF_UPDATE_BATCH).min(refs);
+            for (index, entry) in intent.refs.iter_mut().enumerate().take(end).skip(start) {
+                if entry.status != ReceivePackRefStatus::Pending {
                     continue;
                 }
-                let update = intent.refs[index].update()?;
+                let update = entry.update()?;
                 // A failed proof is uncertainty, not permission to replay a ref.
                 match realized_updates(self, root, std::slice::from_ref(&update)) {
                     Ok(updates) if updates.is_empty() => {
-                        intent.refs[index].status = if intent.refs[index].observed {
+                        entry.status = if entry.observed {
                             ReceivePackRefStatus::Superseded
                         } else {
                             ReceivePackRefStatus::NotApplied
@@ -628,8 +629,8 @@ impl Vault {
                     }
                     Err(_) => {}
                     Ok(_) => {
-                        observed_any |= !intent.refs[index].observed;
-                        intent.refs[index].observed = true;
+                        observed_any |= !entry.observed;
+                        entry.observed = true;
                         realized.push((index, update));
                     }
                 }

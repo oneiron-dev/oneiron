@@ -3,7 +3,7 @@
 //! typed check. A check never refuses, holds or narrows the act that crossed.
 use crate::{EntityId, Result, Vault};
 
-use crate::store::own_rate_rows::CHECKS;
+use crate::store::own_rate_rows::{CHECKS, check_kept, checks_in_order_after};
 pub(crate) use crate::store::own_rate_rows::{
     count_in_txn, erase_check_actor_in_txn, erase_window_actor_in_txn, observe_in_txn,
 };
@@ -90,6 +90,130 @@ pub(crate) fn take_counted_auto_writes() -> Vec<AutoWriteDoor> {
 
 pub use crate::store::own_rate_record::OwnRateCheck;
 
+/// One kept crossing, as the host's OF-520 health check reads it in keeping
+/// order (ARCH-0044 C5).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeptOwnRateCheck {
+    /// Its place in keeping order, to read past next: the recorded time it
+    /// was kept at (16 hex) and its store-local id (32 hex).
+    pub cursor: String,
+    /// The recorded time it was kept at.
+    pub kept_at: u64,
+    pub check: OwnRateCheck,
+}
+
+fn order_cursor(kept_at: u64, id: EntityId) -> String {
+    format!("{kept_at:016x}{}", id.to_hex())
+}
+
+fn parse_order_cursor(cursor: &str) -> Result<(u64, EntityId)> {
+    let corrupt = || crate::Error::CorruptedIndex("own rate check cursor");
+    let (kept_at, id) = cursor.split_at_checked(16).ok_or_else(corrupt)?;
+    let kept_at = u64::from_str_radix(kept_at, 16).map_err(|_| corrupt())?;
+    Ok((kept_at, EntityId::from_hex(id).map_err(|_| corrupt())?))
+}
+
+/// The subject prefix every own-rate health check shares.
+const HEALTH_CHECK_SUBJECT: &str = "own_rate:";
+
+/// The subject the host's OF-520 health check keeps one own actor's
+/// crossings of one kind under (ARCH-0044 C5): `own_rate:<kind>:<actor>`.
+/// An answer covers that actor's next crossings of the kind.
+pub fn health_check_subject(kind: OwnRateKind, actor: &str) -> String {
+    format!("{HEALTH_CHECK_SUBJECT}{}:{actor}", kind.token())
+}
+
+/// What the host's health check asks an own-rate crossing with (ARCH-0044
+/// C5): the window, its count and threshold, and the actor, named apart from
+/// the grant rule's `actors`, as a spend check names its caller. An actor's
+/// erase finds the asks that carry its crossings by this shape.
+#[must_use]
+pub fn health_check_summary(check: &OwnRateCheck) -> serde_json::Value {
+    serde_json::json!({
+        "kind": OwnRateCheck::KIND,
+        "rate": check.kind,
+        "actor": check.actor,
+        "window_started_at": check.window_started_at,
+        "window_seconds": check.window_seconds,
+        "count": check.count,
+        "threshold": check.threshold,
+    })
+}
+
+/// The crossing a health check binds its answer to, the value of its
+/// `wire.health.crossing` unit claim: an own-rate summary
+/// ([`health_check_summary`]) without its actor, any other summary as it is.
+/// The claim is canonical and outlives the check, and an actor's erase
+/// (FIX 3520) does not reach it, so it never names the actor, whether it is
+/// bound before that erase or by a pass that asks after it: the burst it
+/// keeps is no one's. The check and the ask, which the erase takes, name the
+/// actor.
+#[must_use]
+pub fn health_bound_crossing(summary: &serde_json::Value) -> serde_json::Value {
+    let mut bound = summary.clone();
+    if let Some(fields) = bound.as_object_mut()
+        && fields.get("kind").and_then(serde_json::Value::as_str) == Some(OwnRateCheck::KIND)
+    {
+        fields.remove("actor");
+    }
+    bound
+}
+
+/// Whether `state` holds the summary of one of `actor`'s own-rate crossings
+/// ([`health_check_summary`]) at any depth.
+fn names_crossing_of(state: &serde_json::Value, actor: &str) -> bool {
+    use serde_json::Value;
+    match state {
+        Value::Object(fields) => {
+            (fields.get("kind").and_then(Value::as_str) == Some(OwnRateCheck::KIND)
+                && fields.get("actor").and_then(Value::as_str) == Some(actor))
+                || fields.values().any(|field| names_crossing_of(field, actor))
+        }
+        Value::Array(items) => items.iter().any(|item| names_crossing_of(item, actor)),
+        _ => false,
+    }
+}
+
+/// Erasing `actor` (FIX 3520): the host's health checks of its own-rate
+/// crossings go too, every kind, in the erase's own transaction. The host
+/// keeps each check in `WIRE_HEALTH_CHECK` under `check:` and its subject,
+/// which ends in the actor; the body is the host's, so the scrub reads keys
+/// only. Each ask such a check raised holds its crossing as the state it was
+/// asked over, which names the actor and its burst: the ask drops that state
+/// and, while open, leaves the owner's queue. An ask a pass raises after this
+/// erase took its check is the host's to withdraw, when the pass finds the
+/// check gone. The unit claim an ask binds holds no actor
+/// ([`health_bound_crossing`]), so there is none to take.
+///
+/// # Errors
+///
+/// Storage errors, or an ask row that cannot be read.
+pub(crate) fn erase_health_check_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    let rows = format!("wire:health:v1:check:{HEALTH_CHECK_SUBJECT}");
+    let actor = actor.to_hex();
+    let subject_end = format!(":{actor}");
+    let mut keys = Vec::new();
+    vault.sync_state_visit_prefix_in_write_txn(&*wtxn, &rows, |key, _| {
+        if key.ends_with(&subject_end) {
+            keys.push(key.to_owned());
+        }
+        Ok::<(), crate::Error>(())
+    })?;
+    if keys.is_empty() {
+        return Ok(());
+    }
+    for key in &keys {
+        vault.sync_state_delete_in_write_txn(wtxn, key)?;
+    }
+    crate::llm::decision::forget_ask_states_in_txn(vault, wtxn, |state| {
+        names_crossing_of(state, &actor)
+    })
+}
+
 impl Vault {
     /// The latest window in which this actor's acts of `kind` crossed the
     /// advisory threshold, if any. A check never refuses an act.
@@ -100,5 +224,48 @@ impl Vault {
     ) -> Result<Option<OwnRateCheck>> {
         let txn = self.store.env.read_txn()?;
         CHECKS.get(&self.store, &txn, &(actor, kind.token().to_owned()))
+    }
+
+    /// Up to `limit` kept crossings after `after` (a [`KeptOwnRateCheck::cursor`];
+    /// from the first when `None`), in the order they were kept, every actor
+    /// and kind: what the host's health check reads past its cursor. A
+    /// crossing stays readable for 30 days.
+    ///
+    /// # Errors
+    ///
+    /// A cursor this method did not hand out; storage errors.
+    pub fn own_rate_checks_after(
+        &self,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<KeptOwnRateCheck>> {
+        let after = after.map(parse_order_cursor).transpose()?;
+        let txn = self.store.env.read_txn()?;
+        Ok(checks_in_order_after(&self.store, &txn, after, limit)?
+            .into_iter()
+            .map(|((kept_at, id), check)| KeptOwnRateCheck {
+                cursor: order_cursor(kept_at, id),
+                kept_at,
+                check,
+            })
+            .collect())
+    }
+
+    /// Whether the crossing at `cursor` (a [`KeptOwnRateCheck::cursor`]) is
+    /// still kept, read in the caller's writer. An actor's erase takes its
+    /// kept crossings, so the health check folds no crossing it read before
+    /// that erase.
+    ///
+    /// # Errors
+    ///
+    /// A cursor [`Self::own_rate_checks_after`] did not hand out; storage
+    /// errors.
+    #[doc(hidden)]
+    pub fn own_rate_check_kept_in_write_txn(
+        &self,
+        txn: &heed::RwTxn<'_>,
+        cursor: &str,
+    ) -> Result<bool> {
+        check_kept(&self.store, txn, &parse_order_cursor(cursor)?)
     }
 }

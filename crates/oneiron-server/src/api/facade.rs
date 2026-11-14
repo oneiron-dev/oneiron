@@ -140,6 +140,8 @@ mod identity_doors;
 mod identity_topology_doors;
 mod image_edit_doors;
 mod inbox_group_doors;
+// The inquiry rows (INQUIRE-1 PR 5): the asking side and the member side.
+mod inquiry_doors;
 mod invocations;
 mod invoke;
 mod learning_doors;

@@ -6,6 +6,7 @@ mod egress;
 mod host_net_floor;
 pub mod image_release;
 mod relay_protocol;
+mod runner_fence;
 mod transport;
 pub use cli_env::{apply_cli_env_to_command, set_cli_env};
 pub use egress::{
@@ -17,6 +18,7 @@ pub use host_net_floor::{
     UnmeteredFloor, floor_saturated, known_floor, saturated_floor,
 };
 pub use relay_protocol::{RelayAnswer, RelayReply, RelayRequest, read_relay, write_relay};
+pub use runner_fence::{RunnerFence, RunnerFenceMechanism, RunnerFenceOutcome};
 pub use transport::{SessionLease, SessionTransport};
 #[cfg(target_os = "linux")]
 mod launcher;
@@ -118,6 +120,10 @@ pub enum GuestSeccomp {
     GuestSandbox,
     /// Engine Landlock and seccomp user-notification launcher.
     EngineFence,
+    /// No filter: a runner the daemon starts on the host, under the runner
+    /// fence alone ([`RunnerFence`]; canon `#runner-fence`: no seccomp
+    /// deny-list).
+    Unfiltered,
 }
 
 /// What one session runs.

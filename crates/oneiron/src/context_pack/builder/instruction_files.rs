@@ -20,6 +20,7 @@ use super::super::validation::disclosure_admits_target;
 /// a neighbor: visible, admitted by the disclosure `clamp`, and kept by no
 /// device-local world off this device.
 pub(super) fn pack_instruction_files(
+    vault: &crate::Vault,
     read: &StoreRead<'_>,
     reader: Option<&crate::claim::ScopedRead<'_>>,
     rtxn: &RoTxn<'_>,
@@ -34,7 +35,7 @@ pub(super) fn pack_instruction_files(
     }
     crate::codebase::code_instruction_handles_in(read, rtxn, &units, |id| {
         Ok(crate::note::ordinary_entity_visible(read, rtxn, id)?
-            && disclosure_admits_target(read, rtxn, clamp, id)?
+            && disclosure_admits_target(vault, read, rtxn, clamp, id)?
             && match device_local {
                 Some(flagged) => {
                     !crate::settings::device_local_keeps_among(read, rtxn, flagged, id)?
@@ -66,6 +67,7 @@ pub(super) fn returned_pack_instruction_files(
         None
     };
     pack_instruction_files(
+        vault,
         read,
         reader,
         &rtxn,

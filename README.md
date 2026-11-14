@@ -117,8 +117,8 @@ See [DEPLOYMENT.md](./DEPLOYMENT.md) for service templates.
 ## Building from source
 
 The SDK's generated Rust files are not committed: the crates that include them (`oneiron`, `oneiron-server`,
-`oneiron-remote`, `oneiron-napi`, `oneiron-uniffi`, `oneiron-code-check`, `oneiron-py`) run the SDK generator
-(`crates/oneiron-sdk-generator`) inside their build scripts, once per change of the verb table
+`oneiron-remote`, `oneiron-napi`, `oneiron-uniffi`, `oneiron-code-check`, `oneiron-py`, `oneiron-verb-wire`) run
+the SDK generator (`crates/oneiron-sdk-generator`) inside their build scripts, once per change of the verb table
 (`scripts/sdk/verbs/`), the Rust types it names or the generator itself, into the target directory. No Python
 runs for this. The run key covers the generator's source, `Cargo.lock`, the manifests and the compiler. It does
 not see a local override of the generator's dependencies (`[patch]` to a path, `paths` in `.cargo/config`, or
