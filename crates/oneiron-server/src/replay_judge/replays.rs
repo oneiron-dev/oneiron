@@ -271,7 +271,12 @@ impl ServeReplayJudge {
         let texts = || replays.iter().filter_map(|(_, texts)| texts.as_ref());
         // One goal read: the revision the case is judged under rides beside
         // the brief it was worded from.
-        let edit_goal = skill_edit_goal(&self.vault, &case.skill).ok();
+        // The goal the gate resolved the case under, when it hands one
+        // (review round 1 of #7553), else the Coach's read.
+        let edit_goal = match case.goal {
+            Some(goal) => Some(goal.clone()),
+            None => skill_edit_goal(&self.vault, &case.skill).ok(),
+        };
         let goal = match &edit_goal {
             Some(edit_goal) => self.goal_brief(edit_goal)?,
             None => None,

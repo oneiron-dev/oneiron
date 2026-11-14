@@ -115,9 +115,9 @@ use super::{
     PROVENANCE_OPTIMIZE_OF_KEY, PROVENANCE_OPTIMIZE_OF_VERSION_KEY, SKILL_OPTIMIZE_BIRTH_PATH,
     SkillGoalId, invalid, proven_cycle, tier_verdict_in_txn, validate_goal_birth_in_txn,
 };
-use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::claim::ClaimApprovalStatus;
+use crate::dreamer_runner::authority::coach_reader;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, ErrorKind, Result};
 use crate::receipt::{
@@ -136,6 +136,7 @@ use crate::skill::{
 use crate::skill_convert::{PROVENANCE_BIRTH_KEY, source_message_refs};
 use crate::store::Store;
 use crate::temporal::TimeRange;
+use crate::{EdgeActorClass, Vault, WriteActor};
 use oneiron_model::llm::CallPurpose;
 
 mod admission;
@@ -173,7 +174,7 @@ pub use decision::{
 };
 pub use goal_axis::{
     GoalAxisKind, GoalAxisScore, GoalAxisSpec, SkillEditGoal, set_skill_edit_goal_axes,
-    skill_edit_goal,
+    skill_edit_goal, skill_edit_goal_as_owner,
 };
 pub use ledger::{
     is_skill_edit_verdict_receipt, skill_edit_verdict, skill_edit_verdicts,
@@ -248,7 +249,7 @@ use decision::{
 };
 use goal_axis::{
     GoalDefinition, dominates, floor_regressed, goal_definition_in_txn, goal_id_in_txn,
-    is_tradeoff, score_goal_axes, validate_goal_vector,
+    goal_reader_in_txn, is_tradeoff, score_goal_axes, validate_goal_vector,
 };
 use judge_binding::{JudgeBinding, judge_rubric_digest_in_txn};
 use ledger::{record_verdict_in_txn, verdict_rows_in_txn};
