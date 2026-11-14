@@ -9,7 +9,9 @@
 //! - The role and the power are the caller's own live owner Grant's: no Grant
 //!   listing the verb, or a Grant whose worlds miss the effect, is absent (an
 //!   erase may still be proposed); the vault owner goes on its own proof; a
-//!   person without a Grant is refused.
+//!   person without a Grant is refused. Of two Grants listing the verb, the
+//!   one over the effect's world answers, whichever comes first in id order,
+//!   and the two are never unioned.
 //! - `preflight` writes nothing. `open` opens the durable ask on the
 //!   grantor's rung; a repeat of the same saved call, after a restart too,
 //!   returns the same handle and writes nothing; another effect is another
@@ -232,6 +234,11 @@ fn ask(verb: &str, byte: u8) -> Value {
     json!({ "verb": verb, "effect_digest": digest(byte) })
 }
 
+/// An ask for `verb`'s act in `world` over the effect `byte`.
+fn ask_in(verb: &str, world: EntityId, byte: u8) -> Value {
+    json!({ "verb": verb, "world_ref": world.to_hex(), "effect_digest": digest(byte) })
+}
+
 fn call(memory: &Memory<'_>, verb: &str, input: Value) -> Value {
     invoke(memory, verb, input).unwrap_or_else(|error| panic!("{verb} answers: {error:?}"))
 }
@@ -341,6 +348,57 @@ fn a_caller_without_the_power_is_absent_and_may_propose_an_erase() {
         fx.receipts().is_empty(),
         "nothing was opened: {:?}",
         fx.receipts()
+    );
+}
+
+#[test]
+fn of_two_grants_listing_the_verb_the_one_over_the_effects_world_answers() {
+    // Review round 1 of #7715 and #7716: the first Grant in id order that
+    // listed the verb was read alone, so a later Grant over the effect's
+    // world was never seen and the ask was absent. Each world is asked, so
+    // one of the two is the later Grant's whatever order the ids take.
+    let fx = Fixture::rooted();
+    let agent = fx.agent();
+    let (world_a, world_b) = (base_world_id(), EntityId::now());
+    let grant_a = fx.grant(agent, &[SPAWN, READ], Some(world_a));
+    let grant_b = fx.grant(agent, &[SPAWN, READ], Some(world_b));
+    let me = fx.as_agent(agent);
+    for (world, grant, byte) in [(world_a, grant_a, 0xA1), (world_b, grant_b, 0xA2)] {
+        assert_eq!(
+            call(&me, PREFLIGHT, ask_in(READ, world, byte)),
+            json!({ "outcome": "go", "reason": "read", "act_class": null }),
+            "the Grant over {} lets the read go",
+            world.to_hex()
+        );
+        let spawn = call(&me, PREFLIGHT, ask_in(SPAWN, world, byte));
+        assert_eq!(
+            (spawn["outcome"].as_str(), spawn["reason"].as_str()),
+            (Some("wait"), Some("unsure")),
+            "{spawn}"
+        );
+        let opened = call(&me, OPEN, ask_in(SPAWN, world, byte));
+        assert_eq!(opened["outcome"].as_str(), Some("wait"), "{opened}");
+        let id =
+            EntityId::from_hex(opened["handle"]["handle"].as_str().expect("handle")).expect("id");
+        let row = fx
+            .vault
+            .pending_check_in(&id)
+            .expect("read")
+            .expect("the row is stored");
+        assert_eq!(
+            row.grant_ref,
+            grant.to_hex(),
+            "the ask names the Grant over its world"
+        );
+    }
+    let elsewhere = call(&me, PREFLIGHT, ask_in(SPAWN, EntityId::now(), 0xA3));
+    assert_eq!(
+        (elsewhere["outcome"].as_str(), elsewhere["why"].as_str()),
+        (
+            Some("absent"),
+            Some("the caller's Grant does not reach where the effect sits")
+        ),
+        "neither Grant reaches a third world, and the two are not unioned"
     );
 }
 
