@@ -16,6 +16,7 @@ mod question_heads;
 mod question_trials;
 pub(crate) mod tables;
 mod target;
+mod timeline;
 mod types;
 
 use serde::Serialize;
@@ -45,6 +46,10 @@ pub use question_trials::{
 };
 pub(crate) use question_trials::{drop_question_trials_in_txn, erase_question_trial_in_txn};
 pub use target::{QUESTION_LABEL_SCHEMA, QUESTION_RENDERER, QuestionTarget, TrainingTarget};
+pub use timeline::{
+    DataTimeline, ExecutedPhase, MixturePin, ParentCheckpoint, PhaseOutcome, PlannedPhase,
+    TIMELINE_RECEIPT_KEY, TrainingBoundary,
+};
 pub use types::*;
 
 const RUNS: SideTable<EntityId, TrainingRun, Named> =
@@ -92,28 +97,6 @@ impl TrainingRun {
                 .evaluation
                 .as_ref()
                 .is_some_and(|eval| eval.passed && eval.harness == self.plan.harness)
-    }
-}
-
-impl ExportCheck {
-    pub fn passed(&self) -> bool {
-        self.hash_mismatches.is_empty()
-            && self.probe_coverage_matches
-            && self.probe_checkpoints_match
-            && self.settings_match
-            && self.harness_matches
-            && self.argmax_flips == 0
-            && self.max_logit_difference <= self.tolerance
-            && self
-                .question_check
-                .is_none_or(|check| check.finite && check.tokens_match && check.passed)
-            // A question head serves only once the host reproduced its
-            // receipt (FIX 7568); a missing check is a failed one.
-            && (self.question_check.is_none()
-                || self
-                    .candle_parity
-                    .as_ref()
-                    .is_some_and(CandleParityCheck::passed))
     }
 }
 

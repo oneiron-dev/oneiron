@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::DeleteEntityPreview;
 use crate::memory::{
-    DeleteReceipt, EraseOptions, EraseReason, MEMORY_CODE_INVALID_STATE, Memory, MemoryError,
-    MemoryResult, SameBytesHold, SameBytesOutcome,
+    DeleteReceipt, DeleteRequestState, EraseOptions, EraseReason, MEMORY_CODE_INVALID_STATE,
+    Memory, MemoryError, MemoryResult, SameBytesHold, SameBytesOutcome,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, entity_id::bytes_to_hex_lower};
@@ -70,6 +70,15 @@ pub struct RecordErasePreview {
     pub same_bytes: Vec<String>,
     /// Federation recipients may keep copies after a local erase.
     pub remote_copies_may_remain: bool,
+    /// For a world whose keys this erase destroys (ARCH-0038
+    /// #erase-sealed-bundles), the owner-ruled words: the world is erased now,
+    /// and old backups keep only an unreadable copy until they expire. Absent
+    /// for every other record, so its preview and digest stay as they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_backups_notice: Option<String>,
+    /// Beside that notice, the days within which those old backups expire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_backups_expire_within_days: Option<u32>,
     pub preview_digest: String,
 }
 
@@ -99,13 +108,52 @@ pub struct RecordEraseOutcome {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_act: Option<String>,
     pub same_bytes: Vec<EraseSameBytesRow>,
+    /// The preview's notice, once the erase destroyed the world's keys now;
+    /// absent while the erase waits, and for every other record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_backups_notice: Option<String>,
+    /// Beside that notice, the days within which those old backups expire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_backups_expire_within_days: Option<u32>,
 }
 
 fn hex(bytes: &[u8; 32]) -> String {
     bytes_to_hex_lower(bytes)
 }
 
-fn preview_view(preview: &DeleteEntityPreview) -> MemoryResult<RecordErasePreview> {
+/// The notice an erase of a world gives, and the days it names: the world is
+/// erased now, and the sealed bundles kept before it hold only an unreadable
+/// copy until they expire (ARCH-0038 #erase-sealed-bundles, owner 2026-10-18).
+fn world_erase_notice(world_erase: bool) -> (Option<String>, Option<u32>) {
+    if !world_erase {
+        return (None, None);
+    }
+    let days = crate::world_keys::ERASED_WORLD_BACKUP_KEEP_DAYS;
+    (
+        Some(format!(
+            "This world is erased now. Old backups keep only an unreadable copy of it until \
+             they expire, within {days} days."
+        )),
+        Some(days),
+    )
+}
+
+/// Whether erasing `record` destroys a world's keys: it is a WORLD other than
+/// the base world.
+fn erases_world(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    record: EntityId,
+) -> MemoryResult<bool> {
+    crate::world_keys::is_erasable_world_in_txn(&memory.vault().store, txn, record)
+        .map_err(MemoryError::from)
+}
+
+fn preview_view(
+    preview: &DeleteEntityPreview,
+    world_erase: bool,
+) -> MemoryResult<RecordErasePreview> {
+    let (old_backups_notice, old_backups_expire_within_days) = world_erase_notice(world_erase);
     let mut view = RecordErasePreview {
         record: preview.entity().to_hex(),
         shared_with: preview
@@ -138,6 +186,8 @@ fn preview_view(preview: &DeleteEntityPreview) -> MemoryResult<RecordErasePrevie
             .map(EntityId::to_hex)
             .collect(),
         remote_copies_may_remain: preview.remote_copies_may_remain(),
+        old_backups_notice,
+        old_backups_expire_within_days,
         preview_digest: String::new(),
     };
     let canonical = serde_json::to_vec(&view)
@@ -195,8 +245,13 @@ pub fn preview_record_erase(
     memory: &Memory<'_>,
     input: RecordEraseRequest,
 ) -> MemoryResult<RecordErasePreview> {
-    let view = preview_view(&memory.preview_entity_delete(&input.record)?)?;
+    let preview = memory.preview_entity_delete(&input.record)?;
     let vault = memory.vault();
+    let world_erase = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        erases_world(memory, &txn, input.record)?
+    };
+    let view = preview_view(&preview, world_erase)?;
     let now = vault.store.clock.now_recorded_at();
     let row = ErasePreviewRow {
         preview_digest: view.preview_digest.clone(),
@@ -259,7 +314,8 @@ pub fn confirm_record_erase(
             &["Preview the erase again and confirm what it shows now."],
         ));
     }
-    if preview_view(&preview)?.preview_digest != input.preview_digest {
+    let world_erase = erases_world(memory, &txn, input.record)?;
+    if preview_view(&preview, world_erase)?.preview_digest != input.preview_digest {
         return Err(MemoryError::new(
             MEMORY_CODE_INVALID_STATE,
             "the record's erase preview changed since it was shown",
@@ -275,7 +331,13 @@ pub fn confirm_record_erase(
             veto_starter: Some(owner),
         },
     )?;
+    // Only an erase applied now destroyed the world's keys; one that waits on
+    // a veto window or a hold has not erased it yet.
+    let (old_backups_notice, old_backups_expire_within_days) =
+        world_erase_notice(world_erase && outcome.first.state == DeleteRequestState::Applied);
     Ok(RecordEraseOutcome {
+        old_backups_notice,
+        old_backups_expire_within_days,
         first: outcome.first,
         first_act: outcome.first_act,
         same_bytes: outcome
