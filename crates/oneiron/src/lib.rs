@@ -460,8 +460,8 @@ pub use crate::deletion::{
 pub use crate::delivery_window::DeliveryWindowApnsInterruptionLevel;
 pub use crate::disclosure::{DisclosureAssembly, DisclosureContext};
 pub use crate::dreamer_consolidation::{
-    ConsolidationDecisions, ConsolidationExecutor, ConsolidationSink, plan_partitions,
-    read_watermark, scan_dirty_turns,
+    ConsolidationDecisions, ConsolidationExecutor, ConsolidationSink, ExtractionPrompt,
+    plan_partitions, read_watermark, scan_dirty_turns,
 };
 pub use crate::dreamer_prefilter::{
     NoveltyWindow, PrefilterConfig, PrefilterScreen, PrefilterTurnVerdict, PrefilterVerdict,

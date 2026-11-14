@@ -70,6 +70,7 @@ pub(crate) use self::discard_projection::{
     forget_unprojected_in_txn, mark_base_windows_owed_in_txn, resync_projected_windows_in_txn,
 };
 pub(crate) use self::egress::export_history_free_window_snapshot;
+pub(crate) use self::egress::scrub_withdrawn_delete_carriers;
 #[cfg(test)]
 use self::egress::window_packing_excludes_entity;
 use self::egress::window_packing_excludes_entity_with;

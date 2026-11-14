@@ -99,15 +99,8 @@ pub struct FilesPlacement {
     pub exclude: Vec<String>,
 }
 
-/// One file of a Files source, as a later search, action or peer names it:
-/// the source (its install and world with it) and the path under the
-/// folder. The ledger's hashes are its revision.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FileHandle {
-    pub source: EntityId,
-    pub path: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::note::files::source::FileHandle;
 
 /// The namespace a Files source's notes derive their ids from.
 pub(in crate::note) fn namespace(source: EntityId) -> String {
