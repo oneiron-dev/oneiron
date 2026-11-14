@@ -10,12 +10,13 @@ use super::SelfEffect;
 use crate::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::repo_doors::{
-    RepoCheckFinishInput, RepoCheckStartInput, RepoCheckoutBindInput, RepoExportInput,
-    RepoMergeQueueEnqueueInput, RepoMergeQueueObserveInput, RepoProposalResolveInput,
-    RepoProposalSubmitInput, RepoSnapshotsGetInput, RepoSnapshotsIngestInput,
-    RepoSnapshotsReadInput, RepoSymbolsDeclareInput, RepoSymbolsDefinitionsInput,
-    RepoSymbolsNeighborsInput, RepoSymbolsObserveInput, RepoSymbolsReleaseInput,
-    RepoSymbolsRenewInput, RepoViewsGetInput, RepoViewsReadInput, RepoWorkOpenInput,
+    RepoCheckFinishInput, RepoCheckReuseInput, RepoCheckStartInput, RepoCheckoutBindInput,
+    RepoExportInput, RepoMergeQueueEnqueueInput, RepoMergeQueueObserveInput,
+    RepoProposalResolveInput, RepoProposalSubmitInput, RepoSnapshotsGetInput,
+    RepoSnapshotsIngestInput, RepoSnapshotsReadInput, RepoSymbolsDeclareInput,
+    RepoSymbolsDefinitionsInput, RepoSymbolsNeighborsInput, RepoSymbolsObserveInput,
+    RepoSymbolsReleaseInput, RepoSymbolsRenewInput, RepoViewsGetInput, RepoViewsReadInput,
+    RepoWorkOpenInput,
 };
 use crate::task_verb::sdk::RunVerb;
 
@@ -64,6 +65,8 @@ pub enum RepoRunCall {
     ChecksStart(RepoCheckStartInput),
     /// `self.code.checks.finish` (FIX [L4-30-CHECK-REUSE-RECORD]).
     ChecksFinish(RepoCheckFinishInput),
+    /// `self.code.checks.reuse` (FIX [L4-30-CHECK-REUSE-RECORD]).
+    ChecksReuse(RepoCheckReuseInput),
 }
 
 impl RepoRunCall {
@@ -91,6 +94,7 @@ impl RepoRunCall {
             Self::SymbolsObserve(_) => SelfEffect::RepoSymbolsObserve,
             Self::ChecksStart(_) => SelfEffect::RepoChecksStart,
             Self::ChecksFinish(_) => SelfEffect::RepoChecksFinish,
+            Self::ChecksReuse(_) => SelfEffect::RepoChecksReuse,
         }
     }
 
@@ -124,7 +128,8 @@ impl RepoRunCall {
             | Self::CheckoutBind(_)
             | Self::Export(_)
             | Self::ChecksStart(_)
-            | Self::ChecksFinish(_) => None,
+            | Self::ChecksFinish(_)
+            | Self::ChecksReuse(_) => None,
         }
     }
 
@@ -152,6 +157,7 @@ impl RepoRunCall {
             RunVerb::SelfCodeSymbolsObserve => Self::SymbolsObserve(typed(input)?),
             RunVerb::SelfCodeChecksStart => Self::ChecksStart(typed(input)?),
             RunVerb::SelfCodeChecksFinish => Self::ChecksFinish(typed(input)?),
+            RunVerb::SelfCodeChecksReuse => Self::ChecksReuse(typed(input)?),
             _ => return Ok(None),
         }))
     }
@@ -181,12 +187,13 @@ impl RepoRunCall {
             Self::SymbolsObserve(_) => Self::SymbolsObserve(retyped(args)?),
             Self::ChecksStart(_) => Self::ChecksStart(retyped(args)?),
             Self::ChecksFinish(_) => Self::ChecksFinish(retyped(args)?),
+            Self::ChecksReuse(_) => Self::ChecksReuse(retyped(args)?),
         })
     }
 }
 
 /// Every run repo effect, in row order.
-const REPO_EFFECTS: [SelfEffect; 20] = [
+const REPO_EFFECTS: [SelfEffect; 21] = [
     SelfEffect::RepoSnapshotsGet,
     SelfEffect::RepoSnapshotsRead,
     SelfEffect::RepoSymbolsDefinitions,
@@ -207,6 +214,7 @@ const REPO_EFFECTS: [SelfEffect; 20] = [
     SelfEffect::RepoSymbolsObserve,
     SelfEffect::RepoChecksStart,
     SelfEffect::RepoChecksFinish,
+    SelfEffect::RepoChecksReuse,
 ];
 
 impl SelfEffect {
@@ -235,6 +243,7 @@ impl SelfEffect {
                 | Self::RepoSymbolsObserve
                 | Self::RepoChecksStart
                 | Self::RepoChecksFinish
+                | Self::RepoChecksReuse
         )
     }
 
@@ -257,6 +266,7 @@ impl SelfEffect {
                 | Self::RepoExport
                 | Self::RepoChecksStart
                 | Self::RepoChecksFinish
+                | Self::RepoChecksReuse
         )
     }
 

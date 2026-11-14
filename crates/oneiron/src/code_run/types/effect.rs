@@ -98,10 +98,11 @@ pub enum SelfEffect {
     /// SYMBOL-LEASE-OBSERVATION).
     RepoSymbolsObserve,
     /// The run's native check record (ARCH-0068 RC5, FIX
-    /// [L4-30-CHECK-REUSE-RECORD]): start and finish. Last, so no earlier
-    /// label moves.
+    /// [L4-30-CHECK-REUSE-RECORD]): start, finish and reuse. Last, so no
+    /// earlier label moves.
     RepoChecksStart,
     RepoChecksFinish,
+    RepoChecksReuse,
 }
 
 impl SelfEffect {
@@ -165,6 +166,7 @@ impl SelfEffect {
             Self::RepoSymbolsObserve => "self.code.symbols.observe",
             Self::RepoChecksStart => "self.code.checks.start",
             Self::RepoChecksFinish => "self.code.checks.finish",
+            Self::RepoChecksReuse => "self.code.checks.reuse",
         }
     }
 
@@ -227,7 +229,8 @@ impl SelfEffect {
             | Self::RepoExport
             | Self::RepoSymbolsObserve
             | Self::RepoChecksStart
-            | Self::RepoChecksFinish => None,
+            | Self::RepoChecksFinish
+            | Self::RepoChecksReuse => None,
         }
     }
 

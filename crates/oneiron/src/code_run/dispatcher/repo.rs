@@ -201,6 +201,9 @@ impl HostSelfDispatcher<'_> {
             RepoRunCall::ChecksFinish(input) => {
                 answered(effect, memory.repo_checks_finish_for_run(&binding, input))
             }
+            RepoRunCall::ChecksReuse(input) => {
+                answered(effect, memory.repo_checks_reuse_for_run(&binding, input))
+            }
         }
     }
 
@@ -292,6 +295,7 @@ impl HostSelfDispatcher<'_> {
             RepoRunCall::Export(input) => (input.repo, input.git_ref.clone(), None),
             RepoRunCall::ChecksStart(input) => (input.repo, input.git_ref.clone(), None),
             RepoRunCall::ChecksFinish(input) => (input.repo, input.git_ref.clone(), None),
+            RepoRunCall::ChecksReuse(input) => (input.repo, input.git_ref.clone(), None),
             // A row on the run's own work is gated at that work's repo and
             // ref; a work that is not this run's is refused before any
             // decision is recorded.
