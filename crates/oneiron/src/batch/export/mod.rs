@@ -105,8 +105,6 @@ pub use receipt_sources::{ExportReceiptSource, ReceiptSourceOmission, ReceiptSou
 
 pub(crate) use receipt_sources::{receipt_sources_for_body, task_receipt_refs};
 
-// FIX [LIBTEST-QUARANTINE-BATCH-EXPORT-RECEIPT-SOURCE-TESTS]: the lib test target's type check fails here (25 errors: E0599 x15, E0308 x10); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod receipt_source_tests;
 
