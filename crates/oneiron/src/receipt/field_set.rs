@@ -20,39 +20,27 @@ use crate::store::attempt_manifest::ManifestEntry;
 use crate::store::attempt_manifest::ManifestKind;
 use crate::store::model_step_submission::StepBudgetRefusal;
 
-const FIELD_MANIFEST_ENTRIES: &str = "manifest.entries";
-const FIELD_MANIFEST_ATTRIBUTION: &str = "manifest.attribution";
-/// FIX 6934: the complete set of rows the attempt read its inputs from.
-const FIELD_MANIFEST_SOURCE_ROWS: &str = "manifest.source_rows";
+#[doc(hidden)]
+pub(crate) use oneiron_verb_wire::receipt::field_set::FIELD_ATTEMPT_CALLER;
+#[doc(hidden)]
+pub use oneiron_verb_wire::receipt::field_set::{
+    FIELD_BUDGET_REFUSAL, FIELD_EXECUTOR_ROLE, FIELD_LEASE_GENERATION,
+};
+#[doc(hidden)]
+use oneiron_verb_wire::receipt::field_set::{
+    FIELD_MANIFEST_ENTRIES, FIELD_MANIFEST_SOURCE_ROWS, FIELD_TYPE_REF_PROJECT,
+};
 
+const FIELD_MANIFEST_ATTRIBUTION: &str = "manifest.attribution";
 /// OF-541: the template seat the attempt's executor was configured with;
 /// `model` is what that seat ran.
 pub const FIELD_EXECUTOR_SEAT: &str = "executor_seat";
-/// OF-578: the functional role the attempt's executor ran as, frozen with
-/// `model` and `executor_seat`; its value is the role's serde token.
-pub const FIELD_EXECUTOR_ROLE: &str = "executor_role";
-/// FIX 8259: the lease generation (`AttemptRecord.attempt_count`) the attempt
-/// settled under, frozen at the terminal seal. Absent on receipts sealed
-/// before the stamp existed.
-pub const FIELD_LEASE_GENERATION: &str = "lease_generation";
-/// FIX 12306: the calling principal of an agent-dispatch or turn-program
-/// attempt, frozen on its pack receipt as canonical 32-lowercase-hex.
-pub(crate) const FIELD_ATTEMPT_CALLER: &str = "attempt.caller";
-/// BUDGET-TRAP-UNTYPED-NO-SENDER: the typed refusal a spend scope gave a try
-/// it refused for good, as the refusal's own serde JSON (tag `reason`),
-/// stamped by the engine from the failed row or its runner's settle. Absent on
-/// every other receipt; [`ReceiptRecord::budget_refusal`] reads it typed.
-pub const FIELD_BUDGET_REFUSAL: &str = "budget_refusal";
 /// OF-540: the exact `TeamReceipt.team_ref` of the attempt's team run.
 pub const FIELD_LEARNING_TEAM_REF: &str = "learning.team_ref";
 /// OF-540: the run's pattern token (`ceo_decides|committee|vote|market|rotation`).
 pub const FIELD_LEARNING_PATTERN: &str = "learning.pattern";
 /// OF-540: the pattern's decider kind (`leader|chair|vote|referee`).
 pub const FIELD_LEARNING_DECIDED_BY: &str = "learning.decided_by";
-/// The run's project, frozen beside its typeRef: the scope its learning
-/// cells key on (FIX 6038). Absent, the vault's.
-const FIELD_TYPE_REF_PROJECT: &str = "type_ref.project";
-
 const BOARD_STATE_REF_PREFIX: &str = "board:";
 const ACTIVATED_MEMORY_IDS_SEPARATOR: char = ',';
 

@@ -1,11 +1,19 @@
 //! Where the caller of a request sits (DEC-0005): on this device or off it.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use axum::extract::{ConnectInfo, FromRequestParts};
+use axum::extract::{ConnectInfo, FromRequestParts, Request, State};
 use axum::http::{HeaderMap, request::Parts};
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
 use oneiron::authority::PeerMachine;
 use oneiron::claim::CallerLocality;
+
+use crate::config::SyncServerConfig;
+use crate::error::ApiError;
+use crate::server::SyncServer;
 
 /// Proxy forwarding headers. A request that carries any of them came through
 /// a proxy on someone else's behalf.
@@ -44,6 +52,49 @@ pub(crate) fn caller_locality(
     } else {
         CallerLocality::OffDevice
     }
+}
+
+/// Whether `config` runs the unauthenticated development hatch: with
+/// `allow_unauthenticated` and no `auth_secret`, a request with no credential
+/// acts as the owner. An empty secret counts as none, as serve's bind check
+/// counts it.
+pub(crate) fn runs_unauthenticated_hatch(config: &SyncServerConfig) -> bool {
+    config.allow_unauthenticated && config.auth_secret.as_deref().is_none_or(str::is_empty)
+}
+
+/// Set once the first off-device caller of a hatch server is refused, so
+/// the operator's warning is written once per process.
+static OFF_DEVICE_HATCH_CALLER_WARNED: AtomicBool = AtomicBool::new(false);
+
+/// A server that runs the unauthenticated development hatch answers only
+/// callers on this device ([`caller_locality`]); any other request is refused
+/// 401 before it reaches a route. Serve refuses to bind such a server
+/// anywhere but loopback (`commands/serve.rs`); this judges each request
+/// the same way, so an embedder that serves [`crate::build_app`] itself
+/// (ARCH-0028 #unauth-loopback-open) keeps the hatch off the network too.
+/// A connection the listener recorded no peer for is off this device, so
+/// the app must be served with `into_make_service_with_connect_info`, as
+/// [`crate::managed::BoundServeListener`] does. With a secret set, or the
+/// hatch off, every request passes.
+pub(crate) async fn refuse_off_device_hatch_callers(
+    State(server): State<Arc<SyncServer>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if runs_unauthenticated_hatch(&server.config)
+        && matches!(
+            caller_locality(request.headers(), request.extensions()),
+            CallerLocality::OffDevice
+        )
+    {
+        if !OFF_DEVICE_HATCH_CALLER_WARNED.swap(true, Ordering::Relaxed) {
+            tracing::warn!(
+                "unauthenticated mode (allow_unauthenticated with no auth_secret) answers only callers on this device: a loopback peer, a local socket peer, or the in-process channel, with no forwarding header; a caller off this device, or on a connection that recorded no peer, is refused 401. Serve the app with into_make_service_with_connect_info on loopback, or set ONEIRON_AUTH_SECRET"
+            );
+        }
+        return ApiError::unauthorized().into_response();
+    }
+    next.run(request).await
 }
 
 /// The machine a request's connection proved, beside its
