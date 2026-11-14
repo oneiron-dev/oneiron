@@ -5,6 +5,7 @@ mod chat_breakpoint;
 mod deletion;
 mod live_speakers;
 mod membership;
+mod membership_index;
 mod output_guard;
 mod pins;
 mod preview;
@@ -36,6 +37,9 @@ pub(crate) use deletion::{
 pub use live_speakers::{LiveSpeakerCall, RoomLiveSpeakerEntries};
 pub(crate) use live_speakers::{LiveSpeakers, RequiredSpeaker, required_live_speakers};
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
+pub(crate) use membership_index::rebuild_membership_index_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use membership_index::test_support as membership_index_test_support;
 pub(crate) use output_guard::ContainerOutputGuard;
 pub use output_guard::OutputMark;
 pub(crate) use pins::{PIN_UPDATES, served_room_body};

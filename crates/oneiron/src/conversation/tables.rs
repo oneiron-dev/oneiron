@@ -53,4 +53,10 @@ crate::side_table::side_tables! {
         [restore: refuse_image_entities "room roles and membership"]
         [family: unclassified]
         [tier: canonical];
+    /// One person's fold of a room's membership ledger (ARCH-0052, ASTRA-1406b): their windows in ledger order and the ledger index of the Join that opened their current membership; derived from CONVERSATION_MEMBERSHIP_ROW, kept by the ledger's append, rebuilt by a restore. Key: id16 (room) + id16 (person).
+    CONVERSATION_MEMBERSHIP_PERSON: VaultMeta b"conversation_membership:person:v1:" Named
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// The ledger revision (u64be row count) the per-person rows above fold for a room; they serve reads only while it equals CONVERSATION_MEMBERSHIP_SEQ. Key: id16 (room).
+    CONVERSATION_MEMBERSHIP_INDEXED: VaultMeta b"conversation_membership:indexed:v1:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
 }

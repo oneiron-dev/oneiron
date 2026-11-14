@@ -241,6 +241,8 @@ pub(super) fn rebuild(
             WINDOW_FULL_RESYNC_MARKER.put(&vault.store, txn, &window, &[1u8])?;
         }
         crate::conversation_dag::rebuild_thread_meta_projection_in_txn(vault, txn)?;
+        // Restored ledgers bypassed the append that maintains the membership index.
+        crate::conversation::rebuild_membership_index_in_txn(vault, txn)?;
         crate::attempt_queue::rebuild_checkpoint_indexes(&vault.store, txn, opaque_attempts)?;
         vault.store.rebuild_commitment_due_sidecars(txn)?;
         vault.store.rebuild_pending_gate_consent_sidecars(txn)?;
