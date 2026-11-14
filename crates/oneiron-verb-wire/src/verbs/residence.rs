@@ -1,20 +1,26 @@
 //! Moved from `crates/oneiron/src/verbs/residence.rs` (lib split W3: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_authority::authority::RESIDENCE_PREDICTED_DOCUMENTS_DEFAULT;
+use oneiron_authority::authority::RESIDENCE_PREDICTED_WINDOWS_DEFAULT;
 use oneiron_authority::authority::ResidenceAct;
 use oneiron_authority::authority::ResidenceResult;
 use oneiron_authority::authority::ResidenceResultStatus;
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::entity_id::bytes_to_hex_lower;
 use oneiron_contracts::memory::MemoryError;
 use oneiron_contracts::memory::MemoryResult;
 use serde::Deserialize;
 use serde::Serialize;
 
-/// `opened` (items fetched on demand) or `all` (full window replication).
+/// `opened` (items fetched on demand), `predicted` (opened, plus the
+/// windows and entity documents its home predicts it will open; ARCH-0023b
+/// #predicted-residence) or `all` (full window replication).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ResidenceModeName {
     Opened,
+    Predicted,
     All,
 }
 
@@ -33,6 +39,46 @@ pub struct ResidenceModeRequest {
     /// The owner's machine, by its machine id (32 hex).
     pub machine: EntityId,
     pub mode: ResidenceModeName,
+    /// With mode `predicted` only: the most the home's prediction names
+    /// for this machine. Unset, 32 windows and 128 entity documents.
+    #[serde(default)]
+    pub budget: Option<ResidencePredictedBudget>,
+}
+
+/// The owner's budget for a machine at the predicted level: the most
+/// windows and entity documents one prediction names (Engine ruling
+/// L7-46-BUDGET B). No ceiling: a prediction names its set by digest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResidencePredictedBudget {
+    pub windows: u32,
+    pub documents: u32,
+}
+
+impl ResidenceModeRequest {
+    /// The owner's residence directive this row asks for.
+    ///
+    /// # Errors
+    ///
+    /// A budget beside a mode other than `predicted`.
+    pub fn act(&self) -> MemoryResult<ResidenceAct> {
+        match (self.mode, self.budget) {
+            (ResidenceModeName::Opened, None) => Ok(ResidenceAct::SyncOpened),
+            (ResidenceModeName::All, None) => Ok(ResidenceAct::SyncAll),
+            (ResidenceModeName::Predicted, budget) => Ok(ResidenceAct::SyncPredicted {
+                window_budget: budget
+                    .map_or(RESIDENCE_PREDICTED_WINDOWS_DEFAULT, |budget| budget.windows),
+                document_budget: budget.map_or(RESIDENCE_PREDICTED_DOCUMENTS_DEFAULT, |budget| {
+                    budget.documents
+                }),
+            }),
+            (ResidenceModeName::Opened | ResidenceModeName::All, Some(_)) => {
+                Err(MemoryError::bad_request(
+                    "vault.residence.mode takes a budget only with mode predicted",
+                ))
+            }
+        }
+    }
 }
 
 /// `vault.residence.open`'s input: one item of one window, opened on the
@@ -96,7 +142,9 @@ impl ResidenceDirectivesRequest {
 }
 
 /// What a residence directive asks its machine to do. `kind` says which; an
-/// open names its window and item, a prune its cutoff, a follow its worlds.
+/// open names its window and item, a prune its cutoff, a follow its worlds,
+/// a sync-predicted its budget, and the home's prediction the owner's
+/// sync-predicted directive it executes and its set's digest and counts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ResidenceActView {
@@ -104,6 +152,22 @@ pub enum ResidenceActView {
     SyncAll,
     /// Sync what the machine opened.
     SyncOpened,
+    /// Sync what the machine opened plus what its home predicts, within
+    /// this budget.
+    SyncPredicted {
+        window_budget: u32,
+        document_budget: u32,
+    },
+    /// The home's prediction for the machine: the set it should hold,
+    /// named by digest; only that machine fetches the set itself.
+    Predicted {
+        /// The owner's sync-predicted directive it executes, 32 hex.
+        parent: EntityId,
+        /// The set's digest, 64 hex.
+        set_digest: String,
+        window_count: u32,
+        document_count: u32,
+    },
     /// Follow these worlds, the owner's pick.
     Follow {
         /// The picked worlds, ascending, 32 hex each.
@@ -128,6 +192,24 @@ impl From<&ResidenceAct> for ResidenceActView {
         match act {
             ResidenceAct::SyncAll => Self::SyncAll,
             ResidenceAct::SyncOpened => Self::SyncOpened,
+            ResidenceAct::SyncPredicted {
+                window_budget,
+                document_budget,
+            } => Self::SyncPredicted {
+                window_budget: *window_budget,
+                document_budget: *document_budget,
+            },
+            ResidenceAct::Predicted {
+                parent,
+                set_digest,
+                window_count,
+                document_count,
+            } => Self::Predicted {
+                parent: *parent,
+                set_digest: bytes_to_hex_lower(set_digest),
+                window_count: *window_count,
+                document_count: *document_count,
+            },
             ResidenceAct::Follow { worlds } => Self::Follow {
                 worlds: worlds.iter().copied().collect(),
             },

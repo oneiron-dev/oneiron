@@ -492,9 +492,9 @@ impl SyncConnection {
         *self.mode.borrow()
     }
 
-    /// Switch this machine between sync-all and sync-what-you-opened. The
-    /// choice persists; the live socket closes and reconnects with the new
-    /// hello. To sync-all, the opened read caches are dropped (full windows
+    /// Switch this machine between sync-all and sync-what-you-opened, off
+    /// the predicted level. The choice persists; the live socket closes and
+    /// reconnects with the new hello. To sync-all, the opened read caches are dropped (full windows
     /// replace them). To opened, each window held in full is granted again
     /// by the home before it keeps syncing as a promoted window; that needs
     /// the home reachable, and an offline home leaves the mode unchanged.
@@ -503,16 +503,26 @@ impl SyncConnection {
         &self,
         mode: SyncResidenceMode,
     ) -> Result<ResidenceModeChange, crate::sync::TransportError> {
-        self.switch_residence_mode(mode, |_, _| Ok(())).await
+        self.switch_residence_mode(mode, false, |_, _| Ok(())).await
+    }
+
+    /// Rings the owner's residence directives naming this machine, so a
+    /// directive this host just issued to it runs now rather than at the
+    /// next residence upkeep.
+    pub fn wake_residence_directives(&self) {
+        self.directive_wake.notify_one();
     }
 
     /// [`Self::set_residence_mode`], with `finish` run in the transaction
     /// that records the choice, beside the read caches a switch to sync-all
     /// drops; the new mode is published once that commits. The owner's mode
-    /// directives record their result there (OF-534).
+    /// directives record their result there (OF-534). `predicted` puts an
+    /// opened machine at the predicted level (ARCH-0023b
+    /// #predicted-residence), which the transport runs as opened.
     async fn switch_residence_mode(
         &self,
         mode: SyncResidenceMode,
+        predicted: bool,
         finish: impl FnOnce(&mut heed::RwTxn<'_>, &ResidenceModeChange) -> crate::error::Result<()>,
     ) -> Result<ResidenceModeChange, crate::sync::TransportError> {
         let storage = |e: crate::Error| crate::sync::TransportError::Storage(e.to_string());
@@ -557,7 +567,9 @@ impl SyncConnection {
                     change.pruned_items =
                         crate::sync::residence::prune_thin_items_in_txn(vault, txn, u64::MAX)?;
                 }
-                crate::sync::residence::set_device_sync_preference_in_txn(vault, txn, mode)?;
+                crate::sync::residence::set_device_sync_preference_in_txn(
+                    vault, txn, mode, predicted,
+                )?;
                 finish(txn, &change)
             })
             .map_err(storage)?;
