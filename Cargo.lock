@@ -8183,6 +8183,7 @@ dependencies = [
  "futures-util",
  "loro",
  "oneiron",
+ "oneiron-keystore",
  "oneiron-llm-openai",
  "oneiron-llm-own-server",
  "oneiron-organ-protocol",
