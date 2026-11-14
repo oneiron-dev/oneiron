@@ -30,15 +30,18 @@ impl DoorHooksDir {
 
     /// Materializes the directory with the hook keeping `scan`'s bounds.
     pub(super) fn materialize_with(root: &Path, scan: ScanBounds) -> Result<Self> {
-        Self::materialize_listing(root, scan, false)
+        Self::materialize_listing(root, scan, false, false)
     }
 
     /// [`Self::materialize_with`], the hook also listing each move's
-    /// changed paths when `list_paths` (a checkout push, G1-PUSH).
+    /// changed paths when `list_paths` (a checkout push, G1-PUSH), and
+    /// naming each move that does not fast-forward when `flag_rewrites` (a
+    /// push by anyone but the vault's owner, L8-51).
     pub(super) fn materialize_listing(
         root: &Path,
         scan: ScanBounds,
         list_paths: bool,
+        flag_rewrites: bool,
     ) -> Result<Self> {
         let path = root.join(EntityId::now().to_hex());
         fs::create_dir_all(&path)?;
@@ -58,6 +61,10 @@ impl DoorHooksDir {
             .replace(
                 "@DOOR_LIST_CHANGED_PATHS@",
                 if list_paths { "1" } else { "0" },
+            )
+            .replace(
+                "@DOOR_FLAG_REWRITES@",
+                if flag_rewrites { "1" } else { "0" },
             );
         fs::write(&hook, script.as_bytes())?;
         set_executable(&hook)?;

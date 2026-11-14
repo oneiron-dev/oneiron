@@ -18,9 +18,11 @@ use super::paths::{
     DOOR_BLOB_TOO_LARGE, DOOR_REFUSAL_NAME_CHARS, DOOR_VERDICT_OK, DOOR_WINDOW_POLL,
     ORIGIN_REFUSED_REF_PREFIX, serve_failed,
 };
+use super::protected_ref_confirm::{ProtectedRef, ProtectedRefDecision};
 use super::retained_reasons::{RetainedReasons, bounded_verdict_line};
 use super::secret_marks::{ReceiveSecretMarks, ReceiveSecretMarksBuilder, ReceiveSeen};
 use crate::Vault;
+use crate::consent::EffectDigest;
 use crate::credential_door::CredentialDoorService;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName};
@@ -116,11 +118,36 @@ pub(super) struct DoorWindowContext<'a> {
     pub(super) scan: ScanBounds,
     /// The host's disk floor, which a marked push's spool keeps too.
     pub(super) spill_floor: Option<&'a Arc<dyn SpillFloor>>,
+    /// The ref this push may neither delete nor rewrite: the branch the
+    /// repository's HEAD names, set only for a push by anyone but the vault's
+    /// owner, whose hook then names every branch move that does not
+    /// fast-forward (L8-51). `None` for the owner's push, and for a
+    /// repository whose HEAD names no branch.
+    pub(super) protected_ref: Option<&'a ProtectedRef>,
 }
 
 pub(super) struct DoorWindowRequest {
     pub(super) quarantine_path: Option<PathBuf>,
     pub(super) ref_updates: Vec<RefUpdate>,
+    /// The refs whose move the hook found does not descend from the ref's
+    /// current tip. The hook names them only for a push by anyone but the
+    /// vault's owner.
+    pub(super) rewritten_refs: Vec<String>,
+    /// Each existing ref the push names that is symbolic, with the ref git
+    /// moves or deletes in its place. The hook names them only for a push by
+    /// anyone but the vault's owner.
+    pub(super) symbolic_refs: Vec<(String, String)>,
+}
+
+impl DoorWindowRequest {
+    /// The ref git moves or deletes for an update that names `name`: its
+    /// referent when the hook found `name` symbolic, else `name` itself.
+    pub(super) fn moved_ref<'a>(&'a self, name: &'a str) -> &'a str {
+        self.symbolic_refs
+            .iter()
+            .find(|(symbolic, _)| symbolic == name)
+            .map_or(name, |(_, referent)| referent.as_str())
+    }
 }
 
 /// Services one door window: waits for the vetted hook, scans the quarantined
@@ -171,20 +198,26 @@ pub(super) fn serve_door_window(
     // that cannot be parsed and an extraction that cannot be read whole are
     // both unscanned bytes, so they become a published refusal rather than an
     // empty scan — and rather than an unanswered hook left blocking.
-    let mut report = match scan_window(vault, repo, &request_path, hooks, context) {
-        Ok(window) => DoorWindowReport {
-            verdict: window.verdict,
-            ref_updates: window.request.ref_updates,
-            lfs_pointers: window.lfs_pointers,
-            ref_lfs_pointers: window.ref_lfs_pointers,
-            quarantine_path: window.request.quarantine_path,
-        },
-        Err(refused) => DoorWindowReport {
-            verdict: DoorWindowVerdict::Rejected {
-                reasons: vec![refused.reason().to_owned()],
+    let (mut report, approved) = match scan_window(vault, repo, &request_path, hooks, context) {
+        Ok(window) => (
+            DoorWindowReport {
+                verdict: window.verdict,
+                ref_updates: window.request.ref_updates,
+                lfs_pointers: window.lfs_pointers,
+                ref_lfs_pointers: window.ref_lfs_pointers,
+                quarantine_path: window.request.quarantine_path,
             },
-            ..DoorWindowReport::not_invoked()
-        },
+            window.approved,
+        ),
+        Err(refused) => (
+            DoorWindowReport {
+                verdict: DoorWindowVerdict::Rejected {
+                    reasons: vec![refused.reason().to_owned()],
+                },
+                ..DoorWindowReport::not_invoked()
+            },
+            Vec::new(),
+        ),
     };
     if report.admitted() {
         // The hook is still blocked. Commit the complete operation BEFORE
@@ -192,13 +225,21 @@ pub(super) fn serve_door_window(
         // taken on this door thread; the serving thread holds that coordinator.
         // A checkout push's ref moves and changed paths go to the writer,
         // which rechecks the push's authority (G1-PUSH) and names a refusal.
+        // The owner's leave for each deletion or rewrite of the protected ref
+        // is spent there too (L8-51).
         let recorded = context
             .admission
             .ok_or_else(|| receive_pack_provenance_refused("intent has no admission"))
             .and_then(|stamp| {
                 let changes =
                     super::push_paths::checkout_changes(hooks, stamp, &report.ref_updates)?;
-                vault.record_receive_pack_intent(repo, stamp, &report, changes.as_deref())
+                vault.record_receive_pack_intent(
+                    repo,
+                    stamp,
+                    &report,
+                    changes.as_deref(),
+                    &approved,
+                )
             });
         if let Err(error) = recorded {
             report.verdict = DoorWindowVerdict::Rejected {
@@ -247,6 +288,9 @@ struct WindowScan {
     lfs_pointers: Vec<LfsPushedPointer>,
     ref_lfs_pointers: Vec<Vec<usize>>,
     verdict: DoorWindowVerdict,
+    /// The owner's leaves the intent's writer spends, one per rewrite of the
+    /// protected ref the door let pass (L8-51).
+    approved: Vec<EffectDigest>,
 }
 
 /// Reads what the hook left behind and decides on it: the ref list, the blob
@@ -275,6 +319,19 @@ fn scan_window(
     // push whose names the landing could not journal is refused whole and
     // goes unscanned; nothing about a legal batch changes.
     let mut unlandable = unlandable_ref_reasons(&request.ref_updates);
+    // The protected ref is read here too, for the same reason: refused now,
+    // the deletion or rewrite never happens and nothing it carried lands. Its
+    // refusal is laid on the scan's verdict below, so the owner is asked only
+    // about a push nothing else refuses (L8-51).
+    let protected = match context.protected_ref {
+        Some(protected) => ProtectedRefDecision::read(
+            vault,
+            protected,
+            &request,
+            context.admission.map(DoorAdmissionStamp::principal_ref),
+        )?,
+        None => ProtectedRefDecision::default(),
+    };
     let door = CredentialDoorService::new(Arc::clone(vault));
     let marks = ReceiveSecretMarksBuilder::new(
         vault,
@@ -349,11 +406,13 @@ fn scan_window(
             reasons: vec!["publication requires the landed scan".to_owned()],
         },
     };
+    let (verdict, approved) = protected.apply(vault, verdict);
     Ok(WindowScan {
         request,
         lfs_pointers,
         ref_lfs_pointers,
         verdict,
+        approved,
     })
 }
 
@@ -671,6 +730,8 @@ pub(super) fn parse_door_request(bytes: &[u8]) -> Result<DoorWindowRequest> {
         .map_err(|_| serve_failed("door request must be UTF-8".to_owned()))?;
     let mut quarantine_path = None;
     let mut ref_updates = Vec::new();
+    let mut rewritten_refs = Vec::new();
+    let mut symbolic_refs = Vec::new();
     for line in text.lines() {
         if let Some(rest) = line.strip_prefix("quarantine ") {
             if !rest.is_empty() {
@@ -678,11 +739,21 @@ pub(super) fn parse_door_request(bytes: &[u8]) -> Result<DoorWindowRequest> {
             }
         } else if let Some(rest) = line.strip_prefix("ref ") {
             ref_updates.push(parse_ref_update(rest)?);
+        } else if let Some(rest) = line.strip_prefix("rewrite ") {
+            rewritten_refs.push(rest.to_owned());
+        } else if let Some(rest) = line.strip_prefix("symref ") {
+            // A ref name holds no space (git's ref-name rules).
+            let (symbolic, referent) = rest
+                .split_once(' ')
+                .ok_or_else(|| serve_failed("door request has a malformed symref line"))?;
+            symbolic_refs.push((symbolic.to_owned(), referent.to_owned()));
         }
     }
     Ok(DoorWindowRequest {
         quarantine_path,
         ref_updates,
+        rewritten_refs,
+        symbolic_refs,
     })
 }
 
