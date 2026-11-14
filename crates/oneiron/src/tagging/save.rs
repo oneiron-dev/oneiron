@@ -251,19 +251,14 @@ pub(super) fn save_with_hint_read_in_txn(
         .filter(|link| **link != MentionLink::Tag);
         let link = match (inherited, own) {
             (None, None) => MentionLink::Tag,
-            (None, Some(kind)) => {
-                let link = linker.link(txn, kind, text, &messages[span.message], hint_read)?;
-                let link = linker.hinted(
-                    txn,
-                    link,
-                    text,
-                    message_text,
-                    span.start,
-                    span.end,
-                    hint_read,
-                )?;
-                linker.ranked(txn, link, hint_read)?
-            }
+            (None, Some(kind)) => linker.fresh_link(
+                txn,
+                kind,
+                text,
+                &messages[span.message],
+                (message_text, span.start, span.end),
+                hint_read,
+            )?,
             // A pronoun, or a label the table does not map, takes its
             // antecedent's link.
             (Some(inherited), None) => inherited.clone(),
@@ -275,9 +270,14 @@ pub(super) fn save_with_hint_read_in_txn(
                     if inherited.kind() == Some(kind) {
                         inherited.clone()
                     } else {
-                        let link =
-                            linker.link(txn, kind, text, &messages[span.message], hint_read)?;
-                        linker.ranked(txn, link, hint_read)?
+                        linker.fresh_link(
+                            txn,
+                            kind,
+                            text,
+                            &messages[span.message],
+                            (message_text, span.start, span.end),
+                            hint_read,
+                        )?
                     }
                 } else {
                     // A name that keys elsewhere than its antecedent keeps
@@ -653,6 +653,26 @@ impl<'v> Linker<'v> {
             },
             None => link,
         })
+    }
+
+    /// A fresh link for the mention `name` of `kind`, said in `message` at
+    /// `start..end` of its `text`: the cascade's link ([`Self::link`]),
+    /// narrowed by a saved identity hint ([`Self::hinted`]) and ordered by
+    /// the vector rung ([`Self::ranked`]). A mention with no antecedent is
+    /// linked here, and so is one whose antecedent is of another kind and
+    /// whose name the key misses (FIX 23953).
+    fn fresh_link(
+        &mut self,
+        txn: &mut heed::RwTxn<'_>,
+        kind: u8,
+        name: &str,
+        message: &EntityId,
+        (text, start, end): (&str, usize, usize),
+        hint_read: HintRead<'_, '_>,
+    ) -> Result<MentionLink> {
+        let link = self.link(txn, kind, name, message, hint_read)?;
+        let link = self.hinted(txn, link, name, text, start, end, hint_read)?;
+        self.ranked(txn, link, hint_read)
     }
 
     /// `link` ordered by the vector rung ([`vector::ranked_in_txn`]): a
