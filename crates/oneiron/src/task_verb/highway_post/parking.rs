@@ -168,7 +168,10 @@ impl Memory<'_> {
         // decides whether to take it, and escalates to the owner when that is
         // relevant (ARCH-0028). Its yes is a take only when L02's rule admits
         // the agent to work addressed to it; a refused take, like an ask up,
-        // stays in the owner's tray, which is the escalation.
+        // stays in the owner's tray, which is the escalation. A composed
+        // brief is never put to the agent: a model wrote it and no person
+        // has read it, so it waits in the tray for one (L8-07 APPROVAL = A,
+        // review #7818 P1).
         let mut outcome = TaskOutcome::Proposed {
             decision_ref: decision_ref.clone(),
             reason_codes: Vec::new(),
@@ -176,6 +179,7 @@ impl Memory<'_> {
         let mut related = Vec::new();
         if let (Some(decisions), TaskAssignee::AgentDef { agent_def_ref }) =
             (decisions, post.assignee)
+            && post.brief.composed.is_none()
             && self.verify_owner().is_err()
         {
             let state = serde_json::json!({
