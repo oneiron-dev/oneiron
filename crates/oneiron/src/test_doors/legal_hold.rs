@@ -57,7 +57,8 @@ pub fn open_clone(vault: &Vault, hold_id: EntityId) -> Result<Vec<OpenedHoldComp
     for entry in fs::read_dir(&dir)? {
         let name = entry?.file_name().to_string_lossy().into_owned();
         if let Some(stem) = name.strip_suffix(".clone") {
-            files.push((name, stem.to_owned()));
+            let stem = stem.to_owned();
+            files.push((name, stem));
         }
     }
     files.sort();
@@ -344,7 +345,7 @@ fn component_family(component: SourceComponent) -> &'static str {
         SourceComponent::StoredLedger => "gate_decision:v0:",
         SourceComponent::OpenedMessagePack => "gate_decision:opened_messagepack",
         SourceComponent::RetentionContext => "gate_decision:retention_context:v1:",
-        SourceComponent::ClaimRefs => "gate_decision_claim_refs:v0:",
+        SourceComponent::BundleRefs => "gate_decision_claim_refs:v0:",
         SourceComponent::PendingScrub => "gate_decision:pending_scrub:v1:",
         // Live captures never land in a hold store, but the match is total.
         SourceComponent::LiveSessionBody => "live_session:body",
