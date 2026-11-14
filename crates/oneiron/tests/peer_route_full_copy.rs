@@ -147,8 +147,8 @@ fn a_withdrawn_mark_ranks_by_election_again() {
 
 #[test]
 fn a_repeated_mark_writes_nothing() {
-    let (fixture, _dir) = fixture();
-    let Fixture { vault, local, .. } = fixture;
+    let (marked, _dir) = fixture();
+    let Fixture { vault, local, .. } = marked;
     assert!(
         vault
             .declare_full_copy(true)
