@@ -39,24 +39,8 @@ impl ArchiveOutputRef {
     }
 }
 
-/// Coordinates use the axis order in the pinned definition. Cluster cells are
-/// deliberately unnamed and cannot mix with categorical cells.
-#[derive(
-    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ArchiveCell {
-    Axes { bins: Vec<String> },
-    Cluster { index: usize },
-}
-
-/// The scoring definition shared by every output in this campaign.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ArchiveQualityMetric {
-    pub metric_id: String,
-    pub revision: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::autoreason_campaign::archive::{ArchiveCell, ArchiveQualityMetric};
 
 /// Immutable campaign descriptor. Its content hash binds every receipt to the
 /// task, human goal revision, quality ruler, proposal and sample outputs.

@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, test } from "bun:test";
 import { createPublicKey, generateKeyPairSync, verify } from "node:crypto";
 import { encode } from "@msgpack/msgpack";
 import { blake3 } from "@noble/hashes/blake3";
@@ -6,7 +6,7 @@ import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic, type PairedActor } from "./support/engine.ts";
 import { PublicHttpClient, PublicHttpError, WsClient, credentialParts } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
-import { defineFile, secretHex } from "./support/run.ts";
+import { defineFile, expect, secretHex } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -349,7 +349,7 @@ async function fed02Accept(actor: PairedActor, vaultId: string, role: "owner" | 
   return receipt;
 }
 
-/* FEDERATION-02 — decision: WRITTEN (partial).
+/* FEDERATION-02 — covers part of its promise (the runner sets its status).
  * Promise: two live Owners jointly configure a veto policy, an Owner objection survives restart, another Owner cannot clear it, and an Admin cannot object.
  * Doors: conversations.create, witness, get, people.create, self.actor, shape.plan/apply/read, members.invitations/accept/projection, shared.policy.get/propose/answer/change/changes, shared.propose_delete/object/withdraw_objection/execute/started/deletion/receipt, shared.owner_change_wait.get, receipts.get, restart.
  * Unproved: transfer/remove/erase veto journeys and the four-act 604800 default (transfer/remove ship at wait 0 with no veto; needs an engine ruling or fix, no new door).
@@ -1057,7 +1057,7 @@ async function fed04GuestSocket(
   }
 }
 
-/* FEDERATION-04 — decision: WRITTEN (partial).
+/* FEDERATION-04 — covers part of its promise (the runner sets its status).
  * Promise: a live Connect guest can fetch its signed scoped envelope;
  *   revocation reports that copies are not recallable and stops the guest's
  *   next fetch and proposal.

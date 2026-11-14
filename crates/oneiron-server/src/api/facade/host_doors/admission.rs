@@ -202,6 +202,11 @@ pub(in crate::api::facade) fn door_admits(
         Proof::CredentialHolder => crate::api::facade::credential_doors::holder(auth).map(drop),
         Proof::SlideReviewer => slide_reviewer(server, auth).map(drop),
         Proof::ArtifactAsker => artifact_asker(server, auth).map(drop),
+        // An image edit (L4-15): the owner, or a person or agent on its own slip, whose lane the
+        // engine reads the artifact through.
+        Proof::ImageEditor => {
+            crate::api::facade::image_edit_doors::image_editor(server, auth).map(drop)
+        }
         Proof::DiaryReader => diary_reader(server, auth, verb).map(drop),
         Proof::DecisionHolder => {
             crate::api::facade::decision_ask_doors::holder(auth, verb).map(drop)
