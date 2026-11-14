@@ -3541,7 +3541,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/constants.rs` | src | s | 130 crate-vis | — | — |
 | `src/gate/consult_fanout_values.rs` | src | s | 4 struct | ConsultFanOutPolicy, ConsultFanOutRate, ConsultFanOutScope, TaskCreateRateLimit | — |
 | `src/gate/curator_proposal.rs` | src | s | 1 crate-vis | — | The curator finding predicate used by gate policy |
-| `src/gate/decision.rs` | src | s | 23 crate-vis | — | — |
+| `src/gate/decision.rs` | src | s | 25 crate-vis | — | — |
 | `src/gate/decode/decode_class_policy.rs` | src | s | 2 crate-vis | — | `wait_policy` and `act_policy` row parsers |
 | `src/gate/decode/decode_docedit_resource.rs` | src | s | 1 crate-vis | — | Strict three-field document resource policy row decoder (FIX 10590) |
 | `src/gate/decode/decode_manifest.rs` | src | m | 9 crate-vis | — | Manifest envelope plus DecodedPolicyManifest assembly |
@@ -8385,6 +8385,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/can_verb_gate.rs` | test | m | — | — | `can({verb})`: one verb's gate for one actor (FIX [UI-GATE-PREVIEW] phases 1 and 2; GENUI-WIRE-GAPS section… |
 | `tests/cb_oracle_common/mod.rs` | test | s | — | — | Shared fixtures for the split Context Board oracle files |
 | `tests/change_actor_attribution.rs` | test | m | — | — | Who made a change, on the reads the app shows changes from (FIX [UI-GATE-PREVIEW] phase 3; GENUI-WIRE-GAPS… |
+| `tests/charter_citation.rs` | test | s | — | — | Census L8-64: a gate receipt that a connector charter decided cites the charter stamp behind it |
 | `tests/check_in/fixture.rs` | test | s | 18 crate-vis | — | The P2.2 check-in tests' shared fixture (`check_in_pending_handle.rs`, `check_in_rung_waits.rs`): a vault on… |
 | `tests/check_in_fanout_modes.rs` | test | s | — | — | ROLES-CHECKIN PR 1 (ARCH-0082 #build): fan-out admission is the first caller of check-in, and the rename… |
 | `tests/check_in_ladder.rs` | test | m | — | — | ROLES-CHECKIN P2.2, piece 2c (ARCH-0082 #ladder; Engine ruling P22-SHAPE Q3, Q4 and Q9 = A): the ladder from… |

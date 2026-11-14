@@ -42806,7 +42806,7 @@
      "path": "src/gate/decision.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 25
      }
     },
     {
@@ -101330,6 +101330,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/charter_citation.rs",
+     "purpose": "Census L8-64: a gate receipt that a connector charter decided cites the charter stamp behind it",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/check_in/fixture.rs",
      "purpose": "The P2.2 check-in tests' shared fixture (`check_in_pending_handle.rs`, `check_in_rung_waits.rs`): a vault on…",
      "surface": {
@@ -106392,7 +106400,7 @@
    "over_bar": 278,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7536,
-   "test_files": 1259
+   "test_files": 1260
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -148282,6 +148290,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/artifact_pinned_document_cache.rs",
+     "purpose": "A pinned public code bundle's documents revalidate on every load, so a policy change reaches a browser that…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -149608,7 +149624,7 @@
    "over_bar": 62,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1869,
-   "test_files": 241
+   "test_files": 242
   },
   "oneiron-skill-attribution": {
    "files": [
