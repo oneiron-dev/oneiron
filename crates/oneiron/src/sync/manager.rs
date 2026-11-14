@@ -63,6 +63,7 @@ pub(crate) use self::pending_mirror::{discard_window_mirrors_in_txn, window_owes
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::time::{Duration, Instant};
 
 use super::bridge::{Materializer, OutboundSink};
 use super::schema::create_window_doc;
@@ -76,6 +77,10 @@ use super::window_rows::REMAT_WINDOW_MARKER;
 use super::window_rows::{WINDOW_UPDATE, WindowUpdateKey};
 use crate::Vault;
 use crate::error::{Error, Result, SyncError};
+
+/// How often the erasure sweep's drain looks whether a window's issued
+/// handles have dropped ([`WindowManager::while_window_drained_closed`]).
+const SWEEP_DRAIN_POLL: Duration = Duration::from_millis(5);
 
 /// Production registry + recovery orchestrator for window Docs.
 ///
@@ -448,6 +453,100 @@ impl WindowManager {
         f: impl FnOnce() -> T,
     ) -> Option<T> {
         let registry = self.windows.lock().ok()?;
+        self.while_unregistered_window_closed(registry, key, f)
+    }
+
+    /// The erasure sweep's handoff (ARCH-0038 #housekeeping-sla-open, census
+    /// L9-41): [`while_window_closed`](Self::while_window_closed), after the
+    /// manager first takes a registered window from its holders. While it
+    /// waits, no new handle to the window is issued. Once the handles issued
+    /// before have dropped, within `bound`, the window is persisted and
+    /// deregistered as [`unload_window`](Self::unload_window) does, and then
+    /// held closed through `f`, with no step between in which an open could
+    /// register it again. A caller that asks for the window meanwhile waits,
+    /// then reads what `f` wrote.
+    ///
+    /// A window held by short, overlapping calls (one sync frame each) is
+    /// registered at almost every pass, so without this the probe would
+    /// defer it on each one, past the erasure deadline.
+    ///
+    /// `None` without running `f`, as the probe answers, when a handle is
+    /// still held at `bound` (the window stays registered, and its holders
+    /// keep it as before), when its persist fails (it stays registered and
+    /// observed), or when the probe refuses the key. A holder that asks for
+    /// the same window again while it holds one waits until `bound` at most.
+    pub(crate) fn while_window_drained_closed<T>(
+        &self,
+        key: &WindowKey,
+        bound: Duration,
+        f: impl FnOnce() -> T,
+    ) -> Option<T> {
+        let registry = self.lock_registry_settled(key);
+        let Some(window) = registry.get(key).map(Arc::clone) else {
+            return self.while_unregistered_window_closed(registry, key, f);
+        };
+        // The transition mark keeps `window`/`open_window` from issuing a new
+        // handle while the issued ones drop, as an unload's persist does.
+        let draining = self.transition.close(key)?;
+        drop(registry);
+        let deadline = Instant::now() + bound;
+        // The registry's own `Arc` and this one.
+        while Arc::strong_count(&window) > 2 {
+            if Instant::now() >= deadline {
+                tracing::warn!(
+                    window = %key,
+                    "sweep: window still held at the drain bound — deferred"
+                );
+                return None;
+            }
+            std::thread::sleep(SWEEP_DRAIN_POLL);
+        }
+        // Persist BEFORE deregistering, while observers still cover the doc.
+        if let Err(error) = window.persist_state(&self.vault) {
+            tracing::warn!(
+                window = %key,
+                kind = ?error.kind(),
+                "sweep: drained window not persisted — deferred"
+            );
+            return None;
+        }
+        let mut registry = self.lock_registry();
+        let registered = registry
+            .remove(key)
+            .expect("window present under its transition mark");
+        drop(registered);
+        drop(window);
+        // From the transition mark straight into the sweep fence, under the
+        // registry lock: no open registers the window between them. An
+        // orphaned handle a discard left still defers it, as in the probe.
+        let retained = {
+            let mut issued = self
+                .issued_handles
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            Self::prune_issued_handles_locked(&mut issued, key)
+        };
+        let closed = if retained {
+            None
+        } else {
+            self.sweep_fence.close(key)
+        };
+        drop(draining);
+        drop(registry);
+        let closed = closed?;
+        let result = f();
+        drop(closed);
+        Some(result)
+    }
+
+    /// [`while_window_closed`](Self::while_window_closed) under the registry
+    /// lock `registry` the caller took.
+    fn while_unregistered_window_closed<T>(
+        &self,
+        registry: MutexGuard<'_, HashMap<WindowKey, Arc<LoadedWindow>>>,
+        key: &WindowKey,
+        f: impl FnOnce() -> T,
+    ) -> Option<T> {
         if registry.contains_key(key) || self.transition.holds(key) {
             return None;
         }

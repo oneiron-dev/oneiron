@@ -12,7 +12,7 @@
 use super::types::OutboundEffectResult;
 use crate::Vault;
 use crate::connector_key::{
-    self, ConnectorKeyStatus, ConnectorSpendBasis, ConnectorSpendEstimate, EffectorBudgetCharge,
+    self, ConnectorSpendBasis, ConnectorSpendEstimate, EffectorBudgetCharge,
     EffectorBudgetChargeOutcome, EffectorBudgetDebit, EffectorBudgetOnExhaust,
     EffectorSpendReservationRow, SpendReserve,
 };
@@ -272,16 +272,18 @@ pub(super) fn charge_once(
             on_exhaust,
             mut charge,
         } => {
-            if on_exhaust == EffectorBudgetOnExhaust::Suspend {
-                connector_key::suspend_connector_key_in_txn(
-                    &vault.store,
-                    wtxn,
-                    &target.key_id,
-                    &target.key,
-                    connector_key::budget_exhausted_reason(&location),
-                    now_ms,
-                )?;
-                charge.read.status = ConnectorKeyStatus::Suspended;
+            if on_exhaust == EffectorBudgetOnExhaust::Suspend
+                && let connector_key::SuspendAdmission::Suspended(suspended) =
+                    connector_key::suspend_connector_key_in_txn(
+                        &vault.store,
+                        wtxn,
+                        &target.key_id,
+                        &target.key,
+                        connector_key::SuspendCause::BudgetExhausted(&location),
+                        now_ms,
+                    )?
+            {
+                charge.read.status = suspended.status;
             }
             (charge, true)
         }

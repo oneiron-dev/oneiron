@@ -31,6 +31,9 @@ impl PipelineBuilder<'_> {
         if let Some(project_id) = self.project_id_filter.as_deref() {
             crate::codebase::validate_project_id(project_id)?;
         }
+        if self.eval {
+            self.refuse_nondeterminism()?;
+        }
         // Scoped search already denies before counting candidates. Also stop
         // resolved-deny builders before index trust checks, host expansion,
         // or telemetry work; the gate has already validated their request.
@@ -343,7 +346,9 @@ impl PipelineBuilder<'_> {
         let mut replay_inputs = attempt.replay_inputs;
         let mut critical = attempt.critical;
 
-        self.flush_ppr_cache_writes(&deferred_ppr_cache_writes)?;
+        if !self.eval {
+            self.flush_ppr_cache_writes(&deferred_ppr_cache_writes)?;
+        }
 
         let mut claim_bodies = HashMap::new();
         let mut claims_suppressed = 0_usize;
@@ -399,7 +404,9 @@ impl PipelineBuilder<'_> {
                     },
                 )?;
                 retried = true;
-                self.flush_ppr_cache_writes(&retry.deferred_ppr_cache_writes)?;
+                if !self.eval {
+                    self.flush_ppr_cache_writes(&retry.deferred_ppr_cache_writes)?;
+                }
                 // A retry cache hit must not erase an earlier miss in this run.
                 merge_retrieval_diagnostics(&mut diagnostics, retry.diagnostics);
                 text_exhausted = retry.text_exhausted;
@@ -546,7 +553,7 @@ impl PipelineBuilder<'_> {
             .session
             .is_none_or(crate::off_record::SessionRetrievalTelemetry::writes_to_base)
             && self.read.holds_room_rows();
-        let capture = capture_enabled && !withheld;
+        let capture = capture_enabled && !withheld && !self.eval;
         let telemetry_run_id = if !capture {
             if let Some(session) = self.session {
                 if capture_enabled {
