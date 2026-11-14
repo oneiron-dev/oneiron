@@ -6,8 +6,8 @@
 //! resolving.
 use super::{
     Argon2Cost, Deserialize, EscrowAddWarning, EscrowRetirement, HybridPublicKey, Kek, Named,
-    Passphrase, Purpose, Result, SealKey, SealParams, Serialize, SideTable, StoredWrap, SysRng,
-    VaultDataKey, VaultKeyWrapKind, Zeroizing, refused, seal, side_table,
+    Passphrase, Purpose, RecoveryPreset, Result, SealKey, SealParams, Serialize, SideTable,
+    StoredWrap, SysRng, VaultDataKey, VaultKeyWrapKind, Zeroizing, refused, seal, side_table,
 };
 #[doc(hidden)]
 pub(super) use oneiron_records::world_keys::vault_key::state::{
@@ -25,6 +25,8 @@ pub(super) const WRAPS: SideTable<String, StoredWrap, Named> =
 pub(super) struct VaultKeyState {
     pub(super) commitment: [u8; 32],
     pub(super) created_at: u64,
+    /// The owner's recovery preset: which wraps the key may carry.
+    pub(super) recovery: RecoveryPreset,
 }
 
 /// A passkey's PRF output as a KEK: copied once from the caller's guard into
@@ -60,6 +62,7 @@ pub(super) fn seal_wrap(
     let seal_key = match (kind, secret) {
         (VaultKeyWrapKind::Device { .. }, WrapSecret::Kek(kek)) => SealKey::DeviceKeystore(kek),
         (VaultKeyWrapKind::Passkey { .. }, WrapSecret::Kek(kek)) => SealKey::Passkey(kek),
+        (VaultKeyWrapKind::Sheet, WrapSecret::Kek(kek)) => SealKey::SymmetricKek(kek),
         (VaultKeyWrapKind::Password, WrapSecret::Passphrase(passphrase, cost)) => {
             SealKey::Passphrase {
                 passphrase,

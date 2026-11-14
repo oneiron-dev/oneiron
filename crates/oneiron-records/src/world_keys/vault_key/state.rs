@@ -110,6 +110,7 @@ pub fn open_wrap(
     let open_key = match (&stored.info.kind, secret) {
         (VaultKeyWrapKind::Device { .. }, UnlockSecret::Kek(kek)) => OpenKey::DeviceKeystore(kek),
         (VaultKeyWrapKind::Passkey { .. }, UnlockSecret::Kek(kek)) => OpenKey::Passkey(kek),
+        (VaultKeyWrapKind::Sheet, UnlockSecret::Kek(kek)) => OpenKey::SymmetricKek(kek),
         (VaultKeyWrapKind::Password, UnlockSecret::Passphrase(passphrase)) => {
             OpenKey::Passphrase(passphrase)
         }

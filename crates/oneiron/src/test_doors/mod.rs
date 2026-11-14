@@ -4,12 +4,16 @@
 //! ... --test <stem>`); never behind a cargo feature, so no `--all-features`
 //! build reaches them. Hidden; never API.
 
+pub mod advisory_rate_window;
 pub mod agent_definition_scans;
 pub mod approval_target_round_trip;
 pub mod archive_import;
 pub mod authority_stored_damage;
 pub mod authority_view_grant;
 pub mod authority_world_undo;
+pub mod board_child_done;
+pub mod board_task_wakes;
+pub mod builtin_pack_seed;
 pub mod callable_skill;
 pub mod campaign_opt_out_line;
 pub mod check_in;
@@ -33,6 +37,7 @@ pub mod dag_append;
 pub mod derivation_floor;
 pub mod derive;
 pub mod derive_verbs;
+pub mod disclosure_word_sources;
 pub mod dreamer_attempt_binding;
 pub mod dreamer_stage_line;
 pub mod esign_commitments;

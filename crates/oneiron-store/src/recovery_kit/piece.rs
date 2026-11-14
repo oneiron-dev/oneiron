@@ -325,6 +325,7 @@ fn encode_home(home: Option<&PieceHome>) -> [u8; HOME_LEN] {
         }
         Some(PieceHome::TrustedPerson) => bytes[0] = 4,
         Some(PieceHome::SecurityKey) => bytes[0] = 5,
+        Some(PieceHome::Passkey) => bytes[0] = 6,
     }
     bytes
 }
@@ -355,6 +356,7 @@ fn decode_home(bytes: &[u8]) -> Result<Option<PieceHome>, KitError> {
         })),
         (4, 0) if no_id => Some(PieceHome::TrustedPerson),
         (5, 0) if no_id => Some(PieceHome::SecurityKey),
+        (6, 0) if no_id => Some(PieceHome::Passkey),
         _ => return Err(KitError::InvalidPiece),
     };
     Ok(home)

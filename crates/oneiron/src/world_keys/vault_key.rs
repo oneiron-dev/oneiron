@@ -9,7 +9,9 @@
 //! - a vault password: Argon2id over the passphrase;
 //! - a passkey: the host hands in the WebAuthn PRF output as the KEK;
 //! - escrow: a hybrid capsule (X25519 + ML-KEM-1024) to a recovery or transfer
-//!   key, the one wrap that crosses a public-key boundary.
+//!   key, the one wrap that crosses a public-key boundary;
+//! - the printed recovery sheet: a KEK derived from the sheet's random code,
+//!   issued by the "Nobody but me" recovery preset (`recovery_preset`).
 //!
 //! A managed node's supervisor unwraps the key itself and hands it to the vault
 //! process at boot ([`Vault::admit_vault_key`]); that wrap stays with the node.
@@ -37,7 +39,7 @@ use self::state::{
     presented_escrow, recipient_fingerprint, seal_wrap, wrap_digest,
 };
 use oneiron_crypto::backup::{KeyHeader, KeyHeaderWrap as StoredWrap};
-pub use oneiron_crypto::backup::{VaultKeyWrapInfo, VaultKeyWrapKind};
+pub use oneiron_crypto::backup::{RecoveryPreset, VaultKeyWrapInfo, VaultKeyWrapKind};
 use oneiron_crypto::{
     Argon2Cost, Envelope, HybridPublicKey, HybridSecretKey, Kek, OpenKey, OpenPolicy, Passphrase,
     Purpose, SealKey, SealParams, SuiteId, seal,
@@ -56,6 +58,8 @@ pub(super) use oneiron_store::vault_page_seal::WrapDigest;
 
 mod escrow;
 pub(super) mod kit;
+mod kit_passkey;
+mod recovery_preset;
 pub(super) mod restore;
 mod state;
 mod storage;
@@ -65,8 +69,14 @@ pub use self::escrow::{
     EscrowAddWarning, EscrowAdded, EscrowRetirement, ResealedEscrowCapsule, VaultKeyEscrowCapsule,
     reseal_escrow_capsule,
 };
+pub(super) use self::recovery_preset::EscrowOrigin;
+pub use self::recovery_preset::{RecoveryPresetAnyTwoChange, RecoveryPresetChange, RecoverySheet};
+use self::recovery_preset::{
+    admit_delivered_key, admit_escrow_opened_key, admit_presented_capsule, admit_wrap,
+};
 pub use self::vocabulary::{
-    NewVaultKeyWrap, VaultKeyStatus, VaultKeyUnlock, escrow_recipient, passkey_prf_input,
+    KitPasskey, NewVaultKeyWrap, VaultKeyStatus, VaultKeyUnlock, escrow_recipient,
+    passkey_prf_input,
 };
 
 /// The vault key as it rests: its commitment and every wrap's sealed envelope,
@@ -78,14 +88,18 @@ pub use self::vocabulary::{
 pub(crate) struct CarriedVaultKey(KeyHeader);
 
 impl CarriedVaultKey {
-    fn new(commitment: [u8; 32], wraps: Vec<StoredWrap>) -> Self {
-        Self(KeyHeader { commitment, wraps })
+    fn new(commitment: [u8; 32], recovery: RecoveryPreset, wraps: Vec<StoredWrap>) -> Self {
+        Self(KeyHeader {
+            commitment,
+            wraps,
+            recovery,
+        })
     }
 
     /// The vault key named by `commitment` with no wrap yet: what the mirror
     /// of a vault under a delivered key holds before its first wrap.
     pub(super) fn unwrapped(commitment: [u8; 32]) -> Self {
-        Self::new(commitment, Vec::new())
+        Self::new(commitment, RecoveryPreset::Standard, Vec::new())
     }
 
     /// The key header a sealed artifact carries, as its wire form.
@@ -105,6 +119,17 @@ impl CarriedVaultKey {
     /// The commitment naming the vault key.
     pub(crate) fn commitment(&self) -> &[u8; 32] {
         &self.0.commitment
+    }
+
+    /// Refuses a key an escrow recipient opened (a carried escrow wrap but
+    /// the world kit's, or a presented capsule) when this header, the signed
+    /// one of the artifact being opened, carries "Nobody but me" (review of
+    /// #7766, rounds 1 and 2): the refusal binds to every artifact the key
+    /// opens, not only to the one it was unlocked from. The data key itself
+    /// does not change at the switch; this is the engine's refusal, not a
+    /// cryptographic revocation of what a recipient already has.
+    pub(crate) fn admit_escrow_opened_key(&self) -> Result<()> {
+        admit_escrow_opened_key(self.0.recovery)
     }
 
     /// Each carried wrap's public facts: what a host may unlock with.
@@ -134,7 +159,10 @@ impl CarriedVaultKey {
     /// The vault key a carried wrap opens to under `unlock`, and the digest
     /// of every carried wrap that opens. Each wrap `unlock` may open is
     /// tried: while a wrap change commits, a page-seal mirror carries a wrap
-    /// and its replacement under one id (OF-570).
+    /// and its replacement under one id (OF-570). A presented escrow capsule
+    /// is refused when the header names "Nobody but me": the data key does
+    /// not rotate, so a capsule kept from before the preset would open what
+    /// was sealed under it.
     pub(super) fn open_recording(
         &self,
         vault_id: &[u8; 32],
@@ -225,8 +253,15 @@ impl CarriedVaultKey {
                 capsule,
                 secret,
             } => {
+                admit_presented_capsule(self.0.recovery)?;
                 let presented = presented_escrow(label, capsule)?;
                 attempt(&presented, &UnlockSecret::Hybrid(secret));
+            }
+            VaultKeyUnlock::Sheet(sheet) => {
+                let secret = UnlockSecret::Kek(sheet.kek(vault_id));
+                for stored in named(VaultKeyWrapKind::Sheet) {
+                    attempt(stored, &secret);
+                }
             }
             VaultKeyUnlock::Kit { .. } => {
                 return kit::open_kit(vault_id, self, unlock).map(|key| (key, Vec::new()));
@@ -326,6 +361,7 @@ impl Vault {
                     &VaultKeyState {
                         commitment,
                         created_at,
+                        recovery: RecoveryPreset::Standard,
                     },
                 )
             })?,
@@ -357,7 +393,11 @@ impl Vault {
             .into_iter()
             .map(|(_, stored)| stored)
             .collect();
-        Ok((!wraps.is_empty()).then_some(CarriedVaultKey::new(state.commitment, wraps)))
+        Ok((!wraps.is_empty()).then_some(CarriedVaultKey::new(
+            state.commitment,
+            state.recovery,
+            wraps,
+        )))
     }
 
     /// What a sealed vault's page-seal mirror holds while a wrap change
@@ -377,7 +417,11 @@ impl Vault {
             .map(|(_, stored)| stored)
             .collect();
         wraps.extend(adding.cloned());
-        Ok(CarriedVaultKey::new(state.commitment, wraps))
+        Ok(CarriedVaultKey::new(
+            state.commitment,
+            state.recovery,
+            wraps,
+        ))
     }
 
     /// Whether this vault holds one of `wraps` as it is, envelope for
@@ -433,13 +477,15 @@ impl Vault {
     /// Seals the held vault data key to `recipient` as escrow wrap `label`, in
     /// the caller's transaction, replacing a wrap of that label. `None` when
     /// the vault has no data key; refused when it has one this handle does
-    /// not hold, so the old wrap never outlives the change. A sealed vault's
-    /// mirror is staged first: the caller begins `transition` before its
-    /// transaction and finishes it after the commit ([`WrapTransition`]).
+    /// not hold, so the old wrap never outlives the change, and when the
+    /// recovery preset rules out an escrow wrap from `origin`. A sealed
+    /// vault's mirror is staged first: the caller begins `transition` before
+    /// its transaction and finishes it after the commit ([`WrapTransition`]).
     pub(super) fn put_vault_key_escrow_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         transition: &WrapTransition<'_>,
+        origin: EscrowOrigin,
         label: &str,
         recipient: &HybridPublicKey,
     ) -> Result<Option<VaultKeyWrapInfo>> {
@@ -461,6 +507,7 @@ impl Vault {
         let kind = VaultKeyWrapKind::Escrow {
             label: label.to_owned(),
         };
+        admit_wrap(state.recovery, &kind, origin)?;
         self.refuse_retired_escrow_in_txn(txn, &kind)?;
         let fingerprint = recipient_fingerprint(recipient);
         let warnings = self.escrow_warnings_in_txn(txn, label, &fingerprint)?;
@@ -513,7 +560,8 @@ impl Vault {
     /// sealed vault's page-seal mirror. The change's last step, the mirror
     /// rewritten from the committed wraps, is the caller's ([`WrapTransition`]).
     /// An escrow wrap records its recipient's fingerprint and answers what
-    /// the add warns of (FIX 2857).
+    /// the add warns of (FIX 2857). The recovery preset is read in the same
+    /// transaction, and a kind it rules out adds nothing.
     fn commit_vault_key_wrap(
         &self,
         kind: VaultKeyWrapKind,
@@ -538,6 +586,7 @@ impl Vault {
             if state.commitment != commitment {
                 return Err(refused("this handle holds another vault key"));
             }
+            admit_wrap(state.recovery, &kind, EscrowOrigin::Recipient)?;
             let warnings = match (&kind, secret) {
                 (VaultKeyWrapKind::Escrow { label }, WrapSecret::Hybrid(recipient)) => {
                     let fingerprint = recipient_fingerprint(recipient);
