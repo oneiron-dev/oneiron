@@ -21,8 +21,9 @@ subcommand reads files the job wrote:
   census ROOT                     the lib-test quarantine gates in a tree (TSV)
   budget-filter SET [--metadata METADATA]
                                   the budget set's nextest filter (none() when
-                                  the set is empty), over the workspace's
-                                  packages only
+                                  no row is left): with the metadata, only the
+                                  rows whose package and test target a
+                                  selection builds
   summary ...                     the night's verdict: prints the one summary
                                   line and writes summary.json, summary.txt,
                                   results-store.json, flake-row.json,
@@ -604,18 +605,30 @@ def read_budget_set(path: Path) -> list[dict[str, str]]:
     return rows
 
 
-def budget_filter(rows: list[dict[str, str]], metadata: dict | None = None) -> str:
+def budget_filter(
+    rows: list[dict[str, str]], metadata: dict | None = None, always_excluded: tuple[str, ...] = ALWAYS_EXCLUDED
+) -> str:
     """One nextest filter for every test the budget set names (none() for an empty set).
 
-    With the workspace's metadata, a row whose package is not a workspace
-    member is left out: nextest refuses a package() that matches no package,
-    and one stale row must not stop every verdict run.
+    With the workspace's metadata, the filter keeps only the rows a selection
+    can run: the package is a workspace member outside `always_excluded`, and
+    it has the row's test target (or a lib, for a lib row). nextest refuses a
+    package() or binary() that matches nothing, and one stale row must not
+    stop every verdict run; such a row is named as not run in the summary.
     """
-    members = {package["name"] for package in workspace_packages(metadata)} if metadata else None
+    packages = (
+        {p["name"]: p for p in workspace_packages(metadata) if p["name"] not in always_excluded} if metadata else None
+    )
     terms = []
     for row in rows:
-        if members is not None and row["package"] not in members:
-            continue
+        if packages is not None:
+            package = packages.get(row["package"])
+            if package is None:
+                continue
+            if row["kind"] == "test" and row["binary"] not in integration_tests(package):
+                continue
+            if row["kind"] == "lib" and not any("lib" in target["kind"] for target in package["targets"]):
+                continue
         binary = f" & binary(={row['binary']})" if row["kind"] == "test" else ""
         if row["match"] == "^":
             test = f"/^{re.escape(row['test'])}/"

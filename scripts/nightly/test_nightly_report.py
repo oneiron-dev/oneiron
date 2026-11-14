@@ -631,16 +631,35 @@ class BudgetSetTest(unittest.TestCase):
         )
         self.assertEqual(nightly_report.budget_filter([]), "none()")
 
-    def test_a_row_whose_package_is_not_in_the_workspace_is_left_out_of_the_filter(self) -> None:
-        metadata = {**METADATA, "workspace_members": ["oneiron 0.1.0", "oneiron-bench 0.1.0"]}
-        self.assertEqual(
-            nightly_report.budget_filter(self.rows, metadata).count("package(oneiron-testkit)"), 0, "not a member"
-        )
-        self.assertIn("package(oneiron-bench)", nightly_report.budget_filter(self.rows, metadata))
+    def test_the_filter_keeps_only_rows_a_selection_can_run(self) -> None:
+        # nextest refuses a package() or binary() that matches nothing (toy night job 1114-133136-ec54: exit 94,
+        # "operator didn't match any binary names")
+        def ids(metadata: dict) -> list[str]:
+            kept = nightly_report.budget_filter(self.rows, metadata)
+            return [row["id"] for row in self.rows if nightly_report.budget_filter([row]) in kept]
+
+        self.assertEqual(ids(METADATA), ["grant-rows", "long-replay", "alpha-props", "kit-bounded"], "bench left out")
+        no_testkit = {**METADATA, "workspace_members": ["oneiron 0.1.0", "oneiron-server 0.1.0"]}
+        self.assertEqual(ids(no_testkit), ["grant-rows", "long-replay", "alpha-props"], "not a member")
+        no_alpha = json.loads(json.dumps(METADATA))
+        no_alpha["packages"][0]["targets"] = [t for t in no_alpha["packages"][0]["targets"] if t["name"] != "alpha"]
+        self.assertEqual(ids(no_alpha), ["grant-rows", "long-replay", "kit-bounded"], "no such test target")
+        no_lib = json.loads(json.dumps(METADATA))
+        no_lib["packages"][0]["targets"] = [t for t in no_lib["packages"][0]["targets"] if t["kind"] != ["lib"]]
+        self.assertEqual(ids(no_lib), ["alpha-props", "kit-bounded"], "no lib")
+        empty = {**METADATA, "workspace_members": ["oneiron-bench 0.1.0"]}
+        self.assertEqual(nightly_report.budget_filter(self.rows, empty), "none()")
         printed = io.StringIO()
         with contextlib.redirect_stdout(printed):
-            nightly_report.main(["budget-filter", str(self.base / "budget-set.tsv")])
-        self.assertEqual(printed.getvalue().strip(), nightly_report.budget_filter(self.rows))
+            nightly_report.main(
+                [
+                    "budget-filter",
+                    str(self.base / "budget-set.tsv"),
+                    "--metadata",
+                    str(write(self.base / "m.json", json.dumps(METADATA))),
+                ]
+            )
+        self.assertEqual(printed.getvalue().strip(), nightly_report.budget_filter(self.rows, METADATA))
 
     def test_a_budget_set_with_an_unknown_match_a_missing_column_or_a_repeated_id_is_refused(self) -> None:
         header, first = BUDGET_SET.splitlines()[:2]
