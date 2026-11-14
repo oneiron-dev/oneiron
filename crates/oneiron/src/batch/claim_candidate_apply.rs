@@ -61,6 +61,22 @@ pub(super) fn apply_claim_candidate(
             "world default subset must be authored by its subject agent",
         ));
     }
+    // ARCH-0067 #tiers: a grant is the owner's. Another writer's proposal
+    // would count once a holder approved it under a review Grant, with no
+    // owner decision on the grant (FIX [WORLD-ACCESS-GRANT-HOLDER-SETTLE]).
+    if candidate.predicate()
+        == crate::write_envelope::world_access_predicates::PREDICATE_WORLD_ACCESS_ALLOWED_SET
+        && !crate::policy_model::is_live_vault_owner_for_store_in_txn(
+            store,
+            store.privacy_posture,
+            wtxn,
+            &actor.entity_ref(),
+        )?
+    {
+        return Err(Error::InvalidClaimBody(
+            "world access grant must be written by a vault owner",
+        ));
+    }
     if let crate::write_envelope::claim_body::ClaimSubject::Entity(subject_id) = subject
         && !crate::ports::EntityStoreRead::port_entity_present(store, wtxn, &subject_id)?
     {
@@ -99,6 +115,11 @@ pub(super) fn apply_claim_candidate(
     }
     let envelope = &resigned;
     let body = candidate.into_claim_body(envelope, default_facet)?;
+    if crate::write_envelope::world_access_predicates::is_world_access_tier_predicate(
+        &body.predicate,
+    ) {
+        crate::claim::world_access::validate_world_access_claim(&body)?;
+    }
     // The ClaimOf weight the claim is born with: a signed initial-weight
     // entry, else the default. Both machine-history fold entry points seed
     // from this same value.

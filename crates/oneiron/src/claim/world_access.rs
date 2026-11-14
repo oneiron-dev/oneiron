@@ -103,6 +103,24 @@ fn encode_world_access_claim_value(value: &WorldAuthoritySet) -> Value {
     ])
 }
 
+/// The claim door's check of a row under either world-access tier predicate
+/// (FIX [WORLD-ACCESS-GENERIC-DOOR-UNDECODABLE]): an ACTIVE row carries the
+/// pinned strict value. The fold decodes every row it honours and fails the
+/// agent's reads closed on one it cannot read, and a claim door builds its
+/// value from JSON, which has no binary world id, so such a row would land and
+/// then block every read of its agent. A closed row is never read, so closing
+/// a stored row whose value does not decode stays open.
+///
+/// # Errors
+///
+/// [`Error::InvalidConfig`] from [`decode_world_access_claim_value`].
+pub(crate) fn validate_world_access_claim(body: &ClaimBody) -> Result<()> {
+    if body.lifecycle != ClaimLifecycleStatus::Active {
+        return Ok(());
+    }
+    decode_world_access_claim_value(body).map(|_| ())
+}
+
 /// Decodes the strict world-access claim value:
 ///
 /// ```text
