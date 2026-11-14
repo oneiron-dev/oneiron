@@ -1,8 +1,8 @@
 //! The Owner doors' apply-shape check-in tests' shared fixture (P2.5 2k2:
 //! `check_in_erase_effects.rs`, `check_in_history_erase_effects.rs`; 2k3:
-//! `check_in_key_recovery_effects.rs`): a rooted vault, the decision of an
-//! Owner's own act, and an agent's approved ask opened through the check-in
-//! test doors.
+//! `check_in_key_recovery_effects.rs`, `check_in_custody_drain_effects.rs`):
+//! a rooted vault, the decision of an Owner's own act, and an agent's
+//! approved ask opened through the check-in test doors.
 
 use std::sync::Arc;
 
