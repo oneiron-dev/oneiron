@@ -155,6 +155,25 @@ fn validate_review(id: &EntityId, review: &ReportReview) -> Result<Option<Entity
     Ok(duplicate)
 }
 
+/// The report an archived ISSUE `body` holds, when it decodes as a report
+/// filed under `id` with a valid request and review; `None` for any other
+/// body. An export without secrets nulls credential-shaped text, so a
+/// required text field (a proposal's problem or fix) no longer decodes. The
+/// owner's restore leaves such a row omitted, as every ISSUE was before that
+/// restore existed, and restores the rest of the archive.
+pub(crate) fn restorable_archived_report(id: EntityId, body: &[u8]) -> Option<ReportIssue> {
+    let issue: ReportIssue = rmp_serde::from_slice(body).ok()?;
+    let actor = EntityId::from_hex(&issue.actor_ref).ok()?;
+    if EntityId::from_hex(&issue.issue_ref).ok()? != id
+        || issue_id(actor, &issue.request).ok()? != id
+    {
+        return None;
+    }
+    issue.request.validate().ok()?;
+    validate_review(&id, &issue.review).ok()?;
+    Some(issue)
+}
+
 impl Vault {
     /// The filing resolver, called before the archive import opens its writer.
     pub(crate) fn archived_report_artifact_route(
@@ -164,9 +183,10 @@ impl Vault {
         self.report_artifact_route(subject)
     }
 
-    /// Restores one archived ISSUE `body` under `id` for the owner's whole-vault
-    /// restore. The actor, request, filing time, review and disclosure basis and
-    /// round come from the archive; the route is computed here from
+    /// Restores one archived ISSUE under `id` for the owner's whole-vault
+    /// restore; `issue` is the report [`restorable_archived_report`] read from
+    /// its body. The actor, request, filing time, review and disclosure basis
+    /// and round come from the archive; the route is computed here from
     /// `artifact_route` (resolved before the writer opened) and this vault's
     /// route policy, and the disclosure from that route, keeping an archived
     /// `Denied` only on the same route. The row is marked
@@ -177,18 +197,9 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         id: EntityId,
-        body: &[u8],
+        mut issue: ReportIssue,
         artifact_route: Option<ReportRoute>,
     ) -> Result<ReportRestoreOutcome> {
-        let mut issue: ReportIssue =
-            rmp_serde::from_slice(body).map_err(|_| invalid("invalid archived report body"))?;
-        if EntityId::from_hex(&issue.issue_ref)? != id
-            || issue_id(EntityId::from_hex(&issue.actor_ref)?, &issue.request)? != id
-        {
-            return Err(invalid("archived report identity does not match its ID"));
-        }
-        issue.request.validate()?;
-        validate_review(&id, &issue.review)?;
         if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)? {
             let header = crate::batch::EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("report issue header"))?;

@@ -26,6 +26,12 @@
 //!   two-report archive through `import_whole_vault_archive_from_with_actor`
 //!   with a valid local actor restores the PERSONs and keeps both ISSUE rows
 //!   omitted.
+//! * `owner_restore_keeps_a_credential_nulled_report_omitted`: with the write
+//!   door's secret scan off, a proposal whose problem is credential-shaped
+//!   JSON lands as filed. Its archive without secrets nulls that problem, so
+//!   the ISSUE body no longer decodes as a report: the owner's restore keeps
+//!   it omitted and restores the rest, the other report included. The same
+//!   vault's archive with secrets brings both reports back.
 //!
 //! Public doors only; neutral fixtures (`owen`, `yuki`, `owen@example.com`);
 //! vaults in tempdirs. Each destination opens at least one wall-clock second
@@ -44,6 +50,7 @@ use oneiron::feedback::{
     ReportStatus,
 };
 use oneiron::outbound::OutboundExecutionOutcome;
+use oneiron::policy_model::SecretScanMode;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
@@ -673,4 +680,117 @@ fn the_actor_import_keeps_issue_rows_omitted() {
         Some(ENTITY_TYPE_PERSON),
         "the actor import still restores yuki"
     );
+}
+
+#[test]
+fn owner_restore_keeps_a_credential_nulled_report_omitted() {
+    const PROBLEM: &str = r#"{"password":"hunter2"}"#;
+    let (_source_dir, source) = open_source_vault();
+    let owner = source
+        .ensure_embedded_owner_actor()
+        .expect("embedded owner");
+    let proof = owner_proof(&source);
+    source
+        .set_secret_scan_mode(&proof, SecretScanMode::Off, 100)
+        .expect("the owner turns the write door's secret scan off");
+    let owen = EntityId::now();
+    let yuki = EntityId::now();
+    put_person(&source, &owen, "owen");
+    put_person(&source, &yuki, "yuki");
+    let nulled_receipt = source
+        .memory(owner, EdgeActorClass::Human)
+        .report(ReportRequest {
+            subject_ref: owen.to_hex(),
+            category: IssueCategory::SkillDefect,
+            kind: ReportKind::Proposal,
+            note: None,
+            evidence_refs: Vec::new(),
+            why: None,
+            proposal: Some(FeedbackProposal::new(PROBLEM, "rotate it")),
+        })
+        .expect("the credential-shaped proposal lands with the scan off");
+    let nulled = EntityId::from_hex(&nulled_receipt.issue_ref).expect("proposal issue id");
+    let clean_receipt = source
+        .memory(owner, EdgeActorClass::Human)
+        .report(ReportRequest {
+            subject_ref: yuki.to_hex(),
+            category: IssueCategory::SkillDefect,
+            kind: ReportKind::Problem,
+            note: Some("The summary of yuki names the wrong city.".to_owned()),
+            evidence_refs: Vec::new(),
+            why: None,
+            proposal: None,
+        })
+        .expect("the clean problem report lands");
+    let clean = EntityId::from_hex(&clean_receipt.issue_ref).expect("problem issue id");
+    let filed = source
+        .report_issue(&nulled)
+        .expect("read the source proposal")
+        .expect("the source holds the proposal ISSUE row");
+    assert_eq!(
+        filed.request.proposal,
+        Some(FeedbackProposal::new(PROBLEM, "rotate it")),
+        "the scan-off source keeps the credential-shaped problem as filed"
+    );
+    let with_secrets = source
+        .export_whole_vault(true)
+        .expect("whole-vault export with secrets")
+        .bytes()
+        .to_vec();
+    let without_secrets = source
+        .export_whole_vault(false)
+        .expect("whole-vault export without secrets")
+        .bytes()
+        .to_vec();
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = match dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&without_secrets), &dest_owner)
+    {
+        Ok(receipt) => receipt,
+        Err(error) => panic!(
+            "the owner's archive whose export nulled one report's credential must still restore: {error:?}"
+        ),
+    };
+    assert!(
+        dest.report_issue(&nulled)
+            .expect("read the nulled report")
+            .is_none(),
+        "the report whose problem the export nulled stays omitted"
+    );
+    let restored = dest
+        .report_issue(&clean)
+        .expect("read the clean report")
+        .expect("the owner's restore brings the clean report back");
+    assert_eq!(
+        restored.origin,
+        ReportIssueOrigin::OwnerArchiveRestore,
+        "the clean report is marked as an owner archive restore"
+    );
+    assert!(
+        receipt.omitted_entities >= 1,
+        "the receipt counts the omitted report: {receipt:?}"
+    );
+    for (id, name) in [(&owen, "owen"), (&yuki, "yuki")] {
+        assert_eq!(
+            dest.get_entity_type(id).expect("read the restored person"),
+            Some(ENTITY_TYPE_PERSON),
+            "the owner's restore still brings {name} back"
+        );
+    }
+
+    let (_full_dir, full) = open_later_vault();
+    let full_owner = owner_proof(&full);
+    full.import_whole_vault_archive_from_as_owner(Cursor::new(&with_secrets), &full_owner)
+        .expect("the owner's archive with secrets restores");
+    for id in [&nulled, &clean] {
+        assert!(
+            full.report_issue(id)
+                .expect("read the restored report")
+                .is_some(),
+            "the archive with secrets brings report {} back",
+            id.to_hex()
+        );
+    }
 }
