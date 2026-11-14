@@ -299,15 +299,23 @@ pub struct EmbedderServeArgs {
     /// checks it.
     #[arg(long)]
     pub dimensions: Option<usize>,
-    /// Address to listen on. Anything but loopback needs `--api-key-env`.
+    /// Address to listen on. Anything but loopback needs `--api-key-env` or
+    /// `--accounts-file`.
     #[arg(long, default_value = "127.0.0.1")]
     pub host: std::net::IpAddr,
     #[arg(long, default_value_t = 7399)]
     pub port: u16,
-    /// Environment variable NAME holding the key every request must send as
-    /// a bearer token. Never the key itself.
+    /// Environment variable NAME holding the operator's key, which a request
+    /// may send as a bearer token (as may an account's own key, from
+    /// `--accounts-file`). Never the key itself.
     #[arg(long)]
     pub api_key_env: Option<String>,
+    /// TOML file of `[[account]]` rows, each an `id` and `key_sha256`, the
+    /// SHA-256 digest of that account's own bearer key in hex: a request may
+    /// send any account's key, as well as the `--api-key-env` key. Re-read
+    /// on SIGHUP, so one account is added or revoked without a restart.
+    #[arg(long)]
+    pub accounts_file: Option<PathBuf>,
     /// Another name a request's `model` may give, beside the model id.
     #[arg(long = "model-alias")]
     pub model_aliases: Vec<String>,

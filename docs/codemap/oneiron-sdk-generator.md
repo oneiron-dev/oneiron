@@ -20,7 +20,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/facade_types/inventory/python.rs` | src | m | 7 crate-vis | — | The `Python` section of `Inventory`: the declarations as the Python stubs spell them (`facade_types.pyi`)… |
 | `src/facade_types/inventory/rust_ir.rs` | src | L | 3 crate-vis | — | The `Rust type -> IR` section of `Inventory`: a Rust type, field, struct or enum as its serde wire shape |
 | `src/facade_types/inventory/typescript.rs` | src | s | 2 crate-vis | — | The `TypeScript` section of `Inventory`: IR as TypeScript, and the declarations module (`facade-types.ts`) |
-| `src/facade_types/mod.rs` | src | m | 1 const · 46 crate-vis | — | The facade's wire types, read from the Rust serde types every facade row names |
+| `src/facade_types/mod.rs` | src | m | 1 const · 48 crate-vis | — | The facade's wire types, read from the Rust serde types every facade row names |
 | `src/facade_types/reader.rs` | src | L | 28 crate-vis | — | The Rust-text scanner (strings, char literals, comments, brackets), the attribute readers and the type parser |
 | `src/generate/common.rs` | src | L | 25 crate-vis | — | The shared boundary helpers every emitter calls, and `AGENT_VERBS_TS`, which `hand_declared('ts')` reads |
 | `src/generate/docs.rs` | src | s | 3 crate-vis | — | Port of packages/oneiron/scripts/agent-docs.py's `generated_artifacts` and `write`: the three agent-SDK… |

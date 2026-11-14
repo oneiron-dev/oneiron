@@ -445,7 +445,10 @@ fn settle_ask_in_txn(
             return Err(invalid("tradeoff goal changed before the pick"));
         }
         let previous = preferences_in_txn(vault, txn, &question.goal_id)?;
-        let project = project_goal_in_txn(vault, txn, &question.goal_id)?;
+        // Integrity: the role check below authorizes the pick, and the joined
+        // record only dedupes the learned preference; nothing is shown to the
+        // picker. A board member holds no goal read of their own.
+        let project = project_goal_in_txn(vault, txn, &question.goal_id, None)?;
         if project.as_ref().map(|join| join.project) != question.project {
             return Err(invalid("tradeoff goal changed before the pick"));
         }

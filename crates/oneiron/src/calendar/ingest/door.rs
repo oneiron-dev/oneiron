@@ -1,6 +1,5 @@
 //! Uploaded ICS import and a single imported-instance amendment. Both reuse
 //! the poll importer's UID diff, exception identity, screen and claim gates.
-use serde::{Deserialize, Serialize};
 
 use super::admission::{PollAdmission, VerdictFold, connector_event_ref};
 use crate::calendar::claims::CalendarPassportSource;
@@ -12,55 +11,11 @@ use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::{EdgeActorClass, EntityId};
 
-/// An exact uploaded version is the immutable raw archive. No URL, importer
-/// actor, approval override or decoded-text assertion is accepted here.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CalendarIcsImportRequest {
-    pub system: String,
-    pub source_blob_ref: String,
-    pub source_version: u64,
-}
-
-/// A move imports just this detached component from an uploaded amendment,
-/// never the whole feed. Unrelated components, passports and masks stay put.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CalendarInstanceMoveRequest {
-    pub system: String,
-    pub source_blob_ref: String,
-    pub source_version: u64,
-    pub uid: String,
-    pub original_start_utc: u64,
-    pub start_utc: u64,
-    pub end_utc: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CalendarImportClaimReceipt {
-    pub claim_ref: String,
-    pub predicate: String,
-    pub approval: String,
-    pub lifecycle: String,
-}
-
-/// References are returned even when their imported claims await consent.
-/// A successful parse/import is not an approval or an admitted occurrence.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CalendarImportedEvent {
-    pub event_ref: String,
-    pub uid: String,
-    pub original_start_utc: Option<u64>,
-    pub claims: Vec<CalendarImportClaimReceipt>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CalendarIcsImportReceipt {
-    pub source_blob_ref: String,
-    pub source_version: u64,
-    pub events: Vec<CalendarImportedEvent>,
-    pub screen_verdict: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::calendar::ingest::door::{
+    CalendarIcsImportReceipt, CalendarIcsImportRequest, CalendarImportClaimReceipt,
+    CalendarImportedEvent, CalendarInstanceMoveRequest,
+};
 
 /// Calendar errors keep their importer diagnostic; refusal never causes a
 /// retry with different authority, an auto approval or an internal lane.

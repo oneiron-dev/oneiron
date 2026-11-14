@@ -3,6 +3,7 @@ use std::cell::Cell;
 use std::sync::atomic::Ordering as AtomicOrdering;
 
 use crate::counterparty_contact::CounterpartyFirstTouch;
+use crate::entity_id::EntityId;
 use crate::write_envelope::communication::SendOverrideMatch;
 
 use super::input::ExternalEffectGateContext;
@@ -44,6 +45,9 @@ pub(crate) struct GateDecision {
     precedence_row_ref: Option<Option<String>>,
     policy_refusal: Option<PolicyRefusal>,
     delegation_narrowing: Option<super::definition_ceiling::DelegationNarrowing>,
+    /// The stamp of the connector charter whose wall decided, by its
+    /// approval act (census L8-64).
+    charter_stamp: Option<EntityId>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -57,6 +61,7 @@ impl GateDecision {
             precedence_row_ref: None,
             policy_refusal: None,
             delegation_narrowing: None,
+            charter_stamp: None,
         }
     }
 
@@ -69,6 +74,7 @@ impl GateDecision {
             precedence_row_ref: None,
             policy_refusal: None,
             delegation_narrowing: None,
+            charter_stamp: None,
         }
     }
 
@@ -81,6 +87,7 @@ impl GateDecision {
             precedence_row_ref: None,
             policy_refusal: None,
             delegation_narrowing: None,
+            charter_stamp: None,
         }
     }
 
@@ -119,6 +126,21 @@ impl GateDecision {
                 crate::entity_id::bytes_to_hex_lower(narrowing.attempt.as_bytes()),
             )
         })
+    }
+
+    /// This decision cites the charter stamp `approval` names: the stamped
+    /// charter whose wall decided it (census L8-64).
+    pub(super) fn with_charter_stamp(mut self, approval: EntityId) -> Self {
+        self.charter_stamp = Some(approval);
+        self
+    }
+
+    /// The receipt token citing the charter stamp whose wall decided this
+    /// decision, by its approval act, when one did.
+    #[must_use]
+    pub(crate) fn charter_stamp_receipt(&self) -> Option<String> {
+        self.charter_stamp
+            .map(|approval| format!("charter_stamp_{}", approval.to_hex()))
     }
 
     pub(super) fn with_policy_row_ref(mut self, row_ref: Option<&str>) -> Self {

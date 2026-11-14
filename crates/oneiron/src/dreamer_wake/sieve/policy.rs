@@ -13,9 +13,8 @@ const POLICY: SideTable<(), SievePolicy, LegacyJson> =
     SideTable::new(&side_table::DREAMER_SIEVE_POLICY);
 const DEFAULT_POLICY: &str = include_str!("sieve_policy_defaults.json");
 
-fn invalid() -> Error {
-    Error::InvalidConfig("invalid dreamer sieve policy row".into())
-}
+#[doc(hidden)]
+use oneiron_verb_wire::dreamer_wake::sieve::policy::invalid;
 
 /// Per-vault sieve dials. Confidences and band edges are percentages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

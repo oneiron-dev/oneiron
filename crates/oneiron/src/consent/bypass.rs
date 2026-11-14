@@ -243,7 +243,7 @@ impl Vault {
             ));
         };
         let row = ConsentGrantRow { status, ..row };
-        GRANTS.put(&self.store, wtxn, &grant_ref, &row)?;
+        super::codec::put_grant_row_in_txn(&self.store, wtxn, &grant_ref, &row)?;
         let receipt = ConsentReceipt::BypassCreated {
             decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
             grant_ref,

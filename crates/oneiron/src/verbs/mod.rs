@@ -19,6 +19,7 @@ mod campaign_enrollment;
 mod campaign_split;
 mod can;
 mod catalog_fragment;
+mod check_in;
 mod comm_widen;
 mod connect_proposal;
 mod connector;
@@ -86,6 +87,7 @@ mod repo_copy_edit;
 #[cfg(feature = "sync")]
 mod repo_manifest_conflict;
 mod research;
+mod research_advance;
 mod research_root;
 mod reservoir_sources;
 mod residence;
@@ -129,9 +131,7 @@ mod workflows;
 mod workspace;
 
 use crate::memory::{MEMORY_CODE_BAD_REQUEST, Memory, MemoryError, MemoryResult};
-use crate::task_verb::{
-    TaskAskDefault, TaskAskHandle, TaskAskQuestion, TaskAskSpec, TaskAskTarget,
-};
+use crate::task_verb::TaskAskHandle;
 use serde::{Deserialize, Serialize};
 
 /// `can(ask(...))`: one read-only preflight for a typed ask spec.
@@ -148,93 +148,21 @@ pub struct TaskAnswerRequest {
     pub handle: TaskAskHandle,
     pub word: crate::task_verb::TaskAskWord,
 }
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EmptyRequest {}
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomRequest {
-    pub room_ref: String,
-    #[serde(default)]
-    pub after: Option<String>,
-    #[serde(default)]
-    pub limit: Option<usize>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomRefRequest {
-    pub room_ref: String,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomTurnRequest {
-    pub room_ref: String,
-    pub turn_ref: String,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomClaimRequest {
-    pub room_ref: String,
-    pub turn_ref: String,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectRefRequest {
-    pub project_ref: String,
-}
-/// `vault.projects.goal.dismiss`'s input: the project and the proposal to
-/// set aside.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectGoalDismissRequest {
-    pub project_ref: String,
-    pub target: ProjectGoalDismissTarget,
-}
-/// What `vault.projects.goal.dismiss` sets aside: the preference one
-/// tradeoff question proposed, under the goal claim the caller saw in force;
-/// or a full goal proposal by its id, with the owner's reason.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ProjectGoalDismissTarget {
-    Preference {
-        expected_goal_ref: String,
-        question_digest: String,
-    },
-    Proposal {
-        proposal_ref: String,
-        reason: String,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::{
+    BoardFrameReply, BoardRefreshRequest, BoardSubscriptionReply, BoardSubscriptionRequest,
+    BoardWakeReply, BoardWakeRequest, CompanionSharingRequest, EmptyRequest, InboxListRequest,
+    InboxMarkRequest, ProjectCardRequest, ProjectConversationRequest, ProjectGoalDismissRequest,
+    ProjectGoalDismissTarget, ProjectRefRequest, ProjectTradeoffRouteRequest, ReceiptsRequest,
+    RoomClaimRequest, RoomHostRequest, RoomRefRequest, RoomRequest, RoomTurnRequest, TaskRequest,
+    TaskWaveReceipt, TaskWaveRequest, WorkspaceRefRequest,
+};
+
 /// `vault.projects.goal.dismiss`'s result: `false` when an identical retry
 /// wrote nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectGoalDismissReceipt {
     pub dismissed: bool,
-}
-/// `vault.projects.route_tradeoff`'s input: the project TASK to ask on and
-/// the skill proposal whose tradeoff question it carries.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectTradeoffRouteRequest {
-    pub task_ref: String,
-    pub proposal_ref: String,
-}
-/// `vault.rooms.host`: the room, and the live session whose participants
-/// count as present beside the caller.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomHostRequest {
-    pub room_ref: String,
-    #[serde(default)]
-    pub session_ref: Option<String>,
-}
-/// `vault.companions.sharing.get`: a companion's PERSON and the contact her
-/// source vault's clearance is about.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CompanionSharingRequest {
-    pub companion_ref: String,
-    pub contact_ref: String,
 }
 /// `vault.companions.sharing.set`: the owner's standing yes to one frozen
 /// clearance offer for the contact a companion's sharing is about.
@@ -285,33 +213,11 @@ impl CompanionSharingSetRequest {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct WorkspaceRefRequest {
-    pub workspace_ref: String,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct WorkCompanionSetRequest {
     pub workspace_ref: String,
     pub policy: crate::workspace_roster::WorkCompanionPolicy,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TaskRequest {
-    pub task_ref: String,
-}
 pub use crate::task_verb::TaskUpdateRequest;
-/// `vault.projects.proposals`: the conversation whose project cards to read.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectConversationRequest {
-    pub conversation_ref: String,
-}
-/// `vault.projects.dismiss_card`: one host-held project card.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectCardRequest {
-    pub card_id: String,
-}
 /// `vault.projects.dismiss_card`'s result: `false` when the card was
 /// dismissed already.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -415,74 +321,6 @@ pub fn task_create_from_message(
     let spec = task_create_spec(memory, input.create)?;
     memory.tasks_create_from_message(source_ref, &spec)
 }
-/// `tasks.wave` (OF-427, ARCH-0068 RC5): an epic TASK cut into a wave of
-/// TASKs by a planner agent, queued as one planning attempt. Who asks, and
-/// the lease the wave runs under, are the host's, never request text.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TaskWaveRequest {
-    /// The epic TASK the wave realizes.
-    pub epic_task_ref: String,
-    /// The dispatchable agent definition that cuts the epic.
-    pub planner_ref: String,
-    pub objective: String,
-    /// The planner's own constraints, passed to it as they are.
-    #[serde(default)]
-    pub constraints: serde_json::Value,
-}
-/// The planning attempt a `tasks.wave` queued, or the one an identical
-/// request already queued.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct TaskWaveReceipt {
-    pub attempt_ref: String,
-    pub state: String,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BoardRefreshRequest {
-    pub frame_epoch: Option<u64>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BoardSubscriptionRequest {
-    pub scopes: std::collections::BTreeSet<crate::context_board::SubscriptionScope>,
-}
-/// The typed facade answer of `self.focus.refresh` on an attached run: the
-/// one STREAM frame the refresh minted, a keyframe at its epoch.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BoardFrameReply {
-    pub frame: crate::context_board::BoardStreamFrame,
-}
-/// The typed facade answer of `self.focus.subscribe` and
-/// `self.focus.unsubscribe` on an attached run: the run's board STREAM
-/// connection and the scopes now active on it.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BoardSubscriptionReply {
-    pub connection: String,
-    pub active: std::collections::BTreeSet<crate::context_board::SubscriptionScope>,
-}
-/// `self.focus.wakes`'s spec on an attached run: it names nothing beside the
-/// attachment; the run's own board STREAM connection is the queue read.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BoardWakeRequest {}
-/// The typed facade answer of `self.focus.wakes`: every wake queued for the
-/// attached run's board STREAM connection, oldest first, each re-read under
-/// the caller's credential at delivery. Taking them drains the queue; the
-/// TASK or diary-read review each names remains the durable mailbox.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BoardWakeReply {
-    pub wakes: Vec<crate::context_board::WakeEnvelope>,
-    /// The wake opener the woken session appends after its own log, rendered
-    /// at this delivery and never stored with a wake (FIX 15011). Absent when
-    /// no wake is delivered.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub opener: Option<String>,
-}
-
 fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> MemoryResult<T> {
     serde_path_to_error::deserialize(value)
         .map_err(|error| MemoryError::bad_request(format!("invalid SDK request: {error}")))
@@ -521,6 +359,7 @@ pub use self::can::*;
 pub use self::catalog_fragment::{
     CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,
 };
+pub use self::check_in::*;
 pub use self::comm_widen::*;
 pub use self::connect_proposal::*;
 pub use self::connector::*;
@@ -585,6 +424,7 @@ pub use self::repo_copy_edit::*;
 #[cfg(feature = "sync")]
 pub use self::repo_manifest_conflict::*;
 pub use self::research::*;
+pub use self::research_advance::*;
 pub use self::research_root::*;
 pub use self::reservoir_sources::*;
 pub use self::residence::*;
@@ -632,32 +472,6 @@ pub use crate::task_verb::recall_door::{
     RECALL_MEDIA_UNSERVED, RecallDoor, recall_at_door, recall_at_door_seeded, recall_unembedded,
     recall_with_vector,
 };
-
-/// `vault.writes.pending`'s one input.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ReceiptsRequest {
-    #[serde(default)]
-    pub limit: Option<usize>,
-}
-/// `inbox.list`'s one input (OF-221): the exclusive entity-ID cursor a
-/// previous page returned as `next_after`, and a page size
-/// ([`crate::inbox::INBOX_PAGE_DEFAULT`] when absent).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct InboxListRequest {
-    #[serde(default)]
-    pub after: Option<String>,
-    #[serde(default)]
-    pub limit: Option<usize>,
-}
-/// `inbox.mark`'s one input (OF-221): one delivered notification and the
-/// mark to record for the caller.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct InboxMarkRequest {
-    pub notification_ref: String,
-    pub mark: crate::inbox::NotificationMark,
-}
 
 mod memory_requests;
 pub use memory_requests::*;

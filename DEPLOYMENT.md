@@ -727,8 +727,8 @@ profile, or the vault's own provider fills the row instead.
 `deploy/systemd/oneiron-embedder.service` runs it as a user service.
 
 `--config` or the `--embedder-*` flags pick another local model, as `serve`
-reads them. Off loopback the server needs `--api-key-env NAME` (vaults send the
-key with `--embedder-api-key-env`), and vaults refuse a network endpoint that is
+reads them. Off loopback the server needs `--api-key-env NAME` or an accounts
+file (below; vaults send the key with `--embedder-api-key-env`), and vaults refuse a network endpoint that is
 not HTTPS, so reach a remote embedder through a TLS proxy such as
 `tailscale serve`, or an SSH tunnel to a loopback port. The server checks the
 key before it reads any of a request's body, and reads bodies only within a
@@ -751,6 +751,29 @@ and stops waiting as soon as its client goes away. A later batch that fails
 ends the stream broken, never as a shorter list. A vault's client asks for a
 readable end instead (`error_member`): the list closes with an `error`
 member that names why the answer is not complete, and the vault reports it.
+
+Several accounts can share one server, each with a key of its own:
+`--accounts-file accounts.toml` lists `[[account]]` rows, each an `id` and
+`key_sha256`, the SHA-256 digest of that account's key in hex
+(`printf %s "$KEY" | sha256sum`). The file holds digests only, never a key.
+A request may carry any account's key or the `--api-key-env` key; any other
+key gets 401 before its body is read, and the request's work logs under its
+account's id. `kill -HUP` makes the server read the file again, so an account
+is added or revoked without loading the model again; a file that does not
+parse keeps the accounts the server had, and logs why. A server with an
+accounts file may listen off loopback without `--api-key-env`. A row may set
+`daily_input_tokens`, a soft quota on the input tokens the account's requests
+use in one UTC day. Past it the requests are still served (the wire never
+refuses a call for rate): the account's first crossing in a day logs its id
+and a `limit_crossed` question on `embedder.serve:account_daily_input_tokens`.
+A hard money stop is the billing service's, not this server's.
+
+```toml
+[[account]]
+id = "acct-owen"
+key_sha256 = "<64 hex digits>"
+daily_input_tokens = 50000000
+```
 
 On a GPU host, build with candle's CUDA kernels (the CUDA toolkit's `nvcc` on
 `PATH`) and ask for the device:

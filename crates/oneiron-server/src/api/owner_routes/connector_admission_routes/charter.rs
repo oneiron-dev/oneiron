@@ -55,6 +55,9 @@ pub(crate) struct CharterView {
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 struct StampedCharterView {
+    /// The stamp's approval act. A gate receipt this charter decided cites
+    /// it as `charter_stamp_<approval_id>`.
+    approval_id: String,
     text: String,
     text_hash: String,
     compiled: CompiledCharterView,
@@ -100,6 +103,7 @@ impl CharterView {
             connector,
             key: key.to_hex(),
             charter: record.charter.as_ref().map(|charter| StampedCharterView {
+                approval_id: charter.approval_id.to_hex(),
                 text: charter.text.clone(),
                 text_hash: revision_hex(&charter.text_hash),
                 compiled: CompiledCharterView::new(&charter.compiled),

@@ -24,7 +24,7 @@ use super::reader::{
 };
 use super::{
     EAGER, EXTERNAL, Ir, ItemKey, Key, RECURSION_LIMIT, STRING, crate_dir, holds, index_error,
-    recursion_error, substring_not_found,
+    lib_family, recursion_error, substring_not_found,
 };
 use crate::error::GenerateError;
 use crate::py::re::compile;
@@ -521,6 +521,7 @@ impl Index {
 
     /// The best candidate of that name, same crate, under `within`, nearest module; ties keep the first. Every file
     /// that holds an item of that name is a dependency, a candidate or not (an edit there can make it one).
+    /// "Same crate" compares `lib_family`: the crates below `oneiron` that mirror its modules count as `oneiron`.
     pub(crate) fn by_name(
         &mut self,
         name: &str,
@@ -528,6 +529,7 @@ impl Index {
         module: &[String],
         within: Option<&[String]>,
     ) -> Option<ItemRef> {
+        let family = lib_family(crate_name);
         let all = self.items.get(name)?;
         self.dependencies.extend(
             all.iter()
@@ -541,7 +543,9 @@ impl Index {
             let under: Vec<&ItemRef> = candidates
                 .iter()
                 .copied()
-                .filter(|item| item.crate_name == crate_name && item.module.starts_with(within))
+                .filter(|item| {
+                    lib_family(&item.crate_name) == family && item.module.starts_with(within)
+                })
                 .collect();
             if !under.is_empty() {
                 candidates = under;
@@ -559,7 +563,7 @@ impl Index {
                 .take_while(|(a, b)| a == b)
                 .count();
             (
-                item.crate_name != crate_name,
+                lib_family(&item.crate_name) != family,
                 !item.top,
                 std::cmp::Reverse(common),
                 item.module.len(),

@@ -3,7 +3,6 @@
 
 pub use oneiron_store::deletion::coop_delivery::types::*;
 
-use super::super::coop_reply::CooperativeDeletionReplyOutcome;
 use super::CooperativeDeletionDeliveryStatus;
 use crate::deletion::{LegalHold, LegalHoldKind};
 use crate::store::legal_hold as hold_store;
@@ -19,28 +18,8 @@ pub struct CooperativeLocalRedaction {
     pub result: crate::vault::entity_revision::LocalClaimValueRedaction,
 }
 
-/// The recipient owner's menu (BIZ-LEGAL-0004 B2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CooperativeDeletionDispositionKind {
-    Delete,
-    Redact,
-    RestrictPendingReview,
-    RetainUnderBasis,
-    LegalHold,
-    Decline,
-}
-
-impl CooperativeDeletionDispositionKind {
-    /// What the requester learns of this choice.
-    #[must_use]
-    pub const fn reply_outcome(self) -> CooperativeDeletionReplyOutcome {
-        match self {
-            Self::Decline => CooperativeDeletionReplyOutcome::Declined,
-            _ => CooperativeDeletionReplyOutcome::Acknowledged,
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::deletion::coop_delivery::types::CooperativeDeletionDispositionKind;
 
 /// The owner's recorded choice on one filed ask.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

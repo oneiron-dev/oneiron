@@ -3,9 +3,8 @@
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 
-/// The root node of the task-type tree. An outcome with no task (a chat turn,
-/// a channel actor's health) and every unsure placement carries it.
-pub const ROOT_TYPE_NODE: &str = "root";
+#[doc(hidden)]
+pub use oneiron_verb_wire::receipt::task_type_ref::ROOT_TYPE_NODE;
 
 /// A task type: the node and the tree version it was placed in.
 #[derive(

@@ -105,6 +105,7 @@ pub use self::run_task::{
 mod scope;
 pub(crate) use scope::project_descends_from_in_txn;
 mod skill_default;
+pub(crate) use skill_default::workflow_default;
 mod spend_calibration;
 #[cfg(feature = "sync")]
 pub(crate) mod spend_handoff;
@@ -178,6 +179,7 @@ pub use self::codec::{
 };
 pub(crate) use self::codec::{attempt_task_type_ref, attempt_team_stamp, record_dispatch_input};
 pub use self::dispatch::AgentDispatcher;
+pub(crate) use self::dispatch::AgentSpawnAdmission;
 pub use self::leader_planner::VaultLeaderTeamPlanner;
 pub(crate) use self::planner::resolved_budget_ask;
 pub use self::planner::{

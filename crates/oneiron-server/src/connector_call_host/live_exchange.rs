@@ -140,6 +140,19 @@ pub(super) enum Posted {
 }
 
 impl Posted {
+    /// How a POST's send went: a 2xx was taken, a 5xx or a send error past
+    /// the connect may have been, any other status was refused, and a
+    /// connect or builder error sent nothing.
+    fn of_send(sent: &reqwest::Result<reqwest::blocking::Response>) -> Self {
+        match sent {
+            Ok(response) if response.status().is_success() => Self::Accepted,
+            Ok(response) if response.status().is_server_error() => Self::Uncertain,
+            Ok(_) => Self::Refused,
+            Err(error) if error.is_connect() || error.is_builder() => Self::Unsent,
+            Err(_) => Self::Uncertain,
+        }
+    }
+
     /// What an answer's receipt says of this POST.
     fn egress(&self) -> ElicitationEgress {
         match self {
@@ -234,13 +247,7 @@ impl LiveSession {
         let message = Value::Object(message);
         let request = self.post(&message, Some(HANDSHAKE_TIMEOUT));
         zeroize_json(message);
-        match request.send() {
-            Ok(response) if response.status().is_success() => Posted::Accepted,
-            Ok(response) if response.status().is_server_error() => Posted::Uncertain,
-            Ok(_) => Posted::Refused,
-            Err(error) if error.is_connect() || error.is_builder() => Posted::Unsent,
-            Err(_) => Posted::Uncertain,
-        }
+        Posted::of_send(&request.send())
     }
 
     /// Answers the server request `id` of the remote task `task_id` with
@@ -780,19 +787,12 @@ impl Worker {
                 // The call carried the restored keys and request state.
                 zeroize_json(call);
                 let posted = request.send();
-                let egress = match &posted {
-                    Ok(response) if response.status().is_success() => ElicitationEgress::Accepted,
-                    Ok(response) if response.status().is_server_error() => {
-                        ElicitationEgress::Uncertain
-                    }
-                    Ok(_) => ElicitationEgress::Refused,
-                    Err(error) if error.is_connect() || error.is_builder() => {
-                        ElicitationEgress::Unsent
-                    }
-                    Err(_) => ElicitationEgress::Uncertain,
-                };
-                self.receipts
-                    .record(generation, &answered, responses, egress);
+                self.receipts.record(
+                    generation,
+                    &answered,
+                    responses,
+                    Posted::of_send(&posted).egress(),
+                );
                 let message = match posted {
                     Ok(response) => read_retry_reply(&self.session, &self.receipts, response, id),
                     Err(error) if error.is_connect() || error.is_builder() => {
