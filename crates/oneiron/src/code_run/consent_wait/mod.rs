@@ -116,9 +116,11 @@ pub enum ConnectorCallReply {
         /// The session-manifest receipt of the runner the call went
         /// through (canon `#runner-fence`, row L8-27): a stdio connector's
         /// child, with the fence's ruleset hash, or `fence_unproven`.
-        /// Absent for an HTTP connector, and on a replay.
+        /// Absent for an HTTP connector, and on a replay. It reads as a
+        /// browser answer's manifest does: one wire shape for every session
+        /// manifest a caller is shown.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        session_manifest: Option<oneiron_container::SessionManifest>,
+        session_manifest: Option<oneiron_browser::SessionManifest>,
     },
     /// Held for consent or governance; nothing was sent. A code-mode run
     /// parks on `call_ref` until the hold settles. `approval_digest` (FIX
@@ -201,6 +203,68 @@ pub(crate) fn source(name: &str, tool: &str) -> String {
     format!("connector:{name}.{tool}")
 }
 
+/// A runner's session manifest as a caller reads it (row L8-27): the
+/// container's manifest in the browser answer's wire shape, field for field.
+/// The image-release evidence goes as untyped JSON, as that shape keeps it.
+fn wire_session_manifest(
+    manifest: oneiron_container::SessionManifest,
+) -> oneiron_browser::SessionManifest {
+    let oneiron_container::SessionManifest {
+        backend,
+        runtime,
+        image,
+        argv_digest,
+        network,
+        seccomp,
+        generation,
+        fence_proof,
+        fence_unproven,
+        image_release,
+    } = manifest;
+    oneiron_browser::SessionManifest {
+        backend,
+        runtime,
+        image,
+        argv_digest,
+        network,
+        seccomp: match seccomp {
+            oneiron_container::GuestSeccomp::RuntimeDefault => {
+                oneiron_browser::SessionSeccomp::RuntimeDefault
+            }
+            oneiron_container::GuestSeccomp::GuestSandbox => {
+                oneiron_browser::SessionSeccomp::GuestSandbox
+            }
+            oneiron_container::GuestSeccomp::EngineFence => {
+                oneiron_browser::SessionSeccomp::EngineFence
+            }
+            oneiron_container::GuestSeccomp::Unfiltered => {
+                oneiron_browser::SessionSeccomp::Unfiltered
+            }
+        },
+        generation,
+        fence_proof: fence_proof.map(|proof| {
+            let oneiron_container::FenceProof {
+                ruleset_hash,
+                seccomp_hash,
+                network_routes,
+                network_evidence_digest,
+                sandbox_generation,
+                launcher_digest,
+            } = proof;
+            oneiron_browser::SessionFenceProof {
+                ruleset_hash,
+                seccomp_hash,
+                network_routes,
+                network_evidence_digest,
+                sandbox_generation,
+                launcher_digest,
+            }
+        }),
+        fence_unproven,
+        image_release: serde_json::to_value(image_release).ok(),
+    }
+}
+
 impl ConnectorToolResult {
     fn foreign(name: &str, tool: &str, result: UntrustedToolResult) -> Self {
         Self {
@@ -228,7 +292,7 @@ impl ConnectorCallReply {
                 result: Some(ConnectorToolResult::foreign(name, tool, result)),
                 reasons: Vec::new(),
                 budget_steering,
-                session_manifest,
+                session_manifest: session_manifest.map(wire_session_manifest),
             },
             ConnectorCallOutcome::Delivered {
                 result: None,
@@ -250,7 +314,7 @@ impl ConnectorCallReply {
                     .to_owned(),
                 ],
                 budget_steering,
-                session_manifest,
+                session_manifest: session_manifest.map(wire_session_manifest),
             },
             ConnectorCallOutcome::Held {
                 call_ref,

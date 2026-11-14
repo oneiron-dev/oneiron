@@ -18,6 +18,8 @@ use std::sync::{OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use oneiron::code_run::ConnectorCallReply;
+use oneiron::outbound_consent::ConnectorCallOutcome;
 use oneiron_container::{GuestSeccomp, RunnerFence, RunnerFenceMechanism, SessionManifest};
 use oneiron_server::config::ConnectorHostConfig;
 use oneiron_server::connector_call_host::stdio::upstream::UpstreamHeld;
@@ -258,6 +260,28 @@ fn a_stdio_connector_answers_under_the_fence_and_cannot_read_the_vault_or_its_ke
     assert_eq!(manifest.network, "host");
     assert_eq!(manifest.seccomp, GuestSeccomp::Unfiltered);
     assert!(!manifest.fence_unproven);
+    // The caller reads the receipt in a browser answer's manifest shape, and
+    // a settled reply reads back from its row with it.
+    let reply = ConnectorCallReply::project(
+        "notes",
+        "probe",
+        ConnectorCallOutcome::Delivered {
+            intent: None,
+            result: None,
+            result_absence: None,
+            budget_steering: Vec::new(),
+            session_manifest: Some(manifest.clone()),
+        },
+    );
+    let wire = serde_json::to_value(&reply).expect("the reply encodes");
+    assert_eq!(wire["session_manifest"]["seccomp"], "unfiltered");
+    assert_eq!(
+        wire["session_manifest"]["fence_proof"]["ruleset_hash"].as_str(),
+        Some(outcome.ruleset_hash.as_str())
+    );
+    let read_back: ConnectorCallReply =
+        serde_json::from_value(wire).expect("a settled reply reads back");
+    assert_eq!(read_back, reply);
     let proof = manifest
         .fence_proof
         .expect("a proven session carries its proof");
