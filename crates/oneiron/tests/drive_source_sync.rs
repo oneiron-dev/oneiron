@@ -1,11 +1,15 @@
 //! A Google Drive source (MAIL-GOOGLE = A, ARCH-0027 #mail-drive; L2-17):
-//! the Drive files the owner picked land as an attached folder source with
-//! a remote origin. Metadata lands first and the text after it;
-//! `changes.list` supersedes a changed file's text and retracts a removed
-//! file's note; a token Drive no longer knows starts the feed again; a
-//! Google Doc exports as Markdown; every call is charged within the
-//! provider's per-user quota first; and one source's steps run one at a
-//! time. The wire here is a fake Drive that records each call.
+//! the Drive files the owner picked, or their whole Drive (DRIVE-ACCESS =
+//! B), land as an attached folder source with a remote origin. Metadata
+//! lands first and the text after it; a whole Drive is listed by name
+//! first, a bounded number of pages a step, and its listing resumes where
+//! the last step stopped; `changes.list` supersedes a changed file's text
+//! and retracts a removed file's note (every change for a whole Drive);
+//! a token Drive no longer knows starts the feed again, and a whole Drive
+//! listed again retracts a file gone meanwhile; a Google Doc exports as
+//! Markdown; every call is charged within the provider's per-user quota
+//! first; and one source's steps run one at a time. The wire here is a
+//! fake Drive that records each call.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -14,8 +18,9 @@ use std::time::Duration;
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::note::{
-    DRIVE_WIRE_RATE_LIMITED, DriveChange, DriveChangesPage, DriveFileMeta, DriveOrigin, DriveQuota,
-    DriveStepBudget, DriveWire, FolderFileState, FolderSource, NameOnlyReason,
+    DRIVE_FOLDER_MIME_TYPE, DRIVE_WIRE_RATE_LIMITED, DriveAccess, DriveChange, DriveChangesPage,
+    DriveFileMeta, DriveFilesPage, DriveOrigin, DriveQuota, DriveStepBudget, DriveWire,
+    FolderFileState, FolderSource, NameOnlyReason,
 };
 use oneiron::registry::ENTITY_TYPE_NOTE;
 use oneiron::store::GateDecisionId;
@@ -26,7 +31,8 @@ const SHEET: &str = "application/vnd.google-apps.spreadsheet";
 const FORM: &str = "application/vnd.google-apps.form";
 
 /// A fake Drive: its files, the changes it reports next, the change token
-/// it no longer knows, and every call.
+/// it no longer knows, and every call. Its listing names every file it
+/// holds, trashed ones and folders too, newest change first.
 #[derive(Default)]
 struct FakeDrive {
     files: RefCell<HashMap<String, (DriveFileMeta, Vec<u8>)>>,
@@ -34,6 +40,8 @@ struct FakeDrive {
     forgotten: RefCell<Option<String>>,
     calls: RefCell<Vec<String>>,
     quota: Option<DriveQuota>,
+    /// The files one listing page names; none: all of them.
+    list_page: Option<usize>,
     /// Holds each start read until the test lets it go.
     gate: Option<StartGate>,
 }
@@ -72,6 +80,13 @@ impl FakeDrive {
             removed: false,
             file: Some(file),
         });
+    }
+
+    /// Puts `id` in the trash, and reports nothing.
+    fn trash(&self, id: &str) {
+        if let Some((meta, _)) = self.files.borrow_mut().get_mut(id) {
+            meta.trashed = true;
+        }
     }
 
     /// Removes `id`, and reports it next.
@@ -122,6 +137,27 @@ impl DriveWire for FakeDrive {
         }))
     }
 
+    fn list(&self, _origin: &DriveOrigin, page: Option<&str>) -> Result<Option<DriveFilesPage>> {
+        self.record(page.map_or_else(|| "list".to_owned(), |page| format!("list {page}")));
+        let mut files: Vec<DriveFileMeta> = self
+            .files
+            .borrow()
+            .values()
+            .map(|(meta, _)| meta.clone())
+            .collect();
+        files.sort_by(|a, b| b.modified_at.cmp(&a.modified_at).then(a.id.cmp(&b.id)));
+        // A page token "p<n>" names the listing's file <n>.
+        let from: usize = page.map_or(0, |page| page[1..].parse().expect("page token"));
+        let to = self
+            .list_page
+            .map_or(files.len(), |size| from + size)
+            .min(files.len());
+        Ok(Some(DriveFilesPage {
+            files: files[from..to].to_vec(),
+            next_page: (to < files.len()).then(|| format!("p{to}")),
+        }))
+    }
+
     fn file(&self, _origin: &DriveOrigin, id: &str) -> Result<Option<DriveFileMeta>> {
         self.record(format!("file {id}"));
         Ok(self.files.borrow().get(id).map(|(meta, _)| meta.clone()))
@@ -154,13 +190,27 @@ fn owned_vault(temp: &tempfile::TempDir) -> (Vault, AuthenticatedOwner) {
 }
 
 fn attach(vault: &Vault, owner: &AuthenticatedOwner, files: &[&str]) -> FolderSource {
+    attach_access(
+        vault,
+        owner,
+        DriveAccess::Picked {
+            files: files.iter().map(|id| (*id).to_owned()).collect(),
+        },
+    )
+}
+
+fn attach_whole(vault: &Vault, owner: &AuthenticatedOwner) -> FolderSource {
+    attach_access(vault, owner, DriveAccess::Whole)
+}
+
+fn attach_access(vault: &Vault, owner: &AuthenticatedOwner, access: DriveAccess) -> FolderSource {
     vault
         .attach_drive_source(
             owner,
             DriveOrigin {
                 custody_ref: "google-drive-owen".to_owned(),
                 account: "owen@example.com".to_owned(),
-                files: files.iter().map(|id| (*id).to_owned()).collect(),
+                access,
             },
             None,
         )
@@ -186,9 +236,24 @@ fn ledger_state(vault: &Vault, source: &FolderSource, id: &str) -> Option<Folder
 
 fn texts(count: usize) -> DriveStepBudget {
     DriveStepBudget {
-        change_pages: 10,
         texts: count,
+        ..DriveStepBudget::default()
     }
+}
+
+/// One page of a whole Drive's listing a step, and no text.
+fn one_list_page() -> DriveStepBudget {
+    DriveStepBudget {
+        list_pages: 1,
+        texts: 0,
+        ..DriveStepBudget::default()
+    }
+}
+
+fn unread() -> Option<FolderFileState> {
+    Some(FolderFileState::NameOnly {
+        why: NameOnlyReason::Unread,
+    })
 }
 
 #[test]
@@ -557,4 +622,335 @@ fn a_concurrent_step_keeps_the_rest_a_rate_limit_answer_set() {
         );
         assert_eq!(resting.quota_paused_until, Some(until), "{resting:?}");
     });
+}
+
+#[test]
+fn a_whole_drive_source_lists_every_file_by_name_first() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let (vault, owner) = owned_vault(&temp);
+    let drive = FakeDrive::default();
+    drive.put(
+        "docA1",
+        "Roadmap",
+        DOC,
+        1_700_000_200,
+        "# Roadmap\n\nShip the tide log.\n",
+    );
+    drive.put(
+        "mdB2",
+        "Plan.md",
+        "text/markdown",
+        1_700_000_100,
+        "# Plan\n\nRead the logs.\n",
+    );
+    drive.put(
+        "dirE5",
+        "Projects",
+        DRIVE_FOLDER_MIME_TYPE,
+        1_700_000_300,
+        "",
+    );
+    drive.put("mdF6", "Old.md", "text/markdown", 1_700_000_050, "# Old\n");
+    drive.trash("mdF6");
+    assert_eq!(
+        DriveAccess::Whole.oauth_scope(),
+        "https://www.googleapis.com/auth/drive.readonly",
+        "a whole Drive asks Google for the read-only Drive scope the Google pack names"
+    );
+    let source = attach_whole(&vault, &owner);
+
+    let first = vault
+        .drive_sync_step(&owner, &source.folder, &drive, texts(0))
+        .expect("first step");
+    assert_eq!(
+        drive.calls(),
+        ["start", "list"],
+        "the first step takes the feed's start, then lists the whole Drive, and reads no text"
+    );
+    assert_eq!(
+        (first.metadata, first.texts, first.owed, first.listing),
+        (2, 0, 2, false),
+        "{first:?}"
+    );
+    for id in ["docA1", "mdB2"] {
+        assert_eq!(
+            ledger_state(&vault, &source, id),
+            unread(),
+            "{id} is held by its name until its text is read"
+        );
+        assert_eq!(note_text(&vault, &source, id), None, "{id} has no note yet");
+    }
+    for id in ["dirE5", "mdF6"] {
+        assert_eq!(
+            ledger_state(&vault, &source, id),
+            None,
+            "a folder or a trashed file is never held: {id}"
+        );
+    }
+
+    let second = vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("second step");
+    assert_eq!(
+        drive.calls()[2..],
+        ["changes t0", "export docA1 text/markdown", "download mdB2"],
+        "once the listing ended, the next step drains the feed, then reads the owed text newest first"
+    );
+    assert_eq!((second.texts, second.owed), (2, 0), "{second:?}");
+    assert_eq!(second.rescan.landed, 2, "{second:?}");
+    assert_eq!(
+        note_text(&vault, &source, "docA1").as_deref(),
+        Some("# Roadmap\n\nShip the tide log.\n")
+    );
+    assert_eq!(
+        note_text(&vault, &source, "mdB2").as_deref(),
+        Some("# Plan\n\nRead the logs.\n")
+    );
+}
+
+#[test]
+fn a_whole_drive_listing_resumes_its_page_in_the_next_step() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let (vault, owner) = owned_vault(&temp);
+    let drive = FakeDrive {
+        list_page: Some(2),
+        ..FakeDrive::default()
+    };
+    // Newest change first: mdA1, mdB2, mdC3, mdD4, mdE5.
+    for (id, modified_at) in [
+        ("mdA1", 1_700_000_500),
+        ("mdB2", 1_700_000_400),
+        ("mdC3", 1_700_000_300),
+        ("mdD4", 1_700_000_200),
+        ("mdE5", 1_700_000_100),
+    ] {
+        drive.put(
+            id,
+            &format!("{id}.md"),
+            "text/markdown",
+            modified_at,
+            &format!("# {id}\n"),
+        );
+    }
+    let source = attach_whole(&vault, &owner);
+
+    let first = vault
+        .drive_sync_step(&owner, &source.folder, &drive, one_list_page())
+        .expect("first step");
+    assert_eq!(drive.calls(), ["start", "list"]);
+    assert_eq!((first.owed, first.listing), (2, true), "{first:?}");
+    let second = vault
+        .drive_sync_step(&owner, &source.folder, &drive, one_list_page())
+        .expect("second step");
+    assert_eq!(
+        drive.calls()[2..],
+        ["list p2"],
+        "the next step reads on from the listing's page, with no new start and no change feed"
+    );
+    assert_eq!((second.owed, second.listing), (4, true), "{second:?}");
+    let third = vault
+        .drive_sync_step(&owner, &source.folder, &drive, one_list_page())
+        .expect("third step");
+    assert_eq!(drive.calls()[3..], ["list p4"]);
+    assert_eq!(
+        (third.owed, third.listing),
+        (5, false),
+        "the listing ends on its last page: {third:?}"
+    );
+    for id in ["mdA1", "mdB2", "mdC3", "mdD4", "mdE5"] {
+        assert_eq!(ledger_state(&vault, &source, id), unread(), "{id}");
+    }
+
+    let fourth = vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("fourth step");
+    assert_eq!(
+        drive.calls()[4..],
+        [
+            "changes t0",
+            "download mdA1",
+            "download mdB2",
+            "download mdC3",
+            "download mdD4",
+            "download mdE5",
+        ],
+        "the change feed starts from the token taken before the listing"
+    );
+    assert_eq!(fourth.rescan.landed, 5, "{fourth:?}");
+}
+
+#[test]
+fn a_whole_drive_listing_out_of_quota_keeps_its_page() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let (vault, owner) = owned_vault(&temp);
+    let drive = FakeDrive {
+        // The start (with the credential check) and one listing page fit;
+        // a second page does not.
+        quota: Some(DriveQuota {
+            units_per_minute: 20,
+            list: 6,
+            get: 5,
+            content: 200,
+        }),
+        list_page: Some(2),
+        ..FakeDrive::default()
+    };
+    for (id, modified_at) in [
+        ("mdA1", 1_700_000_300),
+        ("mdB2", 1_700_000_200),
+        ("mdC3", 1_700_000_100),
+    ] {
+        drive.put(
+            id,
+            &format!("{id}.md"),
+            "text/markdown",
+            modified_at,
+            &format!("# {id}\n"),
+        );
+    }
+    let source = attach_whole(&vault, &owner);
+
+    let step = vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("step");
+    assert_eq!(drive.calls(), ["start", "list"]);
+    assert!(step.quota_paused_until.is_some(), "{step:?}");
+    assert_eq!((step.owed, step.listing), (2, true), "{step:?}");
+    let sync = vault
+        .folder_source(&source.folder)
+        .expect("read the source")
+        .and_then(|source| source.drive)
+        .expect("a Drive source")
+        .sync;
+    assert_eq!(sync.page_token.as_deref(), Some("t0"));
+    let listing = sync.listing.expect("the listing is under way");
+    assert_eq!(
+        listing.next_page.as_deref(),
+        Some("p2"),
+        "the source keeps the listing's next page for the step after its rest"
+    );
+    assert_eq!(listing.listed, ["mdA1", "mdB2"]);
+    for id in ["mdA1", "mdB2"] {
+        assert_eq!(ledger_state(&vault, &source, id), unread(), "{id}");
+    }
+    assert_eq!(ledger_state(&vault, &source, "mdC3"), None);
+}
+
+#[test]
+fn a_whole_drive_source_takes_every_change() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let (vault, owner) = owned_vault(&temp);
+    let drive = FakeDrive::default();
+    drive.put(
+        "mdB2",
+        "Plan.md",
+        "text/markdown",
+        1_700_000_100,
+        "# Plan\n\nRead the logs.\n",
+    );
+    let source = attach_whole(&vault, &owner);
+    let landed = vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("first step");
+    assert_eq!(landed.rescan.landed, 1, "{landed:?}");
+    assert_eq!(drive.calls(), ["start", "list", "download mdB2"]);
+
+    // After the listing: a new file, a change to the listed one, and a new
+    // folder.
+    drive.put("mdG7", "Notes.md", "text/markdown", 1_700_000_400, "");
+    drive.change("mdG7", 1_700_000_400, "# Notes\n");
+    drive.change("mdB2", 1_700_000_300, "# Plan\n\nRead the logs twice.\n");
+    drive.put(
+        "dirE5",
+        "Projects",
+        DRIVE_FOLDER_MIME_TYPE,
+        1_700_000_300,
+        "",
+    );
+    drive.change("dirE5", 1_700_000_300, "");
+    let changed = vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("changed step");
+    assert_eq!(
+        drive.calls()[3..],
+        ["changes t0", "download mdG7", "download mdB2"],
+        "every change to a file of the Drive is read, newest first, and a folder's never"
+    );
+    assert_eq!(
+        (changed.rescan.landed, changed.rescan.superseded),
+        (1, 1),
+        "{changed:?}"
+    );
+    assert_eq!(
+        note_text(&vault, &source, "mdG7").as_deref(),
+        Some("# Notes\n")
+    );
+    assert_eq!(
+        note_text(&vault, &source, "mdB2").as_deref(),
+        Some("# Plan\n\nRead the logs twice.\n")
+    );
+    assert_eq!(ledger_state(&vault, &source, "dirE5"), None);
+
+    drive.remove("mdG7");
+    let removed = vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("removed step");
+    assert_eq!(removed.rescan.retracted, 1, "{removed:?}");
+    assert_eq!(
+        ledger_state(&vault, &source, "mdG7"),
+        Some(FolderFileState::Retracted)
+    );
+}
+
+#[test]
+fn a_whole_drive_listed_again_retracts_a_file_gone_meanwhile() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let (vault, owner) = owned_vault(&temp);
+    let drive = FakeDrive::default();
+    drive.put(
+        "mdB2",
+        "Plan.md",
+        "text/markdown",
+        1_700_000_200,
+        "# Plan\n",
+    );
+    drive.put(
+        "mdC3",
+        "Draft.md",
+        "text/markdown",
+        1_700_000_100,
+        "# Draft\n",
+    );
+    let source = attach_whole(&vault, &owner);
+    let landed = vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("first step");
+    assert_eq!(landed.rescan.landed, 2, "{landed:?}");
+    assert_eq!(
+        drive.calls(),
+        ["start", "list", "download mdB2", "download mdC3"]
+    );
+
+    // Drive forgets the source's token, and the removal it would have
+    // reported is lost with it.
+    *drive.forgotten.borrow_mut() = Some("t0".to_owned());
+    drive.files.borrow_mut().remove("mdC3");
+    let again = vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("a step on a forgotten token");
+    assert_eq!(
+        drive.calls()[4..],
+        ["changes t0", "start", "list"],
+        "a token Drive no longer knows lists the whole Drive again, and a file whose text landed is not read again"
+    );
+    assert_eq!(again.rescan.retracted, 1, "{again:?}");
+    assert_eq!(
+        ledger_state(&vault, &source, "mdC3"),
+        Some(FolderFileState::Retracted),
+        "a file the new listing did not name has left the Drive"
+    );
+    assert_eq!(
+        ledger_state(&vault, &source, "mdB2"),
+        Some(FolderFileState::Landed)
+    );
 }
