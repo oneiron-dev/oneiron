@@ -49,7 +49,7 @@
 import * as XLSX from "xlsx";
 import { preflightPackage, WorkbookBudgetError } from "./budget";
 import type { PreviewBudget } from "./budget";
-import { attributeValues, checkSheetExpansion, partTexts } from "./expansion";
+import { attributeValues, checkSheetExpansion, partTexts, sheetJsAttributes } from "./expansion";
 
 /** A part of the package as SheetJS holds it once it has inflated it (a CFB file entry). */
 interface ContainerEntry {
@@ -122,6 +122,13 @@ const LOOKUP_TAGS = /<(?:\w*:)?(?:(sheet)[\s/>]|(Relationship)[\s/>]|(Override)[
 /** SheetJS's tag pattern (`tagregex1`), anchored: the tag `parse_ct` reads from a `<Override`. */
 const TAG_AT = /<[\/\?]?[a-zA-Z0-9:_-]+(?:\s+[^"\s?<>\/]+\s*=\s*(?:"[^"]*"|'[^']*'|[^'"<>\s=]+))*\s*[\/\?]?>/y;
 
+/** SheetJS's tag pattern (`tagregex1`), over a whole part: the tags its threaded-comment reader walks. */
+const TAGS = new RegExp(TAG_AT.source, "g");
+/** A comment's tag as SheetJS's comments reader cuts it (`parse_comments_xml`), anywhere in a part. */
+const COMMENT_TAG = /<(?:\w+:)?comment[^<>]*>/g;
+/** A person's tag (`parse_people_xml`). */
+const PERSON_TAG = /<(?:\w+:)?person[ \n\r]/g;
+
 /** The records of one part that make lookups. */
 interface LookupRecords {
   sheets: number;
@@ -152,6 +159,14 @@ class ReadTally {
   private sheets = 0;
   private links = 0;
   private relationships = 0;
+  /** Loop steps charged so far. */
+  private steps = 0;
+  /** Comments gathered so far, by the cell address text SheetJS files them under. */
+  private readonly comments = new Map<string, number>();
+  /** People listed so far, which each threaded comment's author is looked up in. */
+  private people = 0;
+  /** Threaded comments gathered so far, which each later threaded-comments part copies again. */
+  private threaded = 0;
 
   constructor(
     private readonly budget: PreviewBudget,
@@ -186,7 +201,58 @@ class ReadTally {
     if (lookups > this.budget.partLookups) {
       throw new WorkbookBudgetError("partLookups", "finding the parts would compare more paths than the budget");
     }
-    checkSheetExpansion(texts, this.budget, this.formulaText);
+    this.steps += checkSheetExpansion(texts, this.budget, this.formulaText);
+    for (const text of texts) {
+      this.takeComments(text);
+    }
+    if (this.steps > this.budget.loopSteps) {
+      throw new WorkbookBudgetError(
+        "loopSteps",
+        "the read's loops over its comments and array ranges take more steps than the budget",
+      );
+    }
+  }
+
+  /**
+   * Charges the loops SheetJS runs over a part's comments. It puts each
+   * comment on its cell after looking at every comment already there
+   * (`sheet_insert_comments`), and looks up each threaded comment's author in
+   * the people listed (`opts.people`), after it has copied the threaded
+   * comments gathered so far (`tcomments.concat`). A plain comment is counted
+   * at each of its tags, a threaded one at each end tag (SheetJS adds the last
+   * comment started at every end tag), each under the cell address its tag
+   * names.
+   */
+  private takeComments(text: string): void {
+    for (const _ of text.matchAll(PERSON_TAG)) {
+      this.people += 1;
+    }
+    for (const [tag] of text.matchAll(COMMENT_TAG)) {
+      this.commentOn(sheetJsAttributes(tag).get("ref"));
+    }
+    this.steps += this.threaded;
+    if (!text.includes("threadedComment")) {
+      return;
+    }
+    let started: string | undefined;
+    for (const [tag] of text.matchAll(TAGS)) {
+      const name = /^[^ \n\r]*/.exec(tag)![0].replace(/<(\/?)\w+:/, "<$1");
+      if (name === "<threadedComment") {
+        started = sheetJsAttributes(tag).get("ref");
+      } else if (name === "</threadedComment>") {
+        this.steps += 1 + this.people;
+        this.threaded += 1;
+        this.commentOn(started);
+      }
+    }
+  }
+
+  /** One more comment on the cell `ref` names, after a step over each comment already there. */
+  private commentOn(ref: string | undefined): void {
+    const key = ref ?? "";
+    const before = this.comments.get(key) ?? 0;
+    this.steps += before;
+    this.comments.set(key, before + 1);
   }
 }
 
