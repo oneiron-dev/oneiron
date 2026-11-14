@@ -10,9 +10,14 @@ use super::tasks_response::{MCP_HOST_ACTION_REFUSED, MCP_OWNER_BINDING_REQUIRED,
 pub(crate) fn mcp_facade_error(mut error: oneiron::MemoryError) -> McpGatewayError {
     let reason_codes = std::mem::take(&mut error.reason_codes);
     let room_join_hold = error.room_join_hold.take();
+    // L9-61: a reap pause names its capacity bound and the self-host route
+    // here as on every door that serves it.
+    let reap_pause = (error.code == crate::managed::WRITES_FROZEN_TAG)
+        .then(|| Box::new(crate::managed::REAP_PAUSE_BOUND));
     McpGatewayError {
         reason_codes,
         room_join_hold,
+        reap_pause,
         ..mcp_facade_refusal(error)
     }
 }

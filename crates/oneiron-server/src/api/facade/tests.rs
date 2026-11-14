@@ -1772,3 +1772,45 @@ async fn recall_returns_the_person_an_agent_asks_about() {
 }
 
 mod call_mode;
+
+/// A reap pause's facade body names its capacity bound and the self-host
+/// route, in the shape the managed HTTP body carries (L9-61).
+#[test]
+fn a_reap_pause_facade_body_names_its_capacity_bound_and_the_self_host_route() {
+    let error = FacadeApiError::from(oneiron::memory::MemoryError::new(
+        crate::managed::WRITES_FROZEN_TAG,
+        crate::managed::ManagedError::WritesFrozen.to_string(),
+        &[],
+    ));
+    assert_eq!(error.status, StatusCode::SERVICE_UNAVAILABLE);
+    let body = serde_json::to_value(&error.body).expect("body");
+    assert_eq!(body["error"]["code"], "writes_frozen");
+    assert_eq!(
+        body["error"]["bound"],
+        json!({
+            "kind": "capacity",
+            "resource": "vault_lifecycle_allocation",
+            "phase": "reap_prepare",
+        })
+    );
+    assert_eq!(
+        body["error"]["self_hosted"],
+        json!({"supported": true, "condition": "no_service_reap_limit"})
+    );
+    let message = body["error"]["message"].as_str().expect("message");
+    assert!(message.contains("a capacity bound"), "{message}");
+    assert!(message.contains("self-hosted vault"), "{message}");
+}
+
+/// Any other refusal's facade body carries no bound.
+#[test]
+fn another_facade_refusal_body_carries_no_bound() {
+    let error = FacadeApiError::from(oneiron::memory::MemoryError::new(
+        oneiron::memory::MEMORY_CODE_FORBIDDEN,
+        "refused",
+        &[],
+    ));
+    let body = serde_json::to_value(&error.body).expect("body");
+    assert!(body["error"].get("bound").is_none(), "{body}");
+    assert!(body["error"].get("self_hosted").is_none(), "{body}");
+}

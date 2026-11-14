@@ -28,6 +28,7 @@ impl FacadeApiError {
                     reason_codes: Vec::new(),
                     legal_hold: None,
                     room_join_hold: None,
+                    reap_pause: None,
                     program_steps: Vec::new(),
                 },
                 narrowing: None,
@@ -231,6 +232,10 @@ impl From<MemoryError> for FacadeApiError {
         } else if browser_doors::browser_refusal_status(&error.code).is_some() {
             tracing::info!(code = %error.code, error = %error.message, "browser verb refused");
         }
+        // L9-61: a reap pause names its capacity bound and the self-host
+        // route here as on every door that serves it.
+        let reap_pause = (error.code == crate::managed::WRITES_FROZEN_TAG)
+            .then(|| Box::new(crate::managed::REAP_PAUSE_BOUND));
         Self {
             status,
             hook_notice: matches!(
@@ -259,6 +264,7 @@ impl From<MemoryError> for FacadeApiError {
                     reason_codes: error.reason_codes,
                     legal_hold: error.legal_hold,
                     room_join_hold: error.room_join_hold,
+                    reap_pause,
                     program_steps: Vec::new(),
                 },
                 narrowing: error.read_receipt,
