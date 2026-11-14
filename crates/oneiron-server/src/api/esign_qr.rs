@@ -34,23 +34,18 @@ pub(super) fn public_routes() -> Router<Arc<SyncServer>> {
         .layer(axum::middleware::from_fn(private_response))
 }
 
+/// The QR page's shell: one hash-pinned script, isolated as every
+/// first-party page on the API's origin is (ARCH-0050 #artifact-origin-open).
 async fn page() -> Response {
-    use base64::Engine;
-    use sha2::{Digest, Sha256};
     let script = include_str!("esign_qr/page.js");
-    let digest =
-        base64::engine::general_purpose::STANDARD.encode(Sha256::digest(script.as_bytes()));
+    let source = super::first_party_html::inline_script_source(script);
     let csp = format!(
-        "default-src 'none'; script-src 'sha256-{digest}'; connect-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        "default-src 'none'; script-src {source}; connect-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     );
     let html = format!(
         "<!doctype html><html lang=en><meta charset=utf-8><meta name=referrer content=no-referrer><meta name=robots content=noindex><title>Document verification</title><main><h1>Document verification</h1><p id=status></p><dl id=report></dl><div id=reading></div></main><script>{script}</script></html>"
     );
-    (
-        [(header::CONTENT_SECURITY_POLICY, csp)],
-        axum::response::Html(html),
-    )
-        .into_response()
+    super::first_party_html::isolated_html(csp, html)
 }
 
 async fn report(State(server): State<Arc<SyncServer>>, headers: HeaderMap) -> Response {
