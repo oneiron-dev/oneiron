@@ -1,12 +1,16 @@
-//! The fold's verdict on a root appointment (row OWNER-ANCHOR-ROOT-RECOVERY
-//! part (a); PLAN v3 sections 3, 4, 4a and 5; Engine RULINGs 14 Nov 21:01,
-//! 21:47 and 22:32).
+//! The fold's verdict on a root appointment, and what a counted one installs
+//! (row OWNER-ANCHOR-ROOT-RECOVERY parts (a) and (b1); PLAN v3 sections 3 to
+//! 6; Engine RULINGs 14 Nov 21:01, 21:47 and 22:32).
 //!
 //! The anchor of an owner root appoints a successor root key when the roster
 //! holds no live root key. The verdict is a function of the appointment's own
 //! ancestry, so it is the same on every install; only the anchor of an
-//! install's pinned root is judged there. Nothing counts an appointment yet:
-//! every install refuses it, with its descendants, and names its verdict.
+//! install's pinned root is judged there. An install counts a valid
+//! appointment that names its pinned root while its log burns no such
+//! anchor: the appointment's ancestry keeps the verdicts its own fold gave,
+//! every roster key is revoked, the successor is live, and every row an old
+//! roster key signs outside that line is sealed. Every other install
+//! refuses it, with its descendants, and names its verdict.
 //!
 //! Pure folds over hand-signed rows: a genesis root key, an owner root its
 //! anchor signs, and the rows that leave the roster with no live root key.
@@ -144,7 +148,12 @@ fn appointment_row(
     signed(Some(vault_id), seq, parents, op, anchor)
 }
 
+/// The verdict a fold gives `entry`: a counted appointment is a valid entry
+/// (only a valid one counts), and a refused one names its verdict.
 fn verdict(fold: &AuthorityFold, entry: AuthorityEntryHash) -> Option<AppointmentVerdict> {
+    if fold.valid_entries.contains(&entry) {
+        return Some(AppointmentVerdict::Valid);
+    }
     fold.issues.iter().find_map(|issue| match issue {
         AuthorityFoldIssue::AppointmentRefused {
             entry: refused,
@@ -152,6 +161,16 @@ fn verdict(fold: &AuthorityFold, entry: AuthorityEntryHash) -> Option<Appointmen
         } if *refused == entry => Some(*verdict),
         _ => None,
     })
+}
+
+/// Whether `key` is a live key of the folded roster.
+fn live(fold: &AuthorityFold, key: &AuthorityKey) -> bool {
+    fold.roster.get(key).is_some_and(|device| !device.revoked)
+}
+
+/// Whether the fold names its roster rootless.
+fn rootless(fold: &AuthorityFold) -> bool {
+    fold.issues.contains(&AuthorityFoldIssue::NoRootKey)
 }
 
 fn burned(fold: &AuthorityFold, anchor: &SigningKey) -> bool {
@@ -268,50 +287,97 @@ impl Log {
     fn fold(&self) -> AuthorityFold {
         fold_under_pin(&self.rows, Some(&self.pin))
     }
+
+    /// `signer` signs `op` at `seq` on `parents`.
+    fn sign(
+        &mut self,
+        signer: &SigningKey,
+        seq: u64,
+        parents: Vec<AuthorityEntryHash>,
+        op: AuthorityOp,
+    ) -> AuthorityEntryHash {
+        let row = signed(Some(self.vault_id), seq, parents, op, signer);
+        self.push(row)
+    }
+
+    /// The genesis root key enrols a second root key.
+    fn enrol_second_root(&mut self, second: &SigningKey) -> AuthorityEntryHash {
+        let root_key = self.root_key.clone();
+        self.sign(
+            &root_key,
+            1,
+            vec![self.genesis],
+            AuthorityOp::EnrollDevice {
+                device: device(key_of(second), ROLE_OWNER | ROLE_ADMIN),
+            },
+        )
+    }
 }
 
 /// The pinned anchor appoints a fresh successor over a handoff fork, which
-/// left no live root key. Its verdict is Valid, yet nothing counts it yet:
-/// it is refused with the successor's own rows, and the successor is not on
-/// the roster. An install with no pin does not judge it.
+/// left no live root key. Its verdict is Valid and the install that pins its
+/// root counts it: the successor is a live root key, and its own rows stand.
+/// An install with no pin does not judge it, and keeps no roster effect.
 #[test]
-fn an_appointment_over_a_handoff_fork_is_valid_and_counts_nowhere_yet() {
+fn an_appointment_over_a_handoff_fork_counts_where_its_root_is_pinned() {
     let mut log = Log::new();
     let fork = log.fork();
     let successor = signing(61);
     let appointment = log.appoint(2, log.witnesses(&fork), &successor);
+    let enrolled = signing(62);
     let successors_row = signed(
         Some(log.vault_id),
         1,
         vec![appointment],
         AuthorityOp::EnrollDevice {
-            device: device(key_of(&signing(62)), ROLE_ADMIN),
+            device: device(key_of(&enrolled), ROLE_ADMIN),
         },
         &successor,
     );
-    log.push(successors_row);
+    let successors_row = log.push(successors_row);
 
     let fold = log.fold();
 
-    assert_eq!(
-        verdict(&fold, appointment),
-        Some(AppointmentVerdict::Valid),
-        "the pinned anchor's appointment over the fork is valid: {:?}",
+    assert!(
+        fold.valid_entries.contains(&appointment),
+        "the pinned anchor's appointment over the fork counts: {:?}",
         fold.issues
     );
     assert!(!burned(&fold, &log.anchor), "one appointment burns nothing");
-    assert!(!fold.valid_entries.contains(&appointment));
-    assert!(!fold.roster.contains_key(&key_of(&successor)));
-    assert!(!fold.roster.contains_key(&key_of(&signing(62))));
+    assert!(fold.valid_entries.contains(&successors_row));
+    assert!(live(&fold, &key_of(&successor)));
+    assert_eq!(
+        fold.roster[&key_of(&successor)].roles,
+        ROLE_OWNER | ROLE_ADMIN
+    );
+    assert!(live(&fold, &key_of(&enrolled)));
+    for old in [
+        &log.root_key,
+        &signing(FIRST_HANDOFF_SEED),
+        &signing(SECOND_HANDOFF_SEED),
+    ] {
+        assert!(!live(&fold, &key_of(old)), "an old key stays retired");
+    }
+    for handoff in &fork {
+        assert!(!fold.valid_entries.contains(handoff));
+    }
+    assert!(!rootless(&fold), "{:?}", fold.issues);
     assert!(
-        fold.roster.values().all(|device| device.revoked),
-        "the fork left no live root key"
+        !fold
+            .issues
+            .iter()
+            .any(|issue| matches!(issue, AuthorityFoldIssue::UnsettledHandoff(_))),
+        "the recovered line raises no unsettled handoff: {:?}",
+        fold.issues
     );
     let unpinned = fold_under_pin(&log.rows, None);
     assert_eq!(
         verdict(&unpinned, appointment),
         Some(AppointmentVerdict::Unjudged)
     );
+    assert!(!unpinned.valid_entries.contains(&successors_row));
+    assert!(!unpinned.roster.contains_key(&key_of(&successor)));
+    assert!(rootless(&unpinned));
 }
 
 /// An appointment while the genesis root key is still live is void and burns
@@ -650,4 +716,389 @@ fn the_wire_keeps_an_appointment_and_its_shape_binds_it() {
         own_successor.validate_shape().is_err(),
         "the anchor never appoints itself"
     );
+}
+
+// Part (b1): what a counted appointment installs (PLAN v3 sections 5 and 6).
+
+/// A roster with no live root key names itself; a live one, or an
+/// appointment's successor, does not (E4).
+#[test]
+fn a_rootless_roster_names_itself() {
+    let mut log = Log::new();
+    assert!(!rootless(&log.fold()), "the genesis root key is live");
+    let fork = log.fork();
+    assert!(rootless(&log.fold()), "the fork leaves no live root key");
+    log.appoint(2, log.witnesses(&fork), &signing(90));
+    assert!(!rootless(&log.fold()), "the successor is a live root key");
+
+    let mut admin_only = Log::new();
+    let root_key = admin_only.root_key.clone();
+    let genesis = admin_only.genesis;
+    admin_only.sign(
+        &root_key,
+        1,
+        vec![genesis],
+        AuthorityOp::ReRoot {
+            new_device: device(key_of(&signing(91)), ROLE_ADMIN),
+        },
+    );
+    assert!(
+        rootless(&admin_only.fold()),
+        "a settled handoff to an ADMIN key leaves no root key"
+    );
+}
+
+/// Two root keys revoke each other on sibling branches: both fences close in
+/// conflict and no root key is left (round-1 finding 4). The pinned anchor's
+/// appointment over both revocations installs its successor.
+#[test]
+fn the_owner_gets_out_of_a_revocation_only_cycle() {
+    let mut log = Log::new();
+    let second = signing(80);
+    let enrol = log.enrol_second_root(&second);
+    let root_key = log.root_key.clone();
+    let revokes_second = log.sign(
+        &root_key,
+        2,
+        vec![enrol],
+        AuthorityOp::RevokeDevice {
+            revoked_key: key_of(&second),
+        },
+    );
+    let revokes_first = log.sign(
+        &second,
+        1,
+        vec![enrol],
+        AuthorityOp::RevokeDevice {
+            revoked_key: key_of(&root_key),
+        },
+    );
+    let before = log.fold();
+    assert!(rootless(&before), "{:?} {:?}", before.roster, before.issues);
+
+    let successor = signing(81);
+    let appointment = log.appoint(
+        2,
+        vec![revokes_second, revokes_first, log.owner_root],
+        &successor,
+    );
+    let fold = log.fold();
+
+    assert!(
+        fold.valid_entries.contains(&appointment),
+        "{:?}",
+        fold.issues
+    );
+    assert!(live(&fold, &key_of(&successor)));
+    assert!(!live(&fold, &key_of(&root_key)));
+    assert!(!live(&fold, &key_of(&second)));
+    assert!(!rootless(&fold));
+}
+
+/// A revocation and a handoff fence each other (the 20:11 ruling's cycle):
+/// both close in conflict, the handoff installs nothing, and no root key is
+/// left. The pinned anchor's appointment over both installs its successor.
+#[test]
+fn the_owner_gets_out_of_a_revoke_fence_cycle() {
+    let mut log = Log::new();
+    let second = signing(82);
+    let enrol = log.enrol_second_root(&second);
+    let root_key = log.root_key.clone();
+    let revocation = log.sign(
+        &root_key,
+        2,
+        vec![enrol],
+        AuthorityOp::RevokeDevice {
+            revoked_key: key_of(&second),
+        },
+    );
+    let handed_to = signing(83);
+    let handoff = log.sign(
+        &second,
+        1,
+        vec![enrol],
+        AuthorityOp::ReRoot {
+            new_device: device(key_of(&handed_to), ROLE_OWNER | ROLE_ADMIN),
+        },
+    );
+    let before = log.fold();
+    assert!(rootless(&before), "{:?} {:?}", before.roster, before.issues);
+
+    let successor = signing(84);
+    let appointment = log.appoint(2, vec![revocation, handoff, log.owner_root], &successor);
+    let fold = log.fold();
+
+    assert!(
+        fold.valid_entries.contains(&appointment),
+        "{:?}",
+        fold.issues
+    );
+    assert!(live(&fold, &key_of(&successor)));
+    for old in [&root_key, &second, &handed_to] {
+        assert!(!live(&fold, &key_of(old)));
+    }
+    assert!(!fold.valid_entries.contains(&handoff));
+    assert!(!rootless(&fold));
+}
+
+/// Only the install that pins the appointment's root counts it: with no pin,
+/// or pinned to another anchor's root, the appointment keeps no roster
+/// effect and its successor's rows stand nowhere (round-1 finding 8).
+#[test]
+fn an_uncounted_appointment_keeps_no_roster_effect() {
+    let mut log = Log::new();
+    let stranger = RecoveryRootSeed::generate().expect("a seed");
+    let stranger_anchor = stranger.anchor();
+    let record = owner_root_record(log.vault_id, &stranger, &stranger_anchor);
+    let stranger_pin = PinnedRoot {
+        id: record.root,
+        anchor_key: record.anchor_key,
+    };
+    let genesis = log.genesis;
+    log.sign(
+        &stranger_anchor,
+        1,
+        vec![genesis],
+        AuthorityOp::OwnerRoot(record),
+    );
+    let fork = log.fork();
+    let successor = signing(85);
+    let appointment = log.appoint(2, log.witnesses(&fork), &successor);
+    let successors_row = log.sign(
+        &successor,
+        1,
+        vec![appointment],
+        AuthorityOp::EnrollDevice {
+            device: device(key_of(&signing(86)), ROLE_ADMIN),
+        },
+    );
+
+    for pin in [None, Some(&stranger_pin)] {
+        let fold = fold_under_pin(&log.rows, pin);
+        assert!(!fold.valid_entries.contains(&appointment));
+        assert!(!fold.valid_entries.contains(&successors_row));
+        assert!(!fold.roster.contains_key(&key_of(&successor)));
+        assert!(rootless(&fold));
+    }
+    let fold = log.fold();
+    assert!(
+        fold.valid_entries.contains(&successors_row),
+        "{:?}",
+        fold.issues
+    );
+    assert!(live(&fold, &key_of(&successor)));
+}
+
+/// After the appointment counts, rows an old roster key signs outside its
+/// line are sealed (round-1 finding 3; E2, E4): a third sibling handoff
+/// revealed late, a late enrolment of the successor's key, and a late
+/// revocation. Neither raises an unsettled handoff, and the successor stays
+/// the live root key with its own roles.
+#[test]
+fn rows_an_old_key_signs_outside_the_appointment_are_sealed() {
+    let mut log = Log::new();
+    let fork = log.fork();
+    let successor = signing(87);
+    let appointment = log.appoint(2, log.witnesses(&fork), &successor);
+    let root_key = log.root_key.clone();
+    let genesis = log.genesis;
+    let late_handoff = log.sign(
+        &root_key,
+        3,
+        vec![genesis],
+        AuthorityOp::ReRoot {
+            new_device: device(key_of(&signing(53)), ROLE_OWNER | ROLE_ADMIN),
+        },
+    );
+    let late_enrol = log.sign(
+        &root_key,
+        4,
+        vec![genesis],
+        AuthorityOp::EnrollDevice {
+            device: device(key_of(&successor), ROLE_ADMIN),
+        },
+    );
+    let late_revocation = log.sign(
+        &root_key,
+        5,
+        vec![genesis],
+        AuthorityOp::RevokeDevice {
+            revoked_key: key_of(&signing(FIRST_HANDOFF_SEED)),
+        },
+    );
+
+    let fold = log.fold();
+
+    assert!(
+        fold.valid_entries.contains(&appointment),
+        "{:?}",
+        fold.issues
+    );
+    for sealed in [late_handoff, late_enrol, late_revocation] {
+        assert!(!fold.valid_entries.contains(&sealed));
+    }
+    assert!(
+        fold.issues
+            .contains(&AuthorityFoldIssue::RetiredSigner(late_handoff))
+    );
+    assert!(
+        !fold
+            .issues
+            .iter()
+            .any(|issue| matches!(issue, AuthorityFoldIssue::UnsettledHandoff(_))),
+        "{:?}",
+        fold.issues
+    );
+    assert!(!live(&fold, &key_of(&signing(53))));
+    assert!(live(&fold, &key_of(&successor)));
+    assert_eq!(
+        fold.roster[&key_of(&successor)].roles,
+        ROLE_OWNER | ROLE_ADMIN
+    );
+}
+
+/// A sealed late sibling closes no fence: the successor's own later handoff
+/// settles beside it.
+#[test]
+fn the_successor_hands_off_again_beside_a_sealed_sibling() {
+    let mut log = Log::new();
+    let fork = log.fork();
+    let successor = signing(88);
+    let appointment = log.appoint(2, log.witnesses(&fork), &successor);
+    let root_key = log.root_key.clone();
+    let genesis = log.genesis;
+    let late_handoff = log.sign(
+        &root_key,
+        3,
+        vec![genesis],
+        AuthorityOp::ReRoot {
+            new_device: device(key_of(&signing(54)), ROLE_OWNER | ROLE_ADMIN),
+        },
+    );
+    let next = signing(89);
+    let next_handoff = log.sign(
+        &successor,
+        1,
+        vec![appointment],
+        AuthorityOp::ReRoot {
+            new_device: device(key_of(&next), ROLE_OWNER | ROLE_ADMIN),
+        },
+    );
+
+    let fold = log.fold();
+
+    assert!(
+        fold.valid_entries.contains(&next_handoff),
+        "{:?}",
+        fold.issues
+    );
+    assert!(!fold.valid_entries.contains(&late_handoff));
+    assert!(live(&fold, &key_of(&next)));
+    assert!(!live(&fold, &key_of(&successor)));
+    assert!(!rootless(&fold));
+}
+
+/// The barrier is path-sensitive (round-2 finding 8): the successor's row
+/// that reaches a refused handoff only through the appointment stands; one
+/// that also names the refused handoff as a parent does not.
+#[test]
+fn a_descendant_with_its_own_path_to_a_refused_row_stays_refused() {
+    let mut log = Log::new();
+    let fork = log.fork();
+    let successor = signing(92);
+    let appointment = log.appoint(2, log.witnesses(&fork), &successor);
+    let through = log.sign(
+        &successor,
+        1,
+        vec![appointment],
+        AuthorityOp::EnrollDevice {
+            device: device(key_of(&signing(93)), ROLE_ADMIN),
+        },
+    );
+    let beside = log.sign(
+        &successor,
+        2,
+        vec![through, fork[0]],
+        AuthorityOp::EnrollDevice {
+            device: device(key_of(&signing(94)), ROLE_ADMIN),
+        },
+    );
+    let after = log.sign(
+        &successor,
+        2,
+        vec![through],
+        AuthorityOp::EnrollDevice {
+            device: device(key_of(&signing(95)), ROLE_ADMIN),
+        },
+    );
+
+    let fold = log.fold();
+
+    assert!(fold.valid_entries.contains(&through), "{:?}", fold.issues);
+    assert!(fold.valid_entries.contains(&after));
+    assert!(!fold.valid_entries.contains(&beside));
+    assert!(!fold.roster.contains_key(&key_of(&signing(94))));
+    assert!(live(&fold, &key_of(&signing(95))));
+}
+
+/// The rows arrive in other orders; every install folds the counted
+/// appointment's world the same (round-1 finding 6).
+#[test]
+fn every_install_folds_an_appointment_the_same() {
+    let mut log = Log::new();
+    let fork = log.fork();
+    let successor = signing(96);
+    let appointment = log.appoint(2, log.witnesses(&fork), &successor);
+    log.sign(
+        &successor,
+        1,
+        vec![appointment],
+        AuthorityOp::EnrollDevice {
+            device: device(key_of(&signing(97)), ROLE_ADMIN),
+        },
+    );
+    let first = log.fold();
+    assert!(
+        first.valid_entries.contains(&appointment),
+        "{:?}",
+        first.issues
+    );
+    let mut rows = log.rows.clone();
+    for _ in 0..rows.len() {
+        rows.rotate_left(1);
+        let fold = fold_under_pin(&rows, Some(&log.pin));
+        assert_eq!(fold.valid_entries, first.valid_entries);
+        assert_eq!(fold.roster, first.roster);
+    }
+    rows.reverse();
+    let fold = fold_under_pin(&rows, Some(&log.pin));
+    assert_eq!(fold.valid_entries, first.valid_entries);
+    assert_eq!(fold.roster, first.roster);
+}
+
+/// A sibling appointment by the same anchor that arrives later burns it, and
+/// the burn un-counts the first (C3): neither successor is live.
+#[test]
+fn a_later_burn_uncounts_the_appointment() {
+    let mut log = Log::new();
+    let fork = log.fork();
+    let first_successor = signing(98);
+    let first = log.appoint(2, log.witnesses(&fork), &first_successor);
+    let counted = log.fold();
+    assert!(
+        counted.valid_entries.contains(&first),
+        "{:?}",
+        counted.issues
+    );
+
+    let second_successor = signing(99);
+    let second = log.appoint(2, log.witnesses(&fork), &second_successor);
+    let fold = log.fold();
+
+    assert!(burned(&fold, &log.anchor), "{:?}", fold.issues);
+    assert!(!fold.valid_entries.contains(&first));
+    assert!(!fold.valid_entries.contains(&second));
+    assert!(!fold.roster.contains_key(&key_of(&first_successor)));
+    assert!(!fold.roster.contains_key(&key_of(&second_successor)));
+    assert!(rootless(&fold));
 }

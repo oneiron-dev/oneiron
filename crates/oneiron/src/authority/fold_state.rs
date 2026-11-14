@@ -86,6 +86,12 @@ pub enum AuthorityFoldIssue {
         /// The burned anchor's Ed25519 key.
         anchor: [u8; 32],
     },
+    /// The folded roster holds no live root key (`ROLE_OWNER`): a handoff
+    /// conflict, a cycle of revocations, a settled handoff to a key without
+    /// `ROLE_OWNER`, or a revocation of the last one. No roster row settles
+    /// it; the pinned root's anchor appoints a successor
+    /// (OWNER-ANCHOR-ROOT-RECOVERY).
+    NoRootKey,
 }
 
 /// Why the fold refused an actor-binding op.

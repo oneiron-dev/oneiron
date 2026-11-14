@@ -59,8 +59,10 @@ impl FoldIssues {
                 AuthorityFoldIssue::AppointmentRefused { entry, .. } => {
                     (entry, "appointment_refused")
                 }
-                // An anchor's burn names no entry.
-                AuthorityFoldIssue::AnchorBurned { .. } => continue,
+                // An anchor's burn and a rootless roster name no entry.
+                AuthorityFoldIssue::AnchorBurned { .. } | AuthorityFoldIssue::NoRootKey => {
+                    continue;
+                }
             };
             issues.by_entry.entry(*entry).or_default().push(code);
         }
