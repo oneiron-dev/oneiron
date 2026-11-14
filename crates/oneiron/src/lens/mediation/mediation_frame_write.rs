@@ -8,7 +8,7 @@ use crate::claim::ScopedRead;
 use crate::error::{Error, Result};
 use crate::lens::atom::{
     FiniteF64, GeneratedUiResultSetActionEvent, GeneratedUiResultSetAtom,
-    GeneratedUiResultSetSelectAll, GeneratedUiResultSetSelection, LensAtom, LensText,
+    GeneratedUiResultSetSelectAll, GeneratedUiResultSetSelection, LensText,
 };
 use crate::lens::generated_ui::{
     GeneratedUiActionEvent, GeneratedUiActionTier, GeneratedUiCardPhase, GeneratedUiRender,
@@ -110,12 +110,14 @@ impl LensRenderFrame {
                 "generated-ui action event element must match its declaration".to_string(),
             ));
         }
-        let LensAtom::SelfUi(control) = &node.atom else {
+        // A `self.ui` control, a quick filter or an app component: the element has
+        // to carry the very action its declaration names.
+        let Some(action) = node.atom.action() else {
             return Err(Error::InvalidConfig(
-                "generated-ui action element must be a self.ui control".to_string(),
+                "generated-ui action element must carry an action".to_string(),
             ));
         };
-        if control.action() != &declaration.action {
+        if action != &declaration.action {
             return Err(Error::InvalidConfig(
                 "generated-ui element action must match its manifest declaration".to_string(),
             ));

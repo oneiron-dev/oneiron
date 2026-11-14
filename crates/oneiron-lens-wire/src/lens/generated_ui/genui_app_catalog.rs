@@ -4,16 +4,18 @@
 //!
 //! The engine negotiates the component set an app declares and never defines
 //! it (ARCH-0048 G3). A component is data: its props are plain JSON that must
-//! meet the schema its app declared, it declares no action, and every backing
-//! read and action on its card stays under engine mediation. The built-in lens
-//! atom kit is one supplied descriptor ([`GeneratedUiCatalogDescriptor::lens_atom_kit`]),
-//! not the only legal catalog.
+//! meet the schema its app declared, the one action it may carry is the
+//! engine's typed action, and every backing read and action on its card stays
+//! under engine mediation. The built-in lens atom kit is one supplied
+//! descriptor ([`GeneratedUiCatalogDescriptor::lens_atom_kit`]), not the only
+//! legal catalog.
 
 use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 use crate::lens::atom::LensText;
+use crate::lens::self_ui::SelfUiAction;
 use crate::lens::validate::{MAX_LENS_TOKEN_BYTES, fallback_lens_text};
 use crate::lens::wire_ids::{GeneratedUiCatalogName, GeneratedUiComponentName};
 use crate::{Error, Result};
@@ -252,11 +254,15 @@ impl GeneratedUiCatalogDescriptor {
 }
 
 /// A node drawn by a component the app declared (FIX 9891): the app catalog
-/// and component it names, and its props as plain JSON data. It is kept on a
+/// and component it names, its props as plain JSON data, and at most one action
+/// (GENUI-COMPONENT-ACTIONS), such as a foot's "show 10 more". It is kept on a
 /// surface that declares that catalog and component and whose schema the props
-/// meet; on any other surface it lowers to its node's `fallbackText`. It
-/// declares no action and grants no read: the card's manifest and backing refs
-/// stay engine-authored.
+/// meet; on any other surface it lowers to its node's `fallbackText`, and the
+/// declaration of its action leaves the render with it. It grants no read, and
+/// its action grants no authority: the action is the engine's typed
+/// [`SelfUiAction`], beside the props and outside the app's schema, and like a
+/// `self.ui` control's it sends only when the card's engine-authored manifest
+/// declares that same action for this element.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GeneratedUiComponentAtom {
@@ -264,6 +270,8 @@ pub struct GeneratedUiComponentAtom {
     pub name: GeneratedUiComponentName,
     #[serde(default = "admit_any_props")]
     pub props: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<SelfUiAction>,
 }
 
 impl GeneratedUiComponentAtom {
@@ -272,6 +280,9 @@ impl GeneratedUiComponentAtom {
             return Err(Error::InvalidConfig(
                 "generated-ui component props must be a JSON object".to_string(),
             ));
+        }
+        if let Some(action) = &self.action {
+            action.validate()?;
         }
         Ok(())
     }
