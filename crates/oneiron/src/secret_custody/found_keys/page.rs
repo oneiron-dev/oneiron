@@ -57,9 +57,9 @@ pub struct FoundKeyNoticePage {
 impl Vault {
     /// [`Self::found_keys`] a page at a time: at most `limit` notices after
     /// `after` (from the newest when `None`), with the cursor of the next
-    /// page. `open_only` keeps the records with a key the owner has not
-    /// acted on. A zero `limit` reads none, and its next page starts where
-    /// `after` did. No value is read.
+    /// page. `open_only` keeps the records with a key or a seal that waits
+    /// for the owner's answer. A zero `limit` reads none, and its next page
+    /// starts where `after` did. No value is read.
     ///
     /// # Errors
     /// As [`Self::found_keys`].
@@ -75,7 +75,7 @@ impl Vault {
         let mut rows = Vec::new();
         for row in FOUND.iter_from(&self.store, &txn, &[])? {
             let (record, found) = row?;
-            if open_only && !found.is_open() {
+            if open_only && !found.is_open_in_txn(&self.store, &txn, &record)? {
                 continue;
             }
             let latest = found.latest().unwrap_or(0);
