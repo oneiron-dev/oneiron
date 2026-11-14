@@ -445,8 +445,10 @@ fn add_held_back_count(
 
 /// An actor's erase over the retained rows: deletes each retained copy whose source table's
 /// declaration names an actor scrub and whose source key or value holds the actor's 16 id bytes
-/// or its lowercase hex text. Rows of source tables without an actor scrub stay, as does a sealed
-/// copy the byte-or-hex match cannot see.
+/// or its lowercase hex text, and each Gate decision copy that names the actor when read as the
+/// ledger reads its rows, sealed ones included (REVIEW-7706). Rows of source tables without an
+/// actor scrub stay, as does a sealed Gate decision copy no one here can read (its key retired or
+/// never held).
 pub(crate) fn erase_retained_side_row_actor_in_txn(
     vault: &crate::Vault,
     wtxn: &mut RwTxn<'_>,
@@ -468,7 +470,13 @@ pub(crate) fn erase_retained_side_row_actor_in_txn(
                     || contains_bytes(&envelope.source_key, hex.as_bytes())
                     || contains_bytes(&envelope.source_value, actor.as_bytes())
                     || contains_bytes(&envelope.source_value, hex.as_bytes()))
-        });
+        }) || (envelope.source_table
+            == crate::side_table::GATE_DECISION_LEDGER.name
+            && vault.store.gate_decision_copy_names_actor(
+                &envelope.source_key,
+                &envelope.source_value,
+                actor,
+            ) == Some(true));
         if names_actor {
             erase.push(typed);
         }
