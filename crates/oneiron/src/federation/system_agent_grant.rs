@@ -75,6 +75,8 @@ use crate::store::ManifestDbs;
 use crate::{TimeRange, Vault};
 
 mod narrowing;
+#[cfg(feature = "sync")]
+pub(crate) use narrowing::SystemAgentNarrowingRows;
 pub(crate) use narrowing::erase_narrowing_actor_in_txn;
 pub use narrowing::{
     SYSTEM_AGENT_GRANT_NARROWING_WARNING, SystemAgentGrantNarrowing, SystemAgentNarrowing,

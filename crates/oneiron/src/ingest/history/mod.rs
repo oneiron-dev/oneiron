@@ -18,6 +18,8 @@ mod claude_code;
 mod codex;
 mod copilot;
 mod cursor;
+mod hosted;
+mod hosted_verbs;
 mod land;
 mod ledger;
 mod plan;
@@ -29,6 +31,16 @@ mod tree;
 #[cfg(test)]
 mod tests;
 
+pub use hosted::{
+    HostedImportCanceller, HostedImportEmbeddings, HostedImportId, HostedImportJob,
+    HostedImportParse, HostedImportResumed, HostedImportReview, HostedImportSearchable,
+    HostedImportStaged, HostedImportState, HostedImportStatus, HostedImportUpload,
+    HostedImportView,
+};
+pub use hosted_verbs::{
+    HostedImportCancel, HostedImportLookup, hosted_import_cancel, hosted_import_cancel_as,
+    hosted_import_get, hosted_import_get_as_owner, hosted_import_get_as_reader,
+};
 pub use land::HistoryImportReport;
 pub(crate) use ledger::erase_message_in_txn;
 pub use plan::{HistoryDryRun, HistoryLedgerSnapshot};
