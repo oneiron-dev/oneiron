@@ -20,6 +20,7 @@ use crate::deletion::SafeDeleteReason;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
+use crate::file_secret_marks::HeldForm;
 use crate::secret_custody::CustodyRevokeAct;
 use crate::secret_custody::doors::{
     read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
@@ -256,6 +257,7 @@ impl Vault {
             let actor = by.person();
             found.refuse_ruled()?;
             let place = found.key().place.clone();
+            let held = found.key().held;
             let field = place.strip_prefix("text:");
             let repo_false_positive =
                 place == "repo:receive-pack" && action == FoundKeyAction::NotASecret;
@@ -304,11 +306,11 @@ impl Vault {
             if place == "file" {
                 drop_file_key_in_txn(self, txn, &found.record, &found.custody)?;
             } else if place == "claim" {
-                restore_claim_in_txn(self, txn, &found.record, &found.handle, &value)?;
+                restore_claim_in_txn(self, txn, &found.record, &found.handle, &value, held)?;
             } else if let Some(field) = field {
                 restore_text_in_txn(self, txn, &found.record, field, &found.handle, &value)?;
             } else if place == "body" {
-                restore_body_in_txn(self, txn, &found.record, &found.handle, &value)?;
+                restore_body_in_txn(self, txn, &found.record, &found.handle, &value, held)?;
             }
             // The ruling's surface is where the request reached this
             // install: audit only. Its revoke reaches the owner's other
@@ -725,14 +727,16 @@ fn drop_file_key_in_txn(
     crate::secret_custody::masked_files::drop_masked_key_in_txn(&vault.store, txn, &hash, custody)
 }
 
-/// Writes `record` again with `value` back where its body holds `handle`.
-/// The ruling already stands, so the write door reads the value as no hit.
+/// Writes `record` again with `value` back where its body holds `handle`,
+/// decoded when custody `held` it encoded. The ruling already stands, so
+/// the write door reads the value as no hit.
 fn restore_body_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     record: &EntityId,
     handle: &str,
     value: &[u8],
+    held: HeldForm,
 ) -> Result<()> {
     if !live_entity_row_in_txn(&vault.store, txn, record)?.is_live() {
         return Ok(());
@@ -745,7 +749,7 @@ fn restore_body_in_txn(
     let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..) else {
         return Ok(());
     };
-    let Some(restored) = unmasked_body(body, handle, value)? else {
+    let Some(restored) = unmasked_body(body, handle, value, held)? else {
         return Ok(());
     };
     let learned_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
@@ -816,6 +820,7 @@ fn restore_claim_in_txn(
     record: &EntityId,
     handle: &str,
     value: &[u8],
+    held: HeldForm,
 ) -> Result<()> {
     if !live_entity_row_in_txn(&vault.store, txn, record)?.is_live() {
         return Ok(());
@@ -849,7 +854,7 @@ fn restore_claim_in_txn(
     .into_iter()
     .flatten()
     {
-        changed |= unmask_value(part, handle, &text_form, value)?;
+        changed |= unmask_value(part, handle, &text_form, value, held)?;
     }
     if !changed {
         return Ok(());
@@ -874,6 +879,7 @@ fn restore_claim_in_txn(
         &op,
         handle,
         value,
+        held,
     )?;
     crate::batch::apply_ops_with_gate_mode(
         &vault.store,
@@ -892,11 +898,17 @@ fn restore_claim_in_txn(
 /// `body` with `value` back where the mask left `handle`, read as the mask
 /// reads a body: JSON, a whole MessagePack value, or text. A span's text
 /// form, `[secret sc12]`, and a credential field's whole value, `sc12`, both
-/// take it back. `None` when the body holds neither.
-fn unmasked_body(body: &[u8], handle: &str, value: &[u8]) -> Result<Option<Vec<u8>>> {
+/// take it back, the field the decoded value when custody `held` it
+/// encoded. `None` when the body holds neither.
+fn unmasked_body(
+    body: &[u8],
+    handle: &str,
+    value: &[u8],
+    held: HeldForm,
+) -> Result<Option<Vec<u8>>> {
     let text_form = format!("{HANDLE_TEXT_OPEN}{handle}]");
     if let Ok(mut tree) = serde_json::from_slice::<Value>(body) {
-        if !unmask_value(&mut tree, handle, &text_form, value)? {
+        if !unmask_value(&mut tree, handle, &text_form, value, held)? {
             return Ok(None);
         }
         return serde_json::to_vec(&tree)
@@ -907,7 +919,7 @@ fn unmasked_body(body: &[u8], handle: &str, value: &[u8]) -> Result<Option<Vec<u
     if let Ok(mut tree) = rmpv::decode::read_value(&mut cursor)
         && cursor.position() == body.len() as u64
     {
-        if !unmask_value(&mut tree, handle, &text_form, value)? {
+        if !unmask_value(&mut tree, handle, &text_form, value, held)? {
             return Ok(None);
         }
         let mut out = Vec::with_capacity(body.len());

@@ -65,6 +65,7 @@ use super::shapes::{self, Door, HANDLE_OPEN};
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::file_secret_marks::HeldForm;
 use crate::file_secret_marks::KeyPlaces;
 use crate::file_secret_marks::KeySpan;
 use crate::file_secret_marks::MemberStep;
@@ -172,6 +173,8 @@ pub(crate) fn seal_whole_part_in_txn(
         reason: reason.unwrap_or(REASON_KNOWN_VALUE),
         record,
         place: place.to_owned(),
+        // The part's MessagePack encoding, kept whole.
+        held: HeldForm::Encoded,
     });
     let handles = plan.mint(&CustodyWrite::of(vault), wtxn, at)?;
     handles
@@ -220,6 +223,7 @@ pub(crate) fn mark_text_value_in_txn(
         reason: REASON_KNOWN_VALUE,
         record,
         place: place.to_owned(),
+        held: HeldForm::Raw,
     });
     let keys = text
         .match_indices(value)
@@ -460,6 +464,8 @@ struct Found {
     reason: &'static str,
     record: EntityId,
     place: String,
+    /// How custody holds `value`.
+    held: HeldForm,
 }
 
 /// A pass over a batch's ops. A plan hands each new value a stand-in and
@@ -732,16 +738,19 @@ impl Masker {
         if !credential_member(key, member) {
             return self.mask_value(member);
         }
-        let secret = Zeroizing::new(match &*member {
-            Value::String(text) => text.as_bytes().to_vec(),
-            Value::Binary(bytes) => bytes.clone(),
+        // A value that is neither text nor bytes is held as its encoding, and
+        // its key says so, so a restore puts back the value itself (FIX
+        // SEALED-VALUE-RESTORE-KEEPS-ENCODED-TEXT).
+        let (secret, held) = match &*member {
+            Value::String(text) => (Zeroizing::new(text.as_bytes().to_vec()), HeldForm::Raw),
+            Value::Binary(bytes) => (Zeroizing::new(bytes.clone()), HeldForm::Raw),
             other => {
                 let mut bytes = Zeroizing::new(Vec::new());
                 rmpv::encode::write_value(&mut *bytes, other)
                     .map_err(|_| Error::InvariantViolation("a credential field did not encode"))?;
-                std::mem::take(&mut *bytes)
+                (bytes, HeldForm::Encoded)
             }
-        });
+        };
         if self.is_kept(&secret) {
             return Ok(false);
         }
@@ -756,7 +765,7 @@ impl Masker {
                 self.placed_known = true;
                 handle
             }
-            None => self.handle(&secret, REASON_SENSITIVE_ENV)?,
+            None => self.handle_held(&secret, REASON_SENSITIVE_ENV, held)?,
         };
         wipe::wipe_value(member);
         *member = Value::from(handle);
@@ -914,6 +923,17 @@ impl Masker {
 
     /// The handle `value` takes: one per distinct value in a batch.
     fn handle(&mut self, value: &[u8], reason: &'static str) -> Result<String> {
+        self.handle_held(value, reason, HeldForm::Raw)
+    }
+
+    /// [`Self::handle`] for a value custody holds as `held`; the first
+    /// placement of a value in a batch names its form.
+    fn handle_held(
+        &mut self,
+        value: &[u8],
+        reason: &'static str,
+        held: HeldForm,
+    ) -> Result<String> {
         if let Some(handle) = self.handles.get(value) {
             return Ok(handle.clone());
         }
@@ -932,6 +952,7 @@ impl Masker {
             reason,
             record,
             place,
+            held,
         });
         Ok(STAND_IN.to_owned())
     }
@@ -1007,6 +1028,7 @@ impl Masker {
                 reason: found.reason,
                 place: found.place,
                 writer,
+                held: found.held,
             });
             handles.insert(std::mem::take(&mut *value), (handle, id));
         }
