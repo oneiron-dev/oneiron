@@ -4,8 +4,6 @@
 //! entity-id / genesis-vault-id derivation. The `rmpv` mapping itself lives in
 //! [`super::wire_encode`] and [`super::wire_decode`].
 
-use std::io::Cursor;
-
 use rmpv::Value;
 
 use crate::entity_id::EntityId;
@@ -245,6 +243,13 @@ pub struct AuthorityLogEntry {
     pub cosigns: Vec<AuthoritySignature>,
     /// Advisory timestamp. Fold semantics must never branch on this value.
     pub ts: u64,
+    /// The seed of the entry's erasable overlay (census L5-22): `Some`
+    /// exactly when the op has a present overlay leaf
+    /// ([`super::overlay_classes`]). It never rides the log: the body, the
+    /// transcript and the hash carry the op's scaffold, each overlay leaf a
+    /// commitment keyed by this seed, and the seed with the leaves is the
+    /// [`AuthorityOverlayRecord`] kept beside the row.
+    pub overlay_seed: Option<[u8; 32]>,
 }
 
 impl AuthorityLogEntry {
@@ -279,6 +284,11 @@ impl AuthorityLogEntry {
             _ => {}
         }
         validate_op(&self.op)?;
+        // No overlay leaf lands in plaintext, and a seed with nothing to seal
+        // would give two entries one body.
+        if self.overlay_seed.is_some() != op_value_has_overlay_leaf(&op_value(&self.op)) {
+            return Err(invalid_authority());
+        }
         match &self.op {
             AuthorityOp::OwnerRoot(record) => record.validate_entry(self)?,
             AuthorityOp::WorldKeyWraps(record) => record.validate_entry(self)?,
@@ -326,19 +336,10 @@ pub fn encode_authority_log_entry_body(entry: &AuthorityLogEntry) -> Result<Vec<
 }
 
 /// Decodes a canonical authority entry and verifies the embedded origin signature.
+/// A sealed row answers [`AUTHORITY_OVERLAY_UNAVAILABLE`]: open it with its
+/// record through [`open_authority_log_entry_body`].
 pub fn decode_authority_log_entry_body(bytes: &[u8]) -> Result<AuthorityLogEntry> {
-    let mut cursor = Cursor::new(bytes);
-    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_authority())?;
-    if cursor.position() != bytes.len() as u64 {
-        return Err(invalid_authority());
-    }
-    let entry = decode_entry_value(&value)?;
-    entry.validate_shape()?;
-    let canonical = encode_authority_log_entry_body(&entry)?;
-    if canonical == bytes && verify_entry_signatures(&entry).is_ok() {
-        return Ok(entry);
-    }
-    Err(invalid_authority())
+    open_authority_log_entry_body(bytes, None)
 }
 
 /// Validates body bytes for write/replay doors.

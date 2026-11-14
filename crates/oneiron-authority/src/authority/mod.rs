@@ -30,7 +30,14 @@ mod leave_notice_delegation;
 mod log_entry_op;
 mod machine_profile;
 mod membership_execution;
+#[cfg(test)]
+mod op_samples;
 mod origin_cut;
+mod overlay_classes;
+mod overlay_seal;
+mod overlay_subject;
+#[cfg(test)]
+mod overlay_tests;
 mod owner_act;
 mod owner_handover;
 mod owner_key_enrollment;
@@ -71,6 +78,9 @@ pub use log_entry_op::*;
 pub use machine_profile::*;
 pub use membership_execution::*;
 pub use origin_cut::*;
+pub use overlay_classes::*;
+pub use overlay_seal::*;
+pub use overlay_subject::*;
 pub use owner_act::*;
 pub use owner_handover::*;
 pub use owner_key_enrollment::*;

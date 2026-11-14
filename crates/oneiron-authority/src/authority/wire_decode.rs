@@ -42,6 +42,9 @@ pub fn decode_entry_value(value: &Value) -> Result<AuthorityLogEntry> {
         signer,
         cosigns,
         ts,
+        // A sealed row's seed comes from its overlay record
+        // (`open_authority_log_entry_body`), never from the body.
+        overlay_seed: None,
     })
 }
 

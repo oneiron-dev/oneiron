@@ -30,7 +30,13 @@ pub fn entry_value(entry: &AuthorityLogEntry, include_signatures: bool) -> Value
                     .collect(),
             ),
         ),
-        (Value::from(KEY_OP), op_value(&entry.op)),
+        (
+            Value::from(KEY_OP),
+            match &entry.overlay_seed {
+                Some(seed) => seal_op_value(&op_value(&entry.op), seed).0,
+                None => op_value(&entry.op),
+            },
+        ),
     ];
     if include_signatures {
         fields.push((Value::from(KEY_SIGNER), signature_value(&entry.signer)));
