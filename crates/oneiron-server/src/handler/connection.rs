@@ -182,13 +182,29 @@ async fn ws_upgrade_handler(
 /// The full-replication socket an upgrade opens for the caller whose upgrade
 /// proved `machine`: the owner's credential and its peer session, the
 /// facade socket of a caller whose own slip is narrower ([`facade_mode`]),
-/// or the refusal it is answered with before the upgrade.
+/// or the refusal it is answered with before the upgrade. An upgrade that
+/// asks for a member lane (MEMBER-SYNC D1) gets that selector-only socket or
+/// a 403, and never one of the others.
 fn replication_mode(
     headers: &HeaderMap,
     extensions: &axum::http::Extensions,
     server: &SyncServer,
     machine: oneiron::authority::PeerMachine,
 ) -> Result<run::SocketMode, Response> {
+    if super::member_lane::member_lane_requested(headers) {
+        let member = super::member_lane::member_lane(headers, server)?;
+        let credential = member.credential();
+        return Ok(run::SocketMode::Replication {
+            session_jti: credential.jti().map(str::to_owned),
+            owner: None,
+            telemetry_actor: credential
+                .principal_ref()
+                .unwrap_or(credential.principal())
+                .to_owned(),
+            peer_serve: None,
+            member: Some(member),
+        });
+    }
     let auth = match CoreAuth::for_attested_request(headers, extensions, "/ws", server) {
         Some(Ok(auth)) if auth.is_owner_grade() => auth,
         Some(Ok(_)) => {
@@ -233,6 +249,7 @@ fn replication_mode(
         owner,
         telemetry_actor,
         peer_serve,
+        member: None,
     })
 }
 

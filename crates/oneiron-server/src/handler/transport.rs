@@ -203,6 +203,10 @@ pub(super) struct GuardedTransport<S> {
     /// token id names him, so every consult asks the vault instead.
     live_owner: Option<crate::auth::CoreAuth>,
     live_person: Option<live_person::LivePerson>,
+    /// A shared-vault member's lane this socket serves (MEMBER-SYNC D5):
+    /// every consult asks whether its grant still stands, so a member whose
+    /// grant is revoked or deleted is sent nothing new (ARCH-0043:164).
+    live_member: Option<Arc<super::member_lane::MemberLane>>,
     /// Set only while an app-tier frame is draining; sync keeps its owner guard.
     pub(super) app_jti: Option<String>,
     conn_id: u32,
@@ -265,6 +269,7 @@ where
             session_jti,
             vault: None,
             live_owner: None,
+            live_member: None,
             live_person: None,
             app_jti: None,
             conn_id,
@@ -295,6 +300,17 @@ where
     ) -> Self {
         self.vault = Some(Arc::clone(vault));
         self.live_owner = owner;
+        self
+    }
+
+    /// Serves the member lane `lane`, when there is one: every consult then
+    /// asks the served vault whether the lane still stands. Set after
+    /// [`Self::with_live_owner`], which names the vault.
+    pub(super) fn with_member_lane(
+        mut self,
+        lane: Option<Arc<super::member_lane::MemberLane>>,
+    ) -> Self {
+        self.live_member = lane;
         self
     }
 
@@ -350,6 +366,11 @@ where
                 .zip(self.live_owner.as_ref())
                 .is_some_and(|(vault, owner)| !owner.credential_is_live(vault))
             || self.person_membership_ended()
+            || self
+                .vault
+                .as_deref()
+                .zip(self.live_member.as_ref())
+                .is_some_and(|(vault, lane)| !lane.stands(vault))
     }
 
     /// Whether the served vault's deletion marker is present, or unreadable:

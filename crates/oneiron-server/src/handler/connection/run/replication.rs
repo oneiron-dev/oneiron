@@ -45,12 +45,22 @@ use crate::server::SyncServer;
 /// `peer_serve` is the session this machine serves as a peer of another
 /// machine of its vault while their home is down (FIX 4748): its socket
 /// takes none of the home's relays, and its receipt takes the close.
+///
+/// `member` is a shared-vault member's selector-only lane (MEMBER-SYNC): it
+/// speaks the selector or a residence protocol only, is sent no root
+/// snapshot, no presence and no leaf-key or sealed-update relay, checks
+/// every selector on its own pinned lane, and stops once its grant no longer
+/// stands.
 #[expect(clippy::cognitive_complexity)]
 pub(super) async fn handle_connection(
     (socket, mut stop): (WebSocket, crate::embedded::UpgradeStop),
     server: Arc<SyncServer>,
     conn_id: u32,
-    (session_jti, owner): (Option<String>, Option<CoreAuth>),
+    (session_jti, owner, member): (
+        Option<String>,
+        Option<CoreAuth>,
+        Option<Arc<super::super::super::member_lane::MemberLane>>,
+    ),
     telemetry_actor: String,
     locality: oneiron::claim::CallerLocality,
     (machine, peer_serve): (
@@ -70,7 +80,8 @@ pub(super) async fn handle_connection(
         conn_id,
     )
     .with_inbound_cap(server.config.max_frame_size)
-    .with_live_owner(server.vault(), owner.clone());
+    .with_live_owner(server.vault(), owner.clone())
+    .with_member_lane(member.clone());
     // Its hello and sends give way to the engine's stop.
     let mut transport = StoppingTransport::new(transport, stop.clone());
 
@@ -89,21 +100,36 @@ pub(super) async fn handle_connection(
     else {
         return;
     };
+    if member.is_some()
+        && !super::super::super::member_lane::member_hello_admits(protocol_version)
+    {
+        super::super::super::protocol_close::refuse_hello_version(
+            &mut transport,
+            &server,
+            close_codes::VERSION_MISMATCH,
+            "a member lane speaks the selector or a residence protocol",
+            None,
+        )
+        .await;
+        return;
+    }
 
     // Subscribe to broadcast channel for outbound messages
     let mut subscriber = BroadcastSubscriber::new(conn_id, &server.broadcast_tx);
 
     // Phase 1: Send root doc snapshot to client.
-    // Root doc is server-authoritative — client only reads it.
-    match server.export_root_snapshot() {
-        Ok(snapshot) => {
+    // Root doc is server-authoritative — client only reads it. A member lane
+    // is sent none (H8-SHARED-ENV-LANE = B).
+    match member.is_none().then(|| server.export_root_snapshot()) {
+        None => {}
+        Some(Ok(snapshot)) => {
             let msg = protocol::encode_root_update(&snapshot);
             if !super::super::super::root_updates::send_root_frame(&mut transport, msg).await {
                 tracing::warn!(conn_id, "failed to send root snapshot");
                 return;
             }
         }
-        Err(_) => {
+        Some(Err(_)) => {
             tracing::error!(
                 conn_id,
                 reason = "root_snapshot_export_failed",
@@ -117,8 +143,14 @@ pub(super) async fn handle_connection(
         }
     }
 
-    // Late-join/reconnect snapshot for the Loro-native ephemeral lane.
-    for msg in late_join_presence(&server, conn_id, locality, machine) {
+    // Late-join/reconnect snapshot for the Loro-native ephemeral lane. A
+    // member lane has no presence (MEMBER-SYNC-PRESENCE = A).
+    let presence = if member.is_some() {
+        Vec::new()
+    } else {
+        late_join_presence(&server, conn_id, locality, machine)
+    };
+    for msg in presence {
         if !transport.send_binary(msg).await {
             tracing::warn!(conn_id, "failed to send ephemeral snapshot");
             return;
@@ -133,6 +165,10 @@ pub(super) async fn handle_connection(
     conn_state.locality = locality;
     conn_state.signing_request_transport = signing_request_transport;
     conn_state.bound_auth.clone_from(&owner);
+    if let Some(member) = &member {
+        conn_state.selector_lane =
+            super::super::super::selector_scope::SelectorLane::Member(Arc::clone(member));
+    }
     // Where this socket stands in the windows a policy wake readied here
     // (FIX 19634): a new socket asks again for every one.
     let mut ready_windows = oneiron::sync::manager::ReadyProgress::default();
@@ -146,11 +182,14 @@ pub(super) async fn handle_connection(
     // lives (FIX 11785); the relay is the home's, so a peer's carries none
     // (FIX 4748). Nor does the residence RPC lane, which reads RPC frames
     // alone: a leaf-key frame sent there would end its next call.
-    let _leaf_key_socket = (!peer_served && protocol::carries_leaf_keys(protocol_version))
-        .then(|| LeafKeySocket::register(&server, conn_id, machine, &direct_tx));
+    let _leaf_key_socket = (!peer_served
+        && member.is_none()
+        && protocol::carries_leaf_keys(protocol_version))
+    .then(|| LeafKeySocket::register(&server, conn_id, machine, &direct_tx));
     // A machine of the owner's whose hello listed sealed world updates is
-    // offered the home's queue of them (DEC-0005 fix 8).
-    conn_state.sealed_world_updates = transport.peer_codecs().decodes_sealed_world_updates();
+    // offered the home's queue of them (DEC-0005 fix 8); a member lane never.
+    conn_state.sealed_world_updates =
+        member.is_none() && transport.peer_codecs().decodes_sealed_world_updates();
     if let Some(offer) = super::super::super::sealed_updates::offer(&server, conn_id, &conn_state) {
         let _ = direct_tx.send(offer);
     }
@@ -170,7 +209,13 @@ pub(super) async fn handle_connection(
     let mut verb_calls = tokio::task::JoinSet::new();
     // This socket's live-session consult: a privileged frame takes it before
     // dispatch, and a window frame again once its window loads (FIX 5438).
-    let gone = || session_gone(server.vault(), session_jti.as_deref(), owner.as_ref());
+    // A member lane is gone too once its grant no longer stands (D5).
+    let gone = || {
+        session_gone(server.vault(), session_jti.as_deref(), owner.as_ref())
+            || member
+                .as_ref()
+                .is_some_and(|lane| !lane.stands(server.vault()))
+    };
 
     // One loop, one owner. The outbound arms used to run in a spawned task over
     // the split sink; they are folded in here because two tasks cannot share

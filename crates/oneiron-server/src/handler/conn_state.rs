@@ -94,6 +94,9 @@ pub(super) struct ConnState {
     /// lets the release door and the fan-out, which read the state shared,
     /// take a copy once and notice a change once.
     pub(super) peer_exports: std::sync::Mutex<super::peer_serve::PeerExports>,
+    /// The lane every selector this socket sends is checked on (MEMBER-SYNC
+    /// D2): the owner's own device, or a member lane fixed at the upgrade.
+    pub(super) selector_lane: super::selector_scope::SelectorLane,
 }
 
 impl ConnState {
@@ -129,6 +132,7 @@ impl ConnState {
             sealed_updates_live: false,
             peer_served: false,
             peer_exports: std::sync::Mutex::default(),
+            selector_lane: super::selector_scope::SelectorLane::OwnDevice,
         }
     }
 

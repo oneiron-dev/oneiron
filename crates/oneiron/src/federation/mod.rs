@@ -69,6 +69,8 @@ pub(crate) use grant_travel::live_federation_grant_in;
 mod booking_payer;
 mod membership_gate;
 pub use membership_gate::MembershipStanding;
+mod member_lane;
+pub use member_lane::MemberLaneStanding;
 pub use membership_gate::SharedVaultWrite;
 pub(crate) use membership_gate::authenticated_grant_membership_for_store_in_txn;
 #[cfg(feature = "sync")]
