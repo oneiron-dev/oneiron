@@ -309,7 +309,14 @@ pub fn landlock_ruleset<R: AsRef<Path>, W: AsRef<Path>>(
         }
         // SAFETY: open returned a new owned descriptor.
         let parent = unsafe { OwnedFd::from_raw_fd(fd) };
-        let metadata = std::fs::metadata(path)?;
+        // A path removed since its open is skipped too: a runner's rule
+        // names every entry beside the vault's trees, and one of them may
+        // go while the rule is built.
+        let metadata = match std::fs::metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
         let mut rights = if writable { READ | WRITE } else { READ };
         if !metadata.is_dir() {
             rights &= (1 << 0) | (1 << 1) | (1 << 2) | (1 << 14);
