@@ -255,9 +255,10 @@ pub(crate) fn installed(server: &SyncServer, connector: &str) -> OwnerResult<(St
 
 /// Lists the connector `name`'s tools where this host installed it, at
 /// `pinned` as [`host::discover`] takes it: over HTTP with the credential
-/// `secret_ref` names, or from a fenced stdio child, which presents none
-/// until the broker path (B2, row L8-27). Either way the connector's issuer
-/// bindings are read first (FIX 9303).
+/// `secret_ref` names, or from a fenced stdio child, which presents it only
+/// through its upstream door, so only when its connector names an upstream
+/// (B2, row L8-27). Either way the connector's issuer bindings are read
+/// first (FIX 9303).
 fn discover_installed(
     server: &SyncServer,
     name: &str,
@@ -266,14 +267,27 @@ fn discover_installed(
     pinned: Option<&str>,
 ) -> OwnerResult<host::Discovery> {
     let endpoint = installed.http_endpoint();
-    if endpoint.is_none() && secret_ref.is_some() {
+    if endpoint.is_none() && installed.upstream.is_none() && secret_ref.is_some() {
         return Err(OwnerError::Invalid(
-            "a stdio connector presents no credential until the broker path".to_owned(),
+            "a stdio connector presents a credential only through its upstream door, and this \
+             one names no upstream"
+                .to_owned(),
         ));
     }
+    let door_origin = server.loopback_api_origin();
     host::with_credential(server.vault(), secret_ref, name, |auth| match endpoint {
         Some(endpoint) => host::discover(&host::client()?, endpoint, auth, pinned),
-        None => host::discover_stdio(server.runner_fence().as_deref(), name, installed, pinned),
+        None => host::discover_stdio(
+            server.runner_fence().as_deref(),
+            name,
+            installed,
+            pinned,
+            &host::ListingDoor {
+                doors: server.connector_stdio.upstream_doors(),
+                origin: door_origin.as_deref(),
+                auth,
+            },
+        ),
     })
     .map_err(engine)?
     .map_err(engine)

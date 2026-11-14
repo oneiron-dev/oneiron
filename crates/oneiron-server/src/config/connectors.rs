@@ -17,16 +17,25 @@
 //! command = ["python3", "/opt/notes-mcp/server.py"]
 //! env = { LOG_LEVEL = "info" }
 //! cwd = "/opt/notes-mcp"
+//!
+//! [connectors.issues]
+//! transport = "mcp_stdio"
+//! command = ["issues-mcp", "stdio"]
+//! upstream = { origin = "https://api.example.com", base_url_env = "ISSUES_API_URL", token_env = "ISSUES_TOKEN" }
 //! ```
 //!
 //! An `mcp_stdio` connector is a child process this host starts under the
 //! runner fence (canon `#runner-fence`, row L8-27) and speaks MCP to over
 //! its standard input and output. Its endpoint, the one a grant names, is
-//! `stdio:<name>:<16 hex>`, the hex a digest of its command, environment and
-//! working directory, so any change to them is a new endpoint the owner
-//! grants again, as for an HTTP endpoint that moves. Its environment holds
-//! no credential: a name that reads as one is refused here, and a route that
-//! presents a credential is not sent until the broker path (B2).
+//! `stdio:<name>:<16 hex>`, the hex a digest of its command, environment,
+//! working directory and upstream, so any change to them is a new endpoint
+//! the owner grants again, as for an HTTP endpoint that moves. Its
+//! environment holds no credential: a name that reads as one is refused
+//! here. A connector that names an `upstream` reaches that API through this
+//! server's loopback door (B2, RULING L8-27-B2-STDIO): its environment holds
+//! the door's URL and a reference to the door, and the door adds the
+//! credential the call presents. A route that presents a credential to a
+//! stdio connector with no upstream is not sent.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -61,7 +70,31 @@ pub struct ConnectorHostConfig {
     /// temp directory when absent.
     #[serde(default)]
     pub cwd: Option<PathBuf>,
+    /// The API an `mcp_stdio` child calls with the credential its call
+    /// presents, through this server's door.
+    #[serde(default)]
+    pub upstream: Option<StdioUpstream>,
 }
+
+/// The API an `mcp_stdio` connector's child calls, and the variables it
+/// reads that API's base URL and key from. The child gets the door's URL and
+/// its reference to the door in them; the door sends each request on to
+/// `origin` with the credential the call presents.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct StdioUpstream {
+    /// `https://host[:port]`, or `http` on loopback: no path, query,
+    /// fragment or credentials.
+    pub origin: String,
+    /// The variable the child reads the API's base URL from.
+    pub base_url_env: String,
+    /// The variable the child reads its API key from.
+    pub token_env: String,
+}
+
+/// The variables an `mcp_stdio` child keeps of this process's environment:
+/// the MCP SDKs' default inherited set on a Unix host.
+pub const STDIO_INHERITED_ENV: [&str; 6] = ["HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER"];
 
 /// The scheme of the endpoint an `mcp_stdio` connector is granted under.
 pub const STDIO_ENDPOINT_SCHEME: &str = "stdio";
@@ -73,7 +106,9 @@ impl ConnectorHostConfig {
     /// The section names no connector; an `mcp_http` one has no https (or
     /// loopback http) endpoint, or names stdio settings; an `mcp_stdio` one
     /// names an endpoint, no command, a part or variable that cannot be
-    /// set, a variable that reads as a credential, or a relative `cwd`.
+    /// set, a variable that reads as a credential, a relative `cwd`, or an
+    /// upstream whose origin is not https (or loopback http) alone or whose
+    /// variables cannot be set apart from the rest.
     pub fn validate(&self, name: &str) -> anyhow::Result<()> {
         if normalize_name(name).is_empty() {
             anyhow::bail!("[connectors]: a connector section needs a name");
@@ -85,25 +120,20 @@ impl ConnectorHostConfig {
     }
 
     fn validate_http(&self, name: &str) -> anyhow::Result<()> {
-        if !self.command.is_empty() || !self.env.is_empty() || self.cwd.is_some() {
+        if !self.command.is_empty()
+            || !self.env.is_empty()
+            || self.cwd.is_some()
+            || self.upstream.is_some()
+        {
             anyhow::bail!(
-                "[connectors.{name}]: command, env and cwd belong to an mcp_stdio connector"
+                "[connectors.{name}]: command, env, cwd and upstream belong to an mcp_stdio \
+                 connector"
             );
         }
         let Some(endpoint) = self.endpoint.as_deref() else {
             anyhow::bail!("[connectors.{name}]: an mcp_http connector needs an endpoint");
         };
-        let url = reqwest::Url::parse(endpoint)
-            .map_err(|_| anyhow::anyhow!("[connectors.{name}]: endpoint is not a URL"))?;
-        let loopback = matches!(
-            url.host_str(),
-            Some("localhost" | "127.0.0.1" | "[::1]" | "::1")
-        );
-        if !(url.scheme() == "https" || url.scheme() == "http" && loopback)
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.fragment().is_some()
-        {
+        if sendable_url(endpoint).is_none() {
             anyhow::bail!(
                 "[connectors.{name}]: endpoint must be https, or http on loopback, with no \
                  credentials or fragment"
@@ -143,6 +173,45 @@ impl ConnectorHostConfig {
         if self.cwd.as_deref().is_some_and(|cwd| !cwd.is_absolute()) {
             anyhow::bail!("[connectors.{name}]: cwd must be an absolute path");
         }
+        if let Some(upstream) = &self.upstream {
+            self.validate_upstream(name, upstream)?;
+        }
+        Ok(())
+    }
+
+    fn validate_upstream(&self, name: &str, upstream: &StdioUpstream) -> anyhow::Result<()> {
+        let origin = sendable_url(&upstream.origin).filter(|url| {
+            matches!(url.path(), "" | "/") && url.query().is_none() && url.host_str().is_some()
+        });
+        if origin.is_none() {
+            anyhow::bail!(
+                "[connectors.{name}]: upstream origin must be https, or http on loopback, with \
+                 no path, query, credentials or fragment"
+            );
+        }
+        let names = [upstream.base_url_env.as_str(), upstream.token_env.as_str()];
+        for variable in names {
+            let settable = variable
+                .chars()
+                .next()
+                .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+                && variable
+                    .chars()
+                    .all(|part| part.is_ascii_alphanumeric() || part == '_');
+            if !settable
+                || variable == "TMPDIR"
+                || STDIO_INHERITED_ENV.contains(&variable)
+                || self.env.contains_key(variable)
+            {
+                anyhow::bail!(
+                    "[connectors.{name}]: upstream variable {variable:?} cannot be set apart \
+                     from the child's other variables"
+                );
+            }
+        }
+        if names[0] == names[1] {
+            anyhow::bail!("[connectors.{name}]: upstream base_url_env and token_env must differ");
+        }
         Ok(())
     }
 
@@ -157,7 +226,12 @@ impl ConnectorHostConfig {
             ConnectorTransport::McpStdio => format!(
                 "{STDIO_ENDPOINT_SCHEME}:{}:{}",
                 normalize_name(name),
-                stdio_identity(&self.command, &self.env, self.cwd.as_deref())
+                stdio_identity(
+                    &self.command,
+                    &self.env,
+                    self.cwd.as_deref(),
+                    self.upstream.as_ref()
+                )
             ),
         }
     }
@@ -173,13 +247,15 @@ impl ConnectorHostConfig {
     }
 }
 
-/// 16 hex of blake3 over a stdio connector's command, environment and
-/// working directory, each part length-prefixed so no two settings hash
-/// alike.
+/// 16 hex of blake3 over a stdio connector's command, environment,
+/// working directory and upstream, each part length-prefixed so no two
+/// settings hash alike. A connector with no upstream hashes as it did
+/// before upstreams were taken.
 fn stdio_identity(
     command: &[String],
     env: &BTreeMap<String, String>,
     cwd: Option<&Path>,
+    upstream: Option<&StdioUpstream>,
 ) -> String {
     let mut digest = blake3::Hasher::new();
     let mut part = |bytes: &[u8]| {
@@ -199,6 +275,12 @@ fn stdio_identity(
     match cwd {
         Some(cwd) => part(cwd.as_os_str().as_encoded_bytes()),
         None => part(&[]),
+    }
+    if let Some(upstream) = upstream {
+        part(b"upstream");
+        part(upstream.origin.as_bytes());
+        part(upstream.base_url_env.as_bytes());
+        part(upstream.token_env.as_bytes());
     }
     let hex = digest.finalize().to_hex();
     hex[..16].to_owned()
@@ -237,6 +319,21 @@ fn names_a_credential(key: &str) -> bool {
     key.to_ascii_lowercase()
         .split(['_', '-', '.'])
         .any(|word| WORDS.contains(&word))
+}
+
+/// `text` as a URL this host sends to: https, or http on loopback, with no
+/// credentials or fragment.
+fn sendable_url(text: &str) -> Option<reqwest::Url> {
+    let url = reqwest::Url::parse(text).ok()?;
+    let loopback = matches!(
+        url.host_str(),
+        Some("localhost" | "127.0.0.1" | "[::1]" | "::1")
+    );
+    let sendable = (url.scheme() == "https" || url.scheme() == "http" && loopback)
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.fragment().is_none();
+    sendable.then_some(url)
 }
 
 /// A section name spelled as the engine stores catalog names.

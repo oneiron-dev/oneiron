@@ -19,6 +19,7 @@
 //! it presents no credential. Its probes run over HTTP only.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::Vault;
@@ -38,6 +39,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::config::ConnectorHostConfig;
+use crate::connector_call_host::stdio::upstream::{UpstreamDoors, UpstreamHeld};
 use crate::connector_call_host::stdio::{StdioChild, StdioStart};
 use crate::runtime::runner_fence::HostRunnerFence;
 
@@ -291,21 +293,47 @@ pub(crate) fn discover(
     })
 }
 
+/// Where a stdio connector's listing child reaches its upstream API: this
+/// server's upstream doors and loopback origin, and the header the listing
+/// presents, if any.
+pub(crate) struct ListingDoor<'a> {
+    pub(crate) doors: &'a Arc<UpstreamDoors>,
+    pub(crate) origin: Option<&'a str>,
+    pub(crate) auth: Option<&'a HeaderValue>,
+}
+
 /// Lists the tools of the stdio connector `name`, installed as `installed`,
 /// from a child started under `fence` for this listing alone: at `pinned`
 /// once the key has pinned a revision, else at the newest one both sides
-/// speak. The child is stopped after it.
+/// speak. A connector that names an upstream gets a door of its own for
+/// the listing, holding `door`'s header. The child is stopped after it, and
+/// its door closed.
 pub(crate) fn discover_stdio(
     fence: Option<&HostRunnerFence>,
     name: &str,
     installed: &ConnectorHostConfig,
     pinned: Option<&str>,
+    door: &ListingDoor<'_>,
 ) -> oneiron::Result<Discovery> {
     let accepts = |answered: &str| {
         pinned.map_or(SPOKEN_REVISIONS.contains(&answered), |pinned| {
             pinned == answered
         })
     };
+    let opened = match (&installed.upstream, door.origin) {
+        (None, _) => None,
+        (Some(upstream), Some(origin)) => Some(door.doors.open(name, upstream, origin)),
+        (Some(_), None) => {
+            return Err(refused(
+                "a stdio connector that names an upstream needs this server's loopback listener \
+                 for its door",
+            ));
+        }
+    };
+    // Held until the child is stopped: locals drop in reverse order.
+    let _held = opened
+        .as_ref()
+        .map(|(ticket, _)| ticket.hold(UpstreamHeld::new(door.auth.cloned(), None)));
     let mut child = StdioChild::start(&StdioStart {
         name,
         connector: installed,
@@ -314,6 +342,7 @@ pub(crate) fn discover_stdio(
         accepts_revision: &accepts,
         // A listing is bounded by its handshake and page bounds.
         stop: None,
+        upstream_env: opened.as_ref().map(|(_, env)| env),
     })
     .map_err(refused)?;
     let tools = list_pages(|_, params| child.request("tools/list", params, HANDSHAKE_TIMEOUT))
