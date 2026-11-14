@@ -5,7 +5,9 @@
 //!
 //! The rule removes trees; it is not an allow-list, as an organ's fence is.
 //! Seatbelt says so directly: `(allow default)`, then a denial of every file
-//! read and write beneath each removed tree. Landlock cannot deny beneath a
+//! read, write, executable map and exec beneath each removed tree. Landlock
+//! handles every filesystem right of its ABI 3, execution among them, and
+//! cannot deny beneath a
 //! path it allows, so the Linux rule allows, in each directory on the way
 //! from `/` down to a removed tree, every entry except the removed tree and
 //! the next directory on that way. The directories on the way get no right
@@ -13,8 +15,10 @@
 //! entry directly in them, and an entry made in them after the spawn stays
 //! out of its reach. Everything beneath every other entry is the runner's.
 //! An entry that resolves into a removed tree or onto the way to one (a
-//! link) is left out, so it does not hand the tree back; a bind mount of a
-//! removed tree elsewhere is not looked for.
+//! link) is left out, so it does not hand the tree back. Both mechanisms
+//! match paths, not files: a hard link or a bind mount the host made of a
+//! removed file or tree elsewhere is a copy outside the trees, and is not
+//! looked for.
 //!
 //! The rule is built before the fork. Between fork and exec the child only
 //! restricts itself ([`crate::landlock_restrict`]); on macOS the command is
@@ -22,8 +26,8 @@
 //! after it.
 //!
 //! [`RunnerFence::prove`] checks the rule on this host: a probe child under
-//! it must fail to list each removed tree that exists, and must list a
-//! directory outside them. Its [`RunnerFenceOutcome`] goes on each runner
+//! it must fail to list each removed tree that exists, and to read a file at
+//! its top where it holds one, and must list a directory outside them. Its [`RunnerFenceOutcome`] goes on each runner
 //! session's manifest: the ruleset hash when proven, `fence_unproven`
 //! otherwise. A host that cannot prove the fence still runs the runner
 //! (canon `#fence-unproven`); the caller withholds payment credentials from
@@ -36,9 +40,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// The program a proof's probe child runs: it lists the directory it is
-/// given, and fails where it cannot.
-const PROBE_PROGRAM: &str = "/bin/ls";
+/// The programs a proof's probe children run: one lists the directory it is
+/// given and one reads the file it is given, each failing where it cannot.
+const PROBE_LIST: &str = "/bin/ls";
+const PROBE_READ: &str = "/bin/cat";
 
 /// macOS's Seatbelt launcher, as the organ fence runs it.
 const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
@@ -104,7 +109,14 @@ impl RunnerFence {
                     ),
                 ));
             }
-            trees.insert(resolved(&tree));
+            let tree = resolved(&tree);
+            if tree.parent().is_none() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "runner fence tree / would remove the whole host",
+                ));
+            }
+            trees.insert(tree);
         }
         if trees.is_empty() {
             return Err(io::Error::new(
@@ -203,8 +215,8 @@ impl RunnerFence {
 
     /// Proves the fence on this host. The daemon does so once at its start,
     /// and every runner session until the next proof carries the outcome.
-    /// A host with no mechanism, or one whose probe child read a removed
-    /// tree or could not list outside them, is unproven.
+    /// A host with no mechanism, or one whose probe child listed or read a
+    /// removed tree or could not list outside them, is unproven.
     #[must_use]
     pub fn prove(&self) -> RunnerFenceOutcome {
         let proven =
@@ -219,13 +231,14 @@ impl RunnerFence {
     }
 
     /// Whether a probe child under the fence lists a fresh directory outside
-    /// the removed trees, and fails to list each removed tree that exists,
-    /// at least one of them.
+    /// the removed trees, and fails to list each removed tree that exists
+    /// (at least one of them) and to read a file at its top where it holds
+    /// one.
     fn probe(&self) -> io::Result<bool> {
         let outside_dir = tempfile::tempdir()?;
         let outside = resolved(outside_dir.path());
         if self.removed.iter().any(|tree| outside.starts_with(tree))
-            || !self.probe_lists(&outside)?
+            || !self.probe_runs(PROBE_LIST, &outside)?
         {
             return Ok(false);
         }
@@ -234,7 +247,12 @@ impl RunnerFence {
             if !tree.is_dir() {
                 continue;
             }
-            if self.probe_lists(tree)? {
+            if self.probe_runs(PROBE_LIST, tree)? {
+                return Ok(false);
+            }
+            if let Some(file) = top_file(tree)
+                && self.probe_runs(PROBE_READ, &file)?
+            {
                 return Ok(false);
             }
             refused += 1;
@@ -242,10 +260,11 @@ impl RunnerFence {
         Ok(refused > 0)
     }
 
-    fn probe_lists(&self, dir: &Path) -> io::Result<bool> {
+    /// Whether `program` under the fence, given `path`, succeeds.
+    fn probe_runs(&self, program: &str, path: &Path) -> io::Result<bool> {
         let status = self
-            .command(PROBE_PROGRAM)?
-            .arg(dir)
+            .command(program)?
+            .arg(path)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -383,13 +402,25 @@ fn allowed_entries(removed: &[PathBuf]) -> io::Result<Vec<PathBuf>> {
 }
 
 /// The Seatbelt profile for `trees` removed trees: everything allowed, then
-/// every file read and write beneath each `REMOVED_<n>` parameter denied. A
-/// later rule wins, so the denial stands.
+/// every file read, write, executable map and exec beneath each
+/// `REMOVED_<n>` parameter denied. A later rule wins, so the denial stands.
 fn seatbelt_profile(trees: usize) -> String {
     let denied: String = (0..trees)
         .map(|at| format!(" (subpath (param \"REMOVED_{at}\"))"))
         .collect();
-    format!("(version 1)\n(allow default)\n(deny file-read* file-write*{denied})\n")
+    format!(
+        "(version 1)\n(allow default)\n\
+         (deny file-read* file-write* file-map-executable process-exec*{denied})\n"
+    )
+}
+
+/// A regular file directly in `dir`, read by the daemon itself, for a probe
+/// child to fail to read.
+fn top_file(dir: &Path) -> Option<PathBuf> {
+    std::fs::read_dir(dir).ok()?.flatten().find_map(|entry| {
+        let path = entry.path();
+        path.is_file().then_some(path)
+    })
 }
 
 /// `path` as the kernel resolves it: canonical where it exists, else its

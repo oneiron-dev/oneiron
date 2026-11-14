@@ -129,6 +129,16 @@ fn a_fenced_runner_cannot_read_or_write_the_vault_trees() {
     assert!(!planted.exists(), "a file appeared in the data tree");
     let listed = run(&fence, "/bin/ls", &[&layout.control.as_os_str().to_owned()]);
     assert!(!listed.status.success(), "control tree listed");
+    let tool = layout.data.join("tool");
+    fs::copy("/bin/echo", &tool).expect("a program in the data tree");
+    let ran = fence
+        .command(&tool)
+        .expect("fenced command")
+        .arg("ran")
+        .stdin(Stdio::null())
+        .output()
+        .is_ok_and(|output| output.status.success());
+    assert!(!ran, "a program in the data tree ran");
 }
 
 #[test]
@@ -151,9 +161,9 @@ fn a_fenced_runner_keeps_its_checkout_and_the_rest_of_the_host() {
     assert!(writes(&fence, &made, "made"), "checkout write refused");
     assert_eq!(fs::read_to_string(made).expect("made file"), "made");
     assert_eq!(
-        reads(&fence, Path::new("/etc/hosts")).is_some(),
-        Path::new("/etc/hosts").is_file(),
-        "a system file outside the vault"
+        reads(&fence, Path::new("/etc/hosts")),
+        fs::read_to_string("/etc/hosts").ok(),
+        "a system file outside the vault reads as it does unfenced"
     );
 }
 
@@ -230,9 +240,11 @@ fn a_host_without_the_fence_runs_the_runner_unproven() {
 }
 
 #[test]
-fn a_relative_or_missing_tree_is_refused() {
+fn a_relative_missing_or_root_tree_is_refused() {
     let relative = RunnerFence::for_host([PathBuf::from("vault/data")]).expect_err("relative");
     assert_eq!(relative.kind(), std::io::ErrorKind::InvalidInput);
     let none = RunnerFence::for_host(Vec::<PathBuf>::new()).expect_err("no tree");
     assert_eq!(none.kind(), std::io::ErrorKind::InvalidInput);
+    let root = RunnerFence::for_host([PathBuf::from("/")]).expect_err("the root");
+    assert_eq!(root.kind(), std::io::ErrorKind::InvalidInput);
 }
