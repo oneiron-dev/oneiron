@@ -9,10 +9,17 @@
 //! and MCP servers) for a driver; a missing piece marks the arm not ready,
 //! and nothing is faked. The task's own tests stay sealed from the writer.
 //!
-//! `oneiron-bench beam code-bench-pack <plan.json>`.
+//! `code-bench` grades what the writers left: the PR's sealed tests, diff
+//! size, and from each transcript the turns, tokens, files opened, time and
+//! any call outside the arm's profile. A failed run is kept and counted.
+//!
+//! `oneiron-bench beam code-bench-pack <plan.json>`;
+//! `oneiron-bench beam code-bench <attempts.json>`.
 
+mod grade;
 mod manifest;
 mod pack;
 mod profile;
+mod transcript;
 
-pub(super) use self::pack::write_pack;
+pub(super) use self::{grade::grade, pack::write_pack};

@@ -343,9 +343,14 @@ fn is_relative_path(path: &str) -> bool {
             .all(|part| !part.is_empty() && part != "." && part != "..")
 }
 
-/// Seconds since the Unix epoch of an RFC 3339 time,
-/// `YYYY-MM-DDTHH:MM:SS[.fraction](Z|+HH:MM|-HH:MM)`.
+/// Seconds since the Unix epoch of an RFC 3339 time.
 pub(super) fn rfc3339_seconds(text: &str) -> Option<i64> {
+    rfc3339_millis(text).map(|millis| millis.div_euclid(1_000))
+}
+
+/// Milliseconds since the Unix epoch of an RFC 3339 time,
+/// `YYYY-MM-DDTHH:MM:SS[.fraction](Z|+HH:MM|-HH:MM)`.
+pub(super) fn rfc3339_millis(text: &str) -> Option<i64> {
     let bytes = text.as_bytes();
     if bytes.len() < 20
         || bytes.get(4) != Some(&b'-')
@@ -375,11 +380,19 @@ pub(super) fn rfc3339_seconds(text: &str) -> Option<i64> {
         return None;
     }
     let mut rest = text.get(19..)?;
+    let mut millis = 0;
     if let Some(fraction) = rest.strip_prefix('.') {
         let digits = fraction.bytes().take_while(u8::is_ascii_digit).count();
         if digits == 0 {
             return None;
         }
+        let lead = fraction.get(..digits.min(3))?;
+        let scale = match lead.len() {
+            1 => 100,
+            2 => 10,
+            _ => 1,
+        };
+        millis = lead.parse::<i64>().ok()? * scale;
         rest = fraction.get(digits..)?;
     }
     let offset = match rest {
@@ -409,7 +422,7 @@ pub(super) fn rfc3339_seconds(text: &str) -> Option<i64> {
         }
     };
     let days = days_from_civil(year, month, day);
-    Some(days * 86_400 + hour * 3_600 + minute * 60 + second - offset)
+    Some((days * 86_400 + hour * 3_600 + minute * 60 + second - offset) * 1_000 + millis)
 }
 
 /// Days since 1970-01-01 of a proleptic Gregorian date.
