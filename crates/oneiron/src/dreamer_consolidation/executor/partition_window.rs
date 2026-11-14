@@ -1,12 +1,20 @@
 //! One window of plain Micro or Meso partitions (FIX 12487): slots pinned and
-//! opened in admission order, extraction prefixes side by side, then
-//! serial finishes in order against branches re-opened at the finish,
-//! so the committed rows equal the serial run's. Split from
-//! `partition_run` (FIX 12774); the serial run and its settle stay there.
+//! opened in admission order; each slot's extraction prefix side by side,
+//! and its finish at once after its own prefix (FIX 21927); then the
+//! settles in admission order. A finish that ran ahead of an earlier
+//! slot's settle lands only while no earlier slot committed and its
+//! admitted priors still hold; else the slot runs again over its branch
+//! re-opened in its place, so the committed rows equal the serial run's.
+//! The open-conflict markers and contradiction gaps such a finish decides
+//! wait on its branch: they are written only with a run that lands as it
+//! ran (review round 1 of #7855), by its settle's landing arms, so a
+//! deadline checkpoint drops them too (review round 2).
+//! Split from `partition_run` (FIX 12774); the serial run and its settle
+//! stay there.
 
 use std::future::poll_fn;
 use std::panic::AssertUnwindSafe;
-use std::pin::pin;
+use std::pin::{Pin, pin};
 use std::task::Poll;
 use std::time::Instant;
 
@@ -46,14 +54,14 @@ enum WindowSlotRun<'a> {
     Settled(Option<PartitionStages>, Result<DreamerAttemptExecution>),
     /// Not a plain prepared partition: executes serially in its place.
     Serial,
-    /// Opened; its prefix runs (or ran) beside the window's other slots
-    /// and its finish lands in window order.
+    /// Opened; its job runs (or ran) beside the window's other slots and
+    /// it settles in window order.
     Running {
         started: Box<PartitionStarted<'a>>,
         stages: PartitionStages,
         run_id: Option<String>,
         run_started: Instant,
-        prefix: Option<crate::llm::DurableStepResult<PartitionPrefix>>,
+        work: Option<SlotWork>,
     },
     /// A sieve rung job: it runs whole (its span's evidence, its reading
     /// and its own commit) beside the prefixes, and its outcome, kept
@@ -61,37 +69,69 @@ enum WindowSlotRun<'a> {
     Rung(Option<Result<DreamerAttemptExecution>>),
 }
 
-/// Runs one rung job with its own panic containment: a rung commits
-/// inside the window's side-by-side phase, so a sibling's panic must not
-/// unwind its decided outcome away. A panic becomes this slot's shared
-/// executor-panic error (the payload dropped unread), which stops the
-/// window as a slot panic does.
-async fn contained_rung<F: Future<Output = Result<DreamerAttemptExecution>>>(
-    job: F,
-    attempt: &DreamerAdmittedAttempt,
-) -> Result<DreamerAttemptExecution> {
+/// What a running slot's side-by-side job ended with.
+enum SlotWork {
+    /// Its extraction prefix: a stop, an error, or extracted replies whose
+    /// finish waits for the slot's place (the tournament arm).
+    Prefix(crate::llm::DurableStepResult<PartitionPrefix>),
+    /// Its finish, run at once after its own prefix extracted (FIX
+    /// 21927), over the branch the slot opened: the run its settle lands
+    /// in admission order. `live` when the finish got past its step tally
+    /// to reads an earlier slot's commit could change.
+    Finished {
+        run: crate::llm::DurableStepResult<PartitionRun>,
+        live: bool,
+    },
+    /// The job panicked; its containment logged the attempt.
+    Panicked,
+}
+
+/// Polls `job` with its own panic containment: `None` once it panicked.
+/// The payload is dropped unread, as at the driver's containment: a panic
+/// message can quote the row the executor was working on, and logs never
+/// carry world text. The attempt id says where to look.
+async fn contained<F: Future>(job: F, attempt: &DreamerAdmittedAttempt) -> Option<F::Output> {
     let mut job = pin!(job);
     poll_fn(|task_cx| {
         match std::panic::catch_unwind(AssertUnwindSafe(|| job.as_mut().poll(task_cx))) {
-            Ok(poll) => poll,
+            Ok(poll) => poll.map(Some),
             Err(_payload) => {
                 tracing::error!(
                     attempt_id = %bytes_to_hex_lower(attempt.status.attempt.id.as_bytes()),
                     kind = "executor_panic",
                     "dreamer attempt executor panicked; parking the admitted attempt"
                 );
-                Poll::Ready(Err(crate::dreamer_wake::executor_panic_error()))
+                Poll::Ready(None)
             }
         }
     })
     .await
 }
 
-/// `job`'s output and the instant it ended (FIX 21929: a slot's own
-/// prefix end, apart from the window's).
-async fn with_end<F: Future>(job: F) -> (F::Output, Instant) {
-    let output = job.await;
-    (output, Instant::now())
+/// Runs one rung job with its own panic containment: a rung commits
+/// inside the window's side-by-side phase, so a sibling's panic must not
+/// unwind its decided outcome away. A panic becomes this slot's shared
+/// executor-panic error, which stops the window as a slot panic does.
+async fn contained_rung<F: Future<Output = Result<DreamerAttemptExecution>>>(
+    job: F,
+    attempt: &DreamerAdmittedAttempt,
+) -> Result<DreamerAttemptExecution> {
+    contained(job, attempt)
+        .await
+        .unwrap_or_else(|| Err(crate::dreamer_wake::executor_panic_error()))
+}
+
+/// Whether `result` may have landed rows a later slot's finish reads
+/// (admitted priors, candidate signals): a commit, or a serial slot's own
+/// run, which may commit.
+fn may_have_committed(serial: bool, result: &Result<DreamerAttemptExecution>) -> bool {
+    serial
+        || matches!(
+            result,
+            Ok(DreamerAttemptExecution::Completed { .. }
+                | DreamerAttemptExecution::Deferred { .. }
+                | DreamerAttemptExecution::Landed { .. })
+        )
 }
 
 /// Polls `first` and `second` together until both end.
@@ -124,11 +164,20 @@ async fn both<A: Future, B: Future>(first: A, second: B) -> (A::Output, B::Outpu
 
 impl ConsolidationExecutor<'_> {
     /// Runs one driver window of plain Micro or Meso partitions (FIX 12487):
-    /// every slot is pinned and opened in admission order, the
-    /// extraction prefixes run side by side, then each slot finishes
-    /// serially in order against its branch re-opened at the finish —
-    /// the live state a serial pass would read in that position — so
-    /// the committed rows equal the serial run's. A sieve rung job in the
+    /// every slot is pinned and opened in admission order, and the slots'
+    /// jobs run side by side: each slot's extraction prefix and, as soon
+    /// as that prefix extracted, its finish (FIX 21927), so a slot whose
+    /// prefix ends early never waits for its slowest sibling's. Then each
+    /// slot settles in admission order. A finish that ran before an
+    /// earlier slot's settle read the branch as its slot opened it: it
+    /// lands as it ran only while no earlier slot committed and its
+    /// admitted priors still hold. Otherwise the slot runs again over its
+    /// branch re-opened in its place - the live state a serial pass would
+    /// read there, its memoized steps replaying - so the committed rows
+    /// equal the serial run's. The escalation rows that finish decided
+    /// (open-conflict markers, contradiction gaps) are held on its branch
+    /// and written only with a run that lands as it ran: a parked, re-run
+    /// or checkpointed slot leaves none of them. A sieve rung job in the
     /// window runs whole beside the prefixes: its commit touches only its
     /// own span's reading, which no partition's finish reads. The driver
     /// gates the window to these shapes; a slot of any other shape takes
@@ -141,38 +190,33 @@ impl ConsolidationExecutor<'_> {
             .iter()
             .map(|(attempt, ctx)| self.admit_window_slot(attempt, ctx))
             .collect();
-        // The prefixes and the rung jobs, side by side, their outputs kept
-        // in slot order.
+        // The slot jobs and the rung jobs, side by side, their outputs kept
+        // in slot order. Each slot job is panic-contained on its own, as a
+        // rung job is: a sibling's panic must not unwind a finished slot's
+        // run away.
         let mut jobs = Vec::new();
         let mut rungs = Vec::new();
         for (index, (slot, (attempt, ctx))) in slots.iter_mut().zip(window.iter()).enumerate() {
             match slot {
                 WindowSlotRun::Running {
-                    started, run_id, ..
+                    started,
+                    stages,
+                    run_started,
+                    ..
                 } => jobs.push((
                     index,
-                    with_end(self.extract_partition_prefix(
-                        &started.payload,
-                        &started.resources,
-                        ctx,
-                        attempt.status.attempt.id,
-                        run_id.clone(),
-                        &mut started.charges,
-                    )),
+                    self.boxed_window_slot_job(started, stages, *run_started, attempt, ctx),
                 )),
-                WindowSlotRun::Rung(_) => rungs.push((
-                    index,
-                    contained_rung(self.run_rung_job(attempt, ctx), attempt),
-                )),
+                WindowSlotRun::Rung(_) => rungs.push((index, self.boxed_rung_job(attempt, ctx))),
                 WindowSlotRun::Settled(..) | WindowSlotRun::Serial => {}
             }
         }
-        let (indices, prefixes): (Vec<_>, Vec<_>) = jobs.into_iter().unzip();
+        let (indices, slot_jobs): (Vec<_>, Vec<_>) = jobs.into_iter().unzip();
         let (rung_indices, rung_runs): (Vec<_>, Vec<_>) = rungs.into_iter().unzip();
-        let width = prefixes.len().max(1);
+        let width = slot_jobs.len().max(1);
         let rung_width = rung_runs.len().max(1);
-        let (outcomes, rung_outcomes) = both(
-            super::super::sieve_ports::ordered_slots(prefixes, width),
+        let (works, rung_outcomes) = both(
+            super::super::sieve_ports::ordered_slots(slot_jobs, width),
             super::super::sieve_ports::ordered_slots(rung_runs, rung_width),
         )
         .await;
@@ -182,16 +226,15 @@ impl ConsolidationExecutor<'_> {
                 *done = Some(outcome);
             }
         }
-        for (index, (outcome, ended)) in indices.into_iter().zip(outcomes) {
-            if let WindowSlotRun::Running { prefix, stages, .. } = &mut slots[index] {
-                *prefix = Some(outcome);
-                stages.mark_prefix_ended(ended);
+        for (index, ended) in indices.into_iter().zip(works) {
+            if let WindowSlotRun::Running { work, stages, .. } = &mut slots[index] {
+                *work = Some(ended.unwrap_or(SlotWork::Panicked));
                 stages.mark_window_prefixes_ended(side_by_side_ended);
             }
         }
-        // The finishes, one by one in admission order. Each finish is
+        // The settles, one by one in admission order. Each is
         // panic-contained on its own (FIX 12487 round 2): a panic in
-        // one slot keeps the decided outcomes of the slots finished
+        // one slot keeps the decided outcomes of the slots settled
         // before it (claims they already committed settle as
         // completed), marks the panicking slot with the shared panic
         // error so the driver ends the pass on it (FIX 7322), and
@@ -200,15 +243,24 @@ impl ConsolidationExecutor<'_> {
         // without committing, as the serial pass never reaches them.
         let mut results = Vec::with_capacity(window.len());
         let mut stopped: Option<WindowStopped> = None;
+        // Once an earlier slot may have committed, a later slot's finish
+        // that ran ahead of it no longer stands (FIX 21927).
+        let mut committed = false;
         for (slot, (attempt, ctx)) in slots.into_iter().zip(window.iter_mut()) {
-            let mut finish = pin!(self.finish_window_slot(slot, *attempt, ctx, stopped));
-            let caught = poll_fn(|task_cx| {
-                match std::panic::catch_unwind(AssertUnwindSafe(|| finish.as_mut().poll(task_cx))) {
-                    Ok(poll) => poll.map(Ok),
-                    Err(panic) => Poll::Ready(Err(panic)),
-                }
-            })
-            .await;
+            let serial = matches!(slot, WindowSlotRun::Serial);
+            let caught = {
+                let mut finish =
+                    self.boxed_finish_window_slot(slot, attempt, ctx, stopped, committed);
+                poll_fn(|task_cx| {
+                    match std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        finish.as_mut().poll(task_cx)
+                    })) {
+                        Ok(poll) => poll.map(Ok),
+                        Err(panic) => Poll::Ready(Err(panic)),
+                    }
+                })
+                .await
+            };
             let result = match caught {
                 Ok(result) => result,
                 // The payload is dropped unread, as at the driver's
@@ -227,8 +279,9 @@ impl ConsolidationExecutor<'_> {
                     Err(crate::dreamer_wake::executor_panic_error())
                 }
             };
-            // A rung job's contained panic stops the window as a finish's
-            // panic does.
+            committed |= may_have_committed(serial, &result);
+            // A rung job's or a slot job's contained panic stops the
+            // window as a settle's panic does.
             if stopped.is_none()
                 && result
                     .as_ref()
@@ -314,24 +367,236 @@ impl ConsolidationExecutor<'_> {
                 stages,
                 run_id: attempt.status.attempt.run_id.clone(),
                 run_started: Instant::now(),
-                prefix: None,
+                work: None,
             },
             Err(error) => WindowSlotRun::Settled(Some(stages), Err(error)),
         }
     }
 
-    /// One window slot's serial position: its finish and settle, with
-    /// its stage line, in admission order. Once the window has
-    /// `stopped`, the slot still settles in its place but runs and
-    /// commits nothing: a stored outcome stands, a never-run shape
-    /// parks, an extracted prefix is accounted and parked (FIX 12487
-    /// round 2).
+    /// One running slot's side-by-side job: its extraction prefix, then,
+    /// once that prefix extracted, its finish at once over the branch the
+    /// slot opened (FIX 21927), up to the run its settle lands. The finish
+    /// commits nothing: the commit stays in the settle, in admission
+    /// order, and the escalation rows it decides wait on its branch for
+    /// that settle. The tournament arm's finish lands its winner as it
+    /// runs, so it still waits for the slot's place.
+    async fn run_window_slot_job(
+        &self,
+        started: &mut PartitionStarted<'_>,
+        stages: &mut PartitionStages,
+        run_started: Instant,
+        attempt: &DreamerAdmittedAttempt,
+        ctx: &WakeAttemptContext<'_>,
+    ) -> SlotWork {
+        let attempt_id = attempt.status.attempt.id;
+        let prefix = self
+            .boxed_extract_partition_prefix(
+                &started.payload,
+                &started.resources,
+                ctx,
+                attempt_id,
+                attempt.status.attempt.run_id.clone(),
+                &mut started.charges,
+            )
+            .await;
+        // The slot's own prefix end, apart from the window's (FIX 21929).
+        let prefix_ended = Instant::now();
+        stages.mark_prefix_ended(prefix_ended);
+        match prefix {
+            Ok(PartitionPrefix::Extracted(extracted))
+                if !matches!(self.strategy, DreamerClaimAuthoringStrategy::Tournament) =>
+            {
+                // No barrier and no queue before this finish: it waits for
+                // no sibling's prefix and no earlier finish.
+                stages.mark_window_prefixes_ended(prefix_ended);
+                stages.mark_finish_started(prefix_ended);
+                let live = !extracted.steps_decide_finish();
+                // The markers and gaps it decides are rows the serial
+                // order may never write: they wait for the settle.
+                started.resources.hold_escalations();
+                let run = self
+                    .boxed_finish_partition_run(
+                        *extracted,
+                        &started.resources,
+                        ctx,
+                        attempt_id,
+                        &mut started.charges,
+                        stages,
+                    )
+                    .await;
+                stages.close_model_run(run_started);
+                SlotWork::Finished { run, live }
+            }
+            prefix => SlotWork::Prefix(prefix),
+        }
+    }
+
+    // The window awaits its big futures behind a box, each built in a
+    // helper of its own (FIX 21927). This crate builds at opt-level 0 in
+    // dev and test, where each future a function builds keeps its own
+    // stack slot for the whole call. Built inline, the slot jobs and the
+    // settles and re-runs of `finish_window_slot` overflowed the 2 MiB
+    // test thread of `dreamer_window_finish_order`; built here, the
+    // caller's frame holds only a pointer. A slot's finish now runs
+    // beneath its slot job's prefix rather than beneath the window's
+    // settle, so the prefix, the rung job, each slot's settle and the
+    // serial `execute` are boxed as well: no frame on that path keeps a
+    // whole executor future.
+
+    /// [`Self::extract_partition_prefix`], for a window slot's prefix.
+    fn boxed_extract_partition_prefix<'s>(
+        &'s self,
+        payload_input: &'s Value,
+        resources: &'s BranchResources<'_>,
+        ctx: &'s WakeAttemptContext<'_>,
+        attempt_id: crate::attempt_queue::AttemptId,
+        run_id: Option<String>,
+        charges: &'s mut StepChargeTally,
+    ) -> Pin<Box<dyn Future<Output = crate::llm::DurableStepResult<PartitionPrefix>> + 's>> {
+        Box::pin(self.extract_partition_prefix(
+            payload_input,
+            resources,
+            ctx,
+            attempt_id,
+            run_id,
+            charges,
+        ))
+    }
+
+    /// A sieve rung job behind its panic containment.
+    fn boxed_rung_job<'s>(
+        &'s self,
+        attempt: &'s DreamerAdmittedAttempt,
+        ctx: &'s WakeAttemptContext<'_>,
+    ) -> Pin<Box<dyn Future<Output = Result<DreamerAttemptExecution>> + 's>> {
+        Box::pin(contained_rung(self.run_rung_job(attempt, ctx), attempt))
+    }
+
+    /// [`Self::finish_window_slot`], for one slot's settle.
+    fn boxed_finish_window_slot<'s, 'w>(
+        &'s mut self,
+        slot: WindowSlotRun<'w>,
+        attempt: &'s DreamerAdmittedAttempt,
+        ctx: &'s mut WakeAttemptContext<'w>,
+        stopped: Option<WindowStopped>,
+        committed: bool,
+    ) -> Pin<Box<dyn Future<Output = Result<DreamerAttemptExecution>> + 's>> {
+        Box::pin(self.finish_window_slot(slot, attempt, ctx, stopped, committed))
+    }
+
+    /// The serial `execute`, for a window slot of a shape the window
+    /// does not run.
+    fn boxed_execute<'s>(
+        &'s mut self,
+        attempt: &'s DreamerAdmittedAttempt,
+        ctx: &'s mut WakeAttemptContext<'_>,
+    ) -> Pin<Box<dyn Future<Output = Result<DreamerAttemptExecution>> + 's>> {
+        Box::pin(self.execute(attempt, ctx))
+    }
+
+    /// [`Self::run_window_slot_job`] behind its panic containment.
+    fn boxed_window_slot_job<'s>(
+        &'s self,
+        started: &'s mut PartitionStarted<'_>,
+        stages: &'s mut PartitionStages,
+        run_started: Instant,
+        attempt: &'s DreamerAdmittedAttempt,
+        ctx: &'s WakeAttemptContext<'_>,
+    ) -> Pin<Box<dyn Future<Output = Option<SlotWork>> + 's>> {
+        Box::pin(contained(
+            self.run_window_slot_job(started, stages, run_started, attempt, ctx),
+            attempt,
+        ))
+    }
+
+    /// [`Self::settle_partition_run`], for a window slot's settle.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "it passes settle_partition_run's own arguments through"
+    )]
+    fn boxed_settle_partition_run<'s>(
+        &'s mut self,
+        resources: &'s BranchResources<'_>,
+        run: crate::llm::DurableStepResult<PartitionRun>,
+        widened: &'s [(EntityId, [u8; 32], [u8; 32])],
+        widened_round: Option<[u8; 32]>,
+        originals: &'s [EntityId],
+        returned: &'s [(EntityId, [u8; 32], [u8; 32])],
+        ctx: &'s WakeAttemptContext<'_>,
+        charges: &'s mut StepChargeTally,
+        stages: &'s mut PartitionStages,
+    ) -> Pin<Box<dyn Future<Output = Result<DreamerAttemptExecution>> + 's>> {
+        Box::pin(self.settle_partition_run(
+            resources,
+            run,
+            widened,
+            widened_round,
+            originals,
+            returned,
+            ctx,
+            charges,
+            stages,
+        ))
+    }
+
+    /// [`Self::run_partition_attempt`], for a window slot's re-run over its
+    /// re-opened branch.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "it passes run_partition_attempt's own arguments through"
+    )]
+    fn boxed_run_partition_attempt<'s>(
+        &'s mut self,
+        payload_input: &'s Value,
+        resources: &'s BranchResources<'_>,
+        ctx: &'s WakeAttemptContext<'_>,
+        attempt_id: crate::attempt_queue::AttemptId,
+        run_id: Option<String>,
+        charges: &'s mut StepChargeTally,
+        stages: &'s mut PartitionStages,
+    ) -> Pin<Box<dyn Future<Output = crate::llm::DurableStepResult<PartitionRun>> + 's>> {
+        Box::pin(self.run_partition_attempt(
+            payload_input,
+            resources,
+            ctx,
+            attempt_id,
+            run_id,
+            charges,
+            stages,
+        ))
+    }
+
+    /// [`Self::finish_partition_run`], for a window slot's finish.
+    fn boxed_finish_partition_run<'s>(
+        &'s self,
+        extracted: super::super::parallel::ExtractedPartition,
+        resources: &'s BranchResources<'_>,
+        ctx: &'s WakeAttemptContext<'_>,
+        attempt_id: crate::attempt_queue::AttemptId,
+        charges: &'s mut StepChargeTally,
+        stages: &'s mut PartitionStages,
+    ) -> Pin<Box<dyn Future<Output = crate::llm::DurableStepResult<PartitionRun>> + 's>> {
+        Box::pin(self.finish_partition_run(extracted, resources, ctx, attempt_id, charges, stages))
+    }
+
+    /// One window slot's serial position: its settle (and a finish its job
+    /// left to it), with its stage line, in admission order. Once the
+    /// window has `stopped`, the slot still settles in its place but runs
+    /// and commits nothing: a stored outcome stands, a never-run shape
+    /// parks, an extracted prefix or a finished run is accounted and
+    /// parked (FIX 12487 round 2). Once an earlier slot `committed`, a
+    /// finished run that may land runs again in its place (FIX 21927).
+    /// The escalation rows a finished run's branch held are written only
+    /// where that run lands as it ran over an unchanged branch, by the
+    /// settle's landing arms; every other arm drops them, the settle's
+    /// deadline checkpoint among them (reviews rounds 1 and 2 of #7855).
     async fn finish_window_slot<'w>(
         &mut self,
         slot: WindowSlotRun<'w>,
         attempt: &DreamerAdmittedAttempt,
         ctx: &mut WakeAttemptContext<'w>,
         stopped: Option<WindowStopped>,
+        committed: bool,
     ) -> Result<DreamerAttemptExecution> {
         let turns = ctx.prepared_attempt.map_or(0, |plan| plan.turn_ids().len());
         match slot {
@@ -349,7 +614,7 @@ impl ConsolidationExecutor<'_> {
                 ))
             }),
             WindowSlotRun::Serial => match stopped {
-                None => self.execute(attempt, ctx).await,
+                None => self.boxed_execute(attempt, ctx).await,
                 // Never ran: no prefix, no spend. After a panic it
                 // takes the panic outcome; after a pass-ending error
                 // it parks resumable at zero.
@@ -362,7 +627,7 @@ impl ConsolidationExecutor<'_> {
                 mut stages,
                 run_id,
                 run_started,
-                prefix,
+                work,
             } => {
                 stages.mark_finish_started(Instant::now());
                 let PartitionStarted {
@@ -374,10 +639,143 @@ impl ConsolidationExecutor<'_> {
                     widened_round,
                     mut charges,
                 } = *started;
-                let executed = match prefix.expect("a running slot's prefix ran") {
-                    Err(error) => {
+                let executed = match work.expect("a running slot's job ran") {
+                    // Its job's containment logged it; the shared panic
+                    // error stops the window here (FIX 7322).
+                    SlotWork::Panicked => Err(crate::dreamer_wake::executor_panic_error()),
+                    SlotWork::Finished { run, live } => match (stopped, run) {
+                        // The window stopped ahead of this slot: only a
+                        // checkpoint, a trap, a spent seat's refusal or an
+                        // error settles, as a stopped prefix's do (review
+                        // round 2 of #7340); a run that would land parks
+                        // uncommitted, its spend accounted.
+                        (
+                            Some(_),
+                            run @ (Ok(PartitionRun::Checkpoint
+                            | PartitionRun::Trapped
+                            | PartitionRun::SeatRefused { .. })
+                            | Err(_)),
+                        )
+                        // A checkpoint, a trap or a seat refusal lands
+                        // nothing: it stands whatever an earlier slot
+                        // committed, and a re-run would ask the spent seat
+                        // again before its available write. Its held rows
+                        // drop: the resumed attempt replays its memoized
+                        // steps and writes them in its place.
+                        | (
+                            None,
+                            run @ Ok(PartitionRun::Checkpoint
+                            | PartitionRun::Trapped
+                            | PartitionRun::SeatRefused { .. }),
+                        ) => {
+                            self.boxed_settle_partition_run(
+                                &resources,
+                                run,
+                                &widened,
+                                widened_round,
+                                &originals,
+                                &returned,
+                                ctx,
+                                &mut charges,
+                                &mut stages,
+                            )
+                            .await
+                        }
+                        (Some(stop), Ok(_)) => {
+                            Ok(charges.park_for(stop.park_reason(), DreamerParkCause::Retry))
+                        }
+                        // Its steps alone decided it (a refused slice): it
+                        // read nothing an earlier slot could change.
+                        (None, run) if !live => {
+                            self.boxed_settle_partition_run(
+                                &resources,
+                                run,
+                                &widened,
+                                widened_round,
+                                &originals,
+                                &returned,
+                                ctx,
+                                &mut charges,
+                                &mut stages,
+                            )
+                            .await
+                        }
+                        (None, run) => {
+                            let plan = ctx.prepared_attempt.expect("a running slot is prepared");
+                            let wake = ctx.prepared_wake.expect("a running slot is prepared");
+                            match BranchResources::open_prepared(ctx.vault, self.actor, plan, wake)
+                            {
+                                // Nothing the serial order put before this
+                                // slot changed what its finish read: no
+                                // earlier commit, the same admitted priors.
+                                // It lands as it ran, over the branch it ran
+                                // on (the fallback binding its finish made is
+                                // there). Its settle writes the rows its
+                                // finish held ahead of the commit, and drops
+                                // them where the deadline checkpoints it.
+                                Ok(fresh)
+                                    if !committed
+                                        && fresh.admitted_prior_ids()
+                                            == resources.admitted_prior_ids() =>
+                                {
+                                    self.boxed_settle_partition_run(
+                                        &resources,
+                                        run,
+                                        &widened,
+                                        widened_round,
+                                        &originals,
+                                        &returned,
+                                        ctx,
+                                        &mut charges,
+                                        &mut stages,
+                                    )
+                                    .await
+                                }
+                                // An earlier slot may have committed rows the
+                                // finish reads (admitted priors, candidate
+                                // signals): run the partition again over the
+                                // branch re-opened here, as the serial order
+                                // would. Its memoized steps replay, inside the
+                                // finalize window too; its finish already
+                                // accounted the paid steps. The rows its
+                                // finish held drop: the re-run writes its own.
+                                Ok(fresh) => {
+                                    let rerun = self
+                                        .boxed_run_partition_attempt(
+                                            &payload,
+                                            &fresh,
+                                            ctx,
+                                            attempt.status.attempt.id,
+                                            run_id,
+                                            &mut charges,
+                                            &mut stages,
+                                        )
+                                        .await;
+                                    stages.close_model_run(run_started);
+                                    self.boxed_settle_partition_run(
+                                        &fresh,
+                                        rerun,
+                                        &widened,
+                                        widened_round,
+                                        &originals,
+                                        &returned,
+                                        ctx,
+                                        &mut charges,
+                                        &mut stages,
+                                    )
+                                    .await
+                                }
+                                // The finish accounted its steps: the
+                                // deferral settles that spend.
+                                Err(error) => {
+                                    super::super::residency::spent_or_deferred(error, ctx, &charges)
+                                }
+                            }
+                        }
+                    },
+                    SlotWork::Prefix(Err(error)) => {
                         stages.close_model_run(run_started);
-                        self.settle_partition_run(
+                        self.boxed_settle_partition_run(
                             &resources,
                             Err(error),
                             &widened,
@@ -390,7 +788,7 @@ impl ConsolidationExecutor<'_> {
                         )
                         .await
                     }
-                    Ok(PartitionPrefix::Done(run)) => {
+                    SlotWork::Prefix(Ok(PartitionPrefix::Done(run))) => {
                         stages.close_model_run(run_started);
                         if let Some(stop) = stopped
                             && !matches!(run, PartitionRun::Checkpoint)
@@ -401,7 +799,7 @@ impl ConsolidationExecutor<'_> {
                             // commit.
                             Ok(charges.park_for(stop.park_reason(), DreamerParkCause::Retry))
                         } else {
-                            self.settle_partition_run(
+                            self.boxed_settle_partition_run(
                                 &resources,
                                 Ok(run),
                                 &widened,
@@ -415,7 +813,7 @@ impl ConsolidationExecutor<'_> {
                             .await
                         }
                     }
-                    Ok(PartitionPrefix::Extracted(extracted)) => {
+                    SlotWork::Prefix(Ok(PartitionPrefix::Extracted(extracted))) => {
                         if let Some(stop) = stopped {
                             // The window stopped ahead of this slot:
                             // account the prefix and park without
@@ -431,7 +829,7 @@ impl ConsolidationExecutor<'_> {
                                 &mut charges,
                             ) {
                                 Ok(Some(decided)) => {
-                                    self.settle_partition_run(
+                                    self.boxed_settle_partition_run(
                                         &resources,
                                         Ok(decided),
                                         &widened,
@@ -475,7 +873,7 @@ impl ConsolidationExecutor<'_> {
                                     let run = if fresh.admitted_prior_ids()
                                         == resources.admitted_prior_ids()
                                     {
-                                        self.finish_partition_run(
+                                        self.boxed_finish_partition_run(
                                             *extracted,
                                             &fresh,
                                             ctx,
@@ -501,7 +899,7 @@ impl ConsolidationExecutor<'_> {
                                             // write (review round 2 of #7340).
                                             Ok(Some(decided)) => Ok(decided),
                                             Ok(None) => {
-                                                self.run_partition_attempt(
+                                                self.boxed_run_partition_attempt(
                                                     &payload,
                                                     &fresh,
                                                     ctx,
@@ -516,7 +914,7 @@ impl ConsolidationExecutor<'_> {
                                         }
                                     };
                                     stages.close_model_run(run_started);
-                                    self.settle_partition_run(
+                                    self.boxed_settle_partition_run(
                                         &fresh,
                                         run,
                                         &widened,
@@ -554,7 +952,7 @@ impl ConsolidationExecutor<'_> {
                                         // (FIX 12487 round 2), or ask the
                                         // seat again before its available
                                         // write (review round 2 of #7340).
-                                        self.settle_partition_run(
+                                        self.boxed_settle_partition_run(
                                             &resources,
                                             Ok(decided),
                                             &widened,

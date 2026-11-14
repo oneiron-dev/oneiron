@@ -38,7 +38,7 @@ use crate::dreamer_tournament::{
 use crate::dreamer_wake::{BoundClaimAuthoringSelector, WakeAttemptContext};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::learning::{LearningCell, LearningPredicate, TypeRef};
-use crate::model_step_context::DurableStepContext;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
 use crate::model_step_error::{DurableStepError, DurableStepResult};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
@@ -66,6 +66,18 @@ pub(super) struct ExtractedPartition {
     axes: BranchAxes,
     subject: crate::EntityId,
     run_id: Option<String>,
+}
+
+impl ExtractedPartition {
+    /// Whether its steps alone decide its finish: a slice that did not
+    /// finish (a trap, a checkpoint, a refusal) ends the finish at its
+    /// step tally, before any read of state another partition's commit
+    /// could change (FIX 21927).
+    pub(super) fn steps_decide_finish(&self) -> bool {
+        self.steps
+            .iter()
+            .any(|step| !matches!(step.outcome, Ok(StepOutcome::Finished { .. })))
+    }
 }
 
 impl ConsolidationExecutor<'_> {
@@ -103,7 +115,8 @@ impl ConsolidationExecutor<'_> {
     /// read set and run the extraction port. Everything it writes is
     /// scoped to this attempt (its memoized steps, its pin, its read
     /// set); the first read of state another partition's commit could
-    /// change is in the serial finish.
+    /// change is in the finish, whose run a window lands only while no
+    /// earlier slot committed (FIX 21927).
     pub(super) async fn extract_partition_prefix(
         &self,
         payload_input: &Value,
@@ -275,13 +288,16 @@ impl ConsolidationExecutor<'_> {
         })))
     }
 
-    /// The serial finish of one extracted partition: account the steps,
-    /// parse and mint, read corrections, build and resolve candidates.
-    /// `resources` is the branch as this finish opens it, so its live
-    /// reads (admitted priors, candidate signals) see exactly what a
-    /// serial run in this position would see.
+    /// The finish of one extracted partition: account the steps, parse
+    /// and mint, read corrections, build and resolve candidates. It
+    /// commits nothing; the run it returns is what its settle commits.
+    /// `resources` is the branch its live reads (admitted priors,
+    /// candidate signals) see: the serial run's own branch, a window
+    /// slot's branch as it opened (FIX 21927: its settle lands the run
+    /// only while no earlier slot committed), or a branch re-opened in
+    /// the slot's place.
     pub(super) async fn finish_partition_run(
-        &mut self,
+        &self,
         extracted: ExtractedPartition,
         resources: &BranchResources<'_>,
         ctx: &WakeAttemptContext<'_>,
