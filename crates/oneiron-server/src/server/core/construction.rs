@@ -375,6 +375,7 @@ impl SyncServer {
             connector_elicitations: Arc::default(),
             browser_guest: None,
             browser_readiness: Default::default(),
+            runner_fence: std::sync::OnceLock::new(),
             desktop_guest: None,
             artifact_backend: None,
             desktop_seats: Arc::default(),

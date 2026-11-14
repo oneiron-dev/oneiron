@@ -196,6 +196,10 @@ pub struct SyncServer {
     /// How this process's browser stands (FIX 7670), which each browser
     /// guest start moves and `Ping` and the owner's status read.
     pub(crate) browser_readiness: crate::config::browser::BrowserReadinessCell,
+    /// The runner fence every runner this server starts on the host runs
+    /// under, proved once (L8-27); built at its first use.
+    pub(crate) runner_fence:
+        std::sync::OnceLock<Option<Arc<crate::runtime::runner_fence::HostRunnerFence>>>,
     /// The `[desktop]` guest each code run starts for its own desktop verbs.
     /// `None` answers every desktop call `browser_unbound`.
     pub(crate) desktop_guest: Option<oneiron_browser::DesktopGuest>,
@@ -359,7 +363,7 @@ const _: fn(&SyncServer) = |server| {
         browser_readiness, desktop_guest, artifact_backend, desktop_seats, browser_seats,
         web_fetcher, memories_cursors, self_brief_sessions, deep_retrieval, model_slots,
         trained_embedders, model_setup, model_setup_runtime, gpu_pool, llm, decision_read,
-        decision_reads, decisions, hook_runtime,
+        decision_reads, decisions, hook_runtime, runner_fence,
         #[cfg(feature = "mesh")] mesh_transport,
         builtin_handles,
         #[cfg(unix)] organs,

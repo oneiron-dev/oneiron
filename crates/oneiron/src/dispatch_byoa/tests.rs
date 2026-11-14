@@ -296,6 +296,7 @@ fn sample_exhaust() -> ByoaExhaust {
         diff_bundle: Some(b"diff --git a b".to_vec()),
         checkpoint_frontier: vec!["refs/heads/work@".to_owned() + &"a".repeat(40)],
         secret_taint_refs: Vec::new(),
+        session_manifest: None,
     }
 }
 

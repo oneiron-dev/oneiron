@@ -151,7 +151,9 @@ pub struct SessionManifest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fence_proof: Option<FenceProof>,
     /// Non-Linux or explicitly unfenced sessions never claim isolation.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    /// Left out of a record when false, and read back as false where a
+    /// record leaves it out.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fence_unproven: bool,
     /// The guest-image release this launch saw (FIX 8253): evidence only,
     /// separate from the fence evidence, and never a launch decision.
