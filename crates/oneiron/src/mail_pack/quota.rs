@@ -128,8 +128,8 @@ pub struct MailQuota {
 /// units a minute; a listing page 5, a metadata read 20, a full or raw read
 /// 60, a history page 2, an attachment 20; 2,500 MB of downloads a day. The
 /// profile and the send-as list are Google's 1. A text part Gmail keeps
-/// apart is read as an attachment, and the credential check reads the
-/// profile.
+/// apart is read as an attachment, an attachment that rides inline is read
+/// in its whole message, and the credential check reads the profile.
 pub const GMAIL_MAIL_QUOTA: MailQuota = MailQuota {
     units_per_minute: 6_000,
     bytes_per_day: 2_500 * 1_000_000,
@@ -315,7 +315,12 @@ impl<'w> MeteredMailWire<'w> {
         read: impl FnOnce(&dyn MailProviderWire) -> Result<A>,
     ) -> Result<A> {
         self.charge(call)?;
-        let answer = read(self.inner);
+        self.settled(read(self.inner))
+    }
+
+    /// The answer of a call whose requests were charged: counts their bytes,
+    /// and a rate-limit answer rests the source.
+    fn settled<A>(&self, answer: Result<A>) -> Result<A> {
         let mut window = self.window.get();
         self.count_bytes(&mut window);
         if matches!(&answer, Err(Error::InvalidConfig(code)) if code == MAIL_WIRE_RATE_LIMITED) {
@@ -403,9 +408,12 @@ impl MailProviderWire for MeteredMailWire<'_> {
         provider_id: &str,
         attachment: &MailAttachmentRef,
     ) -> Result<Option<Vec<u8>>> {
-        self.metered(MailCall::Attachment, |wire| {
-            wire.attachment(source, provider_id, attachment)
-        })
+        // Each request the read makes is charged as what it is before it is
+        // made: the first is not always the attachment read.
+        let answer = self
+            .inner
+            .attachment_charging(source, provider_id, attachment, &|call| self.charge(call));
+        self.settled(answer)
     }
 
     fn quota(&self) -> Option<MailQuota> {

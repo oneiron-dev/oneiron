@@ -317,6 +317,28 @@ pub trait MailProviderWire {
         attachment: &MailAttachmentRef,
     ) -> Result<Option<Vec<u8>>>;
 
+    /// [`Self::attachment`], with `charge` called before each provider
+    /// request the read makes, its first included: the request that finds
+    /// an attachment is not always its attachment read (Gmail reads the
+    /// whole message for one that rides inline in its part), so a metered
+    /// step charges each request as what it is, and a refused charge ends
+    /// the read. By default the read is one attachment read, charged before
+    /// it is made.
+    ///
+    /// # Errors
+    ///
+    /// A refused charge, or the provider's own failure.
+    fn attachment_charging(
+        &self,
+        source: &MailSyncSource,
+        provider_id: &str,
+        attachment: &MailAttachmentRef,
+        charge: &dyn Fn(MailCall) -> Result<()>,
+    ) -> Result<Option<Vec<u8>>> {
+        charge(MailCall::Attachment)?;
+        self.attachment(source, provider_id, attachment)
+    }
+
     /// The provider's per-user limits and each call's cost, which one step
     /// of the importer spends within. `None` by default: a wire that
     /// declares none is never charged, and only a rate-limit answer
