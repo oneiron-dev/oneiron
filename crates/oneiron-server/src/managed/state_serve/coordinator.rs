@@ -783,6 +783,7 @@ async fn serve_with_handles(
         ),
         &app,
         config.limits.connections(),
+        crate::handler::mesh::MeshRouteSet::Full,
     )
     .await?;
     // A vault that is a device of another home dials it, on that mesh when
