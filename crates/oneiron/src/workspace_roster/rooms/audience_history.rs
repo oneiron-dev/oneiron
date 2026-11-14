@@ -19,13 +19,8 @@ use crate::EdgeActorClass;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE};
 use crate::workspace_roster::RosterActor;
 
-/// `vault.rooms.thread_audience.open_full_history`'s input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ThreadAudienceOpenFullHistoryRequest {
-    /// The private thread's root TURN, 32-hex.
-    pub thread_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::rooms::audience_history::ThreadAudienceOpenFullHistoryRequest;
 
 impl Memory<'_> {
     /// Opens a private thread's full history to the vault's Owner, who is in
