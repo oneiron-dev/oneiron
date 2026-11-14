@@ -14,6 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `examples/emit_revision.rs` | src | s | — | — | Produce one deterministic tracked-change sample for the external Word oracle |
 | `examples/resolve_docx.rs` | src | s | — | — | Resolve a DOCX revision in the pinned fork for an application oracle case |
 | `src/a1.rs` | src | s | 1 struct · 1 fn · 5 crate-vis | A1 | One permissive A1 core (FIX 9207, ruling B): trim + any case + `$` + unbounded letters/digits + full… |
+| `src/bin/deck-create-cases.rs` | src | s | — | — | `deck-create-cases`: the engine half of the `deck-create-v1` oracle runner |
 | `src/bin/deck-gate-cases.rs` | src | s | — | — | `deck-gate-cases`: the engine half of the OF-510 deck gate runner |
 | `src/contract/mod.rs` | src | L | 40 struct · 7 enum · 1 trait · 14 fn · 6 const | AssetMedia, AssetOrigin, Call, ContractError, CreatedSlide, DeckAsset, DeckCreateArgs, DeckCreated +40 | The document engine's contract (ARCH-0075 section 2, "an organ crate with a hosted API"): one versioned… |
 | `src/contract/run.rs` | src | m | 1 crate-vis | — | The handlers behind [`super::execute`]: each op maps its args onto one native door and the door's refusals… |
@@ -65,7 +66,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit/xfrm.rs` | src | s | 6 crate-vis | — | `set_xfrm` and `move_in_slide_space`: a shape's own transform, attribute by attribute |
 | `src/edit/xml.rs` | src | m | 24 crate-vis | — | Byte-span writing over a parsed part: every edit is a list of splices on the retained bytes, so whatever it… |
 | `src/emit/check.rs` | src | m | 1 crate-vis | — | The candidate checks, run on the exported bytes and independent of the writer's bookkeeping: the write set… |
-| `src/emit/mod.rs` | src | m | 11 struct · 3 enum · 2 fn · 1 crate-vis | Candidate, CheckFault, ClaimTrace, EmitError, EmitInputs, EmittedSlide, FitTrace, FitUnverified +6 | Emit a checked deck candidate from a `DesignPlan` (ARCH-0077 "Creation result and checks") |
+| `src/emit/mod.rs` | src | m | 11 struct · 3 enum · 2 fn · 1 mod · 1 crate-vis | Candidate, CheckFault, ClaimTrace, EmitError, EmitInputs, EmittedSlide, FitTrace, FitUnverified +6 | Emit a checked deck candidate from a `DesignPlan` (ARCH-0077 "Creation result and checks") |
+| `src/emit/oracle_cases.rs` | src | m | 8 struct · 1 enum · 5 fn · 3 const | CaseCandidate, CaseNames, CaseSet, CaseSpec, FitUnit, LoadedCaseSet, OfficeSpec, RunWritten +1 | The `deck-create-v1` oracle case set: six new decks the emitter writes, the run that pins them, and the rows… |
 | `src/emit/slide.rs` | src | s | 7 crate-vis | — | Slide XML for emission: an empty slide whose root binds `p:`, `a:` and `r:`, the shapes placed into its… |
 | `src/emit/tests.rs` | test | m | 3 crate-vis | — | ONE-2536 acceptance: an end-to-end plan over the ONE-2533 template is emitted into a candidate that places… |
 | `src/fonts.rs` | src | m | 2 struct · 1 enum · 10 fn · 2 const | Face, FontBook, FontError | Real font metrics for fit estimates (ARCH-0077, "Fit estimate"): a bounded sfnt reader for TrueType and CFF… |
@@ -201,6 +203,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/adversarial.rs` | test | s | — | — | — |
 | `tests/breaker.rs` | test | s | — | — | — |
 | `tests/comment_anchors.rs` | test | m | — | — | Native Word comment ranges for the comment-anchor scenarios (owner ask 2026-10-16; the cases come from… |
+| `tests/deck_create_oracle_receipt.rs` | test | m | — | — | L4-20 (ARCH-0077 slides lane): the `deck-create-v1` Office receipts committed under… |
 | `tests/identity.rs` | test | s | — | — | — |
 | `tests/revisions.rs` | test | s | — | — | — |
 | `tests/stemma_reader.rs` | test | s | — | — | The stemma fork reads untrusted DOCX parts with quick-xml |

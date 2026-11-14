@@ -81,6 +81,7 @@ pub(super) async fn facade_invocation_claim(
     );
     match claim_door_invocation(&server, invocation, call, auth.principal_entity()).await {
         DoorClaim::Run(claim) => {
+            let claim = claim.for_verb(&verb);
             let response = claim
                 .run(next.run(Request::from_parts(parts, body)))
                 .await;
@@ -255,12 +256,30 @@ pub(crate) enum DoorClaim {
     StoreFailed,
 }
 
+/// The verbs whose answer no invocation claim keeps for a later request
+/// (review round 2 of #7603): `vault.inquire` answers with another vault's
+/// words, which this vault holds only with their open TASK and until their
+/// `valid_until` (Engine ruling INQUIRE-SHAPE Q6). A kept reply would send
+/// them again past both, on a replay that runs no send and no eviction. A
+/// re-send of the inquiry's id gets its current answer instead (Q2).
+const UNKEPT_REPLY_VERBS: [&str; 1] = ["vault.inquire"];
+
+/// Whether an invocation claim keeps `verb`'s answer for a later request
+/// naming the same invocation: false only for [`UNKEPT_REPLY_VERBS`].
+fn verb_reply_is_kept(verb: &str) -> bool {
+    !UNKEPT_REPLY_VERBS.contains(&verb)
+}
+
 /// A live claim, with a durable intent for ordinary calls. Session-owned
 /// claims have no durable twin. A normal durable drop releases its intent;
 /// a process crash leaves it standing so a duplicate cannot rerun.
 pub(crate) struct DoorInvocationClaim {
     live: Option<InvocationClaim>,
     durable: Option<DurableDoorInvocation>,
+    /// `false` for a verb whose answer is never kept
+    /// ([`verb_reply_is_kept`]): its reply goes only to the requests already
+    /// waiting on this call.
+    keep_reply: bool,
 }
 
 struct DurableDoorInvocation {
@@ -269,6 +288,15 @@ struct DurableDoorInvocation {
 }
 
 impl DoorInvocationClaim {
+    /// This claim, for a call of `verb`: one whose answer is never kept
+    /// ([`verb_reply_is_kept`]) releases its durable intent when it ends, as
+    /// a failed call does, so a later request naming the same invocation
+    /// runs the verb again.
+    pub(crate) fn for_verb(mut self, verb: &str) -> Self {
+        self.keep_reply = verb_reply_is_kept(verb);
+        self
+    }
+
     /// Runs an ordinary route with its durable intent open on every poll,
     /// so grouped writes count on it (FIX 10379). A session claim runs with
     /// no durable invocation state.
@@ -282,14 +310,15 @@ impl DoorInvocationClaim {
     /// Saves a successful JSON outcome, releases a failed or held one, and
     /// wakes the live waiters in either case. A pending ask or a paced hold
     /// is not an accepted asynchronous job: the next same-id retry must
-    /// reach the held call again. A storage error leaves the durable intent
-    /// standing.
+    /// reach the held call again. A verb whose answer is never kept
+    /// ([`Self::for_verb`]) is released as well. A storage error leaves the
+    /// durable intent standing.
     pub(crate) fn finish(self, outcome: InvocationOutcome) {
         if FacadeApiError::is_held_call(outcome.status, &outcome.body) {
             self.finish_failed(outcome);
             return;
         }
-        let keep = outcome.status < 400;
+        let keep = self.keep_reply && outcome.status < 400;
         self.finish_with(outcome, keep);
     }
 
@@ -385,6 +414,7 @@ pub(crate) async fn claim_door_invocation(
                                 store,
                                 key: store_key,
                             }),
+                            keep_reply: true,
                         });
                     }
                     crate::invocation_claims::InvocationClaimLookup::Replay(outcome) => {
@@ -651,6 +681,7 @@ impl DoorClaim {
             InvocationEntry::Claimed(live) => Self::Run(DoorInvocationClaim {
                 live: Some(live),
                 durable: None,
+                keep_reply: true,
             }),
             InvocationEntry::Conflict => Self::Conflict,
             InvocationEntry::Busy(wait) => {

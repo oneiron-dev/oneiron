@@ -2,8 +2,8 @@
 //! emitted into a candidate that places and traces every block, writes only
 //! what the plan's package row allows, never writes `fontScale`, and reports
 //! `FitUnverified` for laid-out text; the independent checks refuse a
-//! tampered candidate. The opt-in last test writes the Office-oracle
-//! candidate over the oracle's own clean deck.
+//! tampered candidate. The Office oracle's case set and its receipts live
+//! in `oracle_cases` and `tests/deck_create_oracle_receipt.rs` (L4-20).
 use super::*;
 use crate::deck::fixture::{archive, limits};
 use crate::deck::{DeckView, ShapeKind, ShapeView, SlideView};
@@ -690,19 +690,4 @@ pub(crate) fn oracle_deck() -> Candidate {
     let fixture = Fixture::new(oracle_template(), &brief);
     let plan = fixture.plan();
     fixture.emit(&plan)
-}
-
-#[test]
-#[ignore = "writes the Office-oracle candidate to $ONEIRON_EMIT_CANDIDATE"]
-fn office_oracle_candidate() {
-    let candidate = oracle_deck();
-    assert!(candidate.fit.is_err());
-    let path = std::env::var("ONEIRON_EMIT_CANDIDATE").unwrap();
-    std::fs::write(&path, &candidate.bytes).unwrap();
-    println!(
-        "candidate {} blake3 {} slides {}",
-        path,
-        blake3::Hash::from(candidate.hash).to_hex(),
-        candidate.report.slides.len()
-    );
 }
