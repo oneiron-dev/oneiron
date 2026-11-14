@@ -2,9 +2,10 @@
 //! round 1 of #7855): each open-conflict marker and contradiction gap its
 //! conflict sets left standing. That finish runs before the slot's place in
 //! admission order, so these rows wait on the branch it ran on. The slot's
-//! settle writes them only with a run that lands as it ran; a run that parks
-//! or runs again drops them, as the serial pass would never have written
-//! them. Every other branch writes them at once.
+//! settle writes them only with a run that lands as it ran; a run that parks,
+//! runs again or checkpoints at the deadline (review round 2) drops them, as
+//! the serial pass would never have written them. Every other branch writes
+//! them at once.
 
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_consolidation::evidence::{VerifiedCandidate, VerifiedEvidenceSet};

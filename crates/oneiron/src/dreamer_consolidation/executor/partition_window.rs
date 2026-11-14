@@ -7,7 +7,8 @@
 //! re-opened in its place, so the committed rows equal the serial run's.
 //! The open-conflict markers and contradiction gaps such a finish decides
 //! wait on its branch: they are written only with a run that lands as it
-//! ran (review round 1 of #7855).
+//! ran (review round 1 of #7855), by its settle's landing arms, so a
+//! deadline checkpoint drops them too (review round 2).
 //! Split from `partition_run` (FIX 12774); the serial run and its settle
 //! stay there.
 
@@ -175,12 +176,12 @@ impl ConsolidationExecutor<'_> {
     /// read there, its memoized steps replaying - so the committed rows
     /// equal the serial run's. The escalation rows that finish decided
     /// (open-conflict markers, contradiction gaps) are held on its branch
-    /// and written only with a run that lands as it ran: a parked or re-run
-    /// slot leaves none of them. A sieve rung job in the window runs whole
-    /// beside the prefixes: its commit touches only its own span's
-    /// reading, which no partition's finish reads. The driver gates the
-    /// window to these shapes; a slot of any other shape takes the serial
-    /// `execute` in its place as a second lock.
+    /// and written only with a run that lands as it ran: a parked, re-run
+    /// or checkpointed slot leaves none of them. A sieve rung job in the
+    /// window runs whole beside the prefixes: its commit touches only its
+    /// own span's reading, which no partition's finish reads. The driver
+    /// gates the window to these shapes; a slot of any other shape takes
+    /// the serial `execute` in its place as a second lock.
     pub(super) async fn run_partition_window<'w>(
         &mut self,
         window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
@@ -586,8 +587,9 @@ impl ConsolidationExecutor<'_> {
     /// parked (FIX 12487 round 2). Once an earlier slot `committed`, a
     /// finished run that may land runs again in its place (FIX 21927).
     /// The escalation rows a finished run's branch held are written only
-    /// where that run lands as it ran over an unchanged branch; every
-    /// other arm drops them (review round 1 of #7855).
+    /// where that run lands as it ran over an unchanged branch, by the
+    /// settle's landing arms; every other arm drops them, the settle's
+    /// deadline checkpoint among them (reviews rounds 1 and 2 of #7855).
     async fn finish_window_slot<'w>(
         &mut self,
         slot: WindowSlotRun<'w>,
@@ -637,8 +639,6 @@ impl ConsolidationExecutor<'_> {
                     widened_round,
                     mut charges,
                 } = *started;
-                // Empty unless the slot's job finished early.
-                let held = resources.take_held_escalations();
                 let executed = match work.expect("a running slot's job ran") {
                     // Its job's containment logged it; the shared panic
                     // error stops the window here (FIX 7322).
@@ -710,18 +710,14 @@ impl ConsolidationExecutor<'_> {
                                 // earlier commit, the same admitted priors.
                                 // It lands as it ran, over the branch it ran
                                 // on (the fallback binding its finish made is
-                                // there), its held rows first, as its finish
-                                // would have written them.
+                                // there). Its settle writes the rows its
+                                // finish held ahead of the commit, and drops
+                                // them where the deadline checkpoints it.
                                 Ok(fresh)
                                     if !committed
                                         && fresh.admitted_prior_ids()
                                             == resources.admitted_prior_ids() =>
                                 {
-                                    let run = match held.publish(ctx.vault, self.actor, &resources)
-                                    {
-                                        Ok(()) => run,
-                                        Err(error) => Err(error.into()),
-                                    };
                                     self.boxed_settle_partition_run(
                                         &resources,
                                         run,
