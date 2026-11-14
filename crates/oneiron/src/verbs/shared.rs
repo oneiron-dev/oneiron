@@ -11,9 +11,9 @@ use crate::authority::{AuthorityHandoffAlarm, HostSlipIssuer};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::federation::{
-    FederationGrantRole as Role, MemberAskChange, PendingAuthorityAct, RemovalExportDelivery,
-    SharedActExecution, SharedActExecutionReceipt, SharedActKind, SharedActOutcome,
-    SharedMemberAsk, SharedVaultDeletion,
+    FederationGrantRole as Role, MemberAskChange, OwnerRemoval, PendingAuthorityAct,
+    RemovalExportDelivery, SharedActExecution, SharedActExecutionReceipt, SharedActKind,
+    SharedActOutcome, SharedMemberAsk, SharedVaultDeletion,
 };
 use crate::memory::{MemoryError, MemoryResult, ProducerRows};
 use crate::{EntityId, Vault};
@@ -55,6 +55,10 @@ pub struct SharedTransferRequest {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub from_keeps: Option<Role>,
+    /// An asker's approved check-in for this transfer, 32 hex: the starting
+    /// Owner applies it on their own proof, and the act names its asker.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
 
 /// `vault.shared.propose_remove_owner`'s input. `target` keeps
@@ -76,6 +80,10 @@ pub struct SharedRemoveOwnerRequest {
     #[schemars(with = "Option<String>")]
     pub target_keeps: Option<Role>,
     pub export_first: bool,
+    /// An asker's approved check-in for this removal, 32 hex: the starting
+    /// Owner applies it on their own proof, and the act names its asker.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
 
 /// `vault.shared.propose_add_owner`'s input: a live Owner starts an
@@ -88,6 +96,10 @@ pub struct SharedAddOwnerRequest {
     pub vault_id: u64,
     /// The new Owner's PERSON id, hex: a live person not yet an Owner.
     pub owner: String,
+    /// An asker's approved check-in for this add, 32 hex: the starting Owner
+    /// applies it on their own proof, and the act names its asker.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
 
 /// `vault.shared.owner_change_wait.set`'s input: whole days, or `null` to
@@ -332,17 +344,28 @@ pub fn propose_shared_delete(
     Ok(vault.propose_delete_vault_with_check_in(starter, input.vault_id, check_in)?)
 }
 
-/// `vault.shared.propose_transfer`: start a `transfer_ownership` act.
+/// `vault.shared.propose_transfer`: start a `transfer_ownership` act. The
+/// act records the Owner's check-in decision; with `check_in_ref` the Owner
+/// applies an asker's approved check-in for this transfer (2k1).
 pub fn propose_shared_transfer(
     vault: &Vault,
     starter: &AuthenticatedOwner,
     input: SharedTransferRequest,
 ) -> MemoryResult<PendingAuthorityAct> {
     let to = person_id("to", &input.to)?;
-    Ok(vault.propose_transfer_ownership(starter, input.vault_id, to, input.from_keeps)?)
+    let check_in = check_in_ref(input.check_in_ref.as_deref())?;
+    Ok(vault.propose_transfer_ownership_with_check_in(
+        starter,
+        input.vault_id,
+        to,
+        input.from_keeps,
+        check_in,
+    )?)
 }
 
-/// `vault.shared.propose_remove_owner`: start a `remove_owner` act.
+/// `vault.shared.propose_remove_owner`: start a `remove_owner` act. The act
+/// records the Owner's check-in decision; with `check_in_ref` the Owner
+/// applies an asker's approved check-in for this removal (2k1).
 pub fn propose_shared_remove_owner(
     vault: &Vault,
     starter: &AuthenticatedOwner,
@@ -354,24 +377,31 @@ pub fn propose_shared_remove_owner(
         .as_deref()
         .map(|id| person_id("successor", id))
         .transpose()?;
-    Ok(vault.propose_remove_owner(
+    let check_in = check_in_ref(input.check_in_ref.as_deref())?;
+    Ok(vault.propose_remove_owner_with_check_in(
         starter,
         input.vault_id,
-        target,
-        successor,
-        input.target_keeps,
-        input.export_first,
+        OwnerRemoval {
+            target,
+            successor,
+            target_keeps: input.target_keeps,
+            export_first: input.export_first,
+        },
+        check_in,
     )?)
 }
 
-/// `vault.shared.propose_add_owner`: start an `add_owner` act.
+/// `vault.shared.propose_add_owner`: start an `add_owner` act. The act
+/// records the Owner's check-in decision; with `check_in_ref` the Owner
+/// applies an asker's approved check-in for this add (2k1).
 pub fn propose_shared_add_owner(
     vault: &Vault,
     starter: &AuthenticatedOwner,
     input: SharedAddOwnerRequest,
 ) -> MemoryResult<PendingAuthorityAct> {
     let owner = person_id("owner", &input.owner)?;
-    Ok(vault.propose_add_owner(starter, input.vault_id, owner)?)
+    let check_in = check_in_ref(input.check_in_ref.as_deref())?;
+    Ok(vault.propose_add_owner_with_check_in(starter, input.vault_id, owner, check_in)?)
 }
 
 /// `vault.shared.owner_change_wait.set`: one live Owner sets the common
