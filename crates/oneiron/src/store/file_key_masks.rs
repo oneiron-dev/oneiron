@@ -224,6 +224,19 @@ pub(crate) fn clear_file_seal_in_txn(
     MASKED_FILE.put(store, txn, hash, &file)
 }
 
+/// Drops the mark of the file `hash` names, for a test door that stands
+/// for an install where those bytes arrived by sync with no mark (Engine
+/// RULING PLAN-SEALED-FILE-RULING-CARRY).
+#[cfg(oneiron_test_support)]
+pub(crate) fn forget_masked_file_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    hash: &[u8; 32],
+) -> Result<()> {
+    MASKED_FILE.delete(store, txn, hash)?;
+    Ok(())
+}
+
 /// Whether the owner ruled the seal of the file `hash` names no secret
 /// ([`clear_file_seal_in_txn`]).
 pub(crate) fn file_seal_ruled_in_txn(
@@ -337,6 +350,15 @@ pub(crate) fn sighted_bytes_in_txn_with_reader(
         None => *blake3::hash(&bytes).as_bytes(),
     };
     let Some(file) = masked_file_in_txn(store, txn, &hash)? else {
+        // Bytes the write door sealed whole on another install of the
+        // vault, which the owner ruled no secret there, hold no mark here:
+        // the ruling his act carried serves them as written, as their ruled
+        // mark does on that install (Engine RULING
+        // PLAN-SEALED-FILE-RULING-CARRY). It is carried only for bytes that
+        // hold no key the door placed.
+        if crate::secret_custody::carried_file_ruling_holds_in_txn(store, txn, &hash)? {
+            return Ok(bytes);
+        }
         // Bytes that lead as no container are none to the walk, so none is
         // sealed and none holds a member. With no mark, nothing says the
         // write door read them: bytes stored while its scan was off keep

@@ -297,6 +297,9 @@ impl Vault {
         self.store.inference_snapshots.reopen();
         // FIX 14976: a bound private drafter may serve again.
         self.notify_drafter_serving();
+        // A sealed-file ruling made while the key was locked is carried now
+        // (Engine RULING PLAN-SEALED-FILE-RULING-CARRY, 14 Nov 16:48).
+        self.carry_owed_file_rulings();
     }
 
     /// Holds the data key a sealed vault opened with (OF-570 maximum tier).

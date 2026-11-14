@@ -494,7 +494,10 @@ impl MaskedFiles {
 
 /// The key places already recorded for each file a batch puts, by its
 /// bytes' hash: a file put again keeps its mark and mints nothing. Beside
-/// them, the hashes whose seal the owner ruled no secret.
+/// them, the hashes whose seal the owner ruled no secret: on this install's
+/// mark, or by the ruling his act carried from another install of the
+/// vault, where the bytes held no key the door placed (Engine RULING
+/// PLAN-SEALED-FILE-RULING-CARRY).
 fn marked_files(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -514,6 +517,11 @@ fn marked_files(
                     ruled.insert(hash);
                 }
                 marked.insert(hash, file.places());
+            }
+            if !ruled.contains(&hash)
+                && crate::secret_custody::carried_file_ruling_holds_in_txn(store, txn, &hash)?
+            {
+                ruled.insert(hash);
             }
         }
     }
