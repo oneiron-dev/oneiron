@@ -397,6 +397,12 @@ pub struct StoreCore {
     /// the TASK; a lagged reader has lost ids, never seen a false one.
     #[cfg(feature = "sync")]
     pub(crate) task_updates: tokio::sync::broadcast::Sender<crate::EntityId>,
+    /// Mailbox sources connected, or connected again, each sent after its
+    /// write commits: a host steps each at once (ARCH-0063 #mail-copy). A
+    /// lagged reader has lost ids; the host's periodic pass still steps
+    /// every due source.
+    #[cfg(feature = "sync")]
+    pub(crate) mail_source_wakes: tokio::sync::broadcast::Sender<crate::EntityId>,
     /// Serializes this vault's foreign-import admission window: the receipt
     /// read, the selector admission and the stage-if-absent write are one
     /// logical step, and the durable re-read is the cross-process guard. It was

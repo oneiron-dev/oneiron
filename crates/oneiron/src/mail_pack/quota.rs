@@ -20,9 +20,10 @@
 use std::cell::Cell;
 
 use super::rest::{MAX_REST_RESPONSE_BYTES, refused};
+use super::source::MailProvider;
 use super::wire::{
     MailAddressHeaders, MailAttachmentRef, MailFull, MailHeaders, MailHistoryRead, MailIdPage,
-    MailListQuery, MailProviderWire, MailSyncSource,
+    MailListQuery, MailProviderWire, MailSyncSource, MailboxAnchor,
 };
 use crate::memory::MemoryResult;
 use crate::provider_quota::{DayBytes, ProviderQuotaWindow, RATE_LIMIT_REST_SECS, minute_ceiling};
@@ -146,6 +147,17 @@ pub const GMAIL_MAIL_QUOTA: MailQuota = MailQuota {
     first_call_check: Some(MailCall::Anchor),
 };
 
+/// The quota the host's mail wire for `provider` declares, read where no
+/// wire is at hand (a copy's time on the status read): Gmail's for a Google
+/// mailbox; none for a provider whose wire paces nothing.
+pub(super) const fn provider_mail_quota(provider: MailProvider) -> Option<MailQuota> {
+    if super::gmail::reads_google_mail(provider) {
+        Some(GMAIL_MAIL_QUOTA)
+    } else {
+        None
+    }
+}
+
 /// The refusal a metered call answers once its source rests.
 fn resting() -> Error {
     refused(MAIL_WIRE_RESTING)
@@ -183,6 +195,10 @@ pub(super) struct MeteredMailWire<'w> {
     /// The wire's [`MailProviderWire::bytes_read`] when the day's bytes
     /// were last counted.
     counted: Cell<u64>,
+    /// The messages this step read whole, and the bytes those reads took:
+    /// what one more whole read costs of the day's download cap.
+    full_reads: Cell<u64>,
+    full_read_bytes: Cell<u64>,
 }
 
 impl<'w> MeteredMailWire<'w> {
@@ -194,7 +210,14 @@ impl<'w> MeteredMailWire<'w> {
             live: Cell::new(true),
             charged: Cell::new(false),
             counted: Cell::new(inner.bytes_read()),
+            full_reads: Cell::new(0),
+            full_read_bytes: Cell::new(0),
         }
+    }
+
+    /// The messages this step read whole, and the bytes those reads took.
+    pub(super) fn full_reads(&self) -> (u64, u64) {
+        (self.full_reads.get(), self.full_read_bytes.get())
     }
 
     /// Marks what reads next: the change feed (`true`) or the copy.
@@ -289,6 +312,11 @@ impl MailProviderWire for MeteredMailWire<'_> {
         self.metered(MailCall::Anchor, |wire| wire.current_anchor(source))
     }
 
+    fn mailbox_anchor(&self, source: &MailSyncSource) -> Result<MailboxAnchor> {
+        // The same request as the anchor alone, at the same cost.
+        self.metered(MailCall::Anchor, |wire| wire.mailbox_anchor(source))
+    }
+
     fn list_page(
         &self,
         source: &MailSyncSource,
@@ -305,10 +333,18 @@ impl MailProviderWire for MeteredMailWire<'_> {
     }
 
     fn full(&self, source: &MailSyncSource, provider_id: &str) -> Result<Option<MailFull>> {
+        let before = self.inner.bytes_read();
         // A further request the read makes is charged before it is made.
-        self.metered(MailCall::Full, |wire| {
+        let answer = self.metered(MailCall::Full, |wire| {
             wire.full_charging(source, provider_id, &|call| self.charge(call))
-        })
+        });
+        if matches!(&answer, Ok(Some(_))) {
+            self.full_reads.set(self.full_reads.get() + 1);
+            let read = self.inner.bytes_read().saturating_sub(before);
+            self.full_read_bytes
+                .set(self.full_read_bytes.get().saturating_add(read));
+        }
+        answer
     }
 
     fn history(

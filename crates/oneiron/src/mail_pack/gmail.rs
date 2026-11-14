@@ -36,7 +36,7 @@ use super::source::MailProvider;
 use super::wire::{
     MailAddressHeaders, MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange,
     MailHistoryPage, MailHistoryRead, MailIdPage, MailListQuery, MailMessageRef, MailProviderWire,
-    MailSyncSource,
+    MailSyncSource, MailboxAnchor,
 };
 use crate::Vault;
 use crate::channel_identity_provider::gmail::GMAIL_CONNECTOR_EFFECTOR;
@@ -233,10 +233,22 @@ impl HttpGmailMailWire<'_> {
 
 impl MailProviderWire for HttpGmailMailWire<'_> {
     fn current_anchor(&self, source: &MailSyncSource) -> Result<String> {
-        self.profile(source)?
+        Ok(self.mailbox_anchor(source)?.anchor)
+    }
+
+    fn mailbox_anchor(&self, source: &MailSyncSource) -> Result<MailboxAnchor> {
+        let profile = self.profile(source)?;
+        let anchor = profile
             .get("historyId")
             .and_then(id_text)
-            .ok_or_else(|| refused("gmail_mail_profile_without_history_id"))
+            .ok_or_else(|| refused("gmail_mail_profile_without_history_id"))?;
+        Ok(MailboxAnchor {
+            anchor,
+            messages_total: profile
+                .get("messagesTotal")
+                .and_then(id_text)
+                .and_then(|total| total.parse().ok()),
+        })
     }
 
     fn list_page(
@@ -927,7 +939,8 @@ fn trash_or_spam(labels: &[String]) -> bool {
         .any(|label| label == "TRASH" || label == "SPAM")
 }
 
-/// A Gmail id that is a string or a number (`historyId`, `internalDate`).
+/// A Gmail id or count that is a string or a number (`historyId`,
+/// `internalDate`, `messagesTotal`).
 fn id_text(value: &Value) -> Option<String> {
     match value {
         Value::String(text) if !text.is_empty() => Some(text.clone()),
