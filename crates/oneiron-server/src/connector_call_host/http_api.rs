@@ -6,8 +6,9 @@
 //! governing key's routing slate, read at the send. The call goes to the
 //! installed endpoint and nowhere else: the operation's path is appended
 //! under the endpoint's own path, each path argument fills its place as one
-//! percent-encoded segment, and the URL that results is checked to keep the
-//! endpoint's origin and path. The JSON body is the `body` member's bytes as
+//! percent-encoded segment (a Google Discovery `{+name}` place takes a value
+//! with `/` in it, each part between them one segment), and the URL that
+//! results is checked to keep the endpoint's origin and path. The JSON body is the `body` member's bytes as
 //! the frozen call encodes its arguments; that encoding is canonical (the
 //! view's decode re-encodes it byte for byte), so these are the bytes
 //! consent was given on, never a re-serialization of a changed value.
@@ -285,19 +286,33 @@ pub(super) fn http_call_request(
         let close = after
             .find('}')
             .ok_or_else(|| "the stamped path has an unclosed `{`".to_owned())?;
-        let name = &after[..close];
+        let place = &after[..close];
+        let (name, reserved) = match place.strip_prefix('+') {
+            Some(name) => (name, true),
+            None => (place, false),
+        };
         let text = match value(name)? {
             Some(argument) => scalar_text(&argument).ok_or_else(|| {
                 format!("path argument {name} is not a string, number or boolean")
             })?,
             None => return Err(format!("path argument {name} is missing")),
         };
-        if text.is_empty() || text == "." || text == ".." {
-            return Err(format!(
-                "path argument {name} is {text:?}, which is no path segment"
-            ));
+        let parts: Vec<&str> = if reserved {
+            text.split('/').collect()
+        } else {
+            vec![text.as_str()]
+        };
+        for (index, part) in parts.iter().enumerate() {
+            if part.is_empty() || *part == "." || *part == ".." {
+                return Err(format!(
+                    "path argument {name} is {text:?}, which is no path segment"
+                ));
+            }
+            if index > 0 {
+                path.push('/');
+            }
+            path.push_str(&encode_segment(part));
         }
-        path.push_str(&encode_segment(&text));
         rest = &after[close + 1..];
     }
     path.push_str(rest);
@@ -408,6 +423,33 @@ mod tests {
             assert!(
                 http_call_request("http://127.0.0.1:9/api", &get, arguments.as_bytes()).is_err(),
                 "{arguments}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reserved_expansion_takes_slashes_and_keeps_each_part_one_segment() {
+        let get = operation(HttpMethod::Get, "/v1/{+name}:read", &[], false);
+        let request = http_call_request(
+            "https://chat.example.com/",
+            &get,
+            br#"{"name":"spaces/a b/messages/c?d"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            request.url.as_str(),
+            "https://chat.example.com/v1/spaces/a%20b/messages/c%3Fd:read"
+        );
+        for name in [
+            r#""spaces/../x""#,
+            r#""spaces//x""#,
+            r#""/spaces""#,
+            r#""spaces/.""#,
+        ] {
+            let arguments = format!(r#"{{"name":{name}}}"#);
+            assert!(
+                http_call_request("https://chat.example.com/", &get, arguments.as_bytes()).is_err(),
+                "{name}"
             );
         }
     }

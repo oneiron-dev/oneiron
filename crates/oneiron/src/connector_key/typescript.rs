@@ -39,6 +39,14 @@ pub fn output_typescript(schema: &Value) -> String {
     bounded(schema, "unknown")
 }
 
+/// Whether `schema` renders within [`MAX_TYPESCRIPT_BYTES`], so its type is
+/// served rather than its fallback. A translator that may type a schema
+/// less deeply asks this to keep the deepest typing that is still served.
+#[must_use]
+pub fn renders_within_bound(schema: &Value) -> bool {
+    render(schema, 0).len() <= MAX_TYPESCRIPT_BYTES
+}
+
 fn bounded(schema: &Value, fallback: &str) -> String {
     let rendered = render(schema, 0);
     if rendered.len() > MAX_TYPESCRIPT_BYTES {
@@ -108,7 +116,10 @@ fn base(node: &Map<String, Value>, depth: usize) -> Option<String> {
         Some(Value::Array(kinds)) => Some(union(
             kinds
                 .iter()
-                .map(|kind| kind.as_str().map_or_else(unknown, |kind| typed(kind, node, depth)))
+                .map(|kind| {
+                    kind.as_str()
+                        .map_or_else(unknown, |kind| typed(kind, node, depth))
+                })
                 .collect(),
         )),
         _ if node.contains_key("properties") || node.contains_key("additionalProperties") => {
@@ -165,7 +176,11 @@ fn object(node: &Map<String, Value>, depth: usize) -> String {
         if let Some(doc) = doc_comment(child) {
             lines.push(format!("{pad}{doc}"));
         }
-        let optional = if required.contains(name.as_str()) { "" } else { "?" };
+        let optional = if required.contains(name.as_str()) {
+            ""
+        } else {
+            "?"
+        };
         lines.push(format!(
             "{pad}{}{optional}: {};",
             property_key(name),
@@ -178,7 +193,11 @@ fn object(node: &Map<String, Value>, depth: usize) -> String {
     match node.get("additionalProperties") {
         Some(Value::Bool(false)) => {}
         Some(extra @ Value::Object(_)) => {
-            let extra = if no_properties { render(extra, depth + 1) } else { unknown() };
+            let extra = if no_properties {
+                render(extra, depth + 1)
+            } else {
+                unknown()
+            };
             lines.push(format!("{pad}[key: string]: {extra};"));
         }
         _ if no_properties => lines.push(format!("{pad}[key: string]: unknown;")),
