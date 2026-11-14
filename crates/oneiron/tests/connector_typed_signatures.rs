@@ -71,7 +71,8 @@ fn search_output() -> Value {
     })
 }
 
-const SEARCH_INPUT_TYPESCRIPT: &str = "{\n  /** Words to find. */\n  query: string;\n  limit?: number;\n}";
+const SEARCH_INPUT_TYPESCRIPT: &str =
+    "{\n  /** Words to find. */\n  query: string;\n  limit?: number;\n}";
 const SEARCH_OUTPUT_TYPESCRIPT: &str =
     "{\n  hits: {\n    id: string;\n    score: number;\n  }[];\n}";
 
@@ -88,7 +89,10 @@ fn tool_row(name: &str, input: Value, output: Option<Value>) -> ConnectorToolSch
 #[test]
 fn typed_signatures_render_args_and_structured_content() {
     assert_eq!(input_typescript(&search_input()), SEARCH_INPUT_TYPESCRIPT);
-    assert_eq!(output_typescript(&search_output()), SEARCH_OUTPUT_TYPESCRIPT);
+    assert_eq!(
+        output_typescript(&search_output()),
+        SEARCH_OUTPUT_TYPESCRIPT
+    );
     // Literal unions, nullable types, quoted keys, intersections and an
     // escaped doc comment.
     let mixed = json!({
@@ -111,7 +115,10 @@ fn typed_signatures_render_args_and_structured_content() {
          either?: string | number[];\n  free?: {\n    [key: string]: number;\n  };\n}"
     );
     // An object with no declared keys admits any; `true` reads `unknown`.
-    assert_eq!(input_typescript(&json!({"type": "object"})), "{\n  [key: string]: unknown;\n}");
+    assert_eq!(
+        input_typescript(&json!({"type": "object"})),
+        "{\n  [key: string]: unknown;\n}"
+    );
     assert_eq!(output_typescript(&json!(true)), "unknown");
     // One huge schema renders its fallback, never a flood.
     let properties: serde_json::Map<String, Value> = (0..600)
@@ -142,8 +149,11 @@ fn an_output_schema_rides_the_resolved_manifest_and_a_change_reasks() -> TestRes
             "required": ["id", "score"]
         }}
     });
-    let manifest =
-        ResolvedConnectorManifest::resolve(vec![tool_row("search", search_input(), Some(referenced))])?;
+    let manifest = ResolvedConnectorManifest::resolve(vec![tool_row(
+        "search",
+        search_input(),
+        Some(referenced),
+    )])?;
     assert_eq!(manifest.tools()[0].output_schema, Some(search_output()));
 
     // An output that does not resolve (a cyclic ref), or that the owner's
@@ -153,15 +163,21 @@ fn an_output_schema_rides_the_resolved_manifest_and_a_change_reasks() -> TestRes
         json!({"$ref": "#/$defs/loop", "$defs": {"loop": {"$ref": "#/$defs/loop"}}}),
         json!({"type": "object", "properties": {"x": true}}),
     ] {
-        let manifest =
-            ResolvedConnectorManifest::resolve(vec![tool_row("search", search_input(), Some(unusable))])?;
+        let manifest = ResolvedConnectorManifest::resolve(vec![tool_row(
+            "search",
+            search_input(),
+            Some(unusable),
+        )])?;
         assert_eq!(manifest.tools()[0].output_schema, None);
     }
 
     // No output schema: the serialized rows are the pre-L8-31 ones, so the
     // stored manifests and stamped slates hash as before.
     let plain = ResolvedConnectorManifest::resolve(vec![tool_row("search", search_input(), None)])?;
-    assert_eq!(serde_json::to_value(&plain.tools()[0])?.get("output_schema"), None);
+    assert_eq!(
+        serde_json::to_value(&plain.tools()[0])?.get("output_schema"),
+        None
+    );
     let slate_row = SlateToolManifest {
         name: "search".to_owned(),
         data_class: SlateDataClass::Personal,
@@ -178,7 +194,10 @@ fn an_output_schema_rides_the_resolved_manifest_and_a_change_reasks() -> TestRes
         price: None,
         http: None,
     };
-    assert_eq!(serde_json::to_value(&slate_row)?.get("resolved_output_schema"), None);
+    assert_eq!(
+        serde_json::to_value(&slate_row)?.get("resolved_output_schema"),
+        None
+    );
 
     // A changed output schema drifts and re-asks the tool; the same one does not.
     let typed = ResolvedConnectorManifest::resolve(vec![tool_row(
@@ -192,12 +211,22 @@ fn an_output_schema_rides_the_resolved_manifest_and_a_change_reasks() -> TestRes
         Some(json!({"type": "object", "properties": {"total": {"type": "integer"}}})),
     )])?;
     for (old, new) in [(&plain, &typed), (&typed, &retyped), (&typed, &plain)] {
-        let drift = ConnectorManifestDrift::between(old, new, TYPED_SIGNATURES_REVISION, TYPED_SIGNATURES_REVISION);
+        let drift = ConnectorManifestDrift::between(
+            old,
+            new,
+            TYPED_SIGNATURES_REVISION,
+            TYPED_SIGNATURES_REVISION,
+        );
         assert_eq!(drift.kinds, BTreeSet::from([ConnectorDriftKind::Schema]));
         assert_eq!(drift.reconsent_tools, BTreeSet::from(["search".to_owned()]));
         assert!(drift.needs_reconsent());
     }
-    let same = ConnectorManifestDrift::between(&typed, &typed.clone(), TYPED_SIGNATURES_REVISION, TYPED_SIGNATURES_REVISION);
+    let same = ConnectorManifestDrift::between(
+        &typed,
+        &typed.clone(),
+        TYPED_SIGNATURES_REVISION,
+        TYPED_SIGNATURES_REVISION,
+    );
     assert!(!same.has_change());
     assert_ne!(plain.hash()?, typed.hash()?);
     Ok(())
@@ -236,10 +265,18 @@ fn schema_read_serves_the_stamped_output_type() -> TestResult {
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
     vault.prepare_install_signing()?;
     let owner_person = vault.ensure_embedded_owner_actor()?;
-    let owner = vault.authenticate_owner(owner_person, &owner_person.to_hex(), true, GateDecisionId::now())?;
+    let owner = vault.authenticate_owner(
+        owner_person,
+        &owner_person.to_hex(),
+        true,
+        GateDecisionId::now(),
+    )?;
 
     // Register, stamp and attest the connector with its two tools.
-    let manifest = vec![typed_signatures_slate_row("search"), typed_signatures_slate_row("delete_item")];
+    let manifest = vec![
+        typed_signatures_slate_row("search"),
+        typed_signatures_slate_row("delete_item"),
+    ];
     let slate_id = vault.store_connector_slate(
         &manifest,
         &serde_json::to_string(&draft_connector_slate(&manifest))?,
@@ -262,8 +299,12 @@ fn schema_read_serves_the_stamped_output_type() -> TestResult {
     assert_eq!(pending.status, ConnectorKeyStatus::Pending);
     let slate = vault.connector_slate(slate_id)?.ok_or("the stored slate")?;
     vault.stamp_connector_slate(&owner, slate_id, slate.revision(), &BTreeMap::new(), None)?;
-    let active =
-        vault.attest_connector_key(&owner, &catalog_id, TYPED_SIGNATURES_REVISION, TYPED_SIGNATURES_NOW + 1)?;
+    let active = vault.attest_connector_key(
+        &owner,
+        &catalog_id,
+        TYPED_SIGNATURES_REVISION,
+        TYPED_SIGNATURES_NOW + 1,
+    )?;
     assert_eq!(active.status, ConnectorKeyStatus::Active);
 
     // The owner consents both tools for the caller, a named agent principal.
@@ -301,15 +342,28 @@ fn schema_read_serves_the_stamped_output_type() -> TestResult {
     assert_eq!(search.reasons, Vec::<String>::new(), "search is callable");
     assert_eq!(search.input_schema, Some(search_input()));
     assert_eq!(search.output_schema, Some(search_output()));
-    assert_eq!(search.input_typescript.as_deref(), Some(SEARCH_INPUT_TYPESCRIPT));
-    assert_eq!(search.output_typescript.as_deref(), Some(SEARCH_OUTPUT_TYPESCRIPT));
+    assert_eq!(
+        search.input_typescript.as_deref(),
+        Some(SEARCH_INPUT_TYPESCRIPT)
+    );
+    assert_eq!(
+        search.output_typescript.as_deref(),
+        Some(SEARCH_OUTPUT_TYPESCRIPT)
+    );
     assert!(search.foreign);
 
     let delete = read("delete_item")?;
-    assert_eq!(delete.reasons, Vec::<String>::new(), "delete_item is callable");
+    assert_eq!(
+        delete.reasons,
+        Vec::<String>::new(),
+        "delete_item is callable"
+    );
     assert_eq!(delete.output_schema, None);
     assert_eq!(delete.output_typescript, None);
-    assert_eq!(delete.input_typescript.as_deref(), Some("{\n  id: string;\n}"));
+    assert_eq!(
+        delete.input_typescript.as_deref(),
+        Some("{\n  id: string;\n}")
+    );
     assert_eq!(delete.destructive, Some(true));
     Ok(())
 }
