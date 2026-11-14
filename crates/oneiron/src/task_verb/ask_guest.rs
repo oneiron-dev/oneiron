@@ -41,7 +41,7 @@ fn not_recorded() -> crate::Error {
 
 /// A guest is never allowed to expand the person's standing disclosure. The
 /// bound and its owner stamp are checked at admission AND at answer intake.
-pub(super) fn check_disclosure(
+pub(crate) fn check_disclosure(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     person: EntityId,
