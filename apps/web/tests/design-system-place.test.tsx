@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import * as React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Place } from '../src/design-system/frame/Place'
-import { PLACE_END_SLACK_PX, atScrollEnd, followScrollEnd, type ScrollBox } from '../src/design-system/frame/place-scroll'
+import { PLACE_END_SLACK_PX, atScrollEnd, endAfterScroll, followScrollEnd, readScrollBox, type ScrollBox } from '../src/design-system/frame/place-scroll'
 
 /* A body 600 px high over `content` px of messages, scrolled to `top`. */
 const box = (content: number, top: number): ScrollBox => ({ scrollTop: top, clientHeight: 600, scrollHeight: Math.max(600, content) })
@@ -38,6 +38,39 @@ describe('Place.Body keeps the end in view', () => {
 
   test('short content: the end is the top', () => {
     assert.equal(followScrollEnd(true, box(300, 0)), 0)
+  })
+
+  test('the body scrolls itself to the end, the content then grows 33 px: the late scroll event keeps the end', () => {
+    /* A list pane lies over the room: the column widens, a chart in it
+       measures its new width and grows. The body had set its own scroll
+       to the end of the content before the chart grew. */
+    const set = box(1000, 400)
+    const measured = readScrollBox(set)
+    const read = { ...set, scrollHeight: 1033 }
+    /* Read on the newer geometry, the gap looks like the person's. */
+    assert.equal(atScrollEnd(read), false)
+    const atEnd = endAfterScroll(true, read, measured)
+    assert.equal(atEnd, true)
+    assert.equal(followScrollEnd(atEnd, read), 433)
+  })
+
+  test('a scroll event for the body’s own scroll, on the same geometry, keeps the end', () => {
+    const set = box(1000, 400)
+    assert.equal(endAfterScroll(true, set, readScrollBox(set)), true)
+  })
+
+  test('the person scrolling up on unchanged geometry leaves the end; scrolling back down returns to it', () => {
+    const atLoad = box(1000, 400)
+    const up = box(1000, 120)
+    assert.equal(endAfterScroll(true, up, readScrollBox(atLoad)), false)
+    const down = box(1000, 390)
+    assert.equal(endAfterScroll(false, down, readScrollBox(up)), true)
+  })
+
+  test('content that grows after the person scrolled up keeps their position', () => {
+    const up = box(1000, 120)
+    const grown = { ...up, scrollHeight: 1120 }
+    assert.equal(endAfterScroll(false, grown, readScrollBox(up)), false)
   })
 })
 

@@ -272,7 +272,7 @@ export { AppFrame, type AppFrameProps, type AppFrameFoldProps } from './frame/Ap
 export { PlaceHead, type PlaceHeadProps } from './frame/PlaceHead'
 export { RoomHead, ROOM_VIEWS, type RoomHeadProps, type RoomPins } from './frame/RoomHead'
 export { Place, type PlaceProps, type PlaceHeadSlotProps, type PlaceBodyProps, type PlaceFootProps } from './frame/Place'
-export { atScrollEnd, followScrollEnd, PLACE_END_SLACK_PX, type ScrollBox } from './frame/place-scroll'
+export { atScrollEnd, endAfterScroll, followScrollEnd, readScrollBox, PLACE_END_SLACK_PX, type ScrollBox } from './frame/place-scroll'
 export { peekReducer, PEEK_CLOSED, PEEK_DELAY_MS, PEEK_WARM_MS, type PeekState, type PeekAction } from './frame/frame-peek'
 export { moveItem, dropIndex, leadingEdge, shiftFor } from './frame/reorder'
 export { VaultSwitch, type VaultSwitchProps, type VaultSwitchVault } from './frame/VaultSwitch'
