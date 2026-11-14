@@ -13,7 +13,6 @@ export * from "./a1";
 
 // Import bridge (SheetJS CE -> Univer IWorkbookData)
 export {
-  readWorkbook,
   readWorkbookOutline,
   readSheet,
   readSheetMetas,

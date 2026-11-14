@@ -74,7 +74,7 @@ function attributeKey(name: string): string {
  * taken off each end of the value only when a quote opens it. So `si=a=b`
  * names `si`, with the value `a=b`.
  */
-function attributeValues(tag: string, key: string): string[] {
+export function attributeValues(tag: string, key: string): string[] {
   const values: string[] = [];
   for (const [match] of tag.matchAll(ATTRIBUTE)) {
     const pair = match.slice(1);
@@ -202,7 +202,7 @@ function byteText(bytes: Uint8Array): string {
 }
 
 /** The part as the strings SheetJS may parse it as (`cc2str`). */
-function partTexts(bytes: Uint8Array): string[] {
+export function partTexts(bytes: Uint8Array): string[] {
   const texts = [byteText(bytes)];
   if (bytes[0] === 0xff && bytes[1] === 0xfe) {
     texts.push(new TextDecoder("utf-16le").decode(bytes.subarray(2)));
@@ -313,20 +313,13 @@ function checkSharedFormulas(text: string, budget: PreviewBudget): void {
 
 /**
  * Refuses a part whose expansions, were SheetJS to parse it as a sheet, cross
- * `budget`. `formulaText` says whether the read keeps formula text, without
- * which SheetJS copies no shared formula. A `.bin` part goes to SheetJS's
- * binary reader instead and is not read here.
+ * `budget`. `texts` is the part as SheetJS may decode it ({@link partTexts}).
+ * `formulaText` says whether the read keeps formula text, without which
+ * SheetJS copies no shared formula. A part SheetJS would read with its binary
+ * reader is refused before this check (`package-read.ts`).
  */
-export function checkSheetExpansion(
-  name: string,
-  bytes: Uint8Array,
-  budget: PreviewBudget,
-  formulaText: boolean,
-): void {
-  if (name.slice(-4) === ".bin") {
-    return;
-  }
-  for (const text of partTexts(bytes)) {
+export function checkSheetExpansion(texts: readonly string[], budget: PreviewBudget, formulaText: boolean): void {
+  for (const text of texts) {
     checkHyperlinks(text, budget);
     if (formulaText) {
       checkSharedFormulas(text, budget);
