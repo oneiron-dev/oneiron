@@ -292,17 +292,6 @@ impl AgentDispatcher<'_> {
         // leaves inherited from the parent (FIX 7766).
         let funding = first.as_ref().and_then(|frozen| frozen.funding.clone());
         launch.reserve_in_txn(self, txn, root.id, None, funding, input.now)?;
-        // RUN-BUDGET-SPENT = B, RUNBUDGET-ADVANCE-FLOW = A: a root workflow
-        // projected past its root's room asks the owner now; it starts as
-        // before.
-        if input.parent_attempt.is_none() && launch.plan.over_available {
-            super::run_budget_ask::queue_forecast_ask_in_txn(
-                self.vault,
-                txn,
-                root.id,
-                &launch.statement,
-            )?;
-        }
         // FIX 6637: each frozen step as the side-row wall keeps it, before the
         // record is saved and before its first leaf is enqueued, so the first
         // leaf runs the input the record froze. A step the wall leaves keeps
