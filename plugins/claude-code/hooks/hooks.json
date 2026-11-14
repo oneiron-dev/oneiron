@@ -1,0 +1,49 @@
+{
+  "description": "Oneiron's Claude Code hook lanes: bind a vault and recall at session start; queue the session's log for import before compaction, after each reply and at session end.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 15,
+            "command": "oneiron hook --host claude-code session-start --credential-file \"${HOME}/.config/oneiron/claude-code-hooks.cred\""
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "oneiron hook --host claude-code hand-over"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "oneiron hook --host claude-code hand-over"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "oneiron hook --host claude-code hand-over --timeout 4"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -83,12 +83,18 @@ fn checkpoint(deadline: Option<&RetrievalDeadline>) -> Result<()> {
     deadline.map_or(Ok(()), RetrievalDeadline::checkpoint)
 }
 
+/// The phonetic channel. Under a deadline it checks in before each code's
+/// posting and every few hundred ids inside one, so a stage past its share
+/// stops there instead of reading a posting that can name much of the vault.
 pub(super) fn execute_phonetic(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     codes: &[String],
+    deadline: Option<&RetrievalDeadline>,
 ) -> Result<Vec<ScoredEntity>> {
-    crate::ports::RetrievalIndexRead::port_retrieval_phonetic_search(store, rtxn, codes)
+    crate::ports::RetrievalIndexRead::port_retrieval_phonetic_search_with_deadline(
+        store, rtxn, codes, deadline,
+    )
 }
 
 /// The temporal channel. Under a deadline it checks in at every row whose

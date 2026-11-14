@@ -16,8 +16,8 @@ use super::exchange_tests::pack_between;
 use super::serve::repo_common_dir;
 use super::tests::{CapturingSink, commit_file, git, served_repo, temp_vault};
 use super::{
-    DoorSeam, ExchangeBounds, ScanBounds, ServeRequest, ServedRepositoryMaintenance,
-    maintain_served_repositories, serve_bounded,
+    DoorSeam, ExchangeBounds, SERVE_COMMAND_SECTION_TIMEOUT, ScanBounds, ServeRequest,
+    ServedRepositoryMaintenance, maintain_served_repositories, serve_bounded,
 };
 use crate::git_wire::{
     GIT_WIRE_REPO_LOCK_FILE_NAME, GitOid, lock_repository, repository_hold_for_test,
@@ -143,6 +143,7 @@ fn serve_push_within(
             ExchangeBounds {
                 idle: Duration::from_secs(30),
                 repository_wait,
+                command_section: SERVE_COMMAND_SECTION_TIMEOUT,
                 scan: ScanBounds::default(),
                 spill_floor: None,
             },
