@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7536 | 1260 | 278 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7536 | 1261 | 273 |
 | [oneiron-agent-runtime](codemap/oneiron-agent-runtime.md) | `oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1) | 22 | 10 | 1 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 68 | 1 | 0 |
@@ -71,7 +71,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-testkit](codemap/oneiron-testkit.md) | `oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09… | 28 | 12 | 3 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 40 | 0 | 2 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 61 | 2 | 1 |
-| [oneiron-verb-wire](codemap/oneiron-verb-wire.md) | The wire types of the engine's public verbs below `oneiron` (lib split, stage A): every request, response… | 482 | 0 | 0 |
+| [oneiron-verb-wire](codemap/oneiron-verb-wire.md) | The wire types of the engine's public verbs below `oneiron` (lib split, stage A): every request, response… | 781 | 0 | 0 |
 | [oneiron-vm-outbox](codemap/oneiron-vm-outbox.md) | `oneiron-vm-outbox`: a vault VM's root outbox companion, started by `oneiron-vm-init` beside the engine… | 1 | 0 | 0 |
 | [oneiron-wake-contract](codemap/oneiron-wake-contract.md) | The Dreamer wake contract below core (core split slice 3): wake triggers, requests and pass reports… | 40 | 0 | 1 |
 | [oneiron-web-fetch](codemap/oneiron-web-fetch.md) | Web acquisition of the oneiron engine | 14 | 1 | 0 |
@@ -1283,18 +1283,21 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `agent_inbox_lens` | dir | 3 | s | — |
 | `artifact_hosting` | dir | 2 | s | Moved from `crates/oneiron/src/artifact_hosting/mod.rs` (lib split W1: wire types below the lib) |
 | `attempt_queue` | dir | 4 | s | — |
+| `authority` | dir | 18 | s | — |
 | `autoreason_campaign` | dir | 12 | s | — |
 | `batch` | dir | 3 | s | — |
+| `blob_artifact` | dir | 2 | s | — |
 | `booking` | dir | 3 | s | — |
 | `build_cache` | file+dir | 2 | s | Moved from `crates/oneiron/src/build_cache.rs` (lib split W1: wire types below the lib) |
 | `channel_identity` | dir | 2 | s | — |
 | `channel_identity_autonomy` | dir | 2 | s | — |
 | `channel_identity_selection` | dir | 3 | s | — |
 | `check_in` | dir | 2 | s | — |
+| `claim` | dir | 13 | s | — |
 | `clipboard` | dir | 5 | s | — |
 | `code_document` | dir | 3 | s | — |
 | `code_revision` | dir | 2 | s | — |
-| `code_run` | dir | 21 | s | — |
+| `code_run` | dir | 22 | m | — |
 | `code_sandbox` | dir | 3 | s | — |
 | `code_view` | dir | 1 | s | Moved from `crates/oneiron/src/code_view/mod.rs` (lib split W1: wire types below the lib) |
 | `compaction` | dir | 5 | s | — |
@@ -1310,6 +1313,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `drafter` | dir | 6 | m | — |
 | `dreamer_consolidation` | dir | 4 | s | — |
 | `dreamer_promotion` | dir | 2 | s | — |
+| `dreamer_runner` | dir | 34 | m | — |
 | `dreamer_wake` | dir | 8 | s | — |
 | `edit_distance` | dir | 5 | s | — |
 | `edit_settle` | dir | 3 | s | — |
@@ -1321,16 +1325,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `federation` | dir | 7 | s | — |
 | `feedback` | dir | 12 | s | — |
 | `feeds` | dir | 1 | s | Moved from `crates/oneiron/src/feeds/mod.rs` (lib split W1: wire types below the lib) |
+| `gate` | dir | 14 | s | — |
 | `genui` | dir | 3 | s | — |
 | `graph_fs` | dir | 2 | s | — |
 | `guest_document_share` | file | 1 | s | Moved from `crates/oneiron/src/guest_document_share.rs` (lib split W1: wire types below the lib) |
 | `inbox` | dir | 4 | s | — |
 | `ingest` | dir | 7 | s | — |
+| `learning` | dir | 4 | s | — |
 | `learning_setting_doors` | file | 1 | s | Moved from `crates/oneiron/src/learning_setting_doors.rs` (lib split W1: wire types below the lib) |
+| `lens` | dir | 11 | s | — |
 | `linear_sync` | dir | 5 | s | — |
-| `llm` | dir | 7 | s | — |
+| `llm` | dir | 38 | s | — |
 | `mail_pack` | dir | 14 | s | — |
-| `memory` | dir | 5 | s | — |
+| `memory` | dir | 124 | m | — |
 | `merge_queue` | dir | 2 | s | — |
 | `note` | dir | 13 | s | — |
 | `office_body` | dir | 8 | s | — |
@@ -1341,7 +1348,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `pipeline` | dir | 3 | s | — |
 | `query_expansion` | file+dir | 2 | s | Moved from `crates/oneiron/src/query_expansion.rs` (lib split W1: wire types below the lib) |
 | `reaction` | dir | 2 | s | — |
-| `receipt` | dir | 2 | s | — |
+| `receipt` | dir | 12 | s | — |
 | `repo_mutation` | dir | 5 | s | — |
 | `research_budget` | file | 1 | s | Moved from `crates/oneiron/src/research_budget.rs` (lib split W1: wire types below the lib) |
 | `retrieval_depth` | dir | 2 | s | — |
@@ -1350,15 +1357,21 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `scope_summary` | dir | 4 | s | — |
 | `secret_custody` | dir | 4 | s | — |
 | `secret_snapshot` | file | 1 | s | Moved from `crates/oneiron/src/secret_snapshot.rs` (lib split W1: wire types below the lib) |
+| `self_heal` | dir | 5 | s | — |
+| `serialize` | dir | 2 | s | — |
 | `settings` | dir | 4 | s | — |
 | `share_travel` | dir | 6 | s | — |
 | `skill` | dir | 5 | s | — |
+| `skill_attribution` | dir | 2 | s | — |
+| `skill_hub` | dir | 16 | s | — |
 | `skill_optimize` | dir | 29 | s | — |
 | `slim` | file+dir | 2 | s | Moved from `crates/oneiron/src/slim.rs` (lib split W1: wire types below the lib) |
 | `snapshot_read` | dir | 6 | s | — |
 | `source_audience` | dir | 1 | s | Moved from `crates/oneiron/src/source_audience/mod.rs` (lib split W1: wire types below the lib) |
 | `store` | dir | 20 | m | — |
 | `sync` | dir | 8 | s | — |
+| `tagging` | dir | 3 | m | — |
+| `task_verb` | dir | 14 | s | Moved from `crates/oneiron/src/task_verb/mod.rs` (lib split W2: wire types below the lib) |
 | `team` | dir | 6 | m | — |
 | `training_pack` | dir | 2 | s | Moved from `crates/oneiron/src/training_pack/mod.rs` (lib split W1: wire types below the lib) |
 | `vault_cleanup` | dir | 3 | s | — |
