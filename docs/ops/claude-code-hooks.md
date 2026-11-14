@@ -20,6 +20,16 @@ The hooks are part of the `oneiron` binary: `oneiron hook --host claude-code
 holds `settings.json` (the snippet to merge) and `check.sh` (the end-to-end
 check).
 
+The Oneiron plugin for Claude Code
+([`plugins/claude-code/`](../../plugins/claude-code/)) carries these four
+hooks, the MCP server entry and a skill that tells Claude when to recall and
+save. Install it in Claude Code with `/plugin marketplace add
+oneiron-dev/oneiron`, then `/plugin install oneiron@oneiron`. The plugin mints
+nothing and runs `oneiron` from Claude Code's `PATH`: do steps 1 and 2 below,
+minting the hooks' credential to `~/.config/oneiron/claude-code-hooks.cred`,
+the path the plugin reads, and skip step 3. Remove it with `/plugin uninstall
+oneiron@oneiron` in place of step 1 of [Remove it](#remove-it).
+
 ## How it works
 
 ```

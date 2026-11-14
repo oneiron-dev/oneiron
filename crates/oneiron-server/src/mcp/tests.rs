@@ -1644,6 +1644,19 @@ fn agent_verb_schemas_follow_manifest_inputs_and_argument_paths() {
                 );
             }
             assert!(short["properties"].get("intent_key").is_none());
+        } else if name == "can" {
+            // 7aacd82bbb1 (FIX 22102 slice 1b): `can` takes `{ask}` or
+            // `{effect}`, untagged, and each branch refuses the other's field.
+            let branches = input["anyOf"].as_array().expect("ask and effect branches");
+            assert_eq!(branches.len(), 2, "{input}");
+            for field in ["ask", "effect"] {
+                let branch = branches
+                    .iter()
+                    .find(|branch| branch["required"] == json!([field]))
+                    .unwrap_or_else(|| panic!("can has no `{field}` branch: {input}"));
+                assert_eq!(branch["type"], "object", "{field}");
+                assert_eq!(branch["additionalProperties"], false, "{field}");
+            }
         } else {
             assert_eq!(input["type"], "object", "{name}");
         }

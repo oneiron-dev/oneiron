@@ -60,6 +60,9 @@ pub struct CampaignProgramStepSpec {
     /// Outward leg; absent or null enrolls and sends nothing.
     #[serde(default)]
     pub outbound: Option<CampaignProgramOutboundSpec>,
+    /// The copy A/B arm this step's sends carry; absent or null tags none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arm: Option<String>,
 }
 
 /// A step's outward leg on the wire.
@@ -301,6 +304,7 @@ impl CampaignProgramStepSpec {
                 .as_ref()
                 .map(CampaignProgramOutboundSpec::outbound)
                 .transpose()?,
+            arm: self.arm.clone(),
         })
     }
 
@@ -320,6 +324,7 @@ impl CampaignProgramStepSpec {
                     idempotency_supported: outbound.idempotency_supported,
                     subject: outbound.subject.clone(),
                 }),
+            arm: step.arm.clone(),
         }
     }
 }

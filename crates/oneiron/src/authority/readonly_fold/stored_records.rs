@@ -40,7 +40,7 @@ pub(crate) fn folded_vault_id_of_records(
         let body = raw
             .get(ENTITY_METADATA_HEADER_LEN..)
             .ok_or(Error::CorruptedIndex("entity header"))?;
-        entries.push(decode_authority_log_entry_body(body)?);
+        entries.push(decode_stored_authority_log_body(body)?);
     }
     let Some(pin_row) = adopted_pin else {
         return Ok(fold_authority_log(&entries).vault_id);
