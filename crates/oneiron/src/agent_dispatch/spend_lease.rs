@@ -208,6 +208,8 @@ impl AgentDispatcher<'_> {
     /// Raises a persisted lease's hard maximum as its authenticated owner.
     /// The replacement cap makes a replay idempotent. A carved child's
     /// increase is reserved from its parent, never minted past an ancestor.
+    /// The raise checks in on the Owner's own proof (2k10), and this answer
+    /// leaves the decision out; the owner door answers it.
     pub fn top_up_spend_scope_as_owner(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
@@ -216,6 +218,31 @@ impl AgentDispatcher<'_> {
         maximum: DeclaredMaximum,
         shown: MaximumShown,
     ) -> Result<SpendScope> {
+        self.top_up_spend_scope_with_check_in(owner, id, expected_cap_units, maximum, shown, None)
+            .map(|(scope, _)| scope)
+    }
+
+    /// [`Self::top_up_spend_scope_as_owner`], and the check-in decision the
+    /// raise ran on: raising the cap is the act that checks in (act class
+    /// `spend_over_cap`, named at this door; P25-SHAPE Q4 = A). The Owner's
+    /// own raise goes on their own proof; with `applied` the Owner applies an
+    /// asker's approved check-in for exactly this raise, spent in this writer
+    /// after every refusal, so a refused raise leaves it unspent (2k10). A
+    /// replay that finds the cap already set raises nothing, spends nothing
+    /// and answers no decision.
+    ///
+    /// # Errors
+    ///
+    /// The top-up's refusals; a check-in that does not apply.
+    pub(crate) fn top_up_spend_scope_with_check_in(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        id: &SpendScopeId,
+        expected_cap_units: u64,
+        maximum: DeclaredMaximum,
+        shown: MaximumShown,
+        applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> Result<(SpendScope, Option<crate::check_in::CheckInDecision>)> {
         JobMaximum::start(id.as_str(), maximum.clone(), Some(shown))
             .map_err(|_| invalid("spend lease top-up requires a valid shown maximum"))?;
         let mut txn = self.vault.store.env.write_txn()?;
@@ -230,7 +257,7 @@ impl AgentDispatcher<'_> {
             return Err(invalid("a top-up raises the maximum the owner saw"));
         }
         if scope.cap_units == maximum.units {
-            return Ok(scope);
+            return Ok((scope, None));
         }
         if scope.cap_units != expected_cap_units {
             return Err(invalid("spend cap changed; read the lease again"));
@@ -262,6 +289,14 @@ impl AgentDispatcher<'_> {
             SCOPE.put(&self.vault.store, &mut txn, &host.scope.0, &host)?;
             closed_scope::hold_through(self, &mut txn, boundaries, additional)?;
         }
+        // Every refusal is above: the decision spends an applied check-in in
+        // this writer, which commits it with the raise or not at all.
+        let decision = crate::check_in::owner_act_decision_in_txn(
+            self.vault,
+            &mut txn,
+            crate::check_in::ActClass::SpendOverCap,
+            applied,
+        )?;
         scope.cap_units = maximum.units;
         scope.shown_at_ms = Some(shown.at_ms);
         SCOPE.put(&self.vault.store, &mut txn, &scope.scope.0, &scope)?;
@@ -277,7 +312,7 @@ impl AgentDispatcher<'_> {
             self.vault.store.notify_attempt_observers();
             self.vault.store.notify_proactivity_changes();
         }
-        Ok(scope)
+        Ok((scope, Some(decision)))
     }
 
     /// Reserves `child`'s scope under `parent` in one transaction: units move

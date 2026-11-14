@@ -40,6 +40,11 @@ pub struct TopUpSpendLeaseRequest {
     pub cap_units: u64,
     pub unit: String,
     pub shown_at_ms: u64,
+    /// Another asker's approved check-in for exactly this raise, 32 hex:
+    /// the owner applies it on their own proof, and the top-up's writer
+    /// spends it (2k10). Omitted: the owner's own top-up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// A held run's root attempt, in lowercase hex.

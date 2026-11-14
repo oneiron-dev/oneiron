@@ -30,6 +30,11 @@ pub use oneiron_verb_wire::agent_dispatch::budget_doors::{
 pub struct SpendLeaseView {
     pub lease: SpendScope,
     pub spend: SpendRead,
+    /// The decision a top-up that raised the cap ran on: the Owner's own
+    /// proof, naming the asker's approved check-in it applied (2k10).
+    /// Absent on a read, an open and a replay that raised nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 /// Durable budget facts for the same work, without claiming a process-local
@@ -130,7 +135,11 @@ pub fn spend_lease_as_reader(
         .get(&vault.store, &txn, &scope.0)?
         .ok_or_else(|| invalid("spend scope is missing"))?;
     let spend = AgentDispatcher::new(vault).spend_read_at_in_txn(&txn, &scope)?;
-    Ok(SpendLeaseView { lease, spend })
+    Ok(SpendLeaseView {
+        lease,
+        spend,
+        check_in: None,
+    })
 }
 
 /// `vault.budgets.lease` on an in-process handle: the embedded owner's read,
@@ -212,24 +221,58 @@ fn in_own_scope_tree_in_txn(
     Ok(false)
 }
 
+/// `vault.budgets.lease.top_up`: the owner raises a hard lease to the
+/// maximum they were shown. The raise checks in (act class
+/// `spend_over_cap`, named at this door; P25-SHAPE Q4 = A): the Owner's own
+/// raise goes on their own proof, and with `check_in_ref` the Owner applies
+/// an asker's approved check-in for exactly this raise
+/// ([`crate::check_in::spend_lease_top_up_effect_digest`]), spent in the
+/// top-up's writer (2k10). The answer names the decision.
+///
+/// # Errors
+///
+/// A `check_in_ref` that is no 32-hex id; the top-up's refusals; a
+/// check-in that is not an approved ask for this raise.
 pub fn top_up_spend_lease_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: &TopUpSpendLeaseRequest,
 ) -> Result<SpendLeaseView> {
     let scope = scope_id(&input.scope)?;
+    let maximum = maximum(input.cap_units, &input.unit)?;
+    let applied = match input.check_in_ref.as_deref() {
+        Some(hex) => Some(crate::check_in::AppliedCheckIn {
+            id: EntityId::from_hex(hex)
+                .map_err(|_| invalid("check_in_ref is not a check-in id"))?,
+            verb: LEASE_TOP_UP_VERB,
+            effect_digest: crate::check_in::spend_lease_top_up_effect_digest(
+                scope.as_str(),
+                maximum.unit.as_str(),
+                input.expected_cap_units,
+                maximum.units,
+            ),
+        }),
+        None => None,
+    };
     let dispatcher = AgentDispatcher::new(vault);
-    dispatcher.top_up_spend_scope_as_owner(
+    let (_, check_in) = dispatcher.top_up_spend_scope_with_check_in(
         owner,
         &scope,
         input.expected_cap_units,
-        maximum(input.cap_units, &input.unit)?,
+        maximum,
         MaximumShown {
             at_ms: input.shown_at_ms,
         },
+        applied.as_ref(),
     )?;
-    lease_view(&dispatcher, &scope)
+    Ok(SpendLeaseView {
+        check_in,
+        ..lease_view(&dispatcher, &scope)?
+    })
 }
+
+/// The verb whose approved check-in a lease top-up spends.
+const LEASE_TOP_UP_VERB: &str = "vault.budgets.lease.top_up";
 
 pub fn budget_hold_as_owner(
     vault: &Vault,
@@ -474,6 +517,7 @@ fn lease_view(dispatcher: &AgentDispatcher<'_>, scope: &SpendScopeId) -> Result<
     Ok(SpendLeaseView {
         lease,
         spend: dispatcher.spend_read(scope)?,
+        check_in: None,
     })
 }
 

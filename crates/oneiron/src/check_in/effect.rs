@@ -967,3 +967,28 @@ pub fn origin_mirror_push_effect_digest(repo: &str) -> [u8; 32] {
     hasher.update(repo.as_bytes());
     *hasher.finalize().as_bytes()
 }
+
+/// The digest of raising spend lease `scope` from the cap `expected_cap_units`
+/// to `cap_units` of `unit`: the effect `vault.budgets.lease.top_up` spends
+/// an asker's approved check-in over (2k10; P25-SHAPE Q4 = A, the door names
+/// `spend_over_cap`). The moment the maximum was shown stays out: the Owner
+/// who applies the raise is shown it and names their own. BLAKE3, key
+/// derived from `oneiron check_in spend lease top up v1`, over the scope's
+/// and the unit's length as eight big-endian bytes and their bytes, then the
+/// cap expected and the cap set as eight big-endian bytes each.
+#[must_use]
+pub fn spend_lease_top_up_effect_digest(
+    scope: &str,
+    unit: &str,
+    expected_cap_units: u64,
+    cap_units: u64,
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in spend lease top up v1");
+    for part in [scope, unit] {
+        hasher.update(&(part.len() as u64).to_be_bytes());
+        hasher.update(part.as_bytes());
+    }
+    hasher.update(&expected_cap_units.to_be_bytes());
+    hasher.update(&cap_units.to_be_bytes());
+    *hasher.finalize().as_bytes()
+}

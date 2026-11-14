@@ -134,6 +134,8 @@ pub use effect::legal_send_effect_digest;
 pub use effect::mail_reply_approve_effect_digest;
 // The origin mirror push door's effect (2k9b).
 pub use effect::origin_mirror_push_effect_digest;
+// The spend lease top-up door's effect (2k10).
+pub use effect::spend_lease_top_up_effect_digest;
 // The sign act's effect (2k6b).
 pub use effect::sign_effect_digest;
 // The slip conversion and grant back doors' effects (2k7b). The mints'
