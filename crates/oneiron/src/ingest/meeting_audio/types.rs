@@ -27,21 +27,10 @@ impl Pcm16 {
     }
 }
 
-/// Times always use milliseconds. VAD and diarization use the full-file clock;
-/// ASR uses the concatenated pack clock and is mapped by the engine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SpeechSpan {
-    pub start_ms: u64,
-    pub end_ms: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SourceSpan {
-    pub source_start_ms: u64,
-    pub source_end_ms: u64,
-    pub pack_start_ms: u64,
-    pub pack_end_ms: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::ingest::meeting_audio::types::{
+    BulkImportBinding, BulkImportReceipt, SourceSpan, SpeakerTrack, SpeechSpan,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SpeechPack {
@@ -208,15 +197,6 @@ pub struct AsrOutput {
     pub provenance: InferenceProvenance,
 }
 
-/// The host must return a full-file exclusive track, not an overlapping
-/// diarization track. Speaker labels must keep their full-file identity.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SpeakerTrack {
-    pub start_ms: u64,
-    pub end_ms: u64,
-    pub speaker_cluster: String,
-}
-
 #[derive(Debug, Clone)]
 pub struct GlobalDiarization {
     pub exclusive_tracks: Vec<SpeakerTrack>,
@@ -275,24 +255,6 @@ pub trait MeetingAudioHost {
     /// One corrected string per turn, in the supplied order. The engine owns
     /// labels and source IDs and only allows an ASR-backed 1:1 word correction.
     fn cleanup_turns(&mut self, request: CleanupRequest<'_>) -> AudioResult<CleanupOutput>;
-}
-
-/// The consent request binds the complete artifact, not only an audio filename.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BulkImportBinding {
-    /// Opaque vault/owner context supplied by the authenticated authorizer.
-    pub vault_scope: String,
-    pub source_id: String,
-    pub recording_id: String,
-    pub artifact_sha256: String,
-    pub source_record_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
-pub struct BulkImportReceipt {
-    pub binding: BulkImportBinding,
-    pub receipt_ref: String,
 }
 
 /// An authenticated host boundary, not a boolean supplied by transcript data.

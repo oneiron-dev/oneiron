@@ -1,10 +1,11 @@
 //! The inputs and answers of the verb-table rows a host door answers: the
 //! owner's `vault.packs.put`, `vault.packs.remove`,
 //! `vault.connectors.subscriptions.*` and `vault.hooks.replay`, the `ai.*` model calls
-//! past text, `ai.ask_image` and `ai.verdict`. A server answers each with its own state (the
-//! owner's proof, its model seats, its decision ladder, its hook sandbox); an
-//! embedded handle answers a pack put as the vault's embedded owner and
-//! refuses the rest, which have nothing to run on there.
+//! past text, `ai.ask_image`, `ai.verdict` and `vault.artifacts.image.edit`. A
+//! server answers each with its own state (the owner's proof, its model seats,
+//! its decision ladder, its hook sandbox, its organ host); an embedded handle
+//! answers a pack put as the vault's embedded owner and refuses the rest,
+//! which have nothing to run on there.
 use std::collections::BTreeMap;
 
 use base64::Engine as _;
@@ -19,10 +20,12 @@ use crate::skill_hub::pack_catalog::PackInstallReceipt;
 
 mod ask_image;
 mod hooks_replay;
+mod image_edit;
 mod local_pack_agent;
 mod pack_setup;
 pub use self::ask_image::*;
 pub use self::hooks_replay::*;
+pub use self::image_edit::*;
 pub use self::local_pack_agent::*;
 pub use self::pack_setup::*;
 
