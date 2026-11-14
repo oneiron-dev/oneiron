@@ -15,7 +15,7 @@ use std::sync::Arc;
 use super::core::SyncServer;
 use super::housekeeping::HousekeepingAdmission;
 use super::lifecycle::LifecycleJobKind;
-use crate::protocol::ProtocolError;
+use crate::handler::DeviceBurstEnd;
 
 impl SyncServer {
     /// Starts one pass of [`Self::drain_device_bursts`] on a task of its own,
@@ -52,36 +52,30 @@ impl SyncServer {
     }
 
     /// One pass: lands each own device's oldest retained update that is due
-    /// now, and ends its batch. A landed batch, or one held on a copy edit's
-    /// ruled cause, is complete; one the window refuses as it is now is
-    /// rejected; one whose load or persist failed stays for the next pass.
-    /// Answers how many batches ended complete.
+    /// now, and ends its batch as [`DeviceBurstEnd::of`] reads the landing:
+    /// landed, held on a copy edit's ruled cause, or durable, it is complete;
+    /// one the window refuses as it is now is rejected; one whose load or
+    /// persist failed stays for the next pass. Answers how many batches ended
+    /// complete.
     ///
     /// # Errors
     /// A store error reading or ending the retained work.
     pub(crate) async fn drain_device_bursts(&self) -> oneiron::Result<usize> {
         let mut landed = 0;
         for work in oneiron::sync::federation_burst::ready_device_work(self.vault())? {
-            match crate::handler::land_retained_device_update(self, &work).await {
-                Ok(()) => {
-                    work.complete(self.vault())?;
-                    landed += 1;
-                }
-                Err(ProtocolError::Persistence(error)) => {
-                    tracing::warn!(
-                        batch_ref = %work.batch_ref(),
-                        %error,
-                        "an own device's held burst did not land; the next pass retries it"
-                    );
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        batch_ref = %work.batch_ref(),
-                        %error,
-                        "an own device's held burst is refused as it is now; its batch ends rejected"
-                    );
-                    work.reject(self.vault())?;
-                }
+            let landing = crate::handler::land_retained_device_update(self, &work).await;
+            let end = DeviceBurstEnd::of(&landing);
+            if let Err(failure) = &landing {
+                tracing::warn!(
+                    batch_ref = %work.batch_ref(),
+                    kind = failure.kind(),
+                    end = ?end,
+                    "an own device's held burst did not land as it was sent"
+                );
+            }
+            end.settle(self.vault(), &work)?;
+            if end == DeviceBurstEnd::Complete {
+                landed += 1;
             }
         }
         Ok(landed)

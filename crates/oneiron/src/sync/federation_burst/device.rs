@@ -21,8 +21,14 @@ use crate::{EntityId, Error, Result, Vault};
 /// and refuses nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DevicePeer {
-    /// A machine that proved, on its connection, the key it stands on here.
-    Machine { machine: EntityId, key: [u8; 32] },
+    /// A machine that proved, on its connection, the key it stands on here,
+    /// with the id of the slip that bound the connection's Write credential,
+    /// if one did.
+    Machine {
+        machine: EntityId,
+        key: [u8; 32],
+        slip: Option<[u8; 32]>,
+    },
     /// The id of the slip that bound the connection's Write credential.
     Slip { slip: [u8; 32] },
     /// A connection that proved neither.
@@ -31,12 +37,12 @@ pub enum DevicePeer {
 
 impl DevicePeer {
     /// The device a connection proved: its machine when it is
-    /// [`PeerMachine::Proven`], else the slip of its Write credential, else
-    /// [`Self::Unproven`].
+    /// [`PeerMachine::Proven`], with the slip of its Write credential, else
+    /// that slip, else [`Self::Unproven`].
     #[must_use]
     pub fn of_connection(machine: PeerMachine, slip: Option<[u8; 32]>) -> Self {
         match (machine, slip) {
-            (PeerMachine::Proven { machine, key }, _) => Self::Machine { machine, key },
+            (PeerMachine::Proven { machine, key }, slip) => Self::Machine { machine, key, slip },
             (PeerMachine::Unknown, Some(slip)) => Self::Slip { slip },
             (PeerMachine::Unknown, None) => Self::Unproven,
         }
@@ -47,7 +53,7 @@ impl DevicePeer {
     #[must_use]
     pub fn machine(&self) -> PeerMachine {
         match *self {
-            Self::Machine { machine, key } => PeerMachine::Proven { machine, key },
+            Self::Machine { machine, key, .. } => PeerMachine::Proven { machine, key },
             Self::Slip { .. } | Self::Unproven => PeerMachine::Unknown,
         }
     }
@@ -74,13 +80,16 @@ impl DevicePeer {
     }
 
     /// The bytes that bind its retained work to it: the device as its
-    /// connection proved it, a machine's key included.
+    /// connection proved it, a machine's key and slip included.
     pub(super) fn encode(&self) -> Vec<u8> {
         match self {
-            Self::Machine { machine, key } => {
+            Self::Machine { machine, key, slip } => {
                 let mut bytes = vec![0];
                 bytes.extend_from_slice(machine.as_bytes());
                 bytes.extend_from_slice(key);
+                if let Some(slip) = slip {
+                    bytes.extend_from_slice(slip);
+                }
                 bytes
             }
             Self::Slip { slip } => {
@@ -96,10 +105,15 @@ impl DevicePeer {
     pub(super) fn decode(bytes: &[u8]) -> Result<Self> {
         match bytes {
             [0, rest @ ..] => {
-                let (machine, key) = rest.split_first_chunk::<16>().ok_or_else(corrupt)?;
+                let (machine, rest) = rest.split_first_chunk::<16>().ok_or_else(corrupt)?;
+                let (key, slip) = rest.split_first_chunk::<32>().ok_or_else(corrupt)?;
                 Ok(Self::Machine {
                     machine: EntityId::from_bytes(*machine).map_err(|_| corrupt())?,
-                    key: key.try_into().map_err(|_| corrupt())?,
+                    key: *key,
+                    slip: match slip {
+                        [] => None,
+                        slip => Some(slip.try_into().map_err(|_| corrupt())?),
+                    },
                 })
             }
             [1, slip @ ..] => Ok(Self::Slip {
@@ -111,30 +125,37 @@ impl DevicePeer {
     }
 
     /// What its retained work is held under: whether it still stands here as
-    /// its connection proved it (a machine on the same proof key, a slip
-    /// still live). A machine removed or proving another key since, or a
-    /// slip revoked since, ends that work `StaleAuthority` (FIX 7999).
+    /// its connection proved it (a machine on the same proof key, and the
+    /// slip of its Write credential standing as the home's persist recheck
+    /// reads one: unexpired, unrevoked, its grant and member scope standing).
+    /// A machine removed or proving another key since, or a slip that has
+    /// expired or been revoked since, ends that work `StaleAuthority`
+    /// (FIX 7999). The UPDATE arm held it only past that same credential's
+    /// live check.
     pub(super) fn authority_digest_in_txn(
         &self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
     ) -> Result<[u8; 32]> {
-        let stands = match self {
-            Self::Machine { machine, key } => {
+        let (machine_stands, slip) = match self {
+            Self::Machine { machine, key, slip } => (
                 vault
                     .authority_view_readonly_in_txn(txn)?
                     .machine_proof_key(*machine)
-                    == Some(*key)
-            }
-            Self::Slip { slip } => vault
-                .authority_view_readonly_in_txn(txn)?
-                .slip_is_live(slip),
-            Self::Unproven => true,
+                    == Some(*key),
+                slip.as_ref(),
+            ),
+            Self::Slip { slip } => (true, Some(slip)),
+            Self::Unproven => (true, None),
+        };
+        let slip_stands = match slip {
+            Some(slip) => vault.folded_slip_stands_in_txn(txn, slip)?,
+            None => true,
         };
         let mut hash = blake3::Hasher::new();
         hash.update(b"oneiron/device-peer-authority/v1");
         hash.update(&self.encode());
-        hash.update(&[u8::from(stands)]);
+        hash.update(&[u8::from(machine_stands), u8::from(slip_stands)]);
         Ok(*hash.finalize().as_bytes())
     }
 

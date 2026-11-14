@@ -182,6 +182,30 @@ impl Vault {
             && self.slip_refs_stand_in_txn(txn, claims, now)?
             && self.member_slip_scope_is_current_in_txn(txn, claims)?)
     }
+    /// Whether the slip this vault folded as `id` still stands as
+    /// [`Self::capability_slip_is_live_in_txn`] reads a presented one, from
+    /// its folded mint: inside its lifetime on this vault's clock, for this
+    /// vault, live in the fold, its grant, invitation or delegation standing,
+    /// and its member scope current. No slip is presented, so no pact witness
+    /// is rechecked (L7-41: a burst its home holds for an own device).
+    pub(crate) fn folded_slip_stands_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &[u8; 32],
+    ) -> Result<bool> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let now = self.instant_in_txn(txn)?.secs();
+        let Some(mint) = fold.slips.mints.get(id) else {
+            return Ok(false);
+        };
+        let claims = &mint.action.claims;
+        Ok(now >= claims.issued_at
+            && now < claims.expires_at
+            && fold.vault_id == Some(claims.vault_id)
+            && fold.slip_is_live(id)
+            && self.slip_refs_stand_in_txn(txn, claims, now)?
+            && self.member_slip_scope_is_current_in_txn(txn, claims)?)
+    }
     /// Sample the authority plane's local monotonic clock before constructing
     /// a slip mint. Using the wall/store recording clock for `issued_at` can
     /// race one second ahead of the authority fold's observation and cause a

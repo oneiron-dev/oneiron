@@ -16,6 +16,7 @@ use oneiron::sync::{
 
 use super::app_tier::require_bound_app_auth;
 use super::conn_state::{ConnState, WindowSyncMode};
+use super::device_burst_replay::{DeviceBurstEnd, DeviceLandingError};
 pub(crate) use super::selector_scope::selector_grant_scope;
 use crate::auth::CoreAuth;
 use crate::protocol::{self, ProtocolError, window_sub_tags};
@@ -491,20 +492,16 @@ pub(super) async fn handle_window_sync(
                 write_auth,
             )
             .await;
-            // The burst core's batch ends with the landing: landed, or held on
-            // a copy edit's ruled cause, it is complete; refused or failed, the
-            // home refused the device's bytes (L7-41).
-            let settled = if landing.is_ok() {
-                burst.complete(server.vault())
-            } else {
-                burst.reject(server.vault())
-            };
-            if let Err(error) = settled {
+            // The burst core's batch ends as the landing went (L7-41): landed,
+            // held on a copy edit's ruled cause, or durable, it is complete;
+            // its window's refusal of the device's bytes rejects it; a load or
+            // persist that failed keeps it for the drain.
+            if let Err(error) = DeviceBurstEnd::of(&landing).settle(server.vault(), &burst) {
                 tracing::warn!(%error, "an own device's burst batch did not settle");
             }
             // FIX 10598: a copy edit held on its ruled cause is answered as
             // held; nothing of it persisted, imported or relayed.
-            let Some(landed) = landing? else {
+            let Some(landed) = landing.map_err(DeviceLandingError::into_protocol)? else {
                 return super::window_copy::acknowledge_held(
                     conn_state,
                     &key,
@@ -594,15 +591,15 @@ pub(super) struct LandedDeviceUpdate {
 /// # Errors
 /// The copy translation's store failure; a translated update the window
 /// refuses; a refused or failed persist, with nothing imported or relayed;
-/// an import failure after it, the update staying durable and the window
-/// reloading on its next access.
+/// an import or relay failure after it, [`DeviceLandingError::durable`]: the
+/// update stays durable and the window reloads on its next access.
 pub(super) async fn land_device_update(
     server: &SyncServer,
     (sender, machine): (u32, PeerMachine),
     (key, doc): (&WindowKey, &LoroDoc),
     update: &[u8],
     write_auth: Option<&CoreAuth>,
-) -> Result<Option<LandedDeviceUpdate>, ProtocolError> {
+) -> Result<Option<LandedDeviceUpdate>, DeviceLandingError> {
     let admitted = oneiron::sync::selector::admit_repo_sync_frame(
         server.vault.as_ref(),
         key.as_str(),
@@ -673,7 +670,9 @@ pub(super) async fn land_device_update(
             // The accepted update stays durable: the window reloads from
             // d:w:/u:w: state on its next access.
             server.evict_window(key).await;
-            return Err(ProtocolError::LoroImport(format!("{e}")));
+            return Err(DeviceLandingError::durable(ProtocolError::LoroImport(
+                format!("{e}"),
+            )));
         }
     };
     let settled = imported.pending.is_none();
@@ -700,7 +699,7 @@ pub(super) async fn land_device_update(
             window_sub_tags::UPDATE,
             update,
         )
-        .map_err(|e| ProtocolError::ExportFailed(e.to_string()))?;
+        .map_err(|e| DeviceLandingError::durable(ProtocolError::ExportFailed(e.to_string())))?;
         let _ = crate::broadcast::broadcast(&server.broadcast_tx, sender, broadcast_msg);
     }
     Ok(Some(LandedDeviceUpdate {
