@@ -474,6 +474,7 @@ fn any_two_pieces_opens_with_two_pieces_and_never_with_one() {
         prf: &prf,
     };
 
+    let mut kept = 0;
     let switched = vault
         .set_recovery_preset_any_two_as(
             &owner_proof,
@@ -482,6 +483,10 @@ fn any_two_pieces_opens_with_two_pieces_and_never_with_one() {
                 [PAPER, PieceHome::Passkey, PieceHome::TrustedPerson],
             ),
             Some(passkey),
+            |pieces| {
+                kept = pieces.len();
+                Ok(())
+            },
         )
         .expect("the owner turns on \"any 2 pieces\"");
     assert_eq!(switched.change.previous, RecoveryPreset::NobodyButMe);
@@ -517,6 +522,7 @@ fn any_two_pieces_opens_with_two_pieces_and_never_with_one() {
     let vault_id = switched.kit.vault_id;
     let mut pieces = switched.kit.pieces;
     assert_eq!(pieces.len(), 2, "the passkey's piece is handed to no one");
+    assert_eq!(kept, 2, "the pieces were kept before the write");
     let trusted = typed_back(&pieces.pop().expect("the trusted person's piece"));
     let paper = pieces.pop().expect("the paper piece");
     assert_eq!(
@@ -637,6 +643,7 @@ fn any_two_pieces_refuses_every_single_secret_wrap() {
                 ],
             ),
             None,
+            |_| Ok(()),
         )
         .expect("straight from the standard preset");
     assert_eq!(switched.change.previous, RecoveryPreset::Standard);
@@ -671,6 +678,60 @@ fn any_two_pieces_refuses_every_single_secret_wrap() {
     assert_eq!(wrap_ids(&vault), ids, "a refused add changes no wrap");
 }
 
+/// The kit's pieces are kept before the write that removes the old wraps: a
+/// keep that fails leaves the sheet, the preset and every wrap as they were
+/// (review of #7781, round 1).
+#[test]
+fn a_failed_piece_keep_leaves_the_sheet_and_the_preset() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let path = directory.path().join("vault");
+    let vault = keyed_vault(&path);
+    let owner_proof = owner(&vault).expect("owner proof");
+    let sheet = vault
+        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe, |_| Ok(()))
+        .expect("enter \"Nobody but me\"")
+        .sheet
+        .expect("its sheet");
+    let ids = wrap_ids(&vault);
+
+    let mut offered_before_the_write = false;
+    let refused = vault.set_recovery_preset_any_two_as(
+        &owner_proof,
+        &kit_issue(
+            &vault,
+            [
+                PAPER,
+                PieceHome::TrustedPerson,
+                PieceHome::RecoveryCode(CodeKeeping::PasswordManager),
+            ],
+        ),
+        None,
+        |pieces| {
+            offered_before_the_write =
+                pieces.len() == 3 && wrap_ids(&vault).contains(&"sheet".to_owned());
+            Err(oneiron::Error::Io(std::io::Error::other(
+                "the pieces' directory is not writable",
+            )))
+        },
+    );
+    assert!(refused.is_err(), "a failed keep refuses the switch");
+    assert!(
+        offered_before_the_write,
+        "the pieces are offered while the sheet's wrap is still there"
+    );
+    assert_eq!(
+        vault.recovery_preset().expect("preset"),
+        RecoveryPreset::NobodyButMe
+    );
+    assert_eq!(wrap_ids(&vault), ids, "a failed keep changes no wrap");
+
+    drop(vault);
+    let fresh = Vault::open(&path, VaultConfig::device()).expect("reopen with no keystore");
+    fresh
+        .unlock_vault_key_with_sheet(&sheet)
+        .expect("the sheet still opens the vault");
+}
+
 #[test]
 fn turning_any_two_pieces_off_prints_a_fresh_sheet_and_the_kit_stays() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -694,6 +755,7 @@ fn turning_any_two_pieces_off_prints_a_fresh_sheet_and_the_kit_stays() {
                 ],
             ),
             None,
+            |_| Ok(()),
         )
         .expect("turn on \"any 2 pieces\"");
     let vault_id = switched.kit.vault_id;
