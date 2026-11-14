@@ -6,17 +6,21 @@ const fragmentToken = fragment.match(/^#([0-9a-f]{64})$/);
 // target holds, so no server or proxy log sees it (F37). It must not remain
 // in browser history or in referrers either. The page trades it once, in the
 // x-oneiron-esign-capability header, for a single-use exchange; a top-level
-// form POST consumes that and opens the signing session, whose HttpOnly
-// cookie every later call carries (ARCH-0064a [SGN-03]). The page never
-// holds the session itself.
-history.replaceState(null, "", "/sign");
+// form POST consumes that and opens the signing session, which lands at its
+// ceremony's address, /sign?ceremony=<id> (ARCH-0064a [SGN-03]). Every later
+// call names that ceremony, and carries the HttpOnly cookie named for it, so
+// this page acts only on the ceremony it shows, whatever invitation another
+// tab opens. The page never holds the session itself.
+const ceremonyMatch = (location.search || "").match(/^\?ceremony=([0-9a-f]{32})$/);
+const ceremony = ceremonyMatch ? ceremonyMatch[1] : null;
+history.replaceState(null, "", ceremony ? `/sign?ceremony=${ceremony}` : "/sign");
 // Another invitation opened in this tab changes only the fragment, which
 // reruns nothing here: reload, so it starts its own ceremony, never this one.
 window.addEventListener("hashchange", () => location.reload());
 const status = document.getElementById("status");
 const fields = document.getElementById("fields");
 async function send(path, contentType, body) {
-  const response = await fetch(path, {method: "POST", credentials: "same-origin", cache: "no-store", headers: {"Content-Type": contentType}, body});
+  const response = await fetch(path, {method: "POST", credentials: "same-origin", cache: "no-store", headers: {"Content-Type": contentType, "x-oneiron-sign-ceremony": ceremony}, body});
   if (!response.ok) throw new Error(UNAVAILABLE);
   return response;
 }
@@ -92,8 +96,9 @@ window.addEventListener("pagehide",()=>{for(const url of imageURLs.values())URL.
 document.getElementById("complete").onclick = () => action({action: "complete", consent: document.getElementById("consent").checked, next: null}).catch(report);
 document.getElementById("reject").onclick = () => { const reason = prompt("Reason for rejection"); if (reason !== null) { const text = reason.trim(); if (!text) { status.textContent = "Give a reason for the rejection."; return; } action({action: "reject", reason: text}).catch(report); } };
 document.getElementById("download").onclick = async () => { try { const response = await post("/sign/pdf", {item: Number(document.getElementById("item").value || 0)}); const url = URL.createObjectURL(await response.blob()); const link = document.createElement("a"); link.href = url; link.download = `document-${Number(document.getElementById("item").value || 0) + 1}.pdf`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); } catch (error) { report(error); } };
-// A link opens its session and comes back here with no fragment; a page with
-// no fragment runs on the session it has. A malformed fragment sends nothing.
+// A link opens its session and comes back at its ceremony's address with no
+// fragment, and runs on that ceremony's session. A malformed fragment, or a
+// page with no ceremony, sends nothing.
 if (fragmentToken) openSession(fragmentToken[1]).catch(report);
-else if (fragment) report(new Error(UNAVAILABLE));
+else if (fragment || !ceremony) report(new Error(UNAVAILABLE));
 else start().catch(report);

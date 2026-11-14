@@ -5,8 +5,9 @@
 //! the link's capability once, at `POST /sign/exchange` (the
 //! `x-oneiron-esign-capability` header), for a single-use exchange that
 //! `POST /sign/session` consumes to open a signing session (ARCH-0064a
-//! [SGN-03]). The ceremony routes carry only that session's cookie, and the
-//! vault admits the capability it stands for before the body is read
+//! [SGN-03]). The ceremony routes name their ceremony and carry only that
+//! ceremony's session cookie, and the vault admits the capability it stands
+//! for before the body is read
 //! (FIX 3808); the capability is never a path token, a body field or a
 //! core credential. A credential a call also
 //! presents only classes the caller, and an agent's Complete is an
@@ -22,8 +23,10 @@ use oneiron::task_verb::sdk::{input_schema, output_schema};
 /// The security scheme `POST /sign/exchange` names.
 const CAPABILITY_SCHEME: &str = "EsignCapability";
 
-/// The security scheme the ceremony POSTs name.
+/// The security schemes the ceremony POSTs name, together: the session
+/// cookie and the ceremony it is a session of.
 const SESSION_SCHEME: &str = "EsignSigningSession";
+const CEREMONY_SCHEME: &str = "EsignSigningCeremony";
 
 pub(super) fn merge_signing_paths(spec: &mut Value) {
     add_capability_scheme(spec);
@@ -92,7 +95,7 @@ pub(super) fn merge_signing_paths(spec: &mut Value) {
             }}}},
             "responses": {
                 "303": {
-                    "description": "The session is open: Set-Cookie oneiron-sign-session (Path=/sign; Secure; HttpOnly; SameSite=Strict) and Location /sign.",
+                    "description": "The session is open: Set-Cookie oneiron-sign-session-<ceremony> (Path=/sign; Secure; HttpOnly; SameSite=Strict) and Location /sign?ceremony=<ceremony>. The ceremony id is 32 lowercase hex characters drawn from the link; it grants nothing on its own, and no capability can be read back from it.",
                     "headers": {
                         "Set-Cookie": {"schema": {"type": "string"}},
                         "Location": {"schema": {"type": "string"}}
@@ -227,15 +230,25 @@ fn add_capability_scheme(spec: &mut Value) {
         json!({
             "type": "apiKey",
             "in": "cookie",
-            "name": "oneiron-sign-session",
-            "description": "The signing session POST /sign/session opened (Path=/sign; Secure; HttpOnly; SameSite=Strict). The vault admits the link capability it stands for before the request body is read; a request without a live session, or whose capability the vault no longer admits, is refused with its body unread."
+            "name": "oneiron-sign-session-<ceremony>",
+            "description": "The signing session POST /sign/session opened (Path=/sign; Secure; HttpOnly; SameSite=Strict). Its name ends with the id of the ceremony it is a session of, the one the x-oneiron-sign-ceremony header names. The vault admits the link capability it stands for before the request body is read; a request without a live session of that ceremony, or whose capability the vault no longer admits, is refused with its body unread."
+        }),
+    );
+    schemes.insert(
+        CEREMONY_SCHEME.to_owned(),
+        json!({
+            "type": "apiKey",
+            "in": "header",
+            "name": "x-oneiron-sign-ceremony",
+            "description": "The ceremony the call acts on: the id in the signing page's address (/sign?ceremony=<ceremony>). A session of another ceremony answers nothing, so a page acts only on the document it shows."
         }),
     );
 }
 
-/// The `security` a ceremony POST names: the signing session alone.
+/// The `security` a ceremony POST names: the signing session and the
+/// ceremony it is a session of, together.
 fn capability_security() -> Value {
-    json!([{ SESSION_SCHEME: [] }])
+    json!([{ SESSION_SCHEME: [], CEREMONY_SCHEME: [] }])
 }
 
 /// A facade row's input as its public door takes it: the `token` field
@@ -274,7 +287,7 @@ fn ceremony_responses(ok: Value) -> Value {
         ),
         (
             "403",
-            "No live signing session, or one whose link capability the vault does not admit, refused with the body unread; or the capability does not admit this act (signing_unavailable).",
+            "No live signing session of the ceremony the x-oneiron-sign-ceremony header names, or one whose link capability the vault does not admit, refused with the body unread; or the capability does not admit this act (signing_unavailable).",
         ),
         (
             "503",

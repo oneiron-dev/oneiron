@@ -1994,15 +1994,20 @@ the old public bounds: 3 MiB layouts, 16 MiB PDFs, and two free slots with
 A signing invitation is a reusable link, `/sign#<capability>`. When the signer opens it,
 the page removes the capability from the address bar and trades it once at
 `POST /sign/exchange` for a single-use exchange. A form POST to `/sign/session` uses that
-exchange at once and opens a signing session: a cookie (`oneiron-sign-session`, Secure,
-HttpOnly, SameSite=Strict, path `/sign`) that the page itself cannot read. Every later call
-of the ceremony carries only that cookie. The link's signing window, its token cap and its
+exchange at once and opens a signing session: a cookie (`oneiron-sign-session-<ceremony>`,
+Secure, HttpOnly, SameSite=Strict, path `/sign`) that the page itself cannot read, and the
+page lands at `/sign?ceremony=<ceremony>`. The ceremony id comes from the link and grants
+nothing on its own. Every later call of the ceremony names it and carries only that
+cookie, so a page acts only on the document it shows, even when the signer opens another
+invitation in another tab. The link's signing window, its token cap and its
 revocation still apply on every call. A browser keeps a Secure cookie only over HTTPS (or on
 `localhost`), so serve the signing page over HTTPS.
 
 Opening the link again, in another tab or on another device, opens a new session and ends
 the earlier one. The server keeps sessions in memory, so a restart ends them all; the signer
-reopens the link. Ending a session never ends the link. Set the lifetimes in `[limits]`:
+reopens the link. A session ends when its link's signing window closes, and the server
+drops a session that has ended even if the signer never comes back. Ending a session never
+ends the link. Set the lifetimes in `[limits]`:
 
 ```toml
 [limits]

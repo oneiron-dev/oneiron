@@ -345,8 +345,9 @@ fn sent_request() -> (
 
 /// Opens a signing session for `token` the way the page does (ARCH-0064a
 /// [SGN-03]): the exchange door, then the session form. Answers the
-/// `Cookie` value every ceremony POST then carries.
-async fn open_signing_session(app: &axum::Router, token: &str) -> String {
+/// `Cookie` value every ceremony POST then carries, and the ceremony each
+/// names.
+async fn open_signing_session(app: &axum::Router, token: &str) -> (String, String) {
     let exchange = app
         .clone()
         .oneshot(
@@ -382,11 +383,13 @@ async fn open_signing_session(app: &axum::Router, token: &str) -> String {
         .await
         .expect("serve session request");
     assert_eq!(opened.status(), StatusCode::SEE_OTHER);
-    session_pair(
+    let cookie = session_pair(
         opened.headers()[header::SET_COOKIE]
             .to_str()
             .expect("read session cookie"),
-    )
+    );
+    let ceremony = ceremony_of(&cookie);
+    (cookie, ceremony)
 }
 
 /// The `name=value` pair of a `Set-Cookie` value.
@@ -396,6 +399,15 @@ fn session_pair(set_cookie: &str) -> String {
         .next()
         .expect("cookie pair")
         .trim()
+        .to_owned()
+}
+
+/// The ceremony a session cookie pair is named for: every ceremony POST
+/// names it in `x-oneiron-sign-ceremony`.
+fn ceremony_of(pair: &str) -> String {
+    pair.split_once('=')
+        .and_then(|(name, _)| name.strip_prefix("oneiron-sign-session-"))
+        .expect("the session cookie is named for its ceremony")
         .to_owned()
 }
 
@@ -464,10 +476,12 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
             .to_str()
             .expect("read TCP session cookie"),
     );
+    let ceremony = ceremony_of(&cookie);
     let load = client
         .post(format!("{url}/sign/action"))
         .header("x-forwarded-for", "203.0.113.9")
         .header(header::COOKIE, cookie.as_str())
+        .header("x-oneiron-sign-ceremony", ceremony.as_str())
         .json(&serde_json::json!({"action":{"action":"load"}}))
         .send()
         .await
@@ -482,6 +496,7 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
     let saved = client
         .post(format!("{url}/sign/action"))
         .header(header::COOKIE, cookie.as_str())
+        .header("x-oneiron-sign-ceremony", ceremony.as_str())
         .json(&serde_json::json!({"action":{
             "action":"save_field", "field":field, "value":{"kind":"text","value":"Accepted"}
         }}))
@@ -497,6 +512,7 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
     let preview = client
         .post(format!("{url}/sign/preview"))
         .header(header::COOKIE, cookie.as_str())
+        .header("x-oneiron-sign-ceremony", ceremony.as_str())
         .json(&serde_json::json!({"item":0}))
         .send()
         .await
@@ -515,6 +531,7 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
     let pdf = client
         .post(format!("{url}/sign/pdf"))
         .header(header::COOKIE, cookie.as_str())
+        .header("x-oneiron-sign-ceremony", ceremony.as_str())
         .json(&serde_json::json!({"item":0}))
         .send()
         .await
@@ -559,8 +576,8 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
         .expect("finish TCP signing server");
 }
 
-/// One raw HTTP/1.1 exchange over the signing Unix socket; `header` is one
-/// more header line (`name: value`) when given.
+/// One raw HTTP/1.1 exchange over the signing Unix socket; `header` is more
+/// header lines (`name: value`, joined by CRLF) when given.
 async fn over_unix(
     path: &std::path::Path,
     method: &str,
@@ -654,7 +671,11 @@ async fn real_managed_unix_listener_uses_kernel_peer_not_forwarded_caller_ip() {
                 .map(|(_, value)| value.trim().to_owned())
         })
         .expect("Unix session cookie");
-    let cookie = format!("cookie: {}", session_pair(&set_cookie));
+    let pair = session_pair(&set_cookie);
+    let cookie = format!(
+        "cookie: {pair}\r\nx-oneiron-sign-ceremony: {}",
+        ceremony_of(&pair)
+    );
     let load = over_unix(
         &socket,
         "POST",
@@ -834,11 +855,12 @@ async fn hosted_burst_keeps_a_live_ceremony_writable_and_raises_a_typed_check() 
         .await
         .expect("page response");
     assert_eq!(page.status(), StatusCode::OK);
-    let cookie = open_signing_session(&app, &token).await;
+    let (cookie, ceremony) = open_signing_session(&app, &token).await;
 
     let post = |action: serde_json::Value| {
         let app = app.clone();
         let cookie = cookie.clone();
+        let ceremony = ceremony.clone();
         async move {
             let response = app
                 .oneshot(
@@ -852,6 +874,7 @@ async fn hosted_burst_keeps_a_live_ceremony_writable_and_raises_a_typed_check() 
                         ))
                         .header(header::CONTENT_TYPE, "application/json")
                         .header(header::COOKIE, cookie.as_str())
+                        .header("x-oneiron-sign-ceremony", ceremony.as_str())
                         .body(Body::from(serde_json::json!({"action":action}).to_string()))
                         .expect("signing action request"),
                 )

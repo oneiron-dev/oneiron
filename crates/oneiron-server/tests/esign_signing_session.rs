@@ -4,11 +4,16 @@
 //! and opens a Secure, HttpOnly, SameSite=Strict session on `/sign`, and the
 //! ceremony doors read only that session: the emailed capability is no
 //! bearer on them. One session per link; its lifetimes end the session,
-//! never the link.
+//! never the link. Each ceremony has its own id, address and cookie, so a
+//! second invitation never retargets an open ceremony, and an abandoned
+//! session is reclaimed without its cookie (review round 1 of #7663).
 //!
-//! Fleet command: `cargo test --locked -p oneiron-server --all-features
-//! --features oneiron/test-support,oneiron/test-hooks --test
-//! esign_signing_session`.
+//! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test
+//! --locked -p oneiron-server --all-features --features
+//! oneiron/test-support,oneiron/test-hooks --test esign_signing_session`.
+//! The two reclaim cases read the router's registry through
+//! `oneiron_server::test_doors::signing_session`, so they run only under
+//! that cfg.
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
@@ -82,7 +87,7 @@ fn one_exchange_opens_one_session() {
         let (_dir, server, token) = sent_request(LimitsConfig::default());
         let app = build_app(server);
         let exchange = exchange(&app, &token).await;
-        assert!(is_hex64(&exchange), "{exchange}");
+        assert!(is_hex(&exchange, 64), "{exchange}");
         assert_ne!(exchange, token);
 
         // A browser that marks the form POST as sent from another site
@@ -93,21 +98,31 @@ fn one_exchange_opens_one_session() {
 
         let opened = session_response(&app, &exchange, Some("same-origin")).await;
         assert_eq!(opened.status(), StatusCode::SEE_OTHER);
-        assert_eq!(opened.headers()[header::LOCATION], "/sign");
         let set_cookie = opened.headers()[header::SET_COOKIE]
             .to_str()
             .expect("read session cookie")
             .to_owned();
         let attributes: Vec<&str> = set_cookie.split(';').map(str::trim).collect();
         let (name, id) = attributes[0].split_once('=').expect("cookie pair");
-        assert_eq!(name, "oneiron-sign-session");
-        assert!(is_hex64(id), "{set_cookie}");
+        let ceremony = name
+            .strip_prefix(COOKIE_PREFIX)
+            .expect("the session cookie is named for its ceremony");
+        assert!(is_hex(ceremony, 32), "{set_cookie}");
+        assert!(!token.contains(ceremony), "{set_cookie}");
+        assert_eq!(
+            opened.headers()[header::LOCATION],
+            format!("/sign?ceremony={ceremony}").as_str()
+        );
+        assert!(is_hex(id, 64), "{set_cookie}");
         assert_ne!(id, token);
         for attribute in ["Path=/sign", "Secure", "HttpOnly", "SameSite=Strict"] {
             assert!(attributes.contains(&attribute), "{set_cookie}");
         }
-        let cookie = attributes[0].to_owned();
-        let (status, outcome) = load(&app, &cookie).await;
+        let session = Session {
+            cookie: attributes[0].to_owned(),
+            ceremony: ceremony.to_owned(),
+        };
+        let (status, outcome) = load(&app, &session).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(outcome["outcome"], "page");
 
@@ -118,7 +133,20 @@ fn one_exchange_opens_one_session() {
             assert!(!replayed.headers().contains_key(header::SET_COOKIE));
         }
         // The session still answers after the replay was refused.
-        assert_eq!(load(&app, &cookie).await.0, StatusCode::OK);
+        assert_eq!(load(&app, &session).await.0, StatusCode::OK);
+        // A call that names no ceremony, or another one, is answered
+        // nothing, whatever cookie it carries.
+        assert_eq!(
+            load_as(&app, &session.cookie, None).await.0,
+            StatusCode::FORBIDDEN
+        );
+        let unknown = "0".repeat(32);
+        assert_eq!(
+            load_as(&app, &session.cookie, Some(unknown.as_str()))
+                .await
+                .0,
+            StatusCode::FORBIDDEN
+        );
     });
 }
 
@@ -130,7 +158,8 @@ fn a_reopened_link_replaces_its_earlier_session() {
         let first = open_session(&app, &token).await;
         assert_eq!(load(&app, &first).await.0, StatusCode::OK);
         let second = open_session(&app, &token).await;
-        assert_ne!(first, second);
+        assert_ne!(first.cookie, second.cookie);
+        assert_eq!(first.ceremony, second.ceremony, "one link, one ceremony");
         assert_eq!(load(&app, &second).await.0, StatusCode::OK);
         assert_eq!(load(&app, &first).await.0, StatusCode::FORBIDDEN);
         // Opening the link again replaces its pending exchange too.
@@ -186,8 +215,144 @@ fn session_lifetimes_end_the_session_not_the_link() {
     });
 }
 
-fn is_hex64(value: &str) -> bool {
-    value.len() == 64
+#[test]
+fn a_second_invitation_never_retargets_an_open_ceremony() {
+    on_engine_stack(|| async {
+        // Review round 1 of #7663: tab 1 shows document A; the signer then
+        // opens document B's invitation in tab 2 of the same browser. Tab 1
+        // still acts on A, and tab 2 on B.
+        let (_dir, vault, owner) = signing_vault();
+        let first = send_document(&vault, owner, "Agreement A", 3600);
+        let second = send_document(&vault, owner, "Agreement B", 3600);
+        let app = build_app(serve(vault, LimitsConfig::default()));
+        let mut jar = CookieJar::default();
+        let tab_a = open_tab(&app, &mut jar, &first).await;
+        let tab_b = open_tab(&app, &mut jar, &second).await;
+        let (status, shown) = load_as(&app, &jar.header(), tab_a.as_deref()).await;
+        assert_eq!(status, StatusCode::OK, "{shown}");
+        assert_eq!(
+            shown["data"]["title"], "Agreement A",
+            "tab 1 acts on the document it shows, not on the invitation opened after it"
+        );
+        let (status, shown) = load_as(&app, &jar.header(), tab_b.as_deref()).await;
+        assert_eq!(status, StatusCode::OK, "{shown}");
+        assert_eq!(shown["data"]["title"], "Agreement B");
+
+        // A session answers only for its own ceremony: B's session under
+        // A's cookie name, or A's ceremony with only B's cookie, is
+        // answered nothing.
+        let (tab_a, tab_b) = (
+            tab_a.expect("tab 1's page names its ceremony"),
+            tab_b.expect("tab 2's page names its ceremony"),
+        );
+        let b_cookie = &jar.0[&format!("{COOKIE_PREFIX}{tab_b}")];
+        let b_under_a = format!("{COOKIE_PREFIX}{tab_a}={b_cookie}");
+        assert_eq!(
+            load_as(&app, &b_under_a, Some(tab_a.as_str())).await.0,
+            StatusCode::FORBIDDEN
+        );
+        let only_b = format!("{COOKIE_PREFIX}{tab_b}={b_cookie}");
+        assert_eq!(
+            load_as(&app, &only_b, Some(tab_a.as_str())).await.0,
+            StatusCode::FORBIDDEN
+        );
+    });
+}
+
+#[cfg(oneiron_test_support)]
+#[test]
+fn abandoned_sessions_are_reclaimed_without_their_cookies() {
+    use oneiron_server::test_doors::signing_session::{Held, signing_routes};
+    on_engine_stack(|| async {
+        // Review round 1 of #7663: two signers open their links, then throw
+        // their cookies away. Once the sessions' absolute lifetime has
+        // passed, the next signer's traffic leaves nothing of theirs held.
+        let (_dir, vault, owner) = signing_vault();
+        let first = send_document(&vault, owner, "Agreement A", 3600);
+        let second = send_document(&vault, owner, "Agreement B", 3600);
+        let server = serve(
+            vault,
+            LimitsConfig {
+                esign_session_absolute_seconds: Some(2),
+                ..LimitsConfig::default()
+            },
+        );
+        let (app, registry) = signing_routes(server);
+        let mut jar = CookieJar::default();
+        open_tab(&app, &mut jar, &first).await;
+        open_tab(&app, &mut jar, &second).await;
+        assert_eq!(
+            registry.held(),
+            Held {
+                links: 2,
+                exchanges: 0,
+                sessions: 2
+            }
+        );
+        // Neither cookie is presented again.
+        tokio::time::sleep(Duration::from_millis(2_300)).await;
+        // Later traffic: the first link is opened again.
+        exchange(&app, &first).await;
+        assert_eq!(
+            registry.held(),
+            Held {
+                links: 1,
+                exchanges: 1,
+                sessions: 0
+            },
+            "the ended sessions and the link left with nothing are reclaimed"
+        );
+    });
+}
+
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_session_ends_with_its_links_signing_window() {
+    use oneiron_server::test_doors::signing_session::{Held, signing_routes};
+    /// The first link's signing window, in seconds.
+    const WINDOW: u64 = 6;
+    on_engine_stack(|| async {
+        // Review round 1 of #7663: with no session row set, a session the
+        // signer leaves open is still reclaimed once its link's signing
+        // window has closed.
+        let (_dir, vault, owner) = signing_vault();
+        let short = send_document(&vault, owner, "Agreement A", WINDOW);
+        let long = send_document(&vault, owner, "Agreement B", 3600);
+        let (app, registry) = signing_routes(serve(vault, LimitsConfig::default()));
+        let mut jar = CookieJar::default();
+        let tab = open_tab(&app, &mut jar, &short).await;
+        assert_eq!(
+            load_as(&app, &jar.header(), tab.as_deref()).await.0,
+            StatusCode::OK
+        );
+        assert_eq!(
+            registry.held(),
+            Held {
+                links: 1,
+                exchanges: 0,
+                sessions: 1
+            }
+        );
+        tokio::time::sleep(Duration::from_secs(WINDOW + 1)).await;
+        exchange(&app, &long).await;
+        assert_eq!(
+            registry.held(),
+            Held {
+                links: 1,
+                exchanges: 1,
+                sessions: 0
+            },
+            "the session of a link whose window closed is reclaimed"
+        );
+        assert_eq!(
+            load_as(&app, &jar.header(), tab.as_deref()).await.0,
+            StatusCode::FORBIDDEN
+        );
+    });
+}
+
+fn is_hex(value: &str, len: usize) -> bool {
+    value.len() == len
         && value
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
@@ -258,28 +423,109 @@ async fn session_response(
         .expect("serve session request")
 }
 
-/// Opens a session for `token` as the page does; answers its `Cookie` pair.
-async fn open_session(app: &Router, token: &str) -> String {
+/// What the signing session cookies' names start with; the ceremony's id
+/// ends them.
+const COOKIE_PREFIX: &str = "oneiron-sign-session-";
+
+/// A signing session as one tab holds it: the `Cookie` pair the browser
+/// sends for it, and the ceremony its page's address names.
+struct Session {
+    cookie: String,
+    ceremony: String,
+}
+
+/// Opens a session for `token` as the page does.
+async fn open_session(app: &Router, token: &str) -> Session {
     let exchange = exchange(app, token).await;
     let opened = session_response(app, &exchange, Some("same-origin")).await;
     assert_eq!(opened.status(), StatusCode::SEE_OTHER);
+    let cookie = cookie_pair(&opened);
+    let ceremony = cookie
+        .split_once('=')
+        .and_then(|(name, _)| name.strip_prefix(COOKIE_PREFIX))
+        .expect("the session cookie is named for its ceremony")
+        .to_owned();
+    assert_eq!(
+        page_ceremony(&opened).as_deref(),
+        Some(ceremony.as_str()),
+        "the page lands at its ceremony's address"
+    );
+    Session { cookie, ceremony }
+}
+
+/// The `name=value` pair a session answer's `Set-Cookie` sets.
+fn cookie_pair(opened: &axum::response::Response) -> String {
     opened.headers()[header::SET_COOKIE]
         .to_str()
         .expect("read session cookie")
         .split(';')
         .next()
         .expect("cookie pair")
+        .trim()
         .to_owned()
 }
 
-/// One `load` act carried by the session cookie alone.
-async fn load(app: &Router, cookie: &str) -> (StatusCode, serde_json::Value) {
+/// The ceremony the page's address names after a session answer, as the
+/// page reads it: `None` for a page at a bare `/sign`.
+fn page_ceremony(opened: &axum::response::Response) -> Option<String> {
+    opened.headers()[header::LOCATION]
+        .to_str()
+        .expect("read session location")
+        .strip_prefix("/sign?ceremony=")
+        .map(str::to_owned)
+}
+
+/// A browser's cookies for `/sign`: a cookie set again under the same name
+/// replaces the one it had, and every call carries them all.
+#[derive(Default)]
+struct CookieJar(std::collections::BTreeMap<String, String>);
+
+impl CookieJar {
+    fn keep(&mut self, pair: &str) {
+        let (name, value) = pair.split_once('=').expect("cookie pair");
+        self.0.insert(name.to_owned(), value.to_owned());
+    }
+
+    fn header(&self) -> String {
+        self.0
+            .iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+}
+
+/// Opens `token`'s invitation in a new tab of the browser whose cookies are
+/// `jar`; answers the ceremony the tab's page names.
+async fn open_tab(app: &Router, jar: &mut CookieJar, token: &str) -> Option<String> {
+    let exchange = exchange(app, token).await;
+    let opened = session_response(app, &exchange, Some("same-origin")).await;
+    assert_eq!(opened.status(), StatusCode::SEE_OTHER);
+    jar.keep(&cookie_pair(&opened));
+    page_ceremony(&opened)
+}
+
+/// One `load` act carried by the session alone.
+async fn load(app: &Router, session: &Session) -> (StatusCode, serde_json::Value) {
+    load_as(app, &session.cookie, Some(session.ceremony.as_str())).await
+}
+
+/// One `load` act as a page sends it: the browser's `cookies`, and the
+/// ceremony the page names, if it names one.
+async fn load_as(
+    app: &Router,
+    cookies: &str,
+    ceremony: Option<&str>,
+) -> (StatusCode, serde_json::Value) {
     let body = serde_json::json!({"action":{"action":"load"}});
+    let mut request = ceremony_request("/sign/action").header(header::COOKIE, cookies);
+    if let Some(ceremony) = ceremony {
+        request = request.header("x-oneiron-sign-ceremony", ceremony);
+    }
     let response = app
         .clone()
         .oneshot(
-            ceremony_request("/sign/action")
-                .header(header::COOKIE, cookie)
+            request
                 .body(Body::from(body.to_string()))
                 .expect("build session load request"),
         )
@@ -295,18 +541,15 @@ async fn load(app: &Router, cookie: &str) -> (StatusCode, serde_json::Value) {
 /// A request sent through the owner-authored send gate (it_esign_public's
 /// fixture), served with `limits`. Answers the recipient's capability.
 fn sent_request(limits: LimitsConfig) -> (tempfile::TempDir, Arc<SyncServer>, String) {
-    use oneiron::blob_artifact::esign::{
-        DocumentKind, EsignAuditActor, EsignDocument, EsignField, EsignItem, EsignOutboundCommand,
-        EsignOutboundVerb, EsignRecipient, FieldGeometry, FieldMeta, RecipientRole,
-    };
-    use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
+    let (dir, vault, owner) = signing_vault();
+    let token = send_document(&vault, owner, "Agreement", 3600);
+    (dir, serve(vault, limits), token)
+}
+
+/// A server vault whose owner may send documents for signature.
+fn signing_vault() -> (tempfile::TempDir, Arc<oneiron::Vault>, oneiron::EntityId) {
     use oneiron::federation::{Scope, ScopeAxis};
-    use oneiron::outbound::{
-        OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
-        OutboundDispatchOutcome, OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft,
-        OutboundIntentSource, OutboundIntentTrigger,
-    };
-    use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
+    use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
 
     let dir = tempfile::tempdir().expect("create signing fixture directory");
     let vault = Arc::new(
@@ -316,6 +559,46 @@ fn sent_request(limits: LimitsConfig) -> (tempfile::TempDir, Arc<SyncServer>, St
     let owner = vault
         .ensure_embedded_owner_actor()
         .expect("create embedded owner actor");
+    let mut effect = Scope::top();
+    effect.verbs = ScopeAxis::Some(["effect".to_owned()].into());
+    oneiron::conversation_dag::test_support::put_test_policy_manifest(
+        &vault,
+        WriteActor::new(owner, EdgeActorClass::Human),
+        EntityId::now(),
+        &serde_json::json!({
+            "schema_version":"1.2", "pack_id":"esign-session-test", "pack_version":"v1",
+            "min_engine_version":"0.0.0",
+            "defaults":{"criticality":"normal","sensitivity":"normal"},
+            "rules":[],
+            "actor_ceilings":[{"actor_class":"human","actor_ref":owner.to_hex(),"ceiling":"auto"}],
+            "scoped_grants":[{"actor_ref":owner.to_hex(),"effector":"external:send_for_signature",
+                "scope":effect,"selectors":{"channel":"esign"}}]
+        }),
+    )
+    .expect("install signing policy manifest");
+    (dir, vault, owner)
+}
+
+/// Sends a one-PDF document titled `title` to one signer, whose signing
+/// window closes `window_seconds` from now. Answers the signer's capability.
+fn send_document(
+    vault: &oneiron::Vault,
+    owner: oneiron::EntityId,
+    title: &str,
+    window_seconds: u64,
+) -> String {
+    use oneiron::blob_artifact::esign::{
+        DocumentKind, EsignAuditActor, EsignDocument, EsignField, EsignItem, EsignOutboundCommand,
+        EsignOutboundVerb, EsignRecipient, FieldGeometry, FieldMeta, RecipientRole,
+    };
+    use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
+    use oneiron::outbound::{
+        OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
+        OutboundDispatchOutcome, OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft,
+        OutboundIntentSource, OutboundIntentTrigger,
+    };
+    use oneiron::{EdgeActorClass, EntityId, TimeRange, WriteActor};
+
     let artifact = EntityId::now();
     let when = TimeRange { start: 1, end: 1 };
     vault
@@ -344,9 +627,9 @@ fn sent_request(limits: LimitsConfig) -> (tempfile::TempDir, Arc<SyncServer>, St
     let document = EsignDocument {
         schema_version: 1,
         kind: DocumentKind::Document,
-        title: "Agreement".into(),
+        title: title.into(),
         sequential: true,
-        expires_at: now + 3600,
+        expires_at: now + window_seconds,
         items: vec![EsignItem {
             artifact_ref: artifact.to_hex(),
             original_version: 1,
@@ -357,7 +640,7 @@ fn sent_request(limits: LimitsConfig) -> (tempfile::TempDir, Arc<SyncServer>, St
             name: "Signer".into(),
             role: RecipientRole::Signer,
             order: 0,
-            expires_at: now + 3600,
+            expires_at: now + window_seconds,
             principal_ref: None,
             automated: false,
             natural_person: None,
@@ -394,23 +677,6 @@ fn sent_request(limits: LimitsConfig) -> (tempfile::TempDir, Arc<SyncServer>, St
             now,
         )
         .expect("create signing document");
-    let mut effect = Scope::top();
-    effect.verbs = ScopeAxis::Some(["effect".to_owned()].into());
-    oneiron::conversation_dag::test_support::put_test_policy_manifest(
-        &vault,
-        WriteActor::new(owner, EdgeActorClass::Human),
-        EntityId::now(),
-        &serde_json::json!({
-            "schema_version":"1.2", "pack_id":"esign-session-test", "pack_version":"v1",
-            "min_engine_version":"0.0.0",
-            "defaults":{"criticality":"normal","sensitivity":"normal"},
-            "rules":[],
-            "actor_ceilings":[{"actor_class":"human","actor_ref":owner.to_hex(),"ceiling":"auto"}],
-            "scoped_grants":[{"actor_ref":owner.to_hex(),"effector":"external:send_for_signature",
-                "scope":effect,"selectors":{"channel":"esign"}}]
-        }),
-    )
-    .expect("install signing policy manifest");
     let authenticated = vault
         .authenticate_owner(
             owner,
@@ -433,9 +699,10 @@ fn sent_request(limits: LimitsConfig) -> (tempfile::TempDir, Arc<SyncServer>, St
         verb,
         reason: None,
     };
+    let key = format!("signing-session-{}", artifact.to_hex());
     let request = OutboundDispatchRequest::new(
-        "receipt:signing-session",
-        "signing-session",
+        format!("receipt:{key}"),
+        key.clone(),
         OutboundIntent::from_trigger(
             OutboundIntentDraft {
                 actor: owner.to_hex(),
@@ -444,13 +711,13 @@ fn sent_request(limits: LimitsConfig) -> (tempfile::TempDir, Arc<SyncServer>, St
                 channel: "esign".into(),
                 target: artifact.to_hex(),
                 content_ref: None,
-                idempotency_key: Some("signing-session".into()),
-                dedupe_key: Some("signing-session".into()),
+                idempotency_key: Some(key.clone()),
+                dedupe_key: Some(key.clone()),
                 mention: None,
             },
             OutboundIntentTrigger {
                 source: OutboundIntentSource::AgentImmediate,
-                trigger_ref: "signing-session".into(),
+                trigger_ref: key.clone(),
                 job_ref: None,
             },
         ),
@@ -471,7 +738,12 @@ fn sent_request(limits: LimitsConfig) -> (tempfile::TempDir, Arc<SyncServer>, St
         OutboundDispatchOutcome::DeliveredToChannel,
         "{sent:?}"
     );
-    let server = Arc::new(
+    token
+}
+
+/// A sync server over `vault`, served with `limits`.
+fn serve(vault: Arc<oneiron::Vault>, limits: LimitsConfig) -> Arc<SyncServer> {
+    Arc::new(
         SyncServer::new(
             vault,
             SyncServerConfig {
@@ -481,6 +753,5 @@ fn sent_request(limits: LimitsConfig) -> (tempfile::TempDir, Arc<SyncServer>, St
             },
         )
         .expect("create signing sync server"),
-    );
-    (dir, server, token)
+    )
 }

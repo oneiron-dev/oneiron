@@ -8,13 +8,25 @@
 //! capability at each call, so its signing window, token cap and revocation
 //! hold for the whole session.
 //!
+//! Each ceremony has an id of its own, drawn from its link: the form's
+//! answer redirects to `/sign?ceremony=<id>`, the cookie is named for it,
+//! and every ceremony call names it in the `x-oneiron-sign-ceremony`
+//! header. A door reads the cookie of that name and answers only when the
+//! session it holds stands for that ceremony's link, so a page acts only on
+//! the document it shows, however many invitations the browser opens after
+//! it. The id stands for nothing on its own, and no capability can be read
+//! back from it.
+//!
 //! One pending exchange and one session per link: opening the link again
 //! replaces both, which bounds what is held by the links in use, with no
-//! count or rate refusal. Only the digests of exchanges and session ids are
-//! kept, beside the capability they stand for, in this router's own
-//! registry: a restart ends every session, and the signer reopens the
-//! reusable emailed link. Ending a session never ends the link, and opening
-//! one never extends the link's signing window.
+//! count or rate refusal. Every access first reaps what is over: each
+//! exchange past its lifetime, each session past one of its own lifetimes or
+//! past its link's end as the vault last admitted it, and each link left
+//! holding neither. Only the digests of exchanges and session ids are kept,
+//! beside the capability they stand for, in this router's own registry: a
+//! restart ends every session, and the signer reopens the reusable emailed
+//! link. Ending a session never ends the link, and opening one never extends
+//! the link's signing window.
 use oneiron::blob_artifact::esign::EsignCapability;
 use rand_core::{OsRng, RngCore as _};
 use sha2::Digest as _;
@@ -22,9 +34,13 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-/// The cookie a signing session's id rides in. Its path is `/sign`, so no
-/// other route of the vault ever receives it.
-pub(super) const SESSION_COOKIE: &str = "oneiron-sign-session";
+/// What a signing session's cookie name starts with; the ceremony's id
+/// ends it. Its path is `/sign`, so no other route of the vault ever
+/// receives it.
+pub(super) const SESSION_COOKIE_PREFIX: &str = "oneiron-sign-session-";
+
+/// The header each ceremony call names its ceremony in.
+pub(super) const CEREMONY_HEADER: &str = "x-oneiron-sign-ceremony";
 
 /// The form field `POST /sign/session` reads its exchange from.
 pub(super) const EXCHANGE_FIELD: &str = "exchange";
@@ -49,6 +65,15 @@ impl SessionLifetimes {
                 .map(Duration::from_secs),
         }
     }
+
+    /// Whether `open` is past its idle or its absolute lifetime at `now`.
+    fn ended(&self, open: &Open, now: Instant) -> bool {
+        self.absolute
+            .is_some_and(|life| now.saturating_duration_since(open.opened) >= life)
+            || self
+                .idle
+                .is_some_and(|life| now.saturating_duration_since(open.used) >= life)
+    }
 }
 
 /// The public signing router's sessions, shared through an `Extension`.
@@ -65,10 +90,14 @@ struct Registry {
     sessions: HashMap<[u8; 32], [u8; 32]>,
 }
 
-/// One link's state: the capability it stands for, its pending exchange and
-/// its open session.
+/// One link's state: the capability it stands for, when the vault stops
+/// admitting it, its pending exchange and its open session.
 struct LinkState {
     capability: String,
+    /// The instant from which the clock alone refuses the link, as the
+    /// exchange door last admitted it; `None` past any instant this host can
+    /// hold.
+    ends: Option<Instant>,
     exchange: Option<Pending>,
     session: Option<Open>,
 }
@@ -84,13 +113,22 @@ struct Open {
     used: Instant,
 }
 
+/// A session [`SigningSessions::open_session`] opened: its id, for the
+/// cookie, and its ceremony's id, for the cookie's name and the page's
+/// address.
+pub(super) struct OpenedSession {
+    pub(super) id: String,
+    pub(super) ceremony: String,
+}
+
 impl SigningSessions {
     /// Mints the single-use exchange for an admitted link, replacing any
-    /// exchange the link had pending. Exchanges past their lifetime are
-    /// reaped here.
+    /// exchange the link had pending. `link_ends` is when the vault's clock
+    /// alone stops admitting the link.
     pub(super) fn mint_exchange(
         &self,
         capability: &EsignCapability,
+        link_ends: Option<Instant>,
         lifetimes: SessionLifetimes,
     ) -> String {
         let value = random_hex();
@@ -98,7 +136,7 @@ impl SigningSessions {
         let link = digest(capability.expose_for_delivery().as_bytes());
         let mut guard = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         let registry = &mut *guard;
-        registry.reap_exchanges(now, lifetimes.exchange);
+        registry.reap(now, lifetimes);
         let pending = Pending {
             digest: digest(value.as_bytes()),
             minted: now,
@@ -106,9 +144,11 @@ impl SigningSessions {
         registry.exchanges.insert(pending.digest, link);
         let state = registry.links.entry(link).or_insert_with(|| LinkState {
             capability: capability.expose_for_delivery().to_owned(),
+            ends: link_ends,
             exchange: None,
             session: None,
         });
+        state.ends = link_ends;
         let replaced = state.exchange.replace(pending).map(|old| old.digest);
         if let Some(old) = replaced {
             registry.exchanges.remove(&old);
@@ -123,23 +163,20 @@ impl SigningSessions {
         &self,
         presented: &str,
         lifetimes: SessionLifetimes,
-    ) -> Option<String> {
+    ) -> Option<OpenedSession> {
         if !is_token(presented) {
             return None;
         }
         let now = Instant::now();
         let mut guard = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         let registry = &mut *guard;
+        registry.reap(now, lifetimes);
         let exchange = digest(presented.as_bytes());
         let link = registry.exchanges.remove(&exchange)?;
         let state = registry.links.get_mut(&link)?;
-        let pending = state
+        state
             .exchange
             .take_if(|pending| pending.digest == exchange)?;
-        if now.saturating_duration_since(pending.minted) >= lifetimes.exchange {
-            registry.forget_if_idle(link);
-            return None;
-        }
         let id = random_hex();
         let open = Open {
             digest: digest(id.as_bytes()),
@@ -152,15 +189,19 @@ impl SigningSessions {
             registry.sessions.remove(&old);
         }
         registry.sessions.insert(session, link);
-        Some(id)
+        Some(OpenedSession {
+            id,
+            ceremony: ceremony_id(&link),
+        })
     }
 
-    /// The capability an open session stands for, when neither of its
-    /// lifetimes has ended; the call counts as the session's latest use. A
-    /// session past a lifetime is closed here and stands for nothing.
+    /// The capability an open session stands for, when it is a session of
+    /// `ceremony` and is not over; the call counts as the session's latest
+    /// use. A session of another ceremony stands for nothing here.
     pub(super) fn capability(
         &self,
         presented: &str,
+        ceremony: &str,
         lifetimes: SessionLifetimes,
     ) -> Option<EsignCapability> {
         if !is_token(presented) {
@@ -169,90 +210,134 @@ impl SigningSessions {
         let now = Instant::now();
         let mut guard = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         let registry = &mut *guard;
+        registry.reap(now, lifetimes);
         let session = digest(presented.as_bytes());
         let link = *registry.sessions.get(&session)?;
+        if ceremony_id(&link) != ceremony {
+            return None;
+        }
         let state = registry.links.get_mut(&link)?;
         let open = state
             .session
             .as_mut()
             .filter(|open| open.digest == session)?;
-        let ended = lifetimes
-            .absolute
-            .is_some_and(|life| now.saturating_duration_since(open.opened) >= life)
-            || lifetimes
-                .idle
-                .is_some_and(|life| now.saturating_duration_since(open.used) >= life);
-        if ended {
-            state.session = None;
-            registry.sessions.remove(&session);
-            registry.forget_if_idle(link);
-            return None;
-        }
         open.used = now;
         EsignCapability::parse(&state.capability).ok()
+    }
+
+    /// How many links, pending exchanges and open sessions the registry
+    /// holds: the test door's view.
+    #[cfg(oneiron_test_support)]
+    pub(super) fn held(&self) -> (usize, usize, usize) {
+        let registry = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        (
+            registry.links.len(),
+            registry.exchanges.len(),
+            registry.sessions.len(),
+        )
     }
 }
 
 impl Registry {
-    /// Drops every exchange past its lifetime, and each link left with
-    /// neither an exchange nor a session.
-    fn reap_exchanges(&mut self, now: Instant, life: Duration) {
-        let mut expired = Vec::new();
-        for (link, state) in &mut self.links {
-            if let Some(pending) = state
-                .exchange
-                .take_if(|pending| now.saturating_duration_since(pending.minted) >= life)
-            {
-                expired.push((*link, pending.digest));
+    /// Drops every exchange past its lifetime, every session past one of its
+    /// own lifetimes, both once their link's end has come, and each link
+    /// left holding neither, with their digests in the reverse indexes.
+    fn reap(&mut self, now: Instant, lifetimes: SessionLifetimes) {
+        let mut exchanges = Vec::new();
+        let mut sessions = Vec::new();
+        self.links.retain(|_, state| {
+            let link_ended = state.ends.is_some_and(|ends| now >= ends);
+            if let Some(pending) = state.exchange.take_if(|pending| {
+                link_ended || now.saturating_duration_since(pending.minted) >= lifetimes.exchange
+            }) {
+                exchanges.push(pending.digest);
             }
-        }
-        for (link, exchange) in expired {
+            if let Some(open) = state
+                .session
+                .take_if(|open| link_ended || lifetimes.ended(open, now))
+            {
+                sessions.push(open.digest);
+            }
+            state.exchange.is_some() || state.session.is_some()
+        });
+        for exchange in exchanges {
             self.exchanges.remove(&exchange);
-            self.forget_if_idle(link);
         }
-    }
-
-    /// Forgets a link that holds neither an exchange nor a session.
-    fn forget_if_idle(&mut self, link: [u8; 32]) {
-        if self
-            .links
-            .get(&link)
-            .is_some_and(|state| state.exchange.is_none() && state.session.is_none())
-        {
-            self.links.remove(&link);
+        for session in sessions {
+            self.sessions.remove(&session);
         }
     }
 }
 
-/// The session id a request's `Cookie` headers carry, if any.
-pub(super) fn session_cookie(headers: &axum::http::HeaderMap) -> Option<&str> {
+/// The ceremony a request's `x-oneiron-sign-ceremony` header names, if it
+/// is a ceremony id.
+pub(super) fn requested_ceremony(headers: &axum::http::HeaderMap) -> Option<&str> {
+    headers
+        .get(CEREMONY_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| is_ceremony(value))
+}
+
+/// The session id the `Cookie` headers carry for `ceremony`, if any.
+pub(super) fn session_cookie<'a>(
+    headers: &'a axum::http::HeaderMap,
+    ceremony: &str,
+) -> Option<&'a str> {
     headers
         .get_all(axum::http::header::COOKIE)
         .iter()
         .filter_map(|value| value.to_str().ok())
         .flat_map(|value| value.split(';'))
         .filter_map(|pair| pair.trim().split_once('='))
-        .find(|(name, _)| *name == SESSION_COOKIE)
+        .find(|(name, _)| name.strip_prefix(SESSION_COOKIE_PREFIX) == Some(ceremony))
         .map(|(_, value)| value)
 }
 
-/// The `Set-Cookie` value that opens a session in the signer's browser.
-pub(super) fn session_set_cookie(id: &str) -> String {
-    format!("{SESSION_COOKIE}={id}; Path=/sign; Secure; HttpOnly; SameSite=Strict")
+/// The `Set-Cookie` value that opens `ceremony`'s session in the signer's
+/// browser.
+pub(super) fn session_set_cookie(ceremony: &str, id: &str) -> String {
+    format!("{SESSION_COOKIE_PREFIX}{ceremony}={id}; Path=/sign; Secure; HttpOnly; SameSite=Strict")
+}
+
+/// The page's address for `ceremony`, where the opened session lands.
+pub(super) fn page_location(ceremony: &str) -> String {
+    format!("/sign?ceremony={ceremony}")
+}
+
+/// A ceremony's id: 128 bits of a digest of its link's digest, as 32
+/// lowercase hex characters. It names the ceremony in the page's address,
+/// the session cookie's name and each ceremony call.
+fn ceremony_id(link: &[u8; 32]) -> String {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(b"oneiron-sign-ceremony\0");
+    hasher.update(link);
+    hex(&hasher.finalize()[..16])
+}
+
+/// A ceremony id: 32 lowercase hex characters.
+fn is_ceremony(value: &str) -> bool {
+    value.len() == 32 && is_lower_hex(value)
 }
 
 /// An exchange or session id: 64 lowercase hex characters, 256 random bits.
 fn is_token(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    value.len() == 64 && is_lower_hex(value)
+}
+
+fn is_lower_hex(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 fn random_hex() -> String {
     let mut secret = [0u8; 32];
     OsRng.fill_bytes(&mut secret);
-    secret.iter().map(|byte| format!("{byte:02x}")).collect()
+    hex(&secret)
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn digest(value: &[u8]) -> [u8; 32] {

@@ -1,17 +1,20 @@
 //! Token-first ingress at the public signing doors (FIX 3808, Engine rulings
-//! 10-18 and 10-19). Every ceremony POST carries its signing session's
-//! cookie (ARCH-0064a [SGN-03], census L3-22, `signing_session`), which
-//! stands for its recipient link's capability, and the vault admits that
-//! capability ([`oneiron::Vault::admit_esign_ingress`]) before a byte of the
-//! body is read. A request with no live session, or one whose capability the
-//! vault does not admit, is shed with its body unread. Only
-//! `POST /sign/exchange` reads the capability itself, from the
+//! 10-18 and 10-19). Every ceremony POST names its ceremony and carries
+//! that ceremony's signing session cookie (ARCH-0064a [SGN-03], census
+//! L3-22, `signing_session`), which stands for its recipient link's
+//! capability, and the vault admits that capability
+//! ([`oneiron::Vault::admit_esign_ingress`]) before a byte of the body is
+//! read. A request with no live session of the ceremony it names, or one
+//! whose capability the vault does not admit, is shed with its body unread.
+//! Only `POST /sign/exchange` reads the capability itself, from the
 //! `x-oneiron-esign-capability` header. An admitted body spools whole to an
 //! anonymous file the vault stages, under the server's one disk floor; its
 //! size is the `[limits] esign_body_bytes` row, which asks the envelope's
 //! sender past it and never refuses the body. The owner's editor POSTs
 //! (FIX 5618) share this spool under their own admission and rows.
-use super::signing_session::{SessionLifetimes, SigningSessions, session_cookie};
+use super::signing_session::{
+    SessionLifetimes, SigningSessions, requested_ceremony, session_cookie,
+};
 use super::*;
 use crate::api::transfer::{self, BodyReader};
 use crate::machine::{DiskClaim, DiskFloor, MemoryLease, MemoryRefusal};
@@ -66,8 +69,10 @@ impl FromRequestParts<Arc<SyncServer>> for SigningIngress {
     type Rejection = Response;
 
     /// Runs on the request's head alone, before the body extractor: no
-    /// body, digest or decode precedes it. The session cookie is the only
-    /// carrier read; a capability header here admits nothing. Admission only
+    /// body, digest or decode precedes it. The cookie of the ceremony the
+    /// `x-oneiron-sign-ceremony` header names is the only carrier read, and
+    /// its session must stand for that ceremony's link; a capability header
+    /// here admits nothing. Admission only
     /// reads, so a door keeps its own turn and terminal answers. A recipient
     /// the vault admits is no longer a stranger to the listener.
     async fn from_request_parts(
@@ -78,8 +83,11 @@ impl FromRequestParts<Arc<SyncServer>> for SigningIngress {
         let token = parts
             .extensions
             .get::<SigningSessions>()
-            .zip(session_cookie(&parts.headers))
-            .and_then(|(sessions, id)| sessions.capability(id, lifetimes))
+            .zip(requested_ceremony(&parts.headers))
+            .and_then(|(sessions, ceremony)| {
+                session_cookie(&parts.headers, ceremony)
+                    .and_then(|id| sessions.capability(id, ceremony, lifetimes))
+            })
             .ok_or_else(refused)?;
         let admitted = server
             .vault
