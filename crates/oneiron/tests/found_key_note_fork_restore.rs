@@ -3,7 +3,10 @@
 //! head's id, so a key the mask lifts out of it names the head, which is no
 //! entity. The owner's "not a secret" answer puts the value back into the
 //! pending fork; a land after it carries the value into the NOTE, by merge
-//! or by switch; and an answer after a land puts it back into the NOTE.
+//! or by switch; and an answer after a land puts it back into the NOTE. An
+//! answer on the NOTE's own key reaches a pending fork that keeps its handle
+//! too: a merge fork still merges (REVIEW-7904 F1), and a declared rewrite
+//! switches in with the value (REVIEW-7904 F2).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test found_key_note_fork_restore`.
 
@@ -19,6 +22,9 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 /// A GitHub token the door's text rules place by its span.
 const TOKEN: &str = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+
+/// A second GitHub token, which a fork adds to a NOTE that holds the first.
+const SECOND_TOKEN: &str = "ghp_zyxwvutsrqponmlkjihgfedcba9876543210";
 
 /// How a found key's handle opens where the mask left it in a text.
 const HANDLE_OPEN: &str = "[secret ";
@@ -81,6 +87,27 @@ fn note_and_fork(
         .fork_note(note, &edit, as_owner(owner))
         .map_err(|error| format!("FIXTURE: the fork is opened: {error:?}"))?;
     Ok((note, fork))
+}
+
+/// A NOTE the owner writes with the token in it, whose key names the NOTE,
+/// and its markdown, which holds the key's handle.
+fn note_with_token(
+    vault: &Vault,
+    owner: EntityId,
+) -> Result<(EntityId, String), Box<dyn std::error::Error>> {
+    let note = vault
+        .create_note(
+            "research",
+            &format!("{WRITTEN} Deploy with token={TOKEN}."),
+            as_owner(owner),
+        )
+        .map_err(|error| format!("FIXTURE: the NOTE is written: {error:?}"))?;
+    let [live, _] = markdown_reads(vault, note)?;
+    assert!(
+        handled(&live),
+        "FIXTURE: the NOTE holds the key's handle: {live}"
+    );
+    Ok((note, live))
 }
 
 /// The handle of the key the mask lifted out of `record`, from the owner's
@@ -240,6 +267,75 @@ fn a_rewrite_fork_ruled_then_switched_lands_its_value_in_the_note() -> TestResul
     for markdown in markdown_reads(&vault, note)? {
         assert!(
             valued(&markdown),
+            "the switched NOTE reads the value: {markdown}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_ruling_on_the_notes_own_key_lets_a_fork_that_keeps_its_handle_merge() -> TestResult {
+    let (_dir, vault, owner) = open_vault()?;
+    let proof = proof_of(&vault, owner)?;
+    let (note, live) = note_with_token(&vault, owner)?;
+    let handle = found_handle(&vault, &proof, &note)?;
+    let base = vault
+        .note_program_document(note)?
+        .ok_or("FIXTURE: the NOTE has a document")?
+        .version();
+    let edit = NoteProgramEdit::WholeText {
+        text: format!("{live} Rotate with token={SECOND_TOKEN}."),
+        timeout_ms: 1_000,
+        base: Some(base),
+    };
+    let fork = vault
+        .fork_note(note, &edit, as_owner(owner))
+        .map_err(|error| format!("FIXTURE: the fork is opened: {error:?}"))?;
+    vault.rule_found_key_not_a_secret(&proof, ActSurface::ThisInstall, &handle)?;
+    let pending = fork_markdown(&vault, owner, note, fork)?;
+    assert!(
+        pending.contains(TOKEN) && !pending.contains(&handle),
+        "the pending fork reads the NOTE's ruled value: {pending}"
+    );
+    let bundle = vault
+        .open_note_proposal(&[fork], "rotation notes", as_owner(owner))
+        .map_err(|error| format!("the fork merges after the ruling: {error:?}"))?;
+    assert_eq!(bundle.landed.len(), 1, "the fork merges after the ruling");
+    for markdown in markdown_reads(&vault, note)? {
+        assert!(
+            markdown.contains(TOKEN) && !markdown.contains(&handle),
+            "the merged NOTE reads the ruled value: {markdown}"
+        );
+        assert!(
+            markdown.contains(HANDLE_OPEN) && !markdown.contains(SECOND_TOKEN),
+            "the fork's own key keeps its handle: {markdown}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_ruling_on_the_notes_own_key_reaches_a_rewrite_that_keeps_its_handle() -> TestResult {
+    let (_dir, vault, owner) = open_vault()?;
+    let proof = proof_of(&vault, owner)?;
+    let (note, live) = note_with_token(&vault, owner)?;
+    let handle = found_handle(&vault, &proof, &note)?;
+    let edit = NoteProgramEdit::Rewrite {
+        text: format!("{live} Ship it."),
+    };
+    let fork = vault
+        .fork_note(note, &edit, as_owner(owner))
+        .map_err(|error| format!("FIXTURE: the rewrite is opened: {error:?}"))?;
+    vault.rule_found_key_not_a_secret(&proof, ActSurface::ThisInstall, &handle)?;
+    let pending = fork_markdown(&vault, owner, note, fork)?;
+    assert!(
+        valued(&pending),
+        "the pending rewrite reads the value: {pending}"
+    );
+    land(&vault, owner, fork, true)?;
+    for markdown in markdown_reads(&vault, note)? {
+        assert!(
+            valued(&markdown) && markdown.contains("Ship it."),
             "the switched NOTE reads the value: {markdown}"
         );
     }
