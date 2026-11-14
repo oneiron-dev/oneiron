@@ -168,16 +168,10 @@ class RunNightlyTest(unittest.TestCase):
         self.env.pop("CARGO_BUILD_JOBS", None)
         self.env.pop("NIGHTLY_LIB_JOBS", None)
 
-    def run_nightly(self, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
-        command = [
-            "bash",
-            str(self.repo / "scripts/nightly/run_nightly.sh"),
-            "--out",
-            str(self.out),
-            "--date",
-            "2026-11-15",
-            *args,
-        ]
+    def run_nightly(self, *args: str, out: Path | None = None, **env: str) -> subprocess.CompletedProcess[str]:
+        command = ["bash", str(self.repo / "scripts/nightly/run_nightly.sh"), "--out", str(out or self.out), *args]
+        if "--date" not in args:
+            command += ["--date", "2026-11-15"]
         return subprocess.run(command, env={**self.env, **env}, capture_output=True, text=True, timeout=120)
 
     def summary_line(self, result: subprocess.CompletedProcess[str]) -> str:
@@ -194,7 +188,7 @@ class RunNightlyTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(line.startswith("NIGHTLY 2026-11-15 head="), line)
         # the four integration tests in two shards, plus the pending-door tool's own test in libs
-        self.assertIn(" GREEN build=ok shards=2 passed=5 failed=0 ", line)
+        self.assertIn(" GREEN build=ok cycle=1 shards_run=2/2 next=alpha passed=5 failed=0 ", line)
         self.assertIn(" libtest_passed=1 libtest_failed=0 quarantine_gated=1 ", line)
         self.assertEqual(
             [line.split(" --all-features ")[1] for line in self.builds()],
@@ -206,14 +200,14 @@ class RunNightlyTest(unittest.TestCase):
         )
         left = sorted(path.name for path in (self.target / "debug/deps").iterdir())
         self.assertEqual(left, ["pending_door-0123456789abcdef"])
-        for name in ("summary.json", "summary.txt", "results.json", "flake-row.json"):
+        for name in ("summary.json", "summary.txt", "results-store.json", "flake-row.json"):
             self.assertTrue((self.out / name).is_file(), name)
 
     def test_a_test_file_that_does_not_compile_is_left_out_and_the_night_is_red(self) -> None:
         result = self.run_nightly(STUB_FAIL_TESTS="beta")
         line = self.summary_line(result)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn(" RED build=partial shards=1 passed=4 failed=0 ", line)
+        self.assertIn(" RED build=partial cycle=1 shards_run=1/1 next=alpha passed=4 failed=0 ", line)
         self.assertIn('## NIGHTLY failed-unit `oneiron` (test "beta") due to 1 previous error', result.stdout)
         self.assertEqual(
             [line.split(" --all-features ")[1] for line in self.builds()[1:]],
@@ -228,6 +222,34 @@ class RunNightlyTest(unittest.TestCase):
         self.assertTrue(
             (self.target / "debug/deps/alpha-0123456789abcdef").exists(), "an unsharded night keeps its binaries"
         )
+
+    def test_a_night_stopped_after_max_shards_resumes_at_the_cursor_the_next_night(self) -> None:
+        cursor = self.out.parent / "cursor.json"
+        first = self.run_nightly("--shard-files", "1", "--max-shards", "2", "--cursor", str(cursor))
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        self.assertIn("## NIGHTLY stop reason=max-shards next=tests-03", first.stdout)
+        self.assertIn(" cycle=1 shards_run=2/4 next=kit ", self.summary_line(first))
+        self.assertEqual(json.loads(cursor.read_text()), {"next": "kit", "cycle": 1})
+        self.assertIn("## NIGHTLY measured shards=2 ", first.stdout)
+
+        second_out = self.out.parent / "out-2"
+        second = self.run_nightly(
+            "--shard-files", "1", "--max-shards", "2", "--cursor", str(cursor),
+            "--previous", str(self.out / "results-store.json"), "--date", "2026-11-16", out=second_out,
+        )  # fmt: skip
+        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+        self.assertIn(" cycle=1 shards_run=2/4 next=alpha ", self.summary_line(second))
+        self.assertEqual(json.loads(cursor.read_text()), {"next": "alpha", "cycle": 2})
+        store = json.loads((second_out / "results-store.json").read_text())
+        self.assertEqual(store["oneiron::alpha a_case_runs"], {"outcome": "pass", "date": "2026-11-15"})
+        self.assertEqual(store["oneiron::kit a_case_runs"], {"outcome": "pass", "date": "2026-11-16"})
+
+    def test_a_deadline_already_passed_runs_the_libs_and_no_shard(self) -> None:
+        result = self.run_nightly("--shard-files", "2", "--deadline-epoch", "1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("## NIGHTLY stop reason=deadline next=tests-01", result.stdout)
+        self.assertIn(" GREEN build=ok cycle=1 shards_run=0/2 next=alpha passed=1 ", self.summary_line(result))
+        self.assertIn("## NIGHTLY measure after=libs minutes=0 target_kb=", result.stdout)
 
     def test_the_lib_job_count_applies_to_the_lib_selection_build_only(self) -> None:
         result = self.run_nightly(NIGHTLY_LIB_JOBS="1", CARGO_BUILD_JOBS="4")

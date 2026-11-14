@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from argparse import Namespace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -205,14 +206,51 @@ class PlanTest(unittest.TestCase):
             [("tests-01", ["alpha", "beta"]), ("tests-02", ["gamma", "kit"]), ("tests-03", ["shared"])],
         )
 
-    def test_a_rotation_keeps_every_kth_name_and_counts_the_rest(self) -> None:
-        chosen = nightly_report.plan(METADATA, rotation=(1, 2))
-        self.assertEqual(chosen["selections"][1]["tests"], ["beta", "kit"])
-        self.assertEqual((chosen["rotation"], chosen["held_for_other_nights"]), ("1/2", 3))
+    def test_a_cursor_starts_the_shards_at_its_name_and_wraps_past_the_end(self) -> None:
+        chosen = nightly_report.plan(METADATA, shard_files=2, cursor={"next": "gamma", "cycle": 3})
+        self.assertEqual(
+            [(entry["name"], entry["first"], entry["last"], entry["ends_cycle"]) for entry in chosen["order"]],
+            [
+                ("tests-01", "gamma", "kit", False),
+                ("tests-02", "shared", "alpha", True),
+                ("tests-03", "beta", "beta", False),
+            ],
+        )
+        self.assertEqual(chosen["cursor_in"], {"next": "gamma", "cycle": 3})
+
+    def test_advancing_past_the_shard_that_ends_the_cycle_counts_a_new_cycle(self) -> None:
+        chosen = nightly_report.plan(METADATA, shard_files=2, cursor={"next": "gamma", "cycle": 3})
+        self.assertEqual(nightly_report.advance(chosen, "tests-01"), {"next": "shared", "cycle": 3})
+        self.assertEqual(nightly_report.advance(chosen, "tests-02"), {"next": "beta", "cycle": 4})
+        self.assertEqual(nightly_report.advance(chosen, "tests-03"), {"next": "gamma", "cycle": 4})
+        self.assertEqual(chosen["shards_run"], ["tests-01", "tests-02", "tests-03"])
+
+    def test_a_cursor_name_that_left_the_list_starts_at_the_next_name_or_wraps_to_the_first(self) -> None:
+        self.assertEqual(nightly_report.plan(METADATA, 2, {"next": "delta"})["order"][0]["first"], "gamma")
+        self.assertEqual(nightly_report.plan(METADATA, 2, {"next": "zeta"})["order"][0]["first"], "alpha")
+
+    def test_the_deadline_is_the_next_hh_mm_in_japan_time(self) -> None:
+        japan = timezone(timedelta(hours=9))
+        at_0130 = datetime(2026, 11, 15, 1, 30, tzinfo=japan).timestamp()
+        at_0700 = datetime(2026, 11, 15, 7, 0, tzinfo=japan).timestamp()
+        self.assertEqual(
+            nightly_report.deadline_epoch("06:00", at_0130), datetime(2026, 11, 15, 6, 0, tzinfo=japan).timestamp()
+        )
+        self.assertEqual(
+            nightly_report.deadline_epoch("06:00", at_0700), datetime(2026, 11, 16, 6, 0, tzinfo=japan).timestamp()
+        )
+
+    def test_the_plan_and_advance_commands_read_and_write_the_cursor_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             metadata = write(Path(tmp) / "metadata.json", json.dumps(METADATA))
-            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-                nightly_report.main(["plan", str(metadata), "--rotation", "2/2"])
+            cursor = write(Path(tmp) / "cursor.json", json.dumps({"next": "kit", "cycle": 2}))
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                nightly_report.main(["plan", str(metadata), "--shard-files", "2", "--cursor", str(cursor)])
+            plan_file = write(Path(tmp) / "plan.json", printed.getvalue())
+            self.assertEqual(json.loads(plan_file.read_text())["order"][0]["first"], "kit")
+            nightly_report.main(["advance", str(plan_file), "tests-01", str(cursor)])
+            self.assertEqual(json.loads(cursor.read_text()), {"next": "alpha", "cycle": 3})
 
 
 class PruneTest(unittest.TestCase):
@@ -386,7 +424,9 @@ class SummaryTest(unittest.TestCase):
         code, line = self.run_summary()
         self.assertEqual(code, 0)
         self.assertTrue(
-            line.startswith("NIGHTLY 2026-11-15 head=0123456789ab GREEN build=ok shards=1 passed=2 failed=0 skipped=0"),
+            line.startswith(
+                "NIGHTLY 2026-11-15 head=0123456789ab GREEN build=ok cycle=1 shards_run=0/1 next=alpha passed=2 failed=0 skipped=0"
+            ),
             line,
         )
         self.assertIn(" quarantine_gated=3 ported_green=0 ported_red=0 new_gates=0 red_nights=0", line)
@@ -401,7 +441,7 @@ class SummaryTest(unittest.TestCase):
         )
         code, line = self.run_summary()
         self.assertEqual(code, 1)
-        self.assertIn(" RED build=ok shards=1 passed=1 failed=1 ", line)
+        self.assertIn(" RED build=ok cycle=1 shards_run=0/1 next=alpha passed=1 failed=1 ", line)
         self.assertIn("failed: oneiron::alpha a_claim_is_read", (self.out / "summary.txt").read_text())
 
     def test_a_ported_module_is_named_with_its_tests_pass_or_fail(self) -> None:
@@ -437,17 +477,26 @@ class SummaryTest(unittest.TestCase):
         self.assertIn(" new_gates=1 ", line)
         self.assertIn("new quarantine gate: LIBTEST-QUARANTINE-ROOT-NEW", (self.out / "summary.txt").read_text())
 
-    def test_a_test_that_passed_last_night_and_fails_tonight_is_a_flip(self) -> None:
-        previous = write(Path(self.tmp.name) / "previous.json", json.dumps({"oneiron::alpha a_claim_is_read": "pass"}))
+    def test_a_flip_compares_a_test_with_its_own_last_run_and_the_store_keeps_tests_not_run(self) -> None:
+        store = {
+            "oneiron::alpha a_claim_is_read": {"outcome": "pass", "date": "2026-11-12"},
+            "oneiron::kit a_kit_case": {"outcome": "fail", "date": "2026-11-10"},
+        }
+        previous = write(Path(self.tmp.name) / "store.json", json.dumps(store))
         junit(self.out / "junit-verdict-workspace.xml", {"oneiron::alpha": {"a_claim_is_read": "fail"}})
         _, line = self.run_summary(previous=str(previous))
         self.assertIn(" flipped=1 ", line)
         row = json.loads((self.out / "flake-row.json").read_text())
         self.assertEqual(
-            row["flipped_tests"], [{"test": "oneiron::alpha a_claim_is_read", "from": "pass", "to": "fail"}]
+            row["flipped_tests"],
+            [{"test": "oneiron::alpha a_claim_is_read", "from": "pass", "to": "fail", "since": "2026-11-12"}],
         )
         self.assertEqual(
-            json.loads((self.out / "results.json").read_text()), {"oneiron::alpha a_claim_is_read": "fail"}
+            json.loads((self.out / "results-store.json").read_text()),
+            {
+                "oneiron::alpha a_claim_is_read": {"outcome": "fail", "date": "2026-11-15"},
+                "oneiron::kit a_kit_case": {"outcome": "fail", "date": "2026-11-10"},
+            },
         )
 
     def test_the_third_red_night_in_a_row_says_so(self) -> None:
@@ -484,18 +533,24 @@ class SummaryTest(unittest.TestCase):
         write(self.plan, json.dumps(chosen))
         code, line = self.run_summary()
         self.assertEqual(code, 1)
-        self.assertIn(" RED build=partial shards=1 ", line)
+        self.assertIn(" RED build=partial cycle=1 shards_run=0/1 ", line)
         self.assertIn(
             "unselected: tests-01 oneiron test beta (did not compile)", (self.out / "summary.txt").read_text()
         )
 
-    def test_a_dropped_selection_is_listed_and_a_rotation_is_on_the_line(self) -> None:
-        chosen = nightly_report.plan(METADATA, shard_files=2, rotation=(0, 2))
-        nightly_report.drop(chosen, "tests-02", "three build rounds failed")
+    def test_the_report_names_the_cycle_the_shards_run_and_a_dropped_selection(self) -> None:
+        chosen = nightly_report.plan(METADATA, shard_files=2, cursor={"next": "gamma", "cycle": 2})
+        nightly_report.advance(chosen, "tests-01")
+        nightly_report.drop(chosen, "tests-02", "the build failed in 3 rounds")
+        nightly_report.advance(chosen, "tests-02")
         write(self.plan, json.dumps(chosen))
         _, line = self.run_summary()
-        self.assertIn(" RED build=partial shards=1 rotation=0/2 held=2 passed=2 ", line)
-        self.assertIn("dropped: tests-02 (three build rounds failed)", (self.out / "summary.txt").read_text())
+        self.assertIn(" RED build=partial cycle=2 shards_run=2/3 next=beta passed=2 ", line)
+        text = (self.out / "summary.txt").read_text()
+        self.assertIn("shard tests-01: gamma .. kit (2 files)\n", text)
+        self.assertIn("shard tests-02: shared .. alpha (2 files), ends cycle\n", text)
+        self.assertIn("not run tonight: 1 shard(s); the cursor resumes at beta", text)
+        self.assertIn("dropped: tests-02 (the build failed in 3 rounds)", text)
 
     def test_a_verdict_run_that_wrote_no_junit_makes_the_night_red(self) -> None:
         (self.out / "junit-verdict-workspace.xml").unlink()

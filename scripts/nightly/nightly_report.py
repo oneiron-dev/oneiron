@@ -4,9 +4,12 @@
 Standard library only. scripts/nightly/run_nightly.sh calls it; each
 subcommand reads files the job wrote:
 
-  plan METADATA [--shard-files N] [--rotation I/K]
+  plan METADATA [--shard-files N] [--cursor FILE]
                                   the night's selections: the lib tests, then
                                   the integration tests, whole or in shards
+                                  from the cursor on
+  advance PLAN NAME CURSOR        move the cursor past a finished shard
+  deadline HH:MM                  the epoch of the next HH:MM, Japan time
   failed-units LOG...             the test build units cargo could not compile
   prune PLAN NAME FAILED METADATA leave a selection's failed units out (exit 3
                                   when the selection is dropped)
@@ -18,7 +21,7 @@ subcommand reads files the job wrote:
   census ROOT                     the lib-test quarantine gates in a tree (TSV)
   summary ...                     the night's verdict: prints the one summary
                                   line and writes summary.json, summary.txt,
-                                  results.json and flake-row.json
+                                  results-store.json and flake-row.json
 
 A quarantine gate is a `// FIX [LIBTEST-QUARANTINE-<ID>]` comment followed by
 `#[cfg(any())]` on the item it switches off (OPUS-MAINFIX's lib-test
@@ -32,11 +35,14 @@ names its tests' pass or fail.
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import os
 import re
 import sys
+import time
 import xml.etree.ElementTree as ElementTree
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 COULD_NOT_COMPILE = re.compile(r"^error: could not compile `(?P<package>[^`]+)` \((?P<unit>[^)]*)\)")
@@ -121,19 +127,24 @@ def test_owners(metadata: dict) -> dict[str, list[str]]:
 def plan(
     metadata: dict,
     shard_files: int = 0,
-    rotation: tuple[int, int] | None = None,
+    cursor: dict | None = None,
     always_excluded: tuple[str, ...] = ALWAYS_EXCLUDED,
 ) -> dict:
     """The night's selections: the lib tests first, then the integration tests.
 
     `libs` selects every lib test and bin test (`--lib --bins`) and the
     pending-door tool's own test. The integration tests follow by name
-    (`--test`): all in one selection, or in shards of `shard_files` names whose
-    binaries the runner deletes once the shard has run. A name two packages
-    share selects both (cargo matches a `--test` name in every selected
-    package). `rotation` (i, k) keeps the names whose index modulo k is i, so
-    each name runs once in k nights. Every selection keeps `--workspace`, so
+    (`--test`) in sorted order: all in one selection, or in shards of
+    `shard_files` names whose binaries the runner deletes once the shard has
+    run. A name two packages share selects both (cargo matches a `--test` name
+    in every selected package). Every selection keeps `--workspace`, so
     features unify as in a full build.
+
+    The cursor (`{"next": <test name>, "cycle": <n>}`, Engine RULING
+    NIGHTLY-SCALE 14 Nov 10:42) makes the night resumable: the shards start at
+    the first name at or after `next` and wrap past the end of the list, so a
+    night that stops early resumes there the next night, and a full cycle runs
+    every file once. The shard that holds the list's last name ends a cycle.
     """
     owners = {
         name: [p for p in packages if p not in always_excluded] for name, packages in test_owners(metadata).items()
@@ -142,32 +153,57 @@ def plan(
     door_package, door_test = DOOR_TOOL_TEST
     libs_tests = [door_test] if door_package in owners.get(door_test, []) else []
     names = [name for name in names if name not in libs_tests]
-    held = 0
-    if rotation:
-        index, count = rotation
-        kept = [name for position, name in enumerate(names) if position % count == index]
-        held, names = len(names) - len(kept), kept
+    cursor = cursor or {}
+    start = bisect.bisect_left(names, cursor["next"]) if cursor.get("next") else 0
+    start = start if start < len(names) else 0
+    ordered = names[start:] + names[:start]
     size = shard_files if shard_files > 0 else max(len(names), 1)
     selections = [{"name": "libs", "kind": "libs", "excluded": [], "bins": True, "tests": libs_tests}]
-    for number, start in enumerate(range(0, len(names), size), start=1):
-        selections.append(
-            {
-                "name": f"tests-{number:02d}",
-                "kind": "tests",
-                "excluded": [],
-                "bins": False,
-                "tests": names[start : start + size],
-            }
+    order = []
+    for number, first in enumerate(range(0, len(ordered), size), start=1):
+        tests = ordered[first : first + size]
+        name = f"tests-{number:02d}"
+        selections.append({"name": name, "kind": "tests", "excluded": [], "bins": False, "tests": tests})
+        order.append(
+            {"name": name, "first": tests[0], "last": tests[-1], "files": len(tests), "ends_cycle": names[-1] in tests}
         )
+    cycle = int(cursor.get("cycle", 1))
     return {
         "always_excluded": list(always_excluded),
         "shard_files": shard_files,
-        "rotation": f"{rotation[0]}/{rotation[1]}" if rotation else None,
-        "held_for_other_nights": held,
+        "names_total": len(names),
+        "cursor_in": {"next": ordered[0] if ordered else None, "cycle": cycle},
+        "cursor_out": {"next": ordered[0] if ordered else None, "cycle": cycle},
+        "order": order,
+        "shards_run": [],
         "selections": selections,
         "dropped": [],
         "unselected": [],
     }
+
+
+def advance(chosen: dict, name: str) -> dict:
+    """Move the cursor past a finished shard (run or dropped) and return it."""
+    position = next(index for index, entry in enumerate(chosen["order"]) if entry["name"] == name)
+    shard = chosen["order"][position]
+    following = chosen["order"][(position + 1) % len(chosen["order"])]
+    cursor = chosen["cursor_out"]
+    cursor["next"] = following["first"]
+    if shard["ends_cycle"]:
+        cursor["cycle"] += 1
+    if name not in chosen["shards_run"]:
+        chosen["shards_run"].append(name)
+    return cursor
+
+
+def deadline_epoch(stop_at: str, now: float) -> int:
+    """The epoch of the next HH:MM in Japan time (UTC+9, no daylight saving) after `now`."""
+    hours, _, minutes = stop_at.partition(":")
+    japan = timezone(timedelta(hours=9))
+    moment = datetime.fromtimestamp(now, japan).replace(hour=int(hours), minute=int(minutes), second=0, microsecond=0)
+    if moment.timestamp() <= now:
+        moment += timedelta(days=1)
+    return int(moment.timestamp())
 
 
 def find_selection(chosen: dict, name: str) -> dict:
@@ -426,14 +462,23 @@ def quarantine_report(baseline: list[dict[str, str]], tonight: list[dict[str, st
     }
 
 
-def flips(previous: dict[str, str], tonight: dict[str, str]) -> list[dict[str, str]]:
-    """Tests that went from pass to fail or from fail to pass since the last night."""
+def flips(store: dict[str, dict[str, str]], tonight: dict[str, str]) -> list[dict[str, str]]:
+    """Tests run tonight that went from pass to fail or from fail to pass since their own last run.
+
+    The store holds each test's last outcome and the night it ran, so a test in
+    a shard that last ran several nights ago compares with that run (Engine
+    RULING NIGHTLY-SCALE: B's rule).
+    """
     changed = []
-    for test in sorted(set(previous) & set(tonight)):
-        before, after = previous[test], tonight[test]
+    for test in sorted(set(store) & set(tonight)):
+        before, after = store[test]["outcome"], tonight[test]
         if before != after and {before, after} == {"pass", "fail"}:
-            changed.append({"test": test, "from": before, "to": after})
+            changed.append({"test": test, "from": before, "to": after, "since": store[test]["date"]})
     return changed
+
+
+def updated_store(store: dict[str, dict[str, str]], tonight: dict[str, str], date: str) -> dict[str, dict[str, str]]:
+    return {**store, **{test: {"outcome": outcome, "date": date} for test, outcome in tonight.items()}}
 
 
 def red_nights(history: list[str], red: bool) -> int:
@@ -452,7 +497,7 @@ def summary(args: argparse.Namespace) -> int:
     out = Path(args.out)
     chosen = json.loads(Path(args.plan).read_text())
     build = build_state(chosen)
-    shards = sum(1 for entry in chosen["selections"] if entry["kind"] == "tests")
+    shards_run = len(chosen["shards_run"])
     pending_door = json.loads(Path(args.pending_door).read_text()) if Path(args.pending_door).is_file() else None
     results = stage_results(out)
     verdict = counts(results["verdict"])
@@ -461,8 +506,8 @@ def summary(args: argparse.Namespace) -> int:
     pending_run = counts(results["pending"])
     report = quarantine_report(read_census_tsv(Path(args.baseline)), census(Path(args.census_root)), results["libtest"])
     tonight = {**results["libtest"], **results["verdict"]}
-    previous = json.loads(Path(args.previous).read_text()) if args.previous and Path(args.previous).is_file() else {}
-    flipped = flips(previous, tonight)
+    store = json.loads(Path(args.previous).read_text()) if args.previous and Path(args.previous).is_file() else {}
+    flipped = flips(store, tonight)
     history = Path(args.history).read_text().splitlines() if args.history and Path(args.history).is_file() else []
 
     reasons = []
@@ -483,9 +528,10 @@ def summary(args: argparse.Namespace) -> int:
 
     red_ids = sorted(gate_id for gate_id, entry in report["ids"].items() if entry["state"] == "red")
     line = (
-        f"NIGHTLY {args.date} head={args.head[:12]} {'RED' if red else 'GREEN'} build={build} shards={shards}"
-        + (f" rotation={chosen['rotation']} held={chosen['held_for_other_nights']}" if chosen.get("rotation") else "")
-        + f" passed={verdict['passed']} failed={verdict['failed']} skipped={verdict['skipped']}"
+        f"NIGHTLY {args.date} head={args.head[:12]} {'RED' if red else 'GREEN'} build={build}"
+        f" cycle={chosen['cursor_in']['cycle']} shards_run={shards_run}/{len(chosen['order'])}"
+        f" next={chosen['cursor_out']['next']}"
+        f" passed={verdict['passed']} failed={verdict['failed']} skipped={verdict['skipped']}"
         f" quarantined={quarantined['passed'] + quarantined['failed']}"
         f" pending={pending_door.get('pending', 0) if pending_door else '?'}"
         f" expired={pending_door.get('expired', 0) if pending_door else '?'}"
@@ -520,7 +566,9 @@ def summary(args: argparse.Namespace) -> int:
         "quarantine": report,
     }
     (out / "summary.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
-    (out / "results.json").write_text(json.dumps(tonight, indent=0, sort_keys=True) + "\n")
+    (out / "results-store.json").write_text(
+        json.dumps(updated_store(store, tonight, args.date), indent=0, sort_keys=True) + "\n"
+    )
     flake_row = {
         "date": args.date,
         "head": args.head,
@@ -537,13 +585,22 @@ def summary(args: argparse.Namespace) -> int:
 
     text = [line, ""]
     text += [f"red: {reason}" for reason in reasons]
+    ran = {entry["name"]: entry for entry in chosen["order"]}
+    text += [
+        f"shard {name}: {ran[name]['first']} .. {ran[name]['last']} ({ran[name]['files']} files)"
+        + (", ends cycle" if ran[name]["ends_cycle"] else "")
+        for name in chosen["shards_run"]
+    ]
+    not_run = len(chosen["order"]) - len(chosen["shards_run"])
+    if not_run:
+        text.append(f"not run tonight: {not_run} shard(s); the cursor resumes at {chosen['cursor_out']['next']}")
     text += [f"failed: {test}" for test in failed_tests]
     text += [f"dropped: {d['selection']} ({d['reason']})" for d in chosen["dropped"]]
     text += [
         f"unselected: {u['selection']} {u['package']} {u['kind']} {u['name']} ({u['reason']})".replace("  ", " ")
         for u in chosen["unselected"]
     ]
-    text += [f"flipped: {f['test']} {f['from']} -> {f['to']}" for f in flipped]
+    text += [f"flipped: {f['test']} {f['from']} ({f['since']}) -> {f['to']}" for f in flipped]
     text += [f"libtest failed: {test}" for test in record["libtest_failed"]]
     text += [f"new quarantine gate: {gate_id}" for gate_id in report["new_gates"]]
     for gate_id, entry in report["ids"].items():
@@ -565,7 +622,13 @@ def main(argv: list[str]) -> int:
     command = commands.add_parser("plan")
     command.add_argument("metadata", type=Path)
     command.add_argument("--shard-files", type=int, default=0)
-    command.add_argument("--rotation", help="I/K: the integration tests whose index modulo K is I")
+    command.add_argument("--cursor", type=Path, help="the cursor file; absent or empty starts at the first name")
+    command = commands.add_parser("advance")
+    command.add_argument("plan", type=Path)
+    command.add_argument("name")
+    command.add_argument("cursor", type=Path)
+    command = commands.add_parser("deadline")
+    command.add_argument("stop_at", help="HH:MM, Japan time")
     command = commands.add_parser("prune")
     command.add_argument("plan", type=Path)
     command.add_argument("name")
@@ -602,13 +665,17 @@ def main(argv: list[str]) -> int:
     if args.command == "failed-units":
         print(json.dumps(failed_units(args.logs), indent=2))
     elif args.command == "plan":
-        rotation = None
-        if args.rotation:
-            index, _, count = args.rotation.partition("/")
-            rotation = (int(index), int(count))
-            if not 0 <= rotation[0] < rotation[1]:
-                parser.error(f"--rotation {args.rotation}: I/K needs 0 <= I < K")
-        print(json.dumps(plan(json.loads(args.metadata.read_text()), args.shard_files, rotation), indent=2))
+        cursor = json.loads(args.cursor.read_text()) if args.cursor and args.cursor.is_file() else None
+        print(json.dumps(plan(json.loads(args.metadata.read_text()), args.shard_files, cursor), indent=2))
+    elif args.command == "advance":
+        chosen = json.loads(args.plan.read_text())
+        cursor = advance(chosen, args.name)
+        args.plan.write_text(json.dumps(chosen, indent=2) + "\n")
+        args.cursor.write_text(json.dumps(cursor) + "\n")
+    elif args.command == "deadline":
+        if not re.fullmatch(r"([01][0-9]|2[0-3]):[0-5][0-9]", args.stop_at):
+            parser.error(f"deadline {args.stop_at}: not HH:MM")
+        print(deadline_epoch(args.stop_at, time.time()))
     elif args.command in ("prune", "drop"):
         chosen = json.loads(args.plan.read_text())
         if args.command == "prune":

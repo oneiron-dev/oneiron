@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
 # The nightly test job (Fable's test verdict 2026-11-09, sections 3 and 6; PR 10a).
 #
-# Runs the workspace's tests once, at the checked-out commit, under
-# `--cfg oneiron_test_support` (the test doors), and writes the night's verdict.
-# One booked fleet job runs it each night; no PR's CI runs it. Every step prints
-# a `## NIGHTLY <step> rc=<code>` line.
+# Runs the workspace's tests under `--cfg oneiron_test_support` (the test
+# doors) at the checked-out commit, and writes the night's verdict. One booked
+# fleet job runs it each night; no PR's CI runs it. Every step prints a
+# `## NIGHTLY <step> rc=<code>` line.
 #
-# The plan (scripts/nightly/nightly_report.py plan) is a list of selections,
-# each built and run in turn:
+# A resumable sharded night (Engine RULING NIGHTLY-SCALE, 14 Nov 10:42):
 #   libs        every lib test and bin test, plus the pending-door tool's own
-#               test, so cargo builds oneiron-testkit-pending-door
-#   tests-NN    the integration tests by name: all at once, or with
-#               --shard-files N in shards of N names whose test binaries are
-#               deleted after the shard has run (about 600 MB each on the
-#               fleet: the whole set does not fit one host's disk)
+#               test (so cargo builds oneiron-testkit-pending-door), every
+#               night, first. NIGHTLY_LIB_JOBS, when set, is its build's job
+#               count (the core's lib and lib test peak above 23 GiB each in
+#               codegen: one job on a 36G host).
+#   tests-NN    the integration tests by name in sorted order, in shards of
+#               --shard-files names (about 600 MB of test binary per name on the
+#               fleet), from the cursor on, wrapping past the end of the list:
+#               build, run, delete the shard's test binaries, move the cursor.
+#               The night stops before a shard when --max-shards shards have
+#               run, or when the longest shard so far would end past the
+#               deadline (--stop-at HH:MM Japan time, or --deadline-epoch).
+#               The next night resumes at the cursor; a full cycle runs every
+#               file once.
 # oneiron-bench is left out, as CI's full tier leaves it out.
 #
 # For each selection:
@@ -32,50 +39,62 @@
 #               module (Engine ruling 13 Nov 16:20, ASK PR10-NIGHTLY-OVERLAP).
 #   quarantine  `--profile quarantine`, report only.
 #   pending-door `--profile pending-door -E 'P'`, report only.
+#   measure     minutes, the target dir's size, the free disk and the job's
+#               memory peak (cgroup v2 memory.peak), before the shard's binaries
+#               are deleted.
 # Then the summary: one line (`## NIGHTLY SUMMARY NIGHTLY <date> ...`) and
-# summary.json, summary.txt, results.json (the next night's --previous) and
-# flake-row.json in --out.
+# summary.json, summary.txt, results-store.json (each test's last outcome: the
+# next night's --previous, so a flip compares a test with its own last run)
+# and flake-row.json in --out. The cursor file is rewritten after each shard.
 #
 # ONEIRON_TESTKIT_TODAY is the night's date, so the testkit lint test fails an
-# expired quarantine entry. NIGHTLY_LIB_JOBS, when set, is the build's job
-# count for the libs selection only (the core's lib and lib test peak above
-# 23 GiB each in codegen: one job on a 36G host).
+# expired quarantine entry. Plain bash 3.2 (macOS /bin/bash) runs it too.
 #
 # Usage: scripts/nightly/run_nightly.sh --out DIR [--date YYYY-MM-DD]
-#          [--shard-files N] [--rotation I/K]
-#          [--previous RESULTS_JSON] [--history SUMMARY_LINES_FILE]
+#          [--shard-files N] [--cursor FILE] [--max-shards K]
+#          [--stop-at HH:MM | --deadline-epoch SECONDS]
+#          [--previous RESULTS_STORE_JSON] [--history SUMMARY_LINES_FILE]
 # Exit: 0 green night, 1 red night, 2 the job could not start.
-# Plain bash 3.2 (macOS /bin/bash) runs it too.
 set -u -o pipefail
 
-out='' night='' shard_files=0 rotation='' previous='' history=''
+out='' night='' shard_files=0 cursor='' max_shards='' stop_at='' deadline='' previous='' history=''
 while [ $# -gt 0 ]; do
   case $1 in
     --out) out=$2; shift 2 ;;
     --date) night=$2; shift 2 ;;
     --shard-files) shard_files=$2; shift 2 ;;
-    --rotation) rotation=$2; shift 2 ;;
+    --cursor) cursor=$2; shift 2 ;;
+    --max-shards) max_shards=$2; shift 2 ;;
+    --stop-at) stop_at=$2; shift 2 ;;
+    --deadline-epoch) deadline=$2; shift 2 ;;
     --previous) previous=$2; shift 2 ;;
     --history) history=$2; shift 2 ;;
     *) echo "run_nightly.sh: unknown argument $1" >&2; exit 2 ;;
   esac
 done
-[ -n "$out" ] || { echo "usage: run_nightly.sh --out DIR [--date YYYY-MM-DD] [--shard-files N] [--rotation I/K] [--previous FILE] [--history FILE]" >&2; exit 2; }
+usage="usage: run_nightly.sh --out DIR [--date YYYY-MM-DD] [--shard-files N] [--cursor FILE] [--max-shards K] [--stop-at HH:MM | --deadline-epoch S] [--previous FILE] [--history FILE]"
+[ -n "$out" ] || { echo "$usage" >&2; exit 2; }
 night=${night:-$(TZ=Asia/Tokyo date +%F)}
 [[ $night =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "run_nightly.sh: --date $night is not YYYY-MM-DD" >&2; exit 2; }
-[[ $shard_files =~ ^[0-9]+$ ]] || { echo "run_nightly.sh: --shard-files $shard_files is not a number" >&2; exit 2; }
+for number in "$shard_files" "${max_shards:-0}" "${deadline:-0}"; do
+  [[ $number =~ ^[0-9]+$ ]] || { echo "run_nightly.sh: $number is not a number" >&2; exit 2; }
+done
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
 mkdir -p "$out" && out=$(cd "$out" && pwd)
+cursor=${cursor:-$out/cursor.json}
 cd "$root" || exit 2
 report() { python3 "$root/scripts/nightly/nightly_report.py" "$@"; }
 step() { echo "## NIGHTLY $1 rc=$2${3:+ $3}"; }
+if [ -n "$stop_at" ]; then
+  deadline=$(report deadline "$stop_at") || exit 2
+fi
 
 export CARGO_TERM_COLOR=never ONEIRON_TESTKIT_TODAY=$night
 export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg oneiron_test_support"
 commit=$(git rev-parse HEAD) || exit 2
 rm -f "$out"/junit-*.xml "$out/pending-door.json"   # a reused --out dir must not lend an older night's results
-echo "## NIGHTLY head=${commit:0:12} date=$night shard_files=$shard_files rotation=${rotation:-none} jobs=${CARGO_BUILD_JOBS:-default} lib_jobs=${NIGHTLY_LIB_JOBS:-default}"
+echo "## NIGHTLY head=${commit:0:12} date=$night shard_files=$shard_files max_shards=${max_shards:-none} deadline=${deadline:-none} jobs=${CARGO_BUILD_JOBS:-default} lib_jobs=${NIGHTLY_LIB_JOBS:-default}"
 if ! cargo nextest --version > "$out/nextest-version.txt" 2>&1; then
   step nextest missing; exit 2
 fi
@@ -83,20 +102,18 @@ echo "## NIGHTLY nextest $(head -1 "$out/nextest-version.txt")"
 cargo metadata --locked --format-version 1 --no-deps > "$out/metadata.json" 2> "$out/metadata.err" || { step metadata $?; exit 2; }
 target=$(report field "$out/metadata.json" target_directory)
 plan=$out/plan.json
-plan_args=(--shard-files "$shard_files")
-[ -n "$rotation" ] && plan_args+=(--rotation "$rotation")
-report plan "$out/metadata.json" "${plan_args[@]}" > "$plan" || { step plan $?; exit 2; }
-echo "## NIGHTLY plan target=$target selections=$(report args "$plan" | cut -d' ' -f1 | tr '\n' ' ')"
+report plan "$out/metadata.json" --shard-files "$shard_files" --cursor "$cursor" > "$plan" || { step plan $?; exit 2; }
+echo "## NIGHTLY plan target=$target cursor=$(tr -d '\n' 2>/dev/null < "$cursor" || echo none) selections=$(report args "$plan" | cut -d' ' -f1 | tr '\n' ' ')"
 
 build_selection() {  # name -> 0 once its units build (failed units left out), 1 when it is dropped
-  local name=$1 round=0 rc log jobs=${CARGO_BUILD_JOBS:-}
+  local name=$1 round=0 rc log start jobs=${CARGO_BUILD_JOBS:-}
   local -a args
   [ "$name" = libs ] && [ -n "${NIGHTLY_LIB_JOBS:-}" ] && jobs=$NIGHTLY_LIB_JOBS
   while :; do
     round=$((round + 1))
     log=$out/build-$name-$round.log
     read -r -a args <<< "$(report args "$plan" --name "$name")"
-    local start=$SECONDS
+    start=$SECONDS
     if [ -n "$jobs" ]; then
       CARGO_BUILD_JOBS=$jobs cargo nextest run --no-run --locked --all-features "${args[@]}" > "$log" 2>&1
     else
@@ -134,11 +151,37 @@ delete_test_binaries() {  # selection name: its integration test binaries in the
   done < <(report tests "$plan" "$1")
 }
 
+memory_peak_kb() {  # the job's cgroup v2 memory peak, or n/a
+  local group file
+  group=$(sed -n 's/^0:://p' /proc/self/cgroup 2>/dev/null)
+  file=/sys/fs/cgroup$group/memory.peak
+  if [ -n "$group" ] && [ -r "$file" ]; then echo $(( $(cat "$file") / 1024 )); else echo n/a; fi
+}
+
+target_peak_kb=0
+measure() {  # selection name, its seconds
+  local size
+  size=$(du -sk "$target" 2>/dev/null | cut -f1)
+  [ "${size:-0}" -gt "$target_peak_kb" ] && target_peak_kb=$size
+  echo "## NIGHTLY measure after=$1 minutes=$(( ($2 + 30) / 60 )) target_kb=${size:-n/a} avail_kb=$(df -Pk "$target" | awk 'NR == 2 {print $4}') memory_peak_kb=$(memory_peak_kb)"
+}
+
 pending_filter='none()' expired_filter='none()' pending=0
 lib_report='kind(lib) & (package(oneiron) | package(oneiron-server))'
+shards_done=0 shard_seconds=0 longest=0
 for name in $(report args "$plan" | cut -d' ' -f1); do
+  if [ "$name" != libs ]; then
+    if [ -n "$max_shards" ] && [ "$shards_done" -ge "$max_shards" ]; then
+      echo "## NIGHTLY stop reason=max-shards next=$name"; break
+    fi
+    if [ -n "$deadline" ] && [ $(( $(date +%s) + longest )) -gt "$deadline" ]; then
+      echo "## NIGHTLY stop reason=deadline next=$name longest_shard_seconds=$longest"; break
+    fi
+  fi
+  started=$SECONDS
   if ! build_selection "$name"; then
     step "build-$name" dropped
+    [ "$name" != libs ] && report advance "$plan" "$name" "$cursor"
     continue
   fi
   if [ "$name" = libs ]; then
@@ -162,11 +205,16 @@ for name in $(report args "$plan" | cut -d' ' -f1); do
   if [ "${pending:-0}" != 0 ]; then
     run_stage pending pending-door "$pending_filter" "$name" -- "${sel_args[@]}"
   fi
-  if [ "$shard_files" -gt 0 ] && [ "$name" != libs ]; then
-    delete_test_binaries "$name"
+  measure "$name" $((SECONDS - started))
+  if [ "$name" != libs ]; then
+    [ "$shard_files" -gt 0 ] && delete_test_binaries "$name"
+    report advance "$plan" "$name" "$cursor"
+    took=$((SECONDS - started))
+    shards_done=$((shards_done + 1)) shard_seconds=$((shard_seconds + took))
+    [ "$took" -gt "$longest" ] && longest=$took
   fi
-  echo "## NIGHTLY disk after=$name avail_kb=$(df -Pk "$target" | awk 'NR == 2 {print $4}')"
 done
+echo "## NIGHTLY measured shards=$shards_done minutes_per_shard=$(( shards_done > 0 ? (shard_seconds / shards_done + 30) / 60 : 0 )) longest_shard_minutes=$(( (longest + 30) / 60 )) target_peak_kb=$target_peak_kb memory_peak_kb=$(memory_peak_kb) cursor=$(tr -d '\n' 2>/dev/null < "$cursor" || echo none)"
 
 summary_args=(--out "$out" --date "$night" --head "$commit" --plan "$plan"
   --pending-door "$out/pending-door.json" --baseline "$root/scripts/nightly/libtest-quarantine-baseline.tsv"
