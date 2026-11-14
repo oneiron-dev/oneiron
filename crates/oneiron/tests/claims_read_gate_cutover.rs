@@ -32,7 +32,9 @@ use rmpv::Value;
 /// The counterparty every send in this file addresses.
 const COUNTERPARTY: &str = "owen@example.com";
 const EMAIL: &str = "email";
-const SMS: &str = "sms";
+/// A send connector of a recipient class other than email (outbound
+/// manifests; no built-in pack on an unseeded vault).
+const DISCORD: &str = "discord";
 const VERB: &str = "send";
 /// A class no compiled table names; only an owner stamp can enforce it.
 const HOLD_CLASS: &str = "acme.legal_hold_contact";
@@ -254,21 +256,21 @@ fn an_unstamped_class_does_not_hold() {
 fn a_stamped_class_head_holds_only_its_own_channel_class() {
     let (_dir, vault, actor) = cutover_vault();
     put_hold_class(&vault, true);
-    put_hold_head(&vault, SMS);
+    put_hold_head(&vault, DISCORD);
 
     let email = dispatch(&vault, actor, EMAIL, "intent:email");
     assert!(
         !held(&email),
-        "an sms head does not hold an email send: {:?}",
+        "a discord head does not hold an email send: {:?}",
         email.gate_reason_codes
     );
-    let sms = dispatch(&vault, actor, SMS, "intent:sms");
+    let discord = dispatch(&vault, actor, DISCORD, "intent:discord");
     assert!(
-        held(&sms),
-        "the sms head holds an sms send: {:?}",
-        sms.gate_reason_codes
+        held(&discord),
+        "the discord head holds a discord send: {:?}",
+        discord.gate_reason_codes
     );
-    assert!(traces(&sms, ENFORCEMENT_HOLD_REASON));
+    assert!(traces(&discord, ENFORCEMENT_HOLD_REASON));
 }
 
 #[test]
