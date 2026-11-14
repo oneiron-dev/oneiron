@@ -65,7 +65,5 @@ pub(crate) use session::{enqueue_session_summary_in_txn, session_summary_exclude
 pub(crate) use word_sources::{WordSources, word_sources_in, word_sources_through_in};
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-SCOPE-SUMMARY-TESTS]: the lib test target's type check fails here (34 errors: E0061 x25, E0600 x3, E0308 x2, E0609 x2, E0063 x1, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
