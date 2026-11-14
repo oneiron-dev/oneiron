@@ -24,12 +24,10 @@ use crate::repo_mutation::mount::RepoMountRef;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::repo_proposal_record::RepoProposalStatus;
 
-/// One repo proposal, by ref.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeProposalViewRequest {
-    pub proposal_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::code_document::review_views::{
+    CodeProposalViewRequest, CodeRepoDiffRequest, CodeTreeRequest,
+};
 
 /// Who proposed a change, and why: the stamp its landed operation carries,
 /// each ref as the caller reads it.
@@ -80,27 +78,6 @@ pub struct CodeProposalFileView {
     pub changes: Vec<CodeChangeView>,
     pub landed: Option<CodeOperationView>,
     pub metadata_edit: Option<super::CodeFileMetadataEdit>,
-}
-
-/// One side of a repo diff: a code revision's tested files
-/// (`revision_ref`), or a git snapshot's files (`repo` and `snapshot_ref`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeTreeRequest {
-    #[serde(default)]
-    pub revision_ref: Option<String>,
-    #[serde(default)]
-    pub repo: Option<String>,
-    #[serde(default)]
-    pub snapshot_ref: Option<String>,
-}
-
-/// Two trees of a repository.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeRepoDiffRequest {
-    pub before: CodeTreeRequest,
-    pub after: CodeTreeRequest,
 }
 
 /// How one file changed between the trees.

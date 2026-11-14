@@ -33,30 +33,10 @@ const OUTCOME_VERB: &str = "vault.critic.outcome";
 const FINDINGS_VERB: &str = "vault.critic.findings";
 const NO_GRANT: &str = "no live Grant from a live owner names this agent and lists the verb";
 
-/// `vault.critic.outcome`'s input: one critique of a persisted review, and the
-/// anchor that settles it. Who records it and when come from the engine.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CriticOutcomeSubmit {
-    /// The review's `review.verdict` claim, 32-hex.
-    pub verdict_ref: String,
-    /// The reviewed target, 32-hex: the verdict's subject.
-    pub target_ref: String,
-    /// One critique of that review.
-    pub artifact_id: String,
-    pub anchor: CriticOutcomeAnchor,
-}
-
-/// What settles a critique.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum CriticOutcomeAnchor {
-    /// The live owner's own verdict: whether the critique held.
-    OwnerVerdict { accepted: bool },
-    /// The completed directed recheck of the sealed try, 32-hex, whose result
-    /// is the reviewed target. The engine reads what its findings settle.
-    SealRecheck { attempt_ref: String },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::critic::review::doors::{
+    CriticFindingsRequest, CriticOutcomeAnchor, CriticOutcomeSubmit,
+};
 
 /// A standing critique outcome as the engine recorded it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,16 +74,6 @@ pub struct CriticOutcomeView {
     /// The Grant that admitted an agent caller, 32-hex; absent for the owner.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant_ref: Option<String>,
-}
-
-/// `vault.critic.findings`'s input: one persisted review.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CriticFindingsRequest {
-    /// The review's `review.verdict` claim, 32-hex.
-    pub verdict_ref: String,
-    /// The reviewed target, 32-hex: the verdict's subject.
-    pub target_ref: String,
 }
 
 /// One calibration cell of the review's critiques.

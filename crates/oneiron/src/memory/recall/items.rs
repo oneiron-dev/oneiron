@@ -101,6 +101,16 @@ impl Memory<'_> {
             } else {
                 None
             };
+            // A CLAIM serves its value and predicate from its own body, beside
+            // the view: every reader but the owner reads them from the body
+            // the typed Nulled rule releases (ruling EXPORTDOORS Q4 = A), and
+            // a CLAIM whose body is withheld serves no item.
+            let body = match body {
+                Some(stored) if entity_type == ENTITY_TYPE_CLAIM => lane
+                    .released_body_in(txn, entity_type, &stored)?
+                    .map(std::borrow::Cow::into_owned),
+                body => body,
+            };
             let view = self.entity_view_of_in_txn(lane, txn, row, mode)?;
             Ok(Some((entity_type, body, view, turn, stale, handle)))
         })?;

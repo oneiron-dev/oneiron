@@ -54,13 +54,8 @@ fn corrupt() -> Error {
     Error::CorruptedIndex("body file envelope")
 }
 
-/// What one envelope of a file is.
-#[derive(Clone, Copy)]
-enum Role {
-    Chunk = 0,
-    Last = 1,
-    Terminal = 2,
-}
+#[doc(hidden)]
+use oneiron_verb_wire::store::body_envelope::frames::Role;
 
 /// Which of a file's keys an envelope is under: the body's, or its line
 /// index's.

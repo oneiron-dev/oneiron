@@ -8,22 +8,8 @@ use oneiron_model::llm::SafeguardModelBinding;
 
 use super::planes::PolicyPlane;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PolicyClassifySubject {
-    OutboundContent,
-    Action,
-}
-
-impl PolicyClassifySubject {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::OutboundContent => "outbound_content",
-            Self::Action => "action",
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::policy_model::request::PolicyClassifySubject;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolicyClassifyRequest {
