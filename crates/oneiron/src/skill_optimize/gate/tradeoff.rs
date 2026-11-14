@@ -51,14 +51,8 @@ const PREFERENCES_PREFIX: &[u8] = b"skill_optimize/tradeoff_preferences/v1\0";
 const ASK_PREFIX: &[u8] = b"skill_optimize/tradeoff_ask/v1\0";
 const LABEL: &str = "skill tradeoff record";
 
-/// A rule matches the exact sets of axes gained and lost, not unbound prose.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TradeoffRule {
-    pub gains: BTreeSet<String>,
-    pub losses: BTreeSet<String>,
-    pub choice: TradeoffChoice,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::gate::tradeoff::TradeoffRule;
 
 /// The preference part of a skill's goal record. The responsible person
 /// authors the rules and the judgment band. Learned rules come only from that
@@ -342,7 +336,12 @@ pub fn set_skill_tradeoff_preferences(
 ) -> Result<String> {
     vault.with_write_txn_grouped(|txn| {
         let actor = owner.revalidate_in_txn(vault, txn)?;
-        let definition = goal_definition_in_txn(vault, txn, skill)?;
+        let definition = goal_definition_in_txn(
+            vault,
+            txn,
+            skill,
+            Some(WriteActor::new(actor, EdgeActorClass::Human)),
+        )?;
         let previous = preferences_in_txn(vault, txn, &definition.goal_id)?;
         if previous
             .as_ref()
@@ -374,7 +373,13 @@ pub fn set_skill_tradeoff_preferences(
             &key(PREFERENCES_PREFIX, &definition.goal_id),
             &preferences,
         )?;
-        Ok(goal_definition_in_txn(vault, txn, skill)?.revision)
+        Ok(goal_definition_in_txn(
+            vault,
+            txn,
+            skill,
+            Some(WriteActor::new(actor, EdgeActorClass::Human)),
+        )?
+        .revision)
     })
 }
 
@@ -386,7 +391,8 @@ pub fn skill_tradeoff_preferences(
     skill: &EntityId,
 ) -> Result<Option<SkillTradeoffPreferences>> {
     let txn = vault.store.env.read_txn()?;
-    let definition = goal_definition_in_txn(vault, &txn, skill)?;
+    // Integrity: resolve only the preferences key; no project goal content is returned.
+    let definition = goal_definition_in_txn(vault, &txn, skill, None)?;
     preferences_in_txn(vault, &txn, &definition.goal_id)
 }
 
@@ -421,10 +427,11 @@ fn bound_ask_sourced_in_txn(
     else {
         return Ok((None, Some(Vec::new())));
     };
+    // Integrity: only compare the stored question's goal revision.
     if ask.pending != pending.id
         || require_open_optimizer_proposal(&vault.read_skill_record_in_txn(txn, &pending.proposal)?)
             .is_err()
-        || goal_definition_in_txn(vault, txn, &pending.skill)?.revision
+        || goal_definition_in_txn(vault, txn, &pending.skill, None)?.revision
             != ask.question.goal_revision
     {
         return Ok((None, None));
@@ -495,7 +502,8 @@ pub fn skill_tradeoff_asks_for(vault: &Vault, person: &EntityId) -> Result<Vec<S
         let Some((bound, preferences)) = bound_ask_in_txn(vault, &txn, &pending)? else {
             continue;
         };
-        let project = project_goal_in_txn(vault, &txn, &bound.question.goal_id)?;
+        // Integrity: only the project id and live role chain authorize this queue.
+        let project = project_goal_in_txn(vault, &txn, &bound.question.goal_id, None)?;
         if may_answer_in_txn(
             vault,
             &txn,
