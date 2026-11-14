@@ -807,7 +807,7 @@ class Screen:
         self.env = env
 
     def log(self, line):
-        print(line, flush=True)
+        print(line, file=sys.stderr, flush=True)  # stdout carries only the final JSON
 
     def cargo(self, side, argv, log_name):
         env = dict(self.env, CARGO_TARGET_DIR=str(self.target_root / f"target-{side}"))
