@@ -34,6 +34,7 @@ use crate::skills_pack::{self, OutputMode};
 pub(crate) mod api;
 pub(crate) mod credential_file;
 mod credential_helper;
+pub(crate) mod oauth_sign_in;
 pub use self::credential_helper::credential_helper;
 mod host_init;
 pub use self::host_init::host_init;
