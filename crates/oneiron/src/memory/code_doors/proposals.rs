@@ -9,7 +9,7 @@ use crate::store::repo_fork::RepoForkHash;
 use crate::{
     repo_mutation::RepoMutationRequest,
     store::repo_mutation_record::RepoMutationStatus,
-    store::repo_mutation_record::{RepoMutationOperation, RepoMutationOplogEntry},
+    store::repo_mutation_record::{RepoBundleFile, RepoMutationOperation, RepoMutationOplogEntry},
 };
 
 impl Memory<'_> {
@@ -28,6 +28,32 @@ impl Memory<'_> {
     ) -> MemoryResult<CodeProposalSubmitted> {
         let attribution = OwnerRequestAttribution::new("vault.code.proposal_submit", &input)?;
         self.code_proposal_submit(owner, input, None, &attribution)
+    }
+
+    /// `vault.code.proposal_submit_bundle`: stages one native file bundle
+    /// as a Proposed repository proposal through the unchanged engine
+    /// admission, which captures and retains the base at the pinned
+    /// commit. The engine mints the proposal id; nothing is approved,
+    /// queued, applied or retried. The answer names its submission
+    /// admission receipt (FIX 4338). Its session and provenance claim are
+    /// the engine's (NO-DOOR CODE-PROPOSAL-ATTRIBUTION). A bundle repairs
+    /// nothing.
+    pub fn code_proposal_submit_bundle_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: CodeProposalBundleSubmitRequest,
+    ) -> MemoryResult<CodeProposalSubmitted> {
+        let attribution =
+            OwnerRequestAttribution::new("vault.code.proposal_submit_bundle", &input)?;
+        let actor = self.code_owner(owner)?;
+        let repo_ref = self.code_repo(input.repo)?;
+        self.code_op_provenance_sources(&input.op_provenance)?;
+        let repo = input.repo;
+        let (request, catalog) = owner_bundle_submission(repo_ref, actor, input);
+        let proposal =
+            self.vault
+                .propose_repo_bundle_as_owner(owner, repo, request, catalog, &attribution)?;
+        self.code_submitted(repo, actor, &proposal)
     }
 
     /// Submits a fresh review of an approved ordinary file's proved redacted
@@ -158,7 +184,15 @@ impl Memory<'_> {
         if let Some(source) = input.repair_of {
             self.code_readable(source, Some(ENTITY_TYPE_CLAIM))?;
         }
-        let provenance = &input.op_provenance;
+        self.code_op_provenance_sources(&input.op_provenance)
+    }
+
+    /// Every operation provenance ref present read through the caller's
+    /// credential: the one-file and the bundle submissions share it.
+    fn code_op_provenance_sources(
+        &self,
+        provenance: &crate::code_document::CodeOpProvenance,
+    ) -> MemoryResult<()> {
         for id in [
             provenance.turn,
             provenance.activity,
@@ -190,6 +224,37 @@ pub(super) fn owner_submission(
         RepoMutationOperation::CommitFile {
             path: input.path,
             content: input.content,
+            message: input.message,
+        },
+    )
+    .with_actor_id(actor)
+    .with_op_provenance(input.op_provenance);
+    let review = input.catalog.map_or(
+        RepoProposalReview::VaultDefault,
+        RepoProposalReview::Explicit,
+    );
+    (request, review)
+}
+
+/// The CALL behind bundle admission policy: like [`owner_submission`],
+/// but the request carries every file of the bundle as one native
+/// `CommitFiles` change, each with its exact bytes or removal. The
+/// request names no session or provenance claim: the owner writer binds
+/// them. A bundle repairs nothing.
+pub(super) fn owner_bundle_submission(
+    repo_ref: RepoRef,
+    actor: EntityId,
+    input: CodeProposalBundleSubmitRequest,
+) -> (RepoMutationRequest, RepoProposalReview) {
+    let files = input
+        .files
+        .into_iter()
+        .map(|file| RepoBundleFile::new(file.path, file.content, file.mode))
+        .collect();
+    let request = RepoMutationRequest::new(
+        repo_ref,
+        RepoMutationOperation::CommitFiles {
+            files,
             message: input.message,
         },
     )
