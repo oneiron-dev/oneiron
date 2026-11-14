@@ -654,10 +654,12 @@ fn own_machine_window_keeps_rows_as_stored() -> Result<()> {
     Ok(())
 }
 
+/// The row as `get` serves it (`body`) and as it is stored (`raw`). The two
+/// bodies differ for a NOTE: `get` serves its body with the document's
+/// markdown hydrated in, and the stored body has no markdown member.
 fn read_stored_row(vault: &Vault, id: EntityId) -> Result<StoredRow> {
     let body = vault.get(&id)?.expect("stored body");
     let raw = vault.get_raw(&id)?.expect("stored metadata and body");
-    assert_eq!(&raw[ENTITY_METADATA_HEADER_LEN..], body.as_slice());
     Ok(StoredRow { id, body, raw })
 }
 
