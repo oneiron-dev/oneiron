@@ -18,6 +18,30 @@ pub struct ConnectorToolSchema {
     pub permissions: BTreeSet<String>,
     pub triggers: BTreeSet<String>,
     pub input_schema: Value,
+    /// The tool's declared output schema (MCP `outputSchema`; L8-31), resolved
+    /// as the input is. It only types the reply for the caller: one that does
+    /// not resolve is dropped, never a reason to refuse the connector. Absent
+    /// from the serialized row when none, so a manifest without one hashes as
+    /// it did before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
+}
+
+/// The largest literal schema, input or output, one tool may declare.
+const MAX_LITERAL_SCHEMA_BYTES: usize = 65_536;
+
+/// `schema` resolved, when it is an object within
+/// [`MAX_LITERAL_SCHEMA_BYTES`] that resolves to a schema the owner's slate
+/// admits (`slate::is_resolved_schema`); `None` otherwise, so an output
+/// schema never makes a slate invalid.
+fn resolved_output_schema(schema: &Value) -> Option<Value> {
+    let size = serde_json::to_vec(schema).ok()?.len();
+    if !schema.is_object() || size > MAX_LITERAL_SCHEMA_BYTES {
+        return None;
+    }
+    resolve_schema(schema, schema, &mut Vec::new(), 0)
+        .ok()
+        .filter(super::slate::is_resolved_schema)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,12 +77,13 @@ impl ResolvedConnectorManifest {
             if serde_json::to_vec(&tool.input_schema)
                 .map_err(|_| invalid())?
                 .len()
-                > 65_536
+                > MAX_LITERAL_SCHEMA_BYTES
             {
                 return Err(invalid());
             }
             tool.input_schema =
                 resolve_schema(&tool.input_schema, &tool.input_schema, &mut Vec::new(), 0)?;
+            tool.output_schema = tool.output_schema.as_ref().and_then(resolved_output_schema);
         }
         tools.sort_by(|a, b| a.name.cmp(&b.name));
         if tools.windows(2).any(|w| w[0].name == w[1].name) {
@@ -600,6 +625,13 @@ impl ConnectorManifestDrift {
                     reconsent_tools.insert(name.clone());
                 }
             }
+            // The output schema is text the caller reads as the reply's type
+            // (`connector.schema`): a changed one reaches it only after the
+            // owner's tap, as a widened input does.
+            if a.output_schema != b.output_schema {
+                kinds.insert(ConnectorDriftKind::Schema);
+                reconsent_tools.insert(name.clone());
+            }
             if a != b {
                 affected_tools.insert(name);
             }
@@ -647,6 +679,7 @@ mod tests {
     use serde_json::json;
     fn manifest(schema: Value, permission: &str, trigger: &str) -> ResolvedConnectorManifest {
         ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+            output_schema: None,
             name: "send".into(),
             permissions: [permission.into()].into(),
             triggers: [trigger.into()].into(),
@@ -691,8 +724,8 @@ mod tests {
         );
         let revision = ConnectorManifestDrift::between(&old, &old, "r1", "r2");
         assert!(revision.requires_reregistration && revision.needs_reconsent());
-        assert!(ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema { name:"send".into(), permissions: BTreeSet::new(), triggers: BTreeSet::new(), input_schema:json!({"$ref":"#/$defs/loop","$defs":{"loop":{"$ref":"#/$defs/loop"}}}) }]).is_err());
-        assert!(ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema { name:"send".into(), permissions: BTreeSet::new(), triggers: BTreeSet::new(), input_schema:json!({"if":{"properties":{"secret":{"$ref":"#/$defs/power"}}}, "$defs":{"power":{"type":"string"}}}) }]).is_err());
+        assert!(ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema { output_schema: None, name:"send".into(), permissions: BTreeSet::new(), triggers: BTreeSet::new(), input_schema:json!({"$ref":"#/$defs/loop","$defs":{"loop":{"$ref":"#/$defs/loop"}}}) }]).is_err());
+        assert!(ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema { output_schema: None, name:"send".into(), permissions: BTreeSet::new(), triggers: BTreeSet::new(), input_schema:json!({"if":{"properties":{"secret":{"$ref":"#/$defs/power"}}}, "$defs":{"power":{"type":"string"}}}) }]).is_err());
     }
 
     fn prepare_resolved(
@@ -764,6 +797,7 @@ mod tests {
         ] {
             assert!(
                 ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+                    output_schema: None,
                     name: "send".into(),
                     permissions: BTreeSet::new(),
                     triggers: BTreeSet::new(),

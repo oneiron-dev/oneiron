@@ -13,6 +13,7 @@ fn approve_scoped_external_fixture(vault: &crate::Vault, key_id: &EntityId) -> R
         }
     }
     let manifest = ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+        output_schema: None,
         name: "read_file".into(),
         permissions: ["read".into()].into(),
         triggers: Default::default(),

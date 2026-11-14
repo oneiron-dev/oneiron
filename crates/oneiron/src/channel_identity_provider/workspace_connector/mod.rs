@@ -405,6 +405,7 @@ pub fn workspace_manifest(module: &dyn WorkspaceApi) -> Result<ResolvedConnector
             .tools()
             .iter()
             .map(|tool| ConnectorToolSchema {
+                output_schema: None,
                 name: tool.name.to_owned(),
                 permissions: BTreeSet::from([tool.grant.to_owned()]),
                 triggers: BTreeSet::new(),
@@ -444,6 +445,7 @@ pub(crate) fn workspace_tool_schema(
         })?;
     Ok(crate::outbound_consent::ConnectorToolSchema::Approved {
         input_schema: declared.input_schema.clone(),
+        output_schema: declared.output_schema.clone(),
         destructive_hint: tool.writes,
     })
 }

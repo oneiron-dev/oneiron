@@ -287,6 +287,7 @@ impl Vault {
                 WebProviderKey::Backend | WebProviderKey::Secret { .. } => {
                     return Ok(ConnectorToolSchema::Approved {
                         input_schema: web_tool_input_schema(web_tool)?,
+                        output_schema: None,
                         destructive_hint: false,
                     });
                 }
@@ -318,6 +319,7 @@ impl Vault {
             self.connector_tool_class(&governed.key, &route, tool, read)?;
         Ok(ConnectorToolSchema::Approved {
             input_schema: governed.schema,
+            output_schema: governed.output_schema,
             destructive_hint,
         })
     }
@@ -822,6 +824,7 @@ impl Vault {
             key_id,
             key,
             schema,
+            output_schema: _,
         } = match governed {
             Ok(governed) => governed,
             Err(stop) => {

@@ -730,7 +730,8 @@ fn approved_manifest_pins(
 }
 
 /// One tool of the stamped slate as a resolved one-tool manifest, the shape
-/// the qualification suite admitted it in.
+/// the qualification suite admitted it in, with the output schema the owner
+/// stamped (L8-31): the one `connector.schema` serves from this key.
 fn tool_snapshot(slate: &ConnectorGrantSlate, tool: &str) -> Result<ResolvedConnectorManifest> {
     let entry = slate
         .tool(tool)
@@ -744,6 +745,7 @@ fn tool_snapshot(slate: &ConnectorGrantSlate, tool: &str) -> Result<ResolvedConn
         permissions: BTreeSet::new(),
         triggers: entry.trigger.iter().cloned().collect(),
         input_schema,
+        output_schema: entry.resolved_output_schema.clone(),
     }])
 }
 

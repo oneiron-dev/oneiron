@@ -80,6 +80,7 @@ pub(super) fn install_oracle_scoped_fixture(vault: &Vault) -> OracleScopedFixtur
         .expect("register pending scoped connector key");
     let manifest = crate::connector_key::ResolvedConnectorManifest::resolve(vec![
         crate::connector_key::ConnectorToolSchema {
+            output_schema: None,
             name: "read_file".into(),
             permissions: ["read".into()].into(),
             triggers: Default::default(),

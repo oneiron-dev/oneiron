@@ -18,6 +18,7 @@ fn register_catalog(
         .verbs
         .iter()
         .map(|name| SlateToolManifest {
+            resolved_output_schema: None,
             name: name.clone(),
             data_class: SlateDataClass::Personal,
             header_parameters: Vec::new(),
@@ -34,6 +35,7 @@ fn register_catalog(
         .collect();
     let manifest = if manifest.is_empty() {
         vec![SlateToolManifest {
+            resolved_output_schema: None,
             name: "read".into(),
             data_class: SlateDataClass::Personal,
             header_parameters: Vec::new(),
@@ -1562,6 +1564,7 @@ fn manifest_stage_retains_prior_and_revision_halts_until_owner() -> Result<()> {
     )?;
     let source = || {
         ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+        output_schema: None,
         name: "read".into(), permissions: ["read".into()].into(),
         triggers: BTreeSet::new(), input_schema: json!({"type":"object","properties":{"limit":{"type":"integer","default":10}}}),
     }]).unwrap()
@@ -1643,6 +1646,7 @@ fn manifest_stage_retains_prior_and_revision_halts_until_owner() -> Result<()> {
 fn drift_fixture_manifest(permission: &str, schema_bytes: usize) -> ResolvedConnectorManifest {
     use serde_json::json;
     ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+        output_schema: None,
         name: "send".into(), permissions: [permission.into()].into(),
         triggers: ["manual".into()].into(),
         input_schema: json!({"type":"object", "properties":{"value":{"type":"string", "description":"x".repeat(schema_bytes)}}}),
@@ -1824,6 +1828,7 @@ fn strict_permission_narrow_and_tool_removal_qualify_without_reconsent() -> Resu
     let suite = Suite(Cell::new(0));
     vault.register_connector_key(&id, ConnectorKeyRecord::active("line", None, vec![], 10))?;
     let tool = |name: &str, permissions: &[&str]| ConnectorToolSchema {
+        output_schema: None,
         name: name.into(),
         permissions: permissions
             .iter()
@@ -2084,6 +2089,7 @@ fn connector_admission_quota_policy_vault_and_holder_rows_narrow_without_poisoni
         ResolvedConnectorManifest::resolve(
             (0..count)
                 .map(|n| ConnectorToolSchema {
+                    output_schema: None,
                     name: format!("tool_{n:03}"),
                     permissions: ["read".to_owned()].into(),
                     triggers: Default::default(),
@@ -2211,6 +2217,7 @@ mod foreign_owner_proof {
     fn a_foreign_owner_proof_overrides_no_slate() -> Result<()> {
         let (_tmp, vault) = temp_vault();
         let manifest = vec![SlateToolManifest {
+            resolved_output_schema: None,
             name: "send".into(),
             data_class: SlateDataClass::Personal,
             header_parameters: vec![],
@@ -2277,6 +2284,7 @@ mod foreign_owner_proof {
         )?;
         let source = || {
             ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+                output_schema: None,
                 name: "read".into(),
                 permissions: ["read".into()].into(),
                 triggers: BTreeSet::new(),
