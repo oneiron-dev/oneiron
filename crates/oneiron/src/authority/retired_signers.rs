@@ -182,6 +182,21 @@ impl Retirements {
             .any(|fence| fence.kind == FenceKind::Handoff && fence.conflict)
     }
 
+    /// Whether `hash` is itself signed, as primary or co-signer, by a key a
+    /// closed fence holds, outside that fence's line: a row the fence refuses
+    /// for its own signer (`RetiredSigner`). The world refold folds a row
+    /// again with the refused rows beneath it crossed, never such a row
+    /// itself (REVIEW-7987).
+    pub(super) fn fences_signer_of(
+        &self,
+        hash: &AuthorityEntryHash,
+        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    ) -> bool {
+        self.fences
+            .iter()
+            .any(|fence| fence.signed_outside(hash, entries, &self.anchored))
+    }
+
     /// Whether a restriction `hash` stands on a retired key: it, or an entry
     /// in its ancestry, is signed by a key a closed fence holds, outside that
     /// fence's line. Such an entry proves nothing. The rows its own proof
