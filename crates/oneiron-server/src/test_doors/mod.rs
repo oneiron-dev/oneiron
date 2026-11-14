@@ -20,6 +20,4 @@ pub mod replay_admission;
 pub mod resident_pump;
 pub mod siwc_seat;
 pub mod solved_runs;
-#[cfg(unix)]
-pub mod user_service;
 pub mod workflow_park;

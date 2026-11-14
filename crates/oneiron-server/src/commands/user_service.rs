@@ -322,7 +322,7 @@ fn systemd_unit(
 
 /// The launchd agent for `oneiron` with [`local_servers::local_serve_args`],
 /// logging to the shipped agent's files under `home`.
-pub(crate) fn launchd_agent(
+fn launchd_agent(
     oneiron: &Path,
     config: &Path,
     settings_file: Option<&Path>,
@@ -528,4 +528,93 @@ fn supervise(program: &str, args: &[OsString], deadline: Option<Instant>) -> any
         String::from_utf8_lossy(&output.stderr).trim()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::{MARKER, launchd_agent, systemd_word};
+
+    fn strings(section: &str) -> Vec<String> {
+        section
+            .split("<string>")
+            .skip(1)
+            .map(|rest| {
+                rest.split_once("</string>")
+                    .expect("a closed string")
+                    .0
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    /// The macOS agent, rendered on any host: the shipped label, the hook's
+    /// `serve`, `RunAtLoad` and `KeepAlive`, the shipped log files, and no
+    /// `Sockets`, since the server binds its configured address itself.
+    #[test]
+    fn launchd_agent_runs_the_hook_config_without_a_socket() {
+        let agent = launchd_agent(
+            Path::new("/opt/oneiron/bin/oneiron"),
+            Path::new("/home/owen/.config/oneiron/oneiron.toml"),
+            Some(Path::new("/home/owen/settings&co.toml")),
+            Path::new("/home/owen"),
+        )
+        .expect("the agent renders");
+
+        assert!(agent.contains(&format!("<!-- {MARKER} -->")), "{agent}");
+        let (_, after_label) = agent.split_once("<key>Label</key>").expect("a label");
+        assert_eq!(
+            strings(after_label).first().map(String::as_str),
+            Some("com.oneiron.server")
+        );
+        let (_, after_arguments) = agent
+            .split_once("<key>ProgramArguments</key>")
+            .expect("program arguments");
+        let (arguments, _) = after_arguments
+            .split_once("</array>")
+            .expect("a closed array");
+        assert_eq!(
+            strings(arguments),
+            [
+                "/opt/oneiron/bin/oneiron",
+                "serve",
+                "--config",
+                "/home/owen/.config/oneiron/oneiron.toml",
+                "--settings-file",
+                "/home/owen/settings&amp;co.toml",
+                "--host",
+                "127.0.0.1",
+            ]
+        );
+        for key in ["RunAtLoad", "KeepAlive"] {
+            assert!(
+                agent.contains(&format!("<key>{key}</key>\n  <true/>")),
+                "{key} is true: {agent}"
+            );
+        }
+        assert!(!agent.contains("Sockets"), "{agent}");
+        assert!(
+            agent.contains("<string>/home/owen/Library/Logs/oneiron-server.log</string>")
+                && agent
+                    .contains("<string>/home/owen/Library/Logs/oneiron-server.err.log</string>"),
+            "{agent}"
+        );
+    }
+
+    /// An `ExecStart=` word keeps `%` and `$` literal and quotes a space.
+    #[test]
+    fn systemd_words_are_literal() {
+        assert_eq!(
+            systemd_word("/opt/oneiron/bin/oneiron"),
+            "/opt/oneiron/bin/oneiron"
+        );
+        assert_eq!(systemd_word("/home/owen/100%"), "/home/owen/100%%");
+        assert_eq!(systemd_word("/home/owen/$vault"), "/home/owen/$$vault");
+        assert_eq!(
+            systemd_word("/home/owen/My Vault/oneiron.toml"),
+            "\"/home/owen/My Vault/oneiron.toml\""
+        );
+        assert_eq!(systemd_word(r#"/home/owen/a"b"#), r#""/home/owen/a\"b""#);
+    }
 }

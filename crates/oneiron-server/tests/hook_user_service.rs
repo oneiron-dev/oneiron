@@ -1,4 +1,4 @@
-#![cfg(all(oneiron_test_support, target_os = "linux"))]
+#![cfg(target_os = "linux")]
 //! `oneiron user-service` and the hook's step 4 (ARCH-0028
 //! `#plugin-first-run`: "Otherwise, the hook starts a local server, with an
 //! optional user service. The setup steps live in the skill or the MCP
@@ -7,11 +7,11 @@
 //! The binary runs with a scratch `HOME`, `XDG_CONFIG_HOME` and
 //! `XDG_RUNTIME_DIR`, and a stand-in `systemctl` first on `PATH` that
 //! records each call and, on `--user start`, starts the unit's `ExecStart=`
-//! the way the user manager would. The launchd agent is checked through
-//! `oneiron_server::test_doors::user_service`.
+//! the way the user manager would. The launchd agent is checked by the unit
+//! tests in `commands/user_service.rs`.
 //!
-//! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
-//! -p oneiron-server --all-features --test hook_user_service`.
+//! Run with: `cargo test --locked -p oneiron-server --all-features --test
+//! hook_user_service`.
 #![allow(
     clippy::disallowed_methods,
     reason = "a test process starts its own subprocesses; the rule covers the server's crates"
@@ -517,73 +517,6 @@ fn session_start_step4_starts_the_installed_user_service() {
     // Stopped cleanly: nothing is left for the guards to kill.
     std::fs::remove_file(home.path("standin").join("service.pid")).expect("test fixture");
     std::mem::forget(servers);
-}
-
-#[test]
-fn launchd_agent_runs_the_hook_config_without_a_socket() {
-    let agent = oneiron_server::test_doors::user_service::launchd_agent(
-        Path::new("/opt/oneiron/bin/oneiron"),
-        Path::new("/home/owen/.config/oneiron/oneiron.toml"),
-        Some(Path::new("/home/owen/settings&co.toml")),
-        Path::new("/home/owen"),
-    )
-    .expect("the agent renders");
-
-    assert!(
-        agent.contains("<!-- Written by oneiron user-service install. -->"),
-        "{agent}"
-    );
-    let strings = |section: &str| -> Vec<String> {
-        section
-            .split("<string>")
-            .skip(1)
-            .map(|rest| {
-                rest.split_once("</string>")
-                    .expect("a closed string")
-                    .0
-                    .to_owned()
-            })
-            .collect()
-    };
-    let (_, after_label) = agent.split_once("<key>Label</key>").expect("a label");
-    assert_eq!(
-        strings(after_label).first().map(String::as_str),
-        Some("com.oneiron.server")
-    );
-    let (_, after_arguments) = agent
-        .split_once("<key>ProgramArguments</key>")
-        .expect("program arguments");
-    let (arguments, _) = after_arguments
-        .split_once("</array>")
-        .expect("a closed array");
-    assert_eq!(
-        strings(arguments),
-        [
-            "/opt/oneiron/bin/oneiron",
-            "serve",
-            "--config",
-            "/home/owen/.config/oneiron/oneiron.toml",
-            "--settings-file",
-            "/home/owen/settings&amp;co.toml",
-            "--host",
-            "127.0.0.1",
-        ]
-    );
-    for key in ["RunAtLoad", "KeepAlive"] {
-        assert!(
-            agent.contains(&format!("<key>{key}</key>\n  <true/>")),
-            "{key} is true: {agent}"
-        );
-    }
-    assert!(
-        !agent.contains("Sockets"),
-        "the server binds its own port: {agent}"
-    );
-    assert!(
-        agent.contains("<string>/home/owen/Library/Logs/oneiron-server.log</string>")
-            && agent.contains("<string>/home/owen/Library/Logs/oneiron-server.err.log</string>"),
-        "{agent}"
-    );
 }
 
 #[test]
