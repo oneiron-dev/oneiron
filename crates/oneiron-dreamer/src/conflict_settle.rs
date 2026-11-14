@@ -158,12 +158,7 @@ pub fn run(client: &OneironClient, input: &Input) -> Result<Outcome, Error> {
         let rows = rows_from_observed(conflict);
         let ruled = match rule_one(client, conflict, &rows, &start) {
             Ok(ruled) => ruled,
-            Err(error) => {
-                if !rulings.is_empty() {
-                    commit(client, settle_items(&rulings))?;
-                }
-                return Err(error);
-            }
+            Err(error) => return Err(error),
         };
         match ruled {
             RuleOutcome::Settled(settlement) => {

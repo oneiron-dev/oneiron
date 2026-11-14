@@ -84,7 +84,7 @@ impl BoundSettlePage {
 /// kept no member offers no row, and asks among hold both, dismiss and
 /// escalate beside the pages' answers, as the parked path asked.
 fn settle_evidence_ids(references: &[String]) -> MemoryResult<Vec<EntityId>> {
-    if references.is_empty() {
+    if references.len() < 2 {
         return Err(MemoryError::bad_request(
             "settlement evidence needs a conflict marker, then the rows the ask offers",
         ));
