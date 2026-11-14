@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, PoisonError};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{ClaimBody, ClaimSubject};
+use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::ports::EntityStoreRead;
@@ -16,9 +16,14 @@ use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 
+use super::ChannelIdentityShape;
 use super::address::AssignmentKey;
 use super::codec::{decode_channel_identity_body, is_channel_identity_claim_predicate};
 use super::facts::{ChannelIdentityFacts, assignment_heads_in_txn, channel_identity_facts_in_txn};
+use super::keys::{
+    PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE, PREDICATE_CHANNEL_IDENTITY_CHANNEL,
+    PREDICATE_CHANNEL_IDENTITY_SHAPE,
+};
 use super::lifecycle::ChannelIdentityState;
 use super::record::ChannelIdentity;
 
@@ -208,16 +213,169 @@ pub(super) fn conflicts(
     if slot.occupant.is_some_and(|other| other != *id) {
         return Ok(true);
     }
+    if slot.occupant.is_none() && retained_hold_in_txn(store, txn, &key, Some(id))?.is_some() {
+        return Ok(true);
+    }
     // Another identity's alias routes this address (ARCH-0063 R6).
     super::alias::alias_held_by_other_in_txn(store, txn, &key, id)
 }
 
 /// Whether an identity's slot holds `key`: an occupant or a retiring
-/// predecessor, a deleted row's hold included. Such an address is never
-/// free to be an alias.
+/// predecessor, a deleted row's hold included, also where this vault never
+/// held the row ([`retained_hold_in_txn`]). Such an address is never free to
+/// be an alias.
 pub(super) fn holds_key(store: &Store, txn: &heed::RoTxn<'_>, key: &AssignmentKey) -> Result<bool> {
     let slot = read_slot(store, txn, key)?;
-    Ok(slot.occupant.is_some() || slot.predecessor.is_some())
+    Ok(slot.occupant.is_some()
+        || slot.predecessor.is_some()
+        || retained_hold_in_txn(store, txn, key, None)?.is_some())
+}
+
+/// The deleted self-held identity that still holds `key` by its retained
+/// claims (census L3-14; Engine RULING L3-14 = A, 13 Nov 20:49; ARCH-0063
+/// #never-recycle-delete-built, the follow-up A2 of H102).
+///
+/// A self-held delete keeps its address forever, but the slot that says so
+/// ([`clear_assignment_for_delete`]) is this vault's own side row. A replica
+/// that never held the row gets no slot and no marker. It does get the
+/// identity's `channel_identity.*` claims: the delete closed each head
+/// `retracted` and kept it, with its subject and value, and claim rows
+/// replicate. So every vault reads the same answer from the same rows,
+/// whatever arrived first, and no new row carries it.
+///
+/// An identity holds `key` here when it has no live row, its newest
+/// retracted channel and address heads name `key`, and its newest retracted
+/// shape head is not `delegated_grant`: a delegated delete frees its key.
+/// `except` is never its own hold. Only admission asks this, and only for a
+/// key no slot holds: routing an empty slot already routes nothing.
+fn retained_hold_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &AssignmentKey,
+    except: Option<&EntityId>,
+) -> Result<Option<EntityId>> {
+    // Each identity's newest retracted head of one predicate, by `valid_to`.
+    let newest_retracted = |predicate: &str,
+                            only: Option<&BTreeSet<EntityId>>|
+     -> Result<BTreeMap<EntityId, (u64, String)>> {
+        let mut newest: BTreeMap<EntityId, (u64, String)> = BTreeMap::new();
+        for claim_id in crate::claim::claim_ids_for_predicate_in_txn(store, txn, predicate)? {
+            let Some(raw) = store.port_entity_record(txn, &claim_id)? else {
+                continue;
+            };
+            if raw.entity_type != ENTITY_TYPE_CLAIM {
+                continue;
+            }
+            let body = crate::claim::decode_claim_body(&raw.body, true)?;
+            let (ClaimSubject::Entity(subject), Some(value)) = (body.subject, body.value.as_str())
+            else {
+                continue;
+            };
+            if body.predicate != predicate
+                || body.lifecycle != ClaimLifecycleStatus::Retracted
+                || !matches!(
+                    body.approval,
+                    ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+                )
+                || only.is_some_and(|only| !only.contains(&subject))
+            {
+                continue;
+            }
+            let closed_at = body.valid_to.unwrap_or(0);
+            if newest
+                .get(&subject)
+                .is_none_or(|(seen, _)| *seen < closed_at)
+            {
+                newest.insert(subject, (closed_at, value.to_owned()));
+            }
+        }
+        Ok(newest)
+    };
+    // Addresses first: a key no retained address names costs one posting list.
+    let addresses = newest_retracted(PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE, None)?;
+    let candidates: BTreeSet<EntityId> = addresses
+        .iter()
+        .filter(|(id, (_, address))| {
+            except != Some(*id) && AssignmentKey::of(key.channel(), address) == *key
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    let channels = newest_retracted(PREDICATE_CHANNEL_IDENTITY_CHANNEL, Some(&candidates))?;
+    let shapes = newest_retracted(PREDICATE_CHANNEL_IDENTITY_SHAPE, Some(&candidates))?;
+    for id in candidates {
+        let (Some((_, channel)), Some((_, address)), Some((_, shape))) =
+            (channels.get(&id), addresses.get(&id), shapes.get(&id))
+        else {
+            continue;
+        };
+        if shape.as_str() == ChannelIdentityShape::DelegatedGrant.as_str()
+            || AssignmentKey::of(channel, address) != *key
+        {
+            continue;
+        }
+        // A live row holds its pair through its own slot, never through a
+        // closed claim; a soft erase leaves a header-only shell.
+        if store
+            .port_entity_record(txn, &id)?
+            .is_some_and(|row| !row.body.is_empty())
+        {
+            continue;
+        }
+        return Ok(Some(id));
+    }
+    Ok(None)
+}
+
+/// The local generic claim door's rule for the `channel_identity.*` family
+/// (Engine RULING L3-14-RETAINED-HOLD-FORGE = A, 14 Nov 05:22). Retracted
+/// heads are what [`retained_hold_in_txn`] reads, so a writer must not be
+/// able to make one: a claim of the family is born Active, about a live
+/// CHANNEL_IDENTITY row, and an Active correction head on a live identity
+/// still re-keys its slot (OF-272).
+///
+/// A put that rewrites the stored claim at the same id keeps that claim's
+/// predicate and subject, so it makes no new head and is not a birth: a
+/// retraction or supersession of an identity's own head, or the owner's
+/// value redaction of a deleted identity's retained one.
+///
+/// `admit_claim_put` asks this for local puts through the generic doors
+/// only. The replicated door and the engine's own writers (the reserved
+/// door: the head writer and the delete's retraction) never reach it.
+pub(crate) fn guard_generic_claim_put_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &ClaimBody,
+) -> Result<()> {
+    if !is_channel_identity_claim_predicate(&body.predicate)
+        || stored_claim_body(store, txn, id)?
+            .is_some_and(|prior| prior.predicate == body.predicate && prior.subject == body.subject)
+    {
+        return Ok(());
+    }
+    let ClaimSubject::Entity(subject) = body.subject else {
+        return Err(Error::InvalidClaimBody(
+            "channel_identity claim subject must be an entity",
+        ));
+    };
+    // A soft erase leaves a header-only shell, which is no live row.
+    if !store
+        .port_entity_record(txn, &subject)?
+        .is_some_and(|row| row.entity_type == ENTITY_TYPE_CHANNEL_IDENTITY && !row.body.is_empty())
+    {
+        return Err(Error::InvalidClaimBody(
+            "a channel_identity claim must be about a live channel identity",
+        ));
+    }
+    if body.lifecycle != ClaimLifecycleStatus::Active {
+        return Err(Error::InvalidClaimBody(
+            "a channel_identity claim is born active",
+        ));
+    }
+    Ok(())
 }
 
 /// The one slot law for put, claim re-key and rebuild (OF-272). An occupying
@@ -291,6 +449,15 @@ fn move_assignment_slot(
         }
     }
     let mut slot = read_slot(store, txn, key)?;
+    // A deleted self-held identity this vault never held still holds the
+    // key (L3-14): a fresh occupant is refused here as on the vault that
+    // deleted it.
+    if occupies
+        && slot.occupant.is_none()
+        && retained_hold_in_txn(store, txn, key, Some(id))?.is_some()
+    {
+        return Err(Error::Record(RecordError::ChannelIdentityAlreadyExists));
+    }
     let held = known && (moved || slot.predecessor == Some(*id));
     stage_assignment_slot(&mut slot, *id, occupies, held)?;
     write_slot(store, txn, key, slot)
