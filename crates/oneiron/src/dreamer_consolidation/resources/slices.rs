@@ -1,6 +1,5 @@
 //! Read-only extraction children attenuated from one prepared branch.
 use super::*;
-use crate::claim::RelationshipRead;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 
 pub(in crate::dreamer_consolidation) struct ExtractionSlice {
@@ -97,56 +96,30 @@ impl BranchResources<'_> {
             }
             for chunk in group.chunks(turns_per_child) {
                 let ids: BTreeSet<_> = chunk.iter().map(|(id, _)| *id).collect();
-                let parents: BTreeSet<_> = ids.iter().filter_map(|id| self.turns.get(id)).collect();
-                let mut scope = self.request_scope();
-                // Keep its own conversations and the buckets, but remove every
-                // sibling TURN, every other part's conversation, MESSAGE and
-                // prior head from this child's capabilities.
-                for (id, source) in &self.sources {
-                    if (self.turns.contains_key(id) && !ids.contains(id))
-                        || (self.is_part_parent(id) && !parents.contains(id))
-                        || (self.priors.contains_key(id) && !known.shows(*id))
-                    {
-                        scope.readable.remove(&source.resource);
-                        scope.writable.remove(&source.resource);
-                    }
-                }
-                let kept_memberships: BTreeSet<_> = known
-                    .membership_versions()
-                    .map(|(_, version)| version.clone())
-                    .collect();
-                for (_, version) in self.known.membership_versions() {
-                    if !kept_memberships.contains(version) {
-                        scope.readable.remove(version);
-                        scope.writable.remove(version);
-                    }
-                }
-                let kept_messages: BTreeSet<_> = ids
+                let parents: BTreeSet<EntityId> = ids
                     .iter()
-                    .filter_map(|id| self.texts.get(id))
-                    .flat_map(TurnText::versions)
-                    .map(|(_, version)| version.clone())
+                    .filter_map(|id| self.turns.get(id))
+                    .copied()
                     .collect();
-                for version in self
-                    .texts
-                    .values()
-                    .flat_map(TurnText::versions)
-                    .map(|(_, version)| version)
-                {
-                    if !kept_messages.contains(version) {
-                        scope.readable.remove(version);
-                        scope.writable.remove(version);
-                    }
-                }
-                // An unbound branch's words still carry their MESSAGEs'
-                // labels: the chunk binds to the relationships every labelled
-                // word shares (the empty set when they share none), so a
-                // candidate that names no relationship inherits the strictest
-                // label and never `all`, and one that names a relationship
-                // stays inside it (S63E-RULED, lead 9 Nov 19:0x).
-                if scope.relationship.is_none() {
-                    scope.relationship = self.word_bound(&ids)?;
-                }
+                let base = self.request_scope();
+                let is_parent = |id: &EntityId| self.is_part_parent(id);
+                let shows = |id: EntityId| known.shows(id);
+                let inputs = super::extraction_scope::ExtractionScopeInputs {
+                    sources: &self.sources,
+                    turns: &self.turns,
+                    priors: &self.priors,
+                    texts: &self.texts,
+                    cited: &ids,
+                    cited_parents: &parents,
+                    is_part_parent: &is_parent,
+                    shows_prior: &shows,
+                    kept_listing: Some(&known),
+                    whole_listing: &self.known,
+                };
+                let scope =
+                    super::extraction_scope::attenuate_extraction_scope(&base, &inputs, || {
+                        self.word_bound(&ids)
+                    })?;
                 // The relationships a candidate may hold within: the bound
                 // one, or none listed for words that carry no label.
                 let rels: Vec<EntityId> = scope.relationship.iter().flatten().copied().collect();
@@ -227,36 +200,7 @@ impl BranchResources<'_> {
     fn word_bound(&self, turns: &BTreeSet<EntityId>) -> Result<Option<BTreeSet<EntityId>>> {
         let vault = self.read.vault();
         let txn = vault.store.env.read_txn()?;
-        let mut bound: Option<BTreeSet<EntityId>> = None;
-        // The MESSAGEs whose words the transcript shows, not every pinned
-        // child: a hidden or unfinished one is read by no call, so its label
-        // binds nothing (review round 1 of #6903).
-        let messages = turns
-            .iter()
-            .filter_map(|id| self.texts.get(id))
-            .flat_map(TurnText::projection);
-        for message in messages {
-            let Some(raw) = vault.get_raw_in(&txn, &message)? else {
-                continue;
-            };
-            let label: BTreeSet<EntityId> =
-                match crate::claim::relationship_read(&vault.store, &txn, &message, &raw) {
-                    Ok(RelationshipRead::Gated { private: true, .. }) | Err(_) => BTreeSet::new(),
-                    Ok(RelationshipRead::Gated {
-                        space: Some(space), ..
-                    }) => space.into_iter().collect(),
-                    Ok(
-                        RelationshipRead::Gated { space: None, .. } | RelationshipRead::Decided(_),
-                    ) => {
-                        continue;
-                    }
-                };
-            bound = Some(match bound {
-                None => label,
-                Some(held) => held.intersection(&label).copied().collect(),
-            });
-        }
-        Ok(bound)
+        super::extraction_scope::word_bound_in_txn(vault, &txn, &self.texts, turns)
     }
 }
 

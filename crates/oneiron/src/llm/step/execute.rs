@@ -211,7 +211,7 @@ pub(super) async fn call_as_step_with_fallbacks_and_retries(
     .await
 }
 
-async fn durable_step(
+pub(super) async fn durable_step(
     ctx: &DurableStepContext<'_>,
     backend: &dyn LlmBackend,
     guard: &BudgetGuard,

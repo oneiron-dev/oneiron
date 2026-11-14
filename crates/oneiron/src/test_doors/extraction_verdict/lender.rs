@@ -109,6 +109,23 @@ impl ExtractionVerdictFixture {
         }
     }
 
+    /// Shares the fixture's reasoner, model and binding, so a sibling
+    /// extraction-role lender routes the same backend as the verdict leg.
+    #[must_use]
+    pub fn extraction_route(&self) -> (Arc<dyn LlmBackend>, ModelId, HostInferenceBinding) {
+        (
+            Arc::clone(&self.reasoner),
+            self.model.clone(),
+            self.binding.clone(),
+        )
+    }
+
+    /// Borrows the fixture's shared native tally for a sibling extraction-step loan.
+    #[must_use]
+    pub fn charges(&self) -> &Mutex<StepChargeTally> {
+        &self.charges
+    }
+
     /// Builds the fixture around `reasoner` and shares it for the lender to own: a
     /// current-thread runtime, the pass guard, the shipped decisions, the fixture model
     /// with its advertised binding, the frozen pass clock and an empty shared tally.
