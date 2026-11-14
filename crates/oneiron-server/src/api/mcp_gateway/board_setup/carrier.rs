@@ -158,9 +158,10 @@ pub(in crate::api::mcp_gateway) fn mcp_board_verb_error(
 /// row moved out of its ceiling) refuses the continuation, and the caller
 /// starts over from page one under the read it holds now. Which rows its read
 /// admitted is judged at page one's mint, after its producer ran, so the
-/// vault's authority generation is read here, before the producer: a Grant
-/// revoked in between moves it, and page one then keeps every row it was
-/// made from (`mcp_page_rows_read_now`).
+/// vault's authority is read here, before the producer: a Grant revoked in
+/// between moves its generation, one that expires in between its
+/// authorization time, and page one then keeps every row it was made from
+/// (`mcp_page_rows_read_now`).
 pub(in crate::api::mcp_gateway) async fn mcp_preflight_page(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
@@ -174,8 +175,8 @@ pub(in crate::api::mcp_gateway) async fn mcp_preflight_page(
             continuation: None,
             continuable,
             producer_epoch: None,
-            authority_generation: if continuable {
-                server.vault.authority_generation().ok()
+            produced_under: if continuable {
+                McpAuthorityReading::read(&server.vault)
             } else {
                 None
             },
@@ -227,7 +228,7 @@ pub(in crate::api::mcp_gateway) async fn mcp_preflight_page(
         continuation: Some(state),
         continuable,
         producer_epoch: None,
-        authority_generation: None,
+        produced_under: None,
     })
 }
 
@@ -267,7 +268,7 @@ pub(in crate::api::mcp_gateway) async fn mcp_resolve_page(
             #[cfg(oneiron_test_support)]
             crate::test_doors::mcp_page_mint::run_before_page_mint(&server.vault);
             retained.read_rows =
-                mcp_page_rows_read_now(server, actor, snapshot, dispatch.authority_generation)?;
+                mcp_page_rows_read_now(server, actor, snapshot, dispatch.produced_under)?;
         }
         let mut registry = server.mcp_registry.lock().await;
         let cursor = registry.mint_page_cursor_with_snapshot(
@@ -288,17 +289,18 @@ pub(in crate::api::mcp_gateway) async fn mcp_resolve_page(
 /// credential reads the row, inside its registered world and facet ceiling.
 ///
 /// They are judged at the mint, after the producer ran. That answers which
-/// rows the producer's read admitted only while no authority commit landed
-/// since `produced_at`, the generation read before the producer ran. After
-/// one (a Grant revoked while page one was made), or with no generation read,
-/// that is unknown, and every row is kept: each continuation is then judged
-/// by all of them. A caller with no scoped read, or a page whose rows are
-/// unknown (FIX 5988), keeps none.
+/// rows the producer's read admitted only while the vault's authority is
+/// still `produced_under`, read before the producer ran: no authority commit
+/// landed and the authorization time did not move, so no Grant was revoked
+/// and none expired while page one was made. After either, or with no
+/// reading, that is unknown, and every row is kept: each continuation is then
+/// judged by all of them. A caller with no scoped read, or a page whose rows
+/// are unknown (FIX 5988), keeps none.
 fn mcp_page_rows_read_now(
     server: &SyncServer,
     actor: &McpResolvedActor,
     snapshot: &McpPageSnapshot,
-    produced_at: Option<u64>,
+    produced_under: Option<McpAuthorityReading>,
 ) -> Result<Vec<oneiron::EntityId>, McpGatewayError> {
     let rows = snapshot
         .rows
@@ -318,17 +320,20 @@ fn mcp_page_rows_read_now(
             kept.push(*row);
         }
     }
-    if !mcp_authority_unchanged_since(server, produced_at) {
+    if !mcp_authority_unchanged_since(server, produced_under) {
         return Ok(rows.into_iter().collect());
     }
     Ok(kept)
 }
 
-/// Whether the vault's authority generation is still `produced_at`. Read
-/// after the rows are judged, so no authority commit before the judgement
-/// goes unseen.
-fn mcp_authority_unchanged_since(server: &SyncServer, produced_at: Option<u64>) -> bool {
-    produced_at.is_some() && server.vault.authority_generation().ok() == produced_at
+/// Whether the vault's authority is still `produced_under`. Read after the
+/// rows are judged, so no authority commit and no expiry before the
+/// judgement goes unseen.
+fn mcp_authority_unchanged_since(
+    server: &SyncServer,
+    produced_under: Option<McpAuthorityReading>,
+) -> bool {
+    produced_under.is_some() && McpAuthorityReading::read(&server.vault) == produced_under
 }
 
 /// Whether the caller's read at this call still admits every row page one's

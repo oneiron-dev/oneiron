@@ -232,8 +232,29 @@ pub(super) struct McpPageDispatchState {
     pub(super) continuation: Option<McpPageCursorState>,
     continuable: bool,
     pub(super) producer_epoch: Option<u64>,
-    /// The vault's authority generation, read before a fresh continuable
-    /// page one's producer ran. `None` for a continuation, a call that is
-    /// not continuable, or a generation that could not be read.
-    pub(super) authority_generation: Option<u64>,
+    /// The vault's authority, read before a fresh continuable page one's
+    /// producer ran. `None` for a continuation, a call that is not
+    /// continuable, or an authority that could not be read.
+    pub(super) produced_under: Option<McpAuthorityReading>,
+}
+
+/// One reading of the vault's authority: its authority generation, which
+/// every authority commit moves (a Grant's create, narrow or revoke among
+/// them), and the time its authorization decisions judge at, which a Grant's
+/// expiry is judged against with no write. While neither moves, every read
+/// decision between two readings judges alike.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct McpAuthorityReading {
+    generation: u64,
+    authorization_time: u64,
+}
+
+impl McpAuthorityReading {
+    /// The vault's authority now; `None` when either part cannot be read.
+    pub(super) fn read(vault: &oneiron::Vault) -> Option<Self> {
+        Some(Self {
+            generation: vault.authority_generation().ok()?,
+            authorization_time: vault.authorization_time().ok()?,
+        })
+    }
 }

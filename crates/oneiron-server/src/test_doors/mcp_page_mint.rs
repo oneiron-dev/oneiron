@@ -1,7 +1,7 @@
 //! Door for `tests/mcp_page_continuation_rejudge.rs`: one act run at a vault's
 //! next page one mint, after its producer read and before the mint judges
-//! which rows its caller read, where a Grant revoked while page one is made
-//! lands.
+//! which rows its caller read, where a Grant revoked, or a clock step that
+//! expires one, while page one is made lands.
 
 use std::sync::{Mutex, PoisonError};
 

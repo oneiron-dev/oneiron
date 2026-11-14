@@ -9,7 +9,8 @@
 //! refusal, and the caller starts over from page one under the read it holds
 //! now. With nothing changed, page two is served. A Grant revoked while page
 //! one is made, after its producer read and before its mint, refuses page two
-//! too (a door runs the revoke at that point).
+//! too (a door runs the revoke at that point), and so does a Grant that
+//! expires there (the door steps the vault's manual clock to its end).
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support
 //! --test mcp_page_continuation_rejudge`.
@@ -30,6 +31,7 @@ use oneiron::claim::{base_world_id, default_project_id};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::{AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput};
+use oneiron::store::ports::ManualClock;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_server::test_doors::mcp_page_mint::before_next_page_mint;
@@ -48,6 +50,9 @@ const MCP_PATH: &str = "/mcp/tool-first";
 const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
 const RECEIPTS_TOOL: &str = "vault.receipts";
 const CURSOR_REFUSED: &str = "mcp_page_cursor_invalid";
+/// How long the expiring Grant lives on the manual clock: inside one
+/// authorization lease (5 s), so the step to its end renews nothing.
+const GRANT_LIFETIME_SECS: u64 = 2;
 
 /// A slip, the person it names and the key its holder proves it with.
 struct Holder {
@@ -71,8 +76,18 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> TestResult<Self> {
+        Self::open(None, None)
+    }
+
+    /// `clock`: a manual vault clock, else the real one. `expires_at`: the
+    /// reader's Grant's end, else none.
+    fn open(clock: Option<&Arc<ManualClock>>, expires_at: Option<u64>) -> TestResult<Self> {
         let dir = tempfile::tempdir()?;
-        let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device())?);
+        let mut config = VaultConfig::device();
+        if let Some(clock) = clock {
+            config.store_clock = clock.bundle();
+        }
+        let vault = Arc::new(Vault::open(dir.path(), config)?);
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
         let issuer = oneiron::test_support::provision_engine_machines(&vault);
         vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
@@ -98,7 +113,7 @@ impl Fixture {
                 status: AccessGrantStatus::Active,
                 created_at: 1,
                 revoked_at: None,
-                expires_at: None,
+                expires_at,
                 companion_bounds: None,
             },
         )?;
@@ -526,6 +541,82 @@ async fn rejudged_after_a_revoke_during_page_one() -> TestResult {
         error_kind(&second),
         Some(CURSOR_REFUSED),
         "a page made across a revoke continues only under every row it was made from: {second}"
+    );
+    let text = second.to_string();
+    let in_space = fixture.in_space.to_hex();
+    for withheld in [SPACE_TEXT, in_space.as_str()] {
+        assert!(
+            !text.contains(withheld),
+            "the refusal names {withheld}: {text}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn mcp_page_continuation_rejudged_after_a_grant_expires_during_page_one() -> TestResult {
+    on_engine_stack(rejudged_after_a_grant_expires_during_page_one)
+}
+
+/// The reader's Grant expires while page one is made: the vault's manual
+/// clock steps to its end after page one's producer read both claims, before
+/// its mint judged which rows the reader read. An expiry is judged at each
+/// read and writes nothing, so the authority generation stays where it was.
+/// Which rows the producer's read admitted is still unknown at the mint, so
+/// page two is judged by every row page one was made from, and refused.
+async fn rejudged_after_a_grant_expires_during_page_one() -> TestResult {
+    let start = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    let clock = ManualClock::new(start);
+    let expires_at = start + GRANT_LIFETIME_SECS;
+    let fixture = Fixture::open(Some(&clock), Some(expires_at))?;
+    let version = fixture.connect().await?;
+    let read = fixture.claims_read_now(3, &version).await?;
+    assert!(
+        read.contains(&fixture.open.to_hex()) && read.contains(&fixture.in_space.to_hex()),
+        "FIXTURE: before its Grant's end the reader reads both claims' receipts: {read:?}"
+    );
+    let expired = Arc::new(AtomicBool::new(false));
+    {
+        let clock = Arc::clone(&clock);
+        let expired = Arc::clone(&expired);
+        before_next_page_mint(&fixture.vault, move || {
+            clock.set(expires_at);
+            expired.store(true, Ordering::SeqCst);
+        });
+    }
+    let generation = fixture.vault.authority_generation()?;
+    let (status, first) = fixture
+        .receipts(4, &version, Some(json!({ "limit": 1 })))
+        .await?;
+    assert_eq!(status, 200, "{first}");
+    assert!(first.get("error").is_none(), "page one is served: {first}");
+    assert!(
+        expired.load(Ordering::SeqCst),
+        "FIXTURE: the Grant's end comes between page one's producer and its mint"
+    );
+    assert_eq!(
+        fixture.vault.authority_generation()?,
+        generation,
+        "FIXTURE: an expiry commits nothing to the authority log"
+    );
+    let cursor =
+        next_cursor(&first).ok_or_else(|| format!("FIXTURE: page one continues: {first}"))?;
+    let read = fixture.claims_read_now(5, &version).await?;
+    assert!(
+        !read.contains(&fixture.in_space.to_hex()) && read.contains(&fixture.open.to_hex()),
+        "FIXTURE: past its Grant's end, a fresh read drops the space's claim only: {read:?}"
+    );
+
+    let (status, second) = fixture
+        .receipts(6, &version, Some(json!({ "limit": 1, "cursor": cursor })))
+        .await?;
+    assert_eq!(status, 200, "{second}");
+    assert_eq!(
+        error_kind(&second),
+        Some(CURSOR_REFUSED),
+        "a page made across a Grant's expiry continues only under every row it was made from: {second}"
     );
     let text = second.to_string();
     let in_space = fixture.in_space.to_hex();
