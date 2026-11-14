@@ -19,6 +19,7 @@ use super::super::slate::{
 use super::super::txn::{
     append_connector_key_op_record, read_connector_key_in_txn, rewrite_connector_key_in_txn,
 };
+use super::protocol_narrow_ask::protocol_narrow_ask;
 use super::staged_slate::stages_beside;
 
 #[derive(Debug, thiserror::Error)]
@@ -30,9 +31,12 @@ pub enum ConnectorQualificationError {
 }
 
 impl Vault {
-    /// A revision change halts the old route immediately. A new owner slate
-    /// stamp and a fresh full suite are both required before it can reactivate.
-    /// Its per-grant keys are held until then.
+    /// A revision change halts the old route immediately: the key goes
+    /// Pending, and a fresh full suite must pass before it can reactivate.
+    /// Its per-grant keys are held until then. A next slate that only
+    /// narrows carries the owner's stamp forward (ARCH-0072 #drift), and the
+    /// owner is told once on the decision-ask queue (ARCH-0054 #drift); one
+    /// that widens needs a new owner stamp as well.
     pub fn revise_connector_protocol(
         &self,
         id: &EntityId,
@@ -114,6 +118,7 @@ impl Vault {
         let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
         let expanded = record.consent_required
             || slate_expands(&old_slate, &next_slate, &policy.connector_class_carry());
+        let mut narrow_ask = None;
         if same_revision && !expanded && next_slate_ref != old_slate_id {
             let receipt = record.qualification_receipt.clone();
             if let Some(carried) = self.carry_connector_slate_in_txn(
@@ -136,6 +141,21 @@ impl Vault {
                 self.stage_connector_slate_in_txn(&mut wtxn, id, record, next_slate_ref, at)?;
             wtxn.commit()?;
             return Ok(staged);
+        } else if !same_revision && !expanded && next_slate_ref != old_slate_id {
+            // A protocol revision that only narrows carries the owner's
+            // stamp forward (ARCH-0072 #drift): the key still halts and
+            // re-qualifies below, and only a widened row needs a tap. The
+            // owner is asked once, in this write (ARCH-0054 #drift).
+            let mut next = next_slate;
+            if next.carry_owner_stamp(&old_slate, &policy.connector_class_carry()) {
+                put_slate_in_txn(&self.store, &mut wtxn, next_slate_ref, &next)?;
+                narrow_ask = Some(protocol_narrow_ask(
+                    id,
+                    &record,
+                    &revision,
+                    (&old_slate, &next, next_slate_ref),
+                )?);
+            }
         }
         if next_slate_ref != old_slate_id {
             bind_connector_slate_in_txn(self, &mut wtxn, next_slate_ref, id)?;
@@ -169,6 +189,9 @@ impl Vault {
             at,
         )?;
         self.sync_derived_keys_in_txn(&mut wtxn, &pending, at)?;
+        if let Some(request) = &narrow_ask {
+            self.queue_decision_ask_in_txn(&mut wtxn, request, None)?;
+        }
         wtxn.commit()?;
         Ok(pending)
     }
