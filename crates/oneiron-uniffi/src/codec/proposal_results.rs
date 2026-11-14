@@ -304,6 +304,7 @@ impl Lift<oneiron::code_run::ConnectorCallReply> for crate::ConnectorCallReply {
                 result,
                 reasons,
                 budget_steering,
+                ..
             } => Ok(Self::Delivered {
                 result: result.map(crate::ConnectorToolResult::lift).transpose()?,
                 reasons: if reasons.is_empty() {

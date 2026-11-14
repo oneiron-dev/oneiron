@@ -113,6 +113,12 @@ pub enum ConnectorCallReply {
         /// work it is part of. Absent when none fired.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         budget_steering: Vec<String>,
+        /// The session-manifest receipt of the runner the call went
+        /// through (canon `#runner-fence`, row L8-27): a stdio connector's
+        /// child, with the fence's ruleset hash, or `fence_unproven`.
+        /// Absent for an HTTP connector, and on a replay.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_manifest: Option<oneiron_container::SessionManifest>,
     },
     /// Held for consent or governance; nothing was sent. A code-mode run
     /// parks on `call_ref` until the hold settles. `approval_digest` (FIX
@@ -216,16 +222,19 @@ impl ConnectorCallReply {
             ConnectorCallOutcome::Delivered {
                 result: Some(result),
                 budget_steering,
+                session_manifest,
                 ..
             } => Self::Delivered {
                 result: Some(ConnectorToolResult::foreign(name, tool, result)),
                 reasons: Vec::new(),
                 budget_steering,
+                session_manifest,
             },
             ConnectorCallOutcome::Delivered {
                 result: None,
                 result_absence,
                 budget_steering,
+                session_manifest,
                 ..
             } => Self::Delivered {
                 result: None,
@@ -241,6 +250,7 @@ impl ConnectorCallReply {
                     .to_owned(),
                 ],
                 budget_steering,
+                session_manifest,
             },
             ConnectorCallOutcome::Held {
                 call_ref,

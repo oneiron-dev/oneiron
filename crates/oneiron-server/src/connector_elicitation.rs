@@ -677,6 +677,7 @@ pub(crate) fn answer_connector_question(
                 result: Some(result),
                 result_absence: None,
                 budget_steering: Vec::new(),
+                session_manifest: None,
             },
         ),
         WorkerEvent::Failed {

@@ -227,6 +227,7 @@ impl SettledConnectorCall {
                 result: None,
                 result_absence: Some(ConnectorResultAbsence::NotRetained),
                 budget_steering: Vec::new(),
+                session_manifest: None,
             },
             Self::Refused {
                 decision_ref,

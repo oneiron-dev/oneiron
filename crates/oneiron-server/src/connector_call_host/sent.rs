@@ -24,6 +24,9 @@ pub(super) struct Sent {
     /// The wait the connector asked for when it refused the call for rate
     /// (FIX 11025).
     pub(super) provider_wait: Option<ProviderWait>,
+    /// The session manifest of the stdio connector child the call went to
+    /// (row L8-27); `None` for an HTTP connector.
+    pub(super) session_manifest: Option<oneiron_container::SessionManifest>,
 }
 
 impl Sent {
@@ -43,6 +46,7 @@ impl Sent {
             remote_task: None,
             held: None,
             provider_wait: None,
+            session_manifest: None,
         }
     }
 
@@ -64,6 +68,7 @@ impl Sent {
             remote_task: None,
             held: None,
             provider_wait: None,
+            session_manifest: None,
         }
     }
 
@@ -104,6 +109,7 @@ impl Sent {
             remote_task: None,
             held: None,
             provider_wait: None,
+            session_manifest: None,
         }
     }
 
@@ -119,6 +125,7 @@ impl Sent {
             remote_task: None,
             held: None,
             provider_wait: None,
+            session_manifest: None,
         }
     }
 
@@ -135,6 +142,7 @@ impl Sent {
             remote_task: Some(handle),
             held: None,
             provider_wait: None,
+            session_manifest: None,
         }
     }
 }

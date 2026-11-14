@@ -58,7 +58,8 @@ impl HostRunnerFence {
     /// with the outcome its session's manifest carries and a private temp
     /// directory as its `TMPDIR`. The temp directory exists before the rule
     /// is built, so the runner can write there even where the system temp
-    /// directory is on the way to a removed tree.
+    /// directory is on the way to a removed tree. A runner with no `workdir`
+    /// of its own starts in that temp directory (`/` where none was made).
     ///
     /// The runner still runs, unfenced and unproven, where the rule cannot
     /// be built for this spawn, and where `workdir` or its git directories
@@ -67,7 +68,7 @@ impl HostRunnerFence {
     /// that repository. Canon `#fence-unproven`: the engine never refuses
     /// the run.
     #[must_use]
-    pub fn command(&self, program: impl AsRef<OsStr>, workdir: &Path) -> RunnerCommand {
+    pub fn command(&self, program: impl AsRef<OsStr>, workdir: Option<&Path>) -> RunnerCommand {
         let scratch = tempfile::Builder::new()
             .prefix("oneiron-runner-")
             .tempdir()
@@ -78,7 +79,7 @@ impl HostRunnerFence {
                 );
             })
             .ok();
-        let (mut command, outcome) = if self.needs_removed_tree(workdir) {
+        let (mut command, outcome) = if workdir.is_some_and(|dir| self.needs_removed_tree(dir)) {
             tracing::warn!(
                 "runner fence: a runner's working tree needs a removed tree (a masked \
                  checkout's repository in the vault); it runs unproven"
@@ -96,7 +97,11 @@ impl HostRunnerFence {
                 }
             }
         };
-        command.current_dir(workdir);
+        command.current_dir(
+            workdir
+                .or_else(|| scratch.as_ref().map(tempfile::TempDir::path))
+                .unwrap_or(Path::new("/")),
+        );
         if let Some(scratch) = &scratch {
             command.env("TMPDIR", scratch.path());
         }
