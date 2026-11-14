@@ -38,8 +38,14 @@
   white-space: nowrap;
 }
 
-.sl-file-time {
+.sl-file-time,
+.sl-file-size {
   text-align: right;
+}
+
+/* A row with a size: the size at the right end, after the time. */
+.sl-file-row[data-sizes]:not([data-layout="list"]) {
+  grid-template-columns: 18px minmax(0, 1fr) 16ch 19ch 9ch;
 }
 
 /* A mark in place of the kind: a portrait. */
@@ -76,8 +82,15 @@
   color: var(--sl-ink-3);
 }
 
-.sl-file-list-time {
+.sl-file-list-time,
+.sl-file-list-size {
   text-align: right;
+}
+
+/* A list with a size column: the size at the right end, after the time. */
+.sl-file-list[data-sizes] > .sl-file-list-head,
+.sl-file-row[data-layout="list"][data-sizes] {
+  grid-template-columns: 24px minmax(0, 1fr) 16px 132px 52px 64px;
 }
 
 .sl-file-row[data-layout="list"] {

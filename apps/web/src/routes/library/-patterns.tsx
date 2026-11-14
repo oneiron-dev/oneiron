@@ -887,6 +887,18 @@ function FilesDemo() {
   )
 }
 
+/* A list of attachments as an agent's card lists them: no maker, a size at
+   the right end of each row. */
+function FilesWithSizes() {
+  return (
+    <FileRow.List whoHead="" data-specimen="files-sizes">
+      <FileRow kind="sheet" kindLabel="sheet" name="Acme store sales" time="16:40" size="1.2 MB" />
+      <FileRow kind="note" kindLabel="note" name="week 44 dips" time="03:10" size="14 KB" />
+      <FileRow kind="deck" kindLabel="deck" name="Hokuei pitch" time="Mon" size="8.4 MB" />
+    </FileRow.List>
+  )
+}
+
 /* ── the ledger ───────────────────────────────────────────────────────── */
 
 const CLAIMS: Array<[string, string, number, string]> = [
@@ -1112,6 +1124,9 @@ export function PatternSections() {
       <Section title="FileGroup, FileRow">
         <Specimen name="grouped by the thread they were born in; the seal says who made each" full>
           <FilesDemo />
+        </Specimen>
+        <Specimen name="a list with no maker and a size at the right end of each row" full>
+          <FilesWithSizes />
         </Specimen>
       </Section>
 
