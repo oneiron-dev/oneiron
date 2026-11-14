@@ -11,9 +11,13 @@
 //! workspace of hers still lands, and so does the vault's one live owner
 //! bringing it into the workspace it runs.
 //!
-//! No `cfg` is needed and every door used here is on main, so the file builds
-//! there for the red run: `cargo test -p oneiron --all-features --test
-//! companion_split`.
+//! An onboarding that reserved her slot before its workspace was
+//! established is refused when it establishes it, if her companion runs it
+//! by then (review round 1 of #7656). That case stops an onboarding after
+//! its first step through `oneiron::test_doors::member_slot_reservation`,
+//! so it runs only under `--cfg oneiron_test_support`; the other cases use
+//! doors on main: `RUSTFLAGS="--cfg oneiron_test_support" cargo test -p
+//! oneiron --all-features --test companion_split`.
 
 use oneiron::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
 use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
@@ -220,8 +224,23 @@ impl Fixture {
         member: EntityId,
         companion: CompanionChoice,
     ) -> Result<()> {
+        let intent = self.intent(onboarding_id, workspace, member, companion)?;
+        self.vault
+            .onboard_workspace_member(intent, &self.writer, None)
+            .map(|_| ())
+    }
+
+    /// The onboarding intent of `member` joining `workspace` with
+    /// `companion`.
+    fn intent(
+        &self,
+        onboarding_id: &str,
+        workspace: WorkspaceRosterPreset,
+        member: EntityId,
+        companion: CompanionChoice,
+    ) -> Result<MemberOnboardingIntent> {
         let profile_grant = companion.birth().map(|birth| birth.profile_grant_ref);
-        let intent = MemberOnboardingIntent {
+        Ok(MemberOnboardingIntent {
             onboarding_id: onboarding_id.to_owned(),
             workspace,
             person_ref: member,
@@ -237,10 +256,7 @@ impl Fixture {
             companion,
             delegated_mailbox: None,
             occurred_at: self.vault.now_recorded_at(),
-        };
-        self.vault
-            .onboard_workspace_member(intent, &self.writer, None)
-            .map(|_| ())
+        })
     }
 }
 
@@ -336,6 +352,45 @@ fn a_co_owner_who_brings_the_house_of_her_workspace_is_refused() -> Result<()> {
             companion,
         ),
         "a co-owner is not the sole owner, so she is refused",
+    );
+    Ok(())
+}
+
+/// Review round 1 of #7656: her onboarding into workspace B (run by
+/// sys.default) has reserved her slot and stopped before B is established,
+/// so no reserve can read B's house yet. Meanwhile she joins workspace A
+/// bringing sys.default as her companion, which lands: no house of a
+/// workspace she is in is her companion yet. When the first onboarding
+/// resumes and establishes B, the house of B would be her companion, so it
+/// is refused there.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_reserved_slot_in_an_unestablished_workspace_still_keeps_the_split() -> Result<()> {
+    use oneiron::test_doors::member_slot_reservation::reserve_member_slot;
+    let fx = fixture()?;
+    let member = seed_row(&fx.vault, ENTITY_TYPE_PERSON)?;
+    let born = fx.birth("garden.companion.b")?;
+    let first = fx.intent(
+        "join-b-paused",
+        fx.preset(WORKSPACE_B, VAULT_ID, fx.agent),
+        member,
+        born,
+    )?;
+    reserve_member_slot(&fx.vault, first.clone(), &fx.writer)
+        .expect("her slot in workspace B is reserved");
+    let companion = fx.bring(member, fx.agent)?;
+    fx.onboard(
+        "bring-house-of-b-early",
+        fx.preset(WORKSPACE_A, VAULT_ID, fx.other_house),
+        member,
+        companion,
+    )
+    .expect("no published workspace of hers is run by her companion yet");
+    assert_split(
+        fx.vault
+            .onboard_workspace_member(first, &fx.writer, None)
+            .map(|_| ()),
+        "the workspace her paused onboarding establishes is run by her companion",
     );
     Ok(())
 }
