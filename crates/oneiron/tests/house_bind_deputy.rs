@@ -7,7 +7,9 @@
 //! org root, and reads `runs <org> as deputy` on the PEOPLE roster. Who may
 //! set it is the role table's rule for a role above Admin: only an Owner
 //! seats a house at deputy, and only an Owner moves or clears it from there.
-//! An Admin keeps setting member, steward and admin.
+//! Steward is the owner's to give as well (C1, #6988; the Engine's ruling of
+//! 12 Nov 09:36 on HOUSE-ROLE-DEPUTY-AFTER-7071), so the same holds for a
+//! steward house. An Admin keeps setting member and admin.
 //!
 //! The first case opens a vault as a host starts one (rooted under the host,
 //! the owner bound, the root signed once) and the owner binds the stored
@@ -309,13 +311,56 @@ fn only_an_owner_seats_a_house_at_deputy_and_moves_it_from_there() -> Result<()>
 }
 
 #[test]
-fn an_admin_still_seats_a_house_at_member_steward_or_admin() -> Result<()> {
+fn only_an_owner_seats_a_house_at_steward_and_moves_it_from_there() -> Result<()> {
     let fx = org()?;
-    for role in [
-        FederationGrantRole::Member,
-        FederationGrantRole::Steward,
-        FederationGrantRole::Admin,
-    ] {
+
+    let error = fx
+        .vault
+        .set_house_role(&fx.admin_proof, WORKSPACE, FederationGrantRole::Steward)
+        .expect_err("an Admin cannot seat the house at steward");
+    assert!(error.to_string().contains(ASSIGNER_REFUSAL), "{error}");
+    assert!(
+        link_receipts(&fx.vault)?.is_empty(),
+        "the refused set keeps no receipt"
+    );
+
+    fx.vault
+        .set_house_role(&fx.owner_proof, WORKSPACE, FederationGrantRole::Steward)
+        .expect("the Owner seats the house at steward");
+    let receipts = link_receipts(&fx.vault)?;
+    assert_eq!(receipts.len(), 1, "the Owner's set keeps one receipt");
+    assert_eq!(field(&receipts[0], "role"), "steward");
+
+    // The role a set replaces is assigned too: an Admin cannot move a
+    // steward house to Member, nor clear it.
+    let error = fx
+        .vault
+        .set_house_role(&fx.admin_proof, WORKSPACE, FederationGrantRole::Member)
+        .expect_err("an Admin cannot move a steward house");
+    assert!(error.to_string().contains(ASSIGNER_REFUSAL), "{error}");
+    let error = fx
+        .vault
+        .clear_house_role(&fx.admin_proof, WORKSPACE)
+        .expect_err("an Admin cannot clear a steward house");
+    assert!(error.to_string().contains(ASSIGNER_REFUSAL), "{error}");
+    assert_eq!(
+        link_receipts(&fx.vault)?.len(),
+        1,
+        "the Admin's refused move and clear keep no receipt"
+    );
+
+    assert!(
+        fx.vault.clear_house_role(&fx.owner_proof, WORKSPACE)?,
+        "the Owner clears the steward house"
+    );
+    assert_eq!(link_receipts(&fx.vault)?.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn an_admin_still_seats_a_house_at_member_or_admin() -> Result<()> {
+    let fx = org()?;
+    for role in [FederationGrantRole::Member, FederationGrantRole::Admin] {
         fx.vault
             .set_house_role(&fx.admin_proof, WORKSPACE, role)
             .unwrap_or_else(|error| panic!("an Admin seats the house at {role:?}: {error}"));
@@ -325,7 +370,7 @@ fn an_admin_still_seats_a_house_at_member_steward_or_admin() -> Result<()> {
         .iter()
         .map(|receipt| field(receipt, "role"))
         .collect();
-    assert_eq!(roles, ["member", "steward", "admin"]);
+    assert_eq!(roles, ["member", "admin"]);
     assert!(
         receipts
             .iter()

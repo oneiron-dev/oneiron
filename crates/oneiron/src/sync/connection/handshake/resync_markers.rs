@@ -5,6 +5,12 @@ use crate::sync::window_rows::WINDOW_FULL_RESYNC_MARKER;
 
 use super::super::SyncConnection;
 use super::super::session::{FullResyncMarker, SessionFault};
+use crate::sync::SyncClient;
+use crate::sync::types::WindowKey;
+
+/// The fault of an opened-item session holding a marked window it cannot
+/// re-bootstrap over its own exchange.
+const SYNC_ALL_RECOVERY: &str = "opened-item full-resync requires explicit sync-all recovery";
 
 impl SyncConnection {
     pub(super) fn full_resync_markers(&self) -> Result<Vec<FullResyncMarker>, SessionFault> {
@@ -26,6 +32,39 @@ impl SyncConnection {
             markers.push(FullResyncMarker { window_key });
         }
         Ok(markers)
+    }
+
+    /// The marked windows an opened-item session re-bootstraps over this
+    /// connection (FIX 20202): each window this device promoted and the home
+    /// may read, over its promoted exchange, and each window of a world it
+    /// follows that the home granted on this connection, over that follow
+    /// (FOLLOWED-WINDOW-FULL-RESYNC). A followed window the home refused, or
+    /// was not asked for, keeps its marker for a later connection. Any other
+    /// marked window still needs sync-all.
+    pub(super) fn opened_resync_markers(
+        client: &SyncClient,
+        markers: Vec<FullResyncMarker>,
+    ) -> Result<Vec<FullResyncMarker>, SessionFault> {
+        let mut recoverable = Vec::with_capacity(markers.len());
+        for marker in markers {
+            let Some(key) = WindowKey::try_new(marker.window_key.as_str()) else {
+                return Err(SessionFault::local(SYNC_ALL_RECOVERY));
+            };
+            let promoted = client
+                .opened_window_promoted(&key)
+                .map_err(SessionFault::local)?;
+            if !promoted && client.follows_full_window(key.as_str()) {
+                if client.promotion_granted_on_connection(&key) && client.home_may_request(&key) {
+                    recoverable.push(marker);
+                }
+                continue;
+            }
+            if !(promoted && client.home_may_promote(&key) && client.home_may_request(&key)) {
+                return Err(SessionFault::local(SYNC_ALL_RECOVERY));
+            }
+            recoverable.push(marker);
+        }
+        Ok(recoverable)
     }
 
     pub(in crate::sync::connection) fn set_full_resync_markers(

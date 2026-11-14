@@ -49,7 +49,7 @@ fresh vault has another authority root, and the home refuses it.
 - A credential the home's `/ws` upgrade admits, in a file that only its owner can read.
 - A way to the home:
   - over the mesh, when the home's MACHINE row carries a paired mesh address here and the mesh
-    listener runs (a server built with the `mesh` feature, `ONEIRON_MESH_BIND=<addr:port>`, plus
+    listener runs (the default build's `mesh` feature and `ONEIRON_MESH_BIND=<addr:port>`, plus
     `ONEIRON_MESH_RELAYS` for private relays). A managed vault reads no environment: its supervisor
     passes them as `--mesh-bind <addr:port>` and `--mesh-relays <url>,<url>`, and without a bind its
     mesh is off. The machine dials from the listener's own endpoint and never binds a second one;
