@@ -101,7 +101,7 @@ pub(crate) async fn vault_shares_issue_view_link(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: oneiron::task_verb::sdk::ShareViewLinkRequest,
-) -> Listed<oneiron::authority::PairingLink> {
+) -> Listed<oneiron::task_verb::sdk::ShareViewLink> {
     const VERB: &str = "vault.shares.issue_view_link";
     let caller = match principal(server, auth, VERB) {
         Ok(caller) => caller,

@@ -866,3 +866,25 @@ pub fn room_pins_open_effect_digest(room: &EntityId) -> [u8; 32] {
     hasher.update(room.as_bytes());
     *hasher.finalize().as_bytes()
 }
+
+/// The digest of a view link to admitted share `share` for its recipient,
+/// as a credential of class `actor_class` (`human`, `agent` or `system`)
+/// that lives at most `slip_lifetime_secs`: the effect a member's
+/// `vault.shares.issue_view_link` on a share another issued is judged over
+/// (2k8f3; P25-SHAPE Q1 = A). The link's code, expiry and checkpoint pin
+/// are drawn when it issues, so they are no part of it. BLAKE3, key derived
+/// from `oneiron check_in share view link v1`, over the share's 16 id
+/// bytes, the class as its length in one byte and its bytes, and the
+/// lifetime as eight big-endian bytes.
+#[must_use]
+pub fn share_view_link_effect_digest(
+    share: &EntityId,
+    actor_class: &str,
+    slip_lifetime_secs: u64,
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in share view link v1");
+    hasher.update(share.as_bytes());
+    update_short_text(&mut hasher, actor_class);
+    hasher.update(&slip_lifetime_secs.to_be_bytes());
+    *hasher.finalize().as_bytes()
+}

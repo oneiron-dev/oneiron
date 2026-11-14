@@ -4,6 +4,39 @@
 use super::code::{draw_code, pairing_row_key};
 use super::*;
 use crate::authority::slip_vault::require_host;
+use crate::check_in::{self, CheckInDecision, WidenAct, WidenCheckIn};
+
+/// The saved verb a share's view link is, as check-in judges it.
+const VIEW_LINK_VERB: &str = "vault.shares.issue_view_link";
+
+/// A view link's share, as its writer authorizes and judges it.
+struct ShareLinkAct {
+    share: crate::EntityId,
+    actor: crate::write_envelope::WriteActor,
+    /// The recipient credential's class.
+    class: crate::edge::EdgeActorClass,
+    check_in_ref: Option<crate::EntityId>,
+}
+
+/// What one link's writer did.
+enum IssuedLink {
+    /// The link, and a share link's check-in decision.
+    Issued(PairingLink, Option<CheckInDecision>),
+    /// A member's link to a share another issued waits on this pending
+    /// check-in, committed alone.
+    Waits(crate::EntityId),
+}
+
+impl IssuedLink {
+    /// The link and its check-in decision, or `CHECK_IN_PENDING` naming the
+    /// check-in a share link waits on.
+    fn into_judged(self) -> Result<(PairingLink, Option<CheckInDecision>)> {
+        match self {
+            Self::Issued(link, decision) => Ok((link, decision)),
+            Self::Waits(id) => Err(crate::Error::CheckInPending(id.to_hex())),
+        }
+    }
+}
 
 impl Vault {
     /// Owner/host API: issue a one-hour enrollment link, scoped at creation.
@@ -40,6 +73,8 @@ impl Vault {
             None,
             None,
         )
+        .and_then(IssuedLink::into_judged)
+        .map(|(link, _)| link)
     }
     /// [`Self::issue_pairing_link_for_principal`] made by the authenticated
     /// owner in-process on this install (its CLI or its own app,
@@ -90,6 +125,8 @@ impl Vault {
             None,
             Some(surface),
         )
+        .and_then(IssuedLink::into_judged)
+        .map(|(link, _)| link)
     }
     /// [`Self::issue_owner_pairing_link`] that never mints a Grant, for a
     /// holder the engine itself creates with no verb to read by (an artifact
@@ -112,6 +149,8 @@ impl Vault {
             None,
             None,
         )
+        .and_then(IssuedLink::into_judged)
+        .map(|(link, _)| link)
     }
     /// The owner adds a machine, from any surface where he is authenticated
     /// (`surface`, audit only): the single-use link keeps his approval, his
@@ -138,11 +177,14 @@ impl Vault {
             None,
             None,
         )
+        .and_then(IssuedLink::into_judged)
+        .map(|(link, _)| link)
     }
     /// Issues a one-use link for the live share's own recipient. The issuer
     /// supplies the recipient's class; redemption supplies only its key.
     /// This credential can open the rendered view and its citations, not read
-    /// vault records or enrol a machine.
+    /// vault records or enrol a machine. A link that check-in makes wait
+    /// answers `CHECK_IN_PENDING` ([`Self::issue_share_view_link_judged`]).
     pub fn issue_share_view_link(
         &self,
         issuer: &HostSlipIssuer,
@@ -151,6 +193,39 @@ impl Vault {
         actor_class: crate::edge::EdgeActorClass,
         slip_lifetime_secs: u64,
     ) -> Result<PairingLink> {
+        self.issue_share_view_link_judged(
+            issuer,
+            actor,
+            share_id,
+            actor_class,
+            slip_lifetime_secs,
+            None,
+        )
+        .map(|(link, _)| link)
+    }
+    /// [`Self::issue_share_view_link`], judged by check-in in the link's
+    /// writer after every check that refuses it (ROLES-CHECKIN 2k8f;
+    /// MEMBER-SHARE-OWN = B; `check_in::person_widen_check_in_in_txn`): the
+    /// share's issuer links it at once (`own_item`); the vault's Owner on
+    /// their own proof; a member who links a share another issued is judged
+    /// under their role, and a Steward's or a Member's link waits
+    /// (`CHECK_IN_PENDING`: the pending check-in commits alone, and no link
+    /// is drawn) until the call that names the approved check-in as
+    /// `check_in_ref`. Answers the link and its decision.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::issue_share_view_link`]; `CHECK_IN_PENDING` while the link
+    /// waits; a `check_in_ref` no waiting link of this caller's names.
+    pub fn issue_share_view_link_judged(
+        &self,
+        issuer: &HostSlipIssuer,
+        actor: &crate::write_envelope::WriteActor,
+        share_id: crate::EntityId,
+        actor_class: crate::edge::EdgeActorClass,
+        slip_lifetime_secs: u64,
+        check_in_ref: Option<crate::EntityId>,
+    ) -> Result<(PairingLink, Option<CheckInDecision>)> {
         use oneiron_authority::federation::{ScopeAxis, SensitivityCeiling};
         let scope = Scope {
             worlds: ScopeAxis::All,
@@ -172,9 +247,15 @@ impl Vault {
             PairingPrincipal::default(),
             None,
             None,
-            Some((share_id, *actor, actor_class)),
+            Some(ShareLinkAct {
+                share: share_id,
+                actor: *actor,
+                class: actor_class,
+                check_in_ref,
+            }),
             None,
         )
+        .and_then(IssuedLink::into_judged)
     }
     #[allow(clippy::too_many_arguments)]
     fn issue_pairing_link_in(
@@ -189,32 +270,46 @@ impl Vault {
             ActSurface,
             MachineOwnership,
         )>,
-        share: Option<(
-            crate::EntityId,
-            crate::write_envelope::WriteActor,
-            crate::edge::EdgeActorClass,
-        )>,
+        share: Option<ShareLinkAct>,
         default_grant_surface: Option<ActSurface>,
-    ) -> Result<PairingLink> {
+    ) -> Result<IssuedLink> {
         if slip_lifetime_secs == 0 {
             return Err(invalid_authority());
         }
         // The engine's write door, not a raw writer: a default Grant's owner
         // act and row commit in this writer beside the link.
         self.with_write_txn_grouped(|txn| {
-            let (principal, share_ref) = match share {
-                None => (principal, None),
-                Some((id, actor, class)) => {
+            let (principal, share_ref, widen) = match share {
+                None => (principal, None, None),
+                Some(link) => {
                     let now = self.instant_in_txn(txn)?.secs();
-                    let share =
-                        crate::share::authorize_share_link_in_txn(self, txn, &id, &actor, now)?;
+                    let (share, issued) = crate::share::authorize_share_link_in_txn(
+                        self,
+                        txn,
+                        &link.share,
+                        &link.actor,
+                        now,
+                    )?;
+                    let class = link.class.gate_actor_class();
+                    let widen = WidenAct {
+                        actor: link.actor.entity_ref(),
+                        class: link.actor.actor_class(),
+                        owns_item: issued,
+                        verb: VIEW_LINK_VERB,
+                        effect_digest: check_in::share_view_link_effect_digest(
+                            &link.share,
+                            class,
+                            slip_lifetime_secs,
+                        ),
+                    };
                     (
                         PairingPrincipal {
                             holder_ref: Some(share.recipient_ref.to_hex()),
-                            actor_class: Some(class.gate_actor_class().to_owned()),
+                            actor_class: Some(class.to_owned()),
                             ..PairingPrincipal::default()
                         },
-                        Some(id),
+                        Some(link.share),
+                        Some((widen, link.check_in_ref)),
                     )
                 }
             };
@@ -246,6 +341,20 @@ impl Vault {
                 &scope,
                 principal.holder_ref.as_deref(),
             )?;
+            // A share link is judged once every check above admits it, and
+            // before any code is drawn.
+            let decision = match widen {
+                None => None,
+                Some((widen, check_in_ref)) => match check_in::person_widen_check_in_in_txn(
+                    self,
+                    txn,
+                    &widen,
+                    check_in_ref.as_ref(),
+                )? {
+                    WidenCheckIn::Go(decision) => decision,
+                    WidenCheckIn::Wait(id) => return Ok(IssuedLink::Waits(id)),
+                },
+            };
             let now = self.instant_in_txn(txn)?.secs();
             let (code, row_key) = self.free_pairing_code_in_txn(txn, issuer, now)?;
             let expires_at = now.saturating_add(CODE_TTL_SECS);
@@ -279,12 +388,15 @@ impl Vault {
                 invitation: None,
             };
             PAIRING_PENDING.put(&self.store, txn, &row_key, &pending)?;
-            Ok(PairingLink {
-                code,
-                expires_at,
-                pin: pin_ref,
-                comm,
-            })
+            Ok(IssuedLink::Issued(
+                PairingLink {
+                    code,
+                    expires_at,
+                    pin: pin_ref,
+                    comm,
+                },
+                decision,
+            ))
         })
     }
     /// A fresh code and its row key: one no outstanding link holds at `now`.

@@ -182,13 +182,38 @@ pub struct ShareViewLinkRequest {
     pub share_ref: String,
     pub actor_class: String,
     pub slip_lifetime_secs: u64,
+    /// The approved check-in of this member's earlier link to a share
+    /// another issued, with the same class and lifetime, which waited on it;
+    /// the link spends it (ROLES-CHECKIN 2k8f). Omitted otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
+}
+
+/// `vault.shares.issue_view_link`'s answer: the link, as a pairing link
+/// carries it, and its check-in decision (ROLES-CHECKIN 2k8f; Engine ruling
+/// P25-2K8-SCOPE Q4 = A). The code is a secret: like the pairing link, this
+/// answer has no `Debug`.
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ShareViewLink {
+    pub code: String,
+    pub expires_at: u64,
+    /// As [`crate::authority::PairingLink`]'s.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin: Option<crate::authority::PairingPinRef>,
+    pub comm: crate::authority::CommReach,
+    /// The share's issuer's `own_item`, the Owner's `own_proof`, or a
+    /// member's link under their role (with the check-in it spent); none
+    /// for an agent's or an unjudged person's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 /// Issues through this device's existing host-key custody on embedded handles.
 pub fn issue_share_view_link_as_caller(
     memory: &Memory<'_>,
     input: ShareViewLinkRequest,
-) -> MemoryResult<crate::authority::PairingLink> {
+) -> MemoryResult<ShareViewLink> {
     let issuer = memory.vault().load_host_slip_issuer()?;
     issue_share_view_link_with_issuer(memory, &issuer, input)
 }
@@ -198,8 +223,16 @@ pub fn issue_share_view_link_with_issuer(
     memory: &Memory<'_>,
     issuer: &crate::authority::HostSlipIssuer,
     input: ShareViewLinkRequest,
-) -> MemoryResult<crate::authority::PairingLink> {
+) -> MemoryResult<ShareViewLink> {
     let share = share_ref(&input.share_ref)?;
+    let check_in_ref = input
+        .check_in_ref
+        .as_deref()
+        .map(|hex| {
+            EntityId::from_hex(hex)
+                .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))
+        })
+        .transpose()?;
     let class = match input.actor_class.as_str() {
         "human" => crate::edge::EdgeActorClass::Human,
         "agent" => crate::edge::EdgeActorClass::Agent,
@@ -210,15 +243,22 @@ pub fn issue_share_view_link_with_issuer(
             ));
         }
     };
-    let link = memory.vault().issue_share_view_link(
+    let (link, check_in) = memory.vault().issue_share_view_link_judged(
         issuer,
         &memory.write_actor(),
         share,
         class,
         input.slip_lifetime_secs,
+        check_in_ref,
     )?;
     memory.produced_from([share]);
-    Ok(link)
+    Ok(ShareViewLink {
+        code: link.code,
+        expires_at: link.expires_at,
+        pin: link.pin,
+        comm: link.comm,
+        check_in,
+    })
 }
 
 /// `vault.shares.revoke`'s input: the share to stop.

@@ -144,5 +144,7 @@ pub use effect::standing_grant_effect_digest;
 pub(crate) use effect::person_door_go_decision_in_txn;
 pub use effect::{members_delegate_effect_digest, shared_policy_propose_effect_digest};
 // The widen doors' judge and effects (2k8f; MEMBER-SHARE-OWN = B).
-pub use effect::{mail_thread_share_effect_digest, room_pins_open_effect_digest};
+pub use effect::{
+    mail_thread_share_effect_digest, room_pins_open_effect_digest, share_view_link_effect_digest,
+};
 pub(crate) use widen::{WidenAct, WidenCheckIn, person_widen_check_in_in_txn};

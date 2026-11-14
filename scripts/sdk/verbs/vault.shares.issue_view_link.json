@@ -2,7 +2,7 @@
   "name": "vault.shares.issue_view_link",
   "description": "Issues a holder-bound view-only pairing link for one admitted share's recipient.",
   "input": "crate::task_verb::sdk::ShareViewLinkRequest",
-  "output": "crate::authority::PairingLink",
+  "output": "crate::task_verb::sdk::ShareViewLink",
   "call": "crate::task_verb::sdk::issue_share_view_link_as_caller(memory, input)?",
   "host_door": true,
   "host_door_precheck": false,

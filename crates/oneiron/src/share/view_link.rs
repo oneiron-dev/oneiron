@@ -30,13 +30,16 @@ pub(crate) fn live_share_for_holder_in_txn(
     Ok(Some(share))
 }
 
+/// The live share `share_id` `actor` may issue a view link to, and whether
+/// `actor` is its admitted issuer, read in `txn` at `now`: the issuer, or a
+/// human whose binding is active on an unconflicted root.
 pub(crate) fn authorize_share_link_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     share_id: &EntityId,
     actor: &WriteActor,
     now: u64,
-) -> Result<Share> {
+) -> Result<(Share, bool)> {
     let refused = || {
         Error::Record(RecordError::AuthorityRefused(
             "share link requires issuer or owner",
@@ -47,7 +50,8 @@ pub(crate) fn authorize_share_link_in_txn(
         Error::EntityNotFound => refused(),
         error => error,
     })?;
-    if Some(*actor) != admission.issuer {
+    let issued = Some(*actor) == admission.issuer;
+    if !issued {
         let fold = vault.authority_fold_readonly_in_txn(txn)?;
         if actor.actor_class() != EdgeActorClass::Human
             || fold.vault_root_is_conflicted()
@@ -56,8 +60,9 @@ pub(crate) fn authorize_share_link_in_txn(
             return Err(refused());
         }
     }
-    live_share_for_holder_in_txn(vault, txn, share_id, &share.recipient_ref, now)?
-        .ok_or_else(refused)
+    let share = live_share_for_holder_in_txn(vault, txn, share_id, &share.recipient_ref, now)?
+        .ok_or_else(refused)?;
+    Ok((share, issued))
 }
 
 /// A bound view's non-claim prompt sources, judged under the current share's
