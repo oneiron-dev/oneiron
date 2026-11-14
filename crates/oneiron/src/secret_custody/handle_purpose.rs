@@ -13,25 +13,10 @@ const PURPOSE_SET: &str = "gate.secret.handle_purpose.set";
 const PURPOSE_CLEARED: &str = "gate.secret.handle_purpose.cleared";
 const PURPOSE_CONTENT_KIND: &str = "secret_handle_purpose";
 
-/// The actual stored purpose, or a clear, and its owner-act receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SecretHandlePurposeSet {
-    pub purpose: Option<String>,
-    pub receipt: String,
-}
-
-/// A value-free purpose question derived from a newly found key's notice.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SecretPurposeQuestion {
-    pub record: EntityId,
-    pub handle: String,
-    pub name: String,
-    pub label: Option<String>,
-    pub suggested_label: Option<String>,
-    pub kind: String,
-    pub place: String,
-    pub found_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::secret_custody::handle_purpose::{
+    SecretHandlePurposeSet, SecretPurposeQuestion,
+};
 
 impl Vault {
     /// Reads only purpose metadata under the current owner's proof.

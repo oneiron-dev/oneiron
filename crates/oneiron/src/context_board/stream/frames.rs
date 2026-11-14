@@ -3,12 +3,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BoardRenderMode {
-    Resident,
-    Stream,
-}
+#[doc(hidden)]
+pub use oneiron_records::context_board::stream::frames::BoardRenderMode;
 
 #[doc(hidden)]
 pub use oneiron_records::context_board::stream::frames::StreamConnectionId;

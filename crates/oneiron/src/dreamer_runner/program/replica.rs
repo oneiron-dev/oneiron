@@ -53,9 +53,8 @@ use crate::sync::WindowKey;
 /// on its machine, as an arming that names a custody handle does.
 pub(crate) const MAX_ROW_BYTES: usize = 1 << 16;
 
-fn refused(reason: &'static str) -> Error {
-    Error::InvalidConfig(format!("turn program row refused: {reason}"))
-}
+#[doc(hidden)]
+use oneiron_records::dreamer_runner::program::replica::{encode, refused};
 
 /// What a carried arming row says.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,10 +118,6 @@ impl WakeRow {
             } => (*turn, *registration),
         }
     }
-}
-
-fn encode<T: Serialize>(row: &T) -> Result<Vec<u8>> {
-    serde_json::to_vec(row).map_err(|_| refused("does not encode"))
 }
 
 fn decode_arming(bytes: &[u8]) -> Result<ArmingRow> {

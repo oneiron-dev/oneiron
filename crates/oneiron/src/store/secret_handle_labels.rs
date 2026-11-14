@@ -15,13 +15,8 @@ use crate::store::Store;
 pub(crate) const LABEL: SideTable<EntityId, SecretHandleLabel, Named> =
     SideTable::new(&side_table::SECRET_HANDLE_LABEL);
 
-/// The stored owner-set label on one custody handle: the label text and the
-/// Gate receipt of the set that wrote it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SecretHandleLabel {
-    pub label: String,
-    pub receipt: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::store::secret_handle_labels::SecretHandleLabel;
 
 /// Drops the label on the custody record `custody`, whose row is being
 /// erased: the label must not survive it.

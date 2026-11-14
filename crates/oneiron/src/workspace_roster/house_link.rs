@@ -57,24 +57,8 @@ const RECEIPT_VERSION: u8 = 1;
 const RECEIPTS: SideTable<(EntityId, EntityId), HouseLinkReceipt, Named> =
     SideTable::new(&side_table::HOUSE_LINK_RECEIPT);
 
-/// What one receipt records.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum HouseLinkAct {
-    /// The house took its role in the org.
-    Bind,
-    /// The house left it.
-    Unbind,
-}
-
-impl HouseLinkAct {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Bind => "bind",
-            Self::Unbind => "unbind",
-        }
-    }
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::workspace_roster::house_link::HouseLinkAct;
 
 /// One bind or unbind of a house's org link, kept for the receipt read and
 /// the byline's bind intervals.

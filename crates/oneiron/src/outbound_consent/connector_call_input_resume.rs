@@ -32,17 +32,8 @@ use crate::secret_lease::SecretGrantRef;
 use super::connector_call::PENDING_CALLS;
 use super::connector_call_sent::{SentGeneration, SentGenerations};
 
-/// How a live exchange is taken up again after a restart.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ConnectorResumeProtocol {
-    /// 2026-07-28: the protocol Retry, re-sent from its request state once
-    /// the round is answered.
-    Retry,
-    /// 2025-06-18 and 2025-11-25: the reply stream, reattached after its
-    /// last event id.
-    Stream,
-}
+#[doc(hidden)]
+pub use oneiron_records::outbound_consent::connector_call_input_resume::ConnectorResumeProtocol;
 
 /// A round's sealed resume state, as the call's row keeps it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

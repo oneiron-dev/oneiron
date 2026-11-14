@@ -39,27 +39,8 @@ pub(super) use crate::store::gate_receipt::{
     SYSTEM_NOTICE_AUDIENCE_ALL, SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY,
 };
 
-/// Query for the EF-055 pending tray lane.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PendingTrayQuery {
-    pub now: u64,
-    pub limit: usize,
-}
-
-impl PendingTrayQuery {
-    #[must_use]
-    pub fn new(limit: usize) -> Self {
-        Self {
-            now: crate::unix_seconds_now(),
-            limit,
-        }
-    }
-
-    #[must_use]
-    pub const fn at(now: u64, limit: usize) -> Self {
-        Self { now, limit }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::receipt::family::PendingTrayQuery;
 
 /// One current pending ask for the logbook tray lane.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

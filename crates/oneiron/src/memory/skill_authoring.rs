@@ -15,16 +15,8 @@ use serde::{Deserialize, Serialize};
 const AUTHOR_KIND: &str = "memory_skill_author";
 const AUTHOR_PROOF: &str = "memoryAuthorDecision";
 
-/// The skill and its immutable birth-author receipt, not an activation grant.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SkillAuthoringReceipt {
-    #[serde(with = "super::authorship::entity_serde")]
-    pub skill_id: EntityId,
-    #[serde(with = "super::authorship::entity_serde")]
-    pub author: EntityId,
-    pub author_receipt: String,
-    pub version: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::memory::skill_authoring::SkillAuthoringReceipt;
 
 /// The exact birth-author decision ID a skill names in its provenance.
 fn named_author_proof(record: &SkillRecord) -> Result<&str, Error> {

@@ -41,10 +41,10 @@ use super::credential::VerbAskDrainPermit;
 use super::state::DrainScope;
 use super::{InvocationId, VerbAskRefusal, VerbCall, VerbResume};
 
-/// Context of one Grant row's revision digest.
-const PLAIN_GRANT_REVISION: &str = "oneiron verb hook plain grant revision v1";
-/// Context of the ceiling digest a delegated call is asked under.
-const PLAIN_CEILING: &str = "oneiron verb hook plain ceiling v1";
+#[doc(hidden)]
+use oneiron_records::runtime_hooks::verb::plain_resume::{
+    PLAIN_CEILING, PLAIN_GRANT_REVISION, revision,
+};
 
 /// How settlement runs a plain call again ([`VerbResume::Row`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -514,15 +514,6 @@ fn grants_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, actor: EntityId) -> Resul
     }
     grants.sort_unstable_by_key(|grant| grant.id);
     Ok(grants)
-}
-
-/// One Grant row's revision: a digest of its type, id and stored body.
-fn revision(kind: u8, id: &EntityId, body: &[u8]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key(PLAIN_GRANT_REVISION);
-    hasher.update(&[kind]);
-    hasher.update(id.as_bytes());
-    hasher.update(body);
-    *hasher.finalize().as_bytes()
 }
 
 /// The ceiling the gate projects for `actor` in `txn`, as a digest: its

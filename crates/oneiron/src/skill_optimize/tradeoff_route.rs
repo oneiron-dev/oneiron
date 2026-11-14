@@ -35,27 +35,10 @@ const ROUTE_VERB: &str = "vault.projects.route_tradeoff";
 const ISSUED: SideTable<String, TradeoffRouteIssue, Named> =
     SideTable::new(&side_table::SKILL_TRADEOFF_ROUTE);
 
-/// Who the route call was handed to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TradeoffRouteChannel {
-    /// The leader agent, by the dispatched attempt (32 hex).
-    Dispatched { attempt: String },
-    /// The person leader, by an Ask in their inbox.
-    Asked { person: String },
-}
-
-/// One handed-off route call.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TradeoffRouteIssue {
-    pub proposal: String,
-    pub project: String,
-    pub question_digest: String,
-    /// The TASK the call names.
-    pub task: String,
-    pub channel: TradeoffRouteChannel,
-    pub at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::skill_optimize::tradeoff_route::{
+    TradeoffRouteChannel, TradeoffRouteIssue,
+};
 
 /// What one pass did, per reached project of each pending ask.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

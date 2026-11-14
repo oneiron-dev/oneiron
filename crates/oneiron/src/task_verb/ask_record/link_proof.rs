@@ -12,13 +12,12 @@ const SIGNERS: SideTable<EntityId, [u8; 32], side_table::Raw> =
     SideTable::new(&side_table::TASK_ASK_LINK_SIGNER);
 const TRANSCRIPT: &[u8] = b"oneiron.tasks.ask.link_answer.v1\0";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct LinkProof {
-    pub token_digest: [u8; 32],
-    pub revision: u64,
-    pub signature: Vec<u8>,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::task_verb::ask_record::link_proof::LinkProof;
+#[doc(hidden)]
+use oneiron_records::task_verb::ask_record::link_proof::{
+    FORWARD_RESULT_TRANSCRIPT, forward_result_message,
+};
 
 pub(in crate::task_verb) fn mint_key(
     vault: &Vault,
@@ -219,16 +218,6 @@ pub(in crate::task_verb) fn verify_settlement(
     let bytes: [u8; 64] = proof.as_slice().try_into().map_err(|_| invalid())?;
     key.verify_strict(&settlement_message(result)?, &Signature::from_bytes(&bytes))
         .map_err(|_| invalid())
-}
-
-const FORWARD_RESULT_TRANSCRIPT: &[u8] = b"oneiron.tasks.ask.forward_result_signature.v1\0";
-
-/// The message a relayed intent's result signature covers (FIX 7494).
-fn forward_result_message(body: &[u8]) -> Vec<u8> {
-    let mut message = Vec::with_capacity(FORWARD_RESULT_TRANSCRIPT.len() + body.len());
-    message.extend_from_slice(FORWARD_RESULT_TRANSCRIPT);
-    message.extend_from_slice(body);
-    message
 }
 
 /// Signs a relayed intent's result `body` with the group's issuer key (FIX

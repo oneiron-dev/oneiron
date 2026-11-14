@@ -58,15 +58,8 @@ const PREFIX_LABELS: &[(&str, &str)] = &[
     ("sk-", "OpenAI key"),
 ];
 
-/// What setting or clearing a handle's label leaves behind: the stored
-/// label (`None` after a clear), the kind suggestion the card falls back
-/// to, and the act's Gate receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SecretHandleLabelSet {
-    pub label: Option<String>,
-    pub suggested_label: Option<String>,
-    pub receipt: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::secret_custody::handle_labels::SecretHandleLabelSet;
 
 /// The stored label on the custody record `custody`, if the owner set one.
 pub(crate) fn secret_handle_label_in_txn(

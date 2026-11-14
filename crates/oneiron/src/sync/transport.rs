@@ -502,17 +502,8 @@ pub fn encode_ephemeral(payload: &[u8]) -> EncodedFrame {
     EncodedFrame::ok(buf)
 }
 
-/// Decoded Loro `EphemeralStore` wire record.
-///
-/// This mirrors the postcard-encoded shape used by Loro 1.10.x. It is shared
-/// so callers can validate untrusted ephemeral bytes before applying them to a
-/// store while still relaying the native bytes on the wire.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct EphemeralWireState {
-    pub key: String,
-    pub value: Option<LoroValue>,
-    pub timestamp: i64,
-}
+#[doc(hidden)]
+pub use oneiron_records::sync::transport::EphemeralWireState;
 
 /// Decodes Loro-native `EphemeralStore` bytes into timestamped wire records.
 pub fn decode_ephemeral_states(payload: &[u8]) -> Result<Vec<EphemeralWireState>, TransportError> {

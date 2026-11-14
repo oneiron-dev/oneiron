@@ -22,11 +22,8 @@ use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 #[doc(hidden)]
 pub use oneiron_verb_wire::workspace_roster::room_leave::RoomLeaveRequest;
 
-/// The room's members once the leave committed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RoomLeaveOutcome {
-    pub member_ids: Vec<EntityId>,
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::room_leave::RoomLeaveOutcome;
 
 impl Memory<'_> {
     /// Ends a person's current membership of a room for the bound actor, at

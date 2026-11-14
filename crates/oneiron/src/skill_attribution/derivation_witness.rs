@@ -82,31 +82,8 @@ struct SummaryRequest {
     at: u64,
 }
 
-/// What wrote a witnessed edge.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum WitnessProducer {
-    /// A batch applied under the run's envelope.
-    Write,
-    /// A code revision's lifecycle link, written directly.
-    RevisionLink,
-    /// An off-record op the run journaled, replayed by an authorized
-    /// promotion.
-    Promotion,
-    /// A scope summary the run asked for, minted or reused by this Dreamer
-    /// attempt; `None` once that attempt's run is erased.
-    Summary(Option<AttemptId>),
-    /// A tested queue revision sealed from this run's admitted proposal.
-    QueueSeal,
-}
-
-impl WitnessProducer {
-    /// Whether this producer lands a run's edge after the run's own write:
-    /// its token held as it was captured, so the edge stays the run's once
-    /// the lease has ended.
-    const fn lands_late(self) -> bool {
-        matches!(self, Self::Promotion | Self::Summary(_) | Self::QueueSeal)
-    }
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::skill_attribution::derivation_witness::WitnessProducer;
 
 /// Runs `capture`, one witness, in a savepoint of `wtxn` that commits only
 /// when all of it lands: an error aborts the savepoint alone and logs one

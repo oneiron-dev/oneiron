@@ -1,3 +1,13 @@
+pub use crate::dreamer_runner::free_time::*;
+#[cfg(feature = "sync")]
+pub(crate) use crate::dreamer_runner::program::replica as turn_program_replica;
+pub use crate::dreamer_runner::program::types::LandedTurnRef;
+pub use crate::dreamer_runner::program::types::TurnProgramAdmissionOutcome;
+pub use crate::dreamer_runner::program::types::TurnProgramAdmissionReceipt;
+pub use crate::dreamer_runner::seat_wait::ModelSeatAvailability;
+pub use crate::dreamer_runner::seat_wait::ModelSeatAvailableSource;
+pub use crate::dreamer_runner::seat_wait::ModelSeatSource;
+pub use crate::dreamer_runner::seat_wait::ModelSeatState;
 pub use oneiron_verb_wire::dreamer_runner::program::read::views::OwedWakeHoldView;
 pub use oneiron_verb_wire::dreamer_runner::program::read::views::ProgramAdmissionOutcomeView;
 pub use oneiron_verb_wire::dreamer_runner::program::read::views::ProgramCheckpointCallView;
@@ -34,6 +44,7 @@ pub use oneiron_verb_wire::dreamer_runner::program::types::DisarmTurnProgram;
 pub use oneiron_verb_wire::dreamer_runner::program::types::ProgramRecipePin;
 pub use oneiron_verb_wire::dreamer_runner::program::types::ProgramTrigger;
 pub use oneiron_verb_wire::dreamer_runner::program::types::TurnProgramRegistration;
+pub(crate) use oneiron_wake_contract::dreamer_runner::admission::budget_line::AdmittedBudgetLine;
 pub use oneiron_wake_contract::dreamer_runner::park_resume::AGENT_RUNS_PARK_OWNER;
 pub use oneiron_wake_contract::dreamer_runner::park_resume::DRAFTER_RETRAIN_PARK_OWNER;
 pub use oneiron_wake_contract::dreamer_runner::park_resume::DREAMER_SERVER_PARK_OWNER;
@@ -45,4 +56,10 @@ pub use oneiron_wake_contract::dreamer_runner::park_resume::TRAP_PARK_OWNER_PREF
 pub use oneiron_wake_contract::dreamer_runner::park_resume::TURN_PROGRAM_PARK_OWNER;
 pub use oneiron_wake_contract::dreamer_runner::park_resume::WORKFLOWS_PARK_OWNER;
 
+pub mod authority;
+pub mod free_time;
 pub mod maintenance;
+pub mod program;
+pub mod seat_wait;
+pub mod shadow_values;
+pub mod step_replay;

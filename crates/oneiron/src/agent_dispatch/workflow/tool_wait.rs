@@ -37,46 +37,10 @@ const TABLE: SideTable<EntityId, CheckpointRow, Named> =
 const BODY_PLACE: &str = "side:WORKFLOW_TOOL_CHECKPOINT:transcript";
 const BODY_PATH: &str = "workflow/tool-checkpoint";
 
-/// Full admitted request: the assistant's outstanding tool calls and every
-/// completed result stay in their original message order. Objectives are
-/// user text too, so they share this admitted body, not the metadata row.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorkflowToolTranscript {
-    pub request: LlmRequest,
-    pub objectives: Vec<String>,
-    pub answer: Option<WorkflowToolAnswer>,
-}
-
-/// The paid terminal answer and the exact rung that answered it. These are
-/// admitted body content, never reconstructed from the current route.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorkflowToolAnswer {
-    pub response: LlmResponse,
-    pub rung: crate::code_run::CapsuleRungBinding,
-    pub route: Option<crate::code_run::ReplayRoutePin>,
-}
-
-/// The next uncompleted call within the original assistant message. The
-/// ordinal of a pending self.use is retained, not incremented on resume.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorkflowToolCursor {
-    pub assistant_message: usize,
-    pub tool_index: usize,
-    pub use_ordinal: u64,
-    pub round: u64,
-    pub capture_completed: bool,
-}
-
-/// Native identity of the pre-hook pause, never a permit to run its body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorkflowToolWait {
-    pub invocation: [u8; 16],
-    pub ask: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_records::agent_dispatch::workflow::tool_wait::{
+    WorkflowToolAnswer, WorkflowToolCursor, WorkflowToolTranscript, WorkflowToolWait,
+};
 
 /// Settled state beside the transcript. Every positive source survives an
 /// incomplete read set; false never means an empty or public source set.

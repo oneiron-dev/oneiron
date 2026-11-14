@@ -31,7 +31,9 @@ pub use self::pending_step::PendingCodeStep;
 pub(super) use self::request_identity::ErasedRequest;
 
 pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 3;
-pub const CODE_RUN_RNG_SEED_LEN: usize = 32;
+#[doc(hidden)]
+pub use oneiron_records::code_run::replay::CODE_RUN_RNG_SEED_LEN;
+
 pub use crate::store::result_manifest::CODE_RUN_REPLAY_HASH_LEN;
 
 /// Frozen nondeterministic inputs for one code run.

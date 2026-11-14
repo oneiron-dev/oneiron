@@ -55,7 +55,8 @@ impl AuditRow {
     }
 }
 
-const AUDIT_ROW_LABEL: &str = "skill attribution audit row";
+#[doc(hidden)]
+use oneiron_records::skill_attribution::codec::AUDIT_ROW_LABEL;
 
 impl RawValue for AuditRow {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {

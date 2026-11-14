@@ -6,7 +6,15 @@ pub use oneiron_verb_wire::context_board::stream::frames::DeltaRow;
 pub use oneiron_verb_wire::context_board::stream::frames::FrameKind;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct StreamConnectionId(pub String);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BoardRenderMode {
+    Resident,
+    Stream,
+}

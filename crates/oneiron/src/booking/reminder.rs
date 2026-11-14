@@ -12,21 +12,8 @@ use crate::calendar::EventOutcome;
 /// The two default leads: a day before and two hours before the event.
 pub const BOOKING_REMINDER_LEADS_SECS: [u64; 2] = [86_400, 7_200];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BookingReminderStage {
-    DayBefore,
-    TwoHoursBefore,
-}
-
-impl BookingReminderStage {
-    const fn tag(self) -> &'static str {
-        match self {
-            Self::DayBefore => "booking.reminder.day_before",
-            Self::TwoHoursBefore => "booking.reminder.two_hours_before",
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::booking::reminder::BookingReminderStage;
 
 /// Exact wake: stable id allows the host to replace a stale wake on reschedule.
 #[derive(Clone, Debug, PartialEq, Eq)]

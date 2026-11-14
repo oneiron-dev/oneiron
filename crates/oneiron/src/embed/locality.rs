@@ -8,25 +8,6 @@ use crate::{EntityId, Error, Result, Vault};
 const EMBEDDING_LOCALITY: SideTable<EntityId, EmbedderLocality, Raw> =
     SideTable::new(&side_table::EMBEDDING_LOCALITY);
 
-impl RawValue for EmbedderLocality {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
-        Ok(vec![match self {
-            EmbedderLocality::OnDevice => 0,
-            EmbedderLocality::OwnerServer => 1,
-            EmbedderLocality::ThirdParty => 2,
-        }])
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
-        match bytes {
-            [0] => Ok(EmbedderLocality::OnDevice),
-            [1] => Ok(EmbedderLocality::OwnerServer),
-            [2] => Ok(EmbedderLocality::ThirdParty),
-            _ => Err(Error::CorruptedIndex("embedding locality receipt").into()),
-        }
-    }
-}
-
 pub(crate) fn clear_embedding_locality_in_txn(
     store: &impl crate::store::ManifestDbs,
     txn: &mut heed::RwTxn<'_>,

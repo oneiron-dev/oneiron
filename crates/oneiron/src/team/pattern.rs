@@ -48,19 +48,8 @@ const MAX_LINE_BYTES: usize = 512;
 #[doc(hidden)]
 pub use oneiron_verb_wire::team::pattern::{PatternLaunchSpec, TeamAxis, TeamPattern};
 
-/// A skill bound to the pattern it teaches.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PatternSkill {
-    pub skill: EntityId,
-    pub pattern: TeamPattern,
-    /// The pattern's default setting; a team may run it either way.
-    pub default_axis: TeamAxis,
-    /// The plain line: "for tasks like X, Y usually works".
-    pub works_well_for: String,
-    /// The task-type nodes the line names; each gets the weak prior.
-    pub works_well_for_types: Vec<String>,
-    pub at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::team::pattern::{PatternSkill, model_mix};
 
 /// The host's runner for a planned team's pattern skill. It runs that exact
 /// pack's SKILL.md in the host's ordinary runtime, with the asked need, the
@@ -327,22 +316,4 @@ pub fn pattern_cell(
         .type_ref(type_ref.clone())
         .axis(PAYOFF_AXIS)
         .project(project)
-}
-
-/// A team's executor mix: its sorted, distinct model ids joined by `+`, or
-/// their digest when the join would not fit a cell qualifier.
-#[must_use]
-pub fn model_mix(models: &[String]) -> String {
-    let set: BTreeSet<&str> = models.iter().map(String::as_str).collect();
-    let joined = set.into_iter().collect::<Vec<_>>().join("+");
-    if joined.is_empty() {
-        return "unknown".to_owned();
-    }
-    if joined.len() <= 256 {
-        return joined;
-    }
-    format!(
-        "mix#{}",
-        &crate::entity_id::bytes_to_hex_lower(blake3::hash(joined.as_bytes()).as_bytes())[..32]
-    )
 }

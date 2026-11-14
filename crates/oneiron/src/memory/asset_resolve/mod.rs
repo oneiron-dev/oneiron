@@ -81,35 +81,6 @@ const HANDLE_HASH_HEX: usize = 16;
 /// The longest edge, in pixels, a zoom scales a region to.
 const MAX_ZOOM_EDGE: u32 = 4096;
 
-impl AssetConsumer {
-    /// A consumer that declared no capability: it is served text.
-    #[must_use]
-    pub fn text_only(purpose: CallPurpose) -> Self {
-        Self {
-            capabilities: Vec::new(),
-            purpose,
-        }
-    }
-
-    /// The reader a hydrate door serves: it reads for an answer, and reads
-    /// images only when its request says its model takes them in.
-    #[must_use]
-    pub fn hydrate_reader(image_input: bool) -> Self {
-        Self {
-            capabilities: if image_input {
-                vec![LlmCapability::ImageInput]
-            } else {
-                Vec::new()
-            },
-            purpose: CallPurpose::AnswerGen,
-        }
-    }
-
-    fn reads_images(&self) -> bool {
-        self.capabilities.contains(&LlmCapability::ImageInput)
-    }
-}
-
 /// The host's fast per-image pick (OF-329): its ladder, the principal the
 /// read is for, the dial and learned bands, its wording of "does this task
 /// need this image in full?", the task the images serve, and each pick's

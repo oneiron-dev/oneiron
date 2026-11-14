@@ -48,23 +48,8 @@ pub const ROOM_WAKE_ATTEMPT_KIND: &str = "rooms.wake.v1";
 /// The lease owner a consumer settles a staged room wake under.
 const ROOM_WAKE_LEASE_OWNER: &str = "rooms.wake";
 
-/// One staged room wake: the room, the turn that woke the agent there, and
-/// the agent. Refs only: no speaker, no words.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomWake {
-    pub room: EntityId,
-    pub turn: EntityId,
-    pub agent: EntityId,
-}
-
-impl RoomWake {
-    /// The queue key every staging of this wake shares: one per (turn,
-    /// agent).
-    fn dedupe_key(&self) -> String {
-        format!("rooms.wake:{}:{}", self.turn.to_hex(), self.agent.to_hex())
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::rooms::wake::RoomWake;
 
 /// A staged room wake as its consumer reads it: the queue row, when the
 /// witness staged it (the row's store-clock `created_at`), and its wake.

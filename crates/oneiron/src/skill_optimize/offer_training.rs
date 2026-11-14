@@ -27,20 +27,8 @@ const ANSWER: SideTable<EntityId, OfferAnswerRecord, Named> =
 /// The recipe form the host's offers name an earlier run with.
 const RECIPE_RUN_PREFIX: &str = "training_run:";
 
-/// The prepared run an approved Train offer handed off, at the exact spec
-/// the owner authorized.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OfferTrainingHandoff {
-    pub offer: EntityId,
-    pub offer_digest: String,
-    pub run: EntityId,
-    pub spec_blake3: [u8; 32],
-    /// Who authorized the run, or no one once that actor was erased
-    /// (FIX 20774).
-    pub owner: SwitchOwner,
-    pub at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::skill_optimize::offer_training::OfferTrainingHandoff;
 
 /// The owner's training choice on a Train offer: the prepared run, the spec
 /// they saw and the declaration the host admits that run under.

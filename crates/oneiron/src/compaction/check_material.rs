@@ -58,16 +58,10 @@ pub(crate) fn compaction_check_material_accepts_masked(bytes: &[u8]) -> bool {
     side_table::decodes::<CheckMaterialRow, Named>(bytes)
 }
 
-/// Where a conversation summary's check material is, and what it is (FIX
-/// 5040): its occurrence, which is the sealed request's job id, and its
-/// body, which is the BLAKE3 digest and byte length of its encoding, held
-/// inline in its row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CompactionCheckMaterialRef {
-    pub occurrence: EntityId,
-    pub body: BodyRef,
-}
+#[doc(hidden)]
+pub use oneiron_records::compaction::check_material::CompactionCheckMaterialRef;
+#[doc(hidden)]
+use oneiron_records::compaction::check_material::bound_body;
 
 /// The gate policy a pass used, as its material keeps it.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -219,21 +213,6 @@ impl ErasedForm for CheckMaterialRow {
     fn into_erased(mut self) -> Result<Self> {
         self.material = None;
         Ok(self)
-    }
-}
-
-/// The body that `reference` names, owned by `summary`.
-fn bound_body(summary: EntityId, reference: &CompactionCheckMaterialRef) -> OwnedBody {
-    OwnedBody {
-        owner: summary,
-        occurrence: reference.occurrence,
-        mark_occurrence: reference.occurrence,
-        state: BodyState::Complete {
-            body: reference.body.clone(),
-        },
-        result: None,
-        // A compaction's check material is no code run's output.
-        code_run_output: None,
     }
 }
 

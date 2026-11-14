@@ -25,22 +25,10 @@ use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
 };
 
-/// Query for the OF-367 RS6.5 standing outbound-grants lens.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StandingOutboundGrantsLensQuery {
-    pub limit: usize,
-    pub receipt_limit_per_grant: usize,
-}
-
-impl StandingOutboundGrantsLensQuery {
-    #[must_use]
-    pub const fn new(limit: usize, receipt_limit_per_grant: usize) -> Self {
-        Self {
-            limit,
-            receipt_limit_per_grant,
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::receipt::grant::{
+    StandingOutboundGrantRevokeAction, StandingOutboundGrantsLensQuery,
+};
 
 /// Grants-page projection over active, stale, and revoked standing grants.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,14 +54,6 @@ pub struct StandingOutboundGrantLensRow {
     pub revoked_at: Option<u64>,
     pub receipt_join: GrantReceiptProjection,
     pub revoke_action: StandingOutboundGrantRevokeAction,
-}
-
-/// Host-interpreted one-tap revoke command for a grants lens row: the
-/// consent registry's revoke door.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StandingOutboundGrantRevokeAction {
-    pub command: String,
-    pub grant_ref: String,
 }
 
 pub(super) fn standing_outbound_grants_lens(

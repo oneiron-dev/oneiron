@@ -12,11 +12,8 @@ use crate::side_table::{self, Named, SideTable};
 pub(crate) const PURPOSE: SideTable<EntityId, SecretHandlePurpose, Named> =
     SideTable::new(&side_table::SECRET_HANDLE_PURPOSE);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct SecretHandlePurpose {
-    pub purpose: String,
-    pub receipt: [u8; 16],
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::store::secret_handle_purpose::SecretHandlePurpose;
 
 pub(crate) fn accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<SecretHandlePurpose, Named>(bytes)

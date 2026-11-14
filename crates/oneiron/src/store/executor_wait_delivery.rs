@@ -11,28 +11,10 @@ use crate::side_table::{
 use crate::store::{ResponseCarriage, ResponseScan, is_opaque_erased};
 use crate::{EntityId, Error, Result};
 
-/// The reply one wait was answered with, and when it was delivered.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WaitDelivery {
-    /// The reply as JSON text.
-    pub reply: String,
-    pub delivered_at_ms: u64,
-    /// The rows the reply was derived from, as its settler listed them
-    /// (FIX 5455): the rows a connector call's passes picked. `None` when
-    /// its settler listed none: the reply then adds no row to its run's.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_rows: Option<Vec<EntityId>>,
-    /// The origins of the reply as its settler served it (FIX 7083): the
-    /// worlds and row scopes the settler froze in the writer that made the
-    /// reply. `None` when they are unknown. An empty value is a proof that
-    /// the reply has no origin. A copy of the delivery keeps them.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub origins: Option<crate::code_run::ResultOrigins>,
-    /// Whether an erase of its holder's actor took the reply (FIX 5718):
-    /// its text is gone, and when it came and its rows stay.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub erased: bool,
-}
+#[doc(hidden)]
+pub use oneiron_records::store::executor_wait_delivery::WaitDelivery;
+#[doc(hidden)]
+pub(crate) use oneiron_records::store::executor_wait_delivery::WaitHolder;
 
 /// A delivery's erased form (FIX 5718): when it came and the rows its reply
 /// was derived from stay, and its origins too (FIX 7083); its reply goes. An
@@ -44,17 +26,6 @@ impl ErasedForm for WaitDelivery {
             erased: true,
             ..self
         })
-    }
-}
-
-impl RawValue for WaitDelivery {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        serde_json::to_vec(self).map_err(|_| Error::CorruptedIndex("code-run wait delivery").into())
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        serde_json::from_slice(bytes)
-            .map_err(|_| Error::CorruptedIndex("code-run wait delivery").into())
     }
 }
 
@@ -85,52 +56,6 @@ pub(crate) fn code_run_wait_index_accepts_masked(bytes: &[u8]) -> bool {
 /// The rows. Key: id16(wait) + id16(run) + be64(generation).
 pub(crate) const HOLDERS: SideTable<(EntityId, EntityId, u64), WaitHolder, Named> =
     SideTable::new(&side_table::CODE_RUN_WAIT_HOLDER);
-
-/// What one run holds of a wait's reply.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum WaitHolder {
-    /// The reply, for `actor`'s run, when its run's stamps name one.
-    Kept { actor: Option<EntityId> },
-    /// A soft delete of `actor` took the reply (FIX 6591): it reads as
-    /// erased for good, as Erased, and no retry keeps it again. The actor
-    /// stays only so its later erase selects the membership; it is no live
-    /// hold and no authority.
-    Deleted { actor: EntityId },
-    /// Its run's actor was erased: the reply reads as erased for it, for
-    /// good.
-    Erased,
-}
-
-impl WaitHolder {
-    /// The actor whose erase selects this membership (FIX 6591): the one it
-    /// keeps the reply for, or the one a soft delete took it from.
-    pub(crate) const fn retirement_actor(self) -> Option<EntityId> {
-        match self {
-            Self::Kept { actor } => actor,
-            Self::Deleted { actor } => Some(actor),
-            Self::Erased => None,
-        }
-    }
-
-    /// Whether a delete or an erase took the reply.
-    pub(crate) const fn erased(self) -> bool {
-        !matches!(self, Self::Kept { .. })
-    }
-
-    /// The membership `prior` once a soft delete of `actor` takes it (FIX
-    /// 6591): an erased one stays erased, and one that names an actor keeps
-    /// naming it.
-    pub(crate) const fn deleted(prior: Option<Self>, actor: EntityId) -> Self {
-        match prior {
-            Some(Self::Erased) => Self::Erased,
-            Some(Self::Deleted { actor } | Self::Kept { actor: Some(actor) }) => {
-                Self::Deleted { actor }
-            }
-            Some(Self::Kept { actor: None }) | None => Self::Deleted { actor },
-        }
-    }
-}
 
 /// The wait a settled row's full `vault_meta` key names: the wait index's
 /// `s` rows alone, never a waiter's.

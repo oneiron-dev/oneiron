@@ -18,16 +18,8 @@ use crate::sync::types::WindowKey;
 /// pass it is cut short, and its cursor carries the rest.
 pub const RESIDENCE_PAGE_REPLY_BYTES: usize = 16 * 1024 * 1024;
 
-/// Where a paged residence search goes on: the offset into its final ranked
-/// list, that list's revision, and the second its time words and recency
-/// were read at.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ResidenceSearchCursor {
-    pub offset: u64,
-    pub revision: String,
-    pub as_of: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::sync::residence::search::ResidenceSearchCursor;
 
 /// The tag that opens a caller filter's signed and hashed field (FIX 3977).
 const READ_FILTER_FIELD_TAG: &[u8] = b"oneiron.residence.search.read_filter.v1";

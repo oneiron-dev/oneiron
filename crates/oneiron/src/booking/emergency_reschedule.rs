@@ -37,37 +37,12 @@ fn instruction_hex(key: &[u8]) -> Option<&str> {
     std::str::from_utf8(key.strip_prefix(EMERGENCY_INSTRUCTION_META_PREFIX)?).ok()
 }
 
-/// The owner chooses the action; discovery cannot silently change it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EmergencyActionPolicy {
-    Cancel,
-    RequestUpdate,
-}
-
-/// One logged instruction. This is a reference to durable evidence, not proof
-/// by itself. The host must authenticate the owner before calling append.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OwnerInstructionRecord {
-    #[serde(with = "entity_ref_serde")]
-    pub owner_ref: EntityId,
-    pub request_hash: [u8; 32],
-    pub recorded_at: u64,
-}
-
-/// Executing request. `affected_window` is inclusive, like core `TimeRange`;
-/// booking occurrences exposed below are half-open, like booking's slot seam.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct EmergencyRescheduleRequest {
-    #[serde(with = "entity_ref_serde")]
-    pub owner_ref: EntityId,
-    #[serde(with = "time_range_serde")]
-    pub affected_window: TimeRange,
-    pub reason: String,
-    pub action_policy: EmergencyActionPolicy,
-    pub authority: OwnerInstructionRecord,
-}
+#[doc(hidden)]
+pub use oneiron_records::booking::emergency_reschedule::{
+    EmergencyActionPolicy, EmergencyRescheduleRequest, OwnerInstructionRecord,
+};
+#[doc(hidden)]
+use oneiron_records::booking::emergency_reschedule::{content_hash, refused, storage_failure};
 
 #[derive(Serialize)]
 struct WindowFields {
@@ -108,11 +83,6 @@ fn request_fields(
         reason,
         action_policy,
     })
-}
-
-fn content_hash(value: &impl Serialize) -> Result<[u8; 32], BookingError> {
-    let bytes = serde_json::to_vec(value).map_err(storage_failure)?;
-    Ok(*blake3::hash(&bytes).as_bytes())
 }
 
 /// Canonical hash of exactly `{window, reason, action_policy}` in that order.
@@ -320,53 +290,12 @@ fn verify_instruction_in_txn(
     Ok(())
 }
 
-mod time_range_serde {
-    use super::*;
-    pub(super) fn serialize<S: serde::Serializer>(
-        value: &TimeRange,
-        s: S,
-    ) -> Result<S::Ok, S::Error> {
-        (value.start, value.end).serialize(s)
-    }
-    pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
-        d: D,
-    ) -> Result<TimeRange, D::Error> {
-        let (start, end) = <(u64, u64)>::deserialize(d)?;
-        Ok(TimeRange { start, end })
-    }
-}
-
-fn refused(reason: &str) -> BookingError {
-    BookingError::InvalidConfig(reason.to_owned())
-}
-
 pub(super) fn calendar_failure(error: crate::calendar::CalendarError) -> BookingError {
     match error {
         crate::calendar::CalendarError::InviteRefused { reason } => {
             BookingError::InvalidConfig(reason)
         }
         other => storage_failure(other),
-    }
-}
-
-fn storage_failure(error: impl std::fmt::Display) -> BookingError {
-    BookingError::SlotOracle(format!("emergency reschedule: {error}"))
-}
-
-mod entity_ref_serde {
-    use super::*;
-
-    pub(super) fn serialize<S: serde::Serializer>(
-        value: &EntityId,
-        s: S,
-    ) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&value.to_hex())
-    }
-
-    pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
-        d: D,
-    ) -> Result<EntityId, D::Error> {
-        EntityId::from_hex(&String::deserialize(d)?).map_err(serde::de::Error::custom)
     }
 }
 

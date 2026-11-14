@@ -218,6 +218,5 @@ impl ExportHubSource {
         Ok(())
     }
 }
-fn invalid(reason: &str) -> Error {
-    Error::InvalidConfig(format!("hub source archive: {reason}"))
-}
+#[doc(hidden)]
+use oneiron_records::serialize::hub_source_archive::invalid;

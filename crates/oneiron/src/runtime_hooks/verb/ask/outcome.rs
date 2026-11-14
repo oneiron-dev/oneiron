@@ -13,70 +13,8 @@ use super::{ASKS, MAX_SAVED_VERB_ERROR_BYTES, cut};
 use crate::runtime_hooks::{InvocationId, VerbHookStop};
 use crate::{EntityId, Error, Result, Vault};
 
-/// What a call the drain ran returned.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(in crate::runtime_hooks::verb) enum SavedOutcome {
-    /// The caller's view of the result, as JSON.
-    Ok {
-        result: String,
-        /// The rows the result was derived from, when its door listed them
-        /// (FIX 1435). The door that answers the retry releases the result
-        /// by them.
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            with = "crate::serialize::entity_ref::optional_set"
-        )]
-        producers: Option<BTreeSet<EntityId>>,
-        /// From the actual completed chain; absent when its source supplied none.
-        hook_notice: Option<bool>,
-    },
-    Err {
-        code: String,
-        message: String,
-        /// From the actual completed chain; absent when its source supplied none.
-        hook_notice: Option<bool>,
-        /// The refusal receipt a credential call that ended refused left.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        receipt: Option<String>,
-    },
-}
-
-impl SavedOutcome {
-    /// What a drained call that returned `value` saves: its full JSON for
-    /// the caller's retry of this same invocation, beside `producers`, the
-    /// rows its door listed it derived from (FIX 1435), and the chain's
-    /// `hook_notice`.
-    pub(in crate::runtime_hooks::verb) fn result(
-        value: &Value,
-        producers: Option<Vec<EntityId>>,
-        hook_notice: Option<bool>,
-    ) -> Result<Self> {
-        serde_json::to_string(value)
-            .map(|result| Self::Ok {
-                result,
-                producers: producers.map(|producers| producers.into_iter().collect()),
-                hook_notice,
-            })
-            .map_err(|_| Error::InvariantViolation("verb hook ask outcome encode"))
-    }
-
-    /// What a drained call that failed with `code` saves: its message cut to
-    /// [`MAX_SAVED_VERB_ERROR_BYTES`].
-    pub(in crate::runtime_hooks::verb) fn error(
-        code: String,
-        message: &str,
-        hook_notice: Option<bool>,
-    ) -> Self {
-        Self::Err {
-            code,
-            message: cut(message, MAX_SAVED_VERB_ERROR_BYTES),
-            hook_notice,
-            receipt: None,
-        }
-    }
-}
+#[doc(hidden)]
+pub(in crate::runtime_hooks::verb) use oneiron_records::runtime_hooks::verb::ask::outcome::SavedOutcome;
 
 /// The stop a retry of a drained call gets: what the call returned.
 pub(super) fn completed(invocation: InvocationId, outcome: &SavedOutcome) -> Result<VerbHookStop> {

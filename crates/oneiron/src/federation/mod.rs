@@ -85,9 +85,11 @@ mod own_device;
 mod pending_act;
 mod shared_act;
 mod shared_creation;
+#[doc(hidden)]
+pub(crate) use oneiron_records::federation::vault_id_decimal;
 pub(crate) use own_device::is_own_device_grant;
 pub use own_device::own_device_residence_scope;
-pub(crate) mod vault_id_decimal;
+
 pub use pending_act::{
     ActExecution, NOTIFICATION_PRODUCER_POLICY_CHANGE, PendingActMatured, PendingActStarted,
     PendingAuthorityAct, SharedActPoliciesView, SharedActPolicy, SharedActPolicyChange,

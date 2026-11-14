@@ -88,15 +88,8 @@ pub struct BoardTurn {
     pub selection: BoardSelection,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct TurnAnchor {
-    #[serde(with = "entity_id_codec")]
-    pub owner: EntityId,
-    pub at: u64,
-    pub learned_at: u64,
-    pub source_revision_ref: RevisionRef,
-    pub frontier: Vec<u8>,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::context_board::history::types::TurnAnchor;
 
 /// Claims written by this turn. Empty on an unchanged selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,20 +140,4 @@ pub enum BoardHistoryError {
     Storage(#[from] Error),
     #[error(transparent)]
     Database(#[from] heed::Error),
-}
-
-mod entity_id_codec {
-    use super::*;
-    pub(super) fn serialize<S: serde::Serializer>(
-        value: &EntityId,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        value.as_bytes().serialize(serializer)
-    }
-    pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<EntityId, D::Error> {
-        let bytes = <[u8; 16]>::deserialize(deserializer)?;
-        EntityId::from_bytes(bytes).map_err(serde::de::Error::custom)
-    }
 }

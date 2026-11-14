@@ -412,23 +412,8 @@ pub(super) fn decision(
     }
 }
 
-// EntityId deliberately has no global serde implementation.
-pub(super) mod entity_serde {
-    use crate::EntityId;
-    use serde::{Deserialize, Deserializer, Serializer};
-    pub(in crate::memory) fn serialize<S: Serializer>(
-        id: &EntityId,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&id.to_hex())
-    }
-    pub(in crate::memory) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<EntityId, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        EntityId::from_hex(&text).map_err(serde::de::Error::custom)
-    }
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::memory::authorship::entity_serde;
 
 /// Explicit owner replacement/withdrawal in a family-owned actor-facing door.
 /// This is never used by auto-upsert. Only the vault owner overrides: the

@@ -18,15 +18,8 @@ pub const DEFAULT_FEDERATED_CONFIDENCE_SCALE: f32 = 0.5;
 const PEER_CONFIDENCE: SideTable<EntityId, PeerConfidence, Named> =
     SideTable::new(&side_table::FEDERATION_PEER_CONFIDENCE);
 
-/// One peer's owner-set scale.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PeerConfidence {
-    /// Multiplies a peer claim's confidence: above 0, at most 1. A peer is
-    /// never believed above the owner's own word.
-    pub scale: f32,
-    pub set_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::sync::selector::peer_confidence::PeerConfidence;
 
 fn valid_scale(scale: f32) -> bool {
     scale.is_finite() && scale > 0.0 && scale <= 1.0

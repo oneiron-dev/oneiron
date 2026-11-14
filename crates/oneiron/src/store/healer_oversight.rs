@@ -5,7 +5,12 @@ use crate::{Error, Result, Vault};
 use ed25519_dalek::{Signature, Signer, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
-const DOMAIN: &[u8] = b"oneiron:healer-oversight:v1\0";
+#[doc(hidden)]
+use oneiron_records::store::healer_oversight::{DOMAIN, signed_bytes};
+#[doc(hidden)]
+pub use oneiron_records::store::healer_oversight::{
+    OversightCounts, OversightKind, OversightReceipt,
+};
 
 /// Proposed/reviewed/routed timestamps for one healer case. Key: hex32 (case_ref).
 const ACTIVITY: SideTable<String, Activity, Named> = SideTable::new(&side_table::HEALER_ACTIVITY);
@@ -52,13 +57,6 @@ impl Activity {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OversightKind {
-    Coverage,
-    ReviewLatency,
-    EscalationRate,
-}
 /// The three receipts, in the order builders read them.
 const KINDS: [OversightKind; 3] = [
     OversightKind::Coverage,
@@ -66,56 +64,6 @@ const KINDS: [OversightKind; 3] = [
     OversightKind::EscalationRate,
 ];
 
-impl OversightKind {
-    fn tag(self) -> u8 {
-        match self {
-            Self::Coverage => 0,
-            Self::ReviewLatency => 1,
-            Self::EscalationRate => 2,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OversightCounts {
-    pub vault_device: u64,
-    pub observed_at: u64,
-    pub kind: OversightKind,
-    pub proposed: u64,
-    pub reviewed: u64,
-    pub escalated: u64,
-    pub review_latency_secs: u64,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OversightReceipt {
-    pub counts: OversightCounts,
-    pub signer: [u8; 32],
-    pub signature: Vec<u8>,
-}
-impl OversightReceipt {
-    pub fn verify(&self, expected_signer: &[u8; 32]) -> bool {
-        if &self.signer != expected_signer {
-            return false;
-        }
-        let Ok(key) = VerifyingKey::from_bytes(expected_signer) else {
-            return false;
-        };
-        let Ok(signature) = Signature::from_slice(&self.signature) else {
-            return false;
-        };
-        let Ok(bytes) = signed_bytes(&self.counts) else {
-            return false;
-        };
-        key.verify_strict(&bytes, &signature).is_ok()
-    }
-}
-fn signed_bytes(counts: &OversightCounts) -> Result<Vec<u8>> {
-    let mut bytes = DOMAIN.to_vec();
-    bytes.extend(
-        rmp_serde::to_vec_named(counts).map_err(|_| Error::CorruptedIndex("healer oversight"))?,
-    );
-    Ok(bytes)
-}
 fn validate_case_ref(case: &str) -> Result<()> {
     if case.len() != 32
         || !case

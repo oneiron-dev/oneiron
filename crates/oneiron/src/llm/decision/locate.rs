@@ -19,49 +19,8 @@ use serde_json::Value;
 /// The state field the presence question reads the coordinate question's wording from.
 pub const LOCATE_FIELD: &str = "locate";
 
-/// A Box or Point call's decisions: its presence step, then its coordinates.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LocatedDecision {
-    /// The presence question's decision; none when the host words no presence question,
-    /// and the coordinates were asked directly.
-    pub presence: Option<TypedDecision>,
-    /// The coordinate question's decision; none when presence did not start it.
-    pub location: Option<TypedDecision>,
-    /// The answer on the coordinate question's contract: the location's, its found
-    /// absence after a confident no, or Abstain.
-    pub answer: DecisionAnswer,
-}
-
-impl LocatedDecision {
-    /// The decision that stands: the location's when it ran, else the presence step's.
-    pub fn standing(&self) -> &TypedDecision {
-        self.location
-            .as_ref()
-            .or(self.presence.as_ref())
-            .expect("a located decision ran a step")
-    }
-
-    /// Why the call has no answer: the standing step's reason, or Uncertain for a presence
-    /// answer inside its band. None when it has one.
-    pub fn human_ask(&self) -> Option<HumanAskReason> {
-        (self.answer == DecisionAnswer::Abstain).then(|| {
-            self.standing()
-                .human_ask
-                .unwrap_or(HumanAskReason::Uncertain)
-        })
-    }
-
-    /// The decision that stands, and the presence step beside it when the location
-    /// stands.
-    pub fn split(self) -> (TypedDecision, Option<TypedDecision>) {
-        match (self.location, self.presence) {
-            (Some(location), presence) => (location, presence),
-            (None, Some(presence)) => (presence, None),
-            (None, None) => unreachable!("a located decision ran a step"),
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::llm::decision::locate::LocatedDecision;
 
 impl DecisionLadder<'_> {
     /// One Box or Point question over `images`, presence first ([`Self::presence`]). With

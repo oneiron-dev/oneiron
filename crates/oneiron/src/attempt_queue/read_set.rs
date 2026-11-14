@@ -18,17 +18,6 @@ use crate::error::Result;
 pub use crate::store::attempt_read_producer::ReadSetProducer;
 pub use crate::store::attempt_record::AttemptReadSet;
 
-impl AttemptReadSet {
-    /// Nothing declared or read yet: a known, empty set.
-    fn new() -> Self {
-        Self {
-            rows: Some(Vec::new()),
-            expected: BTreeSet::new(),
-            reported: BTreeSet::new(),
-        }
-    }
-}
-
 impl AttemptRecord {
     /// The complete set of rows this attempt's producers recorded its inputs
     /// read from. `None`, unknown, unless its owner declared producers and

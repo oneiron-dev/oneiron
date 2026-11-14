@@ -14,16 +14,8 @@ pub use oneiron_store::embedding_vocabulary::{EmbeddingDevice, EmbeddingProvenan
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// Where an embedder runs relative to the vault owner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum EmbedderLocality {
-    /// Runs on the same device as the vault.
-    OnDevice,
-    /// Runs on infrastructure controlled by the vault owner.
-    OwnerServer,
-    /// Runs on a third-party service.
-    ThirdParty,
-}
+#[doc(hidden)]
+pub use oneiron_records::store::embedding::EmbedderLocality;
 
 /// Host-injected retrieval embedder.
 ///

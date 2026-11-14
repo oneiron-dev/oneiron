@@ -12,18 +12,8 @@ use super::provenance::{
 #[doc(hidden)]
 pub use oneiron_verb_wire::context_board::stream::events::SubscriptionScope;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DeliveryClass {
-    Wake,
-    Carrier,
-    OnDemand,
-}
-
-impl DeliveryClass {
-    pub const fn is_pushable(self) -> bool {
-        matches!(self, Self::Wake | Self::Carrier)
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::context_board::stream::events::DeliveryClass;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeliveryPolicy<A> {

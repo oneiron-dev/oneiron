@@ -18,14 +18,10 @@ pub enum ConversionError {
     InvalidToken,
 }
 
-/// The first-ranked slot is the recommended one; the rest remain available
-/// through a separate see-more action. Never re-rank the solver's answer.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct BookingShortlist {
-    pub recommended: Option<RankedSlot>,
-    pub visible: Vec<RankedSlot>,
-    pub more_count: usize,
-}
+#[doc(hidden)]
+pub use oneiron_records::booking::conversion::ux::{
+    BookingShortlist, ConfigurableReminderWake, ReminderAction, ReminderStep, ZonedBookingTime,
+};
 
 /// Show an owner-chosen ranked prefix within resolved vault policy, keeping
 /// the whole solver result available
@@ -128,14 +124,6 @@ pub struct BookingReminder {
     pub step: ReminderStep,
 }
 
-/// Copy/CTA posture chosen by a resolved notification-policy row.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReminderAction {
-    RescheduleFirst,
-    Neutral,
-}
-
 /// The row chooses how many reminders, when they are due, and the CTA. An
 /// overdue step is omitted; a near-term booking gets no stale wake.
 pub fn booking_reminders(
@@ -159,24 +147,6 @@ pub fn booking_reminders(
             })
         })
         .collect())
-}
-
-/// Stable index across moves; a configured policy may have zero to eight
-/// reminder steps. The host replaces a wake with the same event/index id.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct ReminderStep(pub u8);
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ConfigurableReminderWake {
-    pub id: String,
-    /// Canonical hex, never an authority token or public page address.
-    pub event_ref: String,
-    pub expected_start_utc: u64,
-    pub due_utc: u64,
-    pub step: ReminderStep,
-    pub action: ReminderAction,
 }
 
 fn reminder_wake_id(event_ref: &crate::EntityId, step: ReminderStep) -> String {
@@ -276,16 +246,6 @@ pub fn repeat_no_show_offer(
 pub enum MeetingLocation {
     Remote,
     Physical,
-}
-
-/// The IANA identifier itself is the label (never an ambiguous abbreviation).
-/// UTC is only an instant, not a fallback display zone. Both parties use the
-/// calendar's single conversion border and the same instant.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct ZonedBookingTime {
-    pub utc: u64,
-    pub zone: String,
-    pub local: String,
 }
 
 pub fn booking_zoned_time(utc: u64, zone: &str) -> Result<ZonedBookingTime, ConversionError> {

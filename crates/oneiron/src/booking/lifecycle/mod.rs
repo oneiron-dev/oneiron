@@ -157,31 +157,6 @@ struct TimeRangeWire {
     end: u64,
 }
 
-mod time_range_serde {
-    use super::{Deserialize, Deserializer, Serialize, Serializer, TimeRange, TimeRangeWire};
-
-    pub(super) fn serialize<S: Serializer>(
-        value: &TimeRange,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        TimeRangeWire {
-            start: value.start,
-            end: value.end,
-        }
-        .serialize(serializer)
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<TimeRange, D::Error> {
-        let wire = TimeRangeWire::deserialize(deserializer)?;
-        Ok(TimeRange {
-            start: wire.start,
-            end: wire.end,
-        })
-    }
-}
-
 /// Digests cross the wire as lowercase hex — fixed width, and a compact byte
 /// string rather than the 32-element integer array `[u8; 32]` would otherwise
 /// serialize into.
@@ -245,44 +220,6 @@ const fn hex_nibble(byte: u8) -> Option<u8> {
         b'0'..=b'9' => Some(byte - b'0'),
         b'a'..=b'f' => Some(byte - b'a' + 10),
         _ => None,
-    }
-}
-
-mod entity_ref_serde {
-    use super::{Deserialize, Deserializer, EntityId, Serializer};
-
-    pub(super) fn serialize<S: Serializer>(
-        value: &EntityId,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&value.to_hex())
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<EntityId, D::Error> {
-        let hex = String::deserialize(deserializer)?;
-        EntityId::from_hex(&hex).map_err(serde::de::Error::custom)
-    }
-}
-
-mod entity_refs_serde {
-    use super::{Deserialize, Deserializer, EntityId, Serializer};
-
-    pub(super) fn serialize<S: Serializer>(
-        value: &[EntityId],
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.collect_seq(value.iter().map(EntityId::to_hex))
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Vec<EntityId>, D::Error> {
-        Vec::<String>::deserialize(deserializer)?
-            .iter()
-            .map(|hex| EntityId::from_hex(hex).map_err(serde::de::Error::custom))
-            .collect()
     }
 }
 

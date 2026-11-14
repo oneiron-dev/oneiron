@@ -1,3 +1,22 @@
+pub(crate) use crate::context_board::room_offer::ROOM_OFFER_IDLE_SECS;
+pub use crate::workspace_roster::rooms::liveness::RoomThread;
+pub use crate::workspace_roster::rooms::liveness::RoomThreadAudienceEvent;
+pub use crate::workspace_roster::rooms::liveness::RoomThreadAudienceOp;
+pub use crate::workspace_roster::rooms::liveness::RoomThreadList;
+pub use crate::workspace_roster::rooms::liveness::RoomThreadWait;
+pub use crate::workspace_roster::rooms::liveness::RoomThreads;
+pub use crate::workspace_roster::rooms::liveness::RoomWaitKind;
+pub use crate::workspace_roster::rooms::offers::OfferState;
+pub use crate::workspace_roster::rooms::offers::OfferVoteTally;
+pub use crate::workspace_roster::rooms::upkeep::RoomUpkeepInput;
+pub use crate::workspace_roster::rooms::upkeep::RoomUpkeepThread;
+pub use crate::workspace_roster::rooms::wake::RoomWake;
+use oneiron_contracts::entity_id::EntityId;
+pub(crate) use oneiron_store::conversation_body::AUDIENCE_EDIT_BOUND;
+pub(crate) use oneiron_store::conversation_body::ROOM_THREAD_AUDIENCE_KEY;
+pub(crate) use oneiron_store::conversation_body::ROOM_THREAD_KEY;
+pub(crate) use oneiron_store::conversation_body::THREAD_NOTICE_PRODUCER;
+pub(crate) use oneiron_store::conversation_body::ThreadBinding;
 pub use oneiron_store::conversation_body::ThreadJoinRequestsRequest;
 pub use oneiron_verb_wire::workspace_roster::rooms::audience_doors::ThreadAudienceAddRequest;
 pub use oneiron_verb_wire::workspace_roster::rooms::audience_doors::ThreadAudienceReceipt;
@@ -34,5 +53,46 @@ pub use oneiron_verb_wire::workspace_roster::rooms::thread_join::ThreadJoinReque
 pub use oneiron_verb_wire::workspace_roster::rooms::upkeep_voice::RoomUpkeepNudge;
 pub use oneiron_verb_wire::workspace_roster::rooms::upkeep_voice::RoomUpkeepPendingRequest;
 pub use oneiron_verb_wire::workspace_roster::rooms::upkeep_voice::RoomUpkeepVoiceRequest;
+use serde::Deserialize;
+use serde::Serialize;
+use std::collections::BTreeSet;
 
 pub mod audience_events;
+
+/// A delivered TASK's durable result, attached to its trunk on a room read.
+/// The TASK terminal register holds the fact; no second row is stored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoomTrunkHeader {
+    pub thread: EntityId,
+    pub task: EntityId,
+    pub result_ref: EntityId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoomThreadPage {
+    pub rows: Vec<EntityId>,
+    /// Explicit end marker: `None` means the room has no further page.
+    pub next_after: Option<EntityId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomClaimReceipt {
+    pub room_id: String,
+    pub turn_id: String,
+    pub actor: String,
+    pub receipt_ref: String,
+    pub at: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RoomClaimOutcome {
+    Claimed(RoomClaimReceipt),
+    HeldBy(RoomClaimReceipt),
+    NotAddressed,
+}
+pub mod liveness;
+pub mod offers;
+pub mod replica;
+pub mod upkeep;
+pub mod wake;

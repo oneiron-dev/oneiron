@@ -27,10 +27,8 @@ mod file_stream;
 pub(crate) use file_stream::attaches_as_file_read;
 mod tree;
 
-/// How deep text decoded inside text is read before its original bytes are
-/// kept, as deep as the document pass reads. A value's own structure spends
-/// none of it (FIX 10097).
-const TEXT_DEPTH: usize = 128;
+#[doc(hidden)]
+use oneiron_records::serialize::export_value::{TEXT_DEPTH, invalid, reference_field};
 
 /// Whether an export's serializer nulls credentials (every export but one) or
 /// keeps them (the Owner's whole-vault archive with secrets included).
@@ -599,10 +597,6 @@ fn export_provenance_references(bytes: &[u8], exported: &mut ExportValue, secret
     }
 }
 
-fn invalid(reason: &str) -> Error {
-    Error::InvalidConfig(format!("whole-vault export: {reason}"))
-}
-
 /// Text keeps its original bytes only when every reading of it is clean: its
 /// text, and, when it decodes, every member through the decode the write door
 /// runs ([`decode_members`]), a lone JSON string and each repeated key's value
@@ -641,22 +635,6 @@ fn byte_container_is_opaque_or_tainted(bytes: &[u8], depth: usize) -> bool {
         rmpv::decode::read_value(&mut cursor),
         Ok(Mp::Map(_) | Mp::Array(_) | Mp::Binary(_) | Mp::Ext(_, _))
     ) && cursor.position() == bytes.len() as u64
-}
-
-fn reference_field(key: &str, bytes: &[u8], entity_type: u8, depth: usize) -> bool {
-    if entity_type != crate::registry::ENTITY_TYPE_CLAIM {
-        return false;
-    }
-    if depth > 1 && key != crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY {
-        return false;
-    }
-    match key {
-        "subj" => crate::write_envelope::claim_body::ClaimSubject::decode(bytes).is_ok(),
-        "actor_entity_ref" => <[u8; 16]>::try_from(bytes)
-            .ok()
-            .is_some_and(|id| crate::entity_id::EntityId::from_bytes(id).is_ok()),
-        _ => false,
-    }
 }
 
 /// An exported item as a second pass reads it joined

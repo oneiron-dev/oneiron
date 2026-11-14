@@ -224,13 +224,8 @@ impl SelfFixtureEffectCall {
     }
 }
 
-/// One SDK verb-table call from code mode, at the verb's SDK path.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SelfAgentVerbCall {
-    pub verb: crate::task_verb::sdk::AgentVerb,
-    /// The verb's whole typed input, as its REST body and SDK bindings take it.
-    pub input: serde_json::Value,
-}
+#[doc(hidden)]
+pub use oneiron_records::code_run::types::request::SelfAgentVerbCall;
 
 /// `self.skills.call(...)`: the skill and the arguments its call contract
 /// takes. No lease, executor or runtime comes from the guest.

@@ -7,16 +7,8 @@ use super::{CallPurpose, Deserialize, EntityId, ImageBytes, LlmCapability, Seria
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::asset_resolve::types::{ImageViewRequest, ServedAssetForm};
 
-/// Who reads an asset: what the consumer's model takes in, and the call
-/// purpose the read serves, which the host's per-image pick reads.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AssetConsumer {
-    /// The consumer's input capabilities; image bytes need `image_input`.
-    #[serde(default)]
-    pub capabilities: Vec<LlmCapability>,
-    /// The purpose the read serves.
-    pub purpose: CallPurpose,
-}
+#[doc(hidden)]
+pub use oneiron_records::memory::asset_resolve::types::{AssetConsumer, LandedImage};
 
 /// One asset as served to one consumer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,15 +55,6 @@ pub struct PulledImage {
     #[serde(skip)]
     #[schemars(skip)]
     pub evidence: Option<super::EvidenceVersion>,
-}
-
-/// The rows one generated image landed as.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LandedImage {
-    /// 32-hex ASSET id; the ref every consumer resolves.
-    pub asset_ref: String,
-    /// 32-hex id of its precomputed ASSET_TEXT.
-    pub asset_text_ref: String,
 }
 
 /// What a hydrate serves, for one ASSET its lane admitted live.

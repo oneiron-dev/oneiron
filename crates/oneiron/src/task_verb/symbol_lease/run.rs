@@ -20,20 +20,8 @@ use crate::attempt_queue::AttemptId;
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
 
-/// The leased run a declaration was made under: its try, that try's lease
-/// owner and generation, and the repo and full ref its work is on. The
-/// holder is the declaration's own.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SymbolLeaseRun {
-    pub attempt: AttemptId,
-    pub lease_owner: String,
-    pub generation: u32,
-    /// The CODE anchor the run's work is on.
-    pub repo: EntityId,
-    #[serde(rename = "ref")]
-    pub git_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::task_verb::symbol_lease::run::SymbolLeaseRun;
 
 /// What a run's declaration answers to: its id, the TASK it is held under,
 /// its holder and the run that made it. The run names only the id; the rest

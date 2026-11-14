@@ -25,18 +25,6 @@ thread_local! {
     static OPEN_INTENT: RefCell<Option<IdempotencyIntent>> = const { RefCell::new(None) };
 }
 
-impl IdempotencyEntry {
-    /// The status an intent row holds: no HTTP status is 0 (FIX 9527).
-    pub const INTENT_STATUS: u16 = 0;
-
-    /// Whether this entry is an intent that no outcome settled and no erase
-    /// took.
-    #[must_use]
-    pub fn is_open_intent(&self) -> bool {
-        self.status == Self::INTENT_STATUS && !self.erased
-    }
-}
-
 /// The key of a keyed request's or durable invocation's intent row, under
 /// its declared `sync_state` family.
 #[doc(hidden)]

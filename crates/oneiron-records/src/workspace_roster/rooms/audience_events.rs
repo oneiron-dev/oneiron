@@ -1,10 +1,16 @@
 //! Moved from `crates/oneiron/src/workspace_roster/rooms/audience_events.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use crate::workspace_roster::rooms::*;
+use oneiron_base::error::Error;
+use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
+pub(crate) use oneiron_store::conversation_body::ROOM_THREAD_AUDIENCE_KEY;
 pub use oneiron_verb_wire::workspace_roster::rooms::audience_events::ThreadAudienceHistory;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 /// The domain of an erased person's stand-in in a root's audience edits
 /// (FIX 5640).
@@ -101,4 +107,26 @@ pub enum JoinSettlement {
     Approved,
     /// A denial of it.
     Denied,
+}
+
+/// Whether an edit adds its person, removes them, walks them in or opens
+/// the thread's full history to them, or asks to join for them or denies
+/// that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AudienceOp {
+    Add,
+    Remove,
+    /// A self-add (FIX 6381): its person enters from this edit's turn on,
+    /// or stays as they are when already in.
+    WalkIn,
+    /// The Owner's explicit act (FIX 6383): its person reads every turn of
+    /// the thread until a remove.
+    OpenFullHistory,
+    /// Its person, the one who wrote it, asks to join (FIX 6381, 6384): it
+    /// changes no one's place in the thread.
+    RequestJoin,
+    /// A member denies its person's pending request to join: it changes no
+    /// one's place in the thread.
+    DenyJoin,
 }

@@ -1,6 +1,8 @@
 #[cfg(feature = "sync")]
 pub use crate::embed::home_vectors::HomeClaimVector;
 pub use crate::embed::space::MediaRefused;
+pub use crate::store::embedding::EmbedderLocality;
+pub(crate) use oneiron_store::embedding::COLD_ATTACH_PENDING_KEY;
 #[cfg(feature = "sync")]
 pub use oneiron_store::embedding::DEFAULT_PENDING_EMBEDDING_LEASE_MS;
 #[cfg(feature = "sync")]
@@ -27,6 +29,7 @@ pub use oneiron_store::embedding::PendingEmbeddingPayload;
 pub use oneiron_store::embedding_vocabulary::EmbeddingDevice;
 pub use oneiron_store::embedding_vocabulary::EmbeddingProvenance;
 pub use oneiron_store::embedding_vocabulary::InputKind;
+pub(crate) use oneiron_store::embedding_vocabulary::TEXT_HASH_LEN;
 pub use oneiron_verb_wire::embed::binding_move::BindingMoveState;
 pub use oneiron_verb_wire::embed::binding_move::BindingNotApplied;
 pub use oneiron_verb_wire::embed::space_move::CohortProbe;
@@ -34,8 +37,10 @@ pub use oneiron_verb_wire::embed::space_move::NotWorse;
 pub use oneiron_verb_wire::embed::space_move::PairedInterval;
 pub use oneiron_verb_wire::embed::space_move::SpaceMoveState;
 pub use oneiron_verb_wire::embed::space_probe::SPACE_PROBE_QUERY_MAX_LEN;
+use std::borrow::Cow;
 
 #[cfg(feature = "sync")]
 pub mod home_vectors;
+pub mod locality;
 pub mod repo_projection;
 pub mod space;

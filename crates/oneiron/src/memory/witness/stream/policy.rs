@@ -8,29 +8,6 @@ use crate::side_table::{self, Named, SideTable};
 const POLICY: SideTable<(), MessageStreamPolicy, Named> =
     SideTable::new(&side_table::MESSAGE_STREAM_POLICY);
 
-impl MessageStreamPolicy {
-    fn validate(&self) -> MessageStreamResult<()> {
-        if self.idle_timeout_ms == 0 {
-            return Err(MessageStreamError::InvalidRequest(
-                "idle timeout must be positive",
-            ));
-        }
-        self.default_mode.validate()?;
-        for mode in self.agent_overrides.values() {
-            mode.validate()?;
-        }
-        Ok(())
-    }
-    pub(super) fn resolve(
-        &self,
-        actor: &EntityId,
-        explicit: Option<MessageWriteMode>,
-    ) -> MessageWriteMode {
-        explicit
-            .or_else(|| self.agent_overrides.get(actor).copied())
-            .unwrap_or(self.default_mode)
-    }
-}
 impl Vault {
     pub fn message_stream_policy(&self) -> MessageStreamResult<MessageStreamPolicy> {
         let txn = self.store.env.read_txn()?;

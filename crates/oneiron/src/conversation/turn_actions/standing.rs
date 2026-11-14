@@ -116,11 +116,5 @@ impl TurnActionAttempt {
     }
 }
 
-/// The slip a turn action was asked with no longer stands for its requester.
-fn standing_lost() -> MemoryError {
-    MemoryError::new(
-        crate::memory::MEMORY_CODE_FORBIDDEN,
-        "the slip this turn action was asked with no longer stands for its requester",
-        &["Ask for the action again with a live credential."],
-    )
-}
+#[doc(hidden)]
+use oneiron_records::conversation::turn_actions::standing::standing_lost;

@@ -276,14 +276,10 @@ pub enum RoomTrunkItem {
     Result(RoomTrunkHeader),
 }
 
-/// A delivered TASK's durable result, attached to its trunk on a room read.
-/// The TASK terminal register holds the fact; no second row is stored.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RoomTrunkHeader {
-    pub thread: EntityId,
-    pub task: EntityId,
-    pub result_ref: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::rooms::{
+    RoomClaimOutcome, RoomClaimReceipt, RoomThreadPage, RoomTrunkHeader,
+};
 
 /// A trunk turn with the delivered task headers under its thread anchors.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -292,12 +288,6 @@ pub struct RoomTrunk {
     pub headers: Vec<RoomTrunkHeader>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RoomThreadPage {
-    pub rows: Vec<EntityId>,
-    /// Explicit end marker: `None` means the room has no further page.
-    pub next_after: Option<EntityId>,
-}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomPage {
@@ -325,22 +315,6 @@ fn turns_readable(scope: &crate::federation::Scope) -> bool {
 fn outside_scope() -> MemoryError {
     MemoryError::bad_request_with("room turn is outside the room scope", &[])
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomClaimReceipt {
-    pub room_id: String,
-    pub turn_id: String,
-    pub actor: String,
-    pub receipt_ref: String,
-    pub at: u64,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RoomClaimOutcome {
-    Claimed(RoomClaimReceipt),
-    HeldBy(RoomClaimReceipt),
-    NotAddressed,
-}
-
 /// Project rooms use the PROJECT roster instead of the ordinary membership
 /// ledger. Return None for other conversations so their historical membership
 /// windows remain authoritative at the ordinary audience door. Each audience

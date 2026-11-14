@@ -23,16 +23,6 @@ use super::{GATE_DECISION_LEDGER_VERSION, GateDecisionRecord, RETRIEVAL_RUNS_CAP
 pub(super) const TRAY: SideTable<[u8; 16], PendingGateConsentRecord, Raw> =
     SideTable::new(&side_table::PENDING_GATE_CONSENT);
 
-impl RawValue for PendingGateConsentRecord {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_pending_gate_consent(self)?)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        Ok(decode_pending_gate_consent(bytes)?)
-    }
-}
-
 /// One sequence row of the tray, for a reader whose contract is to surface a
 /// corrupt row rather than refuse its read (FIX 7378, FIX 7601).
 #[derive(Debug, Clone)]
