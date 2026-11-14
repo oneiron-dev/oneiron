@@ -115,8 +115,9 @@ struct Cohorts {
 }
 
 fn create_cohorts(vault: &Vault) -> Cohorts {
-    let owner = id(0x71, 0);
-    put_person(vault, owner);
+    // The embedded owner reads with the owner key; a raw PERSON on this
+    // unrooted vault holds no owner binding, so every page reads empty.
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let facade = vault.memory(owner, EdgeActorClass::Human);
     // A membership commit enrolls only into an Active campaign, so each
     // campaign is launched once it exists.
