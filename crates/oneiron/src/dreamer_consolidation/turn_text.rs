@@ -13,10 +13,11 @@
 //! Every child the text depends on is read as the same actor under the
 //! relationship gate (private rows and relationship rows without a live grant
 //! are withheld) in the caller's snapshot, and pinned at its exact logical
-//! version, `AuthoredBy` targets, document frontier and stream finality. Later
-//! doors re-collect and compare against that pin; they never reinterpret
-//! frozen offsets against new text. An incomplete or unreadable child set
-//! refuses; a partial transcript is never assembled. A range cited over the
+//! version, `AuthoredBy` targets and the source speaker they name (FIX 15412),
+//! document frontier and stream finality. Later doors re-collect and compare
+//! against that pin; they never reinterpret frozen offsets against new text.
+//! An incomplete or unreadable child set refuses; a partial transcript is
+//! never assembled. A range cited over the
 //! text is persisted as the MESSAGE-local slices it covers ([`MessageSpan`]),
 //! so the citation names its words after the turn's other rows move.
 
@@ -40,6 +41,7 @@ use crate::write_envelope::WriteActor;
 use crate::{EntityId, Error, Result, Vault};
 use oneiron_model::llm::{Scope, ScopeResource};
 
+mod attribution;
 pub(super) mod compaction_span;
 pub(super) mod projection;
 
@@ -54,17 +56,29 @@ struct MessagePin {
     version: ScopeResource,
     /// Content hash of the logical body `version` names.
     revision: [u8; 32],
-    /// Exact `AuthoredBy` targets: one for a non-system row, none for system.
+    /// Exact `AuthoredBy` targets: one for a native user or companion row,
+    /// none for a system or counterparty one; for an imported row none, or
+    /// the PERSON its source names.
     authors: Vec<EntityId>,
+    /// The live canonical PERSON an imported row's source names as its
+    /// speaker, read from `authors`; none for a native row (FIX 15412).
+    speaker: Option<EntityId>,
+    /// The source attribution its slices pin: an imported row's raw
+    /// `AuthoredBy` target and `speaker`, as one hash; none for a native row
+    /// and for an import that names no one (FIX 15412).
+    attribution: Option<[u8; 32]>,
     frontier: Option<Vec<u8>>,
     /// Latest stream receipt `(finality, generation)`; `None` when atomic.
     stream: Option<(StreamFinality, EntityId)>,
 }
 
 /// One MESSAGE-local slice behind a range of a witnessed TURN's text: the
-/// child, the byte span within that child's own content, and the exact
-/// revision (plus the document frontier when the child has a document) it
-/// was read at.
+/// child, the byte span within that child's own content, the exact revision
+/// (plus the document frontier when the child has a document) it was read
+/// at, and, when the child carries a source attribution, the one it was
+/// read with: an imported child's raw `AuthoredBy` target and the source
+/// speaker it named, as one hash (FIX 15412). None means the child names no
+/// source speaker: a native child, or an import that names no one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MessageSpan {
     pub(crate) message: EntityId,
@@ -72,10 +86,13 @@ pub(crate) struct MessageSpan {
     pub(crate) end: usize,
     pub(crate) revision: [u8; 32],
     pub(crate) frontier: Option<Vec<u8>>,
+    pub(crate) attribution: Option<[u8; 32]>,
 }
 
 impl MessageSpan {
-    /// Folds every field into an identity hash.
+    /// Folds every field into an identity hash. A slice with no source
+    /// attribution folds exactly the bytes it folded before slices carried
+    /// one.
     pub(crate) fn hash_into(&self, hasher: &mut blake3::Hasher) {
         hasher.update(self.message.as_bytes());
         hasher.update(&(self.start as u64).to_be_bytes());
@@ -87,6 +104,10 @@ impl MessageSpan {
             hasher.update(frontier);
         } else {
             hasher.update(&[0]);
+        }
+        if let Some(attribution) = &self.attribution {
+            hasher.update(b"source_attribution");
+            hasher.update(attribution);
         }
     }
 }
@@ -126,6 +147,10 @@ impl TurnText {
                 part(author.as_bytes());
             }
             part(&[]);
+            if let Some(speaker) = &pin.speaker {
+                part(b"source_speaker");
+                part(speaker.as_bytes());
+            }
             part(pin.frontier.as_deref().unwrap_or_default());
             if let Some((finality, generation)) = &pin.stream {
                 part(
@@ -156,6 +181,23 @@ impl TurnText {
         self.messages.iter().flatten().map(|pin| pin.id)
     }
 
+    /// The one PERSON the source names as the speaker of every MESSAGE this
+    /// text projects, read apart from its role (FIX 15412). None for inline
+    /// text, a native turn, or one whose projected MESSAGEs name no one or
+    /// different people.
+    pub(crate) fn source_speaker(&self) -> Option<EntityId> {
+        let pins = self.messages.as_ref()?;
+        let mut speakers = self.layout.iter().map(|(id, _, _)| {
+            pins.iter()
+                .find(|pin| pin.id == *id)
+                .and_then(|pin| pin.speaker)
+        });
+        let first = speakers.next()??;
+        speakers
+            .all(|speaker| speaker == Some(first))
+            .then_some(first)
+    }
+
     /// The MESSAGE-local slices a byte range of this text covers (the whole
     /// text when `range` is `None`), each at the revision it was read at.
     /// Inline TURN text has none. A range covering no MESSAGE byte (only the
@@ -181,6 +223,7 @@ impl TurnText {
                 end: to - offset,
                 revision: pin.revision,
                 frontier: pin.frontier.clone(),
+                attribution: pin.attribution,
             });
         }
         if range.is_some() && spans.is_empty() {
@@ -492,23 +535,24 @@ fn collect_with(
         let out = |kind| peers(vault, txn, &id, EdgeDirection::Out, kind, None);
         let mut authors = out(EdgeKind::AuthoredBy)?;
         authors.sort_unstable();
-        // An imported row names its source's speaker in metadata and has no
-        // `AuthoredBy` edge: the importer did not write it.
-        let bylines = usize::from(
-            !matches!(
-                message.author.as_str(),
-                WITNESS_AUTHOR_SYSTEM | WITNESS_AUTHOR_COUNTERPARTY
-            ) && !facts.imported,
-        );
         if entity_type != ENTITY_TYPE_MESSAGE
             || out(EdgeKind::PartOf)? != [*turn]
             || out(EdgeKind::BelongsTo)? != [*conversation]
-            || authors.len() != bylines
         {
             return Err(invalid_consolidation(
                 "witnessed turn message binding changed",
             ));
         }
+        // The importer did not write an imported row: its one edge, if any,
+        // names the PERSON its source says spoke (FIX 15412).
+        let speaker = attribution::admitted_speaker_in(
+            vault,
+            txn,
+            &message.author,
+            facts.imported,
+            &authors,
+        )?;
+        let attribution = attribution::attribution_hash(facts.imported, &authors, speaker);
         #[cfg(feature = "sync")]
         let frontier = crate::entity_doc::source_frontier_in_txn(&vault.store, txn, &id)?;
         #[cfg(not(feature = "sync"))]
@@ -523,6 +567,8 @@ fn collect_with(
             version: document_version(id, &body),
             revision: super::swarm_evidence_content_hash(&body),
             authors,
+            speaker,
+            attribution,
             frontier,
             stream,
         });
