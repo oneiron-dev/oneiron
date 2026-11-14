@@ -45,8 +45,6 @@ mod charter_ceiling;
 mod claim_candidate_lineage;
 mod connector_budget;
 mod consent_bundle;
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-CONSOLIDATION-READERS]: the lib test target's type check fails here (15 errors: E0063 x11, E0308 x3, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 mod consolidation_readers;
 mod credential_lifetimes;
 mod critical_confirm_holds;
