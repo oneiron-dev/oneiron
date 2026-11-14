@@ -250,6 +250,16 @@ fn every_fit_unverified_unit_has_a_measured_row() {
                     .unwrap_or_else(|| panic!("{id}: {block} fits without a bound size"));
                 assert_eq!(inner.len(), 2, "{id}: {block} inner size");
                 assert_eq!(bound.len(), 2, "{id}: {block} bound size");
+                if matches!(unit.kind, UnitKind::Table) {
+                    // A table fits only on measured rows: an unread table summed to 0 rows (vel, 15 Nov).
+                    assert!(
+                        bound
+                            .get(1)
+                            .and_then(Value::as_i64)
+                            .is_some_and(|rows| rows > 0),
+                        "{id}: {block} table fits without measured rows"
+                    );
+                }
                 for (axis, (held, room)) in bound.iter().zip(inner.iter()).enumerate() {
                     let held = held
                         .as_i64()
