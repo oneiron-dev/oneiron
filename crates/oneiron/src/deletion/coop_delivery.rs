@@ -255,15 +255,42 @@ pub struct CooperativeDeletionDelivery {
     payload: DeliveryPayload,
 }
 
+/// What queuing an ask does when its nonce already names a queued ask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QueuedAsk {
+    /// Refuse: a hand-picked ask takes a fresh nonce.
+    Refuse,
+    /// Answer the queued ask as it stands: the leave action's nonce names
+    /// its one whole-pact ask per ended pact.
+    Answer,
+}
+
 impl Vault {
     /// Queues `signed` for `destination` and records it `queued`, in one
     /// transaction. The ask must be this vault's, about a pact it ended.
+    /// The leave action's nonce of the pact holds only that action's
+    /// whole-pact ask.
     pub fn queue_cooperative_deletion_request_as(
         &self,
         owner: &AuthenticatedOwner,
         signed: &SignedCooperativeDeletionRequest,
         destination: &str,
         now: u64,
+    ) -> Result<CooperativeDeletionNotice> {
+        self.queue_cooperative_deletion_request(owner, signed, destination, now, QueuedAsk::Refuse)
+    }
+
+    /// [`Self::queue_cooperative_deletion_request_as`], with `queued`
+    /// choosing the answer when the nonce already names a queued ask. The
+    /// lookup runs in the writer that queues, so two calls at once queue
+    /// one ask.
+    fn queue_cooperative_deletion_request(
+        &self,
+        owner: &AuthenticatedOwner,
+        signed: &SignedCooperativeDeletionRequest,
+        destination: &str,
+        now: u64,
+        queued: QueuedAsk,
     ) -> Result<CooperativeDeletionNotice> {
         self.recheck_owner(owner)?;
         let body = &signed.body;
@@ -281,10 +308,16 @@ impl Vault {
                 )
             })
             .ok_or(crate::error::RecordError::CooperativeDeletionRequiresTerminalPact)?;
-        if pact.peer_vault_id != body.peer_vault_id
-            || body.epoch_cutoff > pact.terminal_epoch.unwrap_or(pact.pact_epoch)
-        {
+        let terminal_epoch = pact.terminal_epoch.unwrap_or(pact.pact_epoch);
+        if pact.peer_vault_id != body.peer_vault_id || body.epoch_cutoff > terminal_epoch {
             return Err(invalid("the ask does not match its pact"));
+        }
+        // A repeated leave action answers whatever its nonce names, so no
+        // other ask may take that nonce (REVIEW L7-09 P2).
+        if body.nonce == leave::leave_ask_nonce(&body.pact_id, terminal_epoch)
+            && !leave::is_leave_ask(body, terminal_epoch)
+        {
+            return Err(invalid("this nonce is the leave action's whole-pact ask"));
         }
         let bytes = encode_signed_cooperative_deletion_request(signed)?;
         let recipient = cooperative_deletion_recipient_id(&body.pact_id, &body.peer_vault_id);
@@ -308,8 +341,11 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             // The owner still holds in the writer that queues (FIX 9784).
             owner.revalidate_in_txn(self, txn)?;
-            if NOTICES.contains(&self.store, txn, &key)? {
-                return Err(invalid("an ask under this nonce is already queued"));
+            if let Some(first) = NOTICES.get(&self.store, txn, &key)? {
+                return match queued {
+                    QueuedAsk::Refuse => Err(invalid("an ask under this nonce is already queued")),
+                    QueuedAsk::Answer => Ok(first),
+                };
             }
             stage(self, txn, &payload, now)?;
             NOTICES.put(&self.store, txn, &key, &notice)?;

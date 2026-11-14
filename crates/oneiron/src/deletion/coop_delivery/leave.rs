@@ -12,9 +12,10 @@
 //! inquiry answer among them. The peer files each ask for its owner, and
 //! nothing is erased on receipt.
 
-use super::{CooperativeDeletionNotice, NOTICES, cooperative_deletion_recipient_id};
+use super::{CooperativeDeletionNotice, QueuedAsk};
 use crate::authority::{AuthorityVaultId, HostSlipIssuer};
 use crate::consent::AuthenticatedOwner;
+use crate::deletion::CooperativeDeletionRequest;
 use crate::error::RecordError;
 use crate::{Result, Vault};
 use oneiron_authority::authority::FederationPactStatus;
@@ -24,8 +25,8 @@ const LEAVE_ASK_NONCE_CONTEXT: &str = "oneiron leave erase request nonce v1";
 
 /// The nonce of the leave ask over `pact_id` up to `epoch_cutoff`: one per
 /// ended pact, so a repeated action finds its first ask instead of queuing
-/// a second.
-fn leave_ask_nonce(pact_id: &[u8; 32], epoch_cutoff: u64) -> [u8; 16] {
+/// a second. The queue refuses any other ask under it.
+pub(super) fn leave_ask_nonce(pact_id: &[u8; 32], epoch_cutoff: u64) -> [u8; 16] {
     let mut hasher = blake3::Hasher::new_derive_key(LEAVE_ASK_NONCE_CONTEXT);
     hasher.update(pact_id);
     hasher.update(&epoch_cutoff.to_le_bytes());
@@ -34,13 +35,20 @@ fn leave_ask_nonce(pact_id: &[u8; 32], epoch_cutoff: u64) -> [u8; 16] {
     nonce
 }
 
+/// Whether `body` is the ask the leave action signs over its pact ended at
+/// `terminal_epoch`: one page naming no world, cut off at that epoch.
+pub(super) fn is_leave_ask(body: &CooperativeDeletionRequest, terminal_epoch: u64) -> bool {
+    body.worlds.is_empty() && body.pages == 1 && body.epoch_cutoff == terminal_epoch
+}
+
 impl Vault {
     /// Asks `peer_vault_id` to erase what it holds from this vault, as
     /// `owner`, in one action: for each pact with that peer that this
     /// vault's fold shows Disconnected or Dissolved, one courtesy ask about
     /// all the pact delivered up to its terminal epoch, signed by `issuer`
     /// and queued for `destination` (the peer's courtesy route). An ask this
-    /// action already queued is answered as it stands, not queued again.
+    /// action already queued is answered as it stands, not queued again,
+    /// also when two calls run at once: the writer that would queue it looks.
     /// The answers come in pact order.
     ///
     /// # Errors
@@ -84,23 +92,13 @@ impl Vault {
                 epoch_cutoff,
                 nonce,
             )? {
-                let key = (
-                    signed.body.nonce,
-                    cooperative_deletion_recipient_id(&pact_id, &signed.body.peer_vault_id),
-                );
-                let queued = {
-                    let rtxn = self.store.env.read_txn()?;
-                    NOTICES.get(&self.store, &rtxn, &key)?
-                };
-                notices.push(match queued {
-                    Some(notice) => notice,
-                    None => self.queue_cooperative_deletion_request_as(
-                        owner,
-                        &signed,
-                        destination,
-                        now,
-                    )?,
-                });
+                notices.push(self.queue_cooperative_deletion_request(
+                    owner,
+                    &signed,
+                    destination,
+                    now,
+                    QueuedAsk::Answer,
+                )?);
             }
         }
         Ok(notices)
