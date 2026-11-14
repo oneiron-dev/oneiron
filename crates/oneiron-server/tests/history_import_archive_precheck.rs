@@ -41,6 +41,16 @@ struct Home {
     config: PathBuf,
     /// The config as `init` wrote it, before any `[import]` row.
     written: String,
+    /// What the vault held before any import: `init` and the first open
+    /// write rows of their own (a fresh vault holds one conversation).
+    fresh: Held,
+}
+
+/// How many messages and conversations a vault holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Held {
+    messages: u64,
+    conversations: u64,
 }
 
 impl Home {
@@ -64,11 +74,13 @@ impl Home {
             String::from_utf8_lossy(&init.stderr)
         );
         let written = std::fs::read_to_string(&config).expect("test fixture");
+        let fresh = held_in(&vault);
         Self {
             dir,
             vault,
             config,
             written,
+            fresh,
         }
     }
 
@@ -107,6 +119,10 @@ impl Home {
             .expect("test fixture")
     }
 
+    fn held(&self) -> Held {
+        held_in(&self.vault)
+    }
+
     /// What the vault's folder holds on disk: every file below it, through
     /// no link (the bytes the storage cap is measured against).
     fn vault_folder_bytes(&self) -> u64 {
@@ -127,12 +143,25 @@ impl Home {
     }
 }
 
+fn held_in(vault: &Path) -> Held {
+    let vault = Vault::open_owned(vault, VaultConfig::server()).expect("open vault");
+    let count = |entity_type| {
+        vault
+            .count_entities_by_type(entity_type)
+            .expect("test fixture")
+    };
+    Held {
+        messages: count(ENTITY_TYPE_MESSAGE),
+        conversations: count(ENTITY_TYPE_CONVERSATION),
+    }
+}
+
 fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
 /// Asserts the import failed, its stderr names each of `named`, and nothing
-/// landed.
+/// landed: the vault holds what it held before the import.
 fn assert_refused(home: &Home, output: &Output, named: &[&str]) {
     let stderr = stderr(output);
     assert!(
@@ -146,12 +175,7 @@ fn assert_refused(home: &Home, output: &Output, named: &[&str]) {
             "stderr must name {name:?}; it is: {stderr}"
         );
     }
-    assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 0, "no message landed");
-    assert_eq!(
-        home.count(ENTITY_TYPE_CONVERSATION),
-        0,
-        "no conversation landed"
-    );
+    assert_eq!(home.held(), home.fresh, "nothing landed");
 }
 
 /// Asserts the import succeeded and returns its report.
