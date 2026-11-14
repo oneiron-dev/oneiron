@@ -562,7 +562,10 @@ fn a_key_an_aborted_writer_installed_opens_nothing_until_a_delivery_commits() {
     deliver_authority_overlay_custody_then_abort_for_test(&home, &other, &subject).unwrap();
     {
         let fold = other.authority_fold().unwrap();
-        assert!(fold.pass_through_entries.contains(&mint_row));
+        assert!(
+            fold.pass_through_entries.contains(&mint_row),
+            "a key file an aborted writer left opens nothing before a reopen"
+        );
         assert!(!fold.valid_entries.contains(&mint_row));
         assert!(!fold.slips.mints.contains_key(&slip_id));
         assert!(!other.capability_slip_id_is_live(&slip_id).unwrap());
