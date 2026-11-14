@@ -21,9 +21,9 @@ use super::hooks::DoorHooksDir;
 use super::intent::ReceivePackRefResult;
 use super::landing::ReceivePackLanding;
 use super::paths::{
-    DOOR_WINDOW_TIMEOUT, ORIGIN_COMMAND_SECTION_MEMORY_BYTES, SERVE_IDLE_TIMEOUT,
-    SERVE_MAX_STDERR_BYTES, SERVE_STREAM_CHUNK_BYTES, origin_door_root, origin_repo_dir,
-    origin_serving_root, push_refused, repository_busy, serve_failed, serve_idle,
+    DOOR_WINDOW_TIMEOUT, ORIGIN_COMMAND_SECTION_MEMORY_BYTES, SERVE_COMMAND_SECTION_TIMEOUT,
+    SERVE_IDLE_TIMEOUT, SERVE_MAX_STDERR_BYTES, SERVE_STREAM_CHUNK_BYTES, origin_door_root,
+    origin_repo_dir, origin_serving_root, push_refused, repository_busy, serve_failed, serve_idle,
 };
 use super::projected_serve::{ProjectedExchange, select_projected_exchange};
 use super::push_admission::{ServeCaller, admit_push, stamp_admission};
@@ -112,6 +112,17 @@ pub struct ServeReport {
 /// is always reaped before this returns. The door's scan keeps the default
 /// [`ScanBounds`](super::ScanBounds).
 ///
+/// # The command section deadline
+///
+/// A push's command section is read under the coordinator, before the
+/// backend is spawned, and a byte resets only the idle limit. So the whole
+/// section must arrive within
+/// [`SERVE_COMMAND_SECTION_TIMEOUT`](super::SERVE_COMMAND_SECTION_TIMEOUT) of
+/// its first read, or the push fails with the same
+/// [`CodeError::GitHttpExchangeIdle`] and lets the coordinator go: a section
+/// that trickles in never holds the repository's other pushes for as long as
+/// it keeps coming. [`serve_bounded`] sets another deadline.
+///
 /// [`CodeError::GitHttpExchangeIdle`]: crate::error::CodeError::GitHttpExchangeIdle
 pub fn serve(
     vault: &Arc<Vault>,
@@ -127,10 +138,11 @@ pub fn serve(
 /// [`serve`] for a transport that admits exchanges by permit.
 ///
 /// It runs under its host's [`ExchangeBounds`]: its own idle limit in place of
-/// [`SERVE_IDLE_TIMEOUT`], and the floors its door scan keeps. A transport
-/// whose body and sink bound their own waits passes the same idle limit, so
-/// whichever side sees the stall first ends the exchange the same way. A
-/// push that finds the repository coordinator taken waits for it, for
+/// [`SERVE_IDLE_TIMEOUT`], its own command section deadline in place of
+/// [`SERVE_COMMAND_SECTION_TIMEOUT`], and the floors its door scan keeps. A
+/// transport whose body and sink bound their own waits passes the same idle
+/// limit, so whichever side sees the stall first ends the exchange the same
+/// way. A push that finds the repository coordinator taken waits for it, for
 /// `repository_wait` at most, and only then fails with
 /// [`CodeError::GitHttpRepositoryBusy`]; the transport queues its own pushes
 /// to one repository before this, so the wait is for a writer outside it.
@@ -173,6 +185,7 @@ pub fn serve_bounded_with_authority(
         seam,
         authority,
         idle: bounds.idle,
+        command_section: bounds.command_section,
         scan: bounds.scan,
         spill_floor: bounds.spill_floor,
         wait_for_repository: false,
@@ -212,6 +225,7 @@ pub fn serve_with_provenance(
         seam,
         authority: None,
         idle: SERVE_IDLE_TIMEOUT,
+        command_section: SERVE_COMMAND_SECTION_TIMEOUT,
         scan: ScanBounds::default(),
         spill_floor: None,
         wait_for_repository: true,
@@ -239,6 +253,7 @@ pub fn serve_with_authority(
         seam,
         authority: Some(authority),
         idle: SERVE_IDLE_TIMEOUT,
+        command_section: SERVE_COMMAND_SECTION_TIMEOUT,
         scan: ScanBounds::default(),
         spill_floor: None,
         wait_for_repository: true,
@@ -251,14 +266,16 @@ pub fn serve_with_authority(
 }
 
 /// What one invocation runs under besides its request: the door seam, a lease
-/// from trusted host configuration, the exchange's idle limit, scan floors
-/// and spill floor, whether a read may wait for a repository a writer holds,
-/// and how long a push waits for it (`None`: until it is free), and who it
+/// from trusted host configuration, the exchange's idle limit, how long a
+/// push's command section may take to arrive, scan floors and spill floor,
+/// whether a read may wait for a repository a writer holds, and how long a
+/// push waits for it (`None`: until it is free), and who it
 /// pushes as (G1-PUSH).
 pub(super) struct ServeTerms<'a> {
     pub(super) seam: DoorSeam,
     pub(super) authority: Option<&'a OriginAuthorityLease>,
     pub(super) idle: Duration,
+    pub(super) command_section: Duration,
     pub(super) scan: ScanBounds,
     pub(super) spill_floor: Option<Arc<dyn SpillFloor>>,
     pub(super) wait_for_repository: bool,
@@ -284,6 +301,7 @@ pub(super) fn serve_request(
         seam,
         authority,
         idle,
+        command_section,
         scan,
         spill_floor,
         wait_for_repository,
@@ -369,9 +387,19 @@ pub(super) fn serve_request(
         vault.reconcile_receive_pack_operations(&served_dir)?;
     }
     // No byte of the body is read before the admission above is checked and
-    // recorded. A push body the backend would inflate is inflated here
-    // instead, once: the command section read below is then the one
-    // receive-pack reads, and the backend gets the whole body plain.
+    // recorded. The command section must then arrive within its deadline. The
+    // deadline wraps the body as it came, under any inflation, so each read
+    // from the client is checked; it is lifted once the section is in.
+    let reading_command_section = AtomicBool::new(request.is_receive_pack());
+    let mut deadline_body = CommandSectionDeadline {
+        body,
+        deadline: Instant::now() + command_section,
+        reading: &reading_command_section,
+    };
+    let body: &mut (dyn Read + Send) = &mut deadline_body;
+    // A push body the backend would inflate is inflated here instead, once:
+    // the command section read below is then the one receive-pack reads, and
+    // the backend gets the whole body plain.
     let plain;
     let mut inflated;
     let (request, body): (&ServeRequest, &mut (dyn Read + Send)) =
@@ -386,12 +414,15 @@ pub(super) fn serve_request(
         } else {
             (request, body)
         };
-    // A body that stalls here ends at the idle limit, as it would mid-exchange.
+    // A body that stalls here ends at the idle limit, as it would
+    // mid-exchange, and one that trickles ends at its deadline the same way;
+    // either way the coordinator is let go as this returns.
     let mut commands = if request.is_receive_pack() {
         read_command_section(body, door_root, spill_floor.clone()).map_err(stall_as_idle)?
     } else {
         HeldBytes::new(0, None)
     };
+    reading_command_section.store(false, Ordering::SeqCst);
     // A publication this push may land on again gets its roots back while no
     // backend can move a ref yet, on the thread holding the coordinator.
     if coordinator.is_some() {
@@ -710,6 +741,25 @@ fn read_command_section(
         }
         section.write_all(&line).map_err(Error::Io)?;
         return Ok(section);
+    }
+}
+
+/// The request body while a push's command section is read: a read that
+/// starts past `deadline` fails as a body whose own wait ran out does, so the
+/// section is refused as an idle stall. Once `reading` is cleared, the rest of
+/// the body passes as it came.
+struct CommandSectionDeadline<'a> {
+    body: &'a mut (dyn Read + Send),
+    deadline: Instant,
+    reading: &'a AtomicBool,
+}
+
+impl Read for CommandSectionDeadline<'_> {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        if self.reading.load(Ordering::SeqCst) && Instant::now() >= self.deadline {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        self.body.read(out)
     }
 }
 

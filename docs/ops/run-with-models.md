@@ -2939,7 +2939,25 @@ api_key_env = "ONEIRON_GPU_POD_KEY"
 id = "pod-a"
 url = "https://pod-a.example:8000/v1"
 capacity = 4
+
+# A home GPU box that takes batches only at night, in its owner's time.
+[[gpu.pods]]
+id = "home-gpu"
+url = "https://home-gpu.example:8000/v1"
+capacity = 2
+hours = { start = "22:00", end = "07:00", utc_offset = "+09:00" }
 ```
+
+A pod with `hours` takes new batches only inside them (CROSS-ARCH-0024
+#my-network 07: embeddings can run on the GPU box at night). `start` is the
+first minute in and `end` the first minute out, both `"HH:MM"` in
+`utc_offset`; a start later than the end runs across midnight. The offset is
+required and fixed, so it does not follow daylight-saving changes. A batch
+that took its lease inside the hours keeps it until the batch ends. Outside
+every pod's hours, batches go to the `[embedder]` endpoint, as with no
+healthy pod. A pod without `hours` takes batches at any hour. `serve` refuses
+a time that is not `"HH:MM"`, a start equal to the end, and an offset beyond
+14:00.
 
 `serve` polls each pod at start and then every `poll_seconds`. A pod is
 healthy when it answers at all (transport), answers `health_path` with a 2xx

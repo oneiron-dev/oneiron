@@ -1,0 +1,17 @@
+{
+  "name": "vault.rooms.members.role.set",
+  "description": "Sets a current member's role in a room, owner, admin or member, for a person whose own role the room policy lets delegate; the reply names who set it and when.",
+  "input": "crate::workspace_roster::RoomMemberRoleSet",
+  "output": "crate::workspace_roster::RoomMemberRoleReceipt",
+  "call": "memory.rooms_members_role_set(&input)?",
+  "scope": "Write",
+  "act_class": "grant_widen",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}
