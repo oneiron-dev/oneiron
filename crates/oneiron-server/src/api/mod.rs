@@ -99,6 +99,7 @@ mod discover;
 mod entity;
 mod error_map;
 mod esign;
+mod esign_qr;
 mod oauth_server;
 pub(crate) use self::esign::delivery_outbox::spawn as spawn_esign_delivery_outbox;
 pub(crate) use self::esign::hold_worker::spawn_admitted as spawn_esign_hold_worker_admitted;

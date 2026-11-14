@@ -20,6 +20,10 @@
 //!   erases on the Owner's own proof and its outcome names the house as
 //!   requester (Q7, Q9). With two Owners the erase waits out its veto
 //!   window, and its `erase` act records the decision (Q9; review of P2.4c).
+//! - A hard erase of the asker takes their id out of the act that applied
+//!   their check-in; the decision and the spent check-in stay (review round 2
+//!   of #7718: the actor scrub of pending acts and receipts reads the
+//!   decision's requester).
 //!
 //! On the base (P2.4b) this file does not build: `PendingAuthorityAct` has no
 //! `check_in` field, and `propose_delete_vault_with_check_in` and
@@ -44,6 +48,8 @@ use oneiron::memory::{BlobArtifactInput, Memory};
 use oneiron::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
+use oneiron::test_doors::inquiry::erase_actor_in_tables_in_order;
+use oneiron::test_doors::shared_act_family::rows_naming;
 use oneiron::verbs::{
     AgentGrantMintRequest, RecordEraseConfirmRequest, RecordEraseOutcome, RecordEraseRequest,
     confirm_record_erase, mint_agent_grant_as, preview_record_erase,
@@ -478,4 +484,65 @@ fn an_erase_held_by_the_veto_window_records_its_decision_on_its_act() {
         "the erase act records that the Owner went on their own proof"
     );
     assert_eq!(outcome.check_in, act.check_in, "the outcome says the same");
+}
+
+#[test]
+fn erasing_the_asker_takes_their_id_out_of_the_act_that_applied_their_check_in() {
+    let fx = DeputyHouse::new();
+    let digest = vault_delete_effect_digest(SHARED);
+    let delete = fx.open(VAULT_DELETE, &digest);
+    fx.approve(&delete, &digest);
+    let act = fx
+        .vault
+        .propose_delete_vault_with_check_in(
+            &fx.owner_proof,
+            SHARED,
+            Some(EntityId::from_hex(&delete).expect("a check-in id")),
+        )
+        .expect("the owner applies the approved delete");
+    let row = format!("pending_act:{}", act.id);
+    assert!(
+        rows_naming(&fx.vault, fx.house)
+            .expect("rows")
+            .contains(&row),
+        "before the erase the act names the house that asked"
+    );
+
+    assert_eq!(
+        erase_actor_in_tables_in_order(
+            &fx.vault,
+            &fx.house,
+            &["SHARED_ACT_RECORD", "SHARED_ACT_RECEIPT"],
+        )
+        .expect("the shared-act actor erase runs"),
+        2,
+        "both tables register an actor erase"
+    );
+    assert!(
+        !rows_naming(&fx.vault, fx.house)
+            .expect("rows")
+            .contains(&row),
+        "after the erase the act no longer holds the house's id"
+    );
+    let read = fx
+        .vault
+        .pending_authority_act(&act.id)
+        .expect("read the act")
+        .expect("the act stays");
+    let decision = read.check_in.expect("the decision stays");
+    assert_ne!(
+        decision.requester,
+        Some(fx.house.to_hex()),
+        "the erased asker's id is gone from the decision"
+    );
+    assert_eq!(
+        (decision.basis.as_str(), decision.check_in),
+        ("own_proof", Some(delete)),
+        "the Owner's own proof and the spent check-in stay named"
+    );
+    assert_eq!(
+        read.starter,
+        fx.owner.to_hex(),
+        "the Owner's act stays theirs"
+    );
 }
