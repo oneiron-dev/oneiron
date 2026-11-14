@@ -21,7 +21,7 @@ fetches nothing; a program the image lacks holds the check, naming it.
   root-owned and not writable by uid 10001, run by `/usr/bin/python3`.
 - Python 3 at `/usr/bin/python3` and Git.
 - The Rust toolchain the engine seed plan names: `cargo` under
-  `/opt/cargo/bin`, `RUSTUP_HOME=/opt/rustup`, toolchain `1.96`
+  `/opt/cargo/bin`, `RUSTUP_HOME=/opt/rustup`, toolchain `1.100`
   (rust-toolchain.toml), and the native build dependencies the workspace's
   `cargo check --locked --workspace --all-features` needs (a C toolchain,
   pkg-config, the system libraries its `-sys` crates link; the Dockerfile
@@ -77,7 +77,7 @@ crates/oneiron-container/guest/checker/build.sh --dockerfile
      copies only the two binaries out (FIX 7320);
   3. it builds this directory's Dockerfile from a context of `checker.py`,
      those binaries and that archive. The image gets its packages
-     from the pinned Debian base, and Rust `1.96` from rustup-init 1.29.1,
+     from the pinned Debian base, and Rust `1.100` from rustup-init 1.29.1,
      kept only when its SHA-256 is the one the Dockerfile names for the
      architecture. A stage of its own fetches the dependency store from the
      archived manifests and lockfile; the image keeps the store, not the
@@ -106,7 +106,7 @@ Its outputs go to `ONEIRON_CHECKER_OUT`, by default `checker-image` under
 - `image.json`: the receipt, written inside the image: `image` (the config
   digest), `source_commit` (HEAD for the Dockerfile route, else the engine
   commit the image was built from), `cargo_lock_sha256`, `rustc`
-  (`rustc -vV` of the toolchain `RUSTUP_TOOLCHAIN=1.96` selects), `cargo`
+  (`rustc -vV` of the toolchain `RUSTUP_TOOLCHAIN=1.100` selects), `cargo`
   (`cargo -V`), and the SHA-256 of the helper, fence and guest the image
   holds (`helper_sha256`, `fence_sha256`, `guest_sha256`).
 
@@ -119,7 +119,7 @@ untagged images keeps it. An imported archive also keeps its own
 The image-family image has no rustup. `/opt/cargo/bin` links straight to
 the pinned toolchain in place of rustup's proxies, so `RUSTUP_TOOLCHAIN`
 selects nothing. Nothing that runs in the image may use `cargo +toolchain`:
-without a proxy, `+1.96` is not a toolchain selector (FIX 8977).
+without a proxy, `+1.100` is not a toolchain selector (FIX 8977).
 
 The store holds what the lockfile named at the built commit. When
 Cargo.lock gains a crate or a version, rebuild the image: a check that
@@ -184,7 +184,7 @@ empty environment, over the same protocol, and needs an explicit
 [merge_queue]
 checker_backend = "host"
 helper = ["/usr/bin/python3", "/opt/oneiron/checker.py"]
-toolchain = { rust = "1.96.0" }
+toolchain = { rust = "1.100.0" }
 ```
 
 The host child reaches what the host reaches; its receipts say
