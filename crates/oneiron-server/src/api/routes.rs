@@ -340,6 +340,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // the provider's HMAC over the raw body authenticates each one.
         .merge(crate::builtin_host::routes())
         .merge(crate::linear_host::webhook_routes())
+        // Census L2-17: Gmail's change notices, from the owner's Pub/Sub push
+        // subscription; Google's OIDC token on each delivery authenticates it.
+        // Served only while `[gmail_push]` is set.
+        .merge(crate::mail_host::push_routes(&server))
         .layer(middleware::from_fn_with_state(
             server.clone(),
             crate::wire_telemetry::observe_http,

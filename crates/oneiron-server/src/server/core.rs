@@ -263,6 +263,9 @@ pub struct SyncServer {
     /// The checked built-in channels this host serves (OF-519), kept by
     /// `builtin_host::spawn` and read by their provider webhooks.
     pub(crate) builtin_handles: Arc<crate::builtin_host::BuiltinHandles>,
+    /// The mail sources Gmail's notices woke (census L2-17): the push hook
+    /// adds to it, and the mail worker steps them.
+    pub(crate) mail_push_wakes: crate::mail_host::MailPushWakes,
     /// This server's one organ host: the seal worker and the mesh
     /// listener's `oneiron/organ/1` share its budget and warm processes.
     #[cfg(unix)]
@@ -361,7 +364,7 @@ const _: fn(&SyncServer) = |server| {
         trained_embedders, model_setup, model_setup_runtime, gpu_pool, llm, decision_read,
         decision_reads, decisions, hook_runtime,
         #[cfg(feature = "mesh")] mesh_transport,
-        builtin_handles,
+        builtin_handles, mail_push_wakes,
         #[cfg(unix)] organs,
         #[cfg(unix)] organ_dir,
         run_receipts, ai, pattern_launch_runner, rerank_runtime, hyde_host, extraction_egress,
