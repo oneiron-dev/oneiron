@@ -18,6 +18,14 @@
 //!   asked for, spends the check-in and names it.
 //! - A Member's share of its own brief (the NOTE it wrote) lands at once
 //!   with basis `own_item`.
+//! - A `check_in_ref` on a share that waits on none, the Owner's, a Deputy's
+//!   or an Admin's, is refused as a bad request and lands nothing.
+//! - A share that a budget window paced and whose turn met a wait ends with
+//!   `CHECK_IN_PENDING`: the retry of its invocation reads back the same
+//!   reason code and the check-in's guidance, and the check-in it names,
+//!   once approved, lands the share (2k8g review; the door
+//!   `test_doors::paced_replay` runs the turn end's save, the paced call
+//!   table's codec and the retry's read).
 //!
 //! The vault is rooted, and its human binding is the owner's, so each other
 //! person writes its brief and calls the door while the fixture binds the
@@ -48,6 +56,7 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::{ShareCreateRequest, ShareCreated, create_share_as_caller, invoke};
 use oneiron::temporal::TimeRange;
+use oneiron::test_doors::paced_replay::replayed_ended_error;
 use oneiron::test_support::{bind_host_actor, bind_host_owner};
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use serde_json::json;
@@ -413,24 +422,67 @@ fn a_member_shares_its_own_brief_at_once_as_own_item() {
 }
 
 #[test]
-fn an_owners_share_naming_a_check_in_is_refused() {
+fn a_share_that_waits_on_no_check_in_refuses_one() {
     let org = Org::new();
     let brief = org.brief(org.owner, org.recipient, "a brief for the recipient");
-    let share = EntityId::now();
-    let named = EntityId::now().to_hex();
-    let refused = org
-        .create(org.owner, &brief, Some(share), Some(&named))
-        .expect_err("an Owner's share names no check-in, yet it landed");
-    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST, "{refused:?}");
-    assert!(!org.landed(&share), "the refused share landed nothing");
+    let cases = [
+        (org.owner, "owner", None, "own_proof"),
+        (org.deputy, "deputy", Some("auto"), "sure"),
+        (org.admin, "admin", Some("full-access"), "never_ask"),
+    ];
+    for (holder, name, mode, basis) in cases {
+        let share = EntityId::now();
+        let named = EntityId::now().to_hex();
+        let refused = org
+            .create(holder, &brief, Some(share), Some(&named))
+            .expect_err("a share that waits on no check-in names none, yet it landed");
+        assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST, "{name}: {refused:?}");
+        assert!(
+            !org.landed(&share),
+            "the {name}'s refused share landed nothing"
+        );
 
+        let landed = org
+            .create(holder, &brief, Some(share), None)
+            .unwrap_or_else(|error| panic!("the {name} shares: {error:?}"));
+        assert!(org.landed(&share), "the {name}'s share landed");
+        assert_eq!(
+            landed.check_in,
+            Some(decision(name, mode, basis, None)),
+            "the {name}'s share records why it went"
+        );
+    }
+}
+
+#[test]
+fn a_paced_share_that_waits_names_its_check_in_on_the_retry() {
+    let org = Org::new();
+    let brief = org.brief(org.owner, org.recipient, "a brief for the recipient");
+    let waiting = org
+        .create(org.member, &brief, None, None)
+        .expect_err("a Member's share of another's brief waits, yet it landed");
+    let replayed =
+        replayed_ended_error(waiting.clone()).expect("the paced call's saved outcome reads back");
+    assert_eq!(replayed.code, MEMORY_CODE_CHECK_IN_PENDING, "{replayed:?}");
+    assert_eq!(
+        replayed.reason_codes, waiting.reason_codes,
+        "the retry names the check-in the turn's share waits on"
+    );
+    assert!(
+        replayed
+            .suggestions
+            .iter()
+            .any(|suggestion| suggestion.contains("check_in_ref")),
+        "the retry says how to go on: {replayed:?}"
+    );
+    let id = pending_id(Err(replayed));
+    org.owner_approves(&id);
     let landed = org
-        .create(org.owner, &brief, Some(share), None)
-        .expect("the Owner shares");
-    assert!(org.landed(&share), "the Owner's share landed");
+        .create(org.member, &brief, None, Some(&id))
+        .expect("the share naming the approved check-in lands");
     assert_eq!(
         landed.check_in,
-        Some(decision("owner", None, "own_proof", None)),
-        "the Owner's share records their own proof"
+        Some(decision("member", Some("manual"), "approved", Some(&id))),
+        "the share spends the check-in the retry named"
     );
 }

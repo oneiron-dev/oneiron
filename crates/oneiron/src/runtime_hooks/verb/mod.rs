@@ -16,6 +16,8 @@ mod golden;
 mod held_member;
 mod paced;
 #[cfg(oneiron_test_support)]
+pub(crate) mod paced_replay_door;
+#[cfg(oneiron_test_support)]
 pub(crate) mod park_ask_door;
 mod plain_resume;
 mod record;

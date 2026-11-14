@@ -340,13 +340,7 @@ pub(crate) fn paced_verb_reply_listed(memory: &Memory<'_>, verb: &str) -> Option
         ) => serde_json::from_str(&result)
             .map(|value| (value, producers.map(|rows| rows.into_iter().collect())))
             .map_err(|_| Error::CorruptedIndex("paced verb call outcome").into()),
-        (PacedState::Ended, Some(SavedOutcome::Err { code, message, .. })) => {
-            Err(MemoryError::new(
-                &code,
-                message,
-                &["This invocation's paced call ended; call again with a new invocation."],
-            ))
-        }
+        (PacedState::Ended, Some(outcome @ SavedOutcome::Err { .. })) => Err(ended_error(outcome)),
         (PacedState::Ended, None) => Err(Error::CorruptedIndex("paced verb call outcome").into()),
         _ => Err(held(row.next_eligible_at, row.deadline)),
     })
@@ -421,6 +415,25 @@ pub(crate) fn land_paced_verb_call_in_txn(
     row.landed = true;
     CALLS.put(&vault.store, txn, &key, &row)?;
     WITNESSES.delete(&vault.store, txn, &key).map(drop)
+}
+
+/// What a paced call whose turn ended refused with `error` saves for its
+/// caller's retry of the same invocation, which [`ended_error`] answers.
+pub(super) fn ended_error_outcome(error: MemoryError, hook_notice: Option<bool>) -> SavedOutcome {
+    SavedOutcome::error(error.code, &error.message, hook_notice)
+}
+
+/// What the retry of a paced call whose turn ended refused answers, from
+/// the `outcome` [`ended_error_outcome`] saved.
+pub(super) fn ended_error(outcome: SavedOutcome) -> MemoryError {
+    match outcome {
+        SavedOutcome::Err { code, message, .. } => MemoryError::new(
+            &code,
+            message,
+            &["This invocation's paced call ended; call again with a new invocation."],
+        ),
+        SavedOutcome::Ok { .. } => Error::CorruptedIndex("paced verb call outcome").into(),
+    }
 }
 
 /// What a landed call whose turn kept no answer saves: it ran, and must not
@@ -669,10 +682,7 @@ impl Vault {
             }
             Err(error) => {
                 let receipt = receipt.refused(&error.code, &error.message);
-                TurnEnd::Ended(
-                    SavedOutcome::error(error.code, &error.message, hook_notice),
-                    Some(receipt),
-                )
+                TurnEnd::Ended(ended_error_outcome(error, hook_notice), Some(receipt))
             }
         };
         self.end_paced_turn(key, row.work, end)?;
