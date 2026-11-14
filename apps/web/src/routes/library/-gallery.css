@@ -1024,3 +1024,11 @@
   flex-wrap: wrap;
   gap: 4px 18px;
 }
+
+/* A vault's initial filling the switch's mark square. */
+.lib-vault-initial {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+}

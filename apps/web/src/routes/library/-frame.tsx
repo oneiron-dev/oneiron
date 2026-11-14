@@ -32,6 +32,8 @@ import {
   Verb,
   WindowGround,
   Figure,
+  THEMES,
+  DAY_GROUND_INK,
   Tooltip,
   useMicroSidebarPeek,
   type ActivityAge,
@@ -67,6 +69,18 @@ const VAULTS: VaultSwitchVault[] = [
   { id: 'owen', name: 'owen', caption: 'yours', needsYou: 2 },
   { id: 'acme', name: 'acme', caption: 'a guest slice', needsYou: 1 },
 ]
+
+/* A vault's mark for the switch: its initial in the ground's day ink on
+   its theme's colour. */
+function VaultInitial({ name, colour }: { name: string; colour: string }) {
+  return (
+    <span className="lib-vault-initial" style={{ background: colour, color: DAY_GROUND_INK }}>
+      {name.slice(0, 1).toLocaleUpperCase()}
+    </span>
+  )
+}
+
+const VAULTS_MARKED: VaultSwitchVault[] = VAULTS.map((v, i) => ({ ...v, mark: <VaultInitial name={v.name} colour={THEMES[i % THEMES.length].colour} /> }))
 
 function ThemeItems() {
   const [theme, setTheme] = React.useState<Theme | null>(null)
@@ -123,13 +137,24 @@ function AccountParts() {
   )
 }
 
-function VaultSwitchDemo({ defaultOpen = false, specimen }: { defaultOpen?: boolean; specimen?: string }) {
+function VaultSwitchDemo({
+  defaultOpen = false,
+  marks = false,
+  heading,
+  specimen,
+}: {
+  defaultOpen?: boolean
+  marks?: boolean
+  heading?: string | null
+  specimen?: string
+}) {
   const [current, setCurrent] = React.useState('antevon')
   const [made, setMade] = React.useState(0)
   return (
     <div className="lib-stack">
       <VaultSwitch
-        vaults={VAULTS}
+        vaults={marks ? VAULTS_MARKED : VAULTS}
+        heading={heading}
         currentId={current}
         onSwitch={setCurrent}
         onCreate={() => setMade((n) => n + 1)}
@@ -1334,8 +1359,11 @@ export function FrameSections() {
         <Specimen name="closed">
           <VaultSwitchDemo />
         </Specimen>
-        <Specimen name="open: vaults, a new vault, then the account" tall={6} wide={1}>
-          <VaultSwitchDemo defaultOpen specimen="vault-switch" />
+        <Specimen name="open: vaults with their marks, a new vault, then the account" tall={6} wide={1}>
+          <VaultSwitchDemo defaultOpen marks specimen="vault-switch" />
+        </Specimen>
+        <Specimen name="no heading over the vaults (heading null)">
+          <VaultSwitchDemo marks heading={null} specimen="vault-switch-bare" />
         </Specimen>
       </Section>
 
