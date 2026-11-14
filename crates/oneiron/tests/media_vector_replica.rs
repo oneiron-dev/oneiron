@@ -24,7 +24,7 @@ use base64::Engine as _;
 use oneiron::embed::{EmbeddingSpace, InputKind, MediaVectorReplica};
 use oneiron::memory::AssetIngestRequest;
 use oneiron::registry::ENTITY_TYPE_ASSET;
-use oneiron::test_doors::media_vector_replica::install_media_vector_replica;
+use oneiron::test_doors::media_vector_replica::{install_media_vector_replica, stored_row};
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
 use serde_json::Value;
@@ -248,16 +248,25 @@ fn a_file_held_image_replica_names_the_row_a_residence_door_serves() -> TestResu
     )?;
     let asset = EntityId::now();
     vault.put_entity(&asset, ENTITY_TYPE_ASSET, occurred, OCCURRED_AT, &body)?;
-    let stored = vault.get_raw(&asset)?.ok_or("the filed ASSET row")?;
+    // The row as stored; the public raw read hands the whole record in place of its manifest.
+    let stored = stored_row(&vault, &asset)?.ok_or("the filed ASSET row")?;
     assert!(
         stored.len() < body.len(),
-        "the file plane holds the long record; its stored row keeps a manifest"
+        "the file plane holds the long record; its stored row keeps a manifest ({} stored \
+         bytes, a {}-byte record)",
+        stored.len(),
+        body.len()
     );
     vault.put_media_vector(SPACE, &asset, InputKind::Image, &vector)?;
 
     // A residence door serves the filed row whole: its header, then the whole record.
     let mut served = stored[..ENTITY_METADATA_HEADER_LEN].to_vec();
     served.extend_from_slice(&body);
+    assert_eq!(
+        vault.get_raw(&asset)?.map(|row| blake3::hash(&row)),
+        Some(blake3::hash(&served)),
+        "the public raw read hands the row a residence door serves"
+    );
     let replicas = vault.media_vector_replicas(&asset, SPACE)?;
     assert_eq!(
         replicas.len(),
