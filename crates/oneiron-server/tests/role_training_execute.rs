@@ -9,6 +9,8 @@
 //! - a run whose waiter is lost (a host restart) and whose receipt lands
 //!   after the execute's first step still returns inside the bound: the
 //!   execute polls the trainer again while it waits;
+//! - a receipt that only the execute's last poll, at the bound, records is
+//!   scored before the execute answers;
 //! - an agent executes only with a Grant listing the verb;
 //! - a role run on a question connector, or on a recipe the role trainer does
 //!   not list, holds with `training.no_connector` and answers at once;
@@ -42,9 +44,14 @@ use role_training_fixture::{
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::time::{Duration, Instant};
 
 /// A wait long enough for the tiny worker to start, read and return.
 const WAIT_MS: u64 = 20_000;
+
+/// A bound of one execute poll interval (the door's 200 ms): the execute
+/// polls the trainer at its start and once more at the bound.
+const ONE_POLL_BOUND_MS: u64 = 200;
 
 /// The owner prepares `draft` on `connector`; returns the run and its spec.
 async fn prepare(fixture: &Fixture, draft: &Value, connector: &str) -> (String, String) {
@@ -247,6 +254,78 @@ fn execute_recovers_a_run_whose_waiter_is_lost_when_its_receipt_lands_inside_the
         assert_eq!(read["state"], "returned", "{read}\n{}", job_evidence(&job));
         assert_eq!(read["hold"]["code"], "training.no_evaluator", "{read}");
         assert!(read["waited_ms"].as_u64() < Some(WAIT_MS), "{read}");
+        let recovered = stored(&fixture, &run)
+            .result
+            .expect("the recovered result")
+            .connector_receipt;
+
+        tokio::task::spawn_blocking(move || waiter.rejoin())
+            .await
+            .expect("the waiter rejoins");
+        let record = stored(&fixture, &run);
+        assert_eq!(record.state, TrainingState::Returned);
+        assert_eq!(
+            record.result.map(|result| result.connector_receipt),
+            Some(recovered)
+        );
+        fixture.finish().await;
+    });
+}
+
+/// A receipt that the execute's last poll records, at the bound, is scored
+/// before the execute answers. The worker holds its written receipt until
+/// the test releases it halfway through a bound of one poll interval, so the
+/// polls at the execute's start find nothing and only the poll at the bound
+/// records the receipt: the answer is the returned run held for an
+/// evaluator, not the running run that poll started from.
+#[test]
+fn execute_scores_a_receipt_its_last_poll_records_at_the_bound() {
+    run_on_engine_stack("role-execute-last-poll", || async {
+        let fixture = Fixture::new().await;
+        let release = fixture.dir.path().join("receipt-release");
+        let mut seeded = seed_role_run(&fixture.vault);
+        seeded.draft["plan"]["settings"]["receipt_release_path"] =
+            json!(release.to_str().expect("a UTF-8 temp path"));
+        let (run, spec) = prepare(&fixture, &seeded.draft, ROLE_TRAINER).await;
+        let (status, handoff) = fixture.authorize(&run, &spec).await;
+        assert_eq!(status, StatusCode::OK, "owner authorize: {handoff}");
+        let waiter = fixture.dispatch_with_lost_waiter(&run).await;
+        let job = role_jobs_root(fixture.dir.path()).join(format!("{run}-{spec}"));
+        let held = job.join("output/.receipt.json.partial");
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !held.is_file() {
+            assert!(
+                Instant::now() < deadline,
+                "the worker holds its written receipt\n{}",
+                job_evidence(&job)
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            !job.join("output/receipt.json").exists(),
+            "the receipt is held until the test releases it"
+        );
+        assert_eq!(stored(&fixture, &run).state, TrainingState::Running);
+
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(ONE_POLL_BOUND_MS / 2));
+            std::fs::write(&release, b"").expect("release the receipt");
+        });
+        let (status, read) = fixture
+            .as_owner(
+                EXECUTE_VERB,
+                json!({"run": run, "wait_ms": ONE_POLL_BOUND_MS}),
+            )
+            .await;
+        releaser.join().expect("the release thread");
+        assert_eq!(status, StatusCode::OK, "owner execute: {read}");
+        assert_eq!(
+            read["state"],
+            "returned",
+            "the receipt the last poll recorded is scored before the answer: {read}\n{}",
+            job_evidence(&job)
+        );
+        assert_eq!(read["hold"]["code"], "training.no_evaluator", "{read}");
         let recovered = stored(&fixture, &run)
             .result
             .expect("the recovered result")
