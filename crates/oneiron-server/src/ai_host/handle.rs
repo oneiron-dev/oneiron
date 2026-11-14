@@ -66,6 +66,10 @@ impl AiHandle {
                     models.raw_budget_units
                 }),
             rerank_budget_units: models.map_or(0, |models| models.recall.rerank_budget_units),
+            rerank_pair_template_units: models.map_or(
+                crate::config::models::DEFAULT_RERANK_PAIR_TEMPLATE_UNITS,
+                |models| models.recall.rerank_pair_template_units,
+            ),
             turns: TurnTracker::new(),
             inbound: Arc::new(AtomicU64::new(unix_now())),
             summaries: false,
@@ -165,6 +169,13 @@ impl AiHandle {
     #[must_use]
     pub fn rerank_budget_units(&self) -> u64 {
         self.rerank_budget_units
+    }
+
+    /// The tokens a rerank call is priced at for each query and document
+    /// pair beside their words: the reranker template's share.
+    #[must_use]
+    pub(crate) fn rerank_pair_template_units(&self) -> u64 {
+        self.rerank_pair_template_units
     }
 
     /// Whether the host syncs as a device of another home (`[device_sync]`),
