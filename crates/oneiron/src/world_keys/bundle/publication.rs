@@ -159,7 +159,8 @@ pub(super) fn asks(
             OwnerWorkBody::WorldKey { .. }
             | OwnerWorkBody::Root { .. }
             | OwnerWorkBody::Custody { .. }
-            | OwnerWorkBody::ExportSecret(_) => false,
+            | OwnerWorkBody::ExportSecret(_)
+            | OwnerWorkBody::FileRuling(_) => false,
         })
 }
 
@@ -275,7 +276,8 @@ impl Vault {
                 OwnerWorkBody::WorldKey { .. }
                 | OwnerWorkBody::Root { .. }
                 | OwnerWorkBody::Custody { .. }
-                | OwnerWorkBody::ExportSecret(_) => None,
+                | OwnerWorkBody::ExportSecret(_)
+                | OwnerWorkBody::FileRuling(_) => None,
             })
             .collect())
     }
