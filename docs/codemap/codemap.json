@@ -658,6 +658,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/agent_def/creating_agent.rs",
+     "purpose": "Which agent created an agent definition (AGENT-DEF-PROVENANCE-AUTHOR-FORGEABLE)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/agent_def/creating_owner.rs",
      "purpose": "Which owner created an agent definition through the owner's create door (OWNER-MADE-AGENT-DEF-UNPLACED)",
      "surface": {
@@ -673,7 +683,7 @@
      "path": "src/agent_def/doors.rs",
      "purpose": "Vault CRUD doors over the generic entity/batch machinery",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 1,
       "fn": 10
      }
@@ -729,7 +739,7 @@
      "path": "src/agent_def/mod.rs",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "mod": 1,
       "re-export": 13
      }
@@ -5651,7 +5661,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/pinned_root.rs",
@@ -15021,6 +15031,17 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/channel_identity_provider/workspace_connector/drive.rs",
+     "purpose": "`google.drive` (MAIL-GOOGLE = A, row 3; L3-17; DRIVE-ACCESS = B; L3-17-DRIVE-READ-SCOPE = B): find files…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/channel_identity_provider/workspace_connector/excel.rs",
      "purpose": "`microsoft.excel` (L3-17; L3-17-EXCEL = A): the ranges of an Excel workbook in the user's OneDrive or…",
      "surface": {
@@ -15055,7 +15076,7 @@
       "crate-vis": 6,
       "enum": 1,
       "fn": 6,
-      "mod": 4,
+      "mod": 5,
       "re-export": 2,
       "static": 2,
       "struct": 4,
@@ -15151,6 +15172,7 @@
      "notable": [
       "WorkspaceBrokerCall",
       "WorkspaceBrokerHost",
+      "WorkspaceContent",
       "WorkspaceEndpoint",
       "WorkspaceWireOutcome",
       "WorkspaceWireRequest"
@@ -15160,8 +15182,8 @@
      "surface": {
       "crate-vis": 5,
       "enum": 2,
-      "fn": 8,
-      "struct": 1,
+      "fn": 14,
+      "struct": 2,
       "trait": 2
      }
     },
@@ -24957,8 +24979,9 @@
      "path": "src/consent_graduation/doors.rs",
      "purpose": "Public Vault doors plus the shared accept-offer txn helper used by ED-05",
      "surface": {
+      "const": 1,
       "crate-vis": 1,
-      "fn": 11
+      "fn": 12
      }
     },
     {
@@ -24978,9 +25001,9 @@
      "path": "src/consent_graduation/mod.rs",
      "purpose": "DEC-0006 consent-graduation ramp (ARCH-0055 r7 / ONE-1748, MS-06): the per-scope outcome statistics that…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 1,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -25032,7 +25055,7 @@
      "path": "src/consent_graduation/storage.rs",
      "purpose": "Typed side-table bindings, stored-row converters and version guard",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -36452,7 +36475,7 @@
      "path": "src/edit_distance/graduation/mod.rs",
      "purpose": "ED-05 (ONE-1761, ARCH-0056 §6 · OF-399 · DEC-0006): the graduation POLICY and the offer-answer UX above…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 6
      }
     },
@@ -36487,6 +36510,16 @@
      "surface": {
       "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/graduation/scope_erase.rs",
+     "purpose": "An actor's erase takes the actor out of the offer-answer log and the threshold overrides…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -40440,7 +40473,7 @@
      "path": "src/federation/delivery_record.rs",
      "purpose": "Native federation delivery history, not current grant or content authority",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 8,
       "fn": 1,
       "struct": 1
      }
@@ -47530,6 +47563,16 @@
      "surface": {
       "crate-vis": 4,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/inquiry/landing.rs",
+     "purpose": "The copy landing (INQUIRE-1 PR 6; Engine ruling INQUIRE-SHAPE Q9 = A; federation.md #inquiry-copy)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -81490,7 +81533,7 @@
      "path": "src/store/receipt_row.rs",
      "purpose": "Core half of `store::receipt_row`: its store-layer items live in `oneiron_store::receipt_row` and are…",
      "surface": {
-      "crate-vis": 54,
+      "crate-vis": 55,
       "fn": 11,
       "re-export": 1,
       "struct": 6
@@ -90837,6 +90880,29 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/consent_graduation_demotion.rs",
+     "purpose": "Doors for `tests/graduated_scope_demotion_authors.rs` (census L7-33): the owner-authored grant rows that let…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RampTableRows"
+     ],
+     "path": "src/test_doors/consent_graduation_ramp_rows.rs",
+     "purpose": "The raw rows of every table the consent-graduation ramp keeps (RAMP-SCOPE-ACTOR-ERASE, Engine RULING…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -91145,7 +91211,7 @@
      "path": "src/test_doors/inquiry.rs",
      "purpose": "Door for `tests/inquiry_records.rs` (INQUIRE-1 PR 1): the writers of the member's log and the asking side's…",
      "surface": {
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -91308,7 +91374,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 112,
+      "mod": 114,
       "re-export": 1
      }
     },
@@ -99652,6 +99718,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/agent_made_by_creating_stamp.rs",
+     "purpose": "What an agent made is read from the engine's creation stamp, not from a definition's provenance…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/agent_message_classes.rs",
      "purpose": "Messages to a busy resident (AGM-2 = C; ARCH-0079 #message-classes, agent-mind-design-v1 §1.3): a resident…",
      "surface": {}
@@ -99926,6 +100000,14 @@
      "notable": [],
      "path": "tests/can_verb_gate.rs",
      "purpose": "`can({verb})`: one verb's gate for one actor (FIX [UI-GATE-PREVIEW] phases 1 and 2; GENUI-WIRE-GAPS section…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/carried_pin_awaits_owner.rs",
+     "purpose": "CARRIED-PIN (HOSTED-CARRIER-FIRST-PIN = D, the lead 14 Nov 22:3x; Engine RULING 22:29): a pin request…",
      "surface": {}
     },
     {
@@ -100930,6 +101012,22 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/google_drive_connector.rs",
+     "purpose": "`google.drive` on the workspace connector core (L3-17, PR 3; DRIVE-ACCESS = B; GOOGLE-DRIVE-CONTENT-READ)…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/graduated_scope_demotion_authors.rs",
+     "purpose": "Who may demote another actor's graduated ramp scope (census L7-33; FIX 22934; Engine RULING L7-33-WHO = A…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/grant_restore_and_engine_controls_verbs.rs",
      "purpose": "The owner's three grant verbs (Engine RULING ROW3-GRANT-VERBS = A; FIX FABLE-6917-1 and…",
      "surface": {}
@@ -101119,7 +101217,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/inquiry_asking_side.rs",
@@ -102409,6 +102507,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/ramp_scope_actor_erase.rs",
+     "purpose": "A hard erase takes the erased actor out of every ramp scope it is the actor of (RAMP-SCOPE-ACTOR-ERASE…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -103676,7 +103782,7 @@
      "purpose": "Affect facade: VAD annotations, claim VAD, triggers and coping outcomes"
     },
     "agent_def": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -103837,7 +103943,7 @@
      "purpose": "ChannelIdentity lifecycle verbs through the ExternalEffect door (OF-347 CID-2)"
     },
     "channel_identity_provider": {
-     "files": 57,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104222,7 +104328,7 @@
      "purpose": "The `regenerates` link proofs over stored rows (FIX 5972)"
     },
     "edit_distance": {
-     "files": 87,
+     "files": 88,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -104467,7 +104573,7 @@
      "purpose": "Ingest source registry and source-local normalization"
     },
     "inquiry": {
-     "files": 12,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -105146,7 +105252,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 115,
+     "files": 117,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105323,8 +105429,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7586,
-   "test_files": 1303
+   "source_files": 7592,
+   "test_files": 1308
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -109882,7 +109988,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 10
+      "fn": 11
      }
     },
     {
@@ -109942,6 +110048,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/drive_content_whole.rs",
+     "purpose": "A Drive file's content through the broker (GOOGLE-DRIVE-CONTENT-READ, REVIEW-8002): the bytes come back as…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/graph_workbook_shapes.rs",
      "purpose": "The Microsoft Graph workbook rows (L3-17 PR 4): each accepts only its own workbook path, a worksheet name…",
      "surface": {}
@@ -109951,7 +110065,7 @@
      "kind": "test",
      "notable": [],
      "path": "tests/workspace_shapes.rs",
-     "purpose": "The Google Workspace REST rows for Docs and Slides (L3-17): each accepts only its own endpoint and query…",
+     "purpose": "The Google Workspace REST rows for Docs, Slides and Drive (L3-17; GOOGLE-DRIVE-CONTENT-READ): each accepts…",
      "surface": {}
     }
    ],
@@ -110107,7 +110221,7 @@
    "over_bar": 2,
    "purpose": "The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`)",
    "source_files": 34,
-   "test_files": 7
+   "test_files": 8
   },
   "oneiron-browser": {
    "files": [
@@ -113036,7 +113150,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 105,
+      "const": 106,
       "crate-vis": 1
      }
     },
@@ -130239,7 +130353,7 @@
      "path": "src/api/facade/graduation_doors.rs",
      "purpose": "Consent-graduation host doors, under the consent lifecycle's owner proof",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -147775,6 +147889,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/graduation_demote_holder_door.rs",
+     "purpose": "A policy holder demotes a graduated ramp scope over the host door (census L7-33; Engine RULING…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/history_import_archive_precheck.rs",
      "purpose": "The archive pre-check under `oneiron import chatgpt <zip>`, through the shipped binary (ARCH-0027…",
      "surface": {}
@@ -149009,7 +149131,7 @@
    "over_bar": 63,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1884,
-   "test_files": 258
+   "test_files": 259
   },
   "oneiron-skill-attribution": {
    "files": [
