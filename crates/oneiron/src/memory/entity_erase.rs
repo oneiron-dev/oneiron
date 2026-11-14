@@ -12,6 +12,7 @@ use super::{
     DeleteReceipt, DeleteRequestState, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
 };
+use crate::check_in::CheckInDecision;
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{DeleteEntityPreview, DeleteReason, LegalHoldActorKind};
 use crate::edge::EdgeActorClass;
@@ -135,6 +136,19 @@ impl Memory<'_> {
         preview: &DeleteEntityPreview,
         options: EraseOptions<'_>,
     ) -> MemoryResult<EntityEraseOutcome> {
+        self.confirm_entity_erase_with_check_in(preview, options, None)
+    }
+
+    /// [`Self::confirm_entity_erase`], recording `check_in`, the check-in
+    /// decision the erase runs on (2j; P24-SHAPE Q9 = A), on each `erase`
+    /// act a veto window starts, so the act and its completion receipt
+    /// name it.
+    pub(crate) fn confirm_entity_erase_with_check_in(
+        &self,
+        preview: &DeleteEntityPreview,
+        options: EraseOptions<'_>,
+        check_in: Option<&CheckInDecision>,
+    ) -> MemoryResult<EntityEraseOutcome> {
         let (plan, shared_vault_id, veto) = {
             let txn = self
                 .vault
@@ -219,7 +233,10 @@ impl Memory<'_> {
                 hold: None,
                 act: None,
             };
-            first_act = Some(self.start_held_erase(starter, vault_id, &confirmed)?.id);
+            first_act = Some(
+                self.start_held_erase(starter, vault_id, &confirmed, check_in)?
+                    .id,
+            );
             DeleteReceipt {
                 existed: true,
                 reason: SameBytesHold::VetoWindow.code().to_owned(),
@@ -257,7 +274,7 @@ impl Memory<'_> {
                     options.veto_starter.zip(shared_vault_id),
                 ) {
                     (Some(reason), Some((starter, vault_id))) => {
-                        match self.start_held_erase(starter, vault_id, &planned) {
+                        match self.start_held_erase(starter, vault_id, &planned, check_in) {
                             Ok(act) => SameBytesOutcome::Held {
                                 reason,
                                 act_id: Some(act.id),
@@ -436,12 +453,14 @@ impl Memory<'_> {
         erased
     }
 
-    /// A held match's own `erase` act, its payload the record and the bytes the preview named.
+    /// A held match's own `erase` act, its payload the record and the bytes the preview named,
+    /// recording `check_in`, the decision the erase runs on, when one is given.
     fn start_held_erase(
         &self,
         starter: &AuthenticatedOwner,
         vault_id: u64,
         planned: &PlannedMatch,
+        check_in: Option<&CheckInDecision>,
     ) -> MemoryResult<PendingAuthorityAct> {
         let payload = serde_json::to_vec(&HeldErase {
             v: 1,
@@ -449,9 +468,18 @@ impl Memory<'_> {
             hashes: planned.hashes.clone(),
         })
         .map_err(|_| Error::InvariantViolation("erase act payload"))?;
-        Ok(self
-            .vault
-            .start_authority_act(starter, vault_id, ERASE_ACT, payload)?)
+        Ok(match check_in {
+            Some(decision) => self.vault.start_authority_act_recorded(
+                starter,
+                vault_id,
+                ERASE_ACT,
+                payload,
+                decision.clone(),
+            )?,
+            None => self
+                .vault
+                .start_authority_act(starter, vault_id, ERASE_ACT, payload)?,
+        })
     }
 
     /// The match an `erase` act names, when this caller started it in this vault.

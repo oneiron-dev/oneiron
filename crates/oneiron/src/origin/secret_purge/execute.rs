@@ -132,7 +132,6 @@ impl Vault {
                         receipt
                             .record
                             .failure
-                            .clone()
                             .unwrap_or_else(|| "the publication refused the move".to_owned()),
                     ),
                     None => None,

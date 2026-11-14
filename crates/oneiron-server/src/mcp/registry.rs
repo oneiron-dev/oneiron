@@ -592,6 +592,12 @@ impl McpConnectorActorRegistry {
         self.streams.next_carrier_payload(connection)
     }
 
+    /// The engine STREAM registry, read only.
+    #[must_use]
+    pub(crate) fn streams(&self) -> &BoardStreamRegistry {
+        &self.streams
+    }
+
     /// The engine STREAM registry, for verbs the engine itself dispatches.
     pub fn streams_mut(&mut self) -> &mut BoardStreamRegistry {
         &mut self.streams
@@ -633,7 +639,13 @@ impl McpConnectorActorRegistry {
     ) {
         match reader {
             Some(reader) if self.streams.connection_state(connection).is_some() => {
-                self.run_readers.insert(connection.clone(), reader);
+                if self
+                    .run_readers
+                    .insert(connection.clone(), reader)
+                    .is_none()
+                {
+                    self.streams.note_reader_bound();
+                }
             }
             _ => {
                 self.run_readers.remove(connection);
@@ -665,16 +677,30 @@ impl McpConnectorActorRegistry {
     }
 
     /// Records the reader a connection's call resolved, replacing the one
-    /// before: the latest credential is the one events are read under.
+    /// before: the latest credential is the one events are read under. A
+    /// connection's first reader starts a pass over the staged TASK wakes, so
+    /// the wakes it may read reach it (census L2-38).
     pub fn bind_stream_reader(&mut self, reader: &McpResolvedActor) {
         if self
             .streams
             .connection_state(&reader.stream_connection)
             .is_some()
+            && self
+                .stream_readers
+                .insert(reader.stream_connection.clone(), reader.clone())
+                .is_none()
         {
-            self.stream_readers
-                .insert(reader.stream_connection.clone(), reader.clone());
+            self.streams.note_reader_bound();
         }
+    }
+
+    /// The reader `connection`'s calls bound, if any.
+    #[must_use]
+    pub(crate) fn stream_reader(
+        &self,
+        connection: &StreamConnectionId,
+    ) -> Option<McpResolvedActor> {
+        self.stream_readers.get(connection).cloned()
     }
 
     /// Attaches one host config-directory instance under this credential's
