@@ -136,7 +136,8 @@ impl Vault {
             detach: None,
             notify: BTreeSet::new(),
         };
-        let receipt = self.record_shared_change_in_txn(
+        let check_in = act.check_in.clone();
+        let mut receipt = self.record_shared_change_in_txn(
             &mut txn,
             act.id.clone(),
             act.vault_id,
@@ -149,6 +150,7 @@ impl Vault {
             None,
             now,
         )?;
+        self.record_receipt_check_in_in_txn(&mut txn, &mut receipt, check_in)?;
         txn.commit()?;
         Ok(receipt)
     }
