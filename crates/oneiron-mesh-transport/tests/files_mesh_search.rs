@@ -6,11 +6,13 @@
 //!
 //! Two devices of the owner: two rooted carrier installs (test_doors::steward),
 //! each with its own Files world (read on that install only, as shipped) and
-//! its own landed files. Each vault holds the other's MACHINE, paired and bound
-//! to its transport key as a host's enrolment leaves it, and the owner's grant
-//! of `oneiron/files-search/1` to it. Each device serves its Files search on a
-//! loopback iroh endpoint. Device A searches as the served door does: its own
-//! answer, the other devices' answers over the mesh, one merge.
+//! its own landed files. Each vault holds the other's MACHINE as a host's
+//! enrolment leaves it: added by the owner's machine pairing link answered
+//! "yours", so its profile proves its device key, and bound to its transport
+//! key; and the owner's grant of `oneiron/files-search/1` to it. Each device
+//! serves its Files search on a loopback iroh endpoint. Device A searches as
+//! the served door does: its own answer, the other devices' answers over the
+//! mesh, one merge.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-mesh-transport --all-features --features oneiron/test-support
@@ -22,11 +24,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ed25519_dalek::{Signer, SigningKey};
-use oneiron::authority::{ActSurface, MachineOwnership, MachineRole, pairing_binding_transcript};
+use oneiron::authority::{
+    ActSurface, MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass,
+    MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership, MachineRole, PairingPrincipal,
+    machine_profile_proof_transcript, pairing_binding_transcript,
+};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::Scope;
 use oneiron::note::{FileFacts, FolderRescan, ImportedNote, NameMatch};
-use oneiron::registry::ENTITY_TYPE_MACHINE;
 use oneiron::task_verb::sdk::{
     FilesMeaningState, FilesSearchDevices, FilesSearchMatch, FilesSourceSearchAnswer,
     FilesSourceSearchRequest, FilesUnreachedWhy, files_search_devices, merge_files_search_answers,
@@ -34,7 +39,7 @@ use oneiron::task_verb::sdk::{
 };
 use oneiron::test_doors::steward;
 use oneiron::test_support::test_host_issuer;
-use oneiron::{EntityId, TimeRange, Vault};
+use oneiron::{EntityId, Vault};
 use oneiron_mesh_transport::files_search::{
     FILES_SEARCH_ALPN, FILES_SEARCH_DEADLINE, FilesSearchService, ask_files_search_devices,
 };
@@ -228,40 +233,48 @@ fn serve(mesh: Arc<IrohTransport>, vault: Arc<Vault>) {
 }
 
 impl Device {
-    /// This vault takes `peer` as one of the owner's machines: its MACHINE
-    /// row, a pairing the peer's device key redeems, and the mesh binding of
-    /// its transport key at its loopback address, as enrolment leaves them.
-    /// The owner grants it Files search when `grant`.
+    /// This vault takes `peer` as one of the owner's machines, as enrolment
+    /// leaves it: the owner's machine pairing link, answered "yours", which
+    /// the peer's device key redeems with its enrolment request (its MACHINE
+    /// and the profile that proves that key), and the mesh binding of its
+    /// transport key at its loopback address. The owner grants it Files
+    /// search when `grant`.
     fn enrol(&self, peer: &Device, grant: bool) -> TestResult {
         let host = test_host_issuer();
-        self.vault
-            .put_entity(
-                &peer.machine,
-                ENTITY_TYPE_MACHINE,
-                TimeRange { start: 1, end: 1 },
-                1,
-                b"the owner's other device",
-            )
-            .map_err(at("the peer's MACHINE row"))?;
         let link = self
             .vault
-            .issue_pairing_link(&host, Scope::top(), 3600)
-            .map_err(at("issue a pairing link"))?;
+            .issue_machine_pairing_link(
+                &host,
+                &self.owner,
+                ActSurface::ThisInstall,
+                Scope::top(),
+                3600,
+                PairingPrincipal::default(),
+                MachineOwnership::Yours,
+            )
+            .map_err(at("issue a machine pairing link"))?;
+        let vault_id = self
+            .vault
+            .authority_vault_id()
+            .map_err(at("this vault's id"))?
+            .ok_or("fixture: this vault has no authority vault id")?;
+        let request = enrolment_request(vault_id, peer);
         let device_key = peer.device.verifying_key().to_bytes();
         let transcript =
             pairing_binding_transcript(&link.code, &device_key, &peer.machine.to_hex())
                 .map_err(at("pairing transcript"))?;
         let proof = peer.device.sign(&transcript).to_bytes();
-        let pair = self
+        let (pair, _) = self
             .vault
-            .redeem_pairing_link(
+            .redeem_machine_pairing_link(
                 &host,
                 &link.code,
                 &peer.machine.to_hex(),
                 device_key,
                 &proof,
+                &request,
             )
-            .map_err(at("redeem the pairing link"))?;
+            .map_err(at("redeem the machine pairing link"))?;
         let (device_proof, transport_proof) =
             TransportKey::derive(&peer.device).binding_proofs(&peer.device, peer.machine);
         self.vault
@@ -326,6 +339,35 @@ impl Device {
             answered,
             unreached,
         ))
+    }
+}
+
+/// `peer`'s request to join the vault `vault_id` as a computer, signed by its
+/// device key: the key its pairing binds, so its profile proves that key.
+fn enrolment_request(vault_id: [u8; 32], peer: &Device) -> MachineEnrolmentRequest {
+    let machine_key = peer.device.verifying_key().to_bytes();
+    let device_class = MachineDeviceClass::Computer;
+    let encryption_key = MachineEncryptionKey {
+        suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+        key: vec![7; MACHINE_ENCRYPTION_KEY_LEN],
+    };
+    let machine_proof = peer
+        .device
+        .sign(&machine_profile_proof_transcript(
+            &vault_id,
+            peer.machine,
+            &machine_key,
+            device_class,
+            &encryption_key,
+        ))
+        .to_bytes();
+    MachineEnrolmentRequest {
+        vault_id,
+        machine: peer.machine,
+        machine_key,
+        device_class,
+        encryption_key,
+        machine_proof,
     }
 }
 
