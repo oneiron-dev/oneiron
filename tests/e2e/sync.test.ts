@@ -113,6 +113,31 @@ function sync01DeviceMachine(device: DevicePeer): string {
   if (typeof machine !== "string" || !/^[0-9a-f]{32}$/.test(machine)) throw new Error("device enrol printed no enrolment.machine");
   return machine;
 }
+/** One machine's answer as GET/POST /v1/owner/machines/answer show it. */
+type HomeMachineAnswer = { readonly machine: string; readonly role: string | null; readonly revision: string };
+/**
+ * The owner answers his home "yours", as a surface asks him once the vault
+ * first serves. Until he answers, the serving install's MACHINE stands in the
+ * `unanswered` role, which proves no connection (MachineRole::answered), so a
+ * device he joins to it takes no own-device grant from it and never admits
+ * him. Called right after the home starts, so the checkpoint the device's
+ * pairing link pins already holds the answer. Read back on the home.
+ * Doors: GET /v1/owner/roots (this install's machine), GET and POST
+ * /v1/owner/machines/answer.
+ */
+async function answerHomeYours(home: EngineFixture): Promise<void> {
+  const roots = await home.client.request<{ machine?: string | null }>("GET", "/v1/owner/roots");
+  const machine = roots.body.machine;
+  if (typeof machine !== "string" || !/^[0-9a-f]{32}$/.test(machine)) throw new Error("GET /v1/owner/roots named no home machine");
+  const path = `/v1/owner/machines/answer?machine=${machine}`;
+  const before = (await home.client.request<HomeMachineAnswer>("GET", path)).body;
+  if (before.role !== "unanswered") throw new Error(`the home's MACHINE stood as ${String(before.role)} before the owner answered, not unanswered`);
+  await home.client.request<HomeMachineAnswer>("POST", "/v1/owner/machines/answer", { machine, answer: "yours", seen: before.revision });
+  const after = (await home.client.request<HomeMachineAnswer>("GET", path)).body;
+  expect(after.machine).toBe(machine);
+  expect(after.role).toBe("yours");
+  expect(after.revision).not.toBe(before.revision);
+}
 /** Half-open Unicode-scalar span of the one occurrence of `word` (the authored note is ASCII). */
 function sync01Span(text: string, word: string): Sync01Span {
   const start = text.indexOf(word);
@@ -166,6 +191,7 @@ suite.test(test, "SYNC-01", "Two machines of one vault converge on home's anchor
   const predicates = [sync01Predicate(northFact.label), sync01Predicate(southFact.label)] as const;
 
   const home = await EngineFixture.start({ id: "SYNC-01", profile });
+  await answerHomeYours(home);
   const owner = home.pairedActor.principalRef;
   const link = await SyncLinkProxy.start({ target: home.url });
   // Fixture kind "annotation" is not a shipped NOTE kind; "research" is (vault-readable, durable).
@@ -427,6 +453,7 @@ suite.test(test, "SYNC-04", "A device in opened mode lists only metadata, opens 
   if (!query) throw new Error("SYNC-04 has no query naming the unopened item");
 
   const home = await EngineFixture.start({ id: "SYNC-04", profile });
+  await answerHomeYours(home);
   const link = await SyncLinkProxy.start({ target: home.url });
   // Created before the device joins: its first connection fetches the current
   // thin index. Fixture kind is not given; "research" is a shipped kind.
@@ -596,6 +623,7 @@ suite.test(test, "SYNC-05", "Switching a device to sync-all makes every authoriz
   const predicate = "inventory.crate_contents";
 
   const home = await EngineFixture.start({ id: "SYNC-05", profile });
+  await answerHomeYours(home);
   const owner = home.pairedActor.principalRef;
   const link = await SyncLinkProxy.start({ target: home.url });
   // Fixture kind is not given; "research" is a shipped kind (vault-readable, durable).
@@ -1051,6 +1079,7 @@ suite.todo(test, "SYNC-08", "waits on an EngineFixture opt-in that binds the mes
  */
 suite.test(test, "SYNC-09", "A freshly enrolled device renews its paired credential once its first sync lands the vault's authority, keeps its holder key, and goes on syncing on the renewed credential", async () => {
   const home = await EngineFixture.start({ id: "SYNC-09", profile });
+  await answerHomeYours(home);
   const device = await home.startDevicePeer({ id: "SYNC-09-device" });
   const machine = sync01DeviceMachine(device);
   const enrolled = credentialParts(device.enrolledCredential);
