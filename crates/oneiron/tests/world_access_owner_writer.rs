@@ -29,12 +29,12 @@ use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryResult};
 use oneiron::registry::ENTITY_TYPE_WORLD;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::coach::define_agent;
-use oneiron::test_doors::world_access::put_world_access_row;
+use oneiron::test_doors::world_access::{put_world_access_row, revoke_and_rebind_host_owner};
 use oneiron::write_envelope::{
     WriteActor, WriteEnvelope, WriteProvenance, write_envelope_evidence,
 };
 use oneiron::{
-    ClaimApprovalStatus, ClaimSource, EdgeActorClass, EntityId,
+    ClaimApprovalStatus, ClaimSource, EdgeActorClass, EntityId, PREDICATE_WORLD_ACCESS_ALLOWED_SET,
     PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET, ResolvedWorldAuthority, TimeRange, Vault, VaultConfig,
     WorldAuthoritySet, world_access_claim_body,
 };
@@ -143,15 +143,29 @@ impl Fixture {
         valid_from: Option<u64>,
         subset: &WorldAuthoritySet,
     ) {
+        self.put_row(
+            PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
+            writer,
+            stamps,
+            valid_from,
+            subset,
+        );
+    }
+
+    /// A `predicate` row about the agent stamped with `writer`'s envelope,
+    /// with the source and approval `stamps` names, valid from `valid_from`.
+    /// Returns its id.
+    fn put_row(
+        &self,
+        predicate: &'static str,
+        writer: WriteActor,
+        stamps: (ClaimSource, ClaimApprovalStatus),
+        valid_from: Option<u64>,
+        set: &WorldAuthoritySet,
+    ) -> EntityId {
         let (source, approval) = stamps;
         let mut body = world_access_claim_body(
-            PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
-            self.agent,
-            subset,
-            source,
-            approval,
-            valid_from,
-            None,
+            predicate, self.agent, set, source, approval, valid_from, None,
         )
         .unwrap();
         let envelope = WriteEnvelope::new(
@@ -164,14 +178,10 @@ impl Fixture {
         // An agent definition has no substrate FACET, so the row takes the
         // vault default facet, as the setter's rows do.
         body.scope_facet = self.vault.default_facet().unwrap();
-        put_world_access_row(
-            &self.vault,
-            &EntityId::now(),
-            &body,
-            at(LEARNED_AT),
-            LEARNED_AT,
-        )
-        .expect("a default row about the agent");
+        let id = EntityId::now();
+        put_world_access_row(&self.vault, &id, &body, at(LEARNED_AT), LEARNED_AT)
+            .expect("a world-access row about the agent");
+        id
     }
 }
 
@@ -432,4 +442,55 @@ fn ungoverned() -> ResolvedWorldAuthority {
         allowed_claim_ids: Vec::new(),
         default_claim_id: None,
     }
+}
+
+/// An owner whose binding the host revoked and bound again still sets the
+/// worlds: the door stamps the authority frontier the owner observes, so the
+/// batch's causal check admits its rows (review of #7816, P1 1). Red at
+/// 618443da: the rows carried no frontier, and the set failed with
+/// WriteConcurrentWithRevocation.
+#[test]
+fn a_regranted_owner_still_sets_the_worlds() {
+    let f = Fixture::new();
+    revoke_and_rebind_host_owner(&f.vault, f.owner)
+        .expect("the host revokes and rebinds the owner");
+
+    let answer = f
+        .set(worlds(true, &[f.w1]), None)
+        .expect("the regranted owner sets the agent's worlds");
+    assert_eq!(answer["changed"], json!(true), "{answer}");
+    let authority = f.authority();
+    assert_eq!(authority.allowed_set, authority_set(true, &[f.w1]));
+    assert_eq!(authority.allowed_claim_ids.len(), 1, "one grant row");
+}
+
+/// A grant the fold quarantines never blocks the owner's set: the set
+/// closes only the rows the agent's reads admit. The quarantined grant here
+/// was written by the owner before the host revoked and bound it again, with
+/// no frontier to prove the order (review of #7816, P1 2). Red at 618443da:
+/// the set closed the quarantined grant, the close put its writer's evidence
+/// again, and the batch's causal check rolled the set back.
+#[test]
+fn a_quarantined_grant_never_blocks_the_owners_set() {
+    let f = Fixture::new();
+    let quarantined = f.put_row(
+        PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+        WriteActor::new(f.owner, EdgeActorClass::Human),
+        (ClaimSource::UserStated, ClaimApprovalStatus::Approved),
+        None,
+        &authority_set(true, &[f.w1, f.w2]),
+    );
+    revoke_and_rebind_host_owner(&f.vault, f.owner)
+        .expect("the host revokes and rebinds the owner");
+    assert!(
+        !f.authority().allowed_claim_ids.contains(&quarantined),
+        "the fold quarantines the grant written before the revocation"
+    );
+
+    f.set(worlds(true, &[f.w1]), None)
+        .expect("the owner sets the agent's worlds over a quarantined grant");
+    let authority = f.authority();
+    assert_eq!(authority.allowed_set, authority_set(true, &[f.w1]));
+    assert_eq!(authority.allowed_claim_ids.len(), 1, "one grant row");
+    assert_ne!(authority.allowed_claim_ids[0], quarantined);
 }
