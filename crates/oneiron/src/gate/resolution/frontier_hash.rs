@@ -123,6 +123,12 @@ pub(super) fn hash_policy_frontier_v0(
         hash_str(hasher, "inquiry");
         hash_str(hasher, policy.keep().as_str());
     }
+    // The erase-request reply row decides whether a filed ask is answered
+    // without the owner: hashed only when present, as the inquiry row.
+    if let Some(policy) = resolution.erase_request_reply_policy {
+        hash_str(hasher, "erase_request_reply");
+        hash_str(hasher, policy.reply().as_str());
+    }
     // The common owner-change wait moves start deadlines, so naming one
     // moves the frontier; a manifest that never names it keeps its exact
     // no-common frontier hash. A domain tag rides with the value so no

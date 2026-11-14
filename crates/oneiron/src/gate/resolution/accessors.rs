@@ -834,6 +834,20 @@ impl PolicyManifestResolution {
         }
     }
 
+    /// The erase-request reply row (ARCH-0043 #leaving-a-company) this
+    /// resolution carries. A loaded manifest that fails closed reads as
+    /// unreadable; a vault with no manifest has no row.
+    #[must_use]
+    pub(crate) fn erase_request_reply_policy(&self) -> crate::deletion::EraseRequestReplyRead {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return crate::deletion::EraseRequestReplyRead::Unreadable;
+        }
+        match self.erase_request_reply_policy {
+            Some(policy) => crate::deletion::EraseRequestReplyRead::Row(policy),
+            None => crate::deletion::EraseRequestReplyRead::NoRow,
+        }
+    }
+
     #[must_use]
     /// The catastrophe floor row this resolution carries, or the pinned
     /// floor when no trusted manifest names one (DEC-0006 invariant 7). A

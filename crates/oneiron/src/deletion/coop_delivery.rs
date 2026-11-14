@@ -35,8 +35,15 @@ mod answer;
 mod leave;
 mod redact;
 mod refresh;
+mod reply_setting;
 mod restrict;
 mod types;
+
+pub(crate) use reply_setting::{ERASE_REQUEST_REPLY_ROW_KEY, EraseRequestReplyRead};
+pub use reply_setting::{
+    ERASE_REQUEST_REPLY_ROW_VERSION, EraseRequestReply, EraseRequestReplyPolicy,
+    EraseRequestReplySetting, EraseRequestReplySource,
+};
 
 pub use types::{
     CooperativeClaimValueRedaction, CooperativeDeleteOperation, CooperativeDeleteRecord,
