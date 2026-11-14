@@ -10,21 +10,35 @@
 //! Markdown; every call is charged within the provider's per-user quota
 //! first; and one source's steps run one at a time. The wire here is a
 //! fake Drive that records each call.
+//!
+//! The owner attaches a Drive through `vault.files.drive.attach`, an owner
+//! act no agent reaches; and each step names when the host steps the
+//! source again (L3-16-COPY-PACE = A, as for a Gmail copy): at once after
+//! a step that read on to its budget's end, at the end of its quota window
+//! after one that ran out of it, and never for a wire that declares no
+//! quota, a source that owes nothing or a step whose every text read
+//! failed.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::mpsc;
-use std::time::Duration;
+use std::sync::{Arc, mpsc};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use oneiron::authority::MachineRole;
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::memory::MemoryError;
 use oneiron::note::{
-    DRIVE_FOLDER_MIME_TYPE, DRIVE_WIRE_RATE_LIMITED, DriveAccess, DriveChange, DriveChangesPage,
-    DriveFileMeta, DriveFilesPage, DriveOrigin, DriveQuota, DriveStepBudget, DriveWire,
-    FolderFileState, FolderSource, NameOnlyReason,
+    DRIVE_FOLDER_MIME_TYPE, DRIVE_PICKED_OAUTH_SCOPE, DRIVE_WHOLE_OAUTH_SCOPE,
+    DRIVE_WIRE_RATE_LIMITED, DriveAccess, DriveChange, DriveChangesPage, DriveFileMeta,
+    DriveFilesPage, DriveOrigin, DriveQuota, DriveStepBudget, DriveWire, FolderFileState,
+    FolderSource, NameOnlyReason,
 };
 use oneiron::registry::ENTITY_TYPE_NOTE;
 use oneiron::store::GateDecisionId;
-use oneiron::{Result, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, Result, Vault, VaultConfig};
+use serde_json::{Value, json};
+
+const ATTACH: &str = "vault.files.drive.attach";
 
 const DOC: &str = "application/vnd.google-apps.document";
 const SHEET: &str = "application/vnd.google-apps.spreadsheet";
@@ -952,5 +966,318 @@ fn a_whole_drive_listed_again_retracts_a_file_gone_meanwhile() {
     assert_eq!(
         ledger_state(&vault, &source, "mdB2"),
         Some(FolderFileState::Landed)
+    );
+}
+
+/// A quota no step here runs out of.
+const ROOMY: DriveQuota = DriveQuota {
+    units_per_minute: 100_000,
+    list: 1,
+    get: 1,
+    content: 1,
+};
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after 1970")
+        .as_secs()
+}
+
+/// A rooted vault whose handle holds the writer lease, so the owner verbs
+/// answer its embedded owner (as `plan_mode_setting.rs` builds it): its
+/// install enrolled, its embedded owner and that owner's proof.
+fn rooted_vault(temp: &tempfile::TempDir) -> (Vault, EntityId, AuthenticatedOwner) {
+    let vault =
+        Vault::open_owned(&temp.path().join("vault"), VaultConfig::device()).expect("owned vault");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
+    let issuer = vault.bootstrap_host_slip_issuer().expect("host issuer");
+    vault.ensure_host_root_slip(&issuer).expect("host root");
+    vault
+        .provision_engine_machine_identities(&issuer)
+        .expect("engine machine identities");
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("serving install profile");
+    let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault
+        .authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())
+        .expect("owner proof");
+    (vault, actor, owner)
+}
+
+fn invoke(
+    vault: &Vault,
+    actor: EntityId,
+    class: EdgeActorClass,
+    input: Value,
+) -> std::result::Result<Value, MemoryError> {
+    oneiron::task_verb::sdk::invoke(&vault.memory(actor, class), ATTACH, input)
+}
+
+#[test]
+fn the_owner_attaches_a_drive_through_the_verb() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let (vault, actor, owner) = rooted_vault(&temp);
+    let drive = FakeDrive::default();
+    drive.put(
+        "mdB2",
+        "Plan.md",
+        "text/markdown",
+        1_700_000_100,
+        "# Plan\n",
+    );
+
+    let whole = invoke(
+        &vault,
+        actor,
+        EdgeActorClass::Human,
+        json!({
+            "custody_ref": "google-drive-owen",
+            "account": "Owen@example.com",
+            "access": {"kind": "whole"},
+        }),
+    )
+    .expect("the owner attaches their whole Drive");
+    assert_eq!(
+        whole,
+        json!({
+            "folder": "drive://owen@example.com",
+            "access": {"kind": "whole"},
+            "oauth_scope": DRIVE_WHOLE_OAUTH_SCOPE,
+            "kind": "observation",
+        })
+    );
+    let source = vault
+        .folder_source("drive://owen@example.com")
+        .expect("sources")
+        .expect("the whole Drive is attached");
+    assert_eq!(
+        source.drive.as_ref().map(|drive| &drive.origin.access),
+        Some(&DriveAccess::Whole)
+    );
+    vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("the host's step");
+    assert_eq!(
+        drive.calls(),
+        ["start", "list", "download mdB2"],
+        "the attached source lists the whole Drive"
+    );
+    assert_eq!(
+        note_text(&vault, &source, "mdB2").as_deref(),
+        Some("# Plan\n")
+    );
+
+    let picked = invoke(
+        &vault,
+        actor,
+        EdgeActorClass::Human,
+        json!({
+            "custody_ref": "google-drive-yuki",
+            "account": "yuki@example.com",
+            "access": {"kind": "picked", "files": ["mdB2", "mdB2"]},
+            "kind": "observation",
+        }),
+    )
+    .expect("the owner attaches the files they picked");
+    assert_eq!(
+        picked["access"],
+        json!({"kind": "picked", "files": ["mdB2"]}),
+        "each picked file is named once"
+    );
+    assert_eq!(picked["oauth_scope"], DRIVE_PICKED_OAUTH_SCOPE);
+
+    let again = invoke(
+        &vault,
+        actor,
+        EdgeActorClass::Human,
+        json!({
+            "custody_ref": "google-drive-owen",
+            "account": "owen@example.com",
+            "access": {"kind": "whole"},
+        }),
+    );
+    assert!(again.is_err(), "an account is attached once: {again:?}");
+}
+
+#[test]
+fn an_agent_is_refused_the_drive_attach() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let (vault, _actor, _owner) = rooted_vault(&temp);
+    let agent = EntityId::from_bytes([0xB7; 16]).expect("agent id");
+    let refused = invoke(
+        &vault,
+        agent,
+        EdgeActorClass::Agent,
+        json!({
+            "custody_ref": "google-drive-owen",
+            "account": "owen@example.com",
+            "access": {"kind": "whole"},
+        }),
+    )
+    .expect_err("the attach is the owner's act");
+    assert_eq!(refused.code, "FORBIDDEN", "{refused:?}");
+    assert_eq!(
+        vault
+            .folder_source("drive://owen@example.com")
+            .expect("sources"),
+        None,
+        "nothing is attached"
+    );
+}
+
+#[test]
+fn a_drive_step_that_read_to_its_budget_names_its_next_step_now() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let (vault, owner) = owned_vault(&temp);
+    let drive = FakeDrive {
+        quota: Some(ROOMY),
+        list_page: Some(1),
+        ..FakeDrive::default()
+    };
+    drive.put(
+        "mdB2",
+        "Plan.md",
+        "text/markdown",
+        1_700_000_200,
+        "# Plan\n",
+    );
+    drive.put(
+        "mdC3",
+        "Draft.md",
+        "text/markdown",
+        1_700_000_100,
+        "# Draft\n",
+    );
+    let source = attach_whole(&vault, &owner);
+
+    let before = unix_now();
+    let first = vault
+        .drive_sync_step(&owner, &source.folder, &drive, one_list_page())
+        .expect("first step");
+    assert!(first.listing, "{first:?}");
+    assert_eq!(first.quota_paused_until, None, "{first:?}");
+    let next = first
+        .next_step_at
+        .expect("a listing cut at its budget names its next step");
+    assert!(
+        (before..=unix_now()).contains(&next),
+        "it is stepped again at once: {first:?}"
+    );
+
+    let last = vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("second step");
+    assert_eq!(
+        (last.listing, last.texts, last.owed),
+        (false, 2, 0),
+        "{last:?}"
+    );
+    assert_eq!(
+        last.next_step_at, None,
+        "a source that owes nothing waits for the host's pass: {last:?}"
+    );
+}
+
+#[test]
+fn a_drive_step_out_of_quota_names_the_end_of_its_window() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let (vault, owner) = owned_vault(&temp);
+    let drive = FakeDrive {
+        // The start and one metadata read fit; a download does not.
+        quota: Some(DriveQuota {
+            units_per_minute: 20,
+            list: 100,
+            get: 5,
+            content: 200,
+        }),
+        ..FakeDrive::default()
+    };
+    drive.put(
+        "mdB2",
+        "Plan.md",
+        "text/markdown",
+        1_700_000_100,
+        "# Plan\n",
+    );
+    let source = attach(&vault, &owner, &["mdB2"]);
+
+    let first = vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("first step");
+    assert_eq!(first.owed, 1, "{first:?}");
+    assert!(first.quota_paused_until.is_some(), "{first:?}");
+    assert_eq!(
+        first.next_step_at, first.quota_paused_until,
+        "a resting source is stepped once its window opens"
+    );
+}
+
+#[test]
+fn a_drive_step_with_no_quota_names_no_next_step() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let (vault, owner) = owned_vault(&temp);
+    let drive = FakeDrive {
+        list_page: Some(1),
+        ..FakeDrive::default()
+    };
+    drive.put(
+        "mdB2",
+        "Plan.md",
+        "text/markdown",
+        1_700_000_200,
+        "# Plan\n",
+    );
+    drive.put(
+        "mdC3",
+        "Draft.md",
+        "text/markdown",
+        1_700_000_100,
+        "# Draft\n",
+    );
+    let source = attach_whole(&vault, &owner);
+
+    let first = vault
+        .drive_sync_step(&owner, &source.folder, &drive, one_list_page())
+        .expect("first step");
+    assert!(first.listing, "{first:?}");
+    assert_eq!(
+        first.next_step_at, None,
+        "a wire that declares no quota keeps the host's periodic pace"
+    );
+}
+
+#[test]
+fn a_drive_step_whose_every_text_read_failed_names_no_next_step() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let (vault, owner) = owned_vault(&temp);
+    let drive = FakeDrive {
+        quota: Some(ROOMY),
+        ..FakeDrive::default()
+    };
+    drive.put("txtD4", "Export.txt", "text/plain", 1_700_000_100, "rows\n");
+    // Larger than one download: its read fails each time.
+    drive
+        .files
+        .borrow_mut()
+        .get_mut("txtD4")
+        .expect("the file")
+        .0
+        .size = Some(512 * 1024 * 1024);
+    let source = attach(&vault, &owner, &["txtD4"]);
+
+    let first = vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("first step");
+    assert_eq!(
+        (first.texts, first.owed, first.rescan.failed),
+        (0, 1, 1),
+        "{first:?}"
+    );
+    assert_eq!(
+        first.next_step_at, None,
+        "a file that fails each time never spins the host: {first:?}"
     );
 }
