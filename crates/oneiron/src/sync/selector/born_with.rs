@@ -146,6 +146,11 @@ pub(super) fn carry_born_with(
             }
             prompt.push_str(marker);
         }
+        // No grant admits a credential (SCOPED-EXPORT-RULE = A, ARCH-0027
+        // :382): a field whose text the release check reads one in stays
+        // home whole, as a denied prompt source's text does; the row and its
+        // other fields still travel.
+        text.retain(|_, value| crate::batch::secret_scan::scan_text_content(value).is_none());
         if !text.is_empty() {
             map_insert_bytes(&map, &id.to_hex(), &encode(&text)?)?;
         }
