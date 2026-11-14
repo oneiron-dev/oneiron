@@ -307,6 +307,13 @@ name = "broker_rerank"
 path = "tests/broker_rerank.rs"
 required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
 
+# Census L8-46's pin: a video job's poll and cancel reach the provider only for
+# the admitted job, through the broker and the same TLS fake provider.
+[[test]]
+name = "broker_followup_job_binding"
+path = "tests/broker_followup_job_binding.rs"
+required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
+
 # The NOTE session bind probe roots its home on a `MemoryKeystore` as well.
 [[test]]
 name = "note_session_bind_reply"

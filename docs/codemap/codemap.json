@@ -5673,7 +5673,7 @@
      "path": "src/authority/principal_standing.rs",
      "purpose": "FIX 6219 (L02 seam): whether a recorded principal still stands, for work a host does later in that…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -15024,91 +15024,6 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/channel_identity_provider/sheets/invocation.rs",
-     "purpose": "A Sheets write's claim on its caller's invocation (FIX 4862, REVIEW-6403): one row per logical call, written…",
-     "surface": {
-      "crate-vis": 7
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/channel_identity_provider/sheets/mod.rs",
-     "purpose": "The built-in Google Sheets connector (FIX 4862; MAIL-GOOGLE = A, row 1): `connector.call` on the catalog…",
-     "surface": {
-      "const": 7,
-      "crate-vis": 2,
-      "fn": 2,
-      "re-export": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/channel_identity_provider/sheets/receipt.rs",
-     "purpose": "A Sheets write's Gate records (FIX 4862), kept as a secret use keeps its own: the intent a write commits…",
-     "surface": {
-      "const": 1,
-      "crate-vis": 7
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/channel_identity_provider/sheets/run.rs",
-     "purpose": "One Sheets call's send (FIX 4862): its requests reach the broker before the grant is read, one custody door…",
-     "surface": {
-      "crate-vis": 5
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/channel_identity_provider/sheets/token.rs",
-     "purpose": "The OAuth access token one Sheets send presents (FIX 4862), read from the stored grant inside the custody…",
-     "surface": {
-      "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/channel_identity_provider/sheets/tools.rs",
-     "purpose": "The four Sheets tools (FIX 4862): their names, typed inputs and input schemas",
-     "surface": {
-      "crate-vis": 22
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "SheetsBrokerCall",
-      "SheetsBrokerHost",
-      "SheetsEndpoint",
-      "SheetsWireOutcome",
-      "SheetsWireRequest"
-     ],
-     "path": "src/channel_identity_provider/sheets/wire.rs",
-     "purpose": "The Sheets wire (FIX 4862): each call's exact Sheets v4 request, and the host seam that sends it through the…",
-     "surface": {
-      "const": 2,
-      "crate-vis": 6,
-      "enum": 2,
-      "fn": 3,
-      "struct": 1,
-      "trait": 2
-     }
-    },
-    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -15232,6 +15147,165 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/channel_identity_provider/workspace_connector/docs.rs",
+     "purpose": "`google.docs` (MAIL-GOOGLE = A, row 3; L3-17): a document read and one batch of edits with a readback, over…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_provider/workspace_connector/excel.rs",
+     "purpose": "`microsoft.excel` (L3-17; L3-17-EXCEL = A): the ranges of an Excel workbook in the user's OneDrive or…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_provider/workspace_connector/invocation.rs",
+     "purpose": "A workspace write's claim on its caller's invocation (FIX 4862, REVIEW-6403; L3-17): one row per logical…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WorkspaceApi",
+      "WorkspaceConnection",
+      "WorkspacePlan",
+      "WorkspaceTarget",
+      "WorkspaceTokenExchange",
+      "WorkspaceTool"
+     ],
+     "path": "src/channel_identity_provider/workspace_connector/mod.rs",
+     "purpose": "The built-in workspace connectors (FIX 4862; MAIL-GOOGLE = A, rows 1 and 3; L3-17): typed code-mode modules…",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 6,
+      "mod": 4,
+      "re-export": 2,
+      "static": 2,
+      "struct": 4,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_provider/workspace_connector/receipt.rs",
+     "purpose": "A workspace write's Gate records (FIX 4862; L3-17), kept as a secret use keeps its own: the intent a write…",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_provider/workspace_connector/requests.rs",
+     "purpose": "Input checks the workspace modules share (L3-17): a Google file id, a batch of requests passed through as…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_provider/workspace_connector/run.rs",
+     "purpose": "One workspace call's send (FIX 4862; L3-17): its requests reach the broker before the grant is read, one…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_provider/workspace_connector/sheets/mod.rs",
+     "purpose": "`google.sheets` (FIX 4862; MAIL-GOOGLE = A, row 1): four tools over the Sheets v4 REST API, on the workspace…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_provider/workspace_connector/sheets/tools.rs",
+     "purpose": "The four `google.sheets` tools (FIX 4862): their names, typed inputs and input schemas",
+     "surface": {
+      "crate-vis": 21
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_provider/workspace_connector/sheets/wire.rs",
+     "purpose": "Each `google.sheets` call's exact Sheets v4 requests (FIX 4862): its effect, and after a write the read that…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_provider/workspace_connector/slides.rs",
+     "purpose": "`google.slides` (MAIL-GOOGLE = A, row 3; L3-17): a presentation read and one batch of edits with a readback…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_provider/workspace_connector/token.rs",
+     "purpose": "The OAuth access token one workspace send presents (FIX 4862; L3-17), read from the stored grant inside the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WorkspaceBrokerCall",
+      "WorkspaceBrokerHost",
+      "WorkspaceEndpoint",
+      "WorkspaceWireOutcome",
+      "WorkspaceWireRequest"
+     ],
+     "path": "src/channel_identity_provider/workspace_connector/wire.rs",
+     "purpose": "The workspace wire (FIX 4862; L3-17): each call's exact REST request, and the host seam that sends it…",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 2,
+      "fn": 8,
+      "struct": 1,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/channel_identity_selection/mod.rs",
      "purpose": "Relationship-context channel-identity selection law (ONE-1826)",
      "surface": {
@@ -15336,9 +15410,19 @@
      "surface": {
       "const": 1,
       "enum": 4,
-      "fn": 3,
+      "fn": 4,
       "static": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/check_in/asker.rs",
+     "purpose": "The asking side of the agent verbs `vault.check_in.preflight` and `vault.check_in.open` (ARCH-0082…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -15348,7 +15432,21 @@
      "path": "src/check_in/chain.rs",
      "purpose": "The ladder from verified records (ARCH-0082 #ladder; ROLES-CHECKIN P2.2, piece 2c; Engine ruling P22-SHAPE…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckInDecision"
+     ],
+     "path": "src/check_in/effect.rs",
+     "purpose": "A door's own check-in for a person's act (ARCH-0082 #composing; ROLES-CHECKIN P2.4b, piece 2i; Engine ruling…",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -15358,8 +15456,8 @@
      "path": "src/check_in/mod.rs",
      "purpose": "Check-in: one mechanism for every act that may need an ask (ONEIRON-ARCH-0082; owner ruling ROLES-CHECKIN =…",
      "surface": {
-      "crate-vis": 7,
-      "re-export": 8
+      "crate-vis": 11,
+      "re-export": 9
      }
     },
     {
@@ -15383,6 +15481,7 @@
       "CapturedWait",
       "DelayWindow",
       "DelayWindowOpen",
+      "EligibleBasis",
       "Extension",
       "HolderAnswer",
       "HolderReply",
@@ -15398,9 +15497,9 @@
      "path": "src/check_in/pending.rs",
      "purpose": "The durable Wait handle (ARCH-0082 #ladder and #waits; ROLES-CHECKIN P2.2, pieces 2b and 2d; Engine ruling…",
      "surface": {
-      "crate-vis": 8,
-      "enum": 4,
-      "fn": 8,
+      "crate-vis": 14,
+      "enum": 5,
+      "fn": 11,
       "re-export": 1,
       "struct": 10
      }
@@ -15507,6 +15606,16 @@
      "surface": {
       "crate-vis": 5,
       "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/check_in/wake.rs",
+     "purpose": "The host that wakes a due check-in (ARCH-0082 #waits and \"When nobody answers\"; ROLES-CHECKIN P2.3, piece 2e)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -23936,7 +24045,7 @@
      "path": "src/connector_key/mod.rs",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 20,
       "mod": 3,
       "re-export": 17
      }
@@ -24099,6 +24208,7 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "AuthorizationCodeGrant",
       "PackConnectionCheck",
       "PackConnectionEvidence",
       "PackConnectionVerifier",
@@ -24107,11 +24217,11 @@
      "path": "src/connector_key/setup.rs",
      "purpose": "Guided pack setup's grants and connection checks (OF-378)",
      "surface": {
-      "const": 10,
-      "crate-vis": 1,
-      "fn": 1,
-      "re-export": 2,
-      "struct": 3,
+      "const": 11,
+      "crate-vis": 6,
+      "fn": 3,
+      "re-export": 3,
+      "struct": 4,
       "trait": 1
      }
     },
@@ -24133,14 +24243,13 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "GoogleAuthorizationCode",
-      "GoogleAuthorizationGrant"
+      "GoogleAuthorizationCode"
      ],
      "path": "src/connector_key/setup/google_code.rs",
      "purpose": "Google's code exchange, called with values held inside admitted credential doors",
      "surface": {
-      "fn": 3,
-      "struct": 2
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -24152,6 +24261,20 @@
      "surface": {
       "crate-vis": 5,
       "fn": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MicrosoftAuthorizationCode"
+     ],
+     "path": "src/connector_key/setup/microsoft_code.rs",
+     "purpose": "Microsoft's code exchange and refresh ([MICROSOFT365-OAUTH-EXCHANGE]), called with values held inside…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -27055,7 +27178,7 @@
      "path": "src/conversation/roles.rs",
      "purpose": "Host-local room role grants",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1
      }
     },
@@ -40862,7 +40985,7 @@
      "path": "src/federation/pending_act.rs",
      "purpose": "Row-driven shared-vault objection windows",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 20,
       "fn": 9,
       "re-export": 3,
       "struct": 3
@@ -41141,7 +41264,7 @@
       "SharedEraseAsk"
      ],
      "path": "src/federation/shared_act/erase_ask.rs",
-     "purpose": "Erase asks (ARCH-0043 \"Who may archive, delete and erase\", 2026-10-09): in a shared vault a Member requests…",
+     "purpose": "Erase asks (ARCH-0043 \"Who may archive, delete and erase\", 2026-10-09; ARCH-0082 #role-defaults: \"Any actor…",
      "surface": {
       "const": 1,
       "crate-vis": 1,
@@ -41187,7 +41310,7 @@
       "const": 1,
       "crate-vis": 3,
       "enum": 3,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -41206,8 +41329,8 @@
      "path": "src/federation/shared_act/membership.rs",
      "purpose": "Membership effects: Owner additions and handovers, and the ordinary member changes an Admin's named power…",
      "surface": {
-      "crate-vis": 16,
-      "fn": 5,
+      "crate-vis": 19,
+      "fn": 8,
       "re-export": 2
      }
     },
@@ -41279,7 +41402,7 @@
       "const": 3,
       "crate-vis": 8,
       "enum": 3,
-      "fn": 6,
+      "fn": 7,
       "re-export": 6,
       "struct": 13
      }
@@ -51806,7 +51929,7 @@
      "path": "src/mail_pack/mod.rs",
      "purpose": "The Mail & Calendar pack, engine half (FIX 12559, 12560; owner MAIL-SHARE, MAIL-DELETE, MAIL-PROVIDERS and…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 4,
       "re-export": 24
      }
@@ -51892,7 +52015,7 @@
      "path": "src/mail_pack/rest.rs",
      "purpose": "What the mail pack's REST wires share (Gmail, Microsoft Graph): one HTTPS client shape, one bounded JSON…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 22
      }
     },
     {
@@ -53559,7 +53682,7 @@
      "path": "src/memory/entity_erase.rs",
      "purpose": "Owner erase that can also take every record in this vault holding the same bytes",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 3,
       "fn": 2,
       "struct": 2
@@ -54120,7 +54243,7 @@
      "surface": {
       "crate-vis": 39,
       "mod": 41,
-      "re-export": 72
+      "re-export": 73
      }
     },
     {
@@ -72439,6 +72562,7 @@
      "kind": "src",
      "notable": [
       "ArtifactTaintState",
+      "RotationCause",
       "RotationKind",
       "RotationReceipt"
      ],
@@ -72447,8 +72571,8 @@
      "surface": {
       "const": 3,
       "crate-vis": 7,
-      "enum": 2,
-      "fn": 8,
+      "enum": 3,
+      "fn": 10,
       "re-export": 1,
       "struct": 1
      }
@@ -72460,8 +72584,18 @@
      "path": "src/secret_rotation/owner_door.rs",
      "purpose": "The owner's rotation door and the one transaction body every rotation shares",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_rotation/provider_refresh.rs",
+     "purpose": "The one rotation the engine runs on its own: a provider's refresh answer stored in place of the grant a…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -75932,7 +76066,7 @@
      "path": "src/skill_hub/pack_catalog/setup_session.rs",
      "purpose": "Source-bound guided pack setup (OF-378)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 15,
       "fn": 6,
       "re-export": 1,
       "struct": 6
@@ -90552,7 +90686,7 @@
      "path": "src/test_doors/check_in.rs",
      "purpose": "Door for `tests/check_in_pending_handle.rs`, `tests/check_in_rung_waits.rs` and `tests/check_in_ladder.rs`…",
      "surface": {
-      "fn": 15,
+      "fn": 18,
       "struct": 2
      }
     },
@@ -91077,12 +91211,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ExchangedMicrosoftGrant"
+     ],
+     "path": "src/test_doors/microsoft_token.rs",
+     "purpose": "Door for `tests/microsoft365_oauth.rs` and `tests/microsoft365_refresh_write_back.rs`…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 93,
+      "mod": 95,
       "re-export": 1
      }
     },
@@ -91533,6 +91681,16 @@
      "purpose": "Doors for `tests/wake_d1_park_release.rs` (#6877, WAKE-D1): the wake pass's local node id, the owner notice…",
      "surface": {
       "fn": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/workspace_token.rs",
+     "purpose": "Door for `tests/microsoft_excel_wire.rs` (L3-17-EXCEL-CONNECTION = B): the access token a workspace module's…",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -93964,6 +94122,26 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CheckInAnswerRequest",
+      "CheckInAnswerWord",
+      "CheckInHandleView",
+      "CheckInOpenRequest",
+      "CheckInPreflightRequest",
+      "CheckInSettlement",
+      "CheckInVerdict"
+     ],
+     "path": "src/verbs/check_in.rs",
+     "purpose": "`vault.check_in.preflight` and `vault.check_in.open` (ARCH-0082 #composing and #ladder; ROLES-CHECKIN P2.3b…",
+     "surface": {
+      "enum": 2,
+      "fn": 4,
+      "struct": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -95002,7 +95180,7 @@
       "enum": 1,
       "fn": 9,
       "mod": 1,
-      "re-export": 127,
+      "re-export": 128,
       "struct": 34
      }
     },
@@ -95739,11 +95917,13 @@
       "SharedActExecuted",
       "SharedActRequest",
       "SharedAddOwnerRequest",
+      "SharedDeleteProposeRequest",
       "SharedInvitationAcceptedWithCredential",
       "SharedMemberAddRequest",
       "SharedMemberAskIdRequest",
       "SharedMemberAskKind",
       "SharedMemberAskRequest",
+      "SharedMemberRemoveRequest",
       "SharedMemberRequest",
       "SharedMemberRoleRequest",
       "SharedOwnerChangeWaitSetRequest",
@@ -95755,10 +95935,10 @@
      "path": "src/verbs/shared.rs",
      "purpose": "The inputs and answers of the shared-vault rows a host door answers (OF-158): the acts the shared preset…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 21,
-      "struct": 17
+      "struct": 19
      }
     },
     {
@@ -97463,7 +97643,7 @@
      "surface": {
       "crate-vis": 44,
       "mod": 1,
-      "re-export": 28
+      "re-export": 29
      }
     },
     {
@@ -98495,6 +98675,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoomMemberRoleReceipt",
+      "RoomMemberRoleSet"
+     ],
+     "path": "src/workspace_roster/rooms/member_role.rs",
+     "purpose": "The room role door (FIX [ROOM-ROLE-SET]; the lead 14 Nov 00:2x, under the owner's 13 Nov 22:44 grant)",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -98513,7 +98707,7 @@
       "crate-vis": 52,
       "enum": 2,
       "fn": 6,
-      "re-export": 23,
+      "re-export": 24,
       "struct": 6
      }
     },
@@ -100268,6 +100462,48 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/check_in/ladder.rs",
+     "purpose": "The ladder fixture of the check-in tests (ROLES-CHECKIN P2.2c, used by `check_in_ladder.rs` and…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in_agent_verbs.rs",
+     "purpose": "ROLES-CHECKIN P2.3b, piece 2f (ARCH-0082 #composing and #ladder; Engine ruling P23-SHAPE Q2, Q5, Q6, Q10 and…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in_answer_settlements.rs",
+     "purpose": "ROLES-CHECKIN P2.3c, piece 2l (ARCH-0082 #ladder and \"When nobody answers\"; Engine ruling P23-SHAPE Q7, Q8…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in_deputy_delegation.rs",
+     "purpose": "ROLES-CHECKIN P2.4a, piece 2g (ARCH-0082 #roles and #composing; Engine ruling P24-SHAPE Q1 and Q2 = A, 13…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in_destructive_effects.rs",
+     "purpose": "ROLES-CHECKIN P2.4c, piece 2j (ARCH-0082 #role-defaults and #composing; Engine ruling P24-SHAPE Q7, Q8 and…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/check_in_fanout_modes.rs",
      "purpose": "ROLES-CHECKIN PR 1 (ARCH-0082 #build): fan-out admission is the first caller of check-in, and the rename…",
      "surface": {}
@@ -100278,6 +100514,14 @@
      "notable": [],
      "path": "tests/check_in_ladder.rs",
      "purpose": "ROLES-CHECKIN P2.2, piece 2c (ARCH-0082 #ladder; Engine ruling P22-SHAPE Q3, Q4 and Q9 = A): the ladder from…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in_membership_effects.rs",
+     "purpose": "ROLES-CHECKIN P2.4b, piece 2i (ARCH-0082 #composing and #role-defaults; Engine ruling P24-SHAPE Q3, Q4, Q5…",
      "surface": {}
     },
     {
@@ -100310,6 +100554,14 @@
      "notable": [],
      "path": "tests/check_in_verb_census.rs",
      "purpose": "ROLES-CHECKIN PR 2, P2.1 (ONEIRON-ARCH-0082 #act-table): every verb row states its act class, by the ruled…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in_waiter_resume.rs",
+     "purpose": "ROLES-CHECKIN P2.3a, piece 2e (ARCH-0082 #waits and \"When nobody answers\"; Engine ruling P23-SHAPE Q2-Q5 =…",
      "surface": {}
     },
     {
@@ -101112,6 +101364,22 @@
      "notable": [],
      "path": "tests/goal_read_through_grant.rs",
      "purpose": "The goal read is an ordinary granted read with an actor (untangle 6.6d, F4; Engine 10 Nov 06:53 and 07:23)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/google_connection_routes.rs",
+     "purpose": "A built-in Google module through `connector.schema` (L3-17, PR 1): with no checked Google connection it…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/google_docs_slides_connector.rs",
+     "purpose": "`google.docs` and `google.slides` on the workspace connector core (L3-17, PR 2): each routes to the built-in…",
      "surface": {}
     },
     {
@@ -102066,6 +102334,46 @@
      "notable": [],
      "path": "tests/merged_contact_stop_view.rs",
      "purpose": "A key whose PERSON was merged into a different key keeps showing the STOP it said before the merge on its…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/microsoft365_connection_refresh.rs",
+     "purpose": "The Microsoft 365 connection refreshes the grant the Microsoft code exchange stores, and a Microsoft grant…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/microsoft365_oauth.rs",
+     "purpose": "Microsoft's code exchange and refresh ([MICROSOFT365-OAUTH-EXCHANGE]): what each posts to the tenant's token…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/microsoft365_refresh_write_back.rs",
+     "purpose": "The engine stores Microsoft's newer refresh token in place of the grant a credential door read…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/microsoft_excel_connector.rs",
+     "purpose": "`microsoft.excel` on the workspace connector core (L3-17 PR 4; L3-17-EXCEL-CONNECTION = B): it routes to the…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/microsoft_excel_wire.rs",
+     "purpose": "The `microsoft.excel` wire (L3-17 PR 4): calls in one workbook session carry its id as the…",
      "surface": {}
     },
     {
@@ -103652,6 +103960,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/workspace_connector_routes.rs",
+     "purpose": "The workspace connector core (L3-17, PR 1): `google.sheets` is one module on it, and keeps its four tools…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/write_receipt_float_input.rs",
      "purpose": "Census L1-06 (ARCH-0028:137, \"a float in a write's input can decode differently when its receipt is read back",
      "surface": {}
@@ -103849,7 +104165,7 @@
      "purpose": "ChannelIdentity lifecycle verbs through the ExternalEffect door (OF-347 CID-2)"
     },
     "channel_identity_provider": {
-     "files": 51,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -103863,7 +104179,7 @@
      "purpose": "Relationship-context channel-identity selection law (ONE-1826)"
     },
     "check_in": {
-     "files": 12,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104031,7 +104347,7 @@
      "purpose": "Connect delivery and rejoin wire vocabulary"
     },
     "connector_key": {
-     "files": 61,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104934,7 +105250,7 @@
      "purpose": "Core half of `secret_record`: its store-layer items live in `oneiron_store::secret_record` and are…"
     },
     "secret_rotation": {
-     "files": 5,
+     "files": 6,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -105158,7 +105474,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 96,
+     "files": 98,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105270,7 +105586,7 @@
      "purpose": "Core's view of the verb table (untangle slice 5.0a, S5-2 = A, S50A-3 = A): the per-verb behaviour core's…"
     },
     "verbs": {
-     "files": 141,
+     "files": 142,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105319,7 +105635,7 @@
      "purpose": "Monthly CRDT window keys and their timestamp conversion"
     },
     "workspace_roster": {
-     "files": 141,
+     "files": 142,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105335,8 +105651,8 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7539,
-   "test_files": 1262
+   "source_files": 7554,
+   "test_files": 1277
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -109949,6 +110265,22 @@
       "fn": 8,
       "struct": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/graph_workbook_shapes.rs",
+     "purpose": "The Microsoft Graph workbook rows (L3-17 PR 4): each accepts only its own workbook path, a worksheet name…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/workspace_shapes.rs",
+     "purpose": "The Google Workspace REST rows for Docs and Slides (L3-17): each accepts only its own endpoint and query…",
+     "surface": {}
     }
    ],
    "modules": {
@@ -110103,7 +110435,7 @@
    "over_bar": 2,
    "purpose": "The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`)",
    "source_files": 34,
-   "test_files": 5
+   "test_files": 7
   },
   "oneiron-browser": {
    "files": [
@@ -113369,7 +113701,7 @@
      "path": "src/memory.rs",
      "purpose": "The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one…",
      "surface": {
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -113384,7 +113716,7 @@
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
-      "const": 23,
+      "const": 25,
       "fn": 7,
       "re-export": 1,
       "struct": 4,
@@ -129454,6 +129786,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/check_in_doors.rs",
+     "purpose": "The host door of `vault.check_in.answer` (ROLES-CHECKIN P2.3c, piece 2l; Engine ruling P23-SHAPE Q9 = A): a…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/checkout_doors.rs",
      "purpose": "One credential-backed CHECKOUT door for HTTP, MCP and the generated SDK",
      "surface": {
@@ -130217,7 +130559,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 195
+      "crate-vis": 196
      }
     },
     {
@@ -133694,6 +134036,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/pack_routes/code_exchange.rs",
+     "purpose": "What the owner's authorization-code exchanges share (Gmail's, Microsoft 365's): the code and the client…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/pack_routes/gmail_exchange.rs",
      "purpose": "Owner-admitted Google authorization codes enter only through credential custody",
      "surface": {
@@ -133716,6 +134068,16 @@
      "notable": [],
      "path": "src/api/owner_routes/pack_routes/line_chats.rs",
      "purpose": "`/v1/owner/packs/line/chats`: the LINE groups and rooms the served bot was seen in, as optional offers to…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/pack_routes/microsoft365_exchange.rs",
+     "purpose": "Owner-admitted Microsoft authorization codes enter only through credential custody…",
      "surface": {
       "crate-vis": 1
      }
@@ -138945,7 +139307,17 @@
      "path": "src/embedder/serve.rs",
      "purpose": "`oneiron-server embedder serve`: the local provider over an OpenAI-compatible `/v1/embeddings`, for several…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/serve/accounts.rs",
+     "purpose": "Each account's own bearer key for the shared embedder (CROSS-ARCH-0019 #dm-xaccount-embedder): one server…",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -138985,7 +139357,17 @@
      "path": "src/embedder/serve/tests.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/embedder/serve/tests/accounts.rs",
+     "purpose": "Census L10-10 (CROSS-ARCH-0019 #dm-xaccount-embedder): \"One bearer key covers every caller",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -142211,8 +142593,8 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/models/broker_context/sheets.rs",
-     "purpose": "The built-in Google Sheets connector's credential-broker leg (FIX 4862)",
+     "path": "src/models/broker_context/workspace.rs",
+     "purpose": "The built-in workspace connectors' credential-broker leg (FIX 4862; L3-17)",
      "surface": {
       "crate-vis": 2
      }
@@ -147313,6 +147695,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/broker_followup_job_binding.rs",
+     "purpose": "Census L8-46: provider follow-up URLs stay bound to the admitted destination and job, including the video…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -148098,7 +148488,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 779,
+     "files": 782,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -148294,7 +148684,7 @@
      "purpose": "The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened…"
     },
     "embedder": {
-     "files": 31,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -148646,8 +149036,8 @@
    },
    "over_bar": 62,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1871,
-   "test_files": 246
+   "source_files": 1875,
+   "test_files": 248
   },
   "oneiron-skill-attribution": {
    "files": [
