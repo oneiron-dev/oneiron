@@ -94,6 +94,7 @@ fn proxy_slate_draft() -> (Vec<SlateToolManifest>, Vec<SlateDraftRow>) {
             read_only: reads,
             idempotent: reads,
             price: None,
+            http: None,
         });
         rows.push(SlateDraftRow {
             tool: name.to_owned(),

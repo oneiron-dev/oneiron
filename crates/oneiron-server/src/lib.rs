@@ -45,6 +45,7 @@ mod connector_admission_host;
 pub mod connector_call_host;
 mod connector_call_settle;
 mod connector_elicitation;
+mod connector_translate;
 pub mod control_keys;
 mod conversation_training;
 #[cfg(feature = "code-sandbox-wasmtime")]

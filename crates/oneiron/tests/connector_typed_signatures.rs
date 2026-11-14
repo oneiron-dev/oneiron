@@ -176,6 +176,7 @@ fn an_output_schema_rides_the_resolved_manifest_and_a_change_reasks() -> TestRes
         read_only: true,
         idempotent: true,
         price: None,
+        http: None,
     };
     assert_eq!(serde_json::to_value(&slate_row)?.get("resolved_output_schema"), None);
 
@@ -224,6 +225,7 @@ fn typed_signatures_slate_row(name: &str) -> SlateToolManifest {
         read_only: search,
         idempotent: search,
         price: None,
+        http: None,
     }
 }
 

@@ -214,6 +214,7 @@ fn setup_with_secret(
         read_only: false,
         idempotent: false,
         price: None,
+        http: None,
     }];
     let slate = vault.store_connector_slate(
         &manifest,

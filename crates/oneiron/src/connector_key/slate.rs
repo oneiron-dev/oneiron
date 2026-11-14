@@ -176,6 +176,13 @@ pub struct SlateToolManifest {
     /// Spend row that preauthorizes reserves it before the call.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub price: Option<super::ConnectorSpendEstimate>,
+    /// Where a call goes, for a tool translated from an API document
+    /// (L8-31): the method and the path under the installed endpoint. It is
+    /// in the stamped row, so the owner's stamp covers where each tool
+    /// sends; a changed path drifts the slate. Absent for an MCP tool, and
+    /// then absent from the serialized row, so its hash is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http: Option<super::HttpOperation>,
 }
 impl SlateToolManifest {
     /// Irreversible or header-bearing: `auto` already asks per call for these.
@@ -1175,6 +1182,7 @@ mod tests {
                 read_only: false,
                 idempotent: false,
                 price: None,
+                http: None,
             });
         }
         let rows = draft_connector_slate(&manifest);
@@ -1284,6 +1292,7 @@ mod revision_tests {
             read_only: false,
             idempotent: false,
             price: None,
+            http: None,
         }
     }
     fn slate(manifest: Vec<SlateToolManifest>, rows: Vec<SlateDraftRow>) -> ConnectorGrantSlate {

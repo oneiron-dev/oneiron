@@ -212,6 +212,7 @@ fn register_server(fixture: &Fixture) {
         read_only: true,
         idempotent: true,
         price: None,
+        http: None,
     }];
     let draft = draft_connector_slate(&manifest);
     let slate_id = vault

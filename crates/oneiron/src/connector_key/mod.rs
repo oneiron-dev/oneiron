@@ -17,6 +17,7 @@ mod charter;
 mod codec;
 mod credential_binding;
 pub mod events;
+mod http_operation;
 mod lifecycle;
 mod manifest_drift;
 mod measure;
@@ -184,6 +185,7 @@ pub(crate) use slate_setting::{
     effect_slate_always_allows, governing_slate_in_txn,
 };
 
+pub use http_operation::{HttpMethod, HttpOperation};
 pub use manifest_drift::{
     ConnectorDriftKind, ConnectorManifestDrift, ConnectorToolSchema, ResolvedConnectorManifest,
 };

@@ -24,7 +24,7 @@ use oneiron::connector_key::qualification::{
     QualificationFailure,
 };
 use oneiron::connector_key::{
-    ConnectorToolSchema, ResolvedConnectorManifest, SlateDataClass, SlateManifest,
+    ConnectorToolSchema, HttpOperation, ResolvedConnectorManifest, SlateDataClass, SlateManifest,
     SlateToolManifest,
 };
 use oneiron::skill_hub::pack_catalog::PackObservedTool;
@@ -32,6 +32,8 @@ use reqwest::blocking::{Client, Request, Response};
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 use serde::Deserialize;
 use serde_json::{Value, json};
+
+use crate::connector_translate::TranslatedTool;
 
 /// The MCP revision discovery asks for.
 const REQUESTED_REVISION: &str = "2026-07-28";
@@ -151,6 +153,9 @@ pub(crate) struct ListedTool {
     idempotent: bool,
     /// The result types the connector declares for the probe suite.
     result_types: BTreeSet<String>,
+    /// Where a call goes, for a tool translated from an API document
+    /// (L8-31); `None` for an MCP tool, whose call is a `tools/call`.
+    http: Option<HttpOperation>,
 }
 
 impl ListedTool {
@@ -200,7 +205,26 @@ impl ListedTool {
             open_world: hint("openWorldHint") != Some(false),
             idempotent: hint("idempotentHint") == Some(true),
             result_types,
+            http: None,
         })
+    }
+
+    /// An operation an API document declares (L8-31). The document is the
+    /// declaration: its method sets the hints, as `connector_translate`
+    /// reads them, and no probe result type is declared.
+    pub(crate) fn translated(tool: TranslatedTool) -> Self {
+        Self {
+            name: tool.name,
+            description: tool.description,
+            input_schema: tool.input_schema,
+            output_schema: tool.output_schema,
+            read_only: tool.read_only,
+            destructive: tool.destructive,
+            open_world: true,
+            idempotent: tool.idempotent,
+            result_types: BTreeSet::new(),
+            http: Some(tool.http),
+        }
     }
 
     /// What the suite lists: the literal schema, the declared result types,
@@ -358,6 +382,7 @@ pub(crate) fn slate_manifest(
                 read_only: listed.read_only,
                 idempotent: listed.idempotent,
                 price: class.price,
+                http: listed.http.clone(),
             })
         })
         .collect();
