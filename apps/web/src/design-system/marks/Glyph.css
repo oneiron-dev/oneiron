@@ -25,6 +25,11 @@
   height: 20px;
 }
 
+.sl-glyph[data-size="28"] {
+  width: 28px;
+  height: 28px;
+}
+
 .sl-glyph[data-size="32"] {
   width: 32px;
   height: 32px;

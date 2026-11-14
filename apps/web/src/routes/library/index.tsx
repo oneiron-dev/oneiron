@@ -641,13 +641,15 @@ function LibraryPage() {
           <Specimen name="Owen">
             <Glyph initial="o" label="Owen" size={32} />
           </Specimen>
-          <Specimen name="18, 24, 32">
-            <span className="lib-inline">
+          <Specimen name="18, 24, 28, 32">
+            <span className="lib-inline" data-specimen="glyph-sizes">
               <Glyph glyph="ruler" label="Metryon" size={18} />
               <Glyph glyph="ruler" label="Metryon" size={24} />
+              <Glyph glyph="ruler" label="Metryon" size={28} />
               <Glyph glyph="ruler" label="Metryon" size={32} />
               <Glyph initial="y" label="Yuki" size={18} />
               <Glyph initial="y" label="Yuki" size={24} />
+              <Glyph initial="y" label="Yuki" size={28} />
               <Glyph initial="y" label="Yuki" size={32} />
             </span>
           </Specimen>

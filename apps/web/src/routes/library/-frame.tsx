@@ -978,9 +978,10 @@ export function MicroSidebarDemo({
 }
 
 /* A short strip on the window ground for the parts a caller builds on:
-   an item that waits on the person with no count (the ring at its top
-   corner), and the person's menu, whose head line carries an icon action
-   that keeps the menu's inks by day. */
+   the companion's 28 px face with a caption, an item that waits on the
+   person with no count (the ring at its top corner), and the person's
+   menu, whose head line carries an icon action that keeps the menu's inks
+   by day. */
 function MicroSidebarParts({ specimen }: { specimen: string }) {
   return (
     <div className="lib-micro-demo">
@@ -988,6 +989,13 @@ function MicroSidebarParts({ specimen }: { specimen: string }) {
         <WindowGround />
         <MicroSidebar aria-label="places, parts" data-specimen={specimen}>
           <MicroSidebar.VaultMark name="antevon" />
+          <MicroSidebar.Item
+            id="parts-eiri"
+            icon={<Glyph glyph="wing" label="Eiri" size={28} ink={EIRI.ink} />}
+            label="eiri"
+            caption="your companion"
+            data-specimen={`${specimen}-face`}
+          />
           <MicroSidebar.Item id="parts-activity" icon={<Icon name="activity" />} label="activity" needsYou data-specimen={`${specimen}-waiting`} />
           <MicroSidebar.Foot>
             <Menu>
