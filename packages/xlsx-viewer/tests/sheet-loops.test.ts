@@ -143,10 +143,15 @@ describe("xlsx preview: the loops SheetJS runs over what a read gathers are boun
     TEST_LIMIT_MS,
   );
 
-  it("charges followers next to their master at about the master's length", () => {
-    // A million followers of a 40-character master, below it: about 60
-    // million characters, under the 64 MiB line.
-    const texts = partTexts(text(nearShiftedCopiesSheet(1_000_000)));
-    expect(() => checkSheetExpansion(texts, PREVIEW_BUDGET, true)).not.toThrow();
-  });
+  it(
+    "charges followers next to their master at about the master's length",
+    () => {
+      // A million followers of a 40-character master, below it: about 60
+      // million characters, under the 64 MiB line. The walk over a million
+      // cells took 6.4 s on kel, past bun's 5 s default.
+      const texts = partTexts(text(nearShiftedCopiesSheet(1_000_000)));
+      expect(() => checkSheetExpansion(texts, PREVIEW_BUDGET, true)).not.toThrow();
+    },
+    TEST_LIMIT_MS,
+  );
 });
