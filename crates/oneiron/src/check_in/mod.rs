@@ -124,3 +124,5 @@ pub use effect::{embedding_space_probe_delete_effect_digest, record_delete_effec
 pub use effect::attempt_archive_delete_effect_digest;
 // The legal send door's effect (2k6a).
 pub use effect::legal_send_effect_digest;
+// The sign act's effect (2k6b).
+pub use effect::sign_effect_digest;

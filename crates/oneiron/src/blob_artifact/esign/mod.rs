@@ -83,6 +83,7 @@ pub(crate) use principals::{automated_outbound_allowed, automated_signing_allowe
 mod outbound;
 pub use outbound::{EsignOutboundCommand, EsignOutboundVerb};
 
+mod sign_check_in;
 mod signature_image;
 pub use signature_image::{SignatureImagePlan, plan_signature_image};
 
