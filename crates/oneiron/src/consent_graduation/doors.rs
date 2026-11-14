@@ -260,6 +260,22 @@ impl Vault {
         })
     }
 
+    /// Whether `holder`'s person holds the ramp demotion power now
+    /// ([`RAMP_DEMOTE_GRANT_TARGET`]): the read-only preflight of
+    /// [`Vault::demote_scope_to_propose`]'s own write-transaction check, as
+    /// `holder_has_policy_power` is the gate policy put's. A host door asks
+    /// it so a powerless person's pre-hooks never fire; the writer still
+    /// checks, so a revocation landing between the two is refused at commit.
+    /// Read-only: it opens no writer.
+    ///
+    /// # Errors
+    ///
+    /// Storage failures.
+    pub fn holds_ramp_demote_power(&self, holder: &AuthenticatedOwner) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        holds_ramp_demote_power_in_txn(self, &txn, holder)
+    }
+
     /// Overrides one scope's graduation streak floor (ED-05's seam; the
     /// compiled default is [`DEFAULT_GRADUATION_STREAK_FLOOR`](crate::consent_graduation::DEFAULT_GRADUATION_STREAK_FLOOR)).
     ///
