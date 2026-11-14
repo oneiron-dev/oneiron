@@ -423,6 +423,24 @@ pub struct SystemAgentGrantRestored {
     /// True when the door gave the default grant back; false when it
     /// already stood whole, and nothing changed.
     pub restored: bool,
+    /// The Dreamer's live reach, read after the grant (Engine RULING
+    /// ROW4-WEAVE-GRANT-REACH = A): the default grant can stand whole while
+    /// the owner's policy rows still keep the Dreamer from landing what it
+    /// derives. Absent for the Coach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reach: Option<DreamerGrantReach>,
+}
+
+/// What the live policy lets the Dreamer do, as
+/// [`Vault::dreamer_weave_reach`] reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DreamerGrantReach {
+    /// A receipt-free read grant covering every record names the Dreamer.
+    pub reads: bool,
+    /// An Auto actor ceiling and the Dreamer-bound `Generated` permit: what
+    /// it derives lands.
+    pub lands_auto: bool,
 }
 
 /// `vault.agents.grants.restore`: the owner gives a base agent its default
@@ -430,16 +448,26 @@ pub struct SystemAgentGrantRestored {
 /// `vault.agents.grants.narrow` (Engine RULING ROW3-GRANT-VERBS = A). The
 /// Dreamer's runs through [`Vault::grant_dreamer_weave`], as `oneiron
 /// dreamer grant` does, and the Coach's through [`Vault::grant_coach_steward`].
-/// A second call changes nothing. Any other principal is refused: its
-/// grants are minted and revoked by their ids.
+/// The Dreamer's answer carries its reach, read after the grant, as `oneiron
+/// dreamer grant` reads it before it reports success. A second call changes
+/// nothing. Any other principal is refused: its grants are minted and
+/// revoked by their ids.
 pub fn restore_system_agent_grant_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: SystemAgentGrantRestoreRequest,
 ) -> MemoryResult<SystemAgentGrantRestored> {
-    let restored = match SystemAgent::of(input.agent) {
-        Some(SystemAgent::Dreamer) => vault.grant_dreamer_weave(owner, vault.now_recorded_at())?,
-        Some(SystemAgent::Coach) => vault.grant_coach_steward(owner)?,
+    let (restored, reach) = match SystemAgent::of(input.agent) {
+        Some(SystemAgent::Dreamer) => {
+            let restored = vault.grant_dreamer_weave(owner, vault.now_recorded_at())?;
+            let reach = vault.dreamer_weave_reach()?;
+            let reach = DreamerGrantReach {
+                reads: reach.reads,
+                lands_auto: reach.lands_auto,
+            };
+            (restored, Some(reach))
+        }
+        Some(SystemAgent::Coach) => (vault.grant_coach_steward(owner)?, None),
         None => {
             return Err(MemoryError::bad_request(
                 "vault.agents.grants.restore gives back a base agent's default grant: \
@@ -447,7 +475,7 @@ pub fn restore_system_agent_grant_as(
             ));
         }
     };
-    Ok(SystemAgentGrantRestored { restored })
+    Ok(SystemAgentGrantRestored { restored, reach })
 }
 
 /// 32 bytes from 64 ASCII hex digits of either case.

@@ -112,6 +112,22 @@ pub fn require_history_free_window(vault: &Vault, key: &WindowKey) -> Result<()>
     })
 }
 
+/// Whether the entities-map value `blob` under key `raw_key` is a carrier no
+/// window ships, by its body: a diagnostic observation, a secret-custody row,
+/// a delegated channel identity or an LFS chunk. The live scrub
+/// ([`scrub_local_only_carriers`]) removes such a value, and the export's
+/// history scan holds back one an operation inserted.
+pub(super) fn is_local_only_carrier(raw_key: &str, blob: &[u8]) -> bool {
+    crate::batch::EntityMetadataHeader::parse(blob).is_some_and(|header| {
+        matches!(
+            header.entity_type,
+            crate::registry::ENTITY_TYPE_SECRET_CUSTODY | crate::registry::ENTITY_TYPE_DIAGNOSTIC
+        )
+    }) || is_delegated_channel_identity_carrier(blob)
+        || EntityId::from_hex(raw_key)
+            .is_ok_and(|id| crate::origin::lfs::is_lfs_chunk_blob(&id, blob))
+}
+
 /// Removes local-only diagnostic and secret-custody carriers from the window
 /// doc. Diagnostic observations and secret custody never sync. Neither
 /// refused body may ship in an update.
@@ -145,17 +161,7 @@ pub(super) fn scrub_local_only_carriers(
             key_carriers.push((raw_key.to_owned(), blob.to_vec()));
             return;
         }
-        let lfs_chunk = EntityId::from_hex(raw_key)
-            .ok()
-            .is_some_and(|id| crate::origin::lfs::is_lfs_chunk_blob(&id, blob));
-        if crate::batch::EntityMetadataHeader::parse(blob).is_none_or(|h| {
-            !matches!(
-                h.entity_type,
-                crate::registry::ENTITY_TYPE_SECRET_CUSTODY
-                    | crate::registry::ENTITY_TYPE_DIAGNOSTIC
-            ) && !is_delegated_channel_identity_carrier(blob)
-        }) && !lfs_chunk
-        {
+        if !is_local_only_carrier(raw_key, blob) {
             return;
         }
         match EntityId::from_hex(raw_key) {
@@ -421,8 +427,9 @@ pub(in crate::sync) fn withdrawn_delete_carriers(
 }
 
 /// Scrubs every [`withdrawn_delete_carriers`] entry from the live document.
-/// The window is pinned history-free first, so neither the body nor the
-/// withdrawal's operations ship. Returns whether it pinned.
+/// `pin` names the window pinned history-free first, so neither the body nor
+/// the withdrawal's operations ship; the sweep, whose shallow cut drops that
+/// history, passes `None`. Returns whether it pinned.
 ///
 /// A carrier only a blob-artifact release fences (H125) is dropped with an
 /// ordinary delete and does not pin: nobody withdrew a delete there, the bytes
@@ -431,27 +438,29 @@ pub(in crate::sync) fn withdrawn_delete_carriers(
 /// A pin would answer every later version request with a snapshot rooted at
 /// this vault's newest operation, which a peer even one change behind cannot
 /// apply.
-pub(super) fn scrub_withdrawn_delete_carriers(
+pub(crate) fn scrub_withdrawn_delete_carriers(
     vault: &Vault,
-    key: &WindowKey,
     doc: &LoroDoc,
+    pin: Option<&WindowKey>,
 ) -> Result<bool> {
-    let (withdrawn, pin) = {
+    let (withdrawn, pinned) = {
         let rtxn = vault.store.env.read_txn()?;
         let withdrawn = withdrawn_delete_carriers(vault, &rtxn, doc)?;
-        let mut pin = false;
-        for (_, id) in &withdrawn {
-            if !crate::blob_artifact::release_fenced_only(&vault.store, &rtxn, id)? {
-                pin = true;
-                break;
+        let mut pinned = None;
+        if let Some(key) = pin {
+            for (_, id) in &withdrawn {
+                if !crate::blob_artifact::release_fenced_only(&vault.store, &rtxn, id)? {
+                    pinned = Some(key);
+                    break;
+                }
             }
         }
-        (withdrawn, pin)
+        (withdrawn, pinned)
     };
     if withdrawn.is_empty() {
         return Ok(false);
     }
-    if pin {
+    if let Some(key) = pinned {
         require_history_free_window(vault, key)?;
     }
     let entities = doc.get_map("entities");
@@ -471,7 +480,7 @@ pub(super) fn scrub_withdrawn_delete_carriers(
     crate::sync::origin_positions::drop_unbound(doc)?;
     crate::sync::ingest::forget_stale_peer_origins(doc, withdrawn.into_iter().map(|(_, id)| id))?;
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-    Ok(pin)
+    Ok(pinned.is_some())
 }
 
 /// Remove attribution carriers defeated by permanent author-redaction facts.
@@ -543,7 +552,7 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     scrub_local_claim_carriers(vault, key, doc)?;
     scrub_local_only_carriers(vault, key, doc)?;
     scrub_redacted_attribution_carriers(vault, key, doc)?;
-    scrub_withdrawn_delete_carriers(vault, key, doc)?;
+    scrub_withdrawn_delete_carriers(vault, doc, Some(key))?;
     super::withdrawn::scrub_withdrawn_generation_carriers(vault, key, doc)?;
     // A deleted room's turn rows leave the window (OF-522).
     crate::sync::room_turns::scrub_deleted_room_turns(vault, doc, Some(key))?;
