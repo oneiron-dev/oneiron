@@ -67,11 +67,17 @@ export interface TabsListProps extends React.ComponentPropsWithRef<'div'> {
 }
 
 /* The row of tabs. Left and Right move focus and select (wrapping); Home and
-   End jump to the ends. Only the selected tab is in the tab order. */
+   End jump to the ends. Only the selected tab is in the tab order. The
+   element with role tablist holds only tabs: a Tabs.Add among the children
+   is drawn after it, in the same row, where the last pin ends. */
 function TabsList({ ref, foldValue, foldLabel = 'Pinned in this room', className, onKeyDown, children, ...props }: TabsListProps) {
   const ctx = useTabsContext('Tabs.List')
   const listRef = React.useRef<HTMLDivElement | null>(null)
-  const pins = React.Children.toArray(children).filter(
+  const rowRef = React.useRef<HTMLDivElement | null>(null)
+  const parts = React.Children.toArray(children)
+  const adds = parts.filter((c) => React.isValidElement(c) && c.type === TabsAdd)
+  const tabs = adds.length ? parts.filter((c) => !adds.includes(c)) : parts
+  const pins = parts.filter(
     (c): c is React.ReactElement<TabsPinProps> => React.isValidElement(c) && c.type === TabsPin,
   )
   const pinValues = pins.map((p) => p.props.value).filter((v): v is string => v !== undefined)
@@ -89,8 +95,10 @@ function TabsList({ ref, foldValue, foldLabel = 'Pinned in this room', className
     setFolded(false)
   }, [signature])
 
+  /* With an add action after the list, the row holds both and is what
+     is measured. */
   useIsomorphicLayoutEffect(() => {
-    const list = listRef.current
+    const list = rowRef.current ?? listRef.current
     if (!canFold || !list) return
     let alive = true
     const check = () => {
@@ -119,7 +127,7 @@ function TabsList({ ref, foldValue, foldLabel = 'Pinned in this room', className
   const isFolded = canFold && folded
   const foldSelected = foldValue !== undefined && (ctx.value === foldValue || (isFolded && pinValues.includes(ctx.value)))
 
-  return (
+  const list = (
     <div
       ref={mergeRefs(ref, listRef)}
       role="tablist"
@@ -151,7 +159,7 @@ function TabsList({ ref, foldValue, foldLabel = 'Pinned in this room', className
       }}
       {...props}
     >
-      {children}
+      {tabs}
       {canFold ? (
         <Tooltip label={foldLabel}>
           <button
@@ -172,6 +180,13 @@ function TabsList({ ref, foldValue, foldLabel = 'Pinned in this room', className
           </button>
         </Tooltip>
       ) : null}
+    </div>
+  )
+  if (!adds.length) return list
+  return (
+    <div ref={rowRef} className="sl-tabs-row" data-folded={isFolded ? '' : undefined}>
+      {list}
+      {adds}
     </div>
   )
 }
@@ -278,7 +293,8 @@ export interface TabsAddProps extends Omit<React.ComponentPropsWithRef<'button'>
   label?: string
 }
 
-/* The `+` at the end of the pins. */
+/* The `+` at the end of the pins. Place it last among Tabs.List's
+   children; the list draws it after its tabs, outside the tablist. */
 function TabsAdd({ label = 'Pin a message, a file or a lens to this room', className, ...props }: TabsAddProps) {
   return (
     <IconAction label={label} className={cx('sl-tabs-add', className)} data-pin-part="" {...props}>
