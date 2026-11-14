@@ -37,9 +37,8 @@
 //!   real decision ladder in a fresh vault, labelled after their answers,
 //!   and the per-route calibration report over those pairs (Engine row 22229).
 //!
-//! The full MIRACL / Mr.TyDi / internal SEA judgment-set retrieval
-//! matrix is not shipped here; this binary ships the bench drivers,
-//! cheap in-workspace checks, and the ONE-1311 trace export seam.
+//! The MIRACL / Mr.TyDi retrieval matrix runs through `scorecard convert-trec`,
+//! `run --arm keyword`, `tune-bm25f` and `grade-run` (docs/ops/retrieval-matrix.md).
 #![recursion_limit = "256"]
 #![allow(
     clippy::disallowed_methods,
@@ -209,16 +208,30 @@ fn print_help() {
                                        [--first-of-each-category C,C,..] [--pack-id ID]\n\
                                        [--revision R]\n\
                                        LongMemEval-S JSON into pack slices and split.json\n\
+          scorecard convert-trec --manifest F --out-dir D\n\
+                                       [--fill-seed N --fill-per-corpus K]\n\
+                                       TREC collections into pack slices\n\
           scorecard pack-embed --pack-dir D --slice S [--endpoint URL]\n\
                                        [--model-id ID] [--batch N]\n\
                                        fill a slice's vectors from the served embedder\n\
           scorecard run --pack-dir D --slice S --engine-commit SHA --out F\n\
-                                       [--params F] [--budget-rows N] [--repeats N]\n\
+                                       [--arm pipeline|keyword] [--params F]\n\
+                                       [--rank-profile F] [--dict-dir D]\n\
+                                       [--budget-rows N] [--repeats N]\n\
                                        replay a slice into a retrieval scorecard\n\
           scorecard run ... --slice sealed --sealed-ledger L --campaign C\n\
                                        (--incumbent true | --proposals D --proposal ID)\n\
                                        replay the sealed slice once, spending its claim\n\
+          scorecard tune-bm25f --pack-dir D --slice search --out F\n\
+                                       --steps-out F --engine-commit SHA [--start F]\n\
+                                       [--budget-rows N] [--max-rounds N] [--dict-dir D]\n\
+                                       tune the BM25F rank profile on the search slice\n\
+          scorecard grade-run --pack-dir D --slice S --run F\n\
+                                       --retriever NAME --engine-commit SHA --out F\n\
+                                       [--budget-rows N]\n\
+                                       grade a TREC run file into a retrieval scorecard\n\
           scorecard compare --campaign C [--repo R] [--candidate-params F]\n\
+                                       [--candidate-profile F] [--reference F]\n\
                                        [--proposals D --at T] BASE CAND\n\
                                        judge a candidate on held_out, recording a Promote\n\
           scorecard compare --sealed --campaign C --proposals D\n\
@@ -234,8 +247,7 @@ fn print_help() {
                                        [--churn-pct 1..99] [--churn-ops N]\n\
                                        [--no-recall-assert]\n\
          \n\
-         note: MIRACL / Mr.TyDi / internal SEA retrieval quality matrix\n\
-         is not yet implemented in this binary."
+         note: MIRACL / Mr.TyDi retrieval matrix: scorecard convert-trec | run --arm keyword | tune-bm25f | grade-run (docs/ops/retrieval-matrix.md)"
     );
 }
 

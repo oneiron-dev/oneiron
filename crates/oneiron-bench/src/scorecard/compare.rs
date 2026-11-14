@@ -10,18 +10,32 @@ use std::path::Path;
 
 use oneiron::autoreason_campaign::general::{Measurement, Verdict};
 use oneiron_ruler::axes::{AxisRole, is_per_query_axis};
-use oneiron_ruler::bootstrap::bootstrap_axis;
+use oneiron_ruler::bootstrap::{
+    BOOTSTRAP_RESAMPLES, bootstrap_axis, paired_differences, paired_lower_bound,
+    seed_from_pack_digest,
+};
 use oneiron_ruler::pack::Slice;
 use oneiron_ruler::proposal::{
     HeldOutProposal, PROPOSAL_CONTRACT, ProposalStore, SEALED_OUTCOME_CONTRACT, SealedOutcome,
     SealedVerdict, judge_sealed, proposal_id,
 };
+use oneiron_ruler::scorecard::{QueryScore, Scorecard};
 use oneiron_ruler::sealed::ExperimentIdentity;
 
-use super::{ScorecardFailure, campaign, flag_unix_seconds, params, parse_flags, required_flag};
+use super::{
+    ScorecardFailure, campaign, flag_unix_seconds, params, parse_flags, profile, required_flag,
+};
 
 /// The flags `scorecard compare` takes on held_out.
-const HELD_OUT_FLAGS: &[&str] = &["campaign", "repo", "candidate-params", "proposals", "at"];
+const HELD_OUT_FLAGS: &[&str] = &[
+    "campaign",
+    "repo",
+    "candidate-params",
+    "candidate-profile",
+    "reference",
+    "proposals",
+    "at",
+];
 
 /// The flags `scorecard compare --sealed` takes.
 const SEALED_FLAGS: &[&str] = &["campaign", "proposals", "proposal", "at"];
@@ -93,6 +107,31 @@ fn held_out_compare(
         &campaign.splits.held_out,
         "candidate",
     )?;
+    if incumbent.model_id != candidate_card.model_id {
+        return Err(ScorecardFailure::Input(
+            "incumbent and candidate come from different retrievers".to_owned(),
+        ));
+    }
+    let reference = match flags.get("reference").map(String::as_str) {
+        None => None,
+        Some(path) => {
+            let (card, sha256) = campaign::load_card(path)?;
+            campaign::check_slice(
+                &card,
+                Slice::HeldOut,
+                &campaign.splits.held_out,
+                "reference",
+            )?;
+            if card.budget_rows != candidate_card.budget_rows {
+                let found = card.budget_rows;
+                let wanted = candidate_card.budget_rows;
+                return Err(ScorecardFailure::Input(format!(
+                    "reference scorecard budget_rows is {found}, want {wanted}"
+                )));
+            }
+            Some((card, sha256))
+        }
+    };
     let proposals_dir = flags.get("proposals").map(String::as_str);
     let decided_at = if proposals_dir.is_some() {
         Some(flag_unix_seconds(flags, "at")?)
@@ -105,22 +144,22 @@ fn held_out_compare(
                 "--candidate-params needs --proposals".to_owned(),
             ));
         }
+        if flags.contains_key("candidate-profile") {
+            return Err(ScorecardFailure::Input(
+                "--candidate-profile needs --proposals".to_owned(),
+            ));
+        }
         None
     };
-    let resolved = if proposals_dir.is_some() {
-        Some(params::resolve(
+    let candidate_params = if proposals_dir.is_some() {
+        Some(resolve_candidate_params(
             flags.get("candidate-params").map(String::as_str),
+            flags.get("candidate-profile").map(String::as_str),
+            &candidate_card,
         )?)
     } else {
         None
     };
-    if let Some(resolved) = &resolved
-        && resolved.digest != candidate_card.params_digest
-    {
-        return Err(ScorecardFailure::Input(
-            "candidate params do not match the candidate scorecard's params_digest".to_owned(),
-        ));
-    }
     let plan = campaign::axis_plan(&campaign);
     for entry in &plan {
         if entry.role == AxisRole::Primary && !is_per_query_axis(&entry.name) {
@@ -185,9 +224,14 @@ fn held_out_compare(
         Verdict::Reject => "reject",
         Verdict::EscalateTradeoff => "escalate_tradeoff",
     };
+    let reference_report = match &reference {
+        None => None,
+        Some((card, sha256)) => Some(reference_report(&candidate_card, card, sha256)?),
+    };
     let mut proposal_record = serde_json::Value::Null;
     if verdict == Verdict::Promote
-        && let (Some(dir), Some(at), Some(resolved)) = (proposals_dir, decided_at, resolved)
+        && let (Some(dir), Some(at), Some(candidate_params)) =
+            (proposals_dir, decided_at, candidate_params)
     {
         let store = ProposalStore::open(Path::new(dir))
             .map_err(|error| ScorecardFailure::Input(error.to_string()))?;
@@ -197,7 +241,7 @@ fn held_out_compare(
             campaign_id: campaign.campaign_id.clone(),
             incumbent: incumbent_id,
             candidate: candidate_id,
-            candidate_params: resolved.resolved,
+            candidate_params,
             incumbent_scorecard_sha256: incumbent_sha256,
             candidate_scorecard_sha256: candidate_sha256,
             axes: axes.clone(),
@@ -209,7 +253,7 @@ fn held_out_compare(
             .map_err(|error| ScorecardFailure::Input(error.to_string()))?;
         proposal_record = serde_json::Value::from(path.to_string_lossy().into_owned());
     }
-    let summary = serde_json::json!({
+    let mut summary = serde_json::json!({
         "campaign_id": campaign.campaign_id,
         "proposal_id": proposal,
         "verdict": verdict_name,
@@ -219,11 +263,176 @@ fn held_out_compare(
         "ruler_paths": {"touched": ruler.touched, "source": ruler.source},
         "proposal_record": proposal_record,
     });
+    if let (Some(report), serde_json::Value::Object(map)) = (reference_report, &mut summary) {
+        map.insert("reference".to_owned(), report);
+    }
     if verdict == Verdict::Promote {
         Ok(summary)
     } else {
         Err(ScorecardFailure::Judged(summary))
     }
+}
+
+/// Resolve the candidate's parameter file: `--candidate-params` or `--candidate-profile`, never both.
+///
+/// The resolved digest must equal the candidate scorecard's `params_digest`;
+/// the resolved file becomes the proposal's `candidate_params`.
+fn resolve_candidate_params(
+    params_path: Option<&str>,
+    profile_path: Option<&str>,
+    candidate: &Scorecard,
+) -> Result<serde_json::Value, ScorecardFailure> {
+    match (params_path, profile_path) {
+        (Some(_), Some(_)) => Err(ScorecardFailure::Input(
+            "--candidate-params and --candidate-profile are mutually exclusive".to_owned(),
+        )),
+        (None, Some(path)) => {
+            let resolved = profile::resolve_profile(Some(path))?;
+            if resolved.digest != candidate.params_digest {
+                return Err(ScorecardFailure::Input(
+                    "candidate profile does not match the candidate scorecard's params_digest"
+                        .to_owned(),
+                ));
+            }
+            Ok(resolved.resolved)
+        }
+        (params_path, None) => {
+            let resolved = params::resolve(params_path)?;
+            if resolved.digest != candidate.params_digest {
+                return Err(ScorecardFailure::Input(
+                    "candidate params do not match the candidate scorecard's params_digest"
+                        .to_owned(),
+                ));
+            }
+            Ok(resolved.resolved)
+        }
+    }
+}
+
+/// The reference report: ours vs a reference scorecard, overall and per category.
+///
+/// For `ndcg_at_10` and `recall_at_budget`: our mean, the reference mean,
+/// their ratio (null when the reference is 0), and the paired bootstrap of
+/// the candidate-minus-reference per-query differences. A category with no
+/// non-abstention query is left out. The report never changes the judgment.
+fn reference_report(
+    candidate: &Scorecard,
+    reference: &Scorecard,
+    sha256: &str,
+) -> Result<serde_json::Value, ScorecardFailure> {
+    let seed = seed_from_pack_digest(&candidate.pack_digest)
+        .map_err(|error| ScorecardFailure::Input(format!("reference bootstrap failed: {error}")))?;
+    let mut per_category = serde_json::Map::new();
+    for category in report_categories(candidate, reference) {
+        let (Some(ours), Some(theirs)) = (
+            candidate.per_category.get(category.as_str()),
+            reference.per_category.get(category.as_str()),
+        ) else {
+            continue;
+        };
+        let ours_scores: Vec<QueryScore> = candidate
+            .per_query
+            .iter()
+            .filter(|score| score.category == category)
+            .cloned()
+            .collect();
+        let ref_scores: Vec<QueryScore> = reference
+            .per_query
+            .iter()
+            .filter(|score| score.category == category)
+            .cloned()
+            .collect();
+        let mut entry = serde_json::Map::new();
+        for (metric, ours_mean, ref_mean) in [
+            ("ndcg_at_10", ours.ndcg_at_10, theirs.ndcg_at_10),
+            (
+                "recall_at_budget",
+                ours.recall_at_budget,
+                theirs.recall_at_budget,
+            ),
+        ] {
+            let differences =
+                paired_differences(&ref_scores, &ours_scores, metric).map_err(|error| {
+                    ScorecardFailure::Input(format!("reference bootstrap failed: {error}"))
+                })?;
+            entry.insert(
+                metric.to_owned(),
+                metric_gap(ours_mean, ref_mean, &differences, seed)?,
+            );
+        }
+        per_category.insert(category, serde_json::Value::Object(entry));
+    }
+    let mut overall = serde_json::Map::new();
+    for (metric, ours_mean, ref_mean) in [
+        (
+            "ndcg_at_10",
+            candidate.metrics.ndcg_at_10,
+            reference.metrics.ndcg_at_10,
+        ),
+        (
+            "recall_at_budget",
+            candidate.metrics.recall_at_budget,
+            reference.metrics.recall_at_budget,
+        ),
+    ] {
+        let differences = paired_differences(&reference.per_query, &candidate.per_query, metric)
+            .map_err(|error| {
+                ScorecardFailure::Input(format!("reference bootstrap failed: {error}"))
+            })?;
+        overall.insert(
+            metric.to_owned(),
+            metric_gap(ours_mean, ref_mean, &differences, seed)?,
+        );
+    }
+    Ok(serde_json::json!({
+        "scorecard_sha256": sha256,
+        "retriever": reference.model_id,
+        "overall": overall,
+        "per_category": per_category,
+    }))
+}
+
+/// The categories the reference report covers: on both cards with a non-abstention query.
+fn report_categories(candidate: &Scorecard, reference: &Scorecard) -> Vec<String> {
+    let mut out = Vec::new();
+    for category in candidate.per_category.keys() {
+        if !reference.per_category.contains_key(category) {
+            continue;
+        }
+        let graded = candidate
+            .per_query
+            .iter()
+            .any(|score| score.category.as_str() == category.as_str() && !score.expect_empty);
+        if graded {
+            out.push(category.clone());
+        }
+    }
+    out
+}
+
+/// One metric's gap row: the two means, the ratio, and the paired bootstrap of the differences.
+fn metric_gap(
+    ours: f64,
+    reference: f64,
+    differences: &[f64],
+    seed: u64,
+) -> Result<serde_json::Value, ScorecardFailure> {
+    let sum: f64 = differences.iter().sum();
+    let mean_difference = sum / differences.len() as f64;
+    let lower_bound = paired_lower_bound(differences, BOOTSTRAP_RESAMPLES, seed)
+        .map_err(|error| ScorecardFailure::Input(format!("reference bootstrap failed: {error}")))?;
+    let ratio = if reference == 0.0 {
+        serde_json::Value::Null
+    } else {
+        serde_json::json!(ours / reference)
+    };
+    Ok(serde_json::json!({
+        "ours": ours,
+        "reference": reference,
+        "ratio": ratio,
+        "mean_difference": mean_difference,
+        "lower_bound": lower_bound,
+    }))
 }
 
 /// Run the sealed check once: pass, or withdraw the proposal on a judged loss.

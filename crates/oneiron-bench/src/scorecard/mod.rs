@@ -1,18 +1,25 @@
 //! The retrieval ruler (RESEARCH-0651 Tier 0): replay a fixed query pack, grade the run, judge candidates.
 //!
-//! Six subcommands: `convert` turns the dataset into pack slices, `pack-embed`
-//! fills a slice's vectors from the served embedder, `run` replays a slice
-//! into a `oneiron.retrieval_scorecard.v1`, `compare` judges a candidate
-//! against the incumbent, `proposals` lists every proposal, and `stamp`
-//! records the owner's stamp.
+//! Nine subcommands: `convert` and `convert-trec` turn datasets into pack
+//! slices, `pack-embed` fills a slice's vectors from the served embedder,
+//! `run` replays a slice into a `oneiron.retrieval_scorecard.v1`,
+//! `tune-bm25f` tunes the BM25F rank profile on the search slice,
+//! `grade-run` grades a TREC run file, `compare` judges a candidate against
+//! the incumbent, `proposals` lists every proposal, and `stamp` records the
+//! owner's stamp.
 
 mod campaign;
 mod compare;
 mod convert;
+mod convert_trec;
 mod embed;
+mod grade;
+mod keyword;
 mod params;
+mod profile;
 mod record;
 mod run;
+mod tune;
 
 use std::collections::BTreeMap;
 use std::process::ExitCode;
@@ -133,14 +140,17 @@ fn finish(result: Result<serde_json::Value, ScorecardFailure>) -> ExitCode {
 pub(crate) fn run(args: &[String]) -> ExitCode {
     let Some((command, rest)) = args.split_first() else {
         return finish(Err(ScorecardFailure::Input(
-            "usage: oneiron-bench scorecard <convert|pack-embed|run|compare|proposals|stamp> [flags]"
+            "usage: oneiron-bench scorecard <convert|convert-trec|pack-embed|run|tune-bm25f|grade-run|compare|proposals|stamp> [flags]"
                 .to_owned(),
         )));
     };
     match command.as_str() {
         "convert" => finish(convert::run(rest)),
+        "convert-trec" => finish(convert_trec::run(rest)),
         "pack-embed" => finish(embed::run(rest)),
         "run" => finish(run::run(rest)),
+        "tune-bm25f" => finish(tune::run(rest)),
+        "grade-run" => finish(grade::run(rest)),
         "compare" => finish(compare::run(rest)),
         "proposals" => finish(record::list(rest)),
         "stamp" => finish(record::stamp(rest)),

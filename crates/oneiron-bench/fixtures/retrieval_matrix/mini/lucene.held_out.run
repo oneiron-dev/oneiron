@@ -1,0 +1,6 @@
+miracl-ja-dev:q1 Q0 miracl-ja-dev:tokyo#0 1 10.0 pyserini-bm25-ja
+miracl-ja-dev:q1 Q0 miracl-ja-dev:tokyo#1 2 9.0 pyserini-bm25-ja
+miracl-ko-dev:q1 Q0 miracl-ko-dev:sejong#0 1 10.0 pyserini-bm25-ko
+miracl-zh-dev:q1 Q0 miracl-zh-dev:shanghai#0 1 10.0 pyserini-bm25-zh
+miracl-en-dev:q1 Q0 miracl-en-dev:lantern#0 1 10.0 pyserini-bm25-en
+miracl-en-dev:q1 Q0 miracl-en-dev:lantern#1 2 9.0 pyserini-bm25-en

@@ -9,6 +9,7 @@ use std::path::Path;
 
 use oneiron_ruler::proposal::{ProposalError, ProposalListing, ProposalStore};
 
+use super::profile::PROFILE_CONTRACT;
 use super::{ScorecardFailure, flag_unix_seconds, parse_flags, required_flag};
 
 /// The flags `scorecard proposals` takes.
@@ -56,6 +57,19 @@ pub(crate) fn stamp(args: &[String]) -> Result<serde_json::Value, ScorecardFailu
 fn build_pin_calls(
     listing: &ProposalListing,
 ) -> Result<(Vec<serde_json::Value>, String), ScorecardFailure> {
+    if listing
+        .held_out
+        .candidate_params
+        .get("contract")
+        .and_then(serde_json::Value::as_str)
+        == Some(PROFILE_CONTRACT)
+    {
+        return Ok((
+            Vec::new(),
+            "BM25F weights are compiled defaults: no pin call; the freeze PR applies this stamped profile"
+                .to_owned(),
+        ));
+    }
     let weights = listing.held_out.candidate_params.get("blend_weights");
     match weights {
         Some(serde_json::Value::String(named)) if named == "learned_table" => {

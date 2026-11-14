@@ -1,0 +1,636 @@
+{
+  "contract": "oneiron.trec_sources.v1",
+  "collections": {
+    "miracl": {
+      "repo_id": "miracl/miracl",
+      "revision": "5be20db9509754dadad47689368639fcec739c00",
+      "license": "Apache-2.0",
+      "license_note": "annotations Apache-2.0; passage text is Wikipedia (CC BY-SA)",
+      "card_url": "https://huggingface.co/datasets/miracl/miracl",
+      "corpus_repo_id": "miracl/miracl-corpus",
+      "corpus_revision": "d921ec7e349ce0d28daf30b2da9da5ee698bef0d",
+      "corpus_card_url": "https://huggingface.co/datasets/miracl/miracl-corpus",
+      "languages": {
+        "ja": {
+          "time": "2019-02-01T00:00:00Z",
+          "topics": {
+            "train": {
+              "file": "miracl-v1.0-ja/topics/topics.miracl-v1.0-ja-train.tsv",
+              "sha256": null
+            },
+            "dev": {
+              "file": "miracl-v1.0-ja/topics/topics.miracl-v1.0-ja-dev.tsv",
+              "sha256": null
+            }
+          },
+          "qrels": {
+            "train": {
+              "file": "miracl-v1.0-ja/qrels/qrels.miracl-v1.0-ja-train.tsv",
+              "sha256": null
+            },
+            "dev": {
+              "file": "miracl-v1.0-ja/qrels/qrels.miracl-v1.0-ja-dev.tsv",
+              "sha256": null
+            }
+          },
+          "corpus": [
+            {
+              "file": "miracl-corpus-v1.0-ja/docs-0.jsonl.gz",
+              "sha256": "c205bf3cece2098f3357fdb1b096e9ed0fd257632dd52b8d9095d01e07c61172"
+            },
+            {
+              "file": "miracl-corpus-v1.0-ja/docs-1.jsonl.gz",
+              "sha256": "2d1b8be5ab579604ccc483bebe170dec2b5d0fdcf54a7eb4d1f3dada72795306"
+            },
+            {
+              "file": "miracl-corpus-v1.0-ja/docs-10.jsonl.gz",
+              "sha256": "859b4cce1009e965e3663ce606d49de355ee82362028f6b6ecd0bf3f237b85ec"
+            },
+            {
+              "file": "miracl-corpus-v1.0-ja/docs-11.jsonl.gz",
+              "sha256": "216585793ed7c836eb66a4b5c982025e79a0d0184715d24a404ce0ee009931ce"
+            },
+            {
+              "file": "miracl-corpus-v1.0-ja/docs-12.jsonl.gz",
+              "sha256": "92a950e46775d5c2aebe5e58f1498ddcf16e3e35dafb07f4f04fd3cd9cb64ba3"
+            },
+            {
+              "file": "miracl-corpus-v1.0-ja/docs-13.jsonl.gz",
+              "sha256": "98acce36aa778df24f24be39965a2654cf7fbd923c09acc9eede8d91dc2b081a"
+            },
+            {
+              "file": "miracl-corpus-v1.0-ja/docs-2.jsonl.gz",
+              "sha256": "8992797e86cb16e9be395aae7c68ee2f7be043af638863fb0d36f6cdeb7a02a8"
+            },
+            {
+              "file": "miracl-corpus-v1.0-ja/docs-3.jsonl.gz",
+              "sha256": "8d0f12ce5aa5b3feca45c80ba4aed6abaa4a01d754e309bd8004bd8f181ba92b"
+            },
+            {
+              "file": "miracl-corpus-v1.0-ja/docs-4.jsonl.gz",
+              "sha256": "c32936efa13c72a32c75986dac3737c7d85db103ffabc7d8023320fac7446c57"
+            },
+            {
+              "file": "miracl-corpus-v1.0-ja/docs-5.jsonl.gz",
+              "sha256": "4fbf518b8ec8f57298fa23ffe52863410641173ee368a244863e60ed8b985e62"
+            },
+            {
+              "file": "miracl-corpus-v1.0-ja/docs-6.jsonl.gz",
+              "sha256": "6d55eb02dfa62b79662e3829a3ef223312374699d528b5af6643e0678bd6d517"
+            },
+            {
+              "file": "miracl-corpus-v1.0-ja/docs-7.jsonl.gz",
+              "sha256": "fe74fbd9c3965bffc848f74296e8f3fd7db9d63c1b4c62903d1a9779276a963c"
+            },
+            {
+              "file": "miracl-corpus-v1.0-ja/docs-8.jsonl.gz",
+              "sha256": "0abb18418c92d8013cad727dfffcc3fa719c14f818654f9800d7ebee8748f83a"
+            },
+            {
+              "file": "miracl-corpus-v1.0-ja/docs-9.jsonl.gz",
+              "sha256": "1129864292948a2c8d479aef61ba020d4870cabc3d28e3baed5c8cabee07fe98"
+            }
+          ]
+        },
+        "ko": {
+          "time": "2019-02-01T00:00:00Z",
+          "topics": {
+            "train": {
+              "file": "miracl-v1.0-ko/topics/topics.miracl-v1.0-ko-train.tsv",
+              "sha256": null
+            },
+            "dev": {
+              "file": "miracl-v1.0-ko/topics/topics.miracl-v1.0-ko-dev.tsv",
+              "sha256": null
+            }
+          },
+          "qrels": {
+            "train": {
+              "file": "miracl-v1.0-ko/qrels/qrels.miracl-v1.0-ko-train.tsv",
+              "sha256": null
+            },
+            "dev": {
+              "file": "miracl-v1.0-ko/qrels/qrels.miracl-v1.0-ko-dev.tsv",
+              "sha256": null
+            }
+          },
+          "corpus": [
+            {
+              "file": "miracl-corpus-v1.0-ko/docs-0.jsonl.gz",
+              "sha256": "c56a31883a291504aa9c97968fb7a5fbcc9ea1099ee1810200249e1afb7fc55d"
+            },
+            {
+              "file": "miracl-corpus-v1.0-ko/docs-1.jsonl.gz",
+              "sha256": "fecd2886124e78c3aa87c59604ac9909c23165415c70a96f4edb95677b5ed0cd"
+            },
+            {
+              "file": "miracl-corpus-v1.0-ko/docs-2.jsonl.gz",
+              "sha256": "93e90d098d78f50a9e76dd2e64608d65e0563787954f848da9b04286f81b75d9"
+            }
+          ]
+        },
+        "zh": {
+          "time": "2022-03-01T00:00:00Z",
+          "topics": {
+            "train": {
+              "file": "miracl-v1.0-zh/topics/topics.miracl-v1.0-zh-train.tsv",
+              "sha256": null
+            },
+            "dev": {
+              "file": "miracl-v1.0-zh/topics/topics.miracl-v1.0-zh-dev.tsv",
+              "sha256": null
+            }
+          },
+          "qrels": {
+            "train": {
+              "file": "miracl-v1.0-zh/qrels/qrels.miracl-v1.0-zh-train.tsv",
+              "sha256": null
+            },
+            "dev": {
+              "file": "miracl-v1.0-zh/qrels/qrels.miracl-v1.0-zh-dev.tsv",
+              "sha256": null
+            }
+          },
+          "corpus": [
+            {
+              "file": "miracl-corpus-v1.0-zh/docs-0.jsonl.gz",
+              "sha256": "b036ba6a927a4598b314de55a1de200d2a619b28b4327f49e97ec4233d324827"
+            },
+            {
+              "file": "miracl-corpus-v1.0-zh/docs-1.jsonl.gz",
+              "sha256": "d6db9e242bdebeac76f586c0ec9a6301a9ec4a52c64c71949945ba5983467506"
+            },
+            {
+              "file": "miracl-corpus-v1.0-zh/docs-2.jsonl.gz",
+              "sha256": "29f1b1e3bec59770367be71d1698a7afaf7efb8006d168d40a2815025c8d1b43"
+            },
+            {
+              "file": "miracl-corpus-v1.0-zh/docs-3.jsonl.gz",
+              "sha256": "9cfc76c7f9ec9edc12d351913ba0f33a96d496a7449b46a6488f77668acf178d"
+            },
+            {
+              "file": "miracl-corpus-v1.0-zh/docs-4.jsonl.gz",
+              "sha256": "d47cef57928c3452d95cc8499dea37ce6e589808a9315ab2cf9809a23fe349b5"
+            },
+            {
+              "file": "miracl-corpus-v1.0-zh/docs-5.jsonl.gz",
+              "sha256": "17e1d4bf36d3992ccf5c519522ed1dcf896cb72772907e973bfcf1b2dd993e28"
+            },
+            {
+              "file": "miracl-corpus-v1.0-zh/docs-6.jsonl.gz",
+              "sha256": "4b3cdc7aeefc01ca4c2f55ba16ac80d773393068b78d4f971fc3c25c6fb9a859"
+            },
+            {
+              "file": "miracl-corpus-v1.0-zh/docs-7.jsonl.gz",
+              "sha256": "e7541af8c2fb7a96cff271e06047f0b4f00372b205735fabeed6217f9a7bb334"
+            },
+            {
+              "file": "miracl-corpus-v1.0-zh/docs-8.jsonl.gz",
+              "sha256": "f456671170b8286ede8f81feb9d365750af5027465399f63445a441fc96c41a7"
+            },
+            {
+              "file": "miracl-corpus-v1.0-zh/docs-9.jsonl.gz",
+              "sha256": "6c8193e14aafd93fb1ee57eac4f1171a44a0c975ebdefd6e9df1903c1b2fd7ca"
+            }
+          ]
+        },
+        "th": {
+          "time": "2019-01-01T00:00:00Z",
+          "topics": {
+            "train": {
+              "file": "miracl-v1.0-th/topics/topics.miracl-v1.0-th-train.tsv",
+              "sha256": null
+            },
+            "dev": {
+              "file": "miracl-v1.0-th/topics/topics.miracl-v1.0-th-dev.tsv",
+              "sha256": null
+            }
+          },
+          "qrels": {
+            "train": {
+              "file": "miracl-v1.0-th/qrels/qrels.miracl-v1.0-th-train.tsv",
+              "sha256": null
+            },
+            "dev": {
+              "file": "miracl-v1.0-th/qrels/qrels.miracl-v1.0-th-dev.tsv",
+              "sha256": null
+            }
+          },
+          "corpus": [
+            {
+              "file": "miracl-corpus-v1.0-th/docs-0.jsonl.gz",
+              "sha256": "49728f2682602179d8381d0bf0eeaf6eb75bdb5332f9366832ee8e430e4f422c"
+            },
+            {
+              "file": "miracl-corpus-v1.0-th/docs-1.jsonl.gz",
+              "sha256": "62c501dbbe34af63449ccce9fe62f4b09e7296872a330217c2895969ab961c8a"
+            }
+          ]
+        },
+        "id": {
+          "time": "2019-02-01T00:00:00Z",
+          "topics": {
+            "train": {
+              "file": "miracl-v1.0-id/topics/topics.miracl-v1.0-id-train.tsv",
+              "sha256": null
+            },
+            "dev": {
+              "file": "miracl-v1.0-id/topics/topics.miracl-v1.0-id-dev.tsv",
+              "sha256": null
+            }
+          },
+          "qrels": {
+            "train": {
+              "file": "miracl-v1.0-id/qrels/qrels.miracl-v1.0-id-train.tsv",
+              "sha256": null
+            },
+            "dev": {
+              "file": "miracl-v1.0-id/qrels/qrels.miracl-v1.0-id-dev.tsv",
+              "sha256": null
+            }
+          },
+          "corpus": [
+            {
+              "file": "miracl-corpus-v1.0-id/docs-0.jsonl.gz",
+              "sha256": "86d39c03a7b66a2340c2965a18d05ff4abc8463af89b1ad1228ada40845a06d4"
+            },
+            {
+              "file": "miracl-corpus-v1.0-id/docs-1.jsonl.gz",
+              "sha256": "f51fb5ee259c075fb862fc05be05105a260d2fb4ef471bda2f8174562cf1f468"
+            },
+            {
+              "file": "miracl-corpus-v1.0-id/docs-2.jsonl.gz",
+              "sha256": "d7486977ef31bd33d35981e7df54a778aa6888c14538044b42f2a108f2af4831"
+            }
+          ]
+        },
+        "en": {
+          "time": "2019-02-01T00:00:00Z",
+          "topics": {
+            "train": {
+              "file": "miracl-v1.0-en/topics/topics.miracl-v1.0-en-train.tsv",
+              "sha256": null
+            },
+            "dev": {
+              "file": "miracl-v1.0-en/topics/topics.miracl-v1.0-en-dev.tsv",
+              "sha256": null
+            }
+          },
+          "qrels": {
+            "train": {
+              "file": "miracl-v1.0-en/qrels/qrels.miracl-v1.0-en-train.tsv",
+              "sha256": null
+            },
+            "dev": {
+              "file": "miracl-v1.0-en/qrels/qrels.miracl-v1.0-en-dev.tsv",
+              "sha256": null
+            }
+          },
+          "corpus": [
+            {
+              "file": "miracl-corpus-v1.0-en/docs-0.jsonl.gz",
+              "sha256": "f437e7f1a3c8e62a3d8dc7cc510db9b8ae40f6d088912324ab732f2bf51293f0"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-1.jsonl.gz",
+              "sha256": "26e2dce51e95e116ffd26bf4c9a028853d2a4cca8378ca35592dc36c228436dc"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-10.jsonl.gz",
+              "sha256": "64fa76e090cec2d663766e4fa47dea4309c1d7b934b1a9a50d23d031e4808ea3"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-11.jsonl.gz",
+              "sha256": "c33bb56e54e1cf86f78eaa09905f6c0e3a957376067386763ab95f2798533e85"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-12.jsonl.gz",
+              "sha256": "1f2c64c9ac3c30c3bebdfa85309356bdfc484baa0fba9e01f25a20dac4bd7e58"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-13.jsonl.gz",
+              "sha256": "4001f73aa2ba49222716041529bf87cd4bb8e9dfd2e61aa7a2ca6149ec6099ba"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-14.jsonl.gz",
+              "sha256": "dbc9d8fd5db6af9d170192029a04ae426aa8474461fcb63d1c98cdba9a0a031f"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-15.jsonl.gz",
+              "sha256": "84a5ad58635e4bf77945489e43410e7ad0d51e873119e8f72977deaf0b44d033"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-16.jsonl.gz",
+              "sha256": "9f1a5e9d0bdffc17c04063e01575d4c6212236d42730724235ade7277f87a61a"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-17.jsonl.gz",
+              "sha256": "c796466731b12b9b996a60d1484ad3727a55e69d747f799a9514885a5a5a316c"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-18.jsonl.gz",
+              "sha256": "f2c1b02dc3430674c20d136c0922f16f1f62713d25e1c23fad715575d598f642"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-19.jsonl.gz",
+              "sha256": "49b38a38feb24dd307afa966d2e3e12771a970ac476f99390d229c746acde0bc"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-2.jsonl.gz",
+              "sha256": "6fdbd1eaa6605b07435edbac2ce35ee9b2dbf0b5d838049b13ef735bbe76fd86"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-20.jsonl.gz",
+              "sha256": "27aad70c717b63b61e24962e761166596ae6235a954b44a83cff15bce8956fd2"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-21.jsonl.gz",
+              "sha256": "2013576221c900a6c029f49aa705de0a1f4abd77da2483ee66a71febc2e83ea2"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-22.jsonl.gz",
+              "sha256": "ba39fcd25da55b97266537c0867e0fbcae7723461c26a319caf298c96fddf910"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-23.jsonl.gz",
+              "sha256": "6f8f5f46dc29d2ee7338adcbda293fb41b1b2d3a11f96f88dcb9c32955807b53"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-24.jsonl.gz",
+              "sha256": "10d6470537a4ef421187103ad9aba191d25bd660249e5043b497ff6b26ef9cfa"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-25.jsonl.gz",
+              "sha256": "3054907619679f4c34e04412aef986339006f37337dce74d925e483ad6fa697c"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-26.jsonl.gz",
+              "sha256": "696338984f800e1e9148a5612a69e0af54a5eee4ce06a656f292bfe2241592dc"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-27.jsonl.gz",
+              "sha256": "dda592152098544ccb18b1c0019c226e7055aac64e0c791a8b4e8c28b4e8a52c"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-28.jsonl.gz",
+              "sha256": "ea293c31bd1cadd19ba139118489fb2f1d2647b08a018d0ec5165484752211ba"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-29.jsonl.gz",
+              "sha256": "a8d5f82ffe35c38f27732cb8e5c1f8caf1a562014eae5d0016b05e4940abc6bf"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-3.jsonl.gz",
+              "sha256": "314d101626058609268c42c4cfb805972eb8aac67d63670383763eef4351c920"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-30.jsonl.gz",
+              "sha256": "bc3643d2902b108292d9e8ca7f00ddd22188d0b8208eec19e8f7567c1d2e964b"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-31.jsonl.gz",
+              "sha256": "c360361103c386d212346878df2a465441f5ab5ef623cb89c5bcde9c75176fa9"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-32.jsonl.gz",
+              "sha256": "8fdffb9a71f7c1e6d6aa2032a707b526135984b01f7d166f6e13974e43837229"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-33.jsonl.gz",
+              "sha256": "7771d3925fb18c1c55d499acb2bada6e6ec82934b36b3a225599b0920bead606"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-34.jsonl.gz",
+              "sha256": "1c5227a566196f6858a46e2282d9b5fcdd66c064d2d4f9af90b3289b8a4d7c0c"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-35.jsonl.gz",
+              "sha256": "fb0d900dc71808fa4acbbb2edd2417089339e1ce34edbf69a5421c2d7612f7a7"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-36.jsonl.gz",
+              "sha256": "f90674624bcf503d6f69eb198e23bf6f0530a7091f983f643a33ffafb388c62e"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-37.jsonl.gz",
+              "sha256": "8dc5e0500c77c1598a5610ebc36ebb49e584d14caab78095eb9800d55480d3e7"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-38.jsonl.gz",
+              "sha256": "b520dfdd89983e0453ebe7d837db360ab5b6dcf0e4b9851abac9806026fa900a"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-39.jsonl.gz",
+              "sha256": "c50986a3da85a39d6af0aa5a5fbdff6acf103a1529ec2601977ac0637e8ca856"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-4.jsonl.gz",
+              "sha256": "470d936bd978b84a042647711a689850e48b39b8ca3ed8537b506aa3dfbc6811"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-40.jsonl.gz",
+              "sha256": "4b5e2dcbedb089c280351984b6e219167207a81ac4ee25fa2375d0102432ae65"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-41.jsonl.gz",
+              "sha256": "b834a67c8686dfc7d0d105892459279402de7fe3db9de06231baf141bdc5476a"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-42.jsonl.gz",
+              "sha256": "65215395de63a8c82b6e47d4d0cd1e54540cf860078085271f136eee85102072"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-43.jsonl.gz",
+              "sha256": "46d1ed7537ac2432ca9f28e2ac4cf9c84e54de5882ae1667fd6f1505af80222e"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-44.jsonl.gz",
+              "sha256": "eaa86e52edee34ad3a56c79f6a600f021d6ed69b654c1a1a44ee8600a7ac4343"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-45.jsonl.gz",
+              "sha256": "c1307acccebdacc56561807e60e145fad6ff652b9b3bbdba6b1d30e61bdd7c97"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-46.jsonl.gz",
+              "sha256": "fa98836315afeba18e286290e729abad8ee78c23af7288529c846e1cdb82fb6b"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-47.jsonl.gz",
+              "sha256": "83b86f15f560d9dd7c9b83385b624228735403a372c5400a5a91b04c69f7295c"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-48.jsonl.gz",
+              "sha256": "d093bd06d07e495cbee56cd97288742a55eb9730059c0b165e14d75f1c91d775"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-49.jsonl.gz",
+              "sha256": "e075ce23fcebaa15c8ca4946e71b07fc27470672f1cd1d3bd1dd4b0e5d17fc11"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-5.jsonl.gz",
+              "sha256": "aa4a520a843969a7ad73100967e4f228b8811db3f09cea4bc34bdf38aa4588e3"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-50.jsonl.gz",
+              "sha256": "526164b6eff6477fc572e5c85e772e5065f323d71abb79e2d13a2275c4ff48d4"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-51.jsonl.gz",
+              "sha256": "d391faeacca55490a379e43a950b0de2cb148a0b2b32a7e29d76cb2b82b36973"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-52.jsonl.gz",
+              "sha256": "bc3e022fcf78f03ba5753547827c9963248cb6c4ede235230f4fd5098dcdc1cf"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-53.jsonl.gz",
+              "sha256": "3678ed57b8839e90142ea66d1ab02b07f7e2bf6a264f6eccb2844593f6b76f2e"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-54.jsonl.gz",
+              "sha256": "49940fda3b789438a5d0be44c97ac3a49e84340c04a6b9d6a63862c6ed8b7f20"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-55.jsonl.gz",
+              "sha256": "17d9e309b2ccae8a992e11b06c6f2acf34f51d52089d18f4375afe012fb4c1dc"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-56.jsonl.gz",
+              "sha256": "b76fcbdf092b48b06564112a66feafe7a7463550c142a74eca44e032ebca745e"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-57.jsonl.gz",
+              "sha256": "f8f51cf11dc8d4527d5128d0ed566ce0d7eeccb601342b232ee81f1e738abab9"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-58.jsonl.gz",
+              "sha256": "acbeb217eb03a3f290aef68a734bc664e0471bfd9a9f941b52cb3150112463ff"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-59.jsonl.gz",
+              "sha256": "f5a0c6dc462ef6b533dff24277dd6b33a4096c3e965e14a55f252ff3fe3ae4e2"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-6.jsonl.gz",
+              "sha256": "e11ff2879ee60599fbe12cd7eb7ac83414db282ec63e7125ca0504788c184cd2"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-60.jsonl.gz",
+              "sha256": "97f724273e162cc7832936a5d5d215b63e653e09850c689acd2888e27a13bd5e"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-61.jsonl.gz",
+              "sha256": "2b7a06eab2d5b7e85752032d08979e107164bdafd1a7e4a6f27969c4e6f63e80"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-62.jsonl.gz",
+              "sha256": "785e1bcb1499b5018fc8bedb69deac2ccb78be3950196b4c9ea28a1b6c540176"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-63.jsonl.gz",
+              "sha256": "5f33445c93d384363d583356727e76ae60a74349806f98ebab41ed27382c3f92"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-64.jsonl.gz",
+              "sha256": "bbc4235e201879afccc626a2288b1896b84fee6c5fe51675f89aaec1004340fe"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-65.jsonl.gz",
+              "sha256": "d736c2fe0bb93b76142c485b052561f395dcc7cbe6ac9f92d9668f9ce0291b39"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-7.jsonl.gz",
+              "sha256": "80a91a7b5c53253fbe1646da3b064e33ec845d9d21760d0b071b57150ce0343e"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-8.jsonl.gz",
+              "sha256": "324087c58fe99390a5b3365cbe562ea1ba83ce67757383c57c8ec740f6923f4c"
+            },
+            {
+              "file": "miracl-corpus-v1.0-en/docs-9.jsonl.gz",
+              "sha256": "ff98a5dcfc84b3093c5c674160f478104b3ef78d534db9681d45d3e2d2d218d8"
+            }
+          ]
+        }
+      }
+    },
+    "mr-tydi": {
+      "repo_id": "castorini/mr-tydi",
+      "revision": "1d43c80218d06d0ef80f5b172ccabd848b948bc1",
+      "license": "Apache-2.0",
+      "license_note": "annotations Apache-2.0; passage text is Wikipedia (CC BY-SA)",
+      "card_url": "https://huggingface.co/datasets/castorini/mr-tydi",
+      "corpus_repo_id": "castorini/mr-tydi-corpus",
+      "corpus_revision": "3a3aa212bbe94a8cc0dc858710a3dad49d532054",
+      "corpus_card_url": "https://huggingface.co/datasets/castorini/mr-tydi-corpus",
+      "languages": {
+        "ja": {
+          "time": null,
+          "test": {
+            "file": "mrtydi-v1.1-japanese/test.jsonl.gz",
+            "sha256": "048865f9740d2106b846f24da66174e4cb290cfa069b894381d9e65ee9cfe770"
+          },
+          "corpus": [
+            {
+              "file": "mrtydi-v1.1-japanese/corpus.jsonl.gz",
+              "sha256": "51c19472cbdd4a36e84548dec3db0667a5c05747d356c696a6c61c1c29fbb4eb"
+            }
+          ]
+        },
+        "ko": {
+          "time": null,
+          "test": {
+            "file": "mrtydi-v1.1-korean/test.jsonl.gz",
+            "sha256": "9384ef930edf90b0c18bc1399afe4339656d819f77b0b82e3b60be8e20b742f2"
+          },
+          "corpus": [
+            {
+              "file": "mrtydi-v1.1-korean/corpus.jsonl.gz",
+              "sha256": "21a97a477be8763e1cee09e0a6e923e6463fdca8063078e0cedd1fc887439085"
+            }
+          ]
+        },
+        "th": {
+          "time": null,
+          "test": {
+            "file": "mrtydi-v1.1-thai/test.jsonl.gz",
+            "sha256": "a814bd5964f168914c0ecb91d4fe34dcd47b9cea85f0e0e82f6d87a8a98b9b90"
+          },
+          "corpus": [
+            {
+              "file": "mrtydi-v1.1-thai/corpus.jsonl.gz",
+              "sha256": "03464e4539d3bd5fbcc2cc621e3a5736f4dc349406d852b36dbc309e681e5b1d"
+            }
+          ]
+        },
+        "id": {
+          "time": null,
+          "test": {
+            "file": "mrtydi-v1.1-indonesian/test.jsonl.gz",
+            "sha256": "eac96f076fa16c69a1103ab2c910bed841b77bb4496d0a03c7d786de018f3bed"
+          },
+          "corpus": [
+            {
+              "file": "mrtydi-v1.1-indonesian/corpus.jsonl.gz",
+              "sha256": "a9a5fe3e10a913baea9c3679360ef60687f3b5b4c4003a9d2b37b0eb8009620b"
+            }
+          ]
+        },
+        "en": {
+          "time": null,
+          "test": {
+            "file": "mrtydi-v1.1-english/test.jsonl.gz",
+            "sha256": "0692232beb9cc1350927c7cf658f32aff491d5424bc30878940858264b978fbe"
+          },
+          "corpus": [
+            {
+              "file": "mrtydi-v1.1-english/corpus.jsonl.gz",
+              "sha256": "315744c964d467370c59a3d17cf6b2e50f6f3869dbf3067ac4f198dcb49f8cb0"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
