@@ -117,7 +117,7 @@ pub fn run_calendar_connector_sync_with_screener(
     // back stays owed the same way (FIX 22385).
     let next_cursor = match batch.next_cursor {
         Some(cursor) if counters.owed_omissions > 0 || counters.owed_booking_moves > 0 => {
-            Some(transport.cursor_owing_full_listing(&cursor))
+            transport.cursor_owing_full_listing(&cursor)
         }
         cursor => cursor,
     };
