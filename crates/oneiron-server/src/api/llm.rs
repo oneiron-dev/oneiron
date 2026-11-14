@@ -20,7 +20,9 @@ use oneiron::code_run::model_call::{
 };
 use oneiron::llm::run_admission::{RunAdmission, RunDenied};
 use oneiron::{LlmError, LlmRequest, LlmResponse, LlmStreamEvent};
+use serde::Deserialize;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
@@ -372,12 +374,39 @@ pub(crate) fn record_raw_response(
     }
 }
 
+/// A raw call's body: the request, and beside it the caller's own deadline
+/// (census L9-23, ARCH-0036 "the caller's own deadline on role, raw and
+/// chat calls").
+#[derive(Deserialize)]
+struct RawCall {
+    #[serde(flatten)]
+    request: LlmRequest,
+    /// The memory proxy's field (FIX 8189): milliseconds from when the door
+    /// takes the call, one clock for the whole call, never renewed. Its
+    /// sends, its waits for a resting offer and its fallbacks all end by
+    /// then, and a call it cuts answers `timeout`. Omitted, the caller's
+    /// own connection is the call's deadline (FIX 8213).
+    #[serde(default)]
+    deadline_ms: Option<u64>,
+}
+
+impl RawCall {
+    /// The request, and the deadline its call runs on from now.
+    fn into_call(self) -> (LlmRequest, CallDeadline) {
+        let deadline = self.deadline_ms.map_or(CallDeadline::Open, |ms| {
+            CallDeadline::caller_in(Duration::from_millis(ms))
+        });
+        (self.request, deadline)
+    }
+}
+
 async fn generate(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     headers: axum::http::HeaderMap,
-    Json(mut request): Json<LlmRequest>,
+    Json(call): Json<RawCall>,
 ) -> Response {
+    let (mut request, deadline) = call.into_call();
     let (ladder, run) = match admit(&server, &auth, &mut request) {
         Ok(v) => v,
         Err(e) => return *e,
@@ -391,11 +420,12 @@ async fn generate(
     // as initiator (attribution only), so its evidence row carries an
     // actor its erase can find. Owner-grade callers bind none, as before.
     let run = run.initiated_by(principal);
-    // The caller's own connection is the raw call's deadline (FIX 8213).
+    // The caller's `deadline_ms`, or its own connection (FIX 8213), is the
+    // raw call's deadline.
     // generate_recorded_by takes the request by value; the record keeps its own copy.
     let record_request = request.clone();
     match ladder
-        .generate_recorded_by(&run, request, None, &|| true, CallDeadline::Open)
+        .generate_recorded_by(&run, request, None, &|| true, deadline)
         .await
     {
         Ok((response, binding)) => {
@@ -433,8 +463,9 @@ async fn stream(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     headers: axum::http::HeaderMap,
-    Json(mut request): Json<LlmRequest>,
+    Json(call): Json<RawCall>,
 ) -> Response {
+    let (mut request, deadline) = call.into_call();
     let (ladder, run) = match admit(&server, &auth, &mut request) {
         Ok(v) => v,
         Err(e) => return *e,
@@ -448,14 +479,14 @@ async fn stream(
     let run = run.initiated_by(principal);
     // The first rung is admitted here, so a refused call answers before the
     // stream starts. Each rung settles itself; a stream the client leaves
-    // ends its call, and a started rung keeps its reservation as spend.
+    // ends its call, and a started rung keeps its reservation as spend. The
+    // caller's `deadline_ms` ends it too: its last line is then `timeout`.
     // stream_recorded_by takes the request by value; the record keeps its own copy.
     let record_request = request.clone();
-    let (mut source, mut binding) =
-        match ladder.stream_recorded_by(&run, request, None, CallDeadline::Open) {
-            Ok(opened) => opened,
-            Err(e) => return failure(e),
-        };
+    let (mut source, mut binding) = match ladder.stream_recorded_by(&run, request, None, deadline) {
+        Ok(opened) => opened,
+        Err(e) => return failure(e),
+    };
     let (send, receive) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(8);
     tokio::spawn(async move {
         loop {
