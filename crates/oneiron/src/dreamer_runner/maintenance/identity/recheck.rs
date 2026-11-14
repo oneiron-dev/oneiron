@@ -53,17 +53,23 @@ pub(super) fn context_terms(text: &str, start: usize, end: usize, name: &str) ->
     terms
 }
 
-/// Whether the link in `turn` is an uncertain person: two or more
-/// candidates, or the mention's own provisional entity alone while its name
-/// keys to real people now, or sounds like them (the Linker's phonetic
-/// rung), in a world the turn is in, as the Linker filters them. A real
-/// person the name only sounds like is never a sure link (OF-123).
+/// Whether the link of a mention said in `message` of `turn` is, at `now`, an
+/// uncertain person: two or more candidates, or the mention's own
+/// provisional entity alone while its name keys to real people now, or
+/// sounds like them (the Linker's phonetic rung), or names a person by the
+/// speaker's role edge (its role rung), in a world the turn is in, as the
+/// Linker filters them. A real person the name only sounds like, or one only
+/// an Auto role edge names, is never a sure link (OF-123). Two or more
+/// candidates come back in the vector rung's order when the turn's stored
+/// vector puts one first ([`crate::tagging::ranked_for_turn_in_txn`]).
 fn uncertain_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     turn: EntityId,
+    message: &EntityId,
     link: &MentionLink,
     name: &str,
+    now: u64,
 ) -> Result<Option<Uncertain>> {
     let (kind, entities) = match link {
         MentionLink::Candidates { kind, entities } => (*kind, entities.clone()),
@@ -74,9 +80,13 @@ fn uncertain_in_txn(
         return Ok(None);
     }
     if entities.len() >= 2 {
+        // The vector rung once more: a turn the embed worker reached after
+        // its save has its candidates ordered here. The set stays whole.
+        let candidates = crate::tagging::ranked_for_turn_in_txn(vault, txn, &turn, &entities)?
+            .unwrap_or(entities);
         return Ok(Some(Uncertain {
             kind,
-            candidates: entities,
+            candidates,
             provisional: None,
         }));
     }
@@ -85,11 +95,13 @@ fn uncertain_in_txn(
         return Ok(None);
     }
     let sounds = crate::tagging::sounds_like_in_txn(vault, txn, turn, kind, name)?;
+    let roles = crate::tagging::role_hits_in_txn(vault, txn, turn, message, kind, name, now)?;
     let mut real = BTreeSet::new();
     for hit in vault
         .lookup_identity_key_in_txn(txn, kind, name)?
         .into_iter()
         .chain(sounds)
+        .chain(roles)
     {
         for head in vault.resolve_entity_in_txn(txn, &hit)? {
             if head != own
@@ -112,13 +124,19 @@ fn uncertain_in_txn(
     }))
 }
 
+/// Whether two asks name one candidate set, in any order: the vector rung
+/// may order one set two ways, before and after the turn is embedded.
+fn same_candidates(left: &IdentityAsk, right: &IdentityAsk) -> bool {
+    let set = |ask: &IdentityAsk| ask.candidates.iter().copied().collect::<BTreeSet<_>>();
+    set(left) == set(right)
+}
+
 /// Whether two asks put one question: one name, one candidate set.
 fn same_question(left: &IdentityAsk, right: &IdentityAsk) -> bool {
-    let set = |ask: &IdentityAsk| ask.candidates.iter().copied().collect::<BTreeSet<_>>();
     left.kind == right.kind
         && crate::store::identity_hints::identity_hint_digest(&left.name)
             == crate::store::identity_hints::identity_hint_digest(&right.name)
-        && set(left) == set(right)
+        && same_candidates(left, right)
 }
 
 /// Measures a new ask's name and candidates against the engine's rows; the
@@ -146,7 +164,16 @@ pub(super) fn ask_for_mention_in_txn(
     else {
         return Ok(None);
     };
-    let Some(found) = uncertain_in_txn(vault, txn, *turn, &mention.link, name)? else {
+    let Some(found) = uncertain_in_txn(
+        vault,
+        txn,
+        *turn,
+        &mention.message,
+        &mention.link,
+        name,
+        now,
+    )?
+    else {
         return Ok(None);
     };
     let _ = vault.measure_limit(EngineLimit::IdentityExcerptBytes, text.len() as u64);
@@ -173,7 +200,8 @@ pub(super) fn ask_for_mention_in_txn(
 /// Checks each mention of one turn again: a hint settles it, as the
 /// Dreamer's lane (`admit`) reads the mention whole, else it opens an ask
 /// unless one is open for it or for its question. A kept-separate ask whose
-/// candidates changed opens afresh, to be decided again. `false` when a
+/// candidate set changed opens afresh, to be decided again; a new order of
+/// the same set leaves it kept. `false` when a
 /// mention would open an ask past [`MAX_OPEN_ASKS`]: the turn is not
 /// handled, and a later pass checks it again whole.
 fn recheck_turn_in_txn(
@@ -207,7 +235,7 @@ fn recheck_turn_in_txn(
                     IdentityAskReason::Unsettled,
                     now,
                 )?
-                && fresh.candidates != held.candidates
+                && !same_candidates(&fresh, held)
             {
                 measure_ask(vault, &fresh);
                 index::sync_ask_membership(&vault.store, txn, &key, Some(&*held), Some(&fresh))?;

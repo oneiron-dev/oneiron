@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::Vault;
-use crate::channel_identity_provider::sheets::SheetsBrokerHost;
 use crate::channel_identity_provider::stalwart::StalwartConfig;
+use crate::channel_identity_provider::workspace_connector::WorkspaceBrokerHost;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -151,7 +151,7 @@ pub struct ServedTransports {
     native_mail: Option<StalwartConfig>,
     connector_calls: Option<Arc<dyn ServedConnectorCalls>>,
     broker_model_listing: Option<Arc<dyn BrokerModelListingHost>>,
-    sheets_broker: Option<Arc<dyn SheetsBrokerHost>>,
+    workspace_broker: Option<Arc<dyn WorkspaceBrokerHost>>,
     apns_applications: Vec<Arc<super::apns::ApnsApplication>>,
     /// The installed MCP endpoint of each `[connectors]` section, by
     /// normalized catalog name: where a catalog connector's tool calls go on
@@ -167,7 +167,7 @@ impl ServedTransports {
             native_mail: None,
             connector_calls: None,
             broker_model_listing: None,
-            sheets_broker: None,
+            workspace_broker: None,
             apns_applications: Vec::new(),
             connector_endpoints: BTreeMap::new(),
         }
@@ -202,12 +202,13 @@ impl ServedTransports {
         self
     }
 
-    /// The host's credential-broker leg for the built-in Google Sheets
-    /// connector (FIX 4862). This supplies a transport only; each call still
-    /// presents the checked connection's grant through its own custody door.
+    /// The host's credential-broker leg for the built-in workspace
+    /// connectors (`google.sheets`, FIX 4862; L3-17). This supplies a
+    /// transport only; each call still presents the checked connection's
+    /// grant through its own custody door.
     #[must_use]
-    pub fn with_sheets_broker(mut self, host: Arc<dyn SheetsBrokerHost>) -> Self {
-        self.sheets_broker = Some(host);
+    pub fn with_workspace_broker(mut self, host: Arc<dyn WorkspaceBrokerHost>) -> Self {
+        self.workspace_broker = Some(host);
         self
     }
 
@@ -252,8 +253,8 @@ impl ServedTransports {
         self.broker_model_listing.as_ref()
     }
 
-    pub(crate) fn sheets_broker(&self) -> Option<&Arc<dyn SheetsBrokerHost>> {
-        self.sheets_broker.as_ref()
+    pub(crate) fn workspace_broker(&self) -> Option<&Arc<dyn WorkspaceBrokerHost>> {
+        self.workspace_broker.as_ref()
     }
 
     /// The endpoint the catalog connector `name` (normalized) sends its tool
