@@ -29,6 +29,8 @@ use oneiron::federation::{Scope, ScopeAxis};
 use oneiron_remote::unix_seconds_now;
 use serde_json::{Value, json};
 
+use crate::fake_llm::{FakeLlm, Reply};
+
 const SECRET: &str = "mcp-stdio-issuer-key-not-a-bearer";
 const TEXT: &str = "The Vellichor ferry to Ost Marren leaves pier nine at a quarter past six.";
 
@@ -879,6 +881,163 @@ fn an_agent_holds_its_latest_tier_at_every_write_door() {
     );
     assert_eq!(downgraded.slip.claims.scope.verbs, verbs(&["core:read"]));
     scout_bridge.close();
+}
+
+/// The one-liner the composer test asks for.
+const ONE_LINER: &str = "Find out why the dawn tide readings run high";
+
+/// Every string in `value`, depth first.
+fn strings_in(value: &Value, found: &mut Vec<String>) {
+    match value {
+        Value::String(text) => found.push(text.clone()),
+        Value::Array(items) => items.iter().for_each(|item| strings_in(item, found)),
+        Value::Object(fields) => fields.values().for_each(|field| strings_in(field, found)),
+        _ => {}
+    }
+}
+
+/// The fake local reasoner's draft: a brief for the one-liner, its type
+/// `research` when the request lists it, else the first type it lists.
+fn drafted_brief(request: &Value) -> String {
+    let mut found = Vec::new();
+    strings_in(request, &mut found);
+    let types: Vec<String> = found
+        .iter()
+        .filter_map(|text| text.split_once("Task types (id: name):\n"))
+        .flat_map(|(_, rest)| {
+            rest.lines()
+                .map_while(|line| line.strip_prefix("- "))
+                .filter_map(|line| line.split_once(": ").map(|(id, _)| id.to_owned()))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let node = types
+        .iter()
+        .find(|id| *id == "research")
+        .or_else(|| types.first())
+        .cloned()
+        .unwrap_or_default();
+    json!({
+        "objective": "Explain the high dawn tide readings",
+        "need": "The harbour log's dawn readings disagree with the gauge.",
+        "type": node,
+        "notes": ["Read the harbour log before the gauge data."],
+        "question": "Is the cause of the high dawn readings found?",
+        "yes_if_all": ["The cause is named with the log rows that show it."],
+        "no_if_any": []
+    })
+    .to_string()
+}
+
+/// L8-07 PR 2 (RULING L8-07-DOOR = A, 14 Nov 09:11): an agent's
+/// `tasks.create` over MCP that names a one-liner instead of a brief is
+/// composed by the server's `[models.roles.local_reasoner]` seat, here a
+/// keyless local-openai-compat fake. The seat gets one call: the engine's
+/// instruction, the one-liner, and the reply schema as the request's JSON
+/// response format. The post parks as a proposal whatever the caller's
+/// ceiling (L8-07-APPROVAL = A). On a tree without the host's composer the
+/// tool refuses the `one_liner` field, so the first assert fails.
+#[test]
+fn a_one_liner_task_is_composed_by_the_local_reasoner_seat() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let model = runtime.block_on(FakeLlm::start(
+        Vec::new(),
+        Some(Reply::Computed(Arc::new(drafted_brief))),
+    ));
+    let dir = tempfile::tempdir().unwrap();
+    let config = init_vault(dir.path());
+    let models = format!(
+        "\n[models.dreamer]\nenabled = false\n[models.workflows]\nenabled = false\n\
+         [models.providers.house]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n\
+         [models.roles.local_reasoner]\nmodel = \"house:test-model\"\n",
+        model.base_url
+    );
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&config)
+        .unwrap()
+        .write_all(models.as_bytes())
+        .unwrap();
+    let composer = Minted::new(
+        &config,
+        dir.path().join("composer.cred"),
+        "composer",
+        "full-access",
+    );
+    let port = free_port();
+    let origin = format!("http://127.0.0.1:{port}");
+    let curl_dir = argv_recording_curl(dir.path(), &dir.path().join("curl-argv.log"));
+    let _server = serve(&config, port, &dir.path().join("serve.log"));
+    let mut bridge = Bridge::spawn(
+        &origin,
+        &composer.file,
+        &curl_dir,
+        &dir.path().join("composer.stderr"),
+    );
+    let listed = bridge.call(1, "tools/list", json!({}));
+    let tool = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "tasks.create")
+        .unwrap_or_else(|| panic!("no tasks.create: {listed:#}"))
+        .clone();
+    let version = tool["inputSchema"]["properties"]["schema_version"]["const"].clone();
+
+    let (id, params) = tool_call(
+        2,
+        "tasks.create",
+        &version,
+        json!({ "spec": {}, "intent_key": "dawn-tide/composed", "one_liner": ONE_LINER }),
+    );
+    let created = bridge.call(id, "tools/call", params);
+    assert!(
+        created.get("error").is_none() && created["result"]["isError"] != json!(true),
+        "a one-liner create composes its brief: {created:#}\nserver log: {}",
+        std::fs::read_to_string(dir.path().join("serve.log")).unwrap_or_default()
+    );
+    let receipt = output(&created);
+    assert_eq!(
+        (&receipt["approval"], &receipt["task_ref"]),
+        (&json!("proposed"), &Value::Null),
+        "a composed brief parks as a proposal: {created:#}"
+    );
+    assert!(
+        receipt["proposal_ref"].is_string(),
+        "the parked proposal: {created:#}"
+    );
+
+    let calls: Vec<Value> = model
+        .seen()
+        .into_iter()
+        .filter(|seen| {
+            let mut found = Vec::new();
+            strings_in(&seen.body, &mut found);
+            found.iter().any(|text| text.contains(ONE_LINER))
+        })
+        .map(|seen| seen.body)
+        .collect();
+    assert_eq!(calls.len(), 1, "one seat call composes the brief");
+    assert_eq!(
+        calls[0]["response_format"]["type"],
+        json!("json_schema"),
+        "the seat answers to the engine's reply schema: {:#}",
+        calls[0]
+    );
+    let required = &calls[0]["response_format"]["json_schema"]["schema"]["required"];
+    assert!(
+        required
+            .as_array()
+            .is_some_and(|fields| fields.contains(&json!("yes_if_all"))),
+        "the reply schema is the brief draft's: {:#}",
+        calls[0]
+    );
+    let schema = tool["inputSchema"].to_string();
+    assert!(
+        schema.contains("\"one_liner\"") && schema.contains("\"lens_refs\""),
+        "tasks.create lists the one-liner fields: {schema}"
+    );
+    bridge.close();
 }
 
 /// What a fake endpoint saw: each request's path and JSON-RPC body.
