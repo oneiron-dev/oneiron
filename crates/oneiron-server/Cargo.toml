@@ -283,6 +283,12 @@ name = "agent_definition_served_batch"
 path = "tests/agent_definition_served_batch.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
 
+# The caller-deadline cases root their server on a `MemoryKeystore` as well.
+[[test]]
+name = "caller_deadline"
+path = "tests/caller_deadline.rs"
+required-features = ["oneiron/test-support"]
+
 [[test]]
 name = "consent_revoke_grantee_renounce"
 path = "tests/consent_revoke_grantee_renounce.rs"
@@ -310,12 +316,6 @@ required-features = ["oneiron/test-support"]
 [[test]]
 name = "delete_authority_served_door"
 path = "tests/delete_authority_served_door.rs"
-required-features = ["oneiron/test-support"]
-
-# The caller-deadline cases root their server on a `MemoryKeystore` as well.
-[[test]]
-name = "caller_deadline"
-path = "tests/caller_deadline.rs"
 required-features = ["oneiron/test-support"]
 
 # The off-record stretch pack cases serve the owner's root from a `MemoryKeystore` too.
