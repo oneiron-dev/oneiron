@@ -60,6 +60,7 @@ pub mod live_run_claim_put;
 pub mod mail_counterparty;
 pub mod mail_landing;
 pub mod membership;
+pub mod merge_queue_check;
 pub mod meso_extraction_width;
 pub mod model_binding_proposer;
 pub mod nightly;
