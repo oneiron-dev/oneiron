@@ -193,6 +193,12 @@ impl From<MemoryError> for FacadeApiError {
                 host_doors::ask_image_refusal_status(code)
                     .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
             }
+            // L4-15: `vault.artifacts.image.edit`'s own refusals, each with
+            // its status: the caller's request, or no node to run it now.
+            code if super::image_edit_doors::image_edit_refusal_status(code).is_some() => {
+                super::image_edit_doors::image_edit_refusal_status(code)
+                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+            }
             // A facade door that holds a live run (live_run_doors.rs) refuses
             // under the live-run guard's own codes. They take the status the
             // guard's direct route answers (LiveRunRefusal::status): 400 for
