@@ -41,7 +41,7 @@ fn not_recorded() -> crate::Error {
 
 /// A guest is never allowed to expand the person's standing disclosure. The
 /// bound and its owner stamp are checked at admission AND at answer intake.
-pub(super) fn check_disclosure(
+pub(crate) fn check_disclosure(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     person: EntityId,
@@ -54,6 +54,14 @@ pub(super) fn check_disclosure(
     let refs: BTreeSet<_> = std::iter::once(question.reference.entity_ref())
         .chain(question.context_refs.iter().map(|r| r.entity_ref()))
         .collect();
+    // A foreign copy is never disclosed to a guest (federation.md #model,
+    // Guest federation row: "not a source ... for an answer to a third
+    // vault"; L7-02). The refusal is the ask's own, so it tells nothing more.
+    for id in &refs {
+        if vault.claim_is_foreign_copy_in_txn(txn, id)? {
+            return Err(invalid());
+        }
+    }
     let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
     let ask_policy = policy.ask_operational_policy().ok_or_else(invalid)?;
     let cap = ask_policy

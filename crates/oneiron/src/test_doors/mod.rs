@@ -46,6 +46,7 @@ pub mod free_time_cycle_writer;
 pub mod free_time_handoff;
 pub mod grant_roles;
 pub mod graph_ask_centre;
+pub mod guest_ask_disclosure;
 #[cfg(feature = "sync")]
 pub mod guest_turn_counterparty;
 pub mod history_import_rows;

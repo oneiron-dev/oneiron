@@ -1372,6 +1372,21 @@ pub fn derive_verdict(
     .map_err(DeriveRefusal::token))
 }
 
+/// Whether stored claim `id` may serve as evidence for another write
+/// (`claim_evidence_admissible`): never a generated-origin claim, never a
+/// foreign copy (L7-02).
+///
+/// # Errors
+///
+/// [`crate::Error::EntityNotFound`] when `id` is no stored claim, and the
+/// vault's.
+pub fn claim_evidence_admissible(vault: &Vault, id: EntityId) -> Result<bool> {
+    let body = vault
+        .get_claim(&id)?
+        .ok_or(crate::error::Error::EntityNotFound)?;
+    Ok(crate::claim::claim_evidence_admissible(&body))
+}
+
 /// Every refusal token of the derive verdict.
 #[must_use]
 pub fn refusal_tokens() -> Vec<&'static str> {
