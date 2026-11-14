@@ -400,6 +400,35 @@ class NightTest(unittest.TestCase):
         )
         self.assertEqual(self.fixture.calls(), [])
 
+    def test_a_state_kept_in_the_out_dir_is_read_before_the_night_clears_it(self) -> None:
+        self.fixture.scenario({"cases": {"B-02": ["FAIL", 4000, "expected 2 rows"]}})
+        self.fixture.out.mkdir(parents=True, exist_ok=True)
+        own = self.fixture.out / "e2e-state.json"
+        own.write_text(
+            json.dumps({"cases": {"B-02": {"outcome": "PASS", "date": "2026-11-12", "walls": [1, 2, 3]}}, "files": {}})
+        )
+        code, output = self.fixture.night("--state", str(own))
+        self.assertEqual(code, 1, output)
+        self.assertEqual(
+            self.fixture.summary()["flips"], [{"id": "B-02", "from": "PASS", "to": "FAIL", "since": "2026-11-12"}]
+        )
+        self.assertEqual(
+            self.fixture.state()["cases"]["B-02"], {"outcome": "FAIL", "date": "2026-11-15", "walls": [2, 3, 4000]}
+        )
+
+    def test_a_night_that_cannot_start_hands_on_a_state_kept_in_the_out_dir(self) -> None:
+        self.fixture.manifest(
+            {"version": 1, "head": "0" * 40, "assets": {"bun": {"path": "/x"}, "node": {"path": "/y"}}}
+        )
+        self.fixture.out.mkdir(parents=True, exist_ok=True)
+        own = self.fixture.out / "e2e-state.json"
+        kept = {"cases": {"A-01": {"walls": [7]}}, "files": {"a.test.ts": "2026-11-14"}}
+        own.write_text(json.dumps(kept))
+        code, output = self.fixture.night("--state", str(own))
+        self.assertEqual(code, 2, output)
+        self.assertIn("NOT-STARTED", output)
+        self.assertEqual(self.fixture.state(), kept)
+
     def test_a_set_whose_digests_disagree_does_not_start(self) -> None:
         (self.fixture.set / "manifest.sha256").write_text("f" * 64 + "\n")
         code, output = self.fixture.night()

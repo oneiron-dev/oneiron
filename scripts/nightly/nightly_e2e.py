@@ -443,11 +443,11 @@ def summary_line(
 def night(args: argparse.Namespace) -> int:
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
+    state = read_state(args.state)  # before the clear below: --state may be this --out's own e2e-state.json
     for name in ("summary.json", "summary.txt", "e2e-state.json"):
         (out / name).unlink(missing_ok=True)
     started = time.time()
     date = args.date or datetime.fromtimestamp(started, timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
-    state = read_state(args.state)
     write_json(out / "e2e-state.json", state)  # a night that cannot start hands the state on unchanged
     checkout = Path(args.checkout).resolve()
     head, facts = "", {"sha256": ""}
