@@ -5,10 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::memory::MessageResultAttachment;
-use crate::off_record::{
-    OffRecordBackendClass, OffRecordMode, OffRecordNoticeAct, OffRecordTalkMessage,
-};
-use crate::share_travel::{CopyRefs, CopyTravelChoice};
+use crate::off_record::OffRecordTalkMessage;
 
 mod copy;
 

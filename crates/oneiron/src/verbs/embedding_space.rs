@@ -16,13 +16,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::embed::{
     EmbeddingSpace, InputKind, PendingEmbedderBinding, SpaceMove, SpaceMoveCheck, SpaceMoveOutcome,
     SpaceProbe, SpaceRef,
 };
 use crate::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
-use crate::{EntityId, Vault};
 
 /// Every declared space, where each kind slot reads, and every move: what
 /// `GET /v1/owner/embedding-spaces` and each space change answer.

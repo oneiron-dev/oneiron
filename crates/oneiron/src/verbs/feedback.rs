@@ -11,9 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::feedback::{
-    FeedbackBundle, FeedbackCategory, FeedbackHealerDiagnosis, FeedbackPlatform, IssueCategory,
-    ReportDisclosure, ReportDisclosureChoice, ReportIssue, ReportKind, ReportRequest, ReportRoute,
-    ReportStatus, ReportTextSendBinding,
+    FeedbackBundle, FeedbackCategory, FeedbackHealerDiagnosis, FeedbackPlatform, ReportDisclosure,
+    ReportIssue, ReportRequest, ReportRoute, ReportStatus, ReportTextSendBinding,
 };
 use crate::memory::{MemoryError, MemoryResult};
 use crate::{EntityId, Vault};

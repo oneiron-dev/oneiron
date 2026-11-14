@@ -5,11 +5,11 @@ use serde::{Deserialize, Serialize};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::store::{
-    RetrievalBlendSignal, RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry,
-    RetrievalBlendWeights, RetrievalEndOutcome, RetrievalOutcome, RetrievalOutcomeRecord,
-    RetrievalPolicyCandidate, RetrievalPolicyEvaluation, RetrievalPolicyPin,
-    RetrievalPolicyVerdict, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
-    RetrievalState, RetrievalTrace, RetrievalTurn, RetrievalWeightRow,
+    RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry, RetrievalBlendWeights,
+    RetrievalEndOutcome, RetrievalOutcome, RetrievalOutcomeRecord, RetrievalPolicyCandidate,
+    RetrievalPolicyEvaluation, RetrievalPolicyPin, RetrievalPolicyVerdict, RetrievalRunId,
+    RetrievalRunRecord, RetrievalScoreBreakdown, RetrievalState, RetrievalTrace, RetrievalTurn,
+    RetrievalWeightRow,
 };
 
 /// Default number of newest runs in an unbounded-by-caller diagnostic read.

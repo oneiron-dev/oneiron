@@ -1,11 +1,8 @@
 //! Owner-only retained held-edit evidence from the sync quarantine.
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::MemoryResult;
-use crate::sync::QuarantineContainer;
 
 use super::EmptyRequest;
 

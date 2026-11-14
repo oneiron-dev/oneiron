@@ -11,7 +11,6 @@ use crate::dreamer_runner::{
 };
 use crate::memory::{DreamerAttemptRef, Memory, MemoryError, MemoryResult};
 use crate::{EdgeActorClass, EntityId};
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::weave::{WeaveEnqueueRequest, WeaveScheduleCleared};

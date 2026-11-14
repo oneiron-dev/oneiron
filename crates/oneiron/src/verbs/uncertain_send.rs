@@ -9,13 +9,10 @@
 //! which the TASK's executor makes. No resend settles the TASK
 //! `owner_declined_resend`, sent no more. The first answer settles the ask;
 //! a later one finds it settled.
-use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
-use crate::entity_id::EntityId;
 use crate::memory::MemoryResult;
-use crate::outbound::UncertainSendAnswerOutcome;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::uncertain_send::{UncertainSendAnswer, UncertainSendAnswered};

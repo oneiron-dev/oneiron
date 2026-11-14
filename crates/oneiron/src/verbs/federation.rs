@@ -1,7 +1,5 @@
 //! Typed Connect, reciprocal re-scope, disconnect and foreign-world delivery.
-use serde::{Deserialize, Serialize};
 
-use crate::federation::{FederationDirectionScope, FederationPactScope, Scope};
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 
 pub use crate::authority::{

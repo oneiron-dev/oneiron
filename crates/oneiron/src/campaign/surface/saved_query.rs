@@ -9,9 +9,7 @@
 //! archive transition stay CA-02's, and evaluation stays
 //! [`crate::saved_query::SavedQueryEvaluator`]'s.
 
-use crate::entity_id::EntityId;
-use crate::saved_query::{MatchVerdict, VerdictMemoRow};
-use serde::{Deserialize, Serialize};
+use crate::saved_query::VerdictMemoRow;
 
 pub use crate::memory::query_records::surface::SavedQueryArchiveRequest;
 pub use crate::memory::query_records::surface::SavedQueryCreateRequest;

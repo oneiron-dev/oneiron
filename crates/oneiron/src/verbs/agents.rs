@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::agent_def::{AgentDefinition, switches_off_or_narrows};
-use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use crate::claim::ClaimApprovalStatus;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
 use crate::{EntityId, TimeRange, Vault};

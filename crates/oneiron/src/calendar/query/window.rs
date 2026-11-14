@@ -1,8 +1,6 @@
 //! Bounded, scoped series occurrences with stable original-instance identities.
 use std::time::Instant;
 
-use serde::{Deserialize, Serialize};
-
 use super::facts::{CalendarEventRow, CalendarRead, event_row, receipted, visit_calendar_events};
 use super::occurrences::SeriesCursors;
 use super::pages::{CalendarOccurrencesPage, Slices};

@@ -6,10 +6,7 @@ use crate::consent::{AuthenticatedOwner, ConsentReceipt};
 use crate::memory::{Memory, MemoryResult};
 use crate::runtime_hooks::HookGrant;
 use crate::skill_hub::pack_catalog::{PackHookBinding, PackHookQualification, PackInstallReceipt};
-use crate::skill_hub::{
-    HubAdmissionReceipt, HubImportReceipt, HubRef, HubSyncDisposition, HubSyncPolicy, SkillHubKind,
-    SkillHubRecord, SkillHubTrustTier, TrackedHubRef,
-};
+use crate::skill_hub::{HubSyncDisposition, SkillHubKind, SkillHubRecord, TrackedHubRef};
 use crate::{EntityId, TimeRange, Vault};
 
 use super::PackPutReceipt;

@@ -4,7 +4,6 @@
 use serde::{Deserialize, Serialize};
 
 use super::{OutboundScheduleRequest, TaskCanAskRequest};
-use crate::EntityId;
 
 /// `can`'s input: `{ask: ...}`, one read-only preflight of a typed ask
 /// spec, `{effect: ...}`, the dated preflight of one effect (C2:207, FIX

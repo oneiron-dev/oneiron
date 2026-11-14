@@ -1,8 +1,6 @@
 //! Typed inputs for the public memory verbs in the SDK inventory.
 use crate::claim::{ScopedReadReceipt, ScopedReadResult};
-use crate::memory::{
-    ClaimInput, LexicalHit, Memory, MemoryError, MemoryResult, NeighborOpts, RecallResidence,
-};
+use crate::memory::{LexicalHit, Memory, MemoryError, MemoryResult, RecallResidence};
 use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]

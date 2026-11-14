@@ -1,7 +1,6 @@
 //! Standing-block configuration, gated self-edits and per-agent dreaming
 //! choice (BOARD-04). Configuration and the dreaming dial are the owner's;
 //! a self-edit lands as a Proposed persona claim for the gate to settle.
-use serde::{Deserialize, Serialize};
 
 use crate::agent_def::{AgentDefinition, DreamingMode};
 use crate::claim::ClaimSource;

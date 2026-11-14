@@ -5,7 +5,6 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_doc::{PurgeReceipt, TextHistoryErase};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::{EntityId, Vault};
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::note_history::{

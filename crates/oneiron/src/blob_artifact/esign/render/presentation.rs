@@ -1,6 +1,5 @@
 //! The field presentation contract consumed by editor, ceremony, and PDF export.
 use super::*;
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub(super) use oneiron_verb_wire::blob_artifact::esign::render::presentation::encoded_text;

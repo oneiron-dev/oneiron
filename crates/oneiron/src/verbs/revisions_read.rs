@@ -1,11 +1,8 @@
 //! `vault.revisions.read`: each ref's entity view with its live revision,
 //! under the caller's lane and a live Grant naming the verb.
 
-use serde::{Deserialize, Serialize};
-
 use crate::claim::ScopedReadResult;
-use crate::memory::{EntityView, Memory, MemoryError, MemoryResult};
-use crate::vault::RevisionRef;
+use crate::memory::{Memory, MemoryResult};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::revisions_read::{RevisionEntry, RevisionsReadRequest};

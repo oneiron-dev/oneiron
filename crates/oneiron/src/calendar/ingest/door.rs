@@ -1,6 +1,5 @@
 //! Uploaded ICS import and a single imported-instance amendment. Both reuse
 //! the poll importer's UID diff, exception identity, screen and claim gates.
-use serde::{Deserialize, Serialize};
 
 use super::admission::{PollAdmission, VerdictFold, connector_event_ref};
 use crate::calendar::claims::CalendarPassportSource;

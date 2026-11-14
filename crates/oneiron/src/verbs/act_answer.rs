@@ -5,8 +5,6 @@
 //! ran, and nothing of those rows. A connector's questions are the one
 //! answer narrowed in part (FIX 5824): only the text of a question that
 //! names such a row stays here, and the path to answer them leaves whole.
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::act_answer::{

@@ -6,14 +6,12 @@
 //! so far, so he ticks by what he sees. Read only: the prepare route and
 //! its consent decision stay as they are.
 
-use serde::{Deserialize, Serialize};
-
+use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::edit_distance::reservoir::{
     ReservoirScope, ReservoirSourcePreview, reservoir_source_preview,
 };
 use crate::memory::MemoryResult;
-use crate::{EntityId, Vault};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::reservoir_sources::ReservoirSourcesRequest;

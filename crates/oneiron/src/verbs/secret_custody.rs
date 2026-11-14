@@ -23,8 +23,9 @@ mod surface_seal;
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
+use crate::Vault;
 use crate::authority::{ActSurface, CustodyChange, CustodyRecipientPermit};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};
@@ -35,7 +36,6 @@ use crate::secret_custody::{
 };
 use crate::secret_rotation::RotationReceipt;
 use crate::world_keys::OwnerWorkReceipt;
-use crate::{EntityId, Vault};
 
 pub use self::surface_seal::seal_custody_submit;
 

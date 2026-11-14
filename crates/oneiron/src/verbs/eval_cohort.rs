@@ -1,5 +1,4 @@
 //! Owner setup of sealed cohorts through the eval-authoring mechanism.
-use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::Vault;

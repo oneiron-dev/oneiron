@@ -1,5 +1,4 @@
 //! Typed detection policy for the owner's wire-health doors (OF-520).
-use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result};
 

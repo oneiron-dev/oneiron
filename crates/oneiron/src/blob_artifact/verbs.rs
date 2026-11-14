@@ -7,25 +7,22 @@
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
-use super::review_request::SlideReviewLimitsInput;
+use super::DeckProposeRejection;
 use super::{
     ArtifactKind, ArtifactVersionView, ArtifactView, BornFromArtifact, BornFromSource,
     VersionReconciliation,
 };
-use super::{DeckProposeRejection, DeckTransaction};
-use crate::blob_artifact::deck_context::DeckEditContext;
 use crate::blob_artifact::native_output::NativeOutput;
 use crate::blob_artifact::office_address::RangeRef;
 use crate::blob_artifact::slide_review::REVIEW_IMAGE;
 use crate::blob_artifact::slide_review::SlideRenderer;
-use crate::blob_artifact::slide_review::SlideUnitRefusalReason;
 use crate::blob_artifact::slide_review::review_copy_bytes;
 use crate::blob_artifact::unit_refusal::UnitRefusal;
 use crate::edge::EdgeActorClass;
-use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentPatch, PptxCommentTarget};
+use crate::edit_roundtrip::pptx::PptxCommentPatch;
 use crate::edit_roundtrip::slides_review::{
-    SlideAbstention, SlideJudgment, SlideReviewError, SlideReviewImage, SlideReviewLabels,
-    SlideReviewRequest, SlideReviewSnapshot, SlideReviewUnit,
+    SlideAbstention, SlideJudgment, SlideReviewError, SlideReviewImage, SlideReviewRequest,
+    SlideReviewSnapshot, SlideReviewUnit,
 };
 use crate::edit_roundtrip::{
     ArtifactAsk, DeckEditOutcome, EditOp, FolderAsk, FolderItem, ParagraphAsk, SheetRowsAsk,
@@ -41,7 +38,7 @@ use crate::llm::decision::{ResolvedMedia, TypedDecision};
 use crate::memory::{
     MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult, resolve_image_ref,
 };
-use crate::model_decision::{DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility};
+use crate::model_decision::{DecisionBandPolicy, DecisionDial, Reversibility};
 use crate::ports::ClaimReadStatus;
 use crate::store::receipt_row::ReceiptRecord;
 use crate::store::record_ref::RecordRef;

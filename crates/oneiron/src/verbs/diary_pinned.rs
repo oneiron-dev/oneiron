@@ -5,12 +5,10 @@
 //! authentication, and every entry also passes the caller's ordinary read lane (credential,
 //! destination and room ceilings). This file is the row's wire: the existing query input, and the
 //! door's outcome with its pins as a closed DTO a remote client decodes.
-use serde::{Deserialize, Serialize};
 
-use super::diary::{DiaryQueryOutcome, DiaryQueryRequest};
+use super::diary::DiaryQueryRequest;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::vault::RevisionRef;
 use crate::{EdgeActorClass, EntityId};
 
 #[doc(hidden)]

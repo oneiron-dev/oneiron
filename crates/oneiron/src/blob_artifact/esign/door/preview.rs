@@ -1,14 +1,13 @@
 //! The typed recipient preview, on the engine's document memory port.
 use super::{EsignScope, lane_scope};
 use crate::blob_artifact::esign::render::{
-    self, DecodeAdmissionError, FieldLayout, InspectionMemory, PageGeometry,
+    self, DecodeAdmissionError, InspectionMemory, PageGeometry,
 };
 use crate::blob_artifact::esign::{EsignCapability, EsignField, FieldValue};
 use crate::entity_doc::document_resources::{document_resources, machine_memory_refused};
 use crate::memory::Memory;
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use oneiron_docedit::resource::{Hold, ResourceRefusal};
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 

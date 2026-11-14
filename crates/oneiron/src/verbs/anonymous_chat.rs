@@ -3,14 +3,9 @@
 //! existing route's shapes: one text in, one reply or policy block out.
 //! Neither notice channel is a durable receipt or a conversation turn.
 
-use serde::{Deserialize, Serialize};
-
-use crate::ModelId;
 use crate::off_record::anonymous_chat::{
     AnonymousChatBlockReason, AnonymousChatSkippedCheck, AnonymousChatTarget, AnonymousChatTurn,
 };
-use crate::policy_model::PolicySkipReason;
-use crate::store::GateSystemNoticeRecord;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::anonymous_chat::{

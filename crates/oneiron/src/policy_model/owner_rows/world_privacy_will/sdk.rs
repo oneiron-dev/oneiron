@@ -6,13 +6,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::EntityId;
 use crate::authority::task_ask_handle::TaskAskHandle;
-use crate::authority::{ModelOrder, PolicyRevision, ReadLocation, SealedCopies, WorldPrivacy};
 use crate::error::{Error, Result};
 
 use super::WorldPrivacyOutcome;
-use super::record::{WorldPrivacyRequest, parse_revision};
+use super::record::WorldPrivacyRequest;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::policy_model::owner_rows::world_privacy_will::sdk::{

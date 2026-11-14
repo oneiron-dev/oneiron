@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
-use crate::memory::{DiaryReadOutcome, DiaryReadRecord, Memory, MemoryError, MemoryResult};
+use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::{EdgeActorClass, EntityId};
 
 /// `self.memory.diary.query`'s input: whose diary, and the one-line reason

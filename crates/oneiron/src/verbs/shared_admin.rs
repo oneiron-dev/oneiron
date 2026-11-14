@@ -5,7 +5,7 @@ use crate::claim::{ClaimReadStatus, PointRead};
 use crate::consent::AuthenticatedOwner;
 use crate::federation::{
     FederationGrant, FederationGrantRole, FederationGrantScope, MemberRelationship, OrgAdminError,
-    OrgAdminPolicy, OrgAdminPower, Scope,
+    OrgAdminPolicy, Scope,
 };
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,

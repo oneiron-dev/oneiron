@@ -7,7 +7,6 @@ use crate::limit_ask::EngineLimit;
 use crate::outbound::OutboundDispatchRequest;
 use crate::store::outbound_outcome::OutboundDispatchOutcome;
 use crate::{EntityId, Result, Vault};
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::blob_artifact::esign::lifecycle::{

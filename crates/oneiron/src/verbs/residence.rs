@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 use crate::EntityId;
 #[cfg(feature = "sync")]
 use crate::Vault;
-use crate::authority::{ResidenceAct, ResidenceResult, ResidenceResultStatus};
 #[cfg(feature = "sync")]
 use crate::consent::AuthenticatedOwner;
 #[cfg(feature = "sync")]

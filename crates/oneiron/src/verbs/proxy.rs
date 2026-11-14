@@ -6,9 +6,8 @@ use crate::connector_key::{
     ConnectorGrantSlate, ConnectorIssuerHaltView, ConnectorKeyRecord, SlateRow, SlateToolManifest,
 };
 use crate::vault_shape::ShapePlanReach;
-use crate::{ContentPart, EntityId, LlmMessage, LlmMessageRole, Vault};
+use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
 #[doc(hidden)]
 use oneiron_verb_wire::verbs::proxy::hex;

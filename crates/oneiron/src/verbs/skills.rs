@@ -1,12 +1,11 @@
 //! Owner-bound library doors over the existing conversion, lifecycle and admission engines.
-use serde::{Deserialize, Serialize};
 
 use crate::claim::ClaimApprovalStatus;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::skill::{SkillLifecycle, SkillRecord};
 use crate::skill_convert::{ConvertOutcome, ConvertRequest, SkillRefiner};
-use crate::skill_hub::{HubAdmissionDisposition, HubAdmissionReceipt, HubRef};
+use crate::skill_hub::HubAdmissionDisposition;
 use crate::{EntityId, Error, TimeRange, Vault};
 
 use super::{HubConsentReceipt, HubSkillReceipts, HubSkillRequest};

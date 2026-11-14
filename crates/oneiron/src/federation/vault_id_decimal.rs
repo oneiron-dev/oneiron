@@ -5,7 +5,6 @@
 //! that carries the id, beside `#[schemars(with = "String")]` where the type
 //! derives a schema; the SDK generator's type inventory reads a `decimal` codec
 //! as a string, so the generated TypeScript, Python and UniFFI types say so too.
-use serde::{Deserialize, Deserializer, Serializer};
 
 #[doc(hidden)]
 pub(crate) use oneiron_verb_wire::federation::vault_id_decimal::{deserialize, serialize};

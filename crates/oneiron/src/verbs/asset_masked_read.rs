@@ -1,7 +1,6 @@
 //! `vault.assets.masked_read`: one admitted ASSET's bytes, always masked, as standard base64.
 
 use base64::Engine as _;
-use serde::{Deserialize, Serialize};
 
 use crate::claim::ScopedReadResult;
 use crate::memory::{EntityRequest, Memory, MemoryResult};

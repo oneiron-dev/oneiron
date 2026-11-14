@@ -1,12 +1,11 @@
 //! Owner-bound bootstrap inventory, pinned first-hub read and explicit defaults restore.
-use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::memory::MemoryResult;
-use crate::skill_hub::{DefaultSkillHub, HubImportReceipt, HubRef};
-use crate::{EntityId, Error, TimeRange, Vault};
+use crate::skill_hub::{DefaultSkillHub, HubImportReceipt};
+use crate::{Error, TimeRange, Vault};
 
-use super::{EmptyRequest, HubSkillRequest, SkillLibraryView};
+use super::{EmptyRequest, HubSkillRequest};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::skill_defaults::BootstrapSkillView;

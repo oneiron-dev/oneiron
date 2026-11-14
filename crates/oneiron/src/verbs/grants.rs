@@ -3,11 +3,9 @@
 //! `vault.companions.access_requests.answer` stays the owner's companion-only
 //! door.
 
-use serde::{Deserialize, Serialize};
-
+use crate::Vault;
 use crate::access_grant::{AccessRequestResponder, AccessRequestStatus};
 use crate::memory::{MemoryError, MemoryResult};
-use crate::{EntityId, Vault};
 
 pub use crate::memory::GrantRequestedScope;
 pub(crate) use crate::memory::grant_requested_scope;

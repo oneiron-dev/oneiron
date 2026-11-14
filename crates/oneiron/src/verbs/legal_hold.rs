@@ -9,8 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{
-    ErasePendingReason, EraseWithdrawal, LegalHold, LegalHoldEvent, LegalHoldTarget,
-    LiftAndEraseOutcome, LiftAndEraseShownState, LiftAndEraseStatus,
+    LegalHold, LegalHoldEvent, LiftAndEraseOutcome, LiftAndEraseShownState, LiftAndEraseStatus,
 };
 use crate::memory::MemoryResult;
 use crate::{EntityId, Vault};

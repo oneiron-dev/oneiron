@@ -1,9 +1,7 @@
 //! Typed meeting prep, outcome observation and the owner's check-in policy.
-use serde::{Deserialize, Serialize};
 
 use crate::calendar::outcome::{
-    self, CheckInAnswer, CheckInResolution, DueOutcomeCheckIn, EventOutcome,
-    EventOutcomeClaimValue, MeetingClassSignals,
+    self, CheckInAnswer, CheckInResolution, DueOutcomeCheckIn, MeetingClassSignals,
 };
 use crate::calendar::prep::{PrepBuildRequest, PrepPack, PrepPolicy, build_prep_pack_scoped};
 use crate::claim::{
@@ -11,8 +9,7 @@ use crate::claim::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::side_table::{self, Named, SideTable};
-use crate::{EdgeActorClass, EntityId, WriteActor, WriteEnvelope, WriteProvenance};
+use crate::{EdgeActorClass, EntityId, WriteEnvelope, WriteProvenance};
 
 mod facts;
 pub(in crate::calendar) use facts::meeting_event_in_txn;

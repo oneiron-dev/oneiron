@@ -1,11 +1,6 @@
 //! Typed wire shapes for artifact units and anchored comment threads.
 
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-
 use super::{AnnotationComment, BodyAnchor, DriftMarker, Locator, ThreadState};
-use crate::blob_artifact::ArtifactKind;
-use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 #[doc(hidden)]

@@ -1,5 +1,4 @@
 //! Typed facade calls over the engine's peer-relative federation burst doors.
-use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;

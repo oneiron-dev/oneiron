@@ -1,10 +1,7 @@
 //! Typed passport heads and recorded revisions through the caller's own read lane.
-use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
-use crate::calendar::claims::{
-    CalendarPassportValue, PREDICATE_CALENDAR_PASSPORT, decode_passport_value,
-};
+use crate::calendar::claims::{PREDICATE_CALENDAR_PASSPORT, decode_passport_value};
 use crate::claim::{
     ClaimReadStatus, ClaimSubject, PointRead, ScopedReadResult, claim_surfaceable,
     decode_claim_body,

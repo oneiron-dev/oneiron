@@ -9,13 +9,11 @@
 //! [`courtesy_delete_incoming`]), so a server and an embedded handle answer
 //! them alike (FIX 3139). A former peer's signed ask and answer
 //! (`/v1/federation/courtesy-delete*`) are peer HTTP, never a verb.
-use serde::{Deserialize, Serialize};
 
 use crate::authority::AuthorityFold;
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{
-    CooperativeDeletionDispositionKind, CooperativeDeletionNotice, IncomingCooperativeDeletion,
-    LegalHoldTarget, parse_hex,
+    CooperativeDeletionNotice, IncomingCooperativeDeletion, LegalHoldTarget, parse_hex,
 };
 use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult};
 use crate::{EntityId, Vault};

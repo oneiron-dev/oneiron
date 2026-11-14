@@ -3,7 +3,7 @@
 
 pub use oneiron_store::blob_artifact::esign::model::*;
 
-use crate::{EntityId, Error, Result};
+use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -10,22 +10,17 @@
 //! no control of it. The wire names no attempt, run, parent, result or
 //! approval: the engine mints the run and the queue the attempt.
 
-use serde::{Deserialize, Serialize};
-
 use crate::EdgeActorClass;
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatcher, QueuedRequester, ResearchRootRequest,
 };
 use crate::authority::{NoStanding, PACT_STANDING_LAPSED, principal_standing_or_lapse_in_txn};
-use crate::context_projection::CONTEXT_SPEC_MAX_TEXT_BYTES;
 use crate::entity_id::EntityId;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 
 /// The verb a Grant lists to name root creation: the row's own name.
 const CREATE_ROOT_VERB: &str = "vault.research.create_root";
 
-#[doc(hidden)]
-use oneiron_verb_wire::verbs::research_root::INTENT_KEY_MAX_BYTES;
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::research_root::{ResearchRootReceipt, ResearchRootWire};
 

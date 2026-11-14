@@ -16,8 +16,6 @@
 //! resolve for it and a missing one answer the same `None`.
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use crate::access_grant::AccessGrantStatus;
 use crate::claim::ScopedReadResult;
 use crate::error::{ErrorKind, GateError};

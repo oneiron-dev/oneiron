@@ -6,16 +6,12 @@
 //! its decision ladder, its hook sandbox, its organ host); an embedded handle
 //! answers a pack put as the vault's embedded owner and refuses the rest,
 //! which have nothing to run on there.
-use std::collections::BTreeMap;
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
-use crate::llm::media::{AiOperation, MediaJobState, MediaPart, MediaResponse, MediaUsage};
+use crate::llm::media::{AiOperation, MediaJobState};
 use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult};
-use crate::skill_hub::HubFile;
 use crate::skill_hub::pack_catalog::PackInstallReceipt;
 
 mod ask_image;

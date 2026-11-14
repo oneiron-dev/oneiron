@@ -10,7 +10,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::EntityId;
 use crate::task_verb::{AskForwardAct, AskForwardHolderProof, TaskAskHandle};
 
 /// `tasks.answer.forward.challenge`'s input: the ask, the person's intent

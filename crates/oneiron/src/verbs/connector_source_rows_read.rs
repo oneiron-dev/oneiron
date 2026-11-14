@@ -1,7 +1,5 @@
 //! `connector.call_source_rows`: one held call's source rows the caller's lane admits, by ref.
 
-use serde::{Deserialize, Serialize};
-
 use super::connector_call::ConnectorCallStatusRequest;
 use crate::entity_id::EntityId;
 use crate::memory::{Memory, MemoryError, MemoryResult};

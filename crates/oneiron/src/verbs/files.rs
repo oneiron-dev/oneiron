@@ -4,7 +4,6 @@
 //! Attach, conversion and rescan read folders on the server's host, so an embedded handle,
 //! which has no host walk, answers them with a typed refusal; its owner may
 //! list, read a source's ledger and detach.
-use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
@@ -13,8 +12,7 @@ use crate::memory::{
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
 };
 use crate::note::{
-    FileHandle, FileOriginal, FileReadiness, FolderFileState, FolderRescanReport, FolderSource,
-    FolderSourceFile,
+    FileHandle, FileReadiness, FolderFileState, FolderRescanReport, FolderSource, FolderSourceFile,
 };
 
 #[doc(hidden)]

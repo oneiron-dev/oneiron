@@ -1,5 +1,4 @@
 //! Caller-bound file-drop ingestion over the calendar transcript landing.
-use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::claim::ClaimReadStatus;

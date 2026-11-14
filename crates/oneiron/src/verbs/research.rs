@@ -10,25 +10,20 @@
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptQueue};
-use crate::autoreason_campaign::CampaignDatasetRef;
 use crate::autoreason_campaign::archive::CampaignArchivePin;
 use crate::autoreason_campaign::beam_promotion::SealedRefereeMeasurement;
-use crate::autoreason_campaign::general::{CampaignConfig, Measurement};
+use crate::autoreason_campaign::general::CampaignConfig;
 use crate::autoreason_campaign::research::{
     self, CampaignPromotionReceipt, CandidateRef, ConfirmationOutcome, ExperimentNode, ForkInput,
     ForkKind, PriorSeed, PromotionBasis, PruneReason, ResearchBindRequest, ResearchBinding,
     ResearchBudgetRead, ResearchConfirmationSeat, ResearchExecution, ResearchReservation,
-    ResearchReservationLine, ResearchTarget, SearchEvidence, SelectionBenchmark, SelectionReceipt,
-    WeaveInput, WeaveWriter,
+    ResearchTarget, SelectionBenchmark, SelectionReceipt, WeaveInput, WeaveWriter,
 };
 use crate::autoreason_campaign::selection::OracleSignal;
 use crate::entity_id::EntityId;
-use crate::llm::{
-    RsiBudgetError, RsiBudgetRead, RsiExplorationRead, RsiOverdraftReceipt, RsiSettlement,
-    RsiSpendPurpose,
-};
+use crate::llm::{RsiBudgetError, RsiBudgetRead, RsiExplorationRead};
 use crate::memory::{Memory, MemoryResult};
-use crate::skill_optimize::{EvalRelease, SufficiencyInput};
+use crate::skill_optimize::EvalRelease;
 use crate::task_verb::forbidden;
 
 /// `vault.research.bind`: binds a campaign to its existing root attempt.

@@ -8,12 +8,10 @@
 //! he names none), bound to one world when he names one: its own agent principal, its ceiling,
 //! and an owner agent grant that `vault.consent.registry` lists with its one-tap revoke. The
 //! authorize page then collects the code. A deny sends the app `access_denied`.
-use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::authority::{ActSurface, AgentTier};
+use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
-use crate::entity_id::EntityId;
 use crate::memory::MemoryResult;
 
 #[doc(hidden)]

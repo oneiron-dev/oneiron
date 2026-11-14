@@ -35,8 +35,6 @@
 //! layer deliberately routes through the ordinary claim door rather than around
 //! the gate.
 
-use serde::{Deserialize, Serialize};
-
 use super::claims::{
     CalendarStatus, CalendarStatusValue, PREDICATE_CALENDAR_STATUS, decode_event_outcome_value,
     decode_status_value, encode_event_outcome_value, require_event_subject,

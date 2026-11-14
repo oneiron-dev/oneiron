@@ -8,11 +8,9 @@
 //! door as any agent's request does: its holders there decide under their
 //! own rules. The answer settles the asking vault's pending ask.
 
-use serde::{Deserialize, Serialize};
-
 use crate::authority::{
     AuthorityFold, AuthoritySignature, AuthorityVaultId, FederationPactState, FederationPactStatus,
-    HostSlipIssuer, PrivacyDirection, WorldPrivacy, verify_authority_signature,
+    HostSlipIssuer, PrivacyDirection, verify_authority_signature,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::bytes_to_hex_lower;
@@ -28,8 +26,6 @@ use super::record::{
 };
 use super::{NO_HOLDER, direction_in_txn, unanimity, world_holders_in_txn};
 
-#[doc(hidden)]
-use oneiron_verb_wire::policy_model::owner_rows::world_privacy_will::carry::CARRY_DOMAIN;
 #[doc(hidden)]
 pub use oneiron_verb_wire::policy_model::owner_rows::world_privacy_will::carry::{
     ForeignWorldPrivacyCarry, ForeignWorldPrivacyDelivery, ForeignWorldPrivacyExportRequest,

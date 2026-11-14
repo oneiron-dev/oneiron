@@ -1,8 +1,6 @@
 //! Typed booking-page discovery, public lifecycle calls and calendar occupancy inputs.
 use serde::{Deserialize, Serialize};
 
-use crate::calendar::{CalendarRangeDto, CalendarSel};
-
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::calendar::{
     BookingCancelRequest, BookingConstraintTurnInput, BookingConstraintTurnRequest,

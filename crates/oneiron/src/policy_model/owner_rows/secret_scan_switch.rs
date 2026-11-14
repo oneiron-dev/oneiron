@@ -3,7 +3,6 @@
 //! The switch is a vault setting held in this vault's metadata, read inside
 //! every batch write transaction. Only a live vault owner changes it, and each
 //! change lands its receipt and a typed event in the same transaction.
-use serde::{Deserialize, Serialize};
 
 use super::ledger::{PolicyChangedEvent, put_event_in_txn};
 use crate::Vault;

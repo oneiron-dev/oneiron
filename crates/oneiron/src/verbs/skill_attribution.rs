@@ -27,14 +27,13 @@ use crate::edit_distance::delta::{
 };
 use crate::entity_id::EntityId;
 use crate::learning::TypeRef;
-use crate::memory::{MemoryError, MemoryResult};
+use crate::memory::MemoryResult;
 use crate::skill_attribution::{
     AttemptOutcome, AttributionJudgment, AttributionVerdict, DeviationCause, EditHunk,
     FollowedState, HunkVerdict, OutcomeEvidence, PositiveFinding, PositiveSkillProposal,
-    SkillEditProposal, UnclearAttribution, attribution_judgments, pending_edit_proposals,
-    pending_positive_proposals, read_attribution_cursor, record_attribution_evidence,
-    retire_positive_proposal, run_attribution_projector, run_positive_attribution_pass,
-    unclear_attributions,
+    UnclearAttribution, attribution_judgments, pending_edit_proposals, pending_positive_proposals,
+    read_attribution_cursor, record_attribution_evidence, retire_positive_proposal,
+    run_attribution_projector, run_positive_attribution_pass, unclear_attributions,
 };
 
 #[doc(hidden)]

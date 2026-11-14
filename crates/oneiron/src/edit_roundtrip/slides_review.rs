@@ -30,17 +30,16 @@ use super::pptx::{
 };
 use crate::EntityId;
 use crate::llm::decision::{
-    AnswerContract, BandMode, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
-    DecisionMedia, DecisionMediaRef, DecisionQuestion, DecisionRung, EvidenceVersion, ImageRef,
-    MAX_DECISION_STATE_BYTES, MediaCall, MediaServed, PairedReading, Reasoning, ReasoningCause,
-    ResolvedMedia, Reversibility, SlideReviewLimits, StopCause, TypedDecision,
+    AnswerContract, BandMode, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionMediaRef,
+    DecisionQuestion, DecisionRung, EvidenceVersion, ImageRef, MAX_DECISION_STATE_BYTES, MediaCall,
+    MediaServed, PairedReading, Reasoning, ReasoningCause, ResolvedMedia, Reversibility,
+    SlideReviewLimits, StopCause, TypedDecision,
 };
 use crate::llm::image::ImageBytes;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{Error, Result, Vault};
 use oneiron_docedit::deck::{DeckView, ShapeView, SlideView, TemplateView};
 use oneiron_docedit::retained_opc::{Limits, Package};
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 

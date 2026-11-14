@@ -16,16 +16,12 @@
 //! external local Git repository, as one stable CODE anchor with its
 //! retained editable whitelist and portable id. It grants nobody membership.
 
-use std::collections::BTreeSet;
 use std::path::Path;
-
-use serde::{Deserialize, Serialize};
 
 use super::revision_shape;
 use crate::Vault;
 use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
-use crate::entity_id::EntityId;
 use crate::federation::git_push::{GIT_PUSH_REVOKE_COMMAND, GitPushGrantStanding};
 use crate::federation::{GitPushBounds, GitPushRepo};
 use crate::memory::{MemoryError, MemoryResult};

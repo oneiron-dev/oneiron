@@ -31,8 +31,8 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use super::requests::{CalendarEventView, CalendarRangeDto, CalendarSearchRequest, CalendarSel};
-use super::window::{CalendarOccurrenceView, CalendarOccurrencesRequest};
+use super::requests::{CalendarRangeDto, CalendarSearchRequest, CalendarSel};
+use super::window::CalendarOccurrencesRequest;
 use crate::claim::{ClaimReadStatus, ScopedReadResult};
 use crate::memory::{CalendarFreebusyIntervalDto, Memory, MemoryError, MemoryResult};
 use crate::temporal::TimeRange;

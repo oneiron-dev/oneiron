@@ -1,8 +1,6 @@
 //! Calendar claim value types with their wire-token impls.
 
-use serde::{Deserialize, Serialize};
-
-use super::predicates::{CONTENT_HASH_LEN, ICS_TRANSP_TRANSPARENT};
+use super::predicates::ICS_TRANSP_TRANSPARENT;
 use crate::entity_id::EntityId;
 
 /// How an EVENT's time is anchored.

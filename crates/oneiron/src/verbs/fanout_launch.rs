@@ -6,12 +6,10 @@
 //! digest its approver saw, as lower hex. The rulings are host doors: a
 //! server passes the owner proof its request carried (`*_as`), or the holder
 //! its slip names; an embedded handle its own embedded owner, or its actor.
-use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
-use crate::entity_id::EntityId;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::task_verb::{ConsultFanOutChoice, FanoutCheckChoice};
+use crate::task_verb::ConsultFanOutChoice;
 
 pub use crate::task_verb::fanout_batch::FanoutLaunchRequest;
 

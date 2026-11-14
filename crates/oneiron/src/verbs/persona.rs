@@ -1,7 +1,5 @@
 //! Typed owner doors for profile request answers and accepted persona copies.
 
-use serde::{Deserialize, Serialize};
-
 use crate::access_grant::AccessRequestStatus;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};

@@ -1,7 +1,5 @@
 //! One gate decision under a live verb Grant and the explain door's visibility rule.
 
-use serde::{Deserialize, Serialize};
-
 use super::ExplainGateRequest;
 use crate::EntityId;
 use crate::claim::{ClaimReadStatus, ScopedReadResult};

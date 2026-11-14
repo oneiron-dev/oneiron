@@ -13,12 +13,11 @@
 //! handle. A call receipt's digest and every verb hook read the answer with
 //! the handle where the value was ([`masked_reveal_reply`]).
 use base64::Engine as _;
-use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::secret_custody::{
-    HandleReveal, SecretHandleCard, SecretRevealDecision, SecretRevealReceipt, SecretSight,
+    HandleReveal, SecretHandleCard, SecretRevealDecision, SecretRevealReceipt,
 };
 
 #[doc(hidden)]
@@ -158,7 +157,6 @@ fn reveal_effect(effect: HandleReveal) -> (&'static str, Option<String>, Option<
 }
 
 pub use crate::code_run::kept_reveal_answer;
-pub(crate) use crate::code_run::kept_reveal_lease;
 
 pub use crate::task_verb::verb_hook_boundary::masked_reveal_reply;
 

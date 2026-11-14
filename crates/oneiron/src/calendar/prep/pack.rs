@@ -2,8 +2,6 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use serde::{Deserialize, Serialize};
-
 use super::wake::{PrepEvent, PrepPolicy, prep_is_eligible};
 use crate::calendar::claims::is_calendar_claim_predicate;
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};

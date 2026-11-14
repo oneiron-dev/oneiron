@@ -10,7 +10,6 @@ use super::{
 use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SigningAction {

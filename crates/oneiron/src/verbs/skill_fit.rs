@@ -5,8 +5,6 @@
 //! permissions stay inert either way: the fit only decides whether an
 //! install lands now or asks.
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::MemoryResult;

@@ -2,7 +2,6 @@
 //! acts for, as refs a claim or note can take as its subject, so a plugin's
 //! notes about itself or about its person outlive the one conversation it
 //! wrote them in.
-use serde::{Deserialize, Serialize};
 
 use crate::memory::MemoryResult;
 use crate::{EdgeActorClass, EntityId, Error, Vault};

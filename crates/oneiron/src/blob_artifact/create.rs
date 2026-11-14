@@ -3,7 +3,6 @@
 //! row run this one door as their bound actor.
 
 use base64::Engine as _;
-use serde::{Deserialize, Serialize};
 
 use super::{ArtifactView, BlobArtifactBody, BlobBodyFile, BlobVersionProvenance};
 use crate::edge::EdgeActorClass;

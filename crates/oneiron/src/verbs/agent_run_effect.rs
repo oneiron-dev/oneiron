@@ -10,12 +10,9 @@
 //! call answers the step that it may have happened elsewhere, and the run
 //! goes on without it. The first answer settles the ask; a later one finds
 //! it settled.
-use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::agent_dispatch::AgentRunEffectAnswerOutcome;
 use crate::consent::AuthenticatedOwner;
-use crate::entity_id::EntityId;
 use crate::memory::{MemoryError, MemoryResult};
 
 #[doc(hidden)]

@@ -1,11 +1,8 @@
 //! `self.memory.self_model`: the caller's own self-model SUMMARY text with its live revision, or why it is absent.
 
-use serde::{Deserialize, Serialize};
-
 use crate::claim::ScopedReadResult;
 use crate::memory::{Memory, MemoryResult};
 use crate::scope_summary::SummaryReadRequest;
-use crate::vault::RevisionRef;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::self_model_read::SelfModelReadView;

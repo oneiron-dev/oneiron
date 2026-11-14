@@ -9,14 +9,12 @@
 //! continuation). Like every session row, none keeps a call receipt, and a
 //! bare embedded handle answers each with [`super::off_record_host_only`].
 
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::EntityId;
-use crate::code_run::{ResultFacet, SelfDurableWaitReason};
-use crate::memory::result_doors::{ResultCard, ResultReadRefusal};
-use crate::memory::{MemoryError, MemoryResult};
+use crate::code_run::SelfDurableWaitReason;
+use crate::memory::MemoryResult;
+use crate::memory::result_doors::ResultCard;
 use crate::off_record::{SessionRunCards, SessionRunWait, SessionWaitAnswer};
 
 #[doc(hidden)]

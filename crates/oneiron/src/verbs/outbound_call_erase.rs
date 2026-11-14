@@ -4,9 +4,6 @@
 //! through the typed owner surface, with the owner's proof checked in the
 //! erase's own writer.
 
-use serde::{Deserialize, Serialize};
-
-use crate::EntityId;
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;

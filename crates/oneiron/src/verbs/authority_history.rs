@@ -4,7 +4,6 @@
 //! these DTOs only carry the original signed envelopes over JSON.
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 pub use crate::authority::{AuthorityClockRepair, AuthorityClockRepairOutcome};

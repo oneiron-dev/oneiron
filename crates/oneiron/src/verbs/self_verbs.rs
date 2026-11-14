@@ -69,7 +69,6 @@ pub fn self_memory_diary_write(
     Ok(receipt.into())
 }
 
-pub(crate) use crate::dreamer_runner::maintenance::agent_health::steer::steer_linked;
 pub use crate::dreamer_runner::maintenance::agent_health::steer::{
     SteerReceipt, SteerRequest, steer_child, steer_child_as_owner, steer_child_at,
     steer_child_at_as_owner,

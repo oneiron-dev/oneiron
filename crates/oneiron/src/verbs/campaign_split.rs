@@ -6,18 +6,12 @@
 //! checks them against the config and asks the taste questions through the
 //! decisions the host lends. The report is returned, not stored.
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::autoreason_campaign::authoring::authoring_campaign;
 use crate::autoreason_campaign::{
-    BlindCampaignJudgeInput, CampaignCost, CampaignError, CampaignEvaluationSplit,
-    CampaignExecutableArm, CampaignSmokeOutcome, CampaignSplitReport, CampaignTasteDecisions,
-    build_campaign_split_report,
+    CampaignError, CampaignSplitReport, CampaignTasteDecisions, build_campaign_split_report,
 };
-use crate::entity_id::EntityId;
-use crate::extraction_eval::{Of360ExtractionRun, Of360GoldDataset};
 use crate::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
 
 #[doc(hidden)]

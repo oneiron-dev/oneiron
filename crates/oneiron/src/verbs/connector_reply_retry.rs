@@ -3,8 +3,6 @@
 //! and its kept result stay as history; the successor replays the logical
 //! send through the queue's own path, as a fresh wake would.
 
-use serde::{Deserialize, Serialize};
-
 use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};

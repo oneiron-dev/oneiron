@@ -15,15 +15,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::connector_key::{
     ConnectorBindingDependent, ConnectorCredentialBinding, ConnectorIssuerObservation,
-    ConnectorIssuerTransitionState, ConnectorRevisionDeferral, ConnectorScopeExceed,
-    ConnectorScopeOutcome, ConnectorScopeOutcomeRecorded, ConnectorSlateRevisionAccepted,
-    ConnectorSlateRevisionOffer, ConnectorSlateScopeSignal, SlateDisposition, SlateOwnerOverride,
-    SlateRevisionCause,
+    ConnectorIssuerTransitionState, ConnectorScopeExceed, ConnectorScopeOutcome,
+    ConnectorScopeOutcomeRecorded, ConnectorSlateRevisionAccepted, ConnectorSlateRevisionOffer,
+    ConnectorSlateScopeSignal, SlateDisposition, SlateOwnerOverride, SlateRevisionCause,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::edit_distance::graduation::SnoozeState;
 use crate::entity_id::EntityId;
-use crate::memory::{MemoryError, MemoryResult};
+use crate::memory::MemoryResult;
 
 #[doc(hidden)]
 use oneiron_verb_wire::verbs::connector_slate_revision::id;

@@ -1,7 +1,5 @@
 //! The explicit owner request to keyframe follower sessions (FIX 8532).
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::MemoryResult;

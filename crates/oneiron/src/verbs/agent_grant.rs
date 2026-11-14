@@ -51,9 +51,8 @@ use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::federation::{
-    AGENT_GRANT_REVOKE_COMMAND, AgentGrantFromSlipUnchangedReason, AgentGrantStanding,
-    EngineControlChange, EngineControlClass, GrantlessAgentConversion, RepoAccessBounds, Scope,
-    SystemAgent, SystemAgentGrantNarrowing, SystemFunction, WalletRef, WorkingViewEditBounds,
+    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, EngineControlChange, EngineControlClass,
+    GrantlessAgentConversion, SystemAgent, SystemAgentGrantNarrowing, SystemFunction,
 };
 use crate::memory::{MemoryError, MemoryResult};
 

@@ -1,6 +1,5 @@
 //! `vault.receipts`'s input and its page (FIX 10186): any positive limit,
 //! requested on either ledger, with `after` continuing a page's receipts.
-use serde::{Deserialize, Serialize};
 
 pub use crate::memory::VaultReceiptsPage;
 

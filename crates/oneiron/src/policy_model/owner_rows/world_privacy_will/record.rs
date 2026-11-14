@@ -8,8 +8,6 @@
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
-use serde::{Deserialize, Serialize};
-
 use crate::authority::{PolicyRevision, WorldPrivacy};
 use crate::error::{Error, Result};
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};

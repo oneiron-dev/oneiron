@@ -22,11 +22,9 @@
 //! `vault.settings.snapshot_read.lower` (SNAPSHOT-SETTINGS-IN-6.6).
 //! The owner keeps `vault.sieve.policy.set`, `vault.free_time.policy.set`
 //! and `vault.settings.snapshot_read.replace` for the whole rows.
-use serde::{Deserialize, Serialize};
 
 use super::EngineControlChangeEntry;
 use crate::dreamer_consolidation::strength::ConsolidationStrengthPolicy;
-use crate::dreamer_runner::FreeTimeSchedule;
 use crate::dreamer_runner::maintenance::RetuneThresholds;
 use crate::dreamer_wake::{ProjectorPolicy, SievePassBudgets};
 use crate::federation::EngineControlActor;

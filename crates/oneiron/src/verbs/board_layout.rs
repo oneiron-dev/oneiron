@@ -4,10 +4,8 @@
 //! `self.board.replace` stage one pending batch the next turn applies. The
 //! layout is the handle's own: the engine keys it by the handle's actor,
 //! never by a field naming someone else.
-use serde::{Deserialize, Serialize};
 
-use crate::EntityId;
-use crate::context_board::{BoardLayout, SectionFilter, SectionFold, is_section_key};
+use crate::context_board::{SectionFold, is_section_key};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 
 pub use crate::context_board::BoardLayoutState;

@@ -13,16 +13,13 @@
 //! localities and their paid runs.
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::llm::ModelLocality;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::verbs::voice_records::{
-    VoiceBankActor, VoiceRefOrigin, VoiceRefPack, VoiceRefSubjectKind, VoiceRegisterClip,
-    VoiceRenderConsentWrite, VoiceRenderDecision, VoiceTargetRecord,
+    VoiceBankActor, VoiceRefPack, VoiceRegisterClip, VoiceRenderConsentWrite, VoiceRenderDecision,
+    VoiceTargetRecord,
 };
-use crate::verbs::voice_records::{VoiceConsentBasis, VoiceConsentState};
 
 pub use crate::verbs::voice_records::{
     VoiceBankInspection, VoiceClipSummary, VoiceDroppedTargetView, VoiceIdentityView,

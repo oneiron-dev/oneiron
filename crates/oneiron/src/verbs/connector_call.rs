@@ -33,8 +33,8 @@ use crate::memory::{
     MemoryError, MemoryResult,
 };
 use crate::outbound_consent::{
-    ConnectorAwaitingInput, ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest,
-    ConnectorCallState, ConnectorQuestion, ConnectorSource, ConnectorToolSchema,
+    ConnectorAwaitingInput, ConnectorCallInvocation, ConnectorCallRequest, ConnectorCallState,
+    ConnectorQuestion, ConnectorSource, ConnectorToolSchema,
 };
 use crate::outbound_intent_ledger::IntentLedgerError;
 use crate::runtime_hooks::InvocationId;

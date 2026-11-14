@@ -7,9 +7,6 @@
 //! handle, as the neighbouring owner doors take them; an embedded handle
 //! answers as its own owner. Nothing here revokes on its own.
 
-use serde::{Deserialize, Serialize};
-
-use crate::EntityId;
 use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryResult};

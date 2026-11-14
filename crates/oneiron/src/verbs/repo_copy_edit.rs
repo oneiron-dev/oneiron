@@ -13,7 +13,6 @@
 //! local commit, not a delivery. `x:` evidence is neither read nor needed.
 
 use base64::Engine as _;
-use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::error::{ArtifactError, Error};

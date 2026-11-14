@@ -18,9 +18,7 @@ use zeroize::Zeroize;
 
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};
-use crate::store::custody_protocol::{
-    AckPosition, DrainAck, TargetId, TargetKind, TargetScope, TargetSpec,
-};
+use crate::store::custody_protocol::{AckPosition, TargetId, TargetKind, TargetSpec};
 use crate::{EntityId, Vault};
 
 /// The prefix of a residence member's id: `residence:<machine hex>`.

@@ -1,15 +1,13 @@
 //! `self.skills.package`: one admitted skill's record and runtime package.
 
-use serde::{Deserialize, Serialize};
-
 use crate::EntityId;
-use crate::claim::{ClaimApprovalStatus, ClaimSource, ScopedReadResult};
+use crate::claim::ScopedReadResult;
 use crate::memory::{Memory, MemoryResult};
 use crate::skill_hub::HubPackage;
 
 use super::{
     HubSkillRequest, SkillCapabilityView, SkillLibraryCall, SkillLibraryDependency,
-    SkillLibraryFile, SkillLibraryLifecycle,
+    SkillLibraryFile,
 };
 
 #[doc(hidden)]

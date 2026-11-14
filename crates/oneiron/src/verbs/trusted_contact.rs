@@ -14,19 +14,15 @@
 //! the person and the contact come from the caller's proof and the time from
 //! the host, never from the input, so no request asserts another person's
 //! consent or adulthood, a verdict, or a sender.
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::consent::AuthenticatedOwner;
-use crate::counterparty_contact::{
-    TrustedContact, TrustedContactAsk, TrustedContactAskOutcome, TrustedContactDial,
-    TrustedContactNoticeAuthorization, TrustedContactReach, TrustedContactTier,
-};
+use crate::counterparty_contact::{TrustedContact, TrustedContactAsk, TrustedContactAskOutcome};
 use crate::memory::{
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
 };
 use crate::outbound::OutboundExecutionSink;
 use crate::policy_model::{PolicyClassifyRequest, PolicyEnforcementAction, PolicyModelConfig};
-use crate::store::GateSystemNoticeRecord;
 use crate::{EntityId, Vault};
 
 /// The record kind `.concern.propose` reads: one conversation message.

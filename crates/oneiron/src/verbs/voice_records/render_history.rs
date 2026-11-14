@@ -1,8 +1,6 @@
 //! Render-decision receipts and metadata-only history views.
 
-use super::model::{VoiceRenderConsent, VoiceTargetRecord};
-use super::views::{VoiceRenderConsentView, VoiceTargetCloneView};
-use serde::{Deserialize, Serialize};
+use super::model::VoiceTargetRecord;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::voice_records::render_history::{

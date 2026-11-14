@@ -1,12 +1,9 @@
 //! Engine comment requests over the docedit organ's PowerPoint comment types.
 
-use crate::entity_id::EntityId;
 pub use oneiron_docedit::pptx_comments::{
     PptxAnchorOutcome, PptxAuthor, PptxCommentAction, PptxCommentEffects, PptxCommentTarget,
     PptxDriftReason, PptxError, PptxInspection, PptxShapeIdentity, PptxSlideIdentity,
 };
-use oneiron_docedit::pptx_comments::{PptxCommentEdit, guid};
-use serde::{Deserialize, Serialize};
 
 pub(super) type PatchResult<T> = std::result::Result<T, PptxError>;
 

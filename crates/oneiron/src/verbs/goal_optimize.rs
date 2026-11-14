@@ -2,7 +2,7 @@
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::skill::SkillLifecycle;
-use crate::skill_optimize::{self as optimize, GoalAxisBandit, GoalAxisReport, HeldOutReplayNotes};
+use crate::skill_optimize::{self as optimize, GoalAxisBandit, HeldOutReplayNotes};
 use crate::workspace_roster::{GoalInterviewTurns, GoalRecord};
 use crate::{EntityId, Error, TimeRange, Vault};
 use serde::{Deserialize, Serialize};

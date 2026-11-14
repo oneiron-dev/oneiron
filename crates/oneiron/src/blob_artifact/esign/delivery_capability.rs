@@ -41,7 +41,6 @@ use crate::outbound::EsignDeliveryCall;
 use crate::store::attempt_id::AttemptId;
 use crate::store::attempt_state::AttemptState;
 use crate::{EntityId, Result, Vault};
-use serde::{Deserialize, Serialize};
 
 /// The queue kind the vault keeps authorized e-sign mail under.
 pub(super) const DELIVERY_KIND: &str = "esign.delivery";

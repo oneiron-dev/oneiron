@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::connector_key::{PackConnectionVerifier, PackSetupOwnerAsk, ProviderConnectionChecks};
 use crate::consent::AuthenticatedOwner;
-use crate::lens::GeneratedUiStateSnapshot;
 use crate::memory::{MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryResult};
 use crate::skill_hub::pack_catalog::{
     PackSetupActor, PackSetupAnswer, PackSetupCardAction, PackSetupView,

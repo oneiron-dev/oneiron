@@ -17,7 +17,6 @@
 //! The lease-aware twins ([`use_secret_grant_as_caller`],
 //! [`use_secret_grant_for_connector_call`], FIX 4313) take a secret grant the
 //! caller holds in place of a handle, and answer the same way.
-use serde::{Deserialize, Serialize};
 
 use super::connector_call::ConnectorCallReply;
 use crate::attempt_queue::AttemptId;

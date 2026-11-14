@@ -6,18 +6,13 @@
 //! customer's support person or agent never passes these doors, its own
 //! grant included. An embedded handle holds no host signing key, so it
 //! refuses mint and revoke after the owner check; its owner may list.
-use std::collections::BTreeSet;
-
-use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::authority::{
-    CommReach, HostSlipIssuer, SUPPORT_GRANT_REVOKE_COMMAND, SupportGrantQuery,
-    SupportGrantRequest, SupportGrantRow, SupportGrantStatus, SupportHolderClass, SupportRepair,
+    HostSlipIssuer, SUPPORT_GRANT_REVOKE_COMMAND, SupportGrantQuery, SupportGrantRequest,
+    SupportGrantRow,
 };
 use crate::consent::AuthenticatedOwner;
-use crate::entity_id::EntityId;
-use crate::federation::Scope;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 
 /// The longest support grant list one call answers.

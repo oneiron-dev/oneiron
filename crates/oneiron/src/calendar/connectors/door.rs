@@ -1,7 +1,7 @@
 //! Owner-installed calendar seats and host iMIP submission, with custody names only.
 use serde::{Deserialize, Serialize};
 
-use super::{CalendarConnectorSeatConfig, CalendarConnectorSeatState, CalendarSyncOutcome};
+use super::{CalendarConnectorSeatState, CalendarSyncOutcome};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};

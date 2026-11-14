@@ -1,7 +1,5 @@
 //! Owner review and approve-once doors for held campaign enrollments.
 
-use serde::{Deserialize, Serialize};
-
 use crate::campaign::enrollment::CampaignEnrollmentHeldCall;
 use crate::consent::AuthenticatedOwner;
 use crate::consent::lifecycle::ConsentActReceipt;

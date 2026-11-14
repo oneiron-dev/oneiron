@@ -5,11 +5,9 @@
 //! confers no authority: only the owner settles it, at
 //! `POST /v1/owner/disclosure/confirm`. The agent surface has no confirm row,
 //! and the generic widen accept refuses a contact payload.
-use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::consent::ContactDisclosureOffer;
-use crate::federation::Scope;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 
 #[doc(hidden)]

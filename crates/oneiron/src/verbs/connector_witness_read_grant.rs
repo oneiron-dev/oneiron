@@ -6,12 +6,9 @@
 //! `vault.connectors.read_grants.grant` (FIX 10962) is the owner's grant
 //! once more: it issues the grant anew at its same id.
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
-use crate::entity_id::EntityId;
 use crate::memory::MemoryResult;
 
 #[doc(hidden)]

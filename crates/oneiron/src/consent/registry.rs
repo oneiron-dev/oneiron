@@ -1,13 +1,11 @@
-use super::bound::{BoundEnvelope, BoundSubject, ConsentDomain};
+use super::bound::{BoundEnvelope, ConsentDomain};
 use super::contact_clearance::{
     CONTACT_CLEARANCE_CLASS, CONTACT_CLEARANCE_REVOKE_COMMAND, contact_clearance_ref,
 };
 use super::grant::{ConsentGrantRow, ConsentGrantStatus};
 use crate::disclosure::{DisclosureScope, DisclosureScopeStatus};
 use crate::entity_id::EntityId;
-use oneiron_authority::federation::{
-    RepoAccessBounds, Scope, ScopeAxis, Sensitivity, SensitivityCeiling,
-};
+use oneiron_authority::federation::Scope;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::consent::registry::{
@@ -16,9 +14,7 @@ pub use oneiron_verb_wire::consent::registry::{
     GrantlessAgentConvertAction, GrantlessAgentRow, SUPPORT_GRANT_CLASS,
 };
 #[doc(hidden)]
-use oneiron_verb_wire::consent::registry::{
-    render_axis, render_scope, render_selectors, render_subject,
-};
+use oneiron_verb_wire::consent::registry::{render_scope, render_selectors, render_subject};
 
 /// One registry row: who-can-see-what / what-can-run, with a one-tap revoke.
 #[derive(
