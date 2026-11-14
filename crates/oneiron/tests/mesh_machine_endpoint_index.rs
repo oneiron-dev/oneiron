@@ -6,7 +6,9 @@
 //! the dropped index, the index answers each lookup (no fallback) as the
 //! walk answers it. An owner's lookup the index serves reads no MACHINE row
 //! past its own, so it raises no `MachineRows` check; with the index
-//! dropped it walks and raises one, as before.
+//! dropped it walks and raises one, as before. An erase (a GDPR, policy or
+//! user delete) leaves no index row naming the erased MACHINE, at once or
+//! after a reopen.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -21,7 +23,7 @@ use oneiron::scan_check::EngineScan;
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::mesh_machine_endpoint_index::{self as doors, IndexedEndpoint};
-use oneiron::{EntityId, Vault, VaultConfig};
+use oneiron::{DeleteReason, EntityId, Vault, VaultConfig};
 
 fn endpoint_key(seed: u8) -> [u8; 32] {
     SigningKey::from_bytes(&[seed; 32])
@@ -176,4 +178,44 @@ fn an_owner_lookup_counts_machine_rows_only_when_it_walks() {
     let checks = vault.scan_checks().expect("checks");
     assert_eq!(checks.len(), 1, "the walk reads past its threshold row");
     assert_eq!(checks[0].scan, scan.code());
+}
+
+#[test]
+fn an_erase_leaves_no_index_row_naming_the_erased_machine() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    let indexed = |vault: &Vault, machine: EntityId| {
+        doors::index_rows(vault)
+            .expect("index rows")
+            .iter()
+            .any(|(_, id)| *id == machine)
+    };
+    let mut erased = Vec::new();
+    for (seed, reason) in [
+        (0x71, DeleteReason::GdprDelete),
+        (0x72, DeleteReason::PolicyDelete),
+        (0x73, DeleteReason::UserDelete),
+    ] {
+        let machine = EntityId::now();
+        put_machine(&vault, &machine, &address_body(endpoint_key(seed)));
+        assert!(indexed(&vault, machine), "the address write indexes it");
+        vault
+            .delete_entity_with_reason(&machine, reason)
+            .expect("erase");
+        assert!(
+            !indexed(&vault, machine),
+            "{reason:?} leaves no index row naming the MACHINE"
+        );
+        erased.push(machine);
+    }
+    // The flag stays set, so the reopen keeps the index as it stands.
+    drop(vault);
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("reopen");
+    assert!(doors::index_complete(&vault).expect("flag"));
+    for machine in erased {
+        assert!(!indexed(&vault, machine), "the reopen keeps no row for it");
+    }
 }

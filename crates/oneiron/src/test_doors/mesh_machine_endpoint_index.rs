@@ -44,3 +44,8 @@ pub fn drop_index(vault: &Vault) -> Result<()> {
 pub fn index_complete(vault: &Vault) -> Result<bool> {
     vault.mesh_machine_endpoint_index_complete_for_test()
 }
+
+/// Every `(endpoint key, MACHINE id)` row the index holds.
+pub fn index_rows(vault: &Vault) -> Result<Vec<([u8; 32], EntityId)>> {
+    vault.mesh_machine_endpoint_index_rows_for_test()
+}

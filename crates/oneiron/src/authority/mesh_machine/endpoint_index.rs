@@ -10,9 +10,9 @@
 //! does not hold) falls back to the walk in [`super`], which answers (or
 //! errors) exactly as it does today. Every entity body write passes the
 //! body stage (`batch::put_apply::stage_entity_body_row`), which moves the
-//! row's key here, and every entity row removal drops it. A key a path left
-//! behind by rewriting a body in place (a scrub to a shell) re-reads as no
-//! address for that key and is skipped, as the walk skips that row.
+//! row's key here, every in-place scrub to a shell
+//! (`EntityStoreMaintenance::port_entity_scrub`, which every erase runs)
+//! drops it, and every entity row removal drops it.
 
 use super::{MeshMachineAddress, invalid_authority, parse_address};
 use crate::Vault;
@@ -194,6 +194,18 @@ impl Vault {
     pub(crate) fn mesh_machine_endpoint_index_complete_for_test(&self) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
         Ok(index_complete_in_txn(&self.store, &rtxn))
+    }
+
+    /// Every `(endpoint key, MACHINE id)` row the index holds.
+    pub(crate) fn mesh_machine_endpoint_index_rows_for_test(
+        &self,
+    ) -> Result<Vec<([u8; 32], EntityId)>> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(ENDPOINT_INDEX
+            .scan(&self.store, &rtxn)?
+            .into_iter()
+            .map(|(key, ())| key)
+            .collect())
     }
 
     /// The MACHINE naming endpoint `key` as the index answers: `None` when
