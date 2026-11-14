@@ -418,7 +418,8 @@ pub(crate) fn hold_public_key(vault: &Vault, hold: &EntityId) -> Result<HybridPu
     let store = configured(vault)?;
     let dir = store.hold_dir(vault, hold);
     let vault_id = *vault.vault_id().as_bytes();
-    Ok(hold_secret(vault, &vault_id, hold, &dir)?.public_key())
+    let secret = hold_secret(vault, &vault_id, hold, &dir)?;
+    Ok(secret.public_key().clone())
 }
 
 /// Writes one capture: its frames through a collector into its file, and its
