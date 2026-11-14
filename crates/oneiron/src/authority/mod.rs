@@ -469,7 +469,7 @@ pub(crate) use history_admission::{
 pub(crate) use host_action::{HostActionGuard, host_action_refused};
 #[cfg(any(test, feature = "sync"))]
 pub(crate) use import_order::authority_stage_order;
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) use log_budget::with_authority_doors_open_for_test;
 pub(crate) use log_budget::{
     AuthorityDoor, AuthorityDoorView, authority_door, authority_signer_label, signer_has_standing,
