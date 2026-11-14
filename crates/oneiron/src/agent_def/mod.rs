@@ -63,9 +63,11 @@ pub(crate) use self::powers::{
     decode_power_grant_row, effective_agent_powers_in_txn, ensure_save_agent_in_txn,
     power_grant_row, power_refusal, stage_agent_powers_in_txn,
 };
-pub use self::proposed_change::ProposedAgentDefinitionChangeDecision;
 pub(crate) use self::proposed_change::{
     ProposedAgentDefinitionChange, ProposedAgentDefinitionChangeSettlement,
+};
+pub use self::proposed_change::{
+    ProposedAgentDefinitionChangeDecision, proposed_agent_definition_change_approve_effect_digest,
 };
 pub use self::refusal::{
     REFUSAL_DIAL_KEYS, RefusalDial, RefusalDomain, RefusalLevel, RefusalOutcome, VaultKind,

@@ -235,7 +235,28 @@ impl AgentDispatcher<'_> {
         proposal: &super::ContextWidenProposal,
         now: u64,
     ) -> Result<AgentDispatchOutcome> {
-        self.approve_widen_as(&BoardActor::Owner(owner), proposal, now)
+        self.approve_context_widen_applying(owner, proposal, now, None)
+            .map(|(outcome, _)| outcome)
+    }
+
+    /// [`Self::approve_context_widen`] with the decision it ran on. The
+    /// approval widens the parent's slice: it is the owner's own act on
+    /// their own proof, and with `applied` they apply another asker's
+    /// approved check-in for this exact approval, spent in the landing
+    /// writer beside the approve-once consent (ROLES-CHECKIN 2k8; P25-SHAPE
+    /// Q1 = A). A proposal already settled answers as it settled: it spends
+    /// nothing and records no decision.
+    pub(crate) fn approve_context_widen_applying(
+        &self,
+        owner: &AuthenticatedOwner,
+        proposal: &super::ContextWidenProposal,
+        now: u64,
+        applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> Result<(
+        AgentDispatchOutcome,
+        Option<crate::check_in::CheckInDecision>,
+    )> {
+        self.approve_widen_as(&BoardActor::Owner(owner), proposal, now, applied)
     }
 
     /// [`Self::approve_context_widen`] by the board attempt's own agent
@@ -250,16 +271,22 @@ impl AgentDispatcher<'_> {
         proposal: &super::ContextWidenProposal,
         now: u64,
     ) -> Result<AgentDispatchOutcome> {
-        self.approve_widen_as(&BoardActor::Agent(board_lease), proposal, now)
+        self.approve_widen_as(&BoardActor::Agent(board_lease), proposal, now, None)
+            .map(|(outcome, _)| outcome)
     }
 
-    /// The one landing path both approvals take.
+    /// The one landing path both approvals take. `applied` is the owner's
+    /// only: a board act applies no check-in and records no decision.
     fn approve_widen_as(
         &self,
         actor: &BoardActor<'_>,
         proposal: &super::ContextWidenProposal,
         now: u64,
-    ) -> Result<AgentDispatchOutcome> {
+        applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> Result<(
+        AgentDispatchOutcome,
+        Option<crate::check_in::CheckInDecision>,
+    )> {
         // FIX 6291: as the proposal's, judged at a fresh grant clock.
         self.vault.store.authorization_now()?;
         let mut wtxn = self.vault.store.env.write_txn()?;
@@ -277,7 +304,7 @@ impl AgentDispatcher<'_> {
         // A settled proposal answers as it settled: its landing, or its
         // refusal once declined.
         if record.landed.is_some() || record.declined.is_some() {
-            return self.widen_outcome(&wtxn, &record);
+            return Ok((self.widen_outcome(&wtxn, &record)?, None));
         }
         let (input, spawn) = record.dispatch(&proposal.proposal_id, now)?;
         // In this writer's snapshot, as every read below (FIX 10543): a read
@@ -348,10 +375,10 @@ impl AgentDispatcher<'_> {
                 target.scope.to_world_scope(),
             )?;
         }
-        match actor {
+        let decision = match actor {
             // Only the existing authenticated-owner door mints approval.
             // Spending and landing are atomic, so a failed enqueue spends no
-            // owner act.
+            // owner act, and no applied check-in.
             BoardActor::Owner(owner) => {
                 self.vault
                     .approve_once_in_txn(&mut wtxn, owner, proposal.consent.effect_digest)?;
@@ -362,13 +389,20 @@ impl AgentDispatcher<'_> {
                 )?
                 .ok_or_else(|| invalid("board consent did not authorize this exact widening"))?;
                 spend_approve_once_in_txn(&self.vault.store, &mut wtxn, &authorization)?;
+                Some(crate::check_in::owner_act_decision_in_txn(
+                    self.vault,
+                    &mut wtxn,
+                    crate::check_in::ActClass::GrantWiden,
+                    applied,
+                )?)
             }
             // An agent's act is a board act, recorded beside the pending row
             // in the same writer; it mints no owner consent.
             BoardActor::Agent(_) => {
                 self.record_board_act_in_txn(&mut wtxn, &act, proposal, "approved", now)?;
+                None
             }
-        }
+        };
         let outcome = match &input.target {
             AgentDispatchTarget::Custom(_) => {
                 self.dispatch_in_txn(&mut wtxn, None, input, spawn)?
@@ -421,7 +455,7 @@ impl AgentDispatcher<'_> {
         {
             self.vault.store.notify_task_updates([task]);
         }
-        Ok(outcome)
+        Ok((outcome, decision))
     }
 
     /// The board above refuses an exact, stored proposal (OF-568), on the

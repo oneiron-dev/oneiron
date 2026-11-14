@@ -195,6 +195,11 @@ pub struct ProposedAgentDefinitionChangeApproveRequest {
     /// The stored definition's version the owner read beside the proposal.
     /// The approval is refused once the stored definition has moved on.
     pub expected_target_version: String,
+    /// Another asker's approved check-in for this exact approval, 32 hex:
+    /// the owner applies it on their own proof, and the approval's writer
+    /// spends it (ROLES-CHECKIN 2k8). Omitted: the owner's own approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// The owner's rejection of one proposed change to a stored definition.
@@ -256,10 +261,16 @@ pub struct ProposedAgentDefinitionChangeSettlementView {
     pub proposed_through: Option<String>,
     /// The gate decision that records the answer, as `gate:<id hex>`.
     pub receipt_ref: String,
+    /// The decision an approval ran on: the owner's own proof, naming the
+    /// asker's approved check-in it applied (ROLES-CHECKIN 2k8). Absent on a
+    /// rejection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 fn settlement_view(
     settlement: crate::agent_def::ProposedAgentDefinitionChangeSettlement,
+    check_in: Option<crate::check_in::CheckInDecision>,
 ) -> ProposedAgentDefinitionChangeSettlementView {
     let change = settlement.change;
     ProposedAgentDefinitionChangeSettlementView {
@@ -275,6 +286,7 @@ fn settlement_view(
         proposed_by: change.proposed_by,
         proposed_through: change.proposed_through,
         receipt_ref: settlement.receipt_ref,
+        check_in,
     }
 }
 
@@ -304,25 +316,36 @@ pub fn list_proposed_agent_definition_changes_as(
 }
 
 /// `vault.agents.proposed_changes.approve`: the stored definition takes the
-/// proposal as its next version, and the proposal row is deleted.
+/// proposal as its next version, and the proposal row is deleted. The
+/// approval widens the agent (the verb's act, "Widen another's grant",
+/// ARCH-0082 #act-table): the owner's own approval goes on their own proof,
+/// never gated, and the answer records that decision (`check_in`). With
+/// `check_in_ref` the owner applies another asker's approved check-in for
+/// this exact approval, proposal body included
+/// ([`crate::agent_def::proposed_agent_definition_change_approve_effect_digest`]),
+/// spent in the approval's writer after every check (ROLES-CHECKIN 2k8;
+/// Engine RULING P25-SHAPE Q1 = A).
 ///
 /// # Errors
 ///
 /// The owner proof's refusal; no proposal waiting at `proposal_ref`; a
 /// stored definition no longer at `expected_target_version`; the refusals
-/// the owner's own update of the stored definition meets.
+/// the owner's own update of the stored definition meets; a malformed
+/// `check_in_ref`, or a check-in that is not an approved ask for this
+/// approval.
 pub fn approve_proposed_agent_definition_change_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: ProposedAgentDefinitionChangeApproveRequest,
 ) -> MemoryResult<ProposedAgentDefinitionChangeSettlementView> {
-    Ok(settlement_view(
-        vault.approve_proposed_agent_definition_change_as(
-            owner,
-            &input.proposal_ref,
-            &input.expected_target_version,
-        )?,
-    ))
+    let check_in = super::shared::check_in_ref(input.check_in_ref.as_deref())?;
+    let (settlement, decision) = vault.approve_proposed_agent_definition_change_as(
+        owner,
+        &input.proposal_ref,
+        &input.expected_target_version,
+        check_in.as_ref(),
+    )?;
+    Ok(settlement_view(settlement, Some(decision)))
 }
 
 /// `vault.agents.proposed_changes.reject`: the stored definition stays as it
@@ -338,5 +361,6 @@ pub fn reject_proposed_agent_definition_change_as(
 ) -> MemoryResult<ProposedAgentDefinitionChangeSettlementView> {
     Ok(settlement_view(
         vault.reject_proposed_agent_definition_change_as(owner, &input.proposal_ref)?,
+        None,
     ))
 }

@@ -30,6 +30,12 @@ pub struct WidenProposalAnswer {
     /// The proposal's id (64 hex), as the list and the spawn's
     /// `proposal_ref` name it.
     pub proposal_id: String,
+    /// Another asker's approved check-in for this exact approval, 32 hex:
+    /// the owner applies it on their own proof, and the approval's writer
+    /// spends it (ROLES-CHECKIN 2k8). Omitted: the owner's own approval. A
+    /// decline takes none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// One proposal as the owner sees it. Contexts are descriptors, never the
@@ -60,6 +66,12 @@ pub struct WidenProposalView {
     /// Who declined it (actor hex), and when.
     pub declined_by: Option<String>,
     pub declined_at: Option<u64>,
+    /// The decision an approval ran on: the owner's own proof, naming the
+    /// asker's approved check-in it applied (ROLES-CHECKIN 2k8). Absent on
+    /// the list, on a decline, and on an approval of a proposal already
+    /// settled, which changes nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 /// `vault.widen_proposals`'s answer, newest first.

@@ -141,6 +141,40 @@ fn approved_next_version(stored: &AgentDefinition, proposal: &AgentDefinition) -
     next
 }
 
+/// The digest of the owner's approval of the proposed change at `proposal`,
+/// holding `definition`, while the stored row it names is at
+/// `expected_target_version`: the effect an asker's `vault.check_in.open`
+/// names for `vault.agents.proposed_changes.approve`, and the one the
+/// approval spends (2k8; P25-SHAPE Q1 = A). The proposal's id names its
+/// stored row and version, not its body, so the body is pinned here. BLAKE3,
+/// key derived from `oneiron check_in proposed agent definition change
+/// approve v1`, over the proposal's 16 id bytes, the expected version's
+/// length as eight big-endian bytes and its UTF-8 bytes, then the
+/// definition's stored encoding.
+///
+/// # Errors
+///
+/// A definition that does not encode.
+pub fn proposed_agent_definition_change_approve_effect_digest(
+    proposal: &EntityId,
+    expected_target_version: &str,
+    definition: &AgentDefinition,
+) -> Result<[u8; 32]> {
+    let body = encode_agent_definition(definition)?;
+    let mut hasher = blake3::Hasher::new_derive_key(
+        "oneiron check_in proposed agent definition change approve v1",
+    );
+    hasher.update(proposal.as_bytes());
+    hasher.update(
+        &u64::try_from(expected_target_version.len())
+            .unwrap_or(u64::MAX)
+            .to_be_bytes(),
+    );
+    hasher.update(expected_target_version.as_bytes());
+    hasher.update(&body);
+    Ok(*hasher.finalize().as_bytes())
+}
+
 /// The proposal as a rejection leaves it: Rejected and Retracted, so no
 /// dispatch runs it and no list shows it as waiting, with every other field
 /// as the agent proposed it. Its version moves to `rejected-` and the BLAKE3
@@ -209,6 +243,14 @@ impl Vault {
     /// to the new ceiling, the proposal row is deleted, and one gate decision
     /// records the answer, all in one writer that rechecks the proof.
     ///
+    /// The approval widens what the agent may do: it is the owner's own act
+    /// on their own proof, never gated, and it answers that decision. With
+    /// `check_in` the owner applies another asker's approved check-in for
+    /// this exact approval
+    /// ([`proposed_agent_definition_change_approve_effect_digest`], over the
+    /// proposal's stored body), spent in this writer after every check, so a
+    /// refusal leaves it eligible (ROLES-CHECKIN 2k8; P25-SHAPE Q1 = A).
+    ///
     /// # Errors
     ///
     /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
@@ -218,13 +260,18 @@ impl Vault {
     /// proposed change waiting for the owner, and the refusals the same body
     /// meets as an owner's update of the stored row;
     /// [`Error::ConcurrentWrite`] when the stored row is no longer at
-    /// `expected_target_version`. Every refusal writes nothing.
+    /// `expected_target_version`; a `check_in` that is not an approved ask
+    /// for this approval. Every refusal writes nothing.
     pub(crate) fn approve_proposed_agent_definition_change_as(
         &self,
         owner: &AuthenticatedOwner,
         proposal: &EntityId,
         expected_target_version: &str,
-    ) -> Result<ProposedAgentDefinitionChangeSettlement> {
+        check_in: Option<&EntityId>,
+    ) -> Result<(
+        ProposedAgentDefinitionChangeSettlement,
+        crate::check_in::CheckInDecision,
+    )> {
         let now = crate::unix_seconds_now();
         self.with_write_txn(|txn| {
             let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
@@ -235,6 +282,24 @@ impl Vault {
             }
             let next = approved_next_version(&stored, &change.definition);
             validate_agent_definition_update(&stored, &next)?;
+            let applied = match check_in {
+                Some(id) => Some(crate::check_in::AppliedCheckIn {
+                    id: *id,
+                    verb: "vault.agents.proposed_changes.approve",
+                    effect_digest: proposed_agent_definition_change_approve_effect_digest(
+                        proposal,
+                        expected_target_version,
+                        &change.definition,
+                    )?,
+                }),
+                None => None,
+            };
+            let decision = crate::check_in::owner_act_decision_in_txn(
+                self,
+                txn,
+                crate::check_in::ActClass::GrantWiden,
+                applied.as_ref(),
+            )?;
             super::id_pin::move_pin_for_owner_in_txn(&self.store, txn, &change.target, &next)?;
             self.apply_agent_definition_body(
                 txn,
@@ -247,14 +312,15 @@ impl Vault {
                 encode_agent_definition(&next)?,
             )?;
             self.delete_proposal_in_txn(txn, &change.proposal)?;
-            self.record_answer_in_txn(
+            let settlement = self.record_answer_in_txn(
                 txn,
                 actor,
                 change,
                 ProposedAgentDefinitionChangeDecision::Approved,
                 Some(stored.version),
                 Some(next),
-            )
+            )?;
+            Ok((settlement, decision))
         })
     }
 

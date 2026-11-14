@@ -17,6 +17,7 @@ use crate::agent_inbox_lens::{
     AgentInboxItemKind, AgentInboxLensItem, AgentInboxParticipant, InboxImpact,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::check_in::AppliedCheckIn;
 use crate::consent::AuthenticatedOwner;
 use crate::context_projection::ContextSpec;
 use crate::{EntityId, Result, Vault};
@@ -58,28 +59,79 @@ pub fn widen_proposals_as_owner(
 /// The board above approves one proposal: the parent's slice widens and the
 /// child is enqueued, under the approve-once consent. An approved proposal
 /// answers as it landed; a declined one is refused.
+///
+/// The approval widens the parent's grant (the verb's act, "Widen another's
+/// grant", ARCH-0082 #act-table): the owner's own approval goes on their
+/// own proof, never gated, and the answer records that decision
+/// (`check_in`). With `check_in_ref` the owner applies another asker's
+/// approved check-in for this exact approval
+/// ([`widen_proposal_approve_effect_digest`]), spent in the landing writer
+/// (ROLES-CHECKIN 2k8; Engine RULING P25-SHAPE Q1 = A). A proposal already
+/// settled spends nothing and records none.
 pub fn approve_widen_proposal_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     answer: &WidenProposalAnswer,
 ) -> Result<WidenProposalView> {
+    let applied = match answer.check_in_ref.as_deref() {
+        Some(hex) => Some(AppliedCheckIn {
+            id: EntityId::from_hex(hex)
+                .map_err(|_| invalid("check_in_ref is not a check-in id"))?,
+            verb: "vault.widen_proposals.approve",
+            effect_digest: widen_proposal_approve_effect_digest(answer)?,
+        }),
+        None => None,
+    };
     let proposal = stored(vault, &answer.proposal_id)?.request.proposal()?;
-    AgentDispatcher::new(vault).approve_context_widen(
+    let (_, decision) = AgentDispatcher::new(vault).approve_context_widen_applying(
         owner,
         &proposal,
         crate::unix_seconds_now(),
+        applied.as_ref(),
     )?;
-    view(&stored(vault, &answer.proposal_id)?)
+    let mut settled = view(&stored(vault, &answer.proposal_id)?)?;
+    settled.check_in = decision;
+    Ok(settled)
+}
+
+/// The digest of the owner's approval `answer`: the effect an asker's
+/// `vault.check_in.open` names for `vault.widen_proposals.approve`, and the
+/// one the approval spends (2k8; P25-SHAPE Q1 = A). The proposal's id is
+/// the digest of its stored request, and the landing refuses a record that
+/// does not hash to it, so the id pins the whole widening. BLAKE3, key
+/// derived from `oneiron check_in widen proposal approve v1`, over the
+/// answer's MessagePack encoding with field names, without its
+/// `check_in_ref`.
+///
+/// # Errors
+///
+/// The answer does not encode.
+pub fn widen_proposal_approve_effect_digest(answer: &WidenProposalAnswer) -> Result<[u8; 32]> {
+    let approval = WidenProposalAnswer {
+        check_in_ref: None,
+        ..answer.clone()
+    };
+    let encoded = rmp_serde::to_vec_named(&approval)
+        .map_err(|_| crate::error::Error::InvariantViolation("widen proposal answer encode"))?;
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in widen proposal approve v1");
+    hasher.update(&encoded);
+    Ok(*hasher.finalize().as_bytes())
 }
 
 /// The board above declines one proposal. The decline is final and stays on
 /// record as the Coach's widen-denial evidence; declining again is a no-op,
-/// and an approved proposal cannot be declined.
+/// and an approved proposal cannot be declined. A decline widens nothing,
+/// so it applies no check-in: a `check_in_ref` is refused.
 pub fn decline_widen_proposal_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     answer: &WidenProposalAnswer,
 ) -> Result<WidenProposalView> {
+    if answer.check_in_ref.is_some() {
+        return Err(invalid(
+            "a decline widens nothing; check_in_ref names an approval",
+        ));
+    }
     let proposal = stored(vault, &answer.proposal_id)?.request.proposal()?;
     AgentDispatcher::new(vault).decline_context_widen(owner, &proposal)?;
     view(&stored(vault, &answer.proposal_id)?)
@@ -198,5 +250,6 @@ fn view(record: &WidenRecord) -> Result<WidenProposalView> {
         declined_by: record.declined.as_ref().map(|decline| decline.by.clone()),
         declined_at: record.declined.as_ref().map(|decline| decline.at),
         proposal_id: proposal.proposal_id,
+        check_in: None,
     })
 }

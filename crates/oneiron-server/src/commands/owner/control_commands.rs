@@ -212,6 +212,7 @@ pub fn widen_proposals(command: crate::cli::WidenProposalsCommand) -> anyhow::Re
             "vault.widen_proposals.approve",
             WidenProposalAnswer {
                 proposal_id: args.proposal_id,
+                check_in_ref: None,
             },
             |answer: WidenProposalAnswer| {
                 Ok(doors::approve_widen_proposal_as_owner(
@@ -225,6 +226,7 @@ pub fn widen_proposals(command: crate::cli::WidenProposalsCommand) -> anyhow::Re
             "vault.widen_proposals.decline",
             WidenProposalAnswer {
                 proposal_id: args.proposal_id,
+                check_in_ref: None,
             },
             |answer: WidenProposalAnswer| {
                 Ok(doors::decline_widen_proposal_as_owner(
