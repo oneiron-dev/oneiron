@@ -110,10 +110,18 @@ async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Respon
     models.tagger = server.tagger_slot().as_deref().map(tagger_status);
     point_tagger_seat(&mut models);
     name_worker_machines(&server, &mut models).await;
+    // The owner's open asks about runs held at their spend cap (ARCH-0036
+    // #offers-ask-home): the status shows them; the decision queue owns them.
+    let budget_questions = oneiron::agent_dispatch::run_budget_questions(server.vault())
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "the run-budget asks could not be read");
+            Vec::new()
+        });
     Json(serde_json::json!({
         "ai": server.ai.status(),
         "models": models,
         "quota_questions": server.ai.model_runtime().quota_questions(),
+        "budget_questions": budget_questions,
     }))
     .into_response()
 }

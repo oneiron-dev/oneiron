@@ -859,16 +859,19 @@ impl StepRunner {
             hook_wait: false,
             error: Error::InvalidConfig(format!("workflow step budget: {denied:?}")),
         };
+        // A run the owner approved a one-off overdraft for, answering its
+        // run-budget ask, runs its fresh meters with that cap until it is held
+        // again (ARCH-0026 depletion ladder; RUNBUDGET-OVERDRAFT).
+        let overdraft = dispatcher.run_overdraft_units(attempt.id)?;
+        let exhausted = match overdraft {
+            Some(cap) => BudgetExhaustionPolicy::Overdraft { cap },
+            None => BudgetExhaustionPolicy::Suspend,
+        };
         let guard = if let Some(saved) = &continuation {
-            oneiron::BudgetGuard::from_checkpoint(saved.progress.budget.clone()).map_err(budget)?
+            live_lease::restore_try_meter(saved.progress.budget.clone(), overdraft)
+                .map_err(budget)?
         } else {
-            vault.policy_budget_guard(
-                run_id.clone(),
-                budget_units,
-                reserve,
-                BudgetExhaustionPolicy::Suspend,
-                actor,
-            )?
+            vault.policy_budget_guard(run_id.clone(), budget_units, reserve, exhausted, actor)?
         };
         // Only a ladder with a paid rung replays, so each replay reserves on
         // the paid line whatever the call's locality: an on-device label
