@@ -118,6 +118,7 @@ export {
 export { BarChart, BAR_SCREEN_MASK_ID, type BarChartProps } from './patterns/BarChart'
 export {
   barChartLayout,
+  barValueFormat,
   highestIndex,
   valueLabelBaseline,
   BAR_CHART_ASPECT,

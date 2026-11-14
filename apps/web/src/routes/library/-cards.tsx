@@ -105,7 +105,7 @@ export function ChartCard({
         forecastLabel="the fit"
         compareLabel="the same week last year"
         unit="¥ million a week"
-        formatValue={(v) => v.toFixed(1)}
+        decimals={1}
         ariaLabel={`Weekly sales, weeks 40 to 52: sold through week 45, then the fit with weeks 44 to 46 as ${reading} weeks; rings mark the same week last year.`}
       />
       <ComposedCard.Picks
