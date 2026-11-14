@@ -3,7 +3,6 @@ use super::{Memory, MemoryError, MemoryResult, RecallScope};
 use crate::EntityId;
 use crate::claim::world_access::WorldAuthoritySet;
 use crate::corpus::CorpusScope;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 #[doc(hidden)]

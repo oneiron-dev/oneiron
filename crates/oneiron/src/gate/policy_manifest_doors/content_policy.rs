@@ -1,10 +1,8 @@
 //! The owner's content-policy configuration, kept in the existing default manifest.
-use serde::{Deserialize, Serialize};
 
 use super::{body_in_txn, decode_fields, encode_fields, hex, invalid, record};
 use crate::consent::AuthenticatedOwner;
 use crate::gate::{self, resolve_policy_manifest};
-use crate::policy_model::{PolicyOutputContract, PolicyPatternRule};
 use crate::{EdgeActorClass, Error, Result, Vault, WriteActor};
 
 const FIELDS: &[&str] = &[

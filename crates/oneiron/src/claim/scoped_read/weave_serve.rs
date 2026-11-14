@@ -15,7 +15,6 @@ use crate::lens::{
     GeneratedUiSurfaceCapabilities, HostedLensRender, LensFrameCard, LensRenderFrame,
 };
 use crate::memory::{ClaimView, Memory};
-use crate::provenance::EdgeRef;
 use crate::store::GateDecisionId;
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use serde::{Deserialize, Serialize};

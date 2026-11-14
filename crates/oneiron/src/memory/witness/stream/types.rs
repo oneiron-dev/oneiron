@@ -1,7 +1,5 @@
 //! Public streaming vocabulary. Stream handles carry no text or authority.
-use crate::memory::MemoryError;
-use crate::{EntityId, Error};
-use oneiron_model::llm::FinishReason;
+use crate::EntityId;
 use serde::{Deserialize, Serialize};
 
 /// Maximum in-memory UTF-8 text per handle.

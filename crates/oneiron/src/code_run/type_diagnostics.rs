@@ -14,8 +14,6 @@
 //! with (FIX 10390): a hold on it withholds only its text, as the typed
 //! [`ProgramStepFeedbackRelease::Withheld`] projection, and never the answer.
 
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
 use crate::EntityId;

@@ -1,9 +1,4 @@
 //! Typed projections of retained result manifests and the existing reader.
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-
-use crate::EntityId;
-use crate::memory::result_facet::ResultFacet;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::result_doors::types::{

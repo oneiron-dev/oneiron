@@ -6,12 +6,12 @@
 //! owner's nearest reason on record pre-filled.
 
 use super::{HumanDecisionQueue, HumanDecisionRequest};
+use crate::Result;
 use crate::consent::{
     CatastropheClass, ComposedEffect, EffectFacts, EffectPlace, GrantBound, UndoFidelity,
 };
 use crate::llm::decision::types::invalid;
 use crate::vault_shape::ShapeGrantBound;
-use crate::{EntityId, Result};
 use serde::{Deserialize, Serialize};
 
 /// The host's undo-fidelity finding, as an ask carries it.

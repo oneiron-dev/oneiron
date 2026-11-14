@@ -20,8 +20,6 @@
 //! still reaches it. A wake an admission refused after that expiry keeps the
 //! refusal.
 
-use serde::{Deserialize, Serialize};
-
 use crate::attempt_queue::AttemptId;
 use crate::authority::{InstrumentRebind, InvocationSlipBinding};
 use crate::dreamer_runner::DreamerRunnerStore;

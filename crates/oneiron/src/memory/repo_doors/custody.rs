@@ -20,8 +20,6 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-
 use super::{RepoRunAnswer, RepoRunBinding, refusal_error, repo_target};
 use crate::EntityId;
 use crate::checkout::lease::{CheckoutLeaseAct, CheckoutRepoOps};

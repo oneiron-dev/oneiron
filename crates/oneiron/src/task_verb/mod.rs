@@ -34,7 +34,6 @@ mod browser_workflow;
 mod cancel_settlement;
 mod checkout_facts;
 mod code_consent_word;
-pub(crate) use checkout_facts::CheckoutTaskAccess;
 pub(crate) use code_consent_word::code_consent_word_in_txn;
 mod consts;
 pub(crate) use consts::TASK_EXTERNAL_ATTEMPT_KIND;
@@ -138,18 +137,18 @@ pub(crate) use contribution_pair::{
 };
 pub(crate) use project_tradeoff::{project_tradeoff_routed_in, task_created_at_in};
 pub(crate) use training_offer_ask::{
-    OFFER_QUESTION_TYPE, issue_training_offer_asks, offer_question_key, offer_question_text,
-    reserved_offer_question_in, training_offer_ask_key, void_training_offer_asks_in,
-};
-pub(crate) use training_swap_ask::{
-    SWAP_QUESTION_TYPE, is_training_swap_ask_intent, issue_training_swap_asks,
-    pending_swap_question_in, swap_question_key, training_swap_ask_key, void_training_swap_asks_in,
+    issue_training_offer_asks, offer_question_key, offer_question_text, reserved_offer_question_in,
+    training_offer_ask_key, void_training_offer_asks_in,
 };
 pub use training_swap_ask::{SwapAskState, TrainingSwapAskView, training_swap_asks};
+pub(crate) use training_swap_ask::{
+    is_training_swap_ask_intent, issue_training_swap_asks, pending_swap_question_in,
+    swap_question_key, training_swap_ask_key, void_training_swap_asks_in,
+};
 pub(crate) use wire_decode::{
     TaskBinding, decode_task_realization_input, done_task_evidence_in, leader_task_body_in,
-    leader_task_brief_in, task_binding, task_is_blocked_in, task_is_blocked_with_source_in,
-    task_stored_brief_in, task_text_with_source_in,
+    leader_task_brief_in, task_binding, task_is_blocked_with_source_in, task_stored_brief_in,
+    task_text_with_source_in,
 };
 mod wire_encode;
 mod world_privacy_wait;
@@ -223,8 +222,7 @@ pub use runner_done::{
 };
 
 pub(crate) use create_validation::{
-    completed_task_at_in_txn, open_task_due_at_in_txn, reject_born_expired_task_deadline,
-    reject_incoherent_task_terminal, settled_task_result_binding,
+    completed_task_at_in_txn, open_task_due_at_in_txn, settled_task_result_binding,
     settled_task_result_binding_in_txn, task_human_assignee, task_is_terminal, watcher_due_at,
 };
 pub(crate) use rate_limit::task_create_owner;

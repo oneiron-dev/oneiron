@@ -1,11 +1,5 @@
 //! Typed one-hop code relations within a single pinned snapshot.
 
-use serde::{Deserialize, Serialize};
-
-use super::CodeSnapshotDefinition;
-use crate::EntityId;
-use crate::edge::EdgeKind;
-
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::codebase_doors::neighbor_types::{
     CodeRelationDirection, CodeRelationKind, CodeSnapshotNeighbor, CodeSnapshotNeighborsRequest,

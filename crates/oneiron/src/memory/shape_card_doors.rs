@@ -8,7 +8,6 @@
 use super::{Memory, MemoryError, MemoryResult};
 use crate::claim::ClaimReadStatus;
 use crate::genui::ShapePlanCard;
-use crate::inbox::InboxBulkVerb;
 use crate::vault_shape::{ShapeApplyItem, ShapePlan, ShapePlanRequest, shape_item_ref_parts};
 use serde::{Deserialize, Serialize};
 

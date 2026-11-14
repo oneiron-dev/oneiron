@@ -5,9 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::claim::{
-    WeaveDigestRequest, WeaveReportRequest, WeaveWrongItemRequest, WeaveWrongLinkRequest,
-};
+use crate::claim::{WeaveReportRequest, WeaveWrongItemRequest};
 use crate::lens::WeaveLensRequest;
 
 /// `vault.weave.admin.report`'s input.

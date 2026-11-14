@@ -2,10 +2,6 @@
 //! `CodeWaitReceiptRequest` is the first of its records.
 //! These are local definitions; `memory::code_wait_doors` re-exports them.
 
-use serde::{Deserialize, Serialize};
-
-use crate::EntityId;
-
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::code_wait_doors::types::{
     CodeWaitAnswerView, CodeWaitBrowserAction, CodeWaitChoice, CodeWaitConsumptionView,

@@ -11,11 +11,7 @@
 //! operator root alone acts as nobody (FIX 2222). The receipts each removal
 //! kept are read under the same admission, by their own verb (FIX 7036).
 
-use serde::{Deserialize, Serialize};
-
-use crate::authority::{
-    ActSurface, NoStanding, PACT_STANDING_LAPSED, principal_standing_or_lapse_in_txn,
-};
+use crate::authority::{NoStanding, PACT_STANDING_LAPSED, principal_standing_or_lapse_in_txn};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::{EdgeActorClass, EntityId};

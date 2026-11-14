@@ -1,6 +1,6 @@
 //! Typed compliance-pack amendments, owner decisions and source verification.
 
-use super::{ComplianceAmendmentClass, CompliancePack, ComplianceRuleKind, ComplianceSource};
+use super::CompliancePack;
 use serde::{Deserialize, Serialize};
 
 /// Install and amend both name the active version they were authored against.

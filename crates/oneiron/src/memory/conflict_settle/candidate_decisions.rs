@@ -7,15 +7,12 @@
 //! candidates whose subject an owner-delegated conflict review Grant covers.
 //! Ids and decisions only, never a candidate's value.
 
-use serde::{Deserialize, Serialize};
-
 use super::super::outbound::parse_job_ref;
 use super::super::support::hex_string;
 use super::super::{Memory, MemoryResult};
 use crate::consent::AuthenticatedOwner;
-use crate::dreamer_consolidation::KeptDecision;
 use crate::error::Error;
-use crate::{EdgeActorClass, EntityId, Vault};
+use crate::{EdgeActorClass, Vault};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::conflict_settle::candidate_decisions::{

@@ -1,5 +1,5 @@
 //! Manifest v2 role bindings, per-vault narrow-only route dials, and verdict floors.
-use super::{AutoCheckOutcome, CallPurpose, LlmRequest, ModelId, ModelLocality};
+use super::{CallPurpose, LlmRequest, ModelId, ModelLocality};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     Vault,
@@ -24,7 +24,6 @@ mod teacher_probe;
 pub use encoder_export::{
     CheckpointPin, EncoderDistillationRequest, EncoderExport, SharedBaseFork,
 };
-pub(crate) use teacher_probe::valid_holder_ref as valid_teacher_probe_holder_ref;
 pub use teacher_probe::{TEACHER_PROBE_ID, TeacherProbeApproval, TeacherProbePolicy};
 // The band and basis vocabulary is the claim's own (FIX 7761).
 pub use crate::claim::{ConfidenceBand, VerdictBasis};
@@ -381,7 +380,6 @@ pub(super) fn read_routes(
 ) -> Result<BTreeMap<ModelSlot, ModelLocality>> {
     Ok(RESIDENT_ROUTES.get(store, txn, &())?.unwrap_or_default())
 }
-pub(crate) use crate::claim_check::apply_verdict_floor;
 // FIX [LIBTEST-QUARANTINE-LLM-MANIFEST-TESTS]: the lib test target's type check fails here (5 errors: E0063 x5); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]

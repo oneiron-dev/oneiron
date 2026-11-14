@@ -2,12 +2,9 @@
 //! `CodeConflictRecordRequest` is the first of its records.
 //! These are local definitions; `memory::code_doors` re-exports them.
 
-use super::CodeProposalSubmitRequest;
 use crate::EntityId;
 use crate::critic::{CritiqueSeverity, CritiqueVerdict};
 use crate::learning::LearningCell;
-use crate::repo_mutation::proposal::settlement::{RepoProposalDecision, RepoProposalSettlement};
-use crate::store::repo_proposal_record::RepoProposalStatus;
 use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]

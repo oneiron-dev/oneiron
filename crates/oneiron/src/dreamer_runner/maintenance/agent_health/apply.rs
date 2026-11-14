@@ -14,8 +14,6 @@
 //! pass that puts the candidate to the gate later (FIX 3725). A rejection or
 //! a refusal leaves the skill as it was.
 
-use serde::{Deserialize, Serialize};
-
 use super::ask::{AgentHealthCoachAsk, AgentHealthCoachRoute, COACH_AGENT_HEALTH_ASK_FACET};
 use super::loaded::RunPack;
 use super::{AgentHealthCard, CARDS, card_ref, parse_card_ref};

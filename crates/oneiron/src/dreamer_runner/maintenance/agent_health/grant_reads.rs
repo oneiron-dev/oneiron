@@ -12,7 +12,6 @@ use super::environment::{HealthCauseSource, attempt_sources};
 use super::vocabulary::AgentHealthCard;
 use crate::EntityId;
 use crate::agent_dispatch::{AgentDispatcher, SpendScope};
-use crate::attempt_queue::AttemptId;
 use crate::federation::{SubstrateRead, admit_substrate_read};
 use crate::memory::{MEMORY_CODE_BAD_REQUEST, Memory, MemoryError, MemoryResult};
 use crate::receipt::CallReceipt;

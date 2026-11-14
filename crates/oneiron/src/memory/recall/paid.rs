@@ -31,8 +31,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
-
 use super::selection::RecallPin;
 use super::{Effort, MemoryPack, RecallScope};
 use crate::batch::export::write_door_refuses_body;

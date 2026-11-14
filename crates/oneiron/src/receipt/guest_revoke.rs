@@ -18,11 +18,9 @@
 //! server queue each target's ask after the revoke is durable, and each
 //! target says whether its ask was queued.
 
-use serde::{Deserialize, Serialize};
-
 use super::kernel::hex_lower;
 use crate::entity_id::EntityId;
-use oneiron_authority::authority::{FederationGrantActivation, FederationPactStatus};
+use oneiron_authority::authority::FederationGrantActivation;
 
 /// What one guest revoke did, as the withdrawing door reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]

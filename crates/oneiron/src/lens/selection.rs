@@ -9,7 +9,7 @@ use crate::lens::LensSpanSelectionRequest;
 use crate::lens::{
     GeneratedUiRender, GeneratedUiResultSetActionEvent, GeneratedUiResultSetScope,
     GeneratedUiStateSnapshot, GeneratedUiValidatedAction, InspectionResolved, LensAtomId,
-    LensAtomSelectionRequest, LensBackingTargetKind, LensHandleName, LensReadHandle, LensReadReach,
+    LensAtomSelectionRequest, LensBackingTargetKind, LensReadHandle, LensReadReach,
     LensRenderFrame, LensRenderId,
 };
 use crate::memory::{Memory, MemoryError, MemoryResult};

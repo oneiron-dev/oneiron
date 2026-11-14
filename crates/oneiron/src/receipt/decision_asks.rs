@@ -7,10 +7,6 @@
 //! or clock is a field here: the server's door takes the actor and its class
 //! from the credential, and the vault reads the role's holders again.
 
-use serde::{Deserialize, Serialize};
-
-use crate::model_decision::DecisionAnswer;
-
 #[doc(hidden)]
 pub use oneiron_verb_wire::receipt::decision_asks::{
     DecisionAskAnswerRequest, DecisionAskClimbRequest, DecisionAskConfirmGrantRequest,

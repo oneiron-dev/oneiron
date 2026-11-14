@@ -879,8 +879,5 @@ fn clip(text: &str, max: usize) -> String {
     format!("{}…", &text[..end])
 }
 
-use crate::connector_key::SlatePackSource;
-use serde::{Deserialize, Serialize};
-
 #[doc(hidden)]
 pub use oneiron_verb_wire::task_verb::revoke_lands::ConnectorPackBasis;

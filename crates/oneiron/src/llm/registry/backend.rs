@@ -1,12 +1,8 @@
 //! Backend-specific serving identities and prices. Unknown serving details stay unknown.
 
-use super::{ModelRegistryRow, invalid, price};
+use super::{ModelRegistryRow, invalid};
 use crate::error::Result;
-use crate::llm::{LlmCatalogCost, LlmUsage, ModelId};
-use serde::{Deserialize, Serialize};
 
-#[doc(hidden)]
-use oneiron_verb_wire::llm::registry::backend::amount;
 #[doc(hidden)]
 pub use oneiron_verb_wire::llm::registry::backend::{
     ModelBackendPin, ModelCostReceipt, PricedModelBackend, catalog_usage_cost,

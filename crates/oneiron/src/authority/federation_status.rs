@@ -1,9 +1,7 @@
 //! This install's current federation pact statuses (FIX 18595).
 
-use super::FederationPactStatus;
 use crate::Vault;
 use crate::error::Result;
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::authority::federation_status::{

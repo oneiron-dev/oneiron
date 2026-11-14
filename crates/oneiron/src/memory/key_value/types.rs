@@ -5,8 +5,6 @@ use serde::{Deserialize, Serialize};
 pub use oneiron_verb_wire::memory::key_value::types::{
     KeyValueAddress, KeyValueNamespaces, KeyValuePut, KeyValueSearch,
 };
-#[doc(hidden)]
-use oneiron_verb_wire::memory::key_value::types::{default_limit, generated_source};
 
 /// An exact, committed item. Times are Unix seconds, not milliseconds.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

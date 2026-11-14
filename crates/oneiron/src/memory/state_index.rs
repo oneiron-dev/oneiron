@@ -1,7 +1,6 @@
 //! Composite-state projection records and owner-authored window targets.
 
-use crate::{EntityId, Error, Result};
-use serde::{Deserialize, Serialize};
+use crate::EntityId;
 
 /// Input claims use unit-interval values. Producers own measurement, not this projection.
 pub const GOAL_VELOCITY: &str = "state.goal_velocity";
@@ -16,7 +15,5 @@ pub struct StateIndexEvidence {
     pub engagement: EntityId,
 }
 
-#[doc(hidden)]
-use oneiron_verb_wire::memory::state_index::invalid;
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::state_index::{ModeGateInputs, StateIndex, StateWindow};

@@ -12,11 +12,8 @@
 //! (FIX 10169). Nothing here authors a claim: the tagger's saved spans,
 //! coreference, mood and labels stay derived tags.
 
-use serde::{Deserialize, Serialize};
-
 use super::freshness::{
-    TaggingFreshness, TaggingMoodPartView, mood_freshness, mood_part_views,
-    tagging_freshness_in_txn,
+    TaggingFreshness, mood_freshness, mood_part_views, tagging_freshness_in_txn,
 };
 use super::history::TaggingTraceRecord;
 use super::marker::MarkerPayload;
@@ -28,7 +25,7 @@ use super::{OutputRefusal, TaggingMode};
 use crate::attempt_queue::{AttemptRecord, AttemptState};
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadReceipt, ScopedReadResult};
 use crate::entity_id::bytes_to_hex_lower;
-use crate::memory::extraction::{EncoderExecution, SpeakerTarget};
+use crate::memory::extraction::SpeakerTarget;
 use crate::memory::{MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult, resolve_entity_ref};
 use crate::{EntityId, Error};
 

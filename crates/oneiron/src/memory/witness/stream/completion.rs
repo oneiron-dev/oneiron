@@ -4,8 +4,6 @@
 use super::*;
 use crate::error::Result;
 use crate::memory::MemoryResult;
-use oneiron_model::llm::FinishReason;
-use serde::Serialize;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::witness::stream::completion::MessageCompletion;

@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/learning/honesty.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use std::collections::BTreeMap;
-
 /// Findings and their sampling correction. No term is derived from an
 /// unchecked self-report. The RL reward is deliberately a separate field.
 #[derive(

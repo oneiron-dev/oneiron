@@ -5,7 +5,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
-use crate::origin::residence::{OriginAuthority, OriginResidence};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::origin_doors::types::{

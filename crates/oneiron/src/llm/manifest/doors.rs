@@ -11,7 +11,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::memory::extraction::{EncoderExecution, EncoderOutput};
 use crate::side_table::{self, Named, SideTable};
-use crate::{LlmRequest, LlmResponse, ModelId, ModelLocality, ModelTierRef, Vault};
+use crate::{LlmResponse, ModelId, ModelLocality, ModelTierRef, Vault};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

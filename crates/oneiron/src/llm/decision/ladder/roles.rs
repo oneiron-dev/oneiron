@@ -2,13 +2,7 @@
 //! Entry: HumanDecisionRequest.
 //! Definitions: this module; the parent re-exports the old paths.
 
-use super::ProviderDecision;
-use crate::llm::decision::types::invalid;
-use crate::llm::decision::{
-    DecisionAnswer, DecisionQuestion, HumanAskReason, PersonChangedAnswer, ProviderPin,
-};
-use crate::{EntityId, Result as VaultResult};
-use serde::{Deserialize, Serialize};
+use crate::Result as VaultResult;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::llm::decision::ladder::roles::{

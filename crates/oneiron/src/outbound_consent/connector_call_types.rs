@@ -253,7 +253,8 @@ pub trait ConnectorCallHost: OutboundResultSender {
 
 /// One held or pending-delivery call, as a settler lists it: its ref, the
 /// catalog name and tool it calls, and whether a resume already settled it
-/// (then its row waits only for [`crate::Vault::ack_connector_call_delivery`]).
+/// (then its row waits only for
+/// [`crate::Vault::ack_connector_call_delivery_keeping_caller`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingConnectorCallRef {
     pub call_ref: EntityId,

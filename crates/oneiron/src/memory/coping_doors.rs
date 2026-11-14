@@ -1,5 +1,4 @@
 //! Typed coping observations and per-person aggregates over the engine's coping ledger.
-use serde::{Deserialize, Serialize};
 
 use super::{ClaimScope, Memory, MemoryError, MemoryResult, ScopedClaimInput};
 use crate::claim::{ClaimBody, ClaimReadStatus, ClaimSubject, claim_consolidatable};
@@ -8,8 +7,7 @@ use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::write_envelope::coping_outcome::{
-    COPING_OUTCOME_PREDICATE, CopingOutcomeValue, CopingStrategy, coping_outcome_value,
-    decode_coping_outcome_claim,
+    COPING_OUTCOME_PREDICATE, CopingOutcomeValue, coping_outcome_value, decode_coping_outcome_claim,
 };
 use crate::{EntityId, Error};
 

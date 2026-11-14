@@ -1,7 +1,5 @@
 //! The saved proactivity digest under the same live owner proof as its HTTP door.
 
-use serde::{Deserialize, Serialize};
-
 use super::{Memory, MemoryError, MemoryResult};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::maintenance::digest::ProactivityDigestView;

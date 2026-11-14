@@ -7,8 +7,6 @@
 //! resolver reads it ([`PayerAccount::Person`](super::PayerAccount::Person));
 //! a PERSON with no row keeps the owners' payer-needed ask.
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};

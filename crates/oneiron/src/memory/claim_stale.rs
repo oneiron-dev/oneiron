@@ -6,8 +6,6 @@
 //! caller's full retrieval filter into the scoped lane, which narrows it
 //! against the actor ceiling and returns the narrowing receipt.
 
-use serde::{Deserialize, Serialize};
-
 use super::read_lane::fold_receipt;
 use super::support::*;
 use super::*;

@@ -8,11 +8,10 @@ use super::*;
 use crate::channel_identity::ChannelIdentityState;
 use crate::channel_identity_selection::ThreadMaskSelectionExt;
 use crate::channel_identity_selection::{
-    ChannelIdentityCandidate, ChannelIdentityFace, ChannelIdentitySelectionDecision,
-    ChannelIdentitySelectionError, ChannelIdentitySelectionPatch, ChannelIdentitySelectionQuery,
-    ChannelIdentitySelectionRule, ChannelIdentitySelectionRuleSet, ChannelIdentitySelectionWriter,
-    RelationshipContext, SelectionRuleScope, SelectionRuleWriterKind,
-    resolve_channel_identity_selection,
+    ChannelIdentityCandidate, ChannelIdentitySelectionError, ChannelIdentitySelectionPatch,
+    ChannelIdentitySelectionQuery, ChannelIdentitySelectionRule, ChannelIdentitySelectionRuleSet,
+    ChannelIdentitySelectionWriter, RelationshipContext, SelectionRuleScope,
+    SelectionRuleWriterKind, resolve_channel_identity_selection,
 };
 use crate::write_envelope::thread_claim::ThreadMask;
 

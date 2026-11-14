@@ -20,7 +20,6 @@
 //! rows go with their MESSAGE, TURN, conversation or writer.
 
 use heed::{RoTxn, RwTxn};
-use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::entity_id::EntityId;

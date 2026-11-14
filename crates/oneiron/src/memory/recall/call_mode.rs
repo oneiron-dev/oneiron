@@ -5,8 +5,6 @@
 
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
-
 use super::Effort;
 use crate::memory::MemoryResult;
 

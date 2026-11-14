@@ -3,7 +3,6 @@ use crate::store::embedding::EmbedderLocality;
 use oneiron_contracts::affect::Vad;
 use oneiron_model::llm::ModelId;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 #[derive(Debug, Clone, Serialize)]
 pub struct EncoderMessage {
     pub id: String,

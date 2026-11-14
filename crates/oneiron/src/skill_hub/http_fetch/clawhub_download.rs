@@ -3,7 +3,6 @@ use super::{HttpEndpointSkillHubAdapter, MAX_HUB_PACKAGE_TOTAL_BYTES};
 use crate::error::Result;
 use crate::skill_hub::package_codec::invalid;
 use crate::skill_hub::{GitEndpointSkillHubAdapter, HubPackage, HubPin, HubRef, SkillHubAdapter};
-use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::time::{Duration, Instant};
 

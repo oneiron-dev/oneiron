@@ -15,7 +15,6 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState}
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_wake::nightly::{CONTINUE_ATTEMPT, PLAN_ATTEMPT};
 use crate::dreamer_wake::{NightStepRequestId, WakePolicyTrigger, WakeRecipeInputView};
-use crate::memory::DreamerParkCauseView;
 use crate::{EntityId, Error, Result, Vault};
 
 #[doc(hidden)]

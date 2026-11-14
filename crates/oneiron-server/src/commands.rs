@@ -119,6 +119,8 @@ struct ConfigFiles {
 mod files;
 pub use files::files;
 mod history_import;
+#[cfg(unix)]
+pub(crate) use self::history_import::hosted_import;
 mod init;
 pub use init::init;
 pub(crate) use init::{ModelSetupAnswers, ModelSetupOutcome, setup_models_on_open_vault};

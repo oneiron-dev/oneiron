@@ -22,8 +22,6 @@ use crate::error::{Error, Result};
 use super::{ClaimBody, ClaimLifecycleStatus, predicate_root};
 
 #[doc(hidden)]
-use oneiron_verb_wire::claim::decay::ACCESS_FACTOR_SECONDS_PER_DAY;
-#[doc(hidden)]
 pub use oneiron_verb_wire::claim::decay::{
     ACCESS_FACTOR_FLOOR, AccessFactorPolicy, ClaimAgingClass, DURABLE_ACCESS_HALF_LIFE_DAYS,
     EPHEMERAL_ACCESS_HALF_LIFE_DAYS, STANDARD_ACCESS_HALF_LIFE_DAYS, access_factor_override_valid,

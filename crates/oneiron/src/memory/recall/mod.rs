@@ -59,7 +59,7 @@ use crate::memory::retrieval_defaults::DEFAULT_RECENCY_HALF_LIFE_DAYS;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::rerank::RerankOptions;
 use crate::retrieval_depth::RecallExecution;
-use crate::retrieval_quality::{ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality};
+use crate::retrieval_quality::RetrievalQuality;
 use crate::serialize::{SerializeConfig, serialize_pack};
 use oneiron_model::llm::BudgetLease;
 
@@ -76,8 +76,6 @@ const SCOPE_HONESTY_SCAN_CAP: usize = 512;
 /// (FIX 9962, [`render_budget`]).
 pub(super) const RECALL_TOKEN_BUDGET: usize = 4000;
 
-#[doc(hidden)]
-use oneiron_verb_wire::memory::recall::is_false;
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::recall::{
     Effort, MemoryProvenance, RecallRequest, RecallScope, RetrievalMeta, ScopeHonesty,
@@ -863,6 +861,3 @@ impl Memory<'_> {
         })
     }
 }
-
-use crate::memory::affect::QueryAffect;
-use crate::retrieval_depth::RecallTelemetry;

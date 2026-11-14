@@ -23,7 +23,6 @@ use serde::{Deserialize, Serialize};
 pub const REPRESENTATION_FACET: &str = "dreamer.representation";
 const PREDICATE: &str = "dreamer.representation.proposal";
 use crate::attempt_queue::maintenance_predicate::CONTENT_PREFIX;
-pub(crate) use crate::attempt_queue::maintenance_predicate::REPRESENTATION_CONTENT_PREFIX;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

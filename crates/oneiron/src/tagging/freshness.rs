@@ -8,8 +8,6 @@
 //! Freshness is derived at read from what the set saved (its envelope's
 //! digests) and the turn's text now, never kept in a second table.
 
-use serde::{Deserialize, Serialize};
-
 use super::input::{TurnInput, turn_input_in_txn};
 use super::marker::{TAGGING_MARKER_KIND, dedupe_key};
 use super::tags::TurnTags;

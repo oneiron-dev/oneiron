@@ -5,7 +5,6 @@ use super::super::{
     DecisionAnswer, DecisionDial, DecisionQuestion, DecisionQuestionInput, DecisionRung,
     HostRuleRef, PairedReading, ProviderPin, TypedDecision,
 };
-use crate::learning_setting::SettingSpec;
 use crate::{EdgeActorClass, EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 

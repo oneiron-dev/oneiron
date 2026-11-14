@@ -14,8 +14,6 @@ pub(super) use oneiron_verb_wire::dreamer_runner::program::types::OccurrenceKind
 pub use oneiron_verb_wire::dreamer_runner::program::types::{
     ArmTurnProgram, DisarmTurnProgram, ProgramRecipePin, ProgramTrigger, TurnProgramRegistration,
 };
-#[doc(hidden)]
-use oneiron_verb_wire::dreamer_runner::program::types::{OCCURRENCE_DOMAIN, PIN_DOMAIN};
 
 const ADMISSION_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-admission:v1";
 const CODE_RUN_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-code-run:v1";

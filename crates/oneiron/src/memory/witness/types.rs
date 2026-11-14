@@ -2,8 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::gate::{WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER};
-
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::witness::types::{WitnessAuthor, WitnessMessage};
 

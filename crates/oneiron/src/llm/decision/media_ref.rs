@@ -7,13 +7,10 @@
 
 use super::{
     DecisionAudio, DecisionDial, DecisionImage, DecisionLadder, DecisionQuestion, DecisionRung,
-    EvidenceVersion, audio_format,
+    audio_format,
 };
-use crate::ingest::meeting_audio::{SourceSpan, SpeakerTrack, SpeechSpan};
 use crate::llm::image::ImageBytes;
-use crate::memory::PixelRegion;
 use crate::{FatalLlmError, LlmResult};
-use serde::{Deserialize, Serialize};
 
 /// The state field a call's media entries fill.
 pub const MEDIA_FIELD: &str = "media";

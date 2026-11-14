@@ -2,15 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::claim::learning_estimate::EstimateForm;
-use crate::claim::learning_predicate::LearningPredicate;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
 use crate::receipt::task_type_ref::TypeRef;
 use crate::side_table::{self, Named, SideTable};
 
-#[doc(hidden)]
-use oneiron_verb_wire::claim::learning_evidence::MAX_CATEGORY_BYTES;
 #[doc(hidden)]
 pub use oneiron_verb_wire::claim::learning_evidence::{Anchor, EvidenceSource, Observation};
 

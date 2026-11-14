@@ -8,17 +8,13 @@
 //! as every code door is (`Memory::code_owner`). Neither reads, returns
 //! or logs a value, span or excerpt: a key is named by its custody handle.
 
-use serde::{Deserialize, Serialize};
-
 use super::*;
-use crate::code_document::CodeOpProvenance;
 use crate::repo_mutation::proposal::{OwnerRequestAttribution, RepoProposalReview};
 use crate::repo_mutation::{
     RepoSecretMarkEntry, RepoSecretMarkSeen, RepoSecretRemediation, RepoSecretRemediationAction,
     RepoSecretRemediationLinkEntry, RepoSecretRemediationRequest, RepoSecretRemediationStatus,
     RepoSecretUnresolved,
 };
-use crate::store::critic_lens::LensCatalog;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::code_doors::secrets::{

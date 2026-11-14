@@ -16,8 +16,8 @@ use crate::skill_hub::HubFile;
 
 #[doc(hidden)]
 use oneiron_verb_wire::skill_hub::pack_catalog::setup::{
-    MAX_SETUP_LABEL_BYTES, MAX_SETUP_LINK_BYTES, MAX_SETUP_REF_BYTES, MAX_SETUP_TEXT_BYTES,
-    MAX_SETUP_TOKEN_BYTES, graphic, https_link, text, token,
+    MAX_SETUP_LABEL_BYTES, MAX_SETUP_REF_BYTES, MAX_SETUP_TEXT_BYTES, MAX_SETUP_TOKEN_BYTES,
+    graphic, https_link, text, token,
 };
 #[doc(hidden)]
 pub use oneiron_verb_wire::skill_hub::pack_catalog::setup::{

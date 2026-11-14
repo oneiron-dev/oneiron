@@ -1,5 +1,4 @@
 //! Owner-configured class aging in the existing trusted default policy manifest.
-use serde::{Deserialize, Serialize};
 
 use super::{body_in_txn, decode_fields, encode_fields, invalid, record};
 use crate::claim::ClaimAgingProfiles;

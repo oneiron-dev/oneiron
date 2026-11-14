@@ -7,10 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::attempt_queue::AttemptId;
-use crate::memory::codebase_doors::{CodeSnapshotDefinition, CodeSnapshotFile};
-use crate::merge_queue::{BatchState, QueueDriveStatus};
 use crate::origin::RepoPortableId;
-use crate::store::repo_proposal_record::RepoProposalStatus;
 
 /// `self.code.snapshots.get`: the manifest of one snapshot of the admitted
 /// repo, at the commit its full ref names now.

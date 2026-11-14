@@ -1,5 +1,5 @@
 //! Policy-bound extraction-teacher probe approval for manifest publication.
-use super::{ModelBinding, ModelManifest, ModelRole, invalid};
+use super::{ModelManifest, ModelRole, invalid};
 use crate::{Vault, error::Result, llm::ModelId};
 use serde::{Deserialize, Serialize};
 use std::path::Path;

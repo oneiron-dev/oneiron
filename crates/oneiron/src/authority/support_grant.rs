@@ -24,8 +24,6 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::slip_vault::{random_slip_id, require_host};
 use super::support_receipt::{
     SUPPORT_GRANT_REASON_MINTED, SUPPORT_GRANT_REASON_REVOKED, SupportReceipt, slip_hex,

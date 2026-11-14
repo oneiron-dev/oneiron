@@ -15,20 +15,16 @@
 
 use std::collections::HashSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::store::{DreamerRunnerStore, PARKED, decode_dreamer_attempt_status};
 use super::types::{DreamerHomeNodeCandidate, DreamerHomeNodeDesignation};
 use crate::Vault;
-use crate::attempt_queue::{
-    AttemptId, AttemptRecord, AttemptResultRef, AttemptResumePoint, AttemptState,
-};
+use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptResultRef};
 use crate::authority::{ActAuthority, ActSurface, HomePickState};
 use crate::consent::AuthenticatedOwner;
 use crate::engine_executor::checkpoint_read::{
     CHECKPOINT_READ_DEFAULT_LIMIT, CHECKPOINT_READ_MAX_LIMIT,
 };
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Error;
 use crate::memory::{DreamerParkedAttemptView, MemoryError, MemoryResult};
 

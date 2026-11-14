@@ -1,8 +1,7 @@
 //! The held-out selection and sufficiency card are supplied by eval authoring.
 
-use crate::llm::decision::TypedDecision;
-use crate::llm::registry::{ModelBackendPin, ModelCostReceipt, PricedModelBackend};
-use crate::{EntityId, llm::LlmUsage};
+use crate::EntityId;
+use crate::llm::registry::PricedModelBackend;
 use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]

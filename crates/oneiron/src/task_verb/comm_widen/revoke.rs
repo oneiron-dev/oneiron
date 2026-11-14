@@ -9,8 +9,6 @@
 //! approved once. Its descendants, born or not, inherit nothing from it and
 //! ask again.
 
-use serde::{Deserialize, Serialize};
-
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::MEMORY_CODE_FORBIDDEN;

@@ -1,10 +1,5 @@
 //! The POLICY_MANIFEST row that names who may settle a held code effect.
 
-use std::collections::BTreeSet;
-
-use rmpv::Value;
-use serde::{Deserialize, Serialize};
-
 use super::manifest_authenticity::PolicyRowOrigin;
 use crate::EntityId;
 
@@ -12,8 +7,6 @@ use crate::EntityId;
 pub use oneiron_verb_wire::gate::code_consent_settlement::CodeConsentSettlementRow;
 #[doc(hidden)]
 pub(crate) use oneiron_verb_wire::gate::code_consent_settlement::KEY;
-#[doc(hidden)]
-use oneiron_verb_wire::gate::code_consent_settlement::{SHIPPED_VERSION, field};
 
 #[doc(hidden)]
 pub use oneiron_consent_state::gate::code_consent_settlement::CodeConsentSettlementEligibility;

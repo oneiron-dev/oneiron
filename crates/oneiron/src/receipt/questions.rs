@@ -21,13 +21,11 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
-use crate::llm::decision::TypedDecision;
 use crate::llm::decision::questions::{
     AnswerRecord, ArtifactAskRecord, GraphAskFailure, GraphAskReceipts, QuestionCriteria,
     QuestionDefinitionInput,
 };
 use crate::memory::{MemoryError, MemoryResult};
-use crate::model_decision::questions::{CalibrationPair, OutcomeLabel};
 use crate::model_decision::{DecisionQuestion, DecisionRung};
 
 #[doc(hidden)]

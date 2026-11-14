@@ -23,4 +23,7 @@ pub enum RunControlEffect {
     AlreadyPaused,
     Resumed,
     AlreadyResumed,
+    /// A running run pauses at its next step boundary; a repeat answers it
+    /// again and posts nothing more.
+    PausingAtNextStep,
 }

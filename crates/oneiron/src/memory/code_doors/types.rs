@@ -5,9 +5,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
-use crate::code_document::CodeOpProvenance;
-use crate::store::critic_lens::LensCatalog;
-use crate::store::repo_proposal_record::RepoProposalStatus;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::code_doors::types::{

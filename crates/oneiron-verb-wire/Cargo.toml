@@ -40,7 +40,7 @@ rmp-serde = { workspace = true }
 rmpv = { workspace = true, features = ["with-serde"] }
 schemars = "=0.8.22"
 serde = { workspace = true }
-serde_json = { workspace = true, features = ["raw_value"] }
+serde_json = { workspace = true, features = ["raw_value", "float_roundtrip"] }
 thiserror = { workspace = true }
 
 [features]

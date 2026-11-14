@@ -336,6 +336,7 @@ fn score(
         version,
         instructions,
         held_out_receipts: &snapshot.evidence,
+        goal: None,
     })?;
     if !score.is_finite() || !(0.0..=1.0).contains(&score) {
         return Err(invalid("invalid host held-out score"));

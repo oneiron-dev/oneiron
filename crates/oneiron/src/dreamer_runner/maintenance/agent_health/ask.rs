@@ -17,9 +17,7 @@ use serde::{Deserialize, Serialize};
 use super::apply::{AgentHealthApplicationState, AgentHealthCoachApplication};
 use super::brief::{HealthBriefPin, HealthObservedBrief, observed_brief_in};
 use super::erase::{any_gone_in_txn, sync_card_membership};
-use super::loaded::{
-    AgentHealthLoadedSkill, AgentHealthSkillTarget, bind_target, run_skills_sourced,
-};
+use super::loaded::{AgentHealthLoadedSkill, bind_target, run_skills_sourced};
 use super::sources::known_source_rows;
 use super::{
     AgentHealthCard, AgentHealthMove, CARDS, ConcernMoveOutcome, card_ref, parse_card_ref,

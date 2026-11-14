@@ -7,12 +7,8 @@
 //! (`compiled_hash`) and the slot state it saw (`expected_active_ref`). An
 //! agent can propose a lens; it cannot select one.
 
-use serde::{Deserialize, Serialize};
-
 use super::GeneratedLens;
-use super::proposal::{
-    LensSlot, LensSlotRecord, PROPOSALS, SLOTS, active_at, invalid_state, slot_key,
-};
+use super::proposal::{LensSlotRecord, PROPOSALS, SLOTS, active_at, invalid_state, slot_key};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::receipt::{LensActivationReceipt, LensSlotDecision};

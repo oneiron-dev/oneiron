@@ -5,14 +5,12 @@
 
 use std::cell::RefCell;
 
-use serde::{Deserialize, Serialize};
-
 use super::claim_stale::ReadFilterInput;
 use super::{Memory, MemoryError, MemoryResult};
 use crate::claim::{ClaimLifecycleStatus, ClaimReadStatus, ScopedReadResult};
-use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::edge::EdgeKind;
 use crate::error::Error;
-use crate::provenance::{EdgeRef, SupersessionStatus};
+use crate::provenance::EdgeRef;
 use crate::vault::ReadMode;
 
 #[doc(hidden)]

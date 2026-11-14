@@ -6,8 +6,8 @@ use super::setup::PackSetup;
 use super::{AgentPackFacets, invalid};
 use crate::error::Result;
 use crate::skill_hub::pack_catalog::predicate_rewrites::PackMigrationMap;
+use serde::Deserialize;
 use serde::de::{Deserializer, MapAccess, SeqAccess, Visitor};
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::skill_hub::pack_catalog::manifest::{PackAdapter, PackKind};

@@ -3,11 +3,8 @@
 //! its lease (slice 6.5c, primitive D).
 use std::collections::HashSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::super::{
-    BudgetGuard, ContentPart, FallbackRegistry, LlmBackend, LlmError, LlmRequest, LlmResponse,
-    ResponseFormat,
+    BudgetGuard, ContentPart, FallbackRegistry, LlmBackend, LlmError, LlmResponse, ResponseFormat,
 };
 use super::step_claim::{step_index_lookup, step_index_lookup_in_txn};
 use super::step_state::step_state_read;

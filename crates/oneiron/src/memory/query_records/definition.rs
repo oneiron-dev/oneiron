@@ -1,9 +1,5 @@
 //! Standing-query definitions, scope intersection and lifecycle values.
 
-use std::collections::BTreeSet;
-
-use serde::{Deserialize, Serialize};
-
 use super::filter::{FilterAst, MatcherSpec};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -42,8 +38,6 @@ pub struct SavedQueryDefinition {
     pub lifecycle: SavedQueryLifecycle,
 }
 
-#[doc(hidden)]
-use oneiron_verb_wire::memory::query_records::definition::intersect_axis;
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::query_records::definition::{
     CreateSavedQueryRequest, EvalMode, EvalPolicy, QueryScope, SavedQueryLifecycle,

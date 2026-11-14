@@ -8,11 +8,10 @@ use super::*;
 use crate::claim::{ClaimBody, ClaimReadStatus, ClaimSubject, PointRead};
 use crate::delivery_window::{
     DELIVERY_WINDOW_CLAIM_PREDICATES, DELIVERY_WINDOW_SCHEMA_VERSION,
-    DeliveryWindowApnsInterruptionLevel, DeliveryWindowContextCondition,
-    DeliveryWindowEvaluationContext, DeliveryWindowEvaluator, DeliveryWindowPolicyClaim,
-    DeliveryWindowResolution, DeliveryWindowTimeWindow, DeliveryWindowVerbClass,
-    PREDICATE_DELIVERY_WINDOW_CHANNEL, PREDICATE_DELIVERY_WINDOW_CONTEXT,
-    PREDICATE_DELIVERY_WINDOW_QUIET, is_delivery_window_claim_predicate,
+    DeliveryWindowContextCondition, DeliveryWindowEvaluationContext, DeliveryWindowEvaluator,
+    DeliveryWindowPolicyClaim, DeliveryWindowTimeWindow, PREDICATE_DELIVERY_WINDOW_CHANNEL,
+    PREDICATE_DELIVERY_WINDOW_CONTEXT, PREDICATE_DELIVERY_WINDOW_QUIET,
+    is_delivery_window_claim_predicate,
 };
 use crate::memory::{ClaimInput, CommitReceipt};
 

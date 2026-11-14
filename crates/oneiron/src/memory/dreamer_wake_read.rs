@@ -6,8 +6,6 @@
 //! The read is the caller's own Memory read, as its sibling's is; it names no
 //! owner proof and scans nothing it was not addressed to.
 
-use serde::{Deserialize, Serialize};
-
 use super::support::hex_string;
 use super::{Memory, MemoryError, MemoryResult, parse_job_ref};
 use crate::entity_id::EntityId;

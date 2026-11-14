@@ -15,15 +15,12 @@
 //! writer that admits, then wakes the queue's drain, so a clear releases
 //! inherited waits at once.
 
-use serde::{Deserialize, Serialize};
-
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::consent::AuthenticatedOwner;
 use crate::merge_queue::{
-    QueueReviewDefault, QueueReviewPolicy, QueueReviewThresholds, REVIEW_POLICY_DEFAULT,
-    StoredQueueReviewPolicy, review_policy_unreadable_hold,
+    QueueReviewDefault, QueueReviewPolicy, REVIEW_POLICY_DEFAULT, StoredQueueReviewPolicy,
+    review_policy_unreadable_hold,
 };
-use crate::store::critic_lens::LensCatalog;
 use crate::{EdgeActorClass, EntityId};
 
 /// The Scope verb a Grant lists for the read row.

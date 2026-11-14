@@ -1,7 +1,6 @@
 //! Typed asks: response coverage, decision reducers, and policy-bound revisions.
 
 use super::ConsultPayloadRef;
-use crate::consent::{ActionClass, ActionEnvelope};
 use crate::entity_id::EntityId;
 use crate::lens::RecordRef;
 use crate::memory::{MemoryError, MemoryResult};
@@ -11,8 +10,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod effective;
 
-#[doc(hidden)]
-use oneiron_verb_wire::task_verb::ask_types::AskAuthorityScopeWire;
 #[doc(hidden)]
 pub use oneiron_verb_wire::task_verb::ask_types::{
     AskAuthorityScope, TaskAskBranch, TaskAskDisagree, TaskAskElectorate, TaskAskGuest,

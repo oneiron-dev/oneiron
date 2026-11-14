@@ -1,8 +1,6 @@
 //! Owner-bound historical erasure timing from the immutable redaction receipt,
 //! its factual sweep row and its overall final row (FIX 5844).
 
-use serde::{Deserialize, Serialize};
-
 use super::support::verify_deletion_authority_in_txn;
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::EntityId;

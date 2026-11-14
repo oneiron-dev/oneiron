@@ -16,10 +16,7 @@ use crate::{
 use ed25519_dalek::Signature;
 use oneiron_authority::federation::{Scope, ScopeAxis};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    net::SocketAddr,
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 #[cfg(test)]
 use crate::temporal::TimeRange;

@@ -17,8 +17,6 @@
 //! credential included, by its checked siblings under the caller's own
 //! delete authority (`federation::require_delete_authority_in_txn`).
 
-use serde::{Deserialize, Serialize};
-
 use super::archive_purge::{ArchiveDeleteResults, ArchiveExpectation};
 use super::support::verify_deletion_authority_in_txn;
 use super::{

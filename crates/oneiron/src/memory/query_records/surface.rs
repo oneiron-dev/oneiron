@@ -4,14 +4,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    ClaimComparison, CreateSavedQueryRequest, EvalMode, EvalPolicy, FilterAst, MatchVerdict,
-    MatcherSpec, QueryScope, SAVED_QUERY_SCHEMA_VERSION, SavedQueryLifecycle, SavedQueryRecord,
+    ClaimComparison, CreateSavedQueryRequest, EvalMode, EvalPolicy, FilterAst, MatcherSpec,
+    QueryScope, SAVED_QUERY_SCHEMA_VERSION, SavedQueryLifecycle, SavedQueryRecord,
     UpdateSavedQueryRequest,
 };
 use crate::entity_id::EntityId;
-use crate::memory::campaign_records::{
-    MembershipPage, MembershipReadRequest, MembershipRow, MembershipRowSource,
-};
+use crate::memory::campaign_records::{MembershipPage, MembershipRow};
 
 /// A saved query's declared scope on the wire. An empty axis is
 /// unrestricted on that axis, exactly as [`QueryScope`] reads it.

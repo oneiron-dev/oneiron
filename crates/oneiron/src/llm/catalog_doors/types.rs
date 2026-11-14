@@ -2,7 +2,7 @@
 use crate::llm::manifest::{ModelBinding, ModelRole};
 use crate::llm::model_trials::{
     FrozenTrialCase, ModelTrial, ModelTrialExecutionState, ModelTrialReceipt, ModelTrialRequest,
-    TrialAdmission, TrialAssessment,
+    TrialAdmission,
 };
 use crate::llm::registry::{CatalogSeed, ModelRegistryRow, ModelScoreDiff, ScoreSnapshot};
 use crate::{EntityId, ModelId};

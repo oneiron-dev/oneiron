@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::lens::validate::validate_lens_token;
 use crate::lens::wire_ids::{
     LensAtomId, LensBackingRefId, LensHandleName, LensHandleRole, LensRenderId, LensResultSetRowId,

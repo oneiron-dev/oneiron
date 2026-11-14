@@ -16,7 +16,6 @@ use crate::llm::decision::AskRole;
 use crate::llm::decision::ladder::{AskConsent, HumanDecisionRequest};
 use crate::llm::decision::types::invalid;
 use crate::{Result, Vault};
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::llm::decision::asks::grant_draft::AskGrantDraft;

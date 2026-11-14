@@ -1,7 +1,6 @@
 //! Typed affect evidence setup through ordinary claim admission and VAD consolidation.
-use serde::{Deserialize, Serialize};
 
-use super::{ClaimScope, CommitReceipt, Memory, MemoryError, MemoryResult, ScopedClaimInput};
+use super::{CommitReceipt, Memory, MemoryError, MemoryResult, ScopedClaimInput};
 use crate::consent::AuthenticatedOwner;
 use crate::registry::ENTITY_TYPE_TURN;
 use oneiron_contracts::affect::{VadAnnotation, VadAnnotationSource};

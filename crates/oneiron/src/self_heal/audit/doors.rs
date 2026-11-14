@@ -10,8 +10,7 @@ use crate::learning::honesty::{SealAssessment, seal_assessment};
 use crate::{EntityId, Error, Result, Vault};
 
 use super::{
-    AttemptConfession, SEALS, SealCheckKind, SealCheckOutcome, SealCheckRequest,
-    SealedAttemptReceipt, audit_rate_in_txn, draw_audit,
+    AttemptConfession, SEALS, SealCheckRequest, SealedAttemptReceipt, audit_rate_in_txn, draw_audit,
 };
 
 #[doc(hidden)]

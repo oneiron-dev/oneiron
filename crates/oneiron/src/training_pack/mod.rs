@@ -16,6 +16,7 @@ mod question_heads;
 mod question_trials;
 pub(crate) mod tables;
 mod target;
+mod timeline;
 mod types;
 
 use serde::Serialize;
@@ -45,6 +46,10 @@ pub use question_trials::{
 };
 pub(crate) use question_trials::{drop_question_trials_in_txn, erase_question_trial_in_txn};
 pub use target::{QUESTION_LABEL_SCHEMA, QUESTION_RENDERER, QuestionTarget, TrainingTarget};
+pub use timeline::{
+    DataTimeline, ExecutedPhase, MixturePin, ParentCheckpoint, PhaseOutcome, PlannedPhase,
+    TIMELINE_RECEIPT_KEY, TrainingBoundary,
+};
 pub use types::*;
 
 const RUNS: SideTable<EntityId, TrainingRun, Named> =

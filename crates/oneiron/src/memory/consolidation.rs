@@ -3,7 +3,7 @@
 //! its author, run and source. This door neither completes jobs nor sends effects.
 use std::collections::BTreeSet;
 
-use super::{ClaimScope, Memory, MemoryError, MemoryResult};
+use super::{Memory, MemoryError, MemoryResult};
 use crate::claim::{
     ClaimReadStatus, PointRead, ScopedReadResult, claim_consolidatable, claim_evidence_taint,
     claim_generated_origin,
@@ -14,7 +14,7 @@ use crate::dreamer_consolidation::{
     evidence_chain_source,
 };
 use crate::dreamer_promotion::{
-    DreamerRunContext, EvidenceRef, PromotionEvidenceReason, evidence_ref_refusal_in_txn,
+    DreamerRunContext, PromotionEvidenceReason, evidence_ref_refusal_in_txn,
     promote_consolidated_claims_with_checker, public_evidence_refs, public_evidence_value,
 };
 use crate::dreamer_runner::DreamerRunnerStore;
@@ -24,7 +24,6 @@ use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
 use crate::store::consolidation_scope::DreamerConsolidationScope;
 use crate::write_envelope::ClaimCandidate;
 use crate::{EdgeActorClass, EntityId, Error, TimeRange};
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::consolidation::{

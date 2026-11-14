@@ -1,7 +1,5 @@
 //! Calendar scoped-read surface (read/search/freebusy) plus the invite entry point.
 
-use serde::{Deserialize, Serialize};
-
 use super::super::support::Memory;
 use super::super::{MemoryError, MemoryResult};
 use super::invite::{CalendarInviteOrigin, CalendarInviteSurfaceInput};

@@ -20,7 +20,6 @@ use super::program_definition::{
     CampaignProgramDraft, CampaignProgramOutbound, CampaignProgramStep, CampaignProgramStepDraft,
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::error::Error;
 use crate::error::Result;
 use crate::write_envelope::cohort_claims::normalize_campaign_pack_token;
 
@@ -90,11 +89,11 @@ pub struct CampaignProgramOutboundSpec {
 #[doc(hidden)]
 pub(crate) use oneiron_verb_wire::memory::campaign_records::program::invalid;
 #[doc(hidden)]
+use oneiron_verb_wire::memory::campaign_records::program::payload_from_hex;
+#[doc(hidden)]
 pub use oneiron_verb_wire::memory::campaign_records::program::{
     ArchiveCampaignProgramRequest, CampaignProgramAudienceSpec, CampaignProgramReadRequest,
 };
-#[doc(hidden)]
-use oneiron_verb_wire::memory::campaign_records::program::{hex_nibble, payload_from_hex};
 
 /// `vault.campaign.program.create`'s input.
 ///

@@ -15,8 +15,6 @@
 //! narrowed to some worlds or facets is given no frozen tree. It previews,
 //! asks, imports and activates nothing.
 
-use serde::{Deserialize, Serialize};
-
 use super::GeneratedLens;
 use super::artifact::lens_tree_in;
 use super::proposal::{PROPOSALS, reads_narrowed};
@@ -25,7 +23,6 @@ use crate::claim::ClaimReadStatus;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::secret_custody::SecretSight;
 use crate::{EntityId, Error};
-use oneiron_authority::share_travel::BornWith;
 use oneiron_authority::share_travel::BornWithField;
 use oneiron_authority::share_travel::TravelChoice;
 use oneiron_authority::share_travel::TravelKind;

@@ -8,7 +8,6 @@ use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::{EntityId, Error};
 use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::claim_admission::{

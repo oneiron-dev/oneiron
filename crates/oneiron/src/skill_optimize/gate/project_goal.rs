@@ -62,23 +62,25 @@ fn encode<T: Serialize>(row: &T) -> Result<Vec<u8>> {
 /// The project goal joined to `goal_id`, if one is bound. A bound project
 /// whose goal record cannot be read is an error, never an unbound goal: the
 /// gate does not fall back to fewer axes than the human set.
+/// `Some(reader)` is an acting read; `None` is only for engine integrity
+/// checks that expose no goal content to a caller.
 pub(super) fn project_goal_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     goal_id: &EntityId,
+    reader: Option<WriteActor>,
 ) -> Result<Option<ProjectGoalJoin>> {
     let Some(raw) = vault.store.vault_meta.get(txn, &binding_key(goal_id))? else {
         return Ok(None);
     };
     let binding: ProjectGoalBinding =
         rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex(LABEL))?;
-    let (goal_claim, record) = vault
-        .project_intake_goal_as_in_txn(
-            txn,
-            crate::dreamer_runner::authority::coach_reader()?,
-            binding.project,
-        )?
-        .ok_or(invalid("the skill's project has no readable goal record"))?;
+    let goal = match reader {
+        Some(reader) => vault.project_intake_goal_as_in_txn(txn, reader, binding.project)?,
+        None => vault.project_intake_goal_in_txn(txn, binding.project)?,
+    };
+    let (goal_claim, record) =
+        goal.ok_or(invalid("the skill's project has no readable goal record"))?;
     Ok(Some(ProjectGoalJoin {
         project: binding.project,
         goal_claim,
@@ -137,7 +139,13 @@ pub fn set_skill_goal_project(
                 vault.store.vault_meta.delete(txn, &key)?;
             }
         }
-        Ok(goal_definition_in_txn(vault, txn, skill)?.revision)
+        Ok(goal_definition_in_txn(
+            vault,
+            txn,
+            skill,
+            Some(WriteActor::new(actor, EdgeActorClass::Human)),
+        )?
+        .revision)
     })
 }
 

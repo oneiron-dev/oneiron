@@ -37,7 +37,6 @@ use crate::receipt::ServedForm;
 use crate::session_overlay::RouteTarget;
 use crate::store::SessionStoreView;
 use oneiron_retrieval::pipeline::ScoredEntity;
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::session_reads::{

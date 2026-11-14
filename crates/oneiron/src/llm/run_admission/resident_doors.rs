@@ -2,7 +2,6 @@
 //! resident's share of the host-paid allocation, and read every resident's
 //! share and depletion. The vault's resident ledger owns every admission
 //! rule; these doors only check the owner's proof and project.
-use serde::{Deserialize, Serialize};
 
 use super::ResidentShare;
 use crate::consent::AuthenticatedOwner;

@@ -336,6 +336,9 @@ fn replay_tombstone_markers(
     for (key, value) in markers {
         apply_tombstone_to_indexed_window_doc(doc, &tombstones, &key.id, value)?;
     }
+    // The policies no binding reaches now go in this replay's commit, the
+    // window pinned history-free first (fix list row 17211).
+    crate::sync::source_audiences::prune_unreached_policies(vault, doc, Some(window_key))?;
     // Bridge origin: local LMDB already reflects the delete (the marker was
     // written in the purge/scrub txn itself), so Observer B must not re-run
     // the hard purge against a soft shell.

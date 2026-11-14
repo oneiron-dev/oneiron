@@ -1,15 +1,11 @@
 //! The owner's explicit naming of this install's predecessor device key.
 
-use serde::{Deserialize, Serialize};
-
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::EdgeActorClass;
 use crate::consent::AuthenticatedOwner;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::device_succession::DevicePredecessor;
-#[doc(hidden)]
-use oneiron_verb_wire::memory::device_succession::lower_hex;
 
 impl Memory<'_> {
     /// `vault.devices.predecessor.name`: the actual owner names a predecessor

@@ -1,8 +1,7 @@
 //! Typed ASSET ingest and consumer-form reads (OF-370, OF-329).
 use base64::Engine as _;
-use serde::{Deserialize, Serialize};
 
-use super::asset_resolve::{AssetConsumer, ServedAssetForm, asset_body};
+use super::asset_resolve::{AssetConsumer, asset_body};
 use super::{Memory, MemoryError, MemoryResult, caps};
 use crate::EntityId;
 use crate::claim::ScopedReadResult;

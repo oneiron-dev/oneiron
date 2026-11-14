@@ -6,8 +6,6 @@
 //! route (MCP) reads the same kept archive the
 //! `GET /v1/core/export-transfers/{transfer_ref}` route reads.
 
-use serde::{Deserialize, Serialize};
-
 /// The bytes one read answers when its caller names no length: a pacing
 /// default, never a bound. Any length asked for is answered.
 pub const EXPORT_TRANSFER_READ_BYTES: u64 = 4 * 1024 * 1024;

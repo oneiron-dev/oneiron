@@ -1,9 +1,8 @@
 //! Typed weave publication and persisted correction reads for the bound reader.
-use super::{ClaimReadStatus, ScopedReadReceipt, WeaveLinkCorrectionView, WeaveWrongLinkRequest};
+use super::{ClaimReadStatus, WeaveLinkCorrectionView, WeaveWrongLinkRequest};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::Memory;
 use oneiron_contracts::memory::MemoryResult;
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::claim::scoped_read::weave_trigger::WeaveDigestRendered;

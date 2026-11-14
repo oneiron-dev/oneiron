@@ -1,8 +1,6 @@
 //! A mention's saved resolution, separate from the tagger's original suggestion.
 //! The answer and its owner evidence land in the same writer as the link.
 
-use serde::{Deserialize, Serialize};
-
 use super::{IdentityAnswerRequest, IdentityAsk, MentionProvenance, ask_key, key_hex};
 use crate::claim::ClaimSource;
 use crate::consent::AuthenticatedOwner;

@@ -9,8 +9,6 @@
 //! current `$state` under the caller's own read. Backing refs are never
 //! rebuilt from a returned tree.
 
-use serde::{Deserialize, Serialize};
-
 use super::{
     GeneratedUiAgentCallback, GeneratedUiValidatedAction, LensReadHandle, LensRenderFrame,
 };
@@ -21,7 +19,6 @@ use crate::lens::generated_ui::{
     GeneratedLens, GeneratedUiActionDeclaration, GeneratedUiActionEvent, GeneratedUiCard,
     GeneratedUiRender, GeneratedUiStateSnapshot, GeneratedUiSurfaceCapabilities,
 };
-use crate::lens::wire_ids::LensRenderId;
 use crate::memory::{Memory, MemoryResult};
 
 /// One host-rendered lens: the frame its reads minted backing refs on, and

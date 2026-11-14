@@ -1,7 +1,7 @@
 //! Owner reads of measured learning state and anchored outcome projection.
 //! These doors never admit evidence or run a projector.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
@@ -9,10 +9,9 @@ use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
 use crate::ports::{EdgeDirection, EdgeStore};
 use crate::skill_attribution::{LateCreditReceipt, late_credit_receipt_for_outcome};
-use crate::{EntityId, Error, Result, Vault, WriteActor};
+use crate::{Error, Result, Vault, WriteActor};
 
-use super::cell::{LearningCell, LearningPredicate, TypeRef};
-use super::estimate::{Estimate, EstimateLabels, EstimateValue, PriorOrigin, Window};
+use super::cell::{LearningCell, TypeRef};
 use super::evidence::{EvidenceRow, evidence_in_txn};
 use super::project::active_heads_in_txn;
 use super::read::read_learning_in_txn;

@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use super::{Memory, MemoryError, MemoryResult, caps};
 use crate::batch::EntityMetadataHeader;
 use crate::claim::{ClaimReadStatus, PointRead, ScopedReadResult};
-use crate::pipeline::TemporalSearchReport;
 use crate::ports::EntityStoreRead;
 use crate::temporal::TemporalAnchorMode;
 

@@ -4,13 +4,11 @@
 //! owner's `vault.packs.sections.revoke` undoes it; anything else waits as a
 //! proposed install claim for the owner, with the fit's analysis. Neither
 //! outcome grants a requested permission.
-use serde::{Deserialize, Serialize};
 
 use super::{PluginSectionProposeRequest, plugin_error};
 use crate::context_board::{
     EngineSectionBindings, PluginInstallOrigin, PluginInstallTarget, PluginSectionFitOutcome,
-    SectionManifestEnvelope, VaultPluginInstallSource, digest_to_hex,
-    install_plugin_section_after_fit,
+    VaultPluginInstallSource, digest_to_hex, install_plugin_section_after_fit,
 };
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::skill_hub::{CallerPermissions, HoldsNothing};

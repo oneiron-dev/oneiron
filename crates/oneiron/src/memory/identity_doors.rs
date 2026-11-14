@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use super::{EntityRefReceipt, Memory, MemoryError, MemoryResult, StructuralPutInput};
 use crate::consent::AuthenticatedOwner;
 use crate::ingest::{EntityResolutionCandidate, EntityResolutionWaterfallDecision};
-use crate::provenance::made_by::MadeBy;
 use crate::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE};
 use crate::{EntityId, Error, Vault};
 

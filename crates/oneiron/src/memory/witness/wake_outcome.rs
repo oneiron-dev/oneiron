@@ -4,7 +4,6 @@
 //! accepted either way; a wake that fails rolls back alone.
 
 use heed::{RoTxn, RwTxn};
-use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::entity_id::EntityId;

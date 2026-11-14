@@ -2,8 +2,6 @@
 //! `ThreadPassportRequest` and `Memory::channel_thread_passport` are its call surface.
 //! Its request and view records are local definitions; `memory::channel_doors` re-exports them.
 
-use serde::{Deserialize, Serialize};
-
 use super::*;
 use crate::write_envelope::thread_claim::{
     StickyMaskDecision, ThreadMask, ThreadPassport, canonical_message_id,

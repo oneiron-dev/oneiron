@@ -5,12 +5,7 @@
 //! the caller's stable `stream_key` after any restart.
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
-
-use super::{
-    FatalLlmError, LlmRequest, LlmResponse, LlmResult, LlmStreamEvent, LlmUsage, ModelId,
-    TerminalSink,
-};
+use super::{FatalLlmError, LlmResponse, LlmResult, TerminalSink};
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;

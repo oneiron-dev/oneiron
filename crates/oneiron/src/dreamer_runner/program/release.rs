@@ -18,8 +18,6 @@
 //! its record stays held until its repair (FIX 5881) lands. Nothing here runs
 //! on its own, and no other park is touched.
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::attempt_queue::{
     AttemptId, AttemptInterventionKind, AttemptQueue, AttemptRecord, ForceAttemptCancel,

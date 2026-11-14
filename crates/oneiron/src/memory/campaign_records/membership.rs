@@ -1,7 +1,5 @@
 //! Cursor-page request and projection values for cohort membership.
 
-use serde::{Deserialize, Serialize};
-
 use crate::entity_id::EntityId;
 
 /// Page size used when a caller passes `limit = 0`.

@@ -31,8 +31,6 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
-
 use super::call_evidence::{AgentCalls, CallActivity, UnreadCalls};
 use super::{
     AgentHealthCounter, AgentHealthOutcome, Attempts, CARDS, DialBook, Dispatches, Finding, Traps,

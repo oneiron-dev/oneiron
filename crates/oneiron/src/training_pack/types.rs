@@ -10,7 +10,7 @@ use crate::llm::run_admission::{BudgetLine, LeaseUnit, Payer};
 use crate::llm::{ModelId, ModelLocality};
 use crate::skill_optimize::{EvalCohort, EvalExposure, EvalSeat};
 
-use super::TrainingTarget;
+use super::{DataTimeline, TrainingTarget};
 
 /// A source is a repository and an immutable revision, never a moving branch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -225,6 +225,11 @@ pub struct TrainingResult {
     /// Taken from the run admission, not the connector's own report.
     pub teachers: Value,
     pub service_units: u64,
+    /// Where the run changed its data mixture or restarted from an earlier
+    /// checkpoint (ARCH-0053 #training-timeline), as the trainer's receipt
+    /// reported it; none from a run that did neither.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeline: Option<DataTimeline>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

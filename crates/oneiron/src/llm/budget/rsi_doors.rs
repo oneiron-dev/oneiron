@@ -2,7 +2,6 @@
 //! shares once, read both unit-labelled lines, top up one exact limiting
 //! line, and hold or resume new loop work. The ledger in `rsi` owns every
 //! admission rule; these doors only check the owner's proof and project.
-use serde::{Deserialize, Serialize};
 
 use super::rsi::{RsiBudgetConfig, RsiBudgetError, RsiTopUp};
 use crate::consent::AuthenticatedOwner;

@@ -11,21 +11,17 @@
 //! read: the sheet's spend says so ([`FreeTimeSpendView::unmetered`]), and a
 //! server joins its trusted spend records in ([`FreeTimeSpendView::metered`]).
 
-use std::collections::BTreeMap;
 use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
 use super::cycle::{FreeTimeCycle, FreeTimeCycleState};
 use super::policy::{
-    FREE_TIME_WHEN_UNSET, FreeTimeAuthority, FreeTimePolicy, FreeTimePolicyInput, FreeTimeSchedule,
-    FreeTimeSplit, UnsetFreeTimePolicy, effective_policy,
+    FREE_TIME_WHEN_UNSET, FreeTimeAuthority, FreeTimePolicy, FreeTimePolicyInput, FreeTimeSplit,
+    UnsetFreeTimePolicy, effective_policy,
 };
-use super::receipt::{
-    FreeTimeFloor, FreeTimeItemOutcome, FreeTimeItemReceipt, free_time_floor, receipts_in_txn,
-};
+use super::receipt::{FreeTimeFloor, FreeTimeItemReceipt, free_time_floor, receipts_in_txn};
 use super::{CYCLE, FreeTimeKind, POLICY};
-use crate::agent_dispatch::budget_doors::RunRungSettlement;
 use crate::attempt_queue::AttemptId;
 use crate::authority::ActAuthority;
 use crate::consent::AuthenticatedOwner;

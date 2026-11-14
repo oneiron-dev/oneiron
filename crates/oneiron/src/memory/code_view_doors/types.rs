@@ -1,9 +1,6 @@
 //! Account-local working views and immutable build results (ARCH-0050 / RC7).
 use crate::EntityId;
-use crate::code_view::VisibleFilePolicy;
-use crate::memory::codebase_doors::RepoFileProjectionView;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::code_view_doors::types::{

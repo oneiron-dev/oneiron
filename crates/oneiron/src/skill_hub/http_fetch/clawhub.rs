@@ -2,7 +2,7 @@
 use super::{HttpEndpointSkillHubAdapter, INDEX_LIMIT};
 use crate::error::Result;
 use crate::skill_hub::package_codec::invalid;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::io::Read;
 
 #[doc(hidden)]

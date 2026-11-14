@@ -1,9 +1,4 @@
 //! Typed reference frontiers and the root's immutable evidence-accounting receipts.
-use serde::{Deserialize, Serialize};
-
-use crate::claim::ClaimSource;
-use crate::dreamer_promotion::PromotionEvidenceReason;
-use crate::memory::consolidation::ConsolidationMessageEvidence;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::consolidation_frontier::{

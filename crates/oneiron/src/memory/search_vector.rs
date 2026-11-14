@@ -2,7 +2,7 @@
 use super::{Memory, MemoryError, MemoryResult, caps};
 use crate::claim::{ClaimReadStatus, ScopedReadResult};
 use crate::consent::AuthenticatedOwner;
-use crate::store::embedding::{EmbeddingMatchEvidence, InputKind};
+use crate::store::embedding::InputKind;
 use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]

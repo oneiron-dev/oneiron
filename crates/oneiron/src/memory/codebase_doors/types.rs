@@ -2,9 +2,6 @@
 //! `CodeRepoPointer` is the first of its records.
 //! Local definitions, plus projection kinds re-exported from `crate::origin::secret_projection`.
 
-use serde::{Deserialize, Serialize};
-
-use crate::EntityId;
 // The projection descriptor's own leaf is crate-private; the wire names it here.
 pub use crate::origin::secret_projection::types::{RepoFileProjectionKind, RepoFileProjectionView};
 
