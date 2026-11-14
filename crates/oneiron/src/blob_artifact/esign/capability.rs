@@ -328,6 +328,15 @@ pub(super) fn mint_draft_capabilities_in(
     Ok(issued)
 }
 
+/// An owner's `vault.esign.links.issue`, from its one writer: each
+/// recipient's new link, the decision a minting issue ran on (none when it
+/// minted nothing), and the document as that writer left it.
+pub(crate) struct EsignLinksIssued {
+    pub(crate) minted: Vec<(String, EsignCapability)>,
+    pub(crate) decision: Option<CheckInDecision>,
+    pub(crate) state: EsignState,
+}
+
 impl Vault {
     /// Mint missing or unusable recipient capabilities in DRAFT, for the
     /// owner to hand out. A recipient already holding a link that covers the
@@ -358,7 +367,7 @@ impl Vault {
     ) -> Result<Vec<(String, EsignCapability)>> {
         Ok(self
             .issue_esign_links_with_check_in(owner, document, rotate, None)?
-            .0)
+            .minted)
     }
     /// [`Self::issue_esign_capabilities`], or on `rotate`
     /// [`Self::reissue_esign_capabilities`], for `vault.esign.links.issue`,
@@ -368,24 +377,31 @@ impl Vault {
     /// spent in the mint's writer after every check (ROLES-CHECKIN 2k8;
     /// P25-2K8-SCOPE Q1 = A), so a refusal mints nothing and leaves it
     /// eligible. An issue that mints no link spends nothing and records none.
+    /// The document the answer shows is read in the same writer, so no read
+    /// after the commit can fail an issue that minted and spent.
     pub(crate) fn issue_esign_links_with_check_in(
         &self,
         owner: &AuthenticatedOwner,
         document: EntityId,
         rotate: bool,
         check_in: Option<EntityId>,
-    ) -> Result<(Vec<(String, EsignCapability)>, Option<CheckInDecision>)> {
+    ) -> Result<EsignLinksIssued> {
         self.with_write_txn_grouped(|txn| {
             verify_owner(self, txn, owner)?;
             let minted = mint_draft_capabilities_in(self, txn, document, rotate)?;
+            let state = state_in(self, txn, document)?;
             if minted.is_empty() {
-                return Ok((minted, None));
+                return Ok(EsignLinksIssued {
+                    minted,
+                    decision: None,
+                    state,
+                });
             }
-            let recipients: Vec<String> = state_in(self, txn, document)?
+            let recipients: Vec<String> = state
                 .document
                 .recipients
-                .into_iter()
-                .map(|recipient| recipient.id)
+                .iter()
+                .map(|recipient| recipient.id.clone())
                 .collect();
             let applied = check_in.map(|id| AppliedCheckIn {
                 id,
@@ -398,7 +414,11 @@ impl Vault {
             });
             let decision =
                 owner_act_decision_in_txn(self, txn, ActClass::GrantWiden, applied.as_ref())?;
-            Ok((minted, Some(decision)))
+            Ok(EsignLinksIssued {
+                minted,
+                decision: Some(decision),
+                state,
+            })
         })
     }
     pub fn revoke_esign_capability(
