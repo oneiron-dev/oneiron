@@ -9,12 +9,11 @@
 //! sends once over verified TLS and strips the key from the reply. A refused
 //! or unreachable call never reads the key.
 //!
-//! A streamed chat call (OpenAI-compatible or Anthropic) goes as the wire's
-//! event request through the shape's event row, and its events come back as
-//! the broker clears them of the key ([`super::broker_stream`]); a streamed
-//! Gemini call is refused before its permit starts. A `key_secret` provider's
-//! media calls go through the same broker, call by call
-//! ([`super::broker_media`]).
+//! A streamed chat call goes as the wire's event request through the shape's
+//! event row (Gemini's by its `streamGenerateContent` endpoint and `alt=sse`),
+//! and its events come back as the broker clears them of the key
+//! ([`super::broker_stream`]). A `key_secret` provider's media calls go
+//! through the same broker, call by call ([`super::broker_media`]).
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -25,7 +24,7 @@ use oneiron::llm::{BrokerIsolation, CacheDigest, SingleRouteBackend};
 use oneiron::{
     BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmCatalogEntry, LlmError,
     LlmGenerateFuture, LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamResult, ModelId,
-    RetryableLlmError, UnsupportedCapability, Vault,
+    RetryableLlmError, Vault,
 };
 use oneiron_broker::{
     BrokerClient, BrokerError, CallHeader, ChildBroker, Failure, Isolation, Outcome, Refusal, Shape,
@@ -35,8 +34,8 @@ use oneiron_llm_anthropic::{
     classify_anthropic_status, parse_anthropic_messages_response,
 };
 use oneiron_llm_gemini::{
-    build_request as build_gemini_chat_request, classify_status as classify_gemini_status,
-    parse_response as parse_gemini_chat_response,
+    GeminiEventStream, build_request as build_gemini_chat_request,
+    classify_status as classify_gemini_status, parse_response as parse_gemini_chat_response,
 };
 use oneiron_llm_openai::{
     OpenAiCompatConfig, OpenAiCompatLlmStream, build_openai_chat_request, classify_openai_status,
@@ -121,8 +120,7 @@ pub(super) struct BrokerBackend {
     prefix: String,
     /// The provider's extra headers, names lowercase.
     headers: BTreeMap<String, String>,
-    /// The provider's models, as configured; a Gemini provider's none of
-    /// them streaming, as it has no event shape.
+    /// The provider's models, as configured.
     catalog: BTreeMap<ModelId, LlmCatalogEntry>,
     secret: String,
     client: BrokerClient,
@@ -212,17 +210,9 @@ pub(super) fn broker_backend(
     let client = site.client(Duration::from_secs(provider.timeout_secs) + REPLY_MARGIN)?;
     let url = reqwest::Url::parse(&provider.base_url)?;
     let mut prefix = url.path().trim_end_matches('/').to_owned();
-    let whole_only = matches!(provider.kind, ProviderKind::Gemini);
     let catalog: BTreeMap<ModelId, LlmCatalogEntry> = catalog
         .into_iter()
-        .map(|mut entry| {
-            if whole_only {
-                entry
-                    .capabilities
-                    .retain(|capability| *capability != LlmCapability::Streaming);
-            }
-            (entry.model.clone(), entry)
-        })
+        .map(|entry| (entry.model.clone(), entry))
         .collect();
     let rows = catalog.values().cloned();
     let wire = match provider.kind {
@@ -321,9 +311,7 @@ impl BrokerBackend {
             }
         };
         if stream {
-            shape = shape
-                .with_events()
-                .ok_or_else(|| no_streaming(&request.model))?;
+            shape = shape.with_events().ok_or(FatalLlmError::InvalidRequest)?;
         }
         match &self.wire {
             Wire::Gemini => {
@@ -528,7 +516,10 @@ impl BrokerBackend {
                 let frames = super::anthropic::messages_frames(events, None);
                 Ok(LlmStream::new(AnthropicMessagesLlmStream::new(frames)))
             }
-            Wire::Gemini => Err(no_streaming(&model)),
+            Wire::Gemini => {
+                let frames = super::gemini_chat::generate_frames(events, None);
+                Ok(LlmStream::new(GeminiEventStream::new(frames)))
+            }
         }
     }
 }
@@ -803,15 +794,6 @@ pub(super) fn join(prefix: &str, path: &str) -> String {
         (Some(base), Some(rest)) => format!("{base}/v1/{rest}"),
         _ => format!("{prefix}{path}"),
     }
-}
-
-fn no_streaming(model: &ModelId) -> LlmError {
-    FatalLlmError::Unsupported(UnsupportedCapability {
-        capability: LlmCapability::Streaming,
-        model: Some(model.clone()),
-        reason: Some("the credential broker relays no Gemini events yet".to_owned()),
-    })
-    .into()
 }
 
 pub(crate) fn broker_error(error: BrokerError) -> LlmError {

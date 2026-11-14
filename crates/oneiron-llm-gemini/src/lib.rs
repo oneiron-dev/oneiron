@@ -15,6 +15,7 @@ use oneiron::{
 };
 use std::collections::BTreeMap;
 use stream::GeminiAccumulator;
+pub use stream::GeminiEventStream;
 pub use transport::*;
 pub use wire::{build_request, classify_status, parse_response};
 pub struct GeminiBackend<T> {

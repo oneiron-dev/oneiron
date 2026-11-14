@@ -228,13 +228,17 @@ impl GeminiAccumulator {
         self.assembly.abort(usage)
     }
 }
-pub(super) struct GeminiEventStream<'a> {
+/// A `streamGenerateContent` reply's frames as the call's stream events: the
+/// backend's own reader, which a host that sends the request itself (the
+/// credential broker's event call) reads its frames through as well.
+pub struct GeminiEventStream<'a> {
     source: GeminiProviderStream<'a>,
     accumulator: GeminiAccumulator,
     pending: VecDeque<LlmResult<LlmStreamEvent>>,
 }
 impl<'a> GeminiEventStream<'a> {
-    pub(super) fn new(source: GeminiProviderStream<'a>) -> Self {
+    #[must_use]
+    pub fn new(source: GeminiProviderStream<'a>) -> Self {
         Self {
             source,
             accumulator: Default::default(),
