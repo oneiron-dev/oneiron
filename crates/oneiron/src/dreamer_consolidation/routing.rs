@@ -216,9 +216,18 @@ fn cosine(a: &[f32], b: &[f32]) -> Result<f64> {
     Ok((dot / (an.sqrt() * bn.sqrt())).clamp(-1.0, 1.0))
 }
 impl Vault {
+    /// Reads the effective predicate key rules in a fresh transaction.
     pub fn consolidation_key_rules(&self) -> Result<PredicateKeyRules> {
         let txn = self.store.env.read_txn()?;
-        match KEY_RULES.get(&self.store, &txn, &())? {
+        self.consolidation_key_rules_in_txn(&txn)
+    }
+
+    /// Reads the stored predicate key rules or their defaults in the caller's transaction.
+    pub(crate) fn consolidation_key_rules_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<PredicateKeyRules> {
+        match KEY_RULES.get(&self.store, txn, &())? {
             Some(rules) => Ok(rules),
             None => serde_json::from_str(include_str!("key_defaults.json"))
                 .map_err(|_| Error::CorruptedIndex("default key rules")),
