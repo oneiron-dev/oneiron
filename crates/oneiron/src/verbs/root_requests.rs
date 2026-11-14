@@ -123,7 +123,7 @@ impl From<OwnerWorkReceipt> for OwnerWorkView {
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::root_requests::{
-    OwnerWorkGetRequest, RootRequestCancelRequest,
+    OwnerWorkGetRequest, RootChangeView, RootRequestCancelRequest, RootRequestCreateRequest,
 };
 
 /// `vault.roots.requests.cancel`: records the owner's cancel of one root
@@ -148,43 +148,6 @@ pub fn cancel_root_request_as(
 ) -> MemoryResult<OwnerWorkReceipt> {
     let request = request_entry(&input.request)?;
     Ok(vault.cancel_root_request(owner, surface, request)?)
-}
-
-/// `vault.roots.requests.create`'s input: the root change the owner decides
-/// for one install, as `POST /v1/owner/roots/requests` names it. Ids only.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RootRequestCreateRequest {
-    /// The install that is to make the change, 32 hex.
-    pub target: String,
-    /// `pin`, `activate`, `restore` or `anchor`.
-    pub change: String,
-    /// The root the change binds, 64 lower-case hex: every change but
-    /// `activate`.
-    #[serde(default)]
-    pub root: Option<String>,
-    /// The machine an `anchor` marks, 32 hex.
-    #[serde(default)]
-    pub machine: Option<String>,
-    /// An asker's approved check-in for this change, 32 hex
-    /// (`root_request_effect_digest`): the Owner applies it on their own
-    /// proof, and the answer names its asker.
-    #[serde(default)]
-    pub check_in_ref: Option<String>,
-}
-
-/// One root change as a surface shows it: its kind, and the ids it binds.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RootChangeView {
-    /// `pin`, `activate`, `restore` or `anchor`.
-    pub change: String,
-    /// The root it binds, 64 lower-case hex; `None` for `activate`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub root: Option<String>,
-    /// The machine an `anchor` marks, 32 hex.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub machine: Option<String>,
 }
 
 impl From<RootChange> for RootChangeView {
