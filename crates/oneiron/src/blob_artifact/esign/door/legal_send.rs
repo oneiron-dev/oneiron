@@ -11,18 +11,23 @@
 //! * The vault's Owner sends on their own proof, and the view records it.
 //! * A shared-vault member is judged under their membership role. A
 //!   Deputy's send goes on their own judgment (`sure`). An Admin's (canon:
-//!   "propose"), a Steward's, a Member's, a Delegate's (if named: ask) and a
-//!   Guest's wait: the door admits each of them, so where canon gives the
-//!   role no power of its own the send asks. The door commits the pending
-//!   check-in alone, dispatches nothing and answers `CHECK_IN_PENDING`
-//!   naming it. Once it is approved, the call that names it as
-//!   `check_in_ref` spends it in the judge's writer and dispatches, and a
-//!   dispatch refused after leaves it spent. The same person's retry that
-//!   names it again goes on the basis it gave: a document sends once, so a
-//!   retry is the same send (a gate that held the first call releases it on
-//!   its retry).
+//!   "propose"), a Steward's, a Member's and a Guest's wait: the door admits
+//!   each of them, so where canon gives the role no power of its own the
+//!   send asks. The door commits the pending check-in alone, dispatches
+//!   nothing and answers `CHECK_IN_PENDING` naming it. Once it is approved,
+//!   the call that names it as `check_in_ref` spends it in the judge's
+//!   writer and dispatches, and a dispatch refused after leaves it spent.
+//!   The same person's retry that names it again goes on the basis it gave:
+//!   a document sends once, so a retry is the same send (a gate that held
+//!   the first call releases it on its retry). A member's send whose
+//!   `recipient_count` is not the document's is refused before any ask
+//!   opens: the dispatch would refuse it, so an approved check-in spent on
+//!   it would be lost.
 //! * Any other person (one with no membership grant, or any person on a
-//!   vault that is not shared) is not judged, as on main.
+//!   vault that is not shared) is not judged, as on main. A Delegate grant
+//!   is no membership grant (the ladder climbs from membership grants, as at
+//!   every door of 2i to 2k), so a Delegate's send is not judged either (FIX
+//!   CHECK-IN-PERSON-DELEGATE-UNJUDGED).
 //!
 //! Drafting (`vault.esign.create`) is not judged: it sends nothing.
 
@@ -55,8 +60,9 @@ impl Memory<'_> {
     /// # Errors
     ///
     /// `BAD_REQUEST` for a `check_in_ref` that is no check-in id, or that a
-    /// send no membership role judges names; `CHECK_IN_PENDING` while the
-    /// send waits; as [`check_in::person_door_check_in_in_txn`].
+    /// send no membership role judges names, and for a member's
+    /// `recipient_count` that is not the document's; `CHECK_IN_PENDING`
+    /// while the send waits; as [`check_in::person_door_check_in_in_txn`].
     pub(super) fn send_for_signature_check_in(
         &self,
         document: EntityId,
@@ -126,6 +132,16 @@ fn send_check_in_in_txn(
     let Some((grant, role)) = vault.member_grant_in_txn(txn, creation.vault_id, person)? else {
         return Ok(SendCheckIn::Unjudged);
     };
+    // A count the dispatch refuses opens no ask (module docs). A state the
+    // judge cannot read is left to the dispatch, which refuses it in its own
+    // writer, as on main.
+    if let Ok(state) = super::super::ledger::state_in(vault, txn, document)
+        && state.document.recipients.len() != recipient_count
+    {
+        return Err(super::super::model::invalid(
+            "recipient_count is not the document's recipient count",
+        ));
+    }
     let act = DoorAct {
         person,
         role: RolePreset::of_grant_role(role),
