@@ -55,6 +55,19 @@ pub(super) const SYSTEM_NOTICE_TYPE_TRUSTED_CONTACT_ASK: &str = "trusted_contact
 const TRUSTED_CONTACT_NOTIFIED_NOTICE: &str = "Oneiron is sending this person's trusted contact the check-in notice both of them agreed to, and nothing else.";
 const TRUSTED_CONTACT_ASK_NOTICE: &str = "This person has a trusted contact who agreed to receive a check-in notice. Nothing is sent to them unless this person says yes.";
 
+/// The self-host route of a hosted relay's own pass (DEC-0005 #will-sweep;
+/// RULING L9-61-POLICY-SELFHOST = A): one sentence, the decision's
+/// `self_hosted_note` and the engine-written Block body's last sentence. A
+/// macro, so the Block suffix stays one literal the template bound measures.
+macro_rules! hosted_relay_self_hosted_note {
+    () => {
+        "A self-hosted vault relays through no hosted policy."
+    };
+}
+
+/// What a hosted relay decision says self-hosting changes.
+pub(super) const HOSTED_RELAY_SELF_HOSTED_NOTE: &str = hosted_relay_self_hosted_note!();
+
 /// The hosted notice-body templates, split around the one variable part (the
 /// jurisdiction) so the registration guard can price them. They live as
 /// constants rather than inline literals precisely so
@@ -64,7 +77,8 @@ const HOSTED_WARN_NOTICE_PREFIX: &str = "The hosted relay service flagged this c
 const HOSTED_WARN_NOTICE_SUFFIX: &str = " legal policy and relayed it unchanged.";
 const HOSTED_BLOCK_NOTICE_PREFIX: &str =
     "The hosted relay service withheld this content under its ";
-const HOSTED_BLOCK_NOTICE_SUFFIX: &str = " legal policy.";
+const HOSTED_BLOCK_NOTICE_SUFFIX: &str =
+    concat!(" legal policy. ", hosted_relay_self_hosted_note!());
 
 /// The most a hosted notice body can add around a jurisdiction name. The
 /// ledger's body bound minus this is the room a jurisdiction has.
