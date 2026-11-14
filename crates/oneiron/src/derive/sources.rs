@@ -22,7 +22,7 @@ pub const SOURCE_WITHHELD: &str = "gate.deny.derive.source_withheld";
 /// The refusal of a batch citing a foreign copy: a claim in a received
 /// foreign WORLD, which a pact's WORLD copy or a copied inquiry answer lands
 /// in.
-pub const SOURCE_FOREIGN_COPY: &str = "gate.deny.derive.source_foreign_copy";
+const SOURCE_FOREIGN_COPY: &str = "gate.deny.derive.source_foreign_copy";
 
 /// Rechecks every source version of `batch` in `txn` under the committing
 /// actor's own read.
