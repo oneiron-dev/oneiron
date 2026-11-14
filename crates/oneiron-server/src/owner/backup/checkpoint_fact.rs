@@ -72,9 +72,8 @@ pub(super) fn remove(dir: &Path, artifact: &str) {
 /// Removes this label's checkpoint facts whose artifact is gone, at the start
 /// of each prune (FIX 7359). A fact goes only where nothing at all is at its
 /// artifact's exact path: an entry of any kind there keeps it, and so does
-/// an error reading that path. The holds are read and each fact goes while
-/// the vault's writer is held, as a prune's backups do, so a standing legal
-/// hold keeps these too. The caller holds the backup lock, so no fact goes
+/// an error reading that path. Each fact goes while the vault's
+/// writer is held, as a prune's backups do. The caller holds the backup lock, so no fact goes
 /// while its artifact is still landing. A sweep that fails is logged and
 /// fails nothing else; the next prune sweeps again. A swept fact is not one
 /// of the backups a prune names.

@@ -127,8 +127,8 @@ pub(super) fn retirement_prefixes() -> [&'static [u8]; 2] {
 
 /// Each claim, body instance and known-value history key-retirement intent
 /// among a checkpoint's `vault_meta` rows, with whether the finisher would
-/// carry it out now: an erase's always, a sweep's unless its partition is
-/// held. A restore treats a carried-out one as done, so it never brings back
+/// carry it out now: a claim's always, since no legal hold keeps its
+/// partition any more (LEGAL-HOLD-USE = B). A restore treats a carried-out one as done, so it never brings back
 /// a key a vault has committed to destroy.
 pub(super) fn checkpoint_retirements(
     rows: &[(Vec<u8>, Vec<u8>)],
@@ -160,9 +160,11 @@ pub(super) fn checkpoint_retirements(
         if intent.subject.kind() != CustodyKind::ClaimDecision {
             continue;
         }
-        let held = legal_hold::rows_keep_record(rows, &intent_claim(&intent)?)?;
-        let carried = intent.cause == RetireCause::Erase || !held;
-        retirements.push((intent, carried));
+        // The intent must name its claim, as before; no legal hold keeps the
+        // claim's partition any more, so a sweep's is carried out as an
+        // erase's is.
+        intent_claim(&intent)?;
+        retirements.push((intent, true));
     }
     Ok(retirements)
 }

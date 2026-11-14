@@ -15,10 +15,9 @@
 //! never list or prune each other's files, then a sequence number one past
 //! the highest already there. Retention orders by that number, never by the
 //! clock, so a clock that steps back cannot make a new backup look oldest.
-//! A backup holds every record its image carries, so while a customer legal
-//! hold stands none expires (ARCH-0038 #legal-hold). A host order keeps no
-//! backup: its order-scoped clone lives in the host's separate legal-hold
-//! store (LEGAL-HOLD-USE = B as a clone, owner 2026-11-05). A label whose handoff policy
+//! No legal hold keeps a backup: a hold's sealed copy lives in the host's
+//! separate legal-hold store (LEGAL-HOLD-USE = B as a clone, owner
+//! 2026-11-05). A label whose handoff policy
 //! a managed setup installed keeps each backup until its node's supervisor
 //! acks the stage copy (`handoff`).
 //!
@@ -173,8 +172,7 @@ pub(crate) struct BackupOutcome {
     pub(crate) backup: BackupRecord,
     /// BLAKE3 of the checkpoint image; a rehearsal reports the same id.
     pub(crate) checkpoint_id: String,
-    /// Older backups deleted to honour `keep`; none while a customer legal
-    /// hold stands.
+    /// Older backups deleted to honour `keep`.
     pub(crate) pruned: Vec<String>,
     /// Why a hosted vault's backup carries none of its host-order legal
     /// holds, for its host to alert on (FIX 6598); absent where it carries

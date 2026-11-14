@@ -177,7 +177,7 @@ fn snapshots_see_last_commit(store: &Store, txn: &RoTxn<'_>) -> Result<bool> {
 /// the finisher under the custody write guard and the LMDB writer: no lease,
 /// kept copy or older read snapshot needs it now. Its live
 /// uses the caller reads. `kept` is the pass's holder snapshot (FIX 9067),
-/// read once per holder epoch under the same guard; the lease, hold and
+/// read once per holder epoch under the same guard; the lease and
 /// snapshot checks stay per intent.
 pub(super) fn retention_ready_in_txn(
     store: &Store,

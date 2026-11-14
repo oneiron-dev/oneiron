@@ -500,8 +500,7 @@ pub(super) fn mcp_scoped_task_rows(
 /// the registered world/facet ceiling and the verified slip's worlds and
 /// facets: only such a withheld row may be counted. A credential that
 /// narrows neither excludes no TASK. Any other row cannot prove it, so it is
-/// not counted. A C6 use-limited TASK also adds no omission while its
-/// retaining hold stands.
+/// not counted.
 fn mcp_row_position_inside(
     vault: &oneiron::Vault,
     actor: &McpResolvedActor,

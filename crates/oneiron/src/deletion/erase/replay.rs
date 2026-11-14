@@ -34,8 +34,6 @@ impl Vault {
     ///   finds nothing, so re-application (every-boot forward
     ///   re-materialization, repeated delta delivery) is a receipt-free
     ///   no-op.
-    /// * A refusal a hold made is logged once its writer has ended, committed
-    ///   or dropped, before this returns.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) fn apply_replayed_tombstone(
         &self,

@@ -72,7 +72,8 @@ struct Deferred {
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 enum Reason {
-    /// A standing hold keeps the vault's backups.
+    /// Retained protocol vocabulary: no hold keeps a vault's backups any
+    /// more, so the vault guard never answers it.
     HeldUntilRelease,
     /// The guard could not read the holds, or could not run.
     HoldStateUnknown,

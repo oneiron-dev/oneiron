@@ -354,8 +354,8 @@ pub struct StoreCore {
     /// is sealed to it (FIX 13866). Never persisted.
     pub(crate) host_legal_prospective: super::legal_hold::ProspectiveWake,
     /// Content-free, per-vault: bumped after each committed legal-hold
-    /// release and each hold maintenance pass, so a deferred delete that a
-    /// standing hold kept asks again (FIX 1488). Never persisted.
+    /// release and each hold maintenance pass, so a deferred delete asks
+    /// again (FIX 1488). Never persisted.
     pub(crate) backup_hold_rechecks: tokio::sync::watch::Sender<u64>,
     /// Content-free, per-vault digest deadline invalidation. The host
     /// subscribes before reading its first deadline; no process-global timer.

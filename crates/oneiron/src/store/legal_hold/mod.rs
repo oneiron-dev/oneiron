@@ -8,14 +8,12 @@
 //! backup expiry and key retirement run as they would without it. A hold is
 //! not an in-place retention pin or an erase-completion gate.
 //!
-//! The target index beside a hold stays empty for every new write
-//! ([`put_hold_in_txn`]); every byte-destroying path still reads it inside
-//! the transaction that destroys ([`Store::reject_legal_holds_in_txn`]), and
-//! only a cooperative restriction refuses now. Several holds may name one
-//! record; each lifts on its own.
+//! Every byte-destroying path still calls [`Store::reject_legal_holds_in_txn`]
+//! inside the transaction that destroys; only a cooperative restriction
+//! refuses there now. Several holds may name one record; each lifts on its
+//! own.
 //!
-//! Customer holds, their log, confirmed-erase links and use limits are
-//! canonical rows a restore keeps live. Host-order holds and their log sit
+//! Customer holds and their log are canonical rows a restore keeps live. Host-order holds and their log sit
 //! under `legal_hold:host:`, a runtime prefix no checkpoint image carries, so
 //! an owner backup or export never holds an order or its reference (C2). The
 //! owner reads a host order's rows through the one permitted view

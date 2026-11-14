@@ -30,7 +30,7 @@ pub struct LegalHoldPlaceRequest {
 }
 
 /// `vault.legal_holds.widen`'s input: more targets for one of the owner's
-/// standing customer holds. A hold narrows only through the one confirm.
+/// standing customer holds. A hold never narrows; `lift` ends it.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldWidenRequest {

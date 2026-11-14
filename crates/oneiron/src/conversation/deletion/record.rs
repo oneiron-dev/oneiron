@@ -124,7 +124,6 @@ fn reverify_record_delete(
 }
 
 impl Vault {
-    /// `progress` is the erase request's progress: no hold keeps any record.
     pub(super) fn delete_room_record_as(
         &self,
         room: EntityId,
@@ -132,7 +131,6 @@ impl Vault {
         actor: WriteActor,
         reason: DeleteReason,
         subject: Option<EntityId>,
-        progress: &mut PrivacyEraseProgress,
     ) -> Result<DeleteEntityOutcome> {
         let txn = self.store.env.read_txn()?;
         let role = check_delete(self, &txn, room, record, actor, reason, subject)?;
@@ -177,10 +175,10 @@ impl Vault {
                 }
                 drop(txn);
                 if privacy {
-                    targets = progress.unheld(self, &targets, &reverify)?;
+                    targets = reauthorized_targets(self, &targets, &reverify)?;
                 }
                 for message in targets {
-                    self.delete_room_record_as(room, message, actor, reason, subject, progress)?;
+                    self.delete_room_record_as(room, message, actor, reason, subject)?;
                 }
                 if ids.len() < ERASE_PAGE {
                     break;
@@ -196,7 +194,7 @@ impl Vault {
             crate::reaction::record_reaction_claims_in(self, &txn, record)?
         };
         if privacy {
-            reactions = progress.unheld(self, &reactions, &reverify)?;
+            reactions = reauthorized_targets(self, &reactions, &reverify)?;
         }
         crate::reaction::erase_reaction_claims(self, &reactions, reason)?;
         self.delete_entity_with_reason_gated(
@@ -221,14 +219,7 @@ impl Vault {
         ) {
             return Err(denied());
         }
-        self.delete_room_record_as(
-            room,
-            record,
-            actor,
-            reason,
-            None,
-            &mut PrivacyEraseProgress::default(),
-        )
+        self.delete_room_record_as(room, record, actor, reason, None)
     }
 
     /// Test seam for suites whose subject is a downstream effect of deletion:

@@ -199,8 +199,8 @@ pub enum Command {
     /// decline one as the board above.
     #[command(subcommand)]
     WidenProposals(WidenProposalsCommand),
-    /// Your legal holds: place, widen, list, read the log, or lift one
-    /// through the "Lift the hold and erase?" confirm.
+    /// Your legal holds: place, widen, list, read the log, lift one (its
+    /// sealed copy is destroyed), or produce its sealed copy.
     #[command(subcommand)]
     LegalHolds(LegalHoldsCommand),
     /// Your ask guests at this host: revoke one's access.

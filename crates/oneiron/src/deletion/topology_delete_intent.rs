@@ -313,8 +313,8 @@ pub(crate) fn complete_replayed_topology_delete_in_txn(
 /// Prepared with no published/propagation witness can be withdrawn. A
 /// persisted matching tombstone (or committed `pt:` intent) is completed under
 /// the caller's LMDB writer using the same reason-aware replay eraser; a
-/// refused completion keeps its reservation for the ordinary replay, and its
-/// hold refusal is logged once that writer has ended. No timeout or
+/// refused completion keeps its reservation for the ordinary replay.
+/// No timeout or
 /// guessed-owner cleanup is allowed; ambiguous evidence fails open rather
 /// than releasing an interlock a peer might already obey.
 pub(crate) fn recover_topology_delete_intents_on_open(vault: &crate::Vault) -> Result<()> {

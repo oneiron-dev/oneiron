@@ -1,7 +1,7 @@
 //! Actor-bound room deletion and per-person erasure over the existing delete door.
 mod private_thread;
 mod record;
-use super::privacy_erase::{PrivacyEraseProgress, RoomPersonEraseOutcome};
+use super::privacy_erase::{RoomPersonEraseOutcome, reauthorized_targets};
 use super::*;
 use crate::conversation_dag::{actor_in_txn, conversation_of};
 use crate::deletion::{DeleteEntityOutcome, DeleteReason, DeletionGateContext, GatedDeletion};
@@ -495,7 +495,6 @@ impl Vault {
         })?;
         let reauthorize =
             |txn: &heed::RoTxn<'_>| authorize_room_erasure(self, txn, room, person, actor);
-        let mut progress = PrivacyEraseProgress::default();
         let mut outcomes = Vec::new();
         // MESSAGE text is stored separately from its TURN. Scan the room's
         // direct BelongsTo index first: messages authored by this PERSON may
@@ -526,7 +525,7 @@ impl Vault {
                 }
             }
             drop(txn);
-            let targets = progress.unheld(self, &targets, &reauthorize)?;
+            let targets = reauthorized_targets(self, &targets, &reauthorize)?;
             for message in targets {
                 outcomes.push(self.delete_room_record_as(
                     room,
@@ -534,7 +533,6 @@ impl Vault {
                     actor,
                     DeleteReason::GdprDelete,
                     Some(person),
-                    &mut progress,
                 )?);
             }
             if ids.len() < ERASE_PAGE {
@@ -568,7 +566,7 @@ impl Vault {
                 })
                 .collect::<Result<Vec<_>>>()?;
             drop(txn);
-            let targets = progress.unheld(self, &targets, &reauthorize)?;
+            let targets = reauthorized_targets(self, &targets, &reauthorize)?;
             for record in targets {
                 outcomes.push(self.delete_room_record_as(
                     room,
@@ -576,7 +574,6 @@ impl Vault {
                     actor,
                     DeleteReason::GdprDelete,
                     Some(person),
-                    &mut progress,
                 )?);
             }
             if ids.len() < ERASE_PAGE {
@@ -618,7 +615,7 @@ impl Vault {
                     )?
                 };
                 count.rows(records.len());
-                let reactions = progress.unheld(self, &reactions, &reauthorize)?;
+                let reactions = reauthorized_targets(self, &reactions, &reauthorize)?;
                 crate::reaction::erase_reaction_claims(self, &reactions, DeleteReason::GdprDelete)?;
                 if records.len() < crate::reaction::ROOM_RECORD_PAGE {
                     break;
@@ -628,7 +625,7 @@ impl Vault {
             count.finish(self);
         }
         crate::workspace_roster::scrub_room_audience(self, room, person, &reauthorize, |ids| {
-            progress.unheld(self, ids, &reauthorize)
+            reauthorized_targets(self, ids, &reauthorize)
         })?;
         // The single writer closes the in-flight fence only after every
         // selected active row has completed its reason-aware deletion. A
