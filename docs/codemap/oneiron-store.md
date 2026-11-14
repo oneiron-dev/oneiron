@@ -452,7 +452,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/retrieval_telemetry/types.rs` | src | s | 1 re-export | — | Retrieval-telemetry record, trace, signal, and blend-weight types |
 | `src/retrieval_values.rs` | src | s | 1 struct | PendingVectorEmbedding | Retrieval result values and transaction-local candidate admission contracts |
 | `src/revision_ref.rs` | src | s | 1 struct | RevisionRef | A retained document frontier's opaque reference (`RevisionRef`), the revision a manifest entry and a… |
-| `src/root_directory.rs` | src | s | 2 struct · 13 fn · 1 static | FileIdentity, SharedPath | Descriptor-bound directory identity shared by store opens and writer leases |
+| `src/root_directory.rs` | src | m | 2 struct · 13 fn · 1 static | FileIdentity, SharedPath | Descriptor-bound directory identity shared by store opens and writer leases |
+| `src/root_directory/extended_acl.rs` | src | s | 3 crate-vis | — | A macOS directory's extended access-control list, read without following a final link (ARCH-0038… |
 | `src/run_write_token.rs` | src | s | 1 struct · 5 fn | RunWriteToken | A leased agent run's write identity, as the engine's run-write envelope carries it with each write |
 | `src/sandbox_credential.rs` | src | s | 6 struct · 1 enum · 14 fn | SandboxCredentialCall, SandboxCredentialEffect, SandboxCredentialHandle, SandboxCredentialOperation, SandboxCredentialOutcome, SandboxFileRead, SandboxReadFile | Opaque credential handles and the read-only credential call ABI |
 | `src/sandbox_import.rs` | src | s | 1 enum · 1 fn | SandboxImportClass | Guest-linked host import names and effect classes |
@@ -661,3 +662,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/writer_lease.rs` | src | m | 1 struct · 16 fn · 2 const · 1 static | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |
 | `tests/session_overlay_dump_suppression.rs` | test | s | — | — | Census row L6-18 (ARCH-0052 threat-model note): a process that holds an off-record overlay writes no core… |
 | `tests/session_overlay_dump_suppression_off.rs` | test | s | — | — | Census row L6-18: the operator's off switch |
+| `tests/shared_path_acl.rs` | test | s | — | — | Census row L6-04 item A (ARCH-0038 #restore-path-open): the check of a restore's path reads each macOS… |
