@@ -134,7 +134,28 @@ fn open_vault(dir: &tempfile::TempDir) -> Arc<Vault> {
     let mut config = VaultConfig::device();
     config.dimensions = DIMENSIONS;
     config.embedding_model = Some(MODEL.to_owned());
-    Arc::new(open_dreamer_vault_with(dir.path(), READER, config).expect("vault"))
+    let vault = Arc::new(open_dreamer_vault_with(dir.path(), READER, config).expect("vault"));
+    embed_seeded_rows(&vault);
+    vault
+}
+
+/// Room for every row a fresh vault queues for itself in one embed pass.
+const SEEDED_BATCH: usize = 4096;
+
+/// Embeds the rows a fresh vault queues for itself (skills, models) with a
+/// throwaway embedder, in one pass with room for all of them. A pass leases
+/// at most 32 rows, oldest first, so without this a test's one pass leases
+/// only seeded rows and never reaches the test's own.
+fn embed_seeded_rows(vault: &Arc<Vault>) {
+    let embedder: Arc<dyn Embedder> = Arc::new(LineVectors::default());
+    let report = PendingEmbeddingReconciler::new(Arc::clone(vault), embedder)
+        .with_batch_size(SEEDED_BATCH)
+        .reconcile_once()
+        .expect("the seeded rows' embed pass");
+    assert!(
+        report.leased < SEEDED_BATCH,
+        "FIXTURE: one pass leases every seeded row: {report:?}"
+    );
 }
 
 /// Puts a stated, approved fact `predicate: value` about `person`, whose
@@ -249,15 +270,16 @@ fn reconcile(fixture: &Fixture) -> PendingEmbeddingReconcileReport {
 }
 
 /// Embed worker passes until one leases nothing: a swap queues every
-/// embeddable record again, more than one pass may lease.
+/// embeddable record again, the seeded rows among them, more than one pass
+/// may lease.
 fn reconcile_all(fixture: &Fixture) {
-    for _ in 0..20 {
+    for _ in 0..64 {
         let report = reconcile(fixture);
         if report.leased == 0 && report.stale_jobs == 0 {
             return;
         }
     }
-    panic!("FIXTURE: the queue drains in 20 passes");
+    panic!("FIXTURE: the queue drains in 64 passes");
 }
 
 /// Every payload the embed worker sent for the person, in order.
