@@ -340,6 +340,11 @@ impl Vault {
         owner: &AuthenticatedOwner,
         issue: &KitIssue<'_>,
     ) -> Result<IssuedWorldKit> {
+        if issue.homes.contains(&PieceHome::Passkey) {
+            return Err(refused(
+                "a passkey is a piece of the data-key kit only, never of the world kit",
+            ));
+        }
         let store = self.this_machine_piece_store(&issue.homes)?;
         let prepared = self.prepare_owner_root(owner)?;
         let (vault_id, only_machine, me) = {
@@ -550,6 +555,7 @@ impl Vault {
         let escrow = self.put_vault_key_escrow_in_txn(
             txn,
             transition,
+            super::vault_key::EscrowOrigin::WorldKit,
             WORLD_KIT_ESCROW,
             &confirm.root.recovery_key,
         )?;

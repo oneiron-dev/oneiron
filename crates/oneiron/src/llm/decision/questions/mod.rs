@@ -83,6 +83,7 @@ pub(crate) use refresh::{principal_actor, principal_lane, standing_asker_for_que
 pub(crate) use response_custody::{typed_question_carriage, typed_question_copy_owners_in_txn};
 pub(crate) use role_asks::keep_artifact_unit_ask;
 pub use role_asks::{QuestionUnitAsk, question_unit_correlation};
+pub(in crate::llm::decision) use route_calibration::receipt_route::receipt_route;
 pub use route_calibration::{
     AcceptanceAtCut, CalibrationMetrics, CalibrationPairRef, ECE_BINS, MapKnot,
     RouteCalibrationGroup, RouteCalibrationMap, RouteCalibrationReport, RouteFit, RouteFitRefusal,

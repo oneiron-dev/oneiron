@@ -93,7 +93,7 @@ impl<'a> UnlockRequest<'a> {
 
     /// Whether reading this unlock takes stdin without a kept-piece count.
     /// Existing-vault kits decide after importing their pieces (FIX 12396).
-    /// A password, a PRF output or
+    /// A password, a PRF output, a sheet's code or
     /// an escrow secret with no file or recovery box named, a kit opened
     /// with one piece and no passphrase file, and a recovery box program,
     /// whose `release` inherits stdin for its own sign-in.
@@ -101,7 +101,7 @@ impl<'a> UnlockRequest<'a> {
         let no_file = self.secret.secret_file.is_none();
         match self.method {
             UnlockMethod::Device => false,
-            UnlockMethod::Password | UnlockMethod::Passkey => no_file,
+            UnlockMethod::Password | UnlockMethod::Passkey | UnlockMethod::Sheet => no_file,
             UnlockMethod::Escrow => {
                 self.box_reads_stdin() || (no_file && self.secret.box_dir.is_none())
             }

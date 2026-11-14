@@ -95,6 +95,8 @@ mod conversation_transcript;
 mod conversations;
 mod core;
 mod courtesy_delete;
+// INQUIRE-1 PR 5: the member host's inquiry route.
+mod inquiry_peer;
 mod discover;
 mod entity;
 mod error_map;
@@ -239,6 +241,9 @@ pub(crate) use self::lease::*;
 // The integration tests' door to a draft's solved-run span (FIX 10508).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::draft_checked_span;
+// The integration tests' door to the carrier release check (census L2-38).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mcp_gateway::carrier_releases_for_test;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::run_board_pins_for_test;
 #[cfg(test)]
