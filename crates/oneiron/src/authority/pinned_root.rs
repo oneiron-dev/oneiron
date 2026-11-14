@@ -192,8 +192,10 @@ pub(crate) fn write_pinned_root_in_txn(
 /// Records the root a pin door awaits beside the pin, which stays, or that
 /// it awaits none; a write that changes nothing writes nothing. `for_request`
 /// names the root request whose pickup awaits it, `None` at the owner's own
-/// pin door. The owner's own wait for that same root stays his: a request
-/// that ends never ends it (FIX 5582).
+/// pin door. The owner's own wait stays his: a request that ends never ends
+/// it (FIX 5582), and a request's pickup never replaces it with a wait of
+/// its own, for that root or another (HOSTED-CARRIER-FIRST-PIN). A pin that
+/// stands may still end it (`awaiting` `None`).
 pub(crate) fn write_awaited_root_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -201,9 +203,10 @@ pub(crate) fn write_awaited_root_in_txn(
     for_request: Option<AuthorityEntryHash>,
 ) -> Result<()> {
     let row = read_pin_row_in_txn(store, wtxn)?;
+    let owners_wait = row.awaiting.is_some() && row.awaited_for.is_none();
     let awaited_for = match awaiting {
         None => None,
-        Some(root) if row.awaiting == Some(root) && row.awaited_for.is_none() => None,
+        Some(_) if for_request.is_some() && owners_wait => return Ok(()),
         Some(_) => for_request,
     };
     if row.awaiting == awaiting && row.awaited_for == awaited_for {

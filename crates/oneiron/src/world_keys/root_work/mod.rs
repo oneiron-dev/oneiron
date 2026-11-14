@@ -23,8 +23,15 @@
 //! commits its wait for that root. Any other revision refuses the request as
 //! a root revision mismatch (FIX 4738), and a removed owner as not live.
 //!
-//! A pin needs nothing the target lacks, so the target's pickup makes it
-//! (`super::owner_work`). Every other change needs the root's seed or kit,
+//! A pin needs nothing the target lacks, but the target's pickup
+//! (`super::owner_work`) never moves its pin, and never sets a first one
+//! (CALLS ROOT_WORK_CARRIED_PIN): the request carries its carrier's
+//! signature alone, and the owner it names is the carrier's word. The pickup
+//! commits the root as the one the target awaits, the request's own wait,
+//! and the request stays pending until the owner confirms that root at the
+//! target's own pin door ([`Vault::pin_owner_root`]), with his proof there.
+//! A pin request for the root the target pins already runs there as the
+//! door does and closes. Every other change needs the root's seed or kit,
 //! which only the target receives: it stays pending until the owner, on any
 //! surface that reaches the target, supplies it there
 //! ([`Vault::run_root_request`]). Missing or wrong material is a typed call
@@ -49,8 +56,10 @@
 //! ("already enacted"). Nothing is ordered by clock or hash, nothing is
 //! undone, and nothing expires.
 //!
-//! A pin request whose pickup committed a wait for a root the target did
-//! not store yet owns that wait (FIX 5582): once the target folds the
+//! A pin request whose pickup committed a wait, for a root the target did
+//! not store yet or one awaiting the owner's confirm, owns that wait (FIX
+//! 5582), and never replaces a wait the owner made at the pin door: once
+//! the target folds the
 //! request cancelled or superseded, or answered refused, its final state
 //! (FIX 5696), its store gate stops taking that root's row and its anchor's
 //! marks as its own, and the next pickup clears the wait byte-free
@@ -134,6 +143,25 @@ enum RootCompletion {
 }
 
 const ROOT_WORK_COMPLETION: RootCompletion = RootCompletion::ExactTargetCommit;
+
+/// What a pin request's pickup on the target does with a root the target
+/// does not pin (CALLS ROOT_WORK_CARRIED_PIN; HOSTED-CARRIER-FIRST-PIN = D,
+/// the lead 14 Nov 22:3x). Every live machine profile of the vault carries
+/// owner acts, a hosted node among them, and a request carries no signature
+/// of a key the target trusts as the owner's: the carrier's word is not the
+/// owner's yes. ARCH-0082's catastrophe floor puts key and recovery changes
+/// in a row that asks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CarriedPin {
+    /// The root becomes the one the target awaits, the request's own wait
+    /// (FIX 5582), and the request stays pending. The owner confirms it at
+    /// the target's own pin door; a later pickup then finds it pinned and
+    /// closes the request. An owner-signed request that applies at once is
+    /// FIX [CARRIED-PIN-OWNER-SIGNED-PATH].
+    AwaitsOwner,
+}
+
+const ROOT_WORK_CARRIED_PIN: CarriedPin = CarriedPin::AwaitsOwner;
 
 /// The refusal a root request gets when its target computes another revision
 /// than the act's `seen` and its basis does not prove a lag (CALLS
@@ -426,11 +454,14 @@ impl Vault {
     }
 
     /// The pickup's arm for the root request signed as entry `hash`, naming
-    /// this install, in the caller's transaction: rechecked first, then a
-    /// pin is made here as the act's owner, and its result closes the
-    /// request with it once the pin stands (CALLS ROOT_WORK_COMPLETION). A
-    /// pin awaiting its root stays pending, its wait committed as the
-    /// request's own (FIX 5582). Every other change stays pending (`None`):
+    /// this install, in the caller's transaction: rechecked first. A pin of
+    /// the root this install pins already runs here as the act's owner, and
+    /// its result closes the request once the pin stands (CALLS
+    /// ROOT_WORK_COMPLETION). A pin of any other root moves nothing: it
+    /// awaits the owner's confirm at this install's pin door and stays
+    /// pending, its wait committed as the request's own (CALLS
+    /// ROOT_WORK_CARRIED_PIN, FIX 5582), as does a pin awaiting its root's
+    /// record. Every other change stays pending (`None`):
     /// it needs a seed or kit that only this install's caller supplies
     /// ([`Self::run_root_request`]).
     pub(crate) fn root_work_in_txn(
@@ -464,11 +495,21 @@ impl Vault {
             }
         }
         match change {
-            RootChange::Pin { root } => {
+            RootChange::Pin { root } if fold.pinned_root.is_some_and(|pin| pin.id == root) => {
                 let owner = request.act.owner;
                 let report = self.pin_owner_root_in_txn(txn, owner, secret, root, Some(hash))?;
                 Ok(change_closes(report.awaiting).then_some(OwnerWorkOutcome::enacted()))
             }
+            RootChange::Pin { root } => match ROOT_WORK_CARRIED_PIN {
+                CarriedPin::AwaitsOwner => {
+                    write_awaited_root_in_txn(&self.store, txn, Some(root), Some(hash))?;
+                    tracing::info!(
+                        "a root request asks this install to pin another root; it awaits the \
+                         owner's confirm at this install's pin door and stays pending"
+                    );
+                    Ok(None)
+                }
+            },
             RootChange::Activate | RootChange::Restore { .. } | RootChange::Anchor { .. } => {
                 Ok(None)
             }

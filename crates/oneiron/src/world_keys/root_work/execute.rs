@@ -174,8 +174,9 @@ impl Vault {
     /// An activation takes two calls: [`RootMaterial::IssueKit`] issues its
     /// kit and returns the pieces, the request still pending, and
     /// [`RootMaterial::ConfirmKit`] confirms the kit, activates its root and
-    /// closes the request. A pin request takes no material: the pickup makes
-    /// it.
+    /// closes the request. A pin request takes no material: the owner
+    /// confirms its root at this install's pin door ([`Self::pin_owner_root`]),
+    /// and a later pickup closes it.
     pub fn run_root_request(
         &self,
         owner: &AuthenticatedOwner,
@@ -215,7 +216,7 @@ impl Vault {
                 self.run_anchor(owner, asked, &enrolment, secret)
             }
             (RootChange::Pin { .. }, _) => Err(material_refused(
-                "a pin request takes no material: this install's pickup makes it",
+                "a pin request takes no material: confirm its root at this install's pin door",
             )),
             _ => Err(material_refused(
                 "this is not the material the root request's change needs",
