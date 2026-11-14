@@ -27,6 +27,9 @@ pub use conflicts_page::{
     ConflictAlternative, ConflictMember, ConflictsPage, ConflictsPageRequest, ObservedConflict,
     conflicts_page,
 };
+pub(crate) use conflicts_page::{
+    conflict_reader_in_txn, conflict_served_in_txn, conflicts_page_bound,
+};
 pub use evidence_spans::{
     EVIDENCE_SPANS_MASKED_KEY_CROSSES_MESSAGES, EVIDENCE_SPANS_MAX_RANGES, EvidenceMessageSlice,
     EvidenceRange, EvidenceSourceStatus, EvidenceSpan, EvidenceSpans, EvidenceSpansRequest,

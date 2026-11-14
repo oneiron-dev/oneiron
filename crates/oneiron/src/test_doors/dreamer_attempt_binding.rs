@@ -1,14 +1,14 @@
-//! An admitted strength attempt over one observed Dreamer claim, for the
-//! bound job client's tests (untangle 6.9c PR 3): the claim lands through a
-//! real consolidation pass, its observation through the strength writer, and
-//! the strength attempt through the nightly enqueue and the maintenance
-//! lane's own admission. Nothing here mints a binding or commits.
+//! Admitted strength and conflict-settlement attempts for bound job clients.
+//! A strength claim lands through a real consolidation pass and its
+//! observation through the strength writer. Both job types use their
+//! production enqueue and the maintenance lane's own admission, including
+//! the authority stamp and run-tree row. Nothing here mints a binding or commits.
 
 use crate::attempt_queue::AttemptId;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
-use crate::dreamer_runner::maintenance::CONSOLIDATION_STRENGTH_FACET;
+use crate::dreamer_runner::maintenance::{CONFLICT_SETTLE_FACET, CONSOLIDATION_STRENGTH_FACET};
 use crate::dreamer_runner::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore,
 };
@@ -159,4 +159,94 @@ pub fn admit_strength_attempt(vault: &Vault, now: u64) -> Result<DreamerAdmitted
         )));
     }
     Ok(*admitted)
+}
+
+/// The lease owner every conflict-settlement admission here takes.
+pub const CONFLICT_SETTLE_LEASE_OWNER: &str = "conflict-settle-binding-worker";
+/// The run the conflict-settlement attempt is enqueued in.
+pub const CONFLICT_SETTLE_RUN: &str = "run-conflict-settle-binding";
+
+/// Enqueues one conflict-settlement attempt through the production enqueue,
+/// with the authority stamp and run-tree row a recipe wake records.
+/// Returns whether a new attempt was enqueued rather than deduped.
+///
+/// # Errors
+///
+/// The production enqueue's authority-stamp, run-tree and storage errors.
+pub fn enqueue_conflict_settle_attempt(vault: &Vault, now: u64) -> Result<bool> {
+    vault.with_write_txn(|txn| {
+        DreamerRunnerStore::new(vault).enqueue_conflict_settle_in_txn(
+            txn,
+            Some(CONFLICT_SETTLE_RUN.into()),
+            now,
+        )
+    })
+}
+
+/// Admits the next maintenance attempt as a conflict-settlement job under
+/// [`CONFLICT_SETTLE_LEASE_OWNER`] at `now`, through the lane's own admission.
+///
+/// # Errors
+///
+/// The vault's, or an admission of nothing or of another job type.
+pub fn admit_conflict_settle_attempt(vault: &Vault, now: u64) -> Result<DreamerAdmittedAttempt> {
+    let DreamerAdmissionOutcome::Admitted(admitted) = DreamerRunnerStore::new(vault)
+        .admit_next_maintenance(AdmitDreamerAttempt {
+            lease_owner: CONFLICT_SETTLE_LEASE_OWNER.to_owned(),
+            now,
+            budget_id: "conflict-settle-binding".to_owned(),
+            budget_total_units: 10_000,
+            reserve_units: 1,
+            started_milestone: None,
+        })?
+    else {
+        return Err(Error::InvalidConfig(
+            "no conflict-settlement attempt was admitted".into(),
+        ));
+    };
+    if admitted.status.payload.attempt_type != CONFLICT_SETTLE_FACET {
+        return Err(Error::InvalidConfig(format!(
+            "the maintenance lane admitted {}",
+            admitted.status.payload.attempt_type
+        )));
+    }
+    Ok(*admitted)
+}
+
+/// Runs the native maintenance dispatcher on an admitted conflict-settlement
+/// attempt without a host runner, returning its park outcome.
+///
+/// # Errors
+///
+/// An attempt of another job type, or the dispatcher's storage errors.
+pub fn execute_unlent_conflict_settle(
+    vault: &Vault,
+    admitted: &DreamerAdmittedAttempt,
+    now: u64,
+) -> Result<crate::dreamer_wake::DreamerAttemptExecution> {
+    use crate::dreamer_wake::{WakeAttemptContext, WakePassDeadline};
+
+    if admitted.status.attempt.kind != crate::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND
+        || admitted.status.payload.attempt_type != CONFLICT_SETTLE_FACET
+    {
+        return Err(Error::InvalidConfig(
+            "the native conflict-settlement door requires its admitted job type".into(),
+        ));
+    }
+    let deadline = WakePassDeadline::with_clock(60_000, std::sync::Arc::new(|| 0));
+    crate::dreamer_runner::maintenance::execute(
+        admitted,
+        &WakeAttemptContext {
+            vault,
+            deadline: &deadline,
+            cancel: None,
+            device_cancel: None,
+            budget_id: "conflict-settle-binding",
+            now_ms: now.saturating_mul(1_000),
+            prepared_wake: None,
+            prepared_attempt: None,
+            spend_meter: None,
+        },
+        None,
+    )
 }

@@ -20,9 +20,9 @@ use crate::{EntityId, Vault};
 
 /// One stored member or retained alternative as a settlement ask shows it:
 /// whether a Keep may name it, and its fields, whole.
-pub(super) struct SettleRow {
-    pub(super) id: EntityId,
-    pub(super) keep: bool,
+pub(crate) struct SettleRow {
+    pub(crate) id: EntityId,
+    pub(crate) keep: bool,
     fields: Map<String, Json>,
 }
 
@@ -52,17 +52,20 @@ fn fields(value: Json) -> Map<String, Json> {
     }
 }
 
-/// Every row a settlement of `conflict` asks about, in the conflict's order:
+/// Reads every row a settlement of `conflict` asks about, in the conflict's order:
 /// each stored member, keepable while it stands, then each retained
 /// alternative. A candidate the round dropped rides as retained, never as a
 /// stored claim; keeping it lands it (FIX 496). One whose staged Keep the
 /// owner declined is the owner's to keep again, never this ladder's (FIX
 /// 7072). Every keepable row is offered: none is dropped for room.
-pub(super) fn settle_rows(vault: &Vault, conflict: &OpenConflict) -> Result<Vec<SettleRow>> {
-    let txn = vault.store.env.read_txn()?;
+pub(crate) fn settle_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    conflict: &OpenConflict,
+) -> Result<Vec<SettleRow>> {
     let mut rows = Vec::new();
     for id in &conflict.members {
-        let Some(body) = vault.get_claim_in_txn(&txn, id)? else {
+        let Some(body) = vault.get_claim_in_txn(txn, id)? else {
             continue;
         };
         rows.push(SettleRow {
@@ -79,7 +82,6 @@ pub(super) fn settle_rows(vault: &Vault, conflict: &OpenConflict) -> Result<Vec<
             })),
         });
     }
-    drop(txn);
     for alternative in conflict
         .alternatives
         .iter()
@@ -100,12 +102,19 @@ pub(super) fn settle_rows(vault: &Vault, conflict: &OpenConflict) -> Result<Vec<
     Ok(rows)
 }
 
+/// Reads every settlement row under a fresh transaction by calling
+/// [`settle_rows_in_txn`] with its own snapshot.
+pub(super) fn settle_rows(vault: &Vault, conflict: &OpenConflict) -> Result<Vec<SettleRow>> {
+    let txn = vault.store.env.read_txn()?;
+    settle_rows_in_txn(vault, &txn, conflict)
+}
+
 /// Where one ask sits among its conflict's asks: its round, page and the
 /// round's page count when the conflict is asked in more than one, and what
 /// the pages of the round before answered.
-pub(super) struct AskPart<'p> {
-    pub(super) at: Option<(usize, usize, usize)>,
-    pub(super) before: &'p [PageAnswer],
+pub(crate) struct AskPart<'p> {
+    pub(crate) at: Option<(usize, usize, usize)>,
+    pub(crate) before: &'p [PageAnswer],
 }
 
 /// The state an ask over `rows` reads, each row by the label `labels`
@@ -156,8 +165,8 @@ pub(super) fn state_bytes(
 
 /// One settlement ask: its canonical question, the state the ladder reads,
 /// the call's labels, and the rows a Keep may name.
-pub(super) struct SettleAsk {
-    pub(super) question: DecisionQuestion,
+pub(crate) struct SettleAsk {
+    pub(crate) question: DecisionQuestion,
     pub(super) state: Json,
     pub(super) labels: CallLabelMap,
     keepable: Vec<EntityId>,
@@ -168,7 +177,7 @@ impl SettleAsk {
     /// row whole, and a keep option for each one that may be kept. The
     /// question is keyed by the contested predicates, so each learns its own
     /// bands; an ask that is one of several adds its round and page.
-    pub(super) fn over(
+    pub(crate) fn over(
         conflict: &OpenConflict,
         wording: &str,
         rows: &[&SettleRow],

@@ -18,6 +18,7 @@ use super::strength_observations::{
 };
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadResult, claim_surfaceable};
 use crate::dreamer_consolidation::{OpenConflict, open_conflicts_in_txn, rmpv_to_json};
+use crate::dreamer_runner::DreamerAttemptBinding;
 use crate::federation::Scope;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::{EntityId, Result, Vault, WriteActor};
@@ -92,7 +93,7 @@ pub struct ConflictAlternative {
 
 /// Who reads the page: the proven owner, who answers every open conflict,
 /// or a delegate reader within its record scope (`None` is the whole vault).
-enum ConflictReader {
+pub(crate) enum ConflictReader {
     Owner,
     Delegate(Option<Scope>),
 }
@@ -113,6 +114,29 @@ pub fn conflicts_page(
     memory: &Memory<'_>,
     input: &ConflictsPageRequest,
 ) -> MemoryResult<ScopedReadResult<ConflictsPage>> {
+    bound_conflicts_page(memory, input, None)
+}
+
+/// Reads the conflicts page after proving the binding in the page's own
+/// read transaction, before any conflict row is read.
+///
+/// # Errors
+///
+/// As [`conflicts_page`], and the binding's refusals.
+pub(crate) fn conflicts_page_bound(
+    memory: &Memory<'_>,
+    input: &ConflictsPageRequest,
+    binding: &DreamerAttemptBinding,
+) -> MemoryResult<ScopedReadResult<ConflictsPage>> {
+    bound_conflicts_page(memory, input, Some(binding))
+}
+
+/// The shared page body, proving a bound call in its own read transaction.
+fn bound_conflicts_page(
+    memory: &Memory<'_>,
+    input: &ConflictsPageRequest,
+    binding: Option<&DreamerAttemptBinding>,
+) -> MemoryResult<ScopedReadResult<ConflictsPage>> {
     let vault = memory.vault();
     let owner = memory
         .embedded_owner("vault.consolidation.conflicts.page")
@@ -128,6 +152,9 @@ pub fn conflicts_page(
     let _pins = read.prepare_point_read::<MemoryError>()?;
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     memory.prove_read_authority_in_txn(&txn)?;
+    if let Some(binding) = binding {
+        binding.check_in_txn(&txn)?;
+    }
     let reader = conflict_reader_in_txn(memory, &txn, owner.as_ref())?;
     let actor = memory.write_actor();
     read.read_projected_in_txn(&txn, &[], None, |txn, _| {
@@ -182,7 +209,7 @@ pub fn conflicts_page(
 /// The reader the caller is: the owner under its proof, or a non-owner with
 /// a live Steward read (or a base agent whose manifest rows still stand in
 /// place of a grant).
-fn conflict_reader_in_txn(
+pub(crate) fn conflict_reader_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
     owner: Option<&crate::consent::AuthenticatedOwner>,
@@ -205,7 +232,7 @@ fn conflict_reader_in_txn(
 /// Whether the page serves `conflict` to `reader`: its marker and every
 /// member read for the caller, and, for a delegate, no settlement of it was
 /// reverted and the owner holds no review of its subject.
-fn conflict_served_in_txn(
+pub(crate) fn conflict_served_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     read: &ScopedRead<'_>,

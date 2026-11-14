@@ -50,8 +50,8 @@ use crate::retrieval_depth::RetrievalDeadline;
 use crate::write_envelope::{WriteActor, WriteEnvelope};
 use crate::{ClaimBody, EntityId, TimeRange, Vault};
 
-pub(super) mod decision_pages;
-mod decision_projection;
+pub(crate) mod decision_pages;
+pub(crate) mod decision_projection;
 mod preference_pair;
 
 /// The marker-value keys that name a contradiction's claims: the
@@ -64,7 +64,7 @@ const REPO_CONFLICT_KIND: &str = "repo_branch";
 /// The most members one ladder question offers to keep, under the Choice
 /// contract's 64 options with hold-both, dismiss and escalate beside them;
 /// past it the members split into more questions (FIX 7636).
-const MAX_KEEP_OPTIONS: usize = 61;
+pub(crate) const MAX_KEEP_OPTIONS: usize = 61;
 /// The resolution key naming the retained alternative a Keep landed.
 pub(super) const MATERIALIZED_KEY: &str = "materialized";
 /// The conflict a settlement revert's fresh MACHINE copy still belongs to.
