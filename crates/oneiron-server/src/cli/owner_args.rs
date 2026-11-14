@@ -730,8 +730,10 @@ pub enum ImportCommand {
     /// A Slack workspace export: the zip, or the unzipped folder. Each
     /// conversation reads to the members Slack shares it with whom
     /// `--members` maps to a vault person, and to you; every other member
-    /// is kept as a contact, by name, who reads nothing.
-    Slack(Box<ImportSlackArgs>),
+    /// is kept as a contact, by name, who reads nothing. `--propose-members`
+    /// writes the map for you to confirm; `members set` maps one member
+    /// later.
+    Slack(Box<ImportSlackCommand>),
     /// A folder of linked markdown notes (an Obsidian vault, an agent's
     /// memory folder): writes the batch of new notes and links to `--out` and
     /// prints the digest that approves or declines it.
@@ -851,23 +853,87 @@ pub struct ImportSourceArgs {
     pub serve: ServeArgs,
 }
 
+/// `oneiron import slack <path> (--members | --propose-members) <file>`, or
+/// `oneiron import slack members set ...`.
+#[derive(Args, Clone, Debug)]
+#[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
+pub struct ImportSlackCommand {
+    #[command(subcommand)]
+    pub command: Option<ImportSlackSubcommand>,
+
+    #[command(flatten)]
+    pub import: ImportSlackArgs,
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum ImportSlackSubcommand {
+    /// The members of a workspace an import kept.
+    #[command(subcommand)]
+    Members(ImportSlackMembersCommand),
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum ImportSlackMembersCommand {
+    /// Map one member to a vault person, or back to a contact. Every
+    /// channel of the workspace the member is in reads to its person from
+    /// now on, the messages already imported included.
+    Set(Box<ImportSlackMemberSetArgs>),
+}
+
 #[derive(Args, Clone, Debug)]
 pub struct ImportSlackArgs {
     /// The export: its zip, or the unzipped folder holding `users.json`.
     /// Only this path is read: symbolic links under it are not followed.
-    pub path: PathBuf,
+    #[arg(required = true)]
+    pub path: Option<PathBuf>,
 
-    /// The member map: a JSON object from Slack member id to `"owner"` (your
-    /// own member), a vault person's id in hex, or `null` (a contact). A
-    /// member it leaves out is a contact. `{}` imports a workspace no one in
-    /// the vault was in, which then reads to you alone.
-    #[arg(long)]
-    pub members: PathBuf,
+    #[command(flatten)]
+    pub map: ImportSlackMemberMapArgs,
 
     /// The workspace's name, as the report shows it: by default the export's
     /// file or folder name, up to " Slack export".
     #[arg(long)]
     pub workspace: Option<String>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// The member map the import lands under, or the file a proposed one goes to.
+#[derive(Args, Clone, Debug)]
+#[group(required = true, multiple = false)]
+pub struct ImportSlackMemberMapArgs {
+    /// The member map: a JSON object from Slack member id to `"owner"` (your
+    /// own member), a vault person's id in hex, or `null` (a contact); or to
+    /// an object holding that as `person` beside a `name`, as
+    /// `--propose-members` writes it. A member it leaves out is a contact.
+    /// `{}` imports a workspace no one in the vault was in, which then reads
+    /// to you alone.
+    #[arg(long)]
+    pub members: Option<PathBuf>,
+
+    /// Lands nothing: writes the member map the vault proposes to this new
+    /// file, readable by you alone, for you to check and pass to `--members`.
+    /// A member the vault already maps keeps its mapping; any other member
+    /// whose email address is that of exactly one person in the vault is
+    /// proposed as that person; every other member is a contact. Your own
+    /// member is never guessed: set it to "owner".
+    #[arg(long)]
+    pub propose_members: Option<PathBuf>,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct ImportSlackMemberSetArgs {
+    /// The workspace's key, as the import's report shows it (`workspace.key`):
+    /// its Slack team id.
+    pub workspace: String,
+
+    /// The member's Slack id, as `users.json` lists it.
+    pub member: String,
+
+    /// A vault person's id in hex, or `contact`: the member then reads
+    /// nothing.
+    pub person: String,
 
     #[command(flatten)]
     pub serve: ServeArgs,

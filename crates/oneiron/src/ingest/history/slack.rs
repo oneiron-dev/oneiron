@@ -29,8 +29,8 @@ use serde_json::Value;
 
 use super::text::{MAX_RECORD_BYTES, str_field};
 use super::{
-    HistoryConversation, HistoryMember, HistoryMessage, HistoryRole, HistorySharing, HistorySkips,
-    HistoryThreadKind, UNKNOWN_SPEAKER,
+    HistoryConversation, HistoryMember, HistoryMemberAddress, HistoryMessage, HistoryRole,
+    HistorySharing, HistorySkips, HistoryThreadKind, UNKNOWN_SPEAKER,
 };
 use crate::EntityId;
 use crate::ingest::{IngestError, IngestResult};
@@ -46,6 +46,12 @@ pub const SPEAKER_PREFIX: &str = "slack:";
 
 /// The member-map value that names the importer's own member.
 pub const OWNER_MAPPING: &str = "owner";
+
+/// The field of a member map entry that holds the member's mapping.
+const MAP_PERSON_FIELD: &str = "person";
+
+/// The field of a member map entry that names the member, for the owner.
+const MAP_NAME_FIELD: &str = "name";
 
 /// Message subtypes that carry a person's own words; every other subtype is
 /// the workspace's bookkeeping (a join, a topic, a rename).
@@ -169,13 +175,16 @@ fn document(path: &str, text: &str) -> IngestResult<Value> {
     })
 }
 
-/// Parses the owner's member map.
+/// Parses the owner's member map. Each member's value is its mapping, or an
+/// object holding it as `person` beside the member's `name`, as
+/// [`SlackWorkspace::member_map_document`] writes a proposed map.
 ///
 /// # Errors
 ///
 /// [`IngestError::InvalidDocument`] when the text is not a JSON object, and
-/// [`IngestError::InvalidDocumentField`] for a value that is neither
-/// `"owner"`, a PERSON id in hex nor `null`.
+/// [`IngestError::InvalidDocumentField`] for a mapping that is neither
+/// `"owner"`, a PERSON id in hex nor `null`, and for an object with another
+/// field, or a `name` that is not a string.
 pub fn parse_member_map(text: &str) -> IngestResult<SlackMemberMap> {
     let Value::Object(entries) = document("the member map", text)? else {
         return Err(IngestError::InvalidDocument {
@@ -187,14 +196,57 @@ pub fn parse_member_map(text: &str) -> IngestResult<SlackMemberMap> {
         .into_iter()
         .map(|(member, value)| {
             let mapping = match &value {
-                Value::Null => SlackMemberMapping::Contact,
-                Value::String(text) if text == OWNER_MAPPING => SlackMemberMapping::Owner,
-                Value::String(text) => EntityId::from_hex(text)
-                    .map(SlackMemberMapping::Person)
-                    .map_err(|_| bad(format!("members.{member}")))?,
-                _ => return Err(bad(format!("members.{member}"))),
+                Value::Object(entry) => {
+                    if let Some(field) = entry
+                        .iter()
+                        .find(|(field, value)| match field.as_str() {
+                            MAP_PERSON_FIELD => false,
+                            MAP_NAME_FIELD => !value.is_string(),
+                            _ => true,
+                        })
+                        .map(|(field, _)| field)
+                    {
+                        return Err(bad(format!("members.{member}.{field}")));
+                    }
+                    member_mapping(entry.get(MAP_PERSON_FIELD).unwrap_or(&Value::Null))
+                        .ok_or_else(|| bad(format!("members.{member}.{MAP_PERSON_FIELD}")))?
+                }
+                value => member_mapping(value).ok_or_else(|| bad(format!("members.{member}")))?,
             };
             Ok((member, mapping))
+        })
+        .collect()
+}
+
+/// One member's mapping in a member map: `"owner"`, a PERSON id in hex, or
+/// `null`.
+fn member_mapping(value: &Value) -> Option<SlackMemberMapping> {
+    match value {
+        Value::Null => Some(SlackMemberMapping::Contact),
+        Value::String(text) if text == OWNER_MAPPING => Some(SlackMemberMapping::Owner),
+        Value::String(text) => EntityId::from_hex(text)
+            .ok()
+            .map(SlackMemberMapping::Person),
+        _ => None,
+    }
+}
+
+/// The owner's map as the vault proposes it ([`crate::Vault::propose_history_members`]):
+/// the importer's own member as `"owner"`, a member proposed a PERSON as
+/// that PERSON, and every other member as a contact.
+#[must_use]
+pub fn proposed_map(proposals: &[HistoryMember]) -> SlackMemberMap {
+    proposals
+        .iter()
+        .map(|proposal| {
+            let mapping = if proposal.importer {
+                SlackMemberMapping::Owner
+            } else {
+                proposal
+                    .person
+                    .map_or(SlackMemberMapping::Contact, SlackMemberMapping::Person)
+            };
+            (proposal.provider_id.clone(), mapping)
         })
         .collect()
 }
@@ -534,6 +586,13 @@ impl SlackWorkspace {
                 }
             }
         }
+        Ok(self.member_counts(map))
+    }
+
+    /// How the workspace's members stand under `map`, the owner's own
+    /// member left out.
+    #[must_use]
+    pub fn member_counts(&self, map: &SlackMemberMap) -> SlackMemberCounts {
         let mut counts = SlackMemberCounts::default();
         for member in &self.members {
             match map.get(&member.id) {
@@ -543,7 +602,43 @@ impl SlackWorkspace {
             }
             counts.members += 1;
         }
-        Ok(counts)
+        counts
+    }
+
+    /// Each member with the email address `users.json` gives it, for the
+    /// vault to propose a PERSON for ([`crate::Vault::propose_history_members`]).
+    #[must_use]
+    pub fn member_addresses(&self) -> Vec<HistoryMemberAddress> {
+        self.members
+            .iter()
+            .map(|member| HistoryMemberAddress {
+                provider_id: member.id.clone(),
+                email: member.email.clone(),
+            })
+            .collect()
+    }
+
+    /// The member map `map` as a document the owner reads, edits and hands
+    /// back to the import: each member of the workspace by its id, with its
+    /// `name` and its mapping as `person` (`"owner"`, a PERSON id in hex, or
+    /// `null` for a contact). [`parse_member_map`] reads it.
+    #[must_use]
+    pub fn member_map_document(&self, map: &SlackMemberMap) -> Value {
+        self.members
+            .iter()
+            .map(|member| {
+                let person = match map.get(&member.id) {
+                    Some(SlackMemberMapping::Owner) => Value::from(OWNER_MAPPING),
+                    Some(SlackMemberMapping::Person(person)) => Value::from(person.to_hex()),
+                    Some(SlackMemberMapping::Contact) | None => Value::Null,
+                };
+                let mut entry = serde_json::Map::new();
+                entry.insert(MAP_NAME_FIELD.to_owned(), Value::from(member.name.clone()));
+                entry.insert(MAP_PERSON_FIELD.to_owned(), person);
+                (member.id.clone(), Value::Object(entry))
+            })
+            .collect::<serde_json::Map<String, Value>>()
+            .into()
     }
 
     /// The workspace's members as the member table keeps them, mapped as

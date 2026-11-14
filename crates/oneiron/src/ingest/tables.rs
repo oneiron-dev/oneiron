@@ -58,4 +58,9 @@ crate::side_table::side_tables! {
     /// contact, who reads nothing). Key: string (`source:workspace:member`).
     INGEST_HISTORY_SOURCE_MEMBER: VaultMeta b"history-import:member:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// Each sharing container of such a workspace: the workspace, and the members the source
+    /// shares the container with, so a member mapped later reads it (`members set`). Key:
+    /// string (`source:container`, the key of its sharing policy).
+    INGEST_HISTORY_SOURCE_CONTAINER: VaultMeta b"history-import:container:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
 }
