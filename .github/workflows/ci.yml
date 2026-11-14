@@ -7,7 +7,7 @@ name: CI
 #     and for `oneiron` the touched top-level modules (more than 12, or a crate-root file, means all of it).
 #   * `Checks`: fmt, then clippy -D warnings for touched packages and dependents (plus the featureless build
 #     when `oneiron` changed); cargo-deny only when Cargo.lock or deny.toml changed; tooling tests only when scripts/ or
-#     .github/ changed.
+#     .github/ changed. Every run prints the suite's test count; on a PR, growth needs a stated reason (L8-01).
 #   * `Test`: nextest for the touched packages; for `oneiron`, the lib tests of the touched modules, and the
 #     integration tests only when crates/oneiron/tests changed. No doctests on PRs.
 #   * `Test (featureless)`: the shared-process featureless lane (`cargo test`) for the touched modules.
@@ -138,6 +138,28 @@ jobs:
           if [ -n "$base" ]; then git fetch --no-tags --depth=1 origin "$base" 2>/dev/null || true; fi
           git fetch --no-tags origin 'refs/tags/v*:refs/tags/v*' 2>/dev/null || true
           python3 scripts/sdk/surface.py --diff "$base" --enforce
+      # L8-01 (implementation-baseline-v1 #tests-findings): the gate prints the suite's total test count, and growth
+      # over the PR's base needs a stated reason, a `Test growth: <reason>` line in the PR body. scripts/ci/test_count.py
+      # scans git objects (no cargo). The body comes from the event, so a body edit counts from the next push.
+      # Main pushes and the nightly print the count and never fail on it.
+      - name: Suite test count
+        if: ${{ !cancelled() }}
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            pull_request)
+              git fetch --no-tags --depth=1 origin "$PR_BASE"
+              printf '%s\n' "$PR_BODY" > "$RUNNER_TEMP/pr-body.txt"
+              python3 scripts/ci/test_count.py --base "$PR_BASE" --head HEAD --body-file "$RUNNER_TEMP/pr-body.txt" ;;
+            push)
+              git fetch --no-tags --depth=1 origin "$PUSH_BEFORE" 2>/dev/null || true
+              python3 scripts/ci/test_count.py --base "$PUSH_BEFORE" --head HEAD --report-only || python3 scripts/ci/test_count.py ;;
+            *) python3 scripts/ci/test_count.py ;;
+          esac
       - name: Format
         if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo fmt --check
