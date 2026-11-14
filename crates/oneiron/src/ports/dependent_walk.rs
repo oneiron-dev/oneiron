@@ -591,6 +591,12 @@ impl Vault {
     /// The first walk that failed, once every other walk has finished. A
     /// failed walk keeps its row and resumes on the next call.
     pub fn finish_dependent_walks(&self) -> Result<()> {
+        #[cfg(test)]
+        if self.store.test_hooks.take_dependent_walks_failure() {
+            return Err(Error::InvariantViolation(
+                "test failure finishing dependent walks",
+            ));
+        }
         let mut failed = BTreeSet::new();
         let mut first_error = None;
         loop {
