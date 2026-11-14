@@ -2,6 +2,10 @@
 //! and a draft never widens past it. Only an authenticated owner sets the
 //! override columns; the key's holder may only tighten its own rows.
 use super::slate_revision::SlateRevisionCause;
+use crate::batch::export::archive_side_install::{ArchivedSideRowOutcome, decode_archived_row};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
@@ -810,6 +814,32 @@ pub(in crate::connector_key) fn scan_slates_in_txn(
     txn: &heed::RoTxn<'_>,
 ) -> Result<Vec<(EntityId, ConnectorGrantSlate)>> {
     GRANT_SLATE.scan(store, txn)
+}
+
+/// Owner restore of archived connector grant slates (SIDE-4b G6): decode, then always hold back.
+///
+/// The slate's binding table travels in no disposition and connector keys are refused on
+/// restore, so an installed slate could never bind: destination registration mints a new slate
+/// id and binds that one instead. Every decodable slate row is therefore held back as a
+/// non-portable reference; rows that fail the canonical decode keep the decode reason. No
+/// writes: neither the slate nor its binding is installed.
+pub(crate) fn land_archived_connector_slate_rows_in_txn(
+    _vault: &Vault,
+    _txn: &mut heed::RwTxn<'_>,
+    _permit: &OwnerArchiveRestorePermit,
+    rows: &[ArchiveRetainedSideRow],
+) -> Result<Vec<ArchivedSideRowOutcome>> {
+    let mut outcomes = Vec::with_capacity(rows.len());
+    for row in rows {
+        let outcome = match decode_archived_row(&GRANT_SLATE, row) {
+            Err(reason) => ArchivedSideRowOutcome::HeldBack(reason),
+            Ok(_) => {
+                ArchivedSideRowOutcome::HeldBack(RetainedSideHeldBackReason::NonPortableReference)
+            }
+        };
+        outcomes.push(outcome);
+    }
+    Ok(outcomes)
 }
 
 /// A fresh, unstamped slate over validated draft rows. `prior` and `reask`

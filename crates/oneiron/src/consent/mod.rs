@@ -51,6 +51,7 @@
 mod adapters;
 mod answer_wake;
 pub mod approval_proof;
+pub(crate) mod archive_restore;
 mod ask_holders;
 mod bound;
 mod browser;

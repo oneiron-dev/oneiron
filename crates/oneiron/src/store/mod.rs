@@ -365,7 +365,7 @@ mod open_gates;
 mod outbound_send_receipt;
 use oneiron_store::page_bound;
 mod pending_embedding;
-mod pending_gate_consent;
+pub(crate) mod pending_gate_consent;
 mod ppr_community;
 mod ppr_community_indexed;
 pub(crate) mod reader_fold_receipt;

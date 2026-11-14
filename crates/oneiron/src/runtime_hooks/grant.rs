@@ -3,13 +3,20 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::claim::ClaimBody;
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::pack_catalog::{HookActorClass, PackHookBinding};
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Error, Result as VaultResult, Vault};
 
-use super::filter::glob_match;
+use super::filter::{edge_class, glob_match};
 
 /// The owner's grant rows, by binding. Absent, a hook reads at its author's
 /// ceiling.
@@ -182,6 +189,61 @@ pub(crate) fn carry_hook_grant_in_txn(
         }
     }
     Ok(())
+}
+
+/// Lands one archived owner grant on its hook binding (SIDE-4b G7).
+///
+/// The binding must be live on this vault, the reader must hold its lane's class on a live
+/// entity, and no predicate glob may be empty; worlds install as archived, and `set_by`/`set_at`
+/// are audit-only. The grant installs byte-identical through [`install_archived_row`], so a
+/// different live row stays live.
+pub(crate) fn land_archived_hooks_grant_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> VaultResult<ArchivedSideRowOutcome> {
+    let (binding, stored) = match decode_archived_row(&GRANTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if stored.grant.predicates.iter().any(String::is_empty) {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    if !vault
+        .pack_hook_bindings_in_txn(txn)?
+        .iter()
+        .any(|(id, _)| *id == binding)
+    {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::MissingLiveEntity,
+        ));
+    }
+    // The runner's lane check (the grant reads under `memory(reader, edge_class)`): inside the
+    // import writer its store-truth half applies — the reader entity exists and is live, and its
+    // kind admits the lane's class — without opening a second snapshot.
+    match live_entity_row_in_txn(&vault.store, txn, &stored.grant.reader)? {
+        LiveEntityRow::Absent | LiveEntityRow::DeletedShell => {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::MissingLiveEntity,
+            ));
+        }
+        LiveEntityRow::Live { entity_type, .. }
+            if crate::provenance::validate_actor_class(
+                entity_type,
+                edge_class(stored.grant.reader_class),
+            )
+            .is_err() =>
+        {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::WrongEntityKind,
+            ));
+        }
+        LiveEntityRow::Live { .. } => {}
+    }
+    install_archived_row(&GRANTS, vault, txn, permit, &binding, row)
 }
 
 /// The grant a run reads under: the owner's, else the author's ceiling.
