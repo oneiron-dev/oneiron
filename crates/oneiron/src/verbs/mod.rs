@@ -19,6 +19,7 @@ mod campaign_enrollment;
 mod campaign_split;
 mod can;
 mod catalog_fragment;
+mod check_in;
 mod comm_widen;
 mod connect_proposal;
 mod connector;
@@ -86,6 +87,7 @@ mod repo_copy_edit;
 #[cfg(feature = "sync")]
 mod repo_manifest_conflict;
 mod research;
+mod research_advance;
 mod research_root;
 mod reservoir_sources;
 mod residence;
@@ -521,6 +523,7 @@ pub use self::can::*;
 pub use self::catalog_fragment::{
     CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,
 };
+pub use self::check_in::*;
 pub use self::comm_widen::*;
 pub use self::connect_proposal::*;
 pub use self::connector::*;
@@ -585,6 +588,7 @@ pub use self::repo_copy_edit::*;
 #[cfg(feature = "sync")]
 pub use self::repo_manifest_conflict::*;
 pub use self::research::*;
+pub use self::research_advance::*;
 pub use self::research_root::*;
 pub use self::reservoir_sources::*;
 pub use self::residence::*;

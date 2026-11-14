@@ -41,12 +41,11 @@ pub const WRITE_A_WATCHER_SUBTREE: &str = "skills/write-a-watcher";
 /// nothing imports it on open. [`Vault::installed_default_hub_skill`] finds
 /// the owner's import.
 pub const TUNE_ONEIRON_RETRIEVAL_SUBTREE: &str = "skills/tune-oneiron-retrieval";
-/// The model catalog has no authority of its own. Its rows count once the
-/// fetched bytes carry scan evidence and the pack installs; which bytes are
-/// fetched is the ref's sync policy, vault data rather than an engine constant.
-pub(crate) const MODEL_PACK_SUBTREE: &str = "packs/model-catalog";
-/// The first-party model catalog's pack name.
-pub const MODEL_PACK_NAME: &str = "oneiron.models";
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_hub::default_hub::MODEL_PACK_NAME;
+#[doc(hidden)]
+pub(crate) use oneiron_verb_wire::skill_hub::default_hub::MODEL_PACK_SUBTREE;
+
 /// The publisher an owner admits for a first-party pack: the model catalog
 /// on sync, and any first-party pack through `vault.packs.install`.
 pub const FIRST_PARTY_PACK_PUBLISHER: &str = "publisher:oneiron-hub";

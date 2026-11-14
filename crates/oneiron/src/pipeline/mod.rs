@@ -45,6 +45,8 @@ pub use self::types::{
     WorldScope, decode_world_access_claim_value, world_access_claim_body,
 };
 
+pub use self::builder::{BlendWeightsSource, RetrievalEvalSpec};
+
 pub(crate) use self::authority::{
     claim_ceiling_allowed, claim_scalars_ceiling_allowed, type_allowed as retrieval_type_allowed,
 };
