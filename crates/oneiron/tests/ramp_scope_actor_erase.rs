@@ -5,7 +5,10 @@
 //! and offer answers stay as acts, and their receipts carry
 //! `ERASED_CALL_IDENTITY` in `actor`. Nothing names the erased actor
 //! afterwards (the erased-member rule, 13 Nov 21:09), and a rebuild folds
-//! their history into no shared "erased" scope.
+//! their history into no shared "erased" scope. An offer answer a former
+//! owner gave keeps its row in a scope that is not theirs, and its
+//! `answerer` reads `ERASED_CALL_IDENTITY` once that owner is erased
+//! (review of #7834).
 //!
 //! The scope's actor is a PERSON, the entity type #7514's erase test already
 //! hard-erases; the scrub matches the id whatever its type. Every ramp table
@@ -27,6 +30,7 @@ use oneiron::edit_distance::graduation::{
     DEFAULT_POSTERIOR_GUARD, ThresholdRow, exact_pattern, is_graduation_answer_receipt,
     set_graduation_policy_as_owner, unpin_scope_as_owner,
 };
+use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
 use oneiron::identity_topology::ProposalOutcome;
 use oneiron::receipt::{ERASED_CALL_IDENTITY, ReceiptKind, ReceiptQuery, ReceiptRecord};
 use oneiron::registry::ENTITY_TYPE_PERSON;
@@ -37,15 +41,21 @@ use oneiron::{DeleteReason, EntityId, Vault, VaultConfig};
 
 const OP_KIND: &str = "send_email";
 const TARGET_CLASS: &str = "client_followup";
+const SHARED: u64 = 42;
 
 /// The owner's proof on a fresh vault.
 fn owner(vault: &Vault) -> AuthenticatedOwner {
     let owner = vault
         .ensure_embedded_owner_actor()
         .expect("FIXTURE: the owner");
+    proof(vault, owner)
+}
+
+/// `person`'s own proof.
+fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
     vault
-        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
-        .expect("FIXTURE: the owner's proof")
+        .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
+        .expect("FIXTURE: a person's proof")
 }
 
 /// A live PERSON the hard erase accepts.
@@ -125,6 +135,11 @@ fn a_hard_erase_leaves_no_ramp_row_or_receipt_naming_the_scope_actor() {
     vault
         .set_ramp_streak_floor(&scope, 3)
         .expect("FIXTURE: the floor override");
+    assert_eq!(
+        vault.ramp_streak_floor(&scope).expect("floor read"),
+        3,
+        "FIXTURE: the floor override is in force"
+    );
     vault
         .demote_scope_to_propose(&owner, &scope, DemotionReason::Rejected)
         .expect("FIXTURE: the owner demotes the scope");
@@ -136,6 +151,12 @@ fn a_hard_erase_leaves_no_ramp_row_or_receipt_naming_the_scope_actor() {
             .expect("FIXTURE: a threshold row"),
     )
     .expect("FIXTURE: the threshold override");
+    // The owner's exact row outranks the dial of equal specificity.
+    assert_eq!(
+        vault.ramp_streak_floor(&scope).expect("floor read"),
+        5,
+        "FIXTURE: the threshold override is in force"
+    );
 
     let named: Vec<&str> = spelling(&vault, &hex)
         .iter()
@@ -151,11 +172,6 @@ fn a_hard_erase_leaves_no_ramp_row_or_receipt_naming_the_scope_actor() {
             "graduation_threshold",
         ],
         "FIXTURE: every ramp table that spells an actor names this one"
-    );
-    assert_eq!(
-        vault.ramp_streak_floor(&scope).expect("floor read"),
-        3,
-        "FIXTURE: the floor override is in force"
     );
     let before = ramp_receipts(&vault);
     assert_eq!(
@@ -232,5 +248,113 @@ fn a_hard_erase_leaves_no_ramp_row_or_receipt_naming_the_scope_actor() {
             .map(|table| table.rows),
         Some(0),
         "the stats table holds no row at all"
+    );
+}
+
+/// A shared vault whose roster holds its embedded owner and a second Owner,
+/// who has accepted the founding invitation; the second Owner's id.
+fn co_owner(vault: &Vault) -> EntityId {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the owner");
+    let co_owner = person(vault);
+    vault
+        .initialize_shared_vault(
+            &proof(vault, owner),
+            SHARED,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: owner,
+                    role: Some(Role::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: co_owner,
+                    role: Some(Role::Owner),
+                },
+            ],
+            1,
+        )
+        .expect("FIXTURE: a shared vault with two owners");
+    let own = proof(vault, co_owner);
+    let invitation = vault
+        .shared_invitations(&own, SHARED)
+        .expect("FIXTURE: the co-owner's invitations")
+        .into_iter()
+        .find(|open| open.role == Role::Owner)
+        .expect("FIXTURE: the co-owner's founding invitation");
+    vault
+        .accept_shared_invitation(&own, SHARED, &invitation.id)
+        .expect("FIXTURE: the co-owner accepts");
+    co_owner
+}
+
+/// Each answer receipt's id, its scope actor, and its `answerer` field.
+fn answer_receipts(vault: &Vault) -> Vec<(String, Option<String>, Option<String>)> {
+    ramp_receipts(vault)
+        .iter()
+        .filter(|record| is_graduation_answer_receipt(record))
+        .map(|record| {
+            (
+                record.receipt_id.clone(),
+                record.actor.clone(),
+                record.fields.get("answerer").cloned(),
+            )
+        })
+        .collect()
+}
+
+/// The answer row's first head rewrote only the scope actor, so an owner
+/// who answered an offer in an agent's scope and was later erased stayed
+/// named in the row's `answerer` and on its receipt.
+#[test]
+fn a_hard_erase_takes_a_former_owner_out_of_the_answers_they_gave() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    let co_owner = co_owner(&vault);
+    let co_owner_hex = co_owner.to_hex();
+    let agent = EntityId::now().to_hex();
+    let scope =
+        RampScope::new(OP_KIND, TARGET_CLASS, agent.clone()).expect("FIXTURE: an agent's scope");
+    unpin_scope_as_owner(&vault, &proof(&vault, co_owner), &scope)
+        .expect("FIXTURE: the co-owner answers an offer");
+
+    let named: Vec<&str> = spelling(&vault, &co_owner_hex)
+        .iter()
+        .map(|table| table.table)
+        .collect();
+    assert_eq!(
+        named,
+        vec!["graduation_answer"],
+        "FIXTURE: only the answer names the co-owner"
+    );
+    let before = answer_receipts(&vault);
+    assert_eq!(
+        before
+            .iter()
+            .map(|(_, actor, answerer)| (actor.clone(), answerer.clone()))
+            .collect::<Vec<_>>(),
+        vec![(Some(agent.clone()), Some(co_owner_hex.clone()))],
+        "FIXTURE: the answer receipt names the agent's scope and the co-owner"
+    );
+
+    // Every delete signs as this install first.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault
+        .delete_entity_with_reason(&co_owner, DeleteReason::UserHardDelete)
+        .expect("FIXTURE: the co-owner is hard-erased");
+
+    assert_eq!(
+        spelling(&vault, &co_owner_hex),
+        Vec::new(),
+        "no ramp table row spells the erased co-owner's id"
+    );
+    assert_eq!(
+        answer_receipts(&vault),
+        before
+            .into_iter()
+            .map(|(id, actor, _)| (id, actor, Some(ERASED_CALL_IDENTITY.to_owned())))
+            .collect::<Vec<_>>(),
+        "the answer stays in the agent's scope, and its answerer reads erased"
     );
 }

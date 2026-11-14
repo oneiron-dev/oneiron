@@ -27,7 +27,9 @@ pub struct RampTableRows {
 /// Storage errors.
 pub fn ramp_rows_spelling(vault: &Vault, text: &str) -> Result<Vec<RampTableRows>> {
     let needle = text.as_bytes();
-    let spells = |bytes: &[u8]| bytes.windows(needle.len()).any(|window| window == needle);
+    let spells = |bytes: &[u8]| {
+        !needle.is_empty() && bytes.windows(needle.len()).any(|window| window == needle)
+    };
     // The tables a ramp scope's actor may be spelled in: the ramp's own four
     // and ED-05's offer answers and threshold overrides.
     let ramp_tables: [(&'static str, &SideTableDecl); 6] = [

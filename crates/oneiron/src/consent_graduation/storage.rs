@@ -213,7 +213,10 @@ pub(super) fn stored_row_scope(
 /// - each demotion `actor` made keeps its row, and its `demoted_by` reads
 ///   [`ERASED_CALL_IDENTITY`](crate::receipt::ERASED_CALL_IDENTITY);
 /// - the offer answers and threshold overrides of those scopes go the same
-///   way ([`crate::edit_distance::graduation::erase_scope_actor_in_txn`]).
+///   way, and each answer `actor` gave as an owner keeps its row, and its
+///   `answerer` reads
+///   [`ERASED_CALL_IDENTITY`](crate::receipt::ERASED_CALL_IDENTITY)
+///   ([`crate::edit_distance::graduation::erase_scope_actor_in_txn`]).
 ///
 /// The fold reads no row whose actor is erased, so an erased actor's history
 /// forms no shared scope. An id whose entity is no actor scans nothing. Each

@@ -3,11 +3,13 @@
 //! A1, 14 Nov), as part of the ramp's own erase
 //! ([`crate::consent_graduation::erase_ramp_actor_in_txn`]).
 //!
-//! An answer is the owner's act: it stays, with its answer, answerer and
-//! times, and its scope actor reads [`ERASED_CALL_IDENTITY`]. Its key derives
-//! from the scope, so it is deleted and re-put under the erased scope's digest
-//! with its own row id, as the escalation rows are (FIX 4700). A threshold
-//! override whose pattern names the actor is that scope's policy, and it goes.
+//! An answer is the owner's act: it stays, with its answer and times, and its
+//! scope actor reads [`ERASED_CALL_IDENTITY`]. Its key derives from the scope,
+//! so it is deleted and re-put under the erased scope's digest with its own
+//! row id, as the escalation rows are (FIX 4700). An answer the erased actor
+//! gave as an owner of the vault keeps its scope and key, and its `answerer`
+//! reads [`ERASED_CALL_IDENTITY`] (review of #7834). A threshold override
+//! whose pattern names the actor is that scope's policy, and it goes.
 
 use super::pattern::pattern_axes;
 use super::{ANSWER, THRESHOLD};
@@ -17,10 +19,11 @@ use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::store::Store;
 
 /// Rewrites the scope actor of every answer whose scope names `actor_hex` to
-/// [`ERASED_CALL_IDENTITY`], re-keyed under the erased scope's digest, and
-/// deletes every threshold override whose pattern's actor axis is
-/// `actor_hex`. Returns the scopes whose answers it rewrote, still naming
-/// `actor_hex`, so the ramp's erase drops their floor rows too.
+/// [`ERASED_CALL_IDENTITY`], re-keyed under the erased scope's digest, and the
+/// `answerer` of every answer `actor_hex` gave to it in place; deletes every
+/// threshold override whose pattern's actor axis is `actor_hex`. Returns the
+/// scopes whose answers it re-keyed, still naming `actor_hex`, so the ramp's
+/// erase drops their floor rows too.
 ///
 /// # Errors
 ///
@@ -32,12 +35,19 @@ pub(crate) fn erase_scope_actor_in_txn(
 ) -> Result<Vec<RampScope>> {
     let mut answers = Vec::new();
     for ((scope_key, id), row) in ANSWER.scan(store, wtxn)? {
-        if row.actor == actor_hex {
+        if row.actor == actor_hex || row.answerer.as_deref() == Some(actor_hex) {
             answers.push((scope_key, id, row));
         }
     }
     let mut scopes = Vec::new();
     for (scope_key, id, mut row) in answers {
+        if row.answerer.as_deref() == Some(actor_hex) {
+            row.answerer = Some(ERASED_CALL_IDENTITY.to_owned());
+        }
+        if row.actor != actor_hex {
+            ANSWER.put(store, wtxn, &(scope_key, id), &row)?;
+            continue;
+        }
         let erased = RampScope {
             op_kind: row.op_kind.clone(),
             target_class: row.target_class.clone(),
