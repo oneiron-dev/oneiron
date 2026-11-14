@@ -14,7 +14,6 @@ use loro::LoroDoc;
 use oneiron::authority::PeerMachine;
 use oneiron::sync::{SyncSelector, WindowKey, WindowManager, filtered_window_doc_for_peer};
 
-use super::window_sync::selector_grant_scope;
 
 /// How many filtered window copies one federation socket holds at once
 /// (CALLS: FEDERATION_ADMITTED_WINDOW_COPIES). A memory bound, never a
@@ -117,6 +116,7 @@ pub(super) fn rebuild(
     vault: &oneiron::Vault,
     manager: &Arc<WindowManager>,
     key: &WindowKey,
+    scope: oneiron::FederationGrantScope,
     selector: &SyncSelector,
     peer: PeerMachine,
 ) -> Option<LoroDoc> {
@@ -125,7 +125,7 @@ pub(super) fn rebuild(
             vault,
             &window.doc,
             key,
-            selector_grant_scope(),
+            scope,
             selector,
             peer,
         )

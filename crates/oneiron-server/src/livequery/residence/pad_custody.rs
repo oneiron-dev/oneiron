@@ -26,6 +26,7 @@ use serde_json::{Value, json};
 
 use super::{Answer, AppError, CoreAuth, admitted, selected_window};
 use crate::server::SyncServer;
+use crate::handler::selector_scope::SelectorLane;
 
 /// One page a machine asks for: `keys`, or `selector` with `entityId`, the
 /// item a promotion of the window is admitted through.
@@ -66,8 +67,11 @@ fn promoted<'v>(
     entity_id: &str,
 ) -> Result<(WindowKey, ResidenceAdmission<'v>), AppError> {
     let id = EntityId::from_hex(entity_id).map_err(|_| AppError::invalid_params())?;
-    let (window, selector, doc) = selected_window(server, auth, window, selector)?;
-    let admission = admitted(server, auth, peer, &selector)?;
+    // Pad custody is an owner machine's call, never a member lane's
+    // (`handler::member_lane::member_admits_rpc_method`): its selector is
+    // checked on the own-device lane, as before MEMBER-SYNC.
+    let (window, selector, doc) = selected_window(server, auth, &SelectorLane::OwnDevice, window, selector)?;
+    let admission = admitted(server, auth, peer, &SelectorLane::OwnDevice, &selector)?;
     let scope = crate::handler::selector_grant_scope();
     let unavailable = |_| AppError::internal_server_error("world pads unavailable");
     if !admission.allows_item(id).map_err(unavailable)?

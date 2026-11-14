@@ -17,6 +17,7 @@ pub(super) fn media_vectors(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
+    lane: &crate::handler::selector_scope::SelectorLane,
     params: Value,
 ) -> Result<Answer, AppError> {
     let input: MediaVectorsRequest =
@@ -24,8 +25,8 @@ pub(super) fn media_vectors(
     let PeerMachine::Proven { machine, .. } = server.vault.peer_machine_stands(peer) else {
         return Err(AppError::not_found("item", None));
     };
-    let selector = bound_selector(server, auth, &input.selector)?;
-    let admission = admitted(server, auth, peer, &selector)?;
+    let selector = bound_selector(server, auth, lane, &input.selector)?;
+    let admission = admitted(server, auth, peer, lane, &selector)?;
     if admission.destination() != Destination::Machine(machine)
         || !admission.allows_item(input.id).map_err(unavailable)?
     {
@@ -44,13 +45,13 @@ pub(super) fn media_vectors(
         if replica.space_id() != input.space {
             continue;
         }
-        if full_sources_match(server, input.id, &selector, &admission, replica.sources())? {
+        if full_sources_match(server, lane.grant_scope(), input.id, &selector, &admission, replica.sources())? {
             selected.push(replica);
         }
     }
     // Re-admit after point reads and recheck each complete source image.
-    bound_selector(server, auth, &input.selector)?;
-    let current = admitted(server, auth, peer, &selector)?;
+    bound_selector(server, auth, lane, &input.selector)?;
+    let current = admitted(server, auth, peer, lane, &selector)?;
     if current.destination() != Destination::Machine(machine)
         || !matches!(
             server.vault.peer_machine_stands(peer),
@@ -62,7 +63,7 @@ pub(super) fn media_vectors(
     let mut released = Vec::new();
     let mut rows = BTreeSet::new();
     for replica in selected {
-        if full_sources_match(server, input.id, &selector, &current, replica.sources())?
+        if full_sources_match(server, lane.grant_scope(), input.id, &selector, &current, replica.sources())?
             && server
                 .vault
                 .text_media_vector_replicas(&input.id, &input.space)
@@ -89,6 +90,7 @@ pub(super) fn media_vectors(
 
 fn full_sources_match(
     server: &SyncServer,
+    scope: oneiron::FederationGrantScope,
     turn: EntityId,
     selector: &SyncSelector,
     admission: &ResidenceAdmission<'_>,
@@ -113,7 +115,7 @@ fn full_sources_match(
             &server.vault,
             &held.doc,
             &window,
-            crate::handler::selector_scope::selector_grant_scope(),
+            scope,
             selector,
             admission.withhold(),
             *id,
@@ -130,7 +132,7 @@ fn full_sources_match(
         server.vault.as_ref(),
         turn,
         sources,
-        crate::handler::selector_scope::selector_grant_scope(),
+        scope,
         selector,
         admission.withhold(),
     )

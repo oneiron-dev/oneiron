@@ -21,6 +21,7 @@ fn reply_with_cache(
         server,
         auth,
         PeerMachine::Unknown,
+        &crate::handler::selector_scope::SelectorLane::OwnDevice,
         RpcRequest {
             request_id: 7,
             method: method.into(),
@@ -310,6 +311,7 @@ pub(crate) async fn cross_the_index(
             &server,
             &auth,
             PeerMachine::Unknown,
+            &crate::handler::selector_scope::SelectorLane::OwnDevice,
             params,
             &mut cache,
             budgets,

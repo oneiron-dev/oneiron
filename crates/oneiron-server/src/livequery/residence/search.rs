@@ -8,10 +8,15 @@ use super::*;
 /// receipt to name (FIX 3550), and taken back if the caller stops verifying;
 /// `off_carrier` is set when that caller sits off the carrying device, so
 /// the reply's send judges its rows for an unknown destination (FIX 11991).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the residence RPC's call state, each part its own borrow"
+)]
 pub(super) fn search(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
+    lane: &crate::handler::selector_scope::SelectorLane,
     params: Value,
     budgets: ResidenceOperationBudgets,
     attribution: &mut Option<ForwardedAttribution>,
@@ -26,5 +31,5 @@ pub(super) fn search(
     {
         return Err(AppError::invalid_params());
     }
-    pages::search_pages(server, auth, peer, input, budgets, attribution, off_carrier)
+    pages::search_pages(server, auth, peer, lane, input, budgets, attribution, off_carrier)
 }

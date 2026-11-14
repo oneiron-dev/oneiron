@@ -11,7 +11,6 @@ use oneiron::EntityId;
 use oneiron::sync::transport::{DocumentFrame, document_sub_tags};
 
 use super::conn_state::ConnState;
-use super::window_sync::selector_grant_scope;
 use crate::server::SyncServer;
 
 /// The frame the subscription `state` holds under the copy id of `doc`'s
@@ -37,7 +36,7 @@ pub(super) fn copy_notice_frame(
     let exported = crate::server::blocking(|| {
         server.reassert_manager.export_document_for_peer(
             copy,
-            selector_grant_scope(),
+            state.selector_lane.grant_scope(),
             &request.selector,
             &request.remote_vv,
             peer,

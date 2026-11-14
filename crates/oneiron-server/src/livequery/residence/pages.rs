@@ -40,10 +40,15 @@ fn search_changed() -> AppError {
 /// a search of one call (FIX 3550), and `off_carrier` says whether it sits
 /// off the carrying device: every page is its own call, so each page's
 /// reply carries the rule its send judges again (FIX 11991).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the residence RPC's call state, each part its own borrow"
+)]
 pub(super) fn search_pages(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
+    lane: &crate::handler::selector_scope::SelectorLane,
     input: SearchRequest,
     budgets: ResidenceOperationBudgets,
     attribution: &mut Option<ForwardedAttribution>,
@@ -52,11 +57,15 @@ pub(super) fn search_pages(
     let selector_wire = base64::engine::general_purpose::STANDARD
         .decode(&input.selector)
         .map_err(|_| AppError::invalid_params())?;
-    let selector = bound_selector(server, auth, &input.selector)?;
+    let selector = bound_selector(server, auth, lane, &input.selector)?;
     // A forwarded caller reads under its own credential, at the locality its
     // device signed, and the device's selector stays the second ceiling
-    // every hit passes.
+    // every hit passes. A member lane forwards no other caller (MEMBER-SYNC
+    // D4): it reads as its own grant's holder only.
     let forwarded = input.forwarded_caller(server, peer, &selector)?;
+    if forwarded.is_some() && lane.member().is_some() {
+        return Err(AppError::not_found("item", None));
+    }
     *attribution = forwarded
         .as_ref()
         .map(|forwarded| ForwardedAttribution::of(&forwarded.caller));
@@ -64,8 +73,8 @@ pub(super) fn search_pages(
         .as_ref()
         .is_some_and(|forwarded| forwarded.locality == oneiron::claim::CallerLocality::OffDevice);
     let admission = match &forwarded {
-        Some(caller) => caller.admission(server, peer, &selector)?,
-        None => admitted(server, auth, peer, &selector)?,
+        Some(caller) => caller.admission(server, peer, lane, &selector)?,
+        None => admitted(server, auth, peer, lane, &selector)?,
     };
     let grant_before = server
         .vault
@@ -108,6 +117,7 @@ pub(super) fn search_pages(
             }
             if selects(
                 server,
+                lane.grant_scope(),
                 &selector,
                 &admission,
                 &mut selected_by_window,
@@ -170,7 +180,7 @@ pub(super) fn search_pages(
     });
     // The app credential, grant and selector are rechecked after the page,
     // and a forwarded caller too.
-    let selector = bound_selector(server, auth, &input.selector)?;
+    let selector = bound_selector(server, auth, lane, &input.selector)?;
     if forwarded.is_some() {
         input
             .forwarded_caller(server, peer, &selector)
@@ -198,6 +208,7 @@ pub(super) fn search_pages(
 /// request's admission, as a search of one call judges each hit.
 fn selects(
     server: &SyncServer,
+    scope: oneiron::FederationGrantScope,
     selector: &SyncSelector,
     admission: &ResidenceAdmission<'_>,
     selected_by_window: &mut HashMap<WindowKey, loro::LoroDoc>,
@@ -217,7 +228,7 @@ fn selects(
             &server.vault,
             &doc.doc,
             window,
-            crate::handler::selector_grant_scope(),
+            scope,
             selector,
             admission.withhold(),
         )

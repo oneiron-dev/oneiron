@@ -14,7 +14,6 @@ use oneiron::sync::{
 
 use super::app_tier::require_bound_app_auth;
 use super::conn_state::{ConnState, WindowSyncMode};
-pub(crate) use super::selector_scope::selector_grant_scope;
 use crate::auth::CoreAuth;
 use crate::protocol::{self, ProtocolError, window_sub_tags};
 use crate::server::SyncServer;
@@ -130,6 +129,7 @@ pub(super) async fn handle_window_sync(
                 server,
                 auth,
                 conn_state.peer_machine(server.vault()),
+                &conn_state.selector_lane,
                 &key,
                 &selector,
                 &doc,
@@ -293,6 +293,7 @@ pub(super) async fn handle_window_sync(
             server,
             require_bound_app_auth(server, conn_state)?,
             conn_state.peer_machine(server.vault()),
+            &conn_state.selector_lane,
             &key,
             selector,
             &doc,
@@ -384,6 +385,7 @@ pub(super) async fn handle_window_sync(
                             server,
                             require_bound_app_auth(server, conn_state)?,
                             conn_state.peer_machine(server.vault()),
+                            &conn_state.selector_lane,
                             &key,
                             selector,
                             &doc,
@@ -409,7 +411,10 @@ pub(super) async fn handle_window_sync(
                 admit_promoted_window_update(
                     &server.vault,
                     &doc,
-                    selector_grant_scope(),
+                    conn_state
+                        .selector_lane
+                        .scope_for(selector)
+                        .map_err(map_selector_filter_err)?,
                     selector,
                     proof,
                     update,
@@ -818,6 +823,7 @@ pub(super) fn authorize_promoted_window(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: oneiron::authority::PeerMachine,
+    lane: &super::selector_scope::SelectorLane,
     key: &WindowKey,
     selector: &SyncSelector,
     source: &loro::LoroDoc,
@@ -833,21 +839,17 @@ pub(super) fn authorize_promoted_window(
         ));
     }
     let proof = auth.verified_slip().ok_or(ProtocolError::RpcNoPrincipal)?;
+    let scope = lane.scope_for(selector).map_err(map_selector_filter_err)?;
     // One admission for the machine this socket proved: the credential, the
     // grant and every carried row's world for that machine (OF-534 G6).
-    let admission = oneiron::sync::residence::ResidenceAdmission::load(
-        &server.vault,
-        proof,
-        peer,
-        selector_grant_scope(),
-        selector,
-    )
-    .map_err(map_selector_filter_err)?;
+    let admission =
+        oneiron::sync::residence::ResidenceAdmission::load(&server.vault, proof, peer, scope, selector)
+            .map_err(map_selector_filter_err)?;
     match promotion_covers_full_window_for(
         &server.vault,
         source,
         key,
-        selector_grant_scope(),
+        scope,
         selector,
         admission.withhold(),
         |id| admission.allows_item(id),
@@ -862,6 +864,7 @@ pub(super) fn authorize_promoted_window(
 
 pub(super) fn decode_and_authorize_selector_request(
     server: &SyncServer,
+    lane: &super::selector_scope::SelectorLane,
     payload: &[u8],
 ) -> Result<SelectorVvRequest, ProtocolError> {
     let request = decode_selector_vv_request(payload)
@@ -873,12 +876,11 @@ pub(super) fn decode_and_authorize_selector_request(
             "selector sync requires empty version vector resync",
         ));
     }
-    authorize_sync_selector(
-        server.vault.as_ref(),
-        selector_grant_scope(),
-        &request.selector,
-    )
-    .map_err(map_selector_filter_err)?;
+    let scope = lane
+        .scope_for(&request.selector)
+        .map_err(map_selector_filter_err)?;
+    authorize_sync_selector(server.vault.as_ref(), scope, &request.selector)
+        .map_err(map_selector_filter_err)?;
     Ok(request)
 }
 

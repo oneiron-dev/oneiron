@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 
 use super::{Answer, AppError, CoreAuth, admitted, bound_selector};
 use crate::server::SyncServer;
+use crate::handler::selector_scope::SelectorLane;
 
 /// The target's id in hex and the cursor a page before returned, if any.
 #[derive(Deserialize)]
@@ -42,11 +43,14 @@ pub(super) fn machine_history(
         .as_deref()
         .map(|cursor| MachineHistoryCursor::decode(cursor).ok_or_else(AppError::invalid_params))
         .transpose()?;
-    let selector = bound_selector(server, auth, &input.selector)?;
+    // Machine history is an owner machine's call, never a member lane's
+    // (`handler::member_lane::member_admits_rpc_method`): its selector is
+    // checked on the own-device lane, as before MEMBER-SYNC.
+    let selector = bound_selector(server, auth, &SelectorLane::OwnDevice, &input.selector)?;
     // As a touch: the actor's live scoped-read floor and the destination
     // machine's world read settings must admit the exact target. Either
     // denial looks missing.
-    let admission = admitted(server, auth, peer, &selector)?;
+    let admission = admitted(server, auth, peer, &SelectorLane::OwnDevice, &selector)?;
     if !admission
         .allows_item(target)
         .map_err(|_| AppError::internal_server_error("item admission unavailable"))?
@@ -114,8 +118,8 @@ pub(super) fn freshness(
     if !matches!(peer, PeerMachine::Proven { machine, .. } if machine == challenge.machine) {
         return Err(AppError::not_found("item", None));
     }
-    let selector = bound_selector(server, auth, &input.selector)?;
-    let admission = admitted(server, auth, peer, &selector)?;
+    let selector = bound_selector(server, auth, &SelectorLane::OwnDevice, &input.selector)?;
+    let admission = admitted(server, auth, peer, &SelectorLane::OwnDevice, &selector)?;
     if !admission
         .allows_item(challenge.target)
         .map_err(|_| AppError::internal_server_error("item admission unavailable"))?

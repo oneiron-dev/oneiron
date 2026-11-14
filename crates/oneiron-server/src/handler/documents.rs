@@ -1,6 +1,6 @@
 //! Per-entity selector admission and scope-filtered document delivery on the sync socket.
 use super::{
-    app_tier::require_bound_app_auth, conn_state::ConnState, window_sync::selector_grant_scope,
+    app_tier::require_bound_app_auth, conn_state::ConnState,
 };
 use crate::auth::CoreScope;
 use crate::{protocol::ProtocolError, server::SyncServer};
@@ -156,6 +156,12 @@ fn handle_document_inner(
             if request.selector.member_ref != principal {
                 return Err(ProtocolError::InvalidPayload("selector principal mismatch"));
             }
+            // A member lane subscribes only under its own grant (MEMBER-SYNC
+            // D3); every later use of this stored selector reads its scope.
+            let scope = state
+                .selector_lane
+                .scope_for(&request.selector)
+                .map_err(super::window_sync::map_selector_filter_err)?;
             if is_note(server, entity)? {
                 require_note_auth(server, state, &request.selector, false)?;
             }
@@ -164,7 +170,7 @@ fn handle_document_inner(
             let frame = crate::server::blocking(|| {
                 server.reassert_manager.export_document_for_peer(
                     entity,
-                    selector_grant_scope(),
+                    scope,
                     &request.selector,
                     &request.remote_vv,
                     peer,
@@ -212,7 +218,7 @@ fn handle_document_inner(
                 .memory(actor, class)
                 .admit_note_operation(
                     entity,
-                    selector_grant_scope(),
+                    state.selector_lane.grant_scope(),
                     &request.selector,
                     |txn| {
                         auth.credential_is_live_in_write_txn(&server.vault, txn)
@@ -275,7 +281,7 @@ fn handle_document_inner(
             let held = match source {
                 Some(_) => document.import_copy_from_peer(
                     payload,
-                    selector_grant_scope(),
+                    state.selector_lane.grant_scope(),
                     &request.selector,
                     peer,
                     |txn| auth.credential_is_live_in_write_txn(&server.vault, txn),
@@ -284,7 +290,7 @@ fn handle_document_inner(
                     .import_from_peer(
                         kind,
                         payload,
-                        selector_grant_scope(),
+                        state.selector_lane.grant_scope(),
                         &request.selector,
                         peer,
                         |txn| auth.credential_is_live_in_write_txn(&server.vault, txn),
@@ -724,7 +730,7 @@ pub(super) fn document_delivery_retrying(
             let exported = crate::server::blocking(|| {
                 server.reassert_manager.export_document_for_peer(
                     doc.entity,
-                    selector_grant_scope(),
+                    state.selector_lane.grant_scope(),
                     &request.selector,
                     &request.remote_vv,
                     peer,

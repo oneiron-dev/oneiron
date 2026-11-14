@@ -10,6 +10,7 @@ pub(super) fn index(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
+    lane: &crate::handler::selector_scope::SelectorLane,
     params: Value,
     cache: &mut Option<ResidenceIndexCache>,
     budgets: ResidenceOperationBudgets,
@@ -28,8 +29,8 @@ pub(super) fn index(
         return Err(AppError::invalid_params());
     }
     let page_limit = input.limit.min(budgets.index_page_limit);
-    let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
-    let admission = admitted(server, auth, peer, &selector)?;
+    let (window, selector, doc) = selected_window(server, auth, lane, &input.window, &input.selector)?;
+    let admission = admitted(server, auth, peer, lane, &selector)?;
     let destination = admission.destination();
     let current_vv = doc.oplog_vv().encode();
     let grant = server
@@ -49,7 +50,7 @@ pub(super) fn index(
             &server.vault,
             &doc,
             &window,
-            crate::handler::selector_scope::selector_grant_scope(),
+            lane.grant_scope(),
             &selector,
             admission.withhold(),
             budgets.title_max_chars,
@@ -284,13 +285,14 @@ pub(super) fn touch(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
+    lane: &crate::handler::selector_scope::SelectorLane,
     params: Value,
     stage: &mut Option<ResidenceTouchStage>,
 ) -> Result<Answer, AppError> {
     let input: TouchRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
     *stage = None;
-    let target = touch_target(server, auth, peer, &input)?;
+    let target = touch_target(server, auth, peer, lane, &input)?;
     // Read before the item, so the stage never names a basis newer than its bytes.
     let basis = touch_basis(server, &target)?;
     let (blob, document, cache_worlds) = read_touch(server, &target, None)?;
@@ -353,6 +355,7 @@ pub(super) fn touch_part(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
+    lane: &crate::handler::selector_scope::SelectorLane,
     params: Value,
     stage: &Option<ResidenceTouchStage>,
 ) -> Result<Answer, AppError> {
@@ -364,7 +367,7 @@ pub(super) fn touch_part(
         selector: input.selector,
         entity_id: input.entity_id,
     };
-    let target = touch_target(server, auth, peer, &touch)?;
+    let target = touch_target(server, auth, peer, lane, &touch)?;
     let staged = match stage {
         Some(stage) => match stage.named(&target, input.item, &hash) {
             Some(bytes) if touch_basis(server, &target)?.as_ref() == Some(&stage.basis) => {
@@ -445,6 +448,8 @@ fn touch_item(
 /// window and selector, the window's document, the admission and the id.
 struct TouchTarget<'v> {
     window: WindowKey,
+    /// The grant scope its selector was checked under (MEMBER-SYNC D2).
+    scope: oneiron::FederationGrantScope,
     selector: SyncSelector,
     doc: loro::LoroDoc,
     admission: ResidenceAdmission<'v>,
@@ -458,14 +463,15 @@ fn touch_target<'v>(
     server: &'v SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
+    lane: &crate::handler::selector_scope::SelectorLane,
     input: &TouchRequest,
 ) -> Result<TouchTarget<'v>, AppError> {
     let id = EntityId::from_hex(&input.entity_id).map_err(|_| AppError::invalid_params())?;
-    let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
+    let (window, selector, doc) = selected_window(server, auth, lane, &input.window, &input.selector)?;
     // A stored grant constrains the selector; the actor's live scoped-read
     // floor and the destination machine's world read settings must ALSO
     // admit the exact target. Either denial looks missing.
-    let admission = admitted(server, auth, peer, &selector)?;
+    let admission = admitted(server, auth, peer, lane, &selector)?;
     if !admission
         .allows_item(id)
         .map_err(|_| AppError::internal_server_error("item admission unavailable"))?
@@ -474,6 +480,7 @@ fn touch_target<'v>(
     }
     Ok(TouchTarget {
         window,
+        scope: lane.grant_scope(),
         selector,
         doc,
         admission,
@@ -519,6 +526,7 @@ fn read_touch(
 > {
     let TouchTarget {
         window,
+        scope,
         selector,
         doc,
         admission,
@@ -528,7 +536,7 @@ fn read_touch(
         &server.vault,
         doc,
         window,
-        crate::handler::selector_scope::selector_grant_scope(),
+        *scope,
         selector,
         admission.withhold(),
         *id,
@@ -547,7 +555,7 @@ fn read_touch(
                     .export_read_cache_document_in_window_with(
                         *id,
                         window,
-                        crate::handler::selector_scope::selector_grant_scope(),
+                        *scope,
                         selector,
                         admission.withhold(),
                         &loro::VersionVector::new().encode(),
@@ -559,7 +567,7 @@ fn read_touch(
                     .export_document_in_window_with(
                         *id,
                         window,
-                        crate::handler::selector_scope::selector_grant_scope(),
+                        *scope,
                         selector,
                         admission.withhold(),
                         &loro::VersionVector::new().encode(),
@@ -602,6 +610,7 @@ pub(super) fn promote(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
+    lane: &crate::handler::selector_scope::SelectorLane,
     params: Value,
 ) -> Result<Answer, AppError> {
     let input: PromotionRequest =
@@ -611,8 +620,8 @@ pub(super) fn promote(
     let id = oneiron::sync::selector::RepoCopyAliases::read(&server.vault)
         .map_err(|_| AppError::internal_server_error("item aliases unavailable"))?
         .stored(&id);
-    let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
-    let admission = admitted(server, auth, peer, &selector)?;
+    let (window, selector, doc) = selected_window(server, auth, lane, &input.window, &input.selector)?;
+    let admission = admitted(server, auth, peer, lane, &selector)?;
     if !admission
         .allows_item(id)
         .map_err(|_| AppError::internal_server_error("promotion admission unavailable"))?
@@ -620,7 +629,7 @@ pub(super) fn promote(
             &server.vault,
             &doc,
             &window,
-            crate::handler::selector_scope::selector_grant_scope(),
+            lane.grant_scope(),
             &selector,
             admission.withhold(),
             id,
@@ -637,7 +646,7 @@ pub(super) fn promote(
         &server.vault,
         &doc,
         &window,
-        crate::handler::selector_scope::selector_grant_scope(),
+        lane.grant_scope(),
         &selector,
         admission.withhold(),
         |item| {
@@ -681,12 +690,13 @@ pub(super) fn window_vv(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
+    lane: &crate::handler::selector_scope::SelectorLane,
     params: Value,
 ) -> Result<Answer, AppError> {
     let input: WindowVvRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
-    let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
-    let _admitted = admitted(server, auth, peer, &selector)?;
+    let (window, selector, doc) = selected_window(server, auth, lane, &input.window, &input.selector)?;
+    let _admitted = admitted(server, auth, peer, lane, &selector)?;
     Ok((
         json!({
             "window": window.as_str(),

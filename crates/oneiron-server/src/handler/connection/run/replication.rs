@@ -429,6 +429,7 @@ pub(super) async fn handle_connection(
                                         &server,
                                         auth,
                                         conn_state.peer_machine(server.vault()),
+                                        &conn_state.selector_lane,
                                         &key,
                                         selector,
                                         &window.doc,
@@ -719,7 +720,20 @@ pub(super) async fn handle_connection(
                         break;
                     }
                 }
-                let handle_result = match msg {
+                // A member lane sends only the selector-qualified frames an
+                // Opened device sends (MEMBER-SYNC D4); any other frame is
+                // refused and closes it, before any effect.
+                let member_refusal = conn_state.selector_lane.member().and_then(|_| {
+                    let promoted = |key: &str| {
+                        oneiron::sync::WindowKey::try_new(key)
+                            .is_some_and(|key| conn_state.promoted_windows.contains_key(&key))
+                    };
+                    super::super::super::member_lane::member_admits(&msg, &promoted).err()
+                });
+                let handle_result = if let Some(refusal) = member_refusal {
+                    Err(refusal)
+                } else {
+                    match msg {
                     SyncMessage::Rpc(payload) => handle_app_message_with_connection(
                         &server,
                         &mut conn_state,
@@ -767,6 +781,7 @@ pub(super) async fn handle_connection(
                         Ok(std::ops::ControlFlow::Break(())) => break,
                         result => result.map(drop),
                     },
+                }
                 };
                 if let Err(e) = handle_result {
                     super::super::dispatch_error::close_on(&mut transport, &server, conn_id, &e)

@@ -431,6 +431,14 @@ fn answer_app_message(
                 ProtocolError::InvalidPayload("invalid RPC request")
             }
         })?;
+        // A member lane calls only the bind of its own credential, `ping`
+        // and the residence reads an Opened device makes (MEMBER-SYNC D4),
+        // refused before any machine shortcut or verb runs.
+        if state.selector_lane.member().is_some()
+            && !super::member_lane::member_admits_rpc_method(&request.method)
+        {
+            return Err(ProtocolError::InvalidPayload("not served on a member lane"));
+        }
         // FIX 4748: a peer serves state only. The residence lane (owed
         // machine history, authority log ranges and checkpoints, sealed
         // bundles, home handoffs) is the home's; each call is refused.
@@ -469,6 +477,14 @@ fn answer_app_message(
                     .map_err(|_| ProtocolError::RpcNoPrincipal)?;
                 auth.require_registered_principal()
                     .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+                // A member lane binds only the credential its upgrade proved.
+                if state
+                    .selector_lane
+                    .member()
+                    .is_some_and(|lane| !lane.binds(&auth))
+                {
+                    return Err(ProtocolError::RpcNoPrincipal);
+                }
                 Ok(auth)
             })();
             let actor = binding.as_ref().map_or("unauthenticated", |auth| {
@@ -616,6 +632,7 @@ fn answer_app_message(
                 server,
                 &bound,
                 peer,
+                &state.selector_lane,
                 request,
                 &mut state.residence_index,
                 &mut state.authority_append_stage,

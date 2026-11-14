@@ -23,7 +23,6 @@ use oneiron::sync::{
 use super::admitted_windows::{AdmittedCopy, rebuild};
 use super::app_tier::require_bound_app_auth;
 use super::conn_state::{ConnState, WindowSyncMode};
-use super::window_sync::selector_grant_scope;
 use crate::protocol::{self, ProtocolError};
 use crate::server::SyncServer;
 
@@ -142,6 +141,9 @@ struct AdmittedFollow {
     windows: Vec<(WindowKey, AdmittedCopy)>,
     /// The peer a dropped copy is filtered for; read only when one is.
     peer: Option<PeerMachine>,
+    /// The grant scope this socket's selectors are checked under
+    /// (MEMBER-SYNC D2).
+    scope: oneiron::FederationGrantScope,
     /// Each copy a use read, held or rebuilt, in use order: the socket holds
     /// them again as its latest uses once the read is done.
     used: RefCell<Vec<(WindowKey, loro::LoroDoc)>>,
@@ -161,7 +163,7 @@ impl AdmittedFollow {
         let copy = match (used.iter().rev().find(|(read, _)| read == key), admitted) {
             (Some((_, copy)), _) | (None, AdmittedCopy::Held { copy, .. }) => copy.clone(),
             (None, AdmittedCopy::Dropped(selector)) => {
-                rebuild(vault, manager, key, selector, self.peer?)?
+                rebuild(vault, manager, key, self.scope, selector, self.peer?)?
             }
         };
         used.push((key.clone(), copy.clone()));
@@ -246,6 +248,7 @@ fn followed_windows(server: &SyncServer, state: &ConnState) -> Followed {
                             server,
                             auth,
                             peer,
+                            &state.selector_lane,
                             key,
                             selector,
                             &window.doc,
@@ -262,7 +265,11 @@ fn followed_windows(server: &SyncServer, state: &ConnState) -> Followed {
         // only while the socket's credential is live.
         WindowSyncMode::Selector if require_bound_app_auth(server, state).is_ok() => {
             let windows = state.admitted_windows.read(|selector| {
-                authorize_sync_selector(server.vault.as_ref(), selector_grant_scope(), selector)
+                authorize_sync_selector(
+                    server.vault.as_ref(),
+                    state.selector_lane.grant_scope(),
+                    selector,
+                )
                     .is_ok()
             });
             // Rebuild held copies under today's grant, pact ceiling and
@@ -278,6 +285,7 @@ fn followed_windows(server: &SyncServer, state: &ConnState) -> Followed {
                             server.vault.as_ref(),
                             &server.reassert_manager,
                             &key,
+                            state.selector_lane.grant_scope(),
                             &selector,
                             peer,
                         )?;
@@ -304,6 +312,7 @@ fn followed_windows(server: &SyncServer, state: &ConnState) -> Followed {
             Followed::Admitted(AdmittedFollow {
                 windows,
                 peer,
+                scope: state.selector_lane.grant_scope(),
                 used: RefCell::default(),
             })
         }

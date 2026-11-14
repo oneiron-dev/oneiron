@@ -5,7 +5,7 @@ use std::ops::ControlFlow;
 use super::app_tier::require_bound_app_auth;
 use super::conn_state::{ConnState, WindowSyncMode};
 use super::window_sync::{
-    decode_and_authorize_selector_request, map_selector_filter_err, selector_grant_scope,
+    decode_and_authorize_selector_request, map_selector_filter_err,
 };
 use crate::auth::CoreScope;
 use crate::protocol::{self, ProtocolError, window_sub_tags};
@@ -68,15 +68,19 @@ pub(super) async fn handle_selector_fetch(
     }
     // No queue row, observation, or doc exists before both decoding and
     // authorization.
-    let decoded = decode_and_authorize_selector_request(server, request)?;
+    let decoded = decode_and_authorize_selector_request(server, &state.selector_lane, request)?;
     if decoded.selector.member_ref != principal {
         return Err(ProtocolError::InvalidPayload("selector principal mismatch"));
     }
+    let scope = state
+        .selector_lane
+        .scope_for(&decoded.selector)
+        .map_err(map_selector_filter_err)?;
     let prepared = match retry {
         Some(id) => replay_selector_fetch(
             server.vault.as_ref(),
             principal,
-            selector_grant_scope(),
+            scope,
             key,
             &id,
             request,
@@ -84,7 +88,7 @@ pub(super) async fn handle_selector_fetch(
         None => prepare_selector_fetch(
             server.vault.as_ref(),
             principal,
-            selector_grant_scope(),
+            scope,
             key,
             request,
         ),
@@ -115,7 +119,10 @@ pub(super) async fn handle_selector_fetch(
         server.vault.as_ref(),
         &doc,
         key,
-        selector_grant_scope(),
+        state
+            .selector_lane
+            .scope_for(&prepared.selector)
+            .map_err(map_selector_filter_err)?,
         &prepared.selector,
         state.peer_machine(server.vault()),
     )

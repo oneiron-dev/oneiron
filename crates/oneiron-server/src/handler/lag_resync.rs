@@ -71,6 +71,7 @@ pub(super) fn lag_resync_frames(server: &SyncServer, state: &ConnState) -> Vec<V
                         server,
                         auth,
                         state.peer_machine(server.vault()),
+                        &state.selector_lane,
                         key,
                         selector,
                         &window.doc,

@@ -37,6 +37,16 @@ impl SelectorLane {
         }
     }
 
+    /// The grant scope a selector this socket already holds is checked under:
+    /// one it stored after [`Self::scope_for`] pinned it (an admitted window,
+    /// a promoted window, a subscribed document).
+    pub(crate) fn grant_scope(&self) -> oneiron::FederationGrantScope {
+        match self {
+            Self::OwnDevice => selector_grant_scope(),
+            Self::Member(lane) => lane.standing().scope,
+        }
+    }
+
     /// The grant scope `selector` is checked under on this socket, handed out
     /// only for a selector this lane may send (MEMBER-SYNC D3): on a member
     /// lane it must name the lane's own grant and holder, so a second grant of
