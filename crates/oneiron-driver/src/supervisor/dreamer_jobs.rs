@@ -18,6 +18,8 @@ use oneiron::{
 use oneiron_dreamer::{conflict_settle as conflict_job, strength_archive};
 use oneiron_remote::OneironClient;
 
+use super::extraction_decisions::{ExtractionAttemptLender, ExtractionDecisionResources};
+
 /// The cursor after the last conflict a settlement run asked about, shared by
 /// every factory the host builds with it. A run starts after the held cursor
 /// and stores where it left off, so the next run resumes there. Cloned handles
@@ -48,6 +50,8 @@ pub struct DreamerJobsExecutor<E> {
     vault: Option<Arc<Vault>>,
     conflict_lender: Option<Arc<dyn DreamerDecisionLender>>,
     conflict_cursor: ConflictSettleCursor,
+    /// Retains prepared pass resources without changing native extraction dispatch.
+    extraction_resources: Option<Arc<ExtractionDecisionResources>>,
 }
 
 impl<E> DreamerJobsExecutor<E> {
@@ -58,7 +62,32 @@ impl<E> DreamerJobsExecutor<E> {
             vault,
             conflict_lender: None,
             conflict_cursor: ConflictSettleCursor::default(),
+            extraction_resources: None,
         }
+    }
+
+    /// Retains this pass's extraction resources for explicitly requested attempt loans.
+    #[must_use]
+    pub(crate) fn with_extraction_resources(
+        mut self,
+        resources: Option<Arc<ExtractionDecisionResources>>,
+    ) -> Self {
+        self.extraction_resources = resources;
+        self
+    }
+
+    /// Prepares one lender with the admitted attempt's clock and its own charge sink.
+    ///
+    /// The later extraction job binds this lender explicitly and drains its tally into
+    /// the attempt outcome. Native extraction never calls this preparation seam.
+    #[must_use]
+    pub fn extraction_lender(
+        &self,
+        context: &WakeAttemptContext<'_>,
+    ) -> Option<Arc<ExtractionAttemptLender>> {
+        self.extraction_resources
+            .as_ref()
+            .map(|resources| Arc::new(ExtractionAttemptLender::new(Arc::clone(resources), context)))
     }
 
     /// Lends the conflict settlement arm its host decisions and shared cursor.

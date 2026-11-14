@@ -71,7 +71,44 @@ pub struct ExtractionVerdictFixture {
     charges: Mutex<StepChargeTally>,
 }
 
+/// Shares the parity fixture's prepared pass resources with a host-lender integration test.
+pub struct ExtractionVerdictPassResources {
+    /// Holds the fixture's actual native decisions and wording.
+    pub decisions: ConsolidationDecisions,
+    /// Routes the verdict role to the fixture's injected scripted backend.
+    pub roles: RoleBackends,
+    /// Shares the fixture pass's original budget state.
+    pub guard: BudgetGuard,
+    /// Preserves the fixture attempt's original clock and finalize window.
+    pub deadline: WakePassDeadline,
+    /// Holds the fixture attempt's frozen Unix time in milliseconds.
+    pub now_ms: u64,
+    /// Borrows runtime ownership from the fixture retained by the test.
+    pub runtime: tokio::runtime::Handle,
+}
+
 impl ExtractionVerdictFixture {
+    /// Shares the existing fixture's resources without installing its fixture lender.
+    #[must_use]
+    pub fn pass_resources(&self) -> ExtractionVerdictPassResources {
+        ExtractionVerdictPassResources {
+            decisions: self.decisions.clone(),
+            roles: RoleBackends::default().with(
+                DREAMER_VERDICT_ROLE,
+                RoleBackend {
+                    backend: Arc::clone(&self.reasoner),
+                    model: self.model.clone(),
+                    binding: self.binding.clone(),
+                    sourced: None,
+                },
+            ),
+            guard: self.guard.clone(),
+            deadline: self.deadline.clone(),
+            now_ms: self.now_ms,
+            runtime: self.runtime.handle().clone(),
+        }
+    }
+
     /// Builds the fixture around `reasoner` and shares it for the lender to own: a
     /// current-thread runtime, the pass guard, the shipped decisions, the fixture model
     /// with its advertised binding, the frozen pass clock and an empty shared tally.

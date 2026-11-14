@@ -34,6 +34,8 @@ tracing = { version = "0.1" }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+# Reuses the extraction verdict fixture's request-matched scripted model backend.
+oneiron-testkit = { path = "../oneiron-testkit" }
 # Turns on the engine's `test-support` seam for THIS crate's tests only (same
 # self-dev-dependency pattern `oneiron` uses on itself). CMT-2's deadline
 # source must be provable to answer `Err` — never a quiet `Ok(None)` — on a
