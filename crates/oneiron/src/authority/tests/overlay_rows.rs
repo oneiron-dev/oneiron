@@ -204,3 +204,57 @@ fn a_sealed_row_on_a_signed_page_lands_as_structure() {
         "a row that does not open here makes nothing",
     );
 }
+
+/// T-RECEIPT (census L5-22 1a-iii): the T-LAND sealed row takes its
+/// sequence receipt where it lands, though its record does not open there.
+/// The receipt reads the envelope alone (signer, main log, sequence), so
+/// the row's floor is set at its first observation and stays when the row
+/// opens later; the same first observation adds the row to the totals the
+/// checkpoint cutoffs read.
+#[test]
+fn a_sealed_row_whose_key_is_not_here_takes_its_sequence_receipt() {
+    let home_dir = tempfile::tempdir().unwrap();
+    let home = Vault::open(home_dir.path(), VaultConfig::default()).unwrap();
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let root = home.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims.clone();
+    claims.slip_id = [92; 32];
+    claims.records = BTreeSet::from(["record:b".to_owned()]);
+    let slip = home.mint_capability_slip(&issuer, claims).unwrap();
+    let mint_row = home.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
+    let mint_entry = home
+        .get_authority_log_entry(&authority_log_entity_id_from_hash(&mint_row).unwrap())
+        .unwrap()
+        .expect("the home vault opens its own mint row");
+    let (history, overlays) = home
+        .export_signed_authority_history_with_overlays()
+        .unwrap();
+
+    let other_dir = tempfile::tempdir().unwrap();
+    let other = Vault::open(other_dir.path(), VaultConfig::default()).unwrap();
+    other
+        .import_signed_authority_history(&history, &overlays)
+        .expect("a sealed row whose key is not here lands as structure");
+    assert!(
+        other
+            .authority_fold()
+            .unwrap()
+            .pass_through_entries
+            .contains(&mint_row)
+    );
+    let rtxn = other.store.env.read_txn().unwrap();
+    let (_, receipted) =
+        crate::authority::sequence_observation::authority_local_observations_receipted_in_txn(
+            &other.store,
+            &rtxn,
+            &[crate::authority::fold_resume::RowMeta::of(
+                Some(mint_row),
+                &mint_entry,
+            )],
+        )
+        .unwrap();
+    assert!(
+        receipted.contains(&mint_row),
+        "a row that does not open here still takes its sequence receipt",
+    );
+}
