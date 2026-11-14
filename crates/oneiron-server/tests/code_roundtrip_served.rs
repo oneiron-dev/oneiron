@@ -201,7 +201,7 @@ impl Fixture {
         let vault_dir = tempfile::tempdir()?;
         let vault = Arc::new(Vault::open(vault_dir.path(), VaultConfig::device())?);
         let keystore = Arc::new(oneiron_keystore::MemoryKeystore::default());
-        vault.install_device_keystore(Arc::clone(&keystore));
+        vault.install_device_keystore(Arc::<oneiron_keystore::MemoryKeystore>::clone(&keystore));
         let issuer = oneiron::test_support::provision_engine_machines(&vault);
         vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
         let root = vault.ensure_host_root_slip(&issuer)?;
@@ -331,7 +331,7 @@ impl Fixture {
         };
         drop(old);
         let vault = Arc::new(Vault::open(vault_dir.path(), VaultConfig::device())?);
-        vault.install_device_keystore(Arc::clone(&keystore));
+        vault.install_device_keystore(Arc::<oneiron_keystore::MemoryKeystore>::clone(&keystore));
         let server = Arc::new(SyncServer::new(Arc::clone(&vault), server_config()?)?);
         let app = build_app(Arc::clone(&server));
         let mut fx = Self {
