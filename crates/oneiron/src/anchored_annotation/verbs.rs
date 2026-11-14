@@ -18,7 +18,7 @@ use super::{
     ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationThread, BodyAnchor, CODE_ANCHOR_VERSION,
     Locator, PLAN_DOC_ANCHOR_VERSION, TaskBrief,
 };
-use crate::blob_artifact::{ArtifactKind, ArtifactRefRequest};
+use crate::blob_artifact::{ArtifactExport, ArtifactKind, ArtifactRefRequest};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
 use crate::memory::{Memory, MemoryError, MemoryResult, resolve_entity_ref};
@@ -222,6 +222,20 @@ impl Memory<'_> {
             .vault()
             .export_blob_artifact_as_raw(&anchor.artifact_id, Some(anchor.version), sight)?
             .ok_or_else(|| MemoryError::not_found("anchor version not found"))?;
+        // An image region or overlay names no words (L4-16): its view reads
+        // no document package, so no document resource policy refuses it.
+        if matches!(
+            anchor.locator,
+            Locator::ImagePixel { .. } | Locator::ImageObject { .. }
+        ) {
+            return Ok(AnnotationAnchorView {
+                artifact_id: anchor.artifact_id,
+                version: anchor.version,
+                locator: (&anchor.locator).into(),
+                quote: None,
+                body: anchor.body.as_ref().map(Into::into),
+            });
+        }
         let limits = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             self.vault().text_limits_in_txn(&txn)?
@@ -339,6 +353,41 @@ impl Memory<'_> {
         Ok((anchor, pin))
     }
 
+    /// `vault.artifacts.anchors.pin` of an image locator (L4-16; ASK
+    /// IOB-ANCHOR A): a pixel region of an image version pins by geometry,
+    /// once it lies inside the canvas its header reads, after EXIF
+    /// orientation. It names no words, so its view's quote is null. An
+    /// overlay is refused: no stored image body holds one (IO-BODY A).
+    fn image_anchor_pin(
+        &self,
+        artifact: EntityId,
+        file: &ArtifactExport,
+        locator: Locator,
+    ) -> MemoryResult<(Anchor, AnnotationAnchorView)> {
+        if file.kind != ArtifactKind::Image {
+            return Err(MemoryError::bad_request(
+                "locator format does not match the artifact",
+            ));
+        }
+        let Locator::ImagePixel { x, y, w, h } = locator else {
+            return Err(MemoryError::bad_request(
+                "no stored image body holds overlays, so an overlay does not pin",
+            ));
+        };
+        let (width, height) = image_canvas(&file.bytes)
+            .ok_or_else(|| MemoryError::bad_request("the image version's size does not read"))?;
+        // The locator's constructor bounds each far edge, so neither sum
+        // overflows.
+        if x.saturating_add(w) > width || y.saturating_add(h) > height {
+            return Err(MemoryError::bad_request(
+                "the pixel region lies outside the image",
+            ));
+        }
+        let anchor = Anchor::new(artifact, file.version, locator);
+        let pin = self.annotation_anchor_view(&anchor)?;
+        Ok((anchor, pin))
+    }
+
     /// `vault.artifacts.anchors.pin`: a readable locator in a real version.
     /// The version and locator, not a matching-text search, define the pin.
     pub fn artifacts_anchors_pin(
@@ -366,6 +415,12 @@ impl Memory<'_> {
             .export_blob_artifact_as_raw(&artifact, input.version, self.secret_sight()?)?
             .ok_or_else(|| MemoryError::not_found("artifact version not found"))?;
         let locator = Locator::try_from(&input.locator)?;
+        if matches!(
+            locator,
+            Locator::ImagePixel { .. } | Locator::ImageObject { .. }
+        ) {
+            return self.image_anchor_pin(artifact, &file, locator);
+        }
         let format = UnitFormat::from_media_type(&file.media_type).ok_or_else(|| {
             MemoryError::bad_request("locator format does not match the artifact")
         })?;
@@ -763,4 +818,30 @@ fn require_code_anchor_version(version: Option<u64>) -> MemoryResult<()> {
         ));
     }
     Ok(())
+}
+
+/// The canvas `bytes` decode to, width then height, after EXIF orientation:
+/// a quarter turn swaps the sides. Only the header is read; `None` when it
+/// does not read.
+fn image_canvas(bytes: &[u8]) -> Option<(u32, u32)> {
+    use image::ImageDecoder as _;
+    use image::metadata::Orientation;
+    let mut decoder = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .into_decoder()
+        .ok()?;
+    let (width, height) = decoder.dimensions();
+    let turned = matches!(
+        decoder.orientation().ok()?,
+        Orientation::Rotate90
+            | Orientation::Rotate270
+            | Orientation::Rotate90FlipH
+            | Orientation::Rotate270FlipH
+    );
+    Some(if turned {
+        (height, width)
+    } else {
+        (width, height)
+    })
 }

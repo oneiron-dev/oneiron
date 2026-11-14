@@ -1,0 +1,14 @@
+{
+  "name": "vault.artifacts.image.preview",
+  "description": "One version of an image artifact you can read, with crops and resizes applied and scaled to fit a side bound, drawn as PNG by the host's image organ; nothing lands and nothing is held.",
+  "input": "crate::task_verb::sdk::ImagePreviewRequest",
+  "output": "crate::task_verb::sdk::ImagePreviewAnswer",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.image.preview\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {},
+  "section": false,
+  "host_door_proof": "image_editor"
+}
