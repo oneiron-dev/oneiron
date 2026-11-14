@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The nightly test job (Fable's test verdict 2026-11-09, sections 3 and 6; PR 10a).
+# The nightly test job (Fable's test verdict 2026-11-09, sections 3 and 6; PRs 10a and 10b).
 #
 # Runs the workspace's tests under `--cfg oneiron_test_support` (the test
 # doors) at the checked-out commit, and writes the night's verdict. One booked
@@ -12,6 +12,24 @@
 #               night, first. NIGHTLY_LIB_JOBS, when set, is its build's job
 #               count (the core's lib and lib test peak above 23 GiB each in
 #               codegen: one job on a 36G host).
+#   budget      every night, after libs: the integration tests that hold a
+#               row of scripts/nightly/budget-set.tsv, built with a shard's
+#               args; its verdict runs only the budget tests, so each host
+#               gets one time a night per budget test. Every other verdict
+#               leaves the budget tests out, so none runs twice; a lib row
+#               runs where the lib tests run. Like the libs, a budget verdict
+#               that did not run makes the night red but does not stop it.
+#   bench       every night, after budget (PR 10b2): oneiron-bench, which every
+#               other selection leaves out as CI's full tier does. Its bin's
+#               unit tests and its integration tests, built with --workspace
+#               kept (no package the other selections build changes features
+#               that way; `-p oneiron-bench` alone would rebuild the core).
+#               Then the bench jobs: offline runs of the bench bin it built
+#               (nightly_bench.py BENCH_JOBS), one `## NIGHTLY bench-<job>`
+#               line each, their output in --out/bench-<job>.out. A job's
+#               metrics are timed in the budget band; a job that ends
+#               otherwise than expected, or output that breaks a promise of
+#               the retired bench tests, makes the night red.
 #   tests-NN    the integration tests by name in sorted order, in shards of
 #               --shard-files names (about 600 MB of test binary per name on the
 #               fleet), from the cursor on, wrapping past the end of the list:
@@ -24,7 +42,6 @@
 #               next night retries it).
 #               The next night resumes at the cursor; a full cycle runs every
 #               file once.
-# oneiron-bench is left out, as CI's full tier leaves it out.
 #
 # For each selection:
 #   build       `cargo nextest run --no-run`. A unit that does not compile is
@@ -35,7 +52,8 @@
 #               the NO-DOOR register (ONEIRON_TESTKIT_NO_DOOR_REGISTER) gives
 #               the pending filter P and the expired filter X. An expired test
 #               fails the night: door or delete.
-#   verdict     `--profile nightly -E 'not (P | X) & not (<lib report>)'`. The
+#   verdict     `--profile nightly -E 'not (P | X) & not (<lib report>)'`
+#               (bench: `package(=oneiron-bench) & not (P | X)`). The
 #               profile's default filter keeps the quarantined tests out. A
 #               stage ran when nextest exits 0 (passed) or 100 (tests failed)
 #               and wrote its JUnit; any other end (a test list nextest could
@@ -53,8 +71,12 @@
 #               are deleted.
 # Then the summary: one line (`## NIGHTLY SUMMARY NIGHTLY <date> ...`) and
 # summary.json, summary.txt, results-store.json (each test's last outcome: the
-# next night's --previous, so a flip compares a test with its own last run)
-# and flake-row.json in --out. The cursor file is rewritten after each shard.
+# next night's --previous, so a flip compares a test with its own last run),
+# flake-row.json, budget-samples.json (the next night's --budget-samples: each
+# host's budget test times, from which its baseline comes until a PR commits
+# scripts/nightly/budget-baseline.tsv), budget-row.json and bench-row.json (the
+# bench jobs' exits, metrics and promise states) in --out. The budget band is
+# report only. The cursor file is rewritten after each shard.
 #
 # ONEIRON_TESTKIT_TODAY is the night's date, so the testkit lint test fails an
 # expired quarantine entry. Plain bash 3.2 (macOS /bin/bash) runs it too.
@@ -63,10 +85,11 @@
 #          [--shard-files N] [--cursor FILE] [--max-shards K]
 #          [--stop-at HH:MM | --deadline-epoch SECONDS]
 #          [--previous RESULTS_STORE_JSON] [--history SUMMARY_LINES_FILE]
+#          [--budget-samples BUDGET_SAMPLES_JSON]
 # Exit: 0 green night, 1 red night, 2 the job could not start.
 set -u -o pipefail
 
-out='' night='' shard_files=0 cursor='' max_shards='' stop_at='' deadline='' previous='' history=''
+out='' night='' shard_files=0 cursor='' max_shards='' stop_at='' deadline='' previous='' history='' budget_samples=''
 while [ $# -gt 0 ]; do
   case $1 in
     --out) out=$2; shift 2 ;;
@@ -78,10 +101,11 @@ while [ $# -gt 0 ]; do
     --deadline-epoch) deadline=$2; shift 2 ;;
     --previous) previous=$2; shift 2 ;;
     --history) history=$2; shift 2 ;;
+    --budget-samples) budget_samples=$2; shift 2 ;;
     *) echo "run_nightly.sh: unknown argument $1" >&2; exit 2 ;;
   esac
 done
-usage="usage: run_nightly.sh --out DIR [--date YYYY-MM-DD] [--shard-files N] [--cursor FILE] [--max-shards K] [--stop-at HH:MM | --deadline-epoch S] [--previous FILE] [--history FILE]"
+usage="usage: run_nightly.sh --out DIR [--date YYYY-MM-DD] [--shard-files N] [--cursor FILE] [--max-shards K] [--stop-at HH:MM | --deadline-epoch S] [--previous FILE] [--history FILE] [--budget-samples FILE]"
 [ -n "$out" ] || { echo "$usage" >&2; exit 2; }
 night=${night:-$(TZ=Asia/Tokyo date +%F)}
 [[ $night =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "run_nightly.sh: --date $night is not YYYY-MM-DD" >&2; exit 2; }
@@ -103,7 +127,8 @@ export CARGO_TERM_COLOR=never ONEIRON_TESTKIT_TODAY=$night
 export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg oneiron_test_support"
 commit=$(git rev-parse HEAD) || exit 2
 # a reused --out dir must not lend an older night's results or build errors
-rm -f "$out"/junit-*.xml "$out/pending-door.json" "$out/stages.tsv" "$out"/build-*.log "$out"/failed-units-*.json
+rm -f "$out"/junit-*.xml "$out/pending-door.json" "$out/stages.tsv" "$out"/build-*.log "$out"/failed-units-*.json \
+  "$out/budget-baseline-proposal.tsv" "$out/bench-jobs.tsv" "$out"/bench-*.out "$out"/bench-*.err
 echo "## NIGHTLY head=${commit:0:12} date=$night shard_files=$shard_files max_shards=${max_shards:-none} deadline=${deadline:-none} jobs=${CARGO_BUILD_JOBS:-default} lib_jobs=${NIGHTLY_LIB_JOBS:-default}"
 if ! cargo nextest --version > "$out/nextest-version.txt" 2>&1; then
   step nextest missing; exit 2
@@ -112,7 +137,14 @@ echo "## NIGHTLY nextest $(head -1 "$out/nextest-version.txt")"
 cargo metadata --locked --format-version 1 --no-deps > "$out/metadata.json" 2> "$out/metadata.err" || { step metadata $?; exit 2; }
 target=$(report field "$out/metadata.json" target_directory)
 plan=$out/plan.json
-report plan "$out/metadata.json" --shard-files "$shard_files" --cursor "$cursor" > "$plan" || { step plan $?; exit 2; }
+budget_set=$root/scripts/nightly/budget-set.tsv budget_baseline=$root/scripts/nightly/budget-baseline.tsv
+plan_args=(--shard-files "$shard_files" --cursor "$cursor" --bench)
+budget_filter='none()'
+if [ -f "$budget_set" ]; then
+  plan_args+=(--budget-set "$budget_set")
+  budget_filter=$(report budget-filter "$budget_set" --metadata "$out/metadata.json") || { step budget-filter $?; exit 2; }
+fi
+report plan "$out/metadata.json" "${plan_args[@]}" > "$plan" || { step plan $?; exit 2; }
 echo "## NIGHTLY plan target=$target cursor=$(tr -d '\n' 2>/dev/null < "$cursor" || echo none) selections=$(report args "$plan" | cut -d' ' -f1 | tr '\n' ' ')"
 
 build_selection() {  # name -> 0 once its units build (failed units left out), 1 when it is dropped
@@ -165,12 +197,33 @@ run_stage() {  # stage profile filter selection-name -- selection args; 0 when t
   [ "$ran" = yes ]
 }
 
-delete_test_binaries() {  # selection name: its integration test binaries in the target's deps dir
-  local test_name
-  while read -r test_name; do
-    [ -n "$test_name" ] || continue
-    find "$target/debug/deps" -maxdepth 1 -type f -name "${test_name//-/_}-????????????????" -delete
-  done < <(report tests "$plan" "$1")
+delete_test_binaries() {  # selection name: its test binaries in the target's deps dir, and a bin's own copy
+  local binary
+  while read -r binary; do
+    [ -n "$binary" ] || continue
+    find "$target/debug/deps" -maxdepth 1 -type f -name "${binary//-/_}-????????????????" -delete
+    rm -f "$target/debug/$binary"
+  done < <(report binaries "$plan" "$1")
+}
+
+bench_jobs() {  # the bench jobs, from the bin the bench selection built: one bench-jobs.tsv row each (job, exit, seconds)
+  local bin=$target/debug/oneiron-bench work=$out/bench-work name expected rc start  # the bench bin is its package's
+  local -a job_command
+  rm -rf "$work"
+  if [ ! -x "$bin" ]; then
+    step bench-jobs not-run "($bin was not built)"
+    return
+  fi
+  report bench-inputs "$root" "$work" "$night" "$commit" || { step bench-jobs not-run "(no inputs)"; return; }
+  while IFS=$'\t' read -r -a job_command; do
+    name=${job_command[0]} expected=${job_command[1]}
+    job_command=("${job_command[@]:2}")
+    start=$SECONDS
+    (cd "$work" && "${job_command[@]}") > "$out/bench-$name.out" 2> "$out/bench-$name.err" < /dev/null
+    rc=$?
+    printf '%s\t%s\t%s\n' "$name" "$rc" "$((SECONDS - start))" >> "$out/bench-jobs.tsv"
+    step "bench-$name" $rc "expected=$expected seconds=$((SECONDS - start))"
+  done < <(report bench-jobs "$bin" "$work")
 }
 
 memory_peak_kb() {  # the job's cgroup v2 memory peak, or n/a
@@ -191,8 +244,9 @@ measure() {  # selection name, its seconds
 pending_filter='none()' expired_filter='none()' pending=0
 lib_report='kind(lib) & (package(oneiron) | package(oneiron-server))'
 shards_done=0 shard_seconds=0 longest=0
+every_night() { [ "$1" = libs ] || [ "$1" = budget ] || [ "$1" = bench ]; }  # selections outside the cursor's shards
 for name in $(report args "$plan" | cut -d' ' -f1); do
-  if [ "$name" != libs ]; then
+  if ! every_night "$name"; then
     if [ -n "$max_shards" ] && [ "$shards_done" -ge "$max_shards" ]; then
       echo "## NIGHTLY stop reason=max-shards next=$name"; break
     fi
@@ -221,14 +275,28 @@ for name in $(report args "$plan" | cut -d' ' -f1); do
     fi
   fi
   read -r -a sel_args <<< "$(report args "$plan" --name "$name")"
-  if ! run_stage verdict nightly "not ($pending_filter | $expired_filter) & not ($lib_report)" "$name" -- \
-    "${sel_args[@]}" && [ "$name" != libs ]; then
+  if [ "$name" = budget ]; then
+    verdict_filter="($budget_filter) & not ($pending_filter | $expired_filter)"
+  elif [ "$name" = bench ]; then
+    # --workspace without the exclude puts every package's binaries in scope, so P and X stay valid filters here
+    verdict_filter="package(=oneiron-bench) & not ($pending_filter | $expired_filter)"
+  else
+    verdict_filter="not ($pending_filter | $expired_filter) & not ($lib_report) & not ($budget_filter)"
+  fi
+  if ! run_stage verdict nightly "$verdict_filter" "$name" -- "${sel_args[@]}" && ! every_night "$name"; then
     # The shard's tests did not run (stages.tsv makes the night red): stop with the cursor on it, as for a dropped
-    # build, so the next night retries it and no shard is skipped. The libs run every night, so theirs goes on.
+    # build, so the next night retries it and no shard is skipped. The libs and the budget tests run every night, so
+    # theirs goes on.
     measure "$name" $((SECONDS - started))
     [ "$shard_files" -gt 0 ] && delete_test_binaries "$name"
     echo "## NIGHTLY stop reason=verdict-not-run next=$name"
     break
+  fi
+  if [ "$name" = budget ]; then
+    # its binaries' other tests, quarantined and pending ones included, run in their shards
+    measure "$name" $((SECONDS - started))
+    [ "$shard_files" -gt 0 ] && delete_test_binaries "$name"
+    continue
   fi
   if [ "$name" = libs ]; then
     run_stage libtest nightly "($lib_report) & not ($pending_filter | $expired_filter)" "$name" -- "${sel_args[@]}"
@@ -237,14 +305,19 @@ for name in $(report args "$plan" | cut -d' ' -f1); do
   if [ "${pending:-0}" != 0 ]; then
     run_stage pending pending-door "$pending_filter" "$name" -- "${sel_args[@]}"
   fi
+  [ "$name" = bench ] && bench_jobs
   measure "$name" $((SECONDS - started))
-  if [ "$name" != libs ]; then
-    [ "$shard_files" -gt 0 ] && delete_test_binaries "$name"
-    report advance "$plan" "$name" "$cursor"
-    took=$((SECONDS - started))
-    shards_done=$((shards_done + 1)) shard_seconds=$((shard_seconds + took))
-    [ "$took" -gt "$longest" ] && longest=$took
-  fi
+  case $name in
+    libs) ;;
+    bench) [ "$shard_files" -gt 0 ] && delete_test_binaries "$name" ;;
+    *)
+      [ "$shard_files" -gt 0 ] && delete_test_binaries "$name"
+      report advance "$plan" "$name" "$cursor"
+      took=$((SECONDS - started))
+      shards_done=$((shards_done + 1)) shard_seconds=$((shard_seconds + took))
+      [ "$took" -gt "$longest" ] && longest=$took
+      ;;
+  esac
 done
 echo "## NIGHTLY measured shards=$shards_done minutes_per_shard=$(( shards_done > 0 ? (shard_seconds / shards_done + 30) / 60 : 0 )) longest_shard_minutes=$(( (longest + 30) / 60 )) target_peak_kb=$target_peak_kb memory_peak_kb=$(memory_peak_kb) cursor=$(tr -d '\n' 2>/dev/null < "$cursor" || echo none)"
 
@@ -253,6 +326,9 @@ summary_args=(--out "$out" --date "$night" --head "$commit" --plan "$plan"
   --census-root "$root")
 [ -n "$previous" ] && summary_args+=(--previous "$previous")
 [ -n "$history" ] && summary_args+=(--history "$history")
+[ -f "$budget_set" ] && summary_args+=(--budget-set "$budget_set")
+[ -f "$budget_baseline" ] && summary_args+=(--budget-baseline "$budget_baseline")
+[ -n "$budget_samples" ] && summary_args+=(--budget-samples "$budget_samples")
 line=$(report summary "${summary_args[@]}")
 verdict=$?
 step summary $verdict

@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -322,7 +323,7 @@ class PruneTest(unittest.TestCase):
                 self.assertEqual(
                     nightly_report.main(["prune", str(plan_file), "tests-01", str(failed), str(metadata)]), 0
                 )
-                nightly_report.main(["tests", str(plan_file), "tests-01"])
+                nightly_report.main(["binaries", str(plan_file), "tests-01"])
                 nightly_report.main(["args", str(plan_file), "--name", "libs"])
                 nightly_report.main(["args", str(plan_file)])
                 self.assertEqual(nightly_report.main(["drop", str(plan_file), "libs", "a reason"]), 3)
@@ -412,6 +413,9 @@ class SummaryTest(unittest.TestCase):
             census_root=str(self.tonight),
             previous=None,
             history=None,
+            budget_set=None,
+            budget_baseline=None,
+            budget_samples=None,
         )
         for key, value in extra.items():
             setattr(args, key, value)
@@ -576,6 +580,305 @@ class SummaryTest(unittest.TestCase):
         self.assertIn(
             "the verdict run reported no test", json.loads((self.out / "summary.json").read_text())["reasons"]
         )
+
+
+REPO = Path(__file__).resolve().parent.parent.parent
+
+BUDGET_SET = "".join(
+    "\t".join(row) + "\n"
+    for row in (
+        ("id", "package", "kind", "binary", "match", "test", "source", "bound"),
+        ("grant-rows", "oneiron", "lib", "oneiron", "=", "access::grant::tests::a_grant_reads_its_rows",
+         "crates/core/src/access/grant.rs", "nightly override: 30 min"),
+        ("long-replay", "oneiron", "lib", "oneiron", "=", "tests::replay::a_long_replay",
+         "crates/core/src/tests/replay.rs", "60 min"),
+        ("alpha-props", "oneiron", "test", "alpha", "^", "props::", "crates/core/tests/alpha.rs", "30 min"),
+        ("kit-bounded", "oneiron-testkit", "test", "kit", "~", "_in_bounded_time", "crates/kit/tests/kit.rs", "5 s"),
+        ("bench-smoke", "oneiron-bench", "test", "bench_smoke", "=", "a_smoke_run", "crates/bench/tests/s.rs", "30 min"),
+    )
+)  # fmt: skip
+
+
+def timed_junit(path: Path, suites: dict[str, dict[str, tuple[str, float]]]) -> None:
+    bodies = {"pass": "", "fail": '<failure type="test failure">assertion failed</failure>'}
+    parts = ['<?xml version="1.0" encoding="UTF-8"?>', '<testsuites name="nextest-run">']
+    for binary, tests in suites.items():
+        parts.append(f'<testsuite name="{binary}" tests="{len(tests)}">')
+        parts += [
+            f'<testcase name="{name}" classname="{binary}" time="{seconds}">{bodies[outcome]}</testcase>'
+            for name, (outcome, seconds) in tests.items()
+        ]
+        parts.append("</testsuite>")
+    parts.append("</testsuites>")
+    write(path, "\n".join(parts) + "\n")
+
+
+class BudgetSetTest(unittest.TestCase):
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.base = Path(tmp.name)
+        self.rows = nightly_report.read_budget_set(write(self.base / "budget-set.tsv", BUDGET_SET))
+
+    def test_the_budget_filter_names_each_row_by_package_kind_binary_and_its_match(self) -> None:
+        self.assertEqual(
+            nightly_report.budget_filter(self.rows),
+            "(package(oneiron) & kind(lib) & test(=access::grant::tests::a_grant_reads_its_rows))"
+            " | (package(oneiron) & kind(lib) & test(=tests::replay::a_long_replay))"
+            " | (package(oneiron) & kind(test) & binary(=alpha) & test(/^props::/))"
+            " | (package(oneiron-testkit) & kind(test) & binary(=kit) & test(~_in_bounded_time))"
+            " | (package(oneiron-bench) & kind(test) & binary(=bench_smoke) & test(=a_smoke_run))",
+        )
+        self.assertEqual(nightly_report.budget_filter([]), "none()")
+
+    def test_the_filter_keeps_only_rows_a_selection_can_run(self) -> None:
+        # nextest refuses a package() or binary() that matches nothing (toy night job 1114-133136-ec54: exit 94,
+        # "operator didn't match any binary names")
+        def ids(metadata: dict) -> list[str]:
+            kept = nightly_report.budget_filter(self.rows, metadata)
+            return [row["id"] for row in self.rows if nightly_report.budget_filter([row]) in kept]
+
+        self.assertEqual(ids(METADATA), ["grant-rows", "long-replay", "alpha-props", "kit-bounded"], "bench left out")
+        no_testkit = {**METADATA, "workspace_members": ["oneiron 0.1.0", "oneiron-server 0.1.0"]}
+        self.assertEqual(ids(no_testkit), ["grant-rows", "long-replay", "alpha-props"], "not a member")
+        no_alpha = json.loads(json.dumps(METADATA))
+        no_alpha["packages"][0]["targets"] = [t for t in no_alpha["packages"][0]["targets"] if t["name"] != "alpha"]
+        self.assertEqual(ids(no_alpha), ["grant-rows", "long-replay", "kit-bounded"], "no such test target")
+        no_lib = json.loads(json.dumps(METADATA))
+        no_lib["packages"][0]["targets"] = [t for t in no_lib["packages"][0]["targets"] if t["kind"] != ["lib"]]
+        self.assertEqual(ids(no_lib), ["alpha-props", "kit-bounded"], "no lib")
+        empty = {**METADATA, "workspace_members": ["oneiron-bench 0.1.0"]}
+        self.assertEqual(nightly_report.budget_filter(self.rows, empty), "none()")
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            nightly_report.main(
+                [
+                    "budget-filter",
+                    str(self.base / "budget-set.tsv"),
+                    "--metadata",
+                    str(write(self.base / "m.json", json.dumps(METADATA))),
+                ]
+            )
+        self.assertEqual(printed.getvalue().strip(), nightly_report.budget_filter(self.rows, METADATA))
+
+    def test_a_budget_set_with_an_unknown_match_a_missing_column_or_a_repeated_id_is_refused(self) -> None:
+        header, first = BUDGET_SET.splitlines()[:2]
+        for broken in (
+            first.replace("\t=\t", "\t*\t"),
+            first.replace("\tlib\t", "\tbench\t"),
+            first.replace("\tnightly override: 30 min", "\t"),
+        ):
+            with self.subTest(broken=broken), self.assertRaises(SystemExit):
+                nightly_report.read_budget_set(write(self.base / "broken.tsv", f"{header}\n{broken}\n"))
+        with self.assertRaises(SystemExit):
+            nightly_report.read_budget_set(write(self.base / "twice.tsv", f"{header}\n{first}\n{first}\n"))
+
+    def test_the_budget_tests_run_every_night_after_the_libs_with_a_shards_args(self) -> None:
+        cursor = {"next": "kit", "cycle": 2}
+        chosen = nightly_report.plan(METADATA, shard_files=2, cursor=cursor, budget=self.rows)
+        self.assertEqual(
+            [entry["name"] for entry in chosen["selections"]], ["libs", "budget", "tests-01", "tests-02", "tests-03"]
+        )
+        budget = nightly_report.find_selection(chosen, "budget")
+        self.assertEqual(
+            nightly_report.selection_args(chosen, budget),
+            ["--workspace", "--exclude", "oneiron-bench", "--test", "alpha", "--test", "kit"],
+        )
+        self.assertEqual([entry["first"] for entry in chosen["order"]], ["kit", "alpha", "gamma"], "shards unchanged")
+        self.assertNotIn("budget", [entry["name"] for entry in nightly_report.plan(METADATA)["selections"]])
+
+    def test_a_budget_selection_whose_every_test_failed_to_compile_is_dropped(self) -> None:
+        chosen = nightly_report.plan(METADATA, budget=self.rows)
+        failed = [unit("oneiron", "test", "alpha"), unit("oneiron-testkit", "test", "kit")]
+        self.assertFalse(nightly_report.prune(chosen, "budget", failed, METADATA))
+        self.assertEqual(chosen["dropped"], [{"selection": "budget", "reason": "every unit is left out"}])
+
+    def test_the_committed_budget_set_names_test_targets_and_tests_that_exist(self) -> None:
+        rows = nightly_report.read_budget_set(REPO / "scripts/nightly/budget-set.tsv")
+        self.assertGreaterEqual(len(rows), 6)
+        for row in rows:
+            with self.subTest(row=row["id"]):
+                source = REPO / row["source"]
+                crate = REPO / Path(row["source"]).parts[0] / Path(row["source"]).parts[1]
+                self.assertIn(f'name = "{row["package"]}"', (crate / "Cargo.toml").read_text())
+                text = source.read_text()
+                if row["kind"] == "job":  # a bench job's metric (PR 10b2)
+                    import nightly_bench  # noqa: PLC0415 (the bench module came with the job rows)
+
+                    self.assertIn(row["binary"], [job[0] for job in nightly_bench.BENCH_JOBS])
+                    continue
+                if row["match"] == "=":
+                    self.assertIn(f"fn {row['test'].rsplit('::', 1)[-1]}(", text)
+                elif row["match"] == "~":
+                    self.assertRegex(text, rf"fn \w*{row['test']}\w*\(")
+                else:
+                    self.assertEqual(source.stem, row["test"].split("::")[0])
+                if row["kind"] == "test":
+                    targets = (crate / "tests" / f"{row['binary']}.rs", crate / "tests" / row["binary"] / "main.rs")
+                    self.assertTrue(any(path.is_file() for path in targets), targets)
+
+    def test_every_test_the_nightly_profile_bounds_is_in_the_committed_budget_set(self) -> None:
+        config = (REPO / ".config/nextest.toml").read_text()
+        block = config.split("[[profile.nightly.overrides]]", 1)[1].split("slow-timeout", 1)[0]
+        names = [name.rstrip(":") for name in re.findall(r"test\([=~/^]*([A-Za-z0-9_:]+)", block)]
+        self.assertEqual(len(names), 4, block)
+        tests = [row["test"] for row in nightly_report.read_budget_set(REPO / "scripts/nightly/budget-set.tsv")]
+        for name in names:
+            self.assertTrue(any(name in test for test in tests), name)
+
+
+class BudgetSummaryTest(unittest.TestCase):
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.base = Path(tmp.name)
+        self.budget_set = write(self.base / "budget-set.tsv", BUDGET_SET)
+        rows = nightly_report.read_budget_set(self.budget_set)
+        self.baseline = write(
+            self.base / "baseline.tsv", nightly_report.census_tsv(nightly_report.census(tree(self.base / "b")))
+        )
+        self.tonight = tree(self.base / "tonight")
+        self.plan = json.dumps(nightly_report.plan(METADATA, budget=rows))
+        self.samples: str | None = None
+
+    def night(
+        self, date: str, alpha: float, alpha_outcome: str = "pass", committed: str | None = None
+    ) -> tuple[int, str, Path]:
+        """One night: the budget verdict times props::a_merge_converges, libtest times the grant row test."""
+        out = self.base / f"out-{date}"
+        plan = write(out / "plan.json", self.plan)
+        pending_door = write(
+            out / "pending-door.json",
+            json.dumps({"pending": 0, "expired": 0, "pending_filter": "none()", "expired_filter": "none()"}),
+        )
+        timed_junit(
+            out / "junit-verdict-budget.xml", {"oneiron::alpha": {"props::a_merge_converges": (alpha_outcome, alpha)}}
+        )
+        timed_junit(out / "junit-verdict-tests-01.xml", {"oneiron::alpha": {"a_claim_is_read": ("pass", 0.25)}})
+        timed_junit(
+            out / "junit-libtest-libs.xml", {"oneiron": {"access::grant::tests::a_grant_reads_its_rows": ("pass", 2.0)}}
+        )
+        args = Namespace(
+            out=str(out),
+            date=date,
+            head="0123456789abcdef0123456789abcdef01234567",
+            host="nelly",
+            plan=str(plan),
+            pending_door=str(pending_door),
+            baseline=str(self.baseline),
+            census_root=str(self.tonight),
+            previous=None,
+            history=None,
+            budget_set=str(self.budget_set),
+            budget_baseline=committed,
+            budget_samples=self.samples,
+        )
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            code = nightly_report.summary(args)
+        self.samples = str(out / "budget-samples.json")
+        return code, printed.getvalue().strip(), out
+
+    def test_a_budget_test_is_pending_until_its_hosts_fifth_night_whose_median_becomes_the_proposed_baseline(
+        self,
+    ) -> None:
+        for day, seconds in zip(range(10, 14), (10.0, 12.0, 11.0, 30.0)):
+            code, line, out = self.night(f"2026-11-{day}", seconds)
+            self.assertEqual(code, 0, line)
+            self.assertIn(" red_nights=0 budget_in=0 budget_out=0 budget_pending=2 budget_not_run=3", line)
+            self.assertFalse((out / "budget-baseline-proposal.tsv").exists())
+        self.assertIn(
+            "budget oneiron::alpha props::a_merge_converges: 30.00 s, baseline pending (4/5 nights on nelly)",
+            (out / "summary.txt").read_text(),
+        )
+        code, line, out = self.night("2026-11-14", 9.0)
+        self.assertIn(" budget_in=2 budget_out=0 budget_pending=0 budget_not_run=3", line)
+        text = (out / "summary.txt").read_text()
+        self.assertIn(
+            "budget oneiron::alpha props::a_merge_converges: 9.00 s, baseline 11.00 s (samples), in band (-18%)", text
+        )
+        self.assertIn("budget baseline proposal: 2 new row(s) in budget-baseline-proposal.tsv", text)
+        self.assertEqual(
+            (out / "budget-baseline-proposal.tsv").read_text().splitlines(),
+            [
+                "host\ttest\tseconds\tnights\tfirst\tlast",
+                "nelly\toneiron access::grant::tests::a_grant_reads_its_rows\t2.0\t5\t2026-11-10\t2026-11-14",
+                "nelly\toneiron::alpha props::a_merge_converges\t11.0\t5\t2026-11-10\t2026-11-14",
+            ],
+        )
+        samples = json.loads((out / "budget-samples.json").read_text())
+        self.assertEqual(
+            [s["seconds"] for s in samples["nelly"]["oneiron::alpha props::a_merge_converges"]],
+            [10.0, 12.0, 11.0, 30.0, 9.0],
+        )
+
+    def test_a_time_out_of_the_band_is_reported_and_a_committed_baseline_wins_over_the_samples(self) -> None:
+        for day in range(10, 15):
+            self.night(f"2026-11-{day}", 10.0)
+        code, line, out = self.night("2026-11-15", 12.5)
+        self.assertEqual(code, 0, "the band is report only")
+        self.assertIn(" budget_in=1 budget_out=1 budget_pending=0 ", line)
+        self.assertIn("baseline 10.00 s (samples), over band (+25%)", (out / "summary.txt").read_text())
+        row = json.loads((out / "budget-row.json").read_text())
+        self.assertEqual(
+            row["out_tests"],
+            [{"test": "oneiron::alpha props::a_merge_converges", "seconds": 12.5, "baseline": 10.0, "band": "over"}],
+        )
+        committed = write(
+            self.base / "budget-baseline.tsv",
+            "host\ttest\tseconds\tnights\tfirst\tlast\n"
+            "nelly\toneiron::alpha props::a_merge_converges\t20.000\t5\t2026-10-01\t2026-10-05\n",
+        )
+        _, line, out = self.night("2026-11-16", 12.5, committed=str(committed))
+        text = (out / "summary.txt").read_text()
+        self.assertIn("12.50 s, baseline 20.00 s (committed), under band (-38%)", text)
+        self.assertEqual(
+            (out / "budget-baseline-proposal.tsv").read_text().splitlines()[1:],
+            [
+                "nelly\toneiron access::grant::tests::a_grant_reads_its_rows\t2.0\t5\t2026-11-10\t2026-11-14",
+                "nelly\toneiron::alpha props::a_merge_converges\t20.000\t5\t2026-10-01\t2026-10-05",
+            ],
+            "the proposal is the whole file: the committed rows and the new one",
+        )
+
+    def test_a_sub_millisecond_baseline_round_trips_through_the_proposal_and_stays_in_its_band(self) -> None:
+        # review 7885 P1: a bench p99 of 0.0001 s was proposed as 0.000, so the committed row read over band
+        for day in range(10, 15):
+            _, _, out = self.night(f"2026-11-{day}", 0.0001)
+        proposal = out / "budget-baseline-proposal.tsv"
+        self.assertIn(
+            "nelly\toneiron::alpha props::a_merge_converges\t0.0001\t5\t2026-11-10\t2026-11-14",
+            proposal.read_text().splitlines(),
+        )
+        committed = write(self.base / "budget-baseline.tsv", proposal.read_text())
+        code, line, out = self.night("2026-11-15", 0.0001, committed=str(committed))
+        self.assertEqual(code, 0, line)
+        self.assertIn(" budget_in=2 budget_out=0 budget_pending=0 ", line)
+        self.assertIn(
+            "budget oneiron::alpha props::a_merge_converges: 0.0001 s, baseline 0.0001 s (committed), in band (+0%)",
+            (out / "summary.txt").read_text(),
+        )
+
+    def test_each_budget_row_without_a_result_says_why_and_a_failed_budget_test_gives_no_sample(self) -> None:
+        code, line, out = self.night("2026-11-10", 10.0, alpha_outcome="fail")
+        self.assertEqual(code, 1, "a failed budget test is a failed test")
+        self.assertIn(" failed=1 ", line)
+        self.assertIn(" budget_in=0 budget_out=0 budget_pending=1 budget_not_run=3", line)
+        text = (out / "summary.txt").read_text()
+        self.assertIn("budget oneiron::alpha props::a_merge_converges: fail tonight, no sample", text)
+        self.assertIn("budget not run: long-replay (quarantined (LIBTEST-QUARANTINE-ROOT-TESTS))", text)
+        self.assertIn("budget not run: kit-bounded (no result tonight)", text)
+        self.assertIn("budget not run: bench-smoke (oneiron-bench is left out of the nightly)", text)
+        samples = json.loads((out / "budget-samples.json").read_text())
+        self.assertEqual(list(samples["nelly"]), ["oneiron access::grant::tests::a_grant_reads_its_rows"])
+
+    def test_a_rerun_of_a_night_replaces_its_sample(self) -> None:
+        self.night("2026-11-10", 10.0)
+        _, _, out = self.night("2026-11-10", 14.0)
+        series = json.loads((out / "budget-samples.json").read_text())["nelly"][
+            "oneiron::alpha props::a_merge_converges"
+        ]
+        self.assertEqual([(s["date"], s["seconds"]) for s in series], [("2026-11-10", 14.0)])
 
 
 if __name__ == "__main__":
