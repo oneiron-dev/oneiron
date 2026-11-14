@@ -141,6 +141,61 @@ fn a_fenced_runner_cannot_read_or_write_the_vault_trees() {
     assert!(!ran, "a program in the data tree ran");
 }
 
+/// A link beside the vault that another process swaps between a harmless
+/// directory and `/` while rules are built never widens a rule: no runner
+/// started meanwhile reads the data tree. A rule that checks a name and then
+/// opens it again lands some runner on `/` (review of #7942, round 1).
+#[cfg(target_os = "linux")]
+#[test]
+fn a_link_swapped_while_the_rule_is_built_never_hands_the_trees_back() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+
+    const RUNNERS: usize = 400;
+    let layout = layout();
+    let fence = vault_fence(&layout);
+    if !applied(&fence) {
+        return;
+    }
+    let root = layout.checkout.parent().expect("layout root");
+    let alias = root.join("alias");
+    std::os::unix::fs::symlink(&layout.checkout, &alias).expect("alias link");
+    let staged = [
+        (root.join("alias-to-root"), PathBuf::from("/")),
+        (root.join("alias-to-checkout"), layout.checkout.clone()),
+    ];
+    let secret = layout.data.join("probe");
+    let stop = AtomicBool::new(false);
+    let (breaches, swaps) = std::thread::scope(|scope| {
+        let swapper = scope.spawn(|| {
+            // Bounded, so a failed runner start cannot leave it spinning.
+            let started = Instant::now();
+            let mut swaps = 0_u64;
+            while !stop.load(Ordering::Relaxed) && started.elapsed() < Duration::from_secs(300) {
+                for (link, target) in &staged {
+                    std::os::unix::fs::symlink(target, link).expect("staged link");
+                    fs::rename(link, &alias).expect("link swapped in");
+                    swaps += 1;
+                }
+            }
+            swaps
+        });
+        let breaches = (0..RUNNERS)
+            .filter(|_| reads(&fence, &secret).is_some())
+            .count();
+        stop.store(true, Ordering::Relaxed);
+        (breaches, swapper.join().expect("swapper"))
+    });
+    eprintln!(
+        "runner_fence: {swaps} link swaps over {RUNNERS} fenced runners, {breaches} read the data tree"
+    );
+    assert!(swaps > 0, "the link was never swapped");
+    assert_eq!(
+        breaches, 0,
+        "a runner read the data tree through a rule a swapped link widened"
+    );
+}
+
 #[test]
 fn a_fenced_runner_keeps_its_checkout_and_the_rest_of_the_host() {
     let layout = layout();

@@ -7,18 +7,24 @@
 //! Seatbelt says so directly: `(allow default)`, then a denial of every file
 //! read, write, executable map and exec beneath each removed tree. Landlock
 //! handles every filesystem right of its ABI 3, execution among them, and
-//! cannot deny beneath a
-//! path it allows, so the Linux rule allows, in each directory on the way
-//! from `/` down to a removed tree, every entry except the removed tree and
-//! the next directory on that way. The directories on the way get no right
-//! of their own: a runner cannot list them, or make, remove or rename an
-//! entry directly in them, and an entry made in them after the spawn stays
-//! out of its reach. Everything beneath every other entry is the runner's.
-//! An entry that resolves into a removed tree or onto the way to one (a
-//! link) is left out, so it does not hand the tree back. Both mechanisms
-//! match paths, not files: a hard link or a bind mount the host made of a
-//! removed file or tree elsewhere is a copy outside the trees, and is not
-//! looked for.
+//! cannot deny beneath a path it allows, so the Linux rule allows, in each
+//! directory on the way from `/` down to a removed tree, every entry except
+//! the next directory on that way (the removed tree itself at the end) and
+//! except a link. The directories on the way get no right of their own: a
+//! runner cannot list them, or make, remove or rename an entry directly in
+//! them, and an entry made in them after the spawn stays out of its reach.
+//! Everything beneath every other entry is the runner's. A link is left
+//! out, so a link into a removed tree does not hand the tree back; it adds
+//! no reach of its own, since what it resolves to is reached through a real
+//! entry or not at all. The rule is built from descriptors, never from a
+//! name read twice: each directory on the way is opened from `/` one name
+//! at a time without following a link, each entry is opened once without
+//! following one, the next directory on the way is known by device and
+//! inode, and the kernel gets the descriptor that was checked. A name
+//! another process swaps while the rule is built cannot widen it. Both
+//! mechanisms match paths, not files: a hard link or a bind mount the host
+//! made of a removed file or tree elsewhere is a copy outside the trees, and
+//! is not looked for.
 //!
 //! The rule is built before the fork. Between fork and exec the child only
 //! restricts itself ([`crate::landlock_restrict`]); on macOS the command is
@@ -177,8 +183,7 @@ impl RunnerFence {
     fn landlock_command(&self, program: &OsStr) -> io::Result<Command> {
         use std::os::fd::AsFd as _;
         use std::os::unix::process::CommandExt as _;
-        let allowed = allowed_entries(&self.removed)?;
-        let ruleset = crate::landlock_ruleset::<PathBuf, PathBuf>(&[], &allowed)?;
+        let ruleset = removal_ruleset(&self.removed)?;
         let mut command = oneiron_spawn::command(program);
         // SAFETY: the closure runs in the child between fork and exec, after
         // oneiron_spawn's own step. It makes two system calls on a
@@ -363,42 +368,83 @@ fn host_mechanism() -> RunnerFenceMechanism {
     RunnerFenceMechanism::Unavailable
 }
 
-/// The Linux rule's allowed entries: in each directory on the way from `/`
-/// to a removed tree, every entry that is not on that way and does not
-/// resolve into a removed tree or onto the way to one.
+/// The Linux rule as a Landlock ruleset: in each directory on the way from
+/// `/` to a removed tree, every entry that is not a link and not the next
+/// directory on that way gets every right beneath it. Each directory on the
+/// way is opened from `/` one name at a time without following a link, and
+/// one that is gone or is now a link gives nothing beneath it. Each entry is
+/// opened once without following a link, checked on its descriptor, and its
+/// rule added on that descriptor, so no name is resolved twice. One
+/// descriptor per directory on the way is open at a time, and one entry.
+///
+/// # Errors
+/// A directory on the way could not be read, or the kernel refused a rule.
 #[cfg(target_os = "linux")]
-fn allowed_entries(removed: &[PathBuf]) -> io::Result<Vec<PathBuf>> {
+fn removal_ruleset(removed: &[PathBuf]) -> io::Result<std::os::fd::OwnedFd> {
+    use crate::linux::{add_beneath, descriptor_file, fs_ruleset, open_path};
+    use std::collections::BTreeMap;
+    use std::os::fd::{AsFd as _, OwnedFd};
+
     let way: BTreeSet<&Path> = removed.iter().flat_map(|tree| tree.ancestors()).collect();
-    let mut allowed = Vec::new();
-    for dir in &way {
+    let ruleset = fs_ruleset()?;
+    let root = Path::new("/");
+    let mut opened: BTreeMap<&Path, OwnedFd> = BTreeMap::new();
+    opened.insert(root, open_path(None, root.as_os_str(), true)?);
+    // Path order puts each directory after its parent, so its descriptor is
+    // there when its turn comes.
+    for &dir in &way {
         if removed.iter().any(|tree| dir.starts_with(tree)) {
             continue;
         }
-        let entries = match std::fs::read_dir(dir) {
-            Ok(entries) => entries,
+        let Some(pinned) = opened.remove(dir) else {
+            continue;
+        };
+        let mut next = Vec::new();
+        for &child in way.iter().filter(|child| child.parent() == Some(dir)) {
+            let Some(name) = child.file_name() else {
+                continue;
+            };
+            match open_path(Some(pinned.as_fd()), name, true) {
+                Ok(child_fd) => {
+                    next.push(descriptor_file(child_fd.as_fd())?.identity);
+                    opened.insert(child, child_fd);
+                }
+                Err(error) if way_gone(&error) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        let names = match std::fs::read_dir(dir) {
+            Ok(names) => names,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error),
         };
-        for entry in entries {
-            let path = entry?.path();
-            if way.contains(path.as_path()) {
+        for name in names {
+            let name = name?.file_name();
+            if way.contains(dir.join(&name).as_path()) {
                 continue;
             }
-            // An entry that resolves into a removed tree or onto the way to
-            // one (a link) would allow the tree; one that resolves nowhere (a
-            // dangling link) reaches nothing.
-            let Ok(real) = std::fs::canonicalize(&path) else {
-                continue;
+            // A name listed from the path but gone from the descriptor's
+            // directory reaches nothing.
+            let entry = match open_path(Some(pinned.as_fd()), &name, false) {
+                Ok(entry) => entry,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
             };
-            if !removed
-                .iter()
-                .any(|tree| real.starts_with(tree) || tree.starts_with(&real))
-            {
-                allowed.push(path);
+            let file = descriptor_file(entry.as_fd())?;
+            if !file.is_link && !next.contains(&file.identity) {
+                add_beneath(&ruleset, entry.as_fd(), true, file.is_dir)?;
             }
         }
     }
-    Ok(allowed)
+    Ok(ruleset)
+}
+
+/// A directory on the way that is gone, or is no longer a directory
+/// reached without a link.
+#[cfg(target_os = "linux")]
+fn way_gone(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::NotFound
+        || matches!(error.raw_os_error(), Some(libc::ELOOP | libc::ENOTDIR))
 }
 
 /// The Seatbelt profile for `trees` removed trees: everything allowed, then

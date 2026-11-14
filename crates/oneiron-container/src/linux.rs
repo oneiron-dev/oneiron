@@ -1,8 +1,8 @@
 //! Linux UAPI used on both sides of the seccomp listener.
 
-use std::ffi::CString;
+use std::ffi::{CString, OsStr};
 use std::io;
-use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
@@ -265,14 +265,37 @@ pub fn landlock_ruleset<R: AsRef<Path>, W: AsRef<Path>>(
     read: &[R],
     write: &[W],
 ) -> io::Result<OwnedFd> {
+    let ruleset = fs_ruleset()?;
+    let read = read.iter().map(|path| (path.as_ref(), false));
+    let write = write.iter().map(|path| (path.as_ref(), true));
+    for (path, writable) in read.chain(write) {
+        let name = CString::new(path.as_os_str().as_bytes()).map_err(io::Error::other)?;
+        // SAFETY: name is NUL terminated; O_PATH obtains only a path handle.
+        let fd = unsafe { libc::open(name.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
+        if fd < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::NotFound {
+                continue;
+            }
+            return Err(error);
+        }
+        // SAFETY: open returned a new owned descriptor.
+        let parent = unsafe { OwnedFd::from_raw_fd(fd) };
+        let metadata = std::fs::metadata(path)?;
+        add_beneath(&ruleset, parent.as_fd(), writable, metadata.is_dir())?;
+    }
+    Ok(ruleset)
+}
+
+/// A new Landlock ruleset that handles every filesystem right of ABI 3 and
+/// allows none yet.
+///
+/// # Errors
+/// The kernel's Landlock ABI is below 3, or it refused the ruleset.
+pub(crate) fn fs_ruleset() -> io::Result<OwnedFd> {
     #[repr(C)]
     struct Ruleset {
         handled_access_fs: u64,
-    }
-    #[repr(C, packed)]
-    struct PathRule {
-        allowed_access: u64,
-        parent_fd: i32,
     }
     if landlock_abi() < 3 {
         return Err(io::Error::other("Landlock ABI 3 is required"));
@@ -293,53 +316,105 @@ pub fn landlock_ruleset<R: AsRef<Path>, W: AsRef<Path>>(
         return Err(io::Error::last_os_error());
     }
     // SAFETY: successful create_ruleset returns an owned descriptor.
-    let ruleset = unsafe { OwnedFd::from_raw_fd(fd as i32) };
-    let read = read.iter().map(|path| (path.as_ref(), false));
-    let write = write.iter().map(|path| (path.as_ref(), true));
-    for (path, writable) in read.chain(write) {
-        let name = CString::new(path.as_os_str().as_bytes()).map_err(io::Error::other)?;
-        // SAFETY: name is NUL terminated; O_PATH obtains only a path handle.
-        let fd = unsafe { libc::open(name.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
-        if fd < 0 {
-            let error = io::Error::last_os_error();
-            if error.kind() == io::ErrorKind::NotFound {
-                continue;
-            }
-            return Err(error);
-        }
-        // SAFETY: open returned a new owned descriptor.
-        let parent = unsafe { OwnedFd::from_raw_fd(fd) };
-        // A path removed since its open is skipped too: a runner's rule
-        // names every entry beside the vault's trees, and one of them may
-        // go while the rule is built.
-        let metadata = match std::fs::metadata(path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error),
-        };
-        let mut rights = if writable { READ | WRITE } else { READ };
-        if !metadata.is_dir() {
-            rights &= (1 << 0) | (1 << 1) | (1 << 2) | (1 << 14);
-        }
-        let rule = PathRule {
-            allowed_access: rights,
-            parent_fd: parent.as_raw_fd(),
-        };
-        // SAFETY: rule has the packed landlock_path_beneath_attr layout.
-        if unsafe {
-            libc::syscall(
-                libc::SYS_landlock_add_rule,
-                ruleset.as_raw_fd(),
-                1,
-                &rule,
-                0,
-            )
-        } < 0
-        {
-            return Err(io::Error::last_os_error());
-        }
+    Ok(unsafe { OwnedFd::from_raw_fd(fd as i32) })
+}
+
+/// Adds to `ruleset` a rule beneath the file `target` holds: read (and
+/// run), and also write where `writable`. A file that is not a directory
+/// gets only the rights a file has. The rule names the file the descriptor
+/// holds, so no name is resolved again.
+///
+/// # Errors
+/// The kernel refused the rule.
+pub(crate) fn add_beneath(
+    ruleset: &OwnedFd,
+    target: BorrowedFd<'_>,
+    writable: bool,
+    is_dir: bool,
+) -> io::Result<()> {
+    #[repr(C, packed)]
+    struct PathRule {
+        allowed_access: u64,
+        parent_fd: i32,
     }
-    Ok(ruleset)
+    let mut rights = if writable { READ | WRITE } else { READ };
+    if !is_dir {
+        rights &= (1 << 0) | (1 << 1) | (1 << 2) | (1 << 14);
+    }
+    let rule = PathRule {
+        allowed_access: rights,
+        parent_fd: target.as_raw_fd(),
+    };
+    // SAFETY: rule has the packed landlock_path_beneath_attr layout.
+    if unsafe {
+        libc::syscall(
+            libc::SYS_landlock_add_rule,
+            ruleset.as_raw_fd(),
+            1,
+            &rule,
+            0,
+        )
+    } < 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// `name` opened as a path handle (`O_PATH`), never through a link in its
+/// last component: beneath `dir`, or as an absolute path where `dir` is
+/// `None`. A link gives a handle on the link itself; with `directory`,
+/// anything but a directory fails (`ENOTDIR`).
+///
+/// # Errors
+/// The open failed.
+pub(crate) fn open_path(
+    dir: Option<BorrowedFd<'_>>,
+    name: &OsStr,
+    directory: bool,
+) -> io::Result<OwnedFd> {
+    let name = CString::new(name.as_bytes()).map_err(io::Error::other)?;
+    let mut flags = libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    if directory {
+        flags |= libc::O_DIRECTORY;
+    }
+    let at = dir.map_or(libc::AT_FDCWD, |dir| dir.as_raw_fd());
+    // SAFETY: name is NUL terminated; O_PATH obtains only a path handle.
+    let fd = unsafe { libc::openat(at, name.as_ptr(), flags) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: openat returned a new owned descriptor.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+/// The file one descriptor holds: its kind, and its identity on the host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DescriptorFile {
+    pub(crate) is_dir: bool,
+    pub(crate) is_link: bool,
+    /// The device and inode: one file under any of its names.
+    pub(crate) identity: (libc::dev_t, libc::ino_t),
+}
+
+/// What `fstat` says of the file `fd` holds.
+///
+/// # Errors
+/// The kernel refused the `fstat`.
+pub(crate) fn descriptor_file(fd: BorrowedFd<'_>) -> io::Result<DescriptorFile> {
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: fstat writes a whole stat into the buffer when it succeeds.
+    if unsafe { libc::fstat(fd.as_raw_fd(), stat.as_mut_ptr()) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: fstat succeeded, so the buffer is initialised.
+    let stat = unsafe { stat.assume_init() };
+    let kind = stat.st_mode & libc::S_IFMT;
+    Ok(DescriptorFile {
+        is_dir: kind == libc::S_IFDIR,
+        is_link: kind == libc::S_IFLNK,
+        identity: (stat.st_dev, stat.st_ino),
+    })
 }
 
 /// Confines this process and what it starts to `ruleset`
