@@ -1,4 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdir, copyFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { blake3 } from "@noble/hashes/blake3";
@@ -360,7 +361,7 @@ async function mintProjectWithGoal(engine: EngineFixture, providers: ScriptedPro
   if (typeof thread !== "string") throw new Error(`project ${project} opened no interview thread`);
   const turns = INTERVIEW_TURNS;
   const draft = JSON.stringify(record);
-  // The question run claims the thread root through its TASK and asks.
+  // The opening run's second program claims the thread root through its TASK and asks.
   leaderStep(providers, "intake-question",
     leaderReply(room, thread, turns.question, occurred + 1, "What should this project achieve, and how will we measure it?")
     + `finish("asked");`);
@@ -408,8 +409,8 @@ async function mintProjectWithGoal(engine: EngineFixture, providers: ScriptedPro
 // as they were, and no old placement lands under the new descriptor. This is
 // an OUTPUT archive, never a skill archive and never a second store of numeric
 // learning claims.
-/* LEARNING-05 is a budget case: a minted project and its four interview runs,
- * two Coach jobs, three research runs and fifteen judge questions. Its stated
+/* LEARNING-05 is a budget case: a minted project, three interview runs over
+ * four model calls, two Coach jobs, three research runs and fifteen judge questions. Its stated
  * bound is 90 s until it is measured; it belongs to the nightly tier. */
 /** The host-configured decision wording; the Big rung sends it as the first system text. */
 const DECISION_WORDING = "You answer one typed question about the state you are given.";
@@ -534,9 +535,9 @@ function bestRows(view: { best: readonly unknown[] }): { cell: string; output: s
 function cellNames(cells: readonly unknown[]): string[] {
   return cells.map(cell => (Array.isArray(cell) ? cell.map(String) : bins(cell)).join("/")).sort();
 }
-/** A test-minted configuration pin: a label and the BLAKE3 hex of that label. */
+/** A test-minted configuration pin: a label and the SHA-256 hex of that label. */
 function candidateRef(label: string): { config_ref: string; config_sha256: string } {
-  return { config_ref: label, config_sha256: Buffer.from(blake3(Buffer.from(label, "utf8"))).toString("hex") };
+  return { config_ref: label, config_sha256: createHash("sha256").update(label, "utf8").digest("hex") };
 }
 /** One campaign over a workflow configuration: quality is primary, and the
  * goal's coverage floor is kept as a floor axis of the campaign's ruler. */
