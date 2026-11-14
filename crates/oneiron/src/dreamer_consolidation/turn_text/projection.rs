@@ -24,7 +24,10 @@ use crate::dreamer_consolidation::swarm_evidence_content_hash;
 use crate::dreamer_consolidation::watermark::decode_turn_body;
 use crate::dreamer_runner::{DreamerTurnRole, dreamer_turn_role};
 use crate::edge::EdgeKind;
-use crate::gate::{WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER};
+use crate::gate::{
+    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_COUNTERPARTY, WITNESS_AUTHOR_SYSTEM,
+    WITNESS_AUTHOR_USER,
+};
 use crate::ports::EdgeDirection;
 use crate::registry::ENTITY_TYPE_MESSAGE;
 use crate::{EntityId, Error, Result};
@@ -80,6 +83,7 @@ fn frame_in(
     ) {
         DreamerTurnRole::User => WITNESS_AUTHOR_USER,
         DreamerTurnRole::Assistant => WITNESS_AUTHOR_COMPANION,
+        DreamerTurnRole::Counterparty => WITNESS_AUTHOR_COUNTERPARTY,
         _ => return Err(changed()),
     };
     if crate::tagging::tagged_messages_absent_in_txn(&vault.store, txn, turn)? {
@@ -131,7 +135,12 @@ fn cited_words_in(
     let message = decode_message(&body)
         .ok_or_else(|| invalid_consolidation("witnessed message body is malformed"))?;
     let out = |kind| peers(vault, txn, id, EdgeDirection::Out, kind, None);
-    let bylines = usize::from(message.author != WITNESS_AUTHOR_SYSTEM && !frame.imported);
+    let bylines = usize::from(
+        !matches!(
+            message.author.as_str(),
+            WITNESS_AUTHOR_SYSTEM | WITNESS_AUTHOR_COUNTERPARTY
+        ) && !frame.imported,
+    );
     if entity_type != ENTITY_TYPE_MESSAGE
         || out(EdgeKind::PartOf)? != [frame.turn]
         || out(EdgeKind::BelongsTo)? != [frame.conversation]

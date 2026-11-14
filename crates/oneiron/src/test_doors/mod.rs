@@ -55,6 +55,7 @@ pub mod learning_claim_value;
 pub mod learning_setting_sourced;
 pub mod lifted_text;
 pub mod live_run_claim_put;
+pub mod mail_counterparty;
 pub mod mail_landing;
 pub mod membership;
 pub mod meso_extraction_width;
