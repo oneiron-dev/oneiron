@@ -509,10 +509,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/serialize/types.rs` | src | s | 1 enum · 1 type · 2 const | GroupKey | Cross-cutting types shared by every `serialize` submodule |
 | `src/serialize/value_json.rs` | src | s | 3 fn | — | The opaque MessagePack value a record carries, to and from the JSON public APIs read and write |
 | `src/serialize/yaml_format.rs` | src | s | 3 fn | — | YAML section writer and YAML scalar/key quoting rules |
+| `src/session_overlay/dump_suppression.rs` | src | s | 2 fn · 3 const · 1 crate-vis | — | Core-dump suppression for a process that holds off-record room bytes (ARCH-0052 threat-model note… |
 | `src/session_overlay/hygiene_tests.rs` | test | s | 1 struct · 1 enum · 7 fn | ObservedAllocator, ShortIdScratch | Allocation-boundary teardown observer for session-owned buffers |
 | `src/session_overlay/journal.rs` | src | m | 4 struct · 1 enum · 10 fn · 4 crate-vis | JournalEntry, JournalRole, JournalScope, PromotePlan, PublishedEntry | Typed session-overlay journal: entries, promotion plans, and replay |
 | `src/session_overlay/keyspace.rs` | src | m | 1 enum · 1 fn · 13 crate-vis | OverlayKeyspace | Overlay keyspace manifest: the 28 named databases and their mutations |
-| `src/session_overlay/mod.rs` | src | s | 7 mod · 5 re-export | — | In-memory session write-overlay substrate (ARCH-0052, D1) |
+| `src/session_overlay/mod.rs` | src | s | 7 mod · 6 re-export | — | In-memory session write-overlay substrate (ARCH-0052, D1) |
 | `src/session_overlay/overlay/held.rs` | src | s | 11 crate-vis | — | What the overlay's readers hold beyond its published state, counted in what the overlay retains (FIX 11083)… |
 | `src/session_overlay/overlay/lifecycle.rs` | src | m | 1 struct · 8 fn · 10 crate-vis | SessionOverlay | Overlay lifecycle state machine, leases, seal/rearm/close |
 | `src/session_overlay/overlay/mod.rs` | src | s | 1 fn · 8 mod · 3 re-export · 4 crate-vis | — | Ephemeral in-memory write overlay for one live session (ARCH-0052, D1) |
@@ -578,7 +579,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/window_key.rs` | src | s | 1 struct · 15 fn · 1 crate-vis | WindowKey | Monthly CRDT window keys and their timestamp conversion |
 | `src/window_protocol.rs` | src | s | 2 enum · 1 fn · 2 const | FederationAdmissionRole, ImportTier | Window payload bounds and local commit origin values |
 | `src/window_rows.rs` | src | s | 5 struct · 1 enum · 2 const | CarrierRemoval, HexSeqKey, WindowEntityHexKey, WindowEntityKey, WindowUpdateKey, WindowUpdateSeq | Typed `sync_state` tables for the window/root plane rows: one window's persisted CRDT snapshot, state… |
-| `src/witness_message_body.rs` | src | m | 2 struct · 2 enum · 8 fn · 5 const | StoredMessagePart, WitnessMessageBodyAuthor, WitnessMessageEnvelope, WitnessMetadataMeasure | Canonical MESSAGE body vocabulary, encoding, and structural validation |
+| `src/witness_message_body.rs` | src | m | 2 struct · 2 enum · 8 fn · 6 const | StoredMessagePart, WitnessMessageBodyAuthor, WitnessMessageEnvelope, WitnessMetadataMeasure | Canonical MESSAGE body vocabulary, encoding, and structural validation |
 | `src/workflow_definition.rs` | src | s | 1 struct · 6 fn | WorkflowDefinition | A saved ordered agent composition (`WORKFLOW` entities): its value, wire codec and put admission |
 | `src/world_pad_codec.rs` | src | s | 1 struct · 1 enum · 17 fn | PadBody, WorldKeyPad | The world-key pad row codec (KS-5, FIX 5686): a pad, a pad row's deterministic id, and a pad row body in its… |
 | `src/world_registration_keys.rs` | src | s | 2 const | — | Storage keys for foreign-world registration and stale markers |
@@ -658,3 +659,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/world_access_predicates.rs` | src | s | 2 const | — | World-access authority claim predicates |
 | `src/writer_hold.rs` | src | s | 1 struct · 2 fn | WriterHold | Writer closure timing and the Dreamer writer-hold trace |
 | `src/writer_lease.rs` | src | m | 1 struct · 16 fn · 2 const · 1 static | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |
+| `tests/session_overlay_dump_suppression.rs` | test | s | — | — | Census row L6-18 (ARCH-0052 threat-model note): a process that holds an off-record overlay writes no core… |
+| `tests/session_overlay_dump_suppression_off.rs` | test | s | — | — | Census row L6-18: the operator's off switch |
