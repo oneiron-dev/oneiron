@@ -8,7 +8,7 @@ export { Well, type WellProps } from './ground/Well'
 export { WindowGround, type WindowGroundProps } from './ground/WindowGround'
 export { SceneSheet, type SceneSheetProps } from './ground/SceneSheet'
 export { useRootTheme, type RootTheme } from './ground/root-theme'
-export { readScene, type SceneReading } from './lib/scene'
+export { readScene, pagePictures, pagePicture, type SceneReading } from './lib/scene'
 
 export { Verb, type VerbProps } from './primitives/Verb'
 export { IconAction, type IconActionProps } from './primitives/IconAction'
@@ -317,6 +317,9 @@ export {
   THEMES,
   DEFAULT_THEME,
   SCENE_STAND_IN_COLOUR,
+  sceneAddressAllowed,
+  scenePictures,
+  type ScenePictures,
   DAY_GROUND_INK,
   NIGHT_GROUND_INK,
   TONE_FLOOR,
