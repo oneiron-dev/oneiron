@@ -3,7 +3,9 @@
 //! a Grant line naming a tighten of the world the change applies; otherwise a
 //! tighten waits as a proposal and a widen as an ask to the world's holders.
 //! A run of the owner himself, whose host bound his proof, changes them as
-//! his own say-so. An agent is never relabelled as the owner. A request the
+//! his own say-so, and may apply an asker's approved check-in for exactly
+//! the change (`check_in_ref`, 2k11); an agent's `check_in_ref` is refused.
+//! An agent is never relabelled as the owner. A request the
 //! run opens carries the credential lineage its host admitted it under (FIX
 //! 4705), so no answer from that lineage settles it.
 
@@ -42,7 +44,12 @@ impl HostSelfDispatcher<'_> {
             return Ok(refused(AGENT_VERB_SESSION_BOUND));
         };
         let (world, settings, seen) = input.parse()?;
+        let check_in_ref = input.check_in_ref()?;
         let outcome = match (self.actor.actor_class(), self.owner_proof) {
+            // Only the vault's Owner applies an asker's check-in (2k11).
+            (EdgeActorClass::Agent, _) if check_in_ref.is_some() => {
+                return Err(crate::policy_model::world_privacy_check_in_refused());
+            }
             (EdgeActorClass::Agent, _) => vault.agent_world_privacy(
                 &self.actor,
                 self.opener_lineage.clone(),
@@ -59,6 +66,7 @@ impl HostSelfDispatcher<'_> {
                     world,
                     settings,
                     seen,
+                    check_in_ref,
                 )?
             }
             _ => return Ok(refused(WORLD_PRIVACY_NEEDS_AGENT)),

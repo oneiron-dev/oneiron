@@ -53,6 +53,7 @@ use crate::authority::{
     ActAuthority, ActSurface, PolicyRevision, PrivacyDirection, WorldEditAuthor, WorldPrivacy,
     privacy_direction,
 };
+use crate::check_in::{ActClass, AppliedCheckIn, CheckInDecision};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result};
 use crate::{EntityId, Vault};
@@ -88,6 +89,18 @@ impl WorldPrivacyOutcome {
     }
 }
 
+/// The door a holder's own change comes through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum HolderDoor {
+    /// A door that takes only a receipt: a widen under "widen needs every
+    /// owner" is refused before anything is written.
+    Receipt,
+    /// The settings door: such a widen opens an ask. `check_in_ref` is an
+    /// asker's approved check-in the vault's Owner applies to a change that
+    /// lands (2k11).
+    Outcome { check_in_ref: Option<EntityId> },
+}
+
 /// A change of a world shared from another vault that its owning vault's
 /// holders decide (DEC-0005 fix 11): a holder here does not apply it.
 const FOREIGN_WORLD: &str =
@@ -101,6 +114,26 @@ const NEEDS_EVERY_OWNER: &str = "this vault's \"widen needs every owner\" settin
                                  said yes";
 /// Nobody holds the world's settings right now, so no request can go to one.
 const NO_HOLDER: &str = "no live holder of this world's settings right could answer a request";
+/// A `check_in_ref` from another holder or an agent (2k11).
+const OWNER_APPLIES_CHECK_IN: &str = "check_in_ref names an asker's approved check-in, which the \
+                                      vault's Owner applies on their own proof; another holder's \
+                                      change and an agent's act apply none";
+/// A `check_in_ref` on a widen "widen needs every owner" puts to every owner
+/// (2k11).
+const UNANIMOUS_WIDEN_APPLIES_NO_CHECK_IN: &str = "this widen waits for every owner under \
+                                                   \"widen needs every owner\"; an asker's \
+                                                   check-in applies only to a change that lands \
+                                                   at once, so open it without check_in_ref";
+
+/// The saved verb a holder's own world-settings change is: the verb an
+/// asker's check-in names for it (2k11).
+const WORLD_PRIVACY_SET_VERB: &str = "vault.worlds.privacy.set";
+
+/// The refusal of a `check_in_ref` from anyone but the vault's Owner, who
+/// alone applies an asker's check-in to a world's settings (2k11).
+pub(crate) fn world_privacy_check_in_refused() -> Error {
+    Error::InvalidConfig(OWNER_APPLIES_CHECK_IN.to_owned())
+}
 
 pub(super) fn not_holder() -> Error {
     Error::Gate(GateError::ConsentOwnerNotAuthenticated(NOT_HOLDER))
@@ -180,6 +213,41 @@ fn direction_in_txn(
     Ok((privacy_direction(&heads, settings), current))
 }
 
+/// The check-in decision holder `actor`'s change of `world` to `settings`
+/// from `seen` runs on, in `txn`, the change's writer, after every refusal
+/// before the write (2k11; P25-SHAPE Q1 = A): the vault's Owner changes a
+/// world's settings on their own proof, and with `check_in_ref` applies an
+/// asker's approved check-in for exactly this change, spent here, so an
+/// abort leaves it eligible. Another holder's change records none and
+/// applies no ask: their Grant is the authority, as before.
+///
+/// # Errors
+/// A `check_in_ref` from a holder who is not the vault's Owner; as
+/// [`crate::check_in::owner_act_decision_in_txn`].
+fn holder_check_in_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: EntityId,
+    world: EntityId,
+    settings: &WorldPrivacy,
+    seen: Option<&PolicyRevision>,
+    check_in_ref: Option<&EntityId>,
+) -> Result<Option<CheckInDecision>> {
+    if !super::authority::is_live_vault_owner_in_txn(vault, txn, &actor)? {
+        return match check_in_ref {
+            Some(_) => Err(world_privacy_check_in_refused()),
+            None => Ok(None),
+        };
+    }
+    let applied = check_in_ref.map(|id| AppliedCheckIn {
+        id: *id,
+        verb: WORLD_PRIVACY_SET_VERB,
+        effect_digest: crate::check_in::world_privacy_set_effect_digest(&world, settings, seen),
+    });
+    crate::check_in::owner_act_decision_in_txn(vault, txn, ActClass::WorldWiden, applied.as_ref())
+        .map(Some)
+}
+
 impl Vault {
     /// The one world-settings door (mesh contract §1, FIX 4480): `authority`
     /// is a holder's own proof and surface, or an agent's act its live Grant
@@ -193,20 +261,40 @@ impl Vault {
     /// nothing. An agent's change to a foreign world asks its owning vault's
     /// holders (FIX 4702).
     ///
+    /// The vault's Owner changes a world's settings on their own proof: the
+    /// receipt records the decision (`check_in`, act class `world_widen`;
+    /// none on another holder's change). With `check_in_ref` the Owner
+    /// applies an asker's approved check-in for exactly this change
+    /// ([`crate::check_in::world_privacy_set_effect_digest`]), spent in the
+    /// change's writer (2k11; P25-SHAPE Q1 = A).
+    ///
     /// # Errors
     /// As [`Self::set_world_privacy_as`]; an authority refusal when the
     /// agent's Grant no longer names a tighten of this world; a foreign
     /// world refusal for an agent when no live Connect names the world.
+    /// [`Error::InvalidConfig`] for a `check_in_ref` from an agent or a
+    /// holder who is not the vault's Owner, on a widen that waits for every
+    /// owner, or naming no eligible ask for this exact change: nothing is
+    /// written and the check-in stays unspent.
     pub fn set_world_privacy_by(
         &self,
         authority: &ActAuthority,
         world: EntityId,
         settings: WorldPrivacy,
         seen: Option<PolicyRevision>,
+        check_in_ref: Option<EntityId>,
     ) -> Result<WorldPrivacyOutcome> {
         match authority {
-            ActAuthority::Owner(owner, surface) => {
-                self.holder_world_privacy(owner, *surface, world, settings, seen, true)
+            ActAuthority::Owner(owner, surface) => self.holder_world_privacy(
+                owner,
+                *surface,
+                world,
+                settings,
+                seen,
+                HolderDoor::Outcome { check_in_ref },
+            ),
+            ActAuthority::Agent(_) if check_in_ref.is_some() => {
+                Err(world_privacy_check_in_refused())
             }
             // An agent's act that reaches this door, not its run's
             // (`agent_world_privacy`), names no run credential: a Grant
@@ -217,8 +305,7 @@ impl Vault {
         }
     }
 
-    /// A holder's own change. `collect`: a widen under "widen needs every
-    /// owner" opens an ask (`true`) or is refused before anything is written.
+    /// A holder's own change, through `door`.
     pub(super) fn holder_world_privacy(
         &self,
         owner: &AuthenticatedOwner,
@@ -226,16 +313,25 @@ impl Vault {
         world: EntityId,
         settings: WorldPrivacy,
         seen: Option<PolicyRevision>,
-        collect: bool,
+        door: HolderDoor,
     ) -> Result<WorldPrivacyOutcome> {
+        let check_in_ref = match door {
+            HolderDoor::Receipt => None,
+            HolderDoor::Outcome { check_in_ref } => check_in_ref,
+        };
         let outcome = self.with_world_settings_writer(|txn, secret| {
             let actor = revalidate_holder_in_txn(self, txn, owner, world)?;
             let (direction, current) = direction_in_txn(self, txn, world, &settings, seen)?;
             if direction == PrivacyDirection::Widen {
                 let needs = unanimity::widen_needs_in_txn(self, txn, world)?;
                 if needs.iter().any(|needed| *needed != actor) {
-                    if !collect {
+                    if door == HolderDoor::Receipt {
                         return Err(Error::InvalidConfig(NEEDS_EVERY_OWNER.to_owned()));
+                    }
+                    if check_in_ref.is_some() {
+                        return Err(Error::InvalidConfig(
+                            UNANIMOUS_WIDEN_APPLIES_NO_CHECK_IN.to_owned(),
+                        ));
                     }
                     let yes = needs.iter().copied().filter(|o| *o == actor).collect();
                     let holders = world_holders_in_txn(self, txn, world)?;
@@ -263,9 +359,20 @@ impl Vault {
                     return Ok(WorldPrivacyOutcome::Asked(request));
                 }
             }
+            let check_in = holder_check_in_in_txn(
+                self,
+                txn,
+                actor,
+                world,
+                &settings,
+                seen.as_ref(),
+                check_in_ref.as_ref(),
+            )?;
             let author = WorldEditAuthor::holder(actor, surface);
-            let receipt =
+            let mut receipt =
                 self.write_world_privacy_in_txn(txn, author, world, settings, Some(current), None)?;
+            // Stored with the key work's settlement, in this commit.
+            receipt.check_in = check_in;
             let key_owner = key_owner_in_txn(self, txn, actor)?;
             let receipt = self.finish_world_key_work_in_txn(txn, key_owner, receipt, secret)?;
             Ok(WorldPrivacyOutcome::Applied(receipt))

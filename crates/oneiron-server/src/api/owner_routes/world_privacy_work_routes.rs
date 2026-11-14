@@ -199,6 +199,18 @@ async fn settings(
     Ok(Json(read))
 }
 
+/// Refuses a `check_in_ref` at a door that applies none: an asker's check-in
+/// is applied at `POST /v1/owner/worlds/privacy/set` only (2k11).
+fn refuse_check_in_ref(input: &WorldPrivacySetInput) -> OwnerResult<()> {
+    match input.check_in_ref {
+        Some(_) => Err(OwnerError::Invalid(
+            "check_in_ref is applied at /v1/owner/worlds/privacy/set; this door applies none"
+                .to_owned(),
+        )),
+        None => Ok(()),
+    }
+}
+
 /// `POST /v1/owner/worlds/privacy/settings`: the holder sets the world's
 /// settings (`Vault::set_world_privacy_as`). `seen` is the revision the
 /// surface showed him; none takes the current one. A widen the vault's
@@ -215,6 +227,7 @@ async fn set(
     let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let input = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<WorldPrivacyReceipt> {
+        refuse_check_in_ref(&input)?;
         let (world, settings, seen) = input.parse()?;
         Ok(server
             .vault()
@@ -239,6 +252,7 @@ async fn reassert(
     let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let input = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<WorldPrivacyReceipt> {
+        refuse_check_in_ref(&input)?;
         let (world, settings, seen) = input.parse()?;
         let expected = seen.ok_or_else(|| {
             OwnerError::Invalid(

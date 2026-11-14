@@ -16,11 +16,12 @@
 use serde::{Deserialize, Serialize};
 
 use super::ledger::{PolicyChangedEvent, put_event_in_txn};
-use super::world_privacy_will::parse_revision;
+use super::world_privacy_will::{HolderDoor, parse_revision};
 use crate::authority::{
     ActSurface, EffectiveRead, EffectiveWorldPrivacy, KeyWork, PolicyRevision, WorldEditAuthor,
     WorldPrivacy,
 };
+use crate::check_in::CheckInDecision;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::gate::PolicyRowScope;
@@ -74,6 +75,13 @@ pub struct WorldPrivacyReceipt {
     /// read from the fold. `None` when no holder is needed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_work: Option<OwnerWorkReceipt>,
+    /// The check-in decision a holder's own change ran on: the vault's
+    /// Owner's own proof, naming the asker's check-in it applied, if any
+    /// (2k11; P25-SHAPE Q1 = A). `None` for another holder's change, an
+    /// agent's act, an accepted proposal or ask, a door's in-commit change,
+    /// and older receipts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
     pub at: u64,
 }
 
@@ -113,7 +121,9 @@ impl Vault {
     /// `policy.world_privacy.changed` event commit in one transaction; a call
     /// that keeps the current settings is receipted too. When this install
     /// may read the world it does the key work in the same commit; otherwise
-    /// the receipt says a holder still has to.
+    /// the receipt says a holder still has to. The vault's Owner's change
+    /// records their own-proof decision on the receipt (`check_in`, 2k11);
+    /// an asker's check-in is applied only at [`Self::set_world_privacy_by`].
     ///
     /// # Errors
     /// [`crate::error::GateError::ConsentOwnerNotAuthenticated`] when the
@@ -134,7 +144,7 @@ impl Vault {
         settings: WorldPrivacy,
         seen: Option<PolicyRevision>,
     ) -> Result<WorldPrivacyReceipt> {
-        self.holder_world_privacy(owner, surface, world, settings, seen, false)?
+        self.holder_world_privacy(owner, surface, world, settings, seen, HolderDoor::Receipt)?
             .applied()
             .ok_or(Error::InvariantViolation(
                 "a holder's own change that waits for no owner applies",
@@ -252,6 +262,7 @@ impl Vault {
             orphaned_from: change.orphaned_from.iter().map(EntityId::to_hex).collect(),
             key_work,
             owner_work: None,
+            check_in: None,
             at: self.instant_in_txn(txn)?.secs(),
         };
         RECEIPTS.put(&self.store, txn, &revision, &receipt)?;

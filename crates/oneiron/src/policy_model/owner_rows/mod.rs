@@ -21,6 +21,7 @@ pub use notifications::{
 pub use secret_scan_switch::SecretScanReceipt;
 pub use world_placement_switch::{WorldMachinePlacement, machine_placement_settings};
 pub use world_privacy_switch::WorldPrivacyReceipt;
+pub(crate) use world_privacy_will::world_privacy_check_in_refused;
 pub use world_privacy_will::{
     ForeignWorldPrivacyCarry, ForeignWorldPrivacyDelivery, ForeignWorldPrivacyExportRequest,
     ForeignWorldPrivacyLeg, ForeignWorldPrivacyLink, WORLD_PRIVACY_ROW_REF, WidenUnanimity,

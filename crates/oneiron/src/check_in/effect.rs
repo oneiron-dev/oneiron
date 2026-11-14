@@ -1018,3 +1018,56 @@ pub fn rsi_top_up_effect_digest(top_up: &crate::llm::RsiTopUp) -> [u8; 32] {
     hasher.update(&units.to_be_bytes());
     *hasher.finalize().as_bytes()
 }
+
+/// The digest of changing world `world`'s settings to `settings` from the
+/// revision `seen` the change names: the effect `vault.worlds.privacy.set`
+/// spends an asker's approved check-in over (2k11; P25-SHAPE Q1 = A). It
+/// binds the whole change as the door takes it, so the Owner applies exactly
+/// the settings asked, from the revision the asker read; the check-in ref
+/// stays out. BLAKE3, key derived from `oneiron check_in world privacy set
+/// v1`, over the world's 16 id bytes; the read as one byte, 0 and the
+/// machine's 16 id bytes for one machine, 1 for my machines, 2 for
+/// everywhere; the sealed copies as one byte, 0 off, 1 my machines, 2 cloud
+/// and my machines; the models as one byte 0 for the vault's own order, or
+/// one byte 1, the route count as eight big-endian bytes and each route's
+/// length as eight big-endian bytes and its bytes; and the revision seen as
+/// one byte 0, or one byte 1 and its 32 bytes.
+#[must_use]
+pub fn world_privacy_set_effect_digest(
+    world: &EntityId,
+    settings: &crate::authority::WorldPrivacy,
+    seen: Option<&crate::authority::PolicyRevision>,
+) -> [u8; 32] {
+    use crate::authority::{ModelOrder, ReadLocation, SealedCopies};
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in world privacy set v1");
+    hasher.update(world.as_bytes());
+    match settings.read {
+        ReadLocation::OneMachine(machine) => hasher.update(&[0]).update(machine.as_bytes()),
+        ReadLocation::MyMachines => hasher.update(&[1]),
+        ReadLocation::Everywhere => hasher.update(&[2]),
+    };
+    hasher.update(&[match settings.sealed {
+        SealedCopies::Off => 0,
+        SealedCopies::MyMachines => 1,
+        SealedCopies::CloudAndMyMachines => 2,
+    }]);
+    match &settings.models {
+        ModelOrder::Inherit => {
+            hasher.update(&[0]);
+        }
+        ModelOrder::Ordered(routes) => {
+            hasher
+                .update(&[1])
+                .update(&(routes.len() as u64).to_be_bytes());
+            for route in routes {
+                hasher.update(&(route.len() as u64).to_be_bytes());
+                hasher.update(route.as_bytes());
+            }
+        }
+    }
+    match seen {
+        Some(seen) => hasher.update(&[1]).update(&seen.0),
+        None => hasher.update(&[0]),
+    };
+    *hasher.finalize().as_bytes()
+}

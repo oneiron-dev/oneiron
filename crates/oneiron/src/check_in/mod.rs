@@ -136,6 +136,8 @@ pub use effect::mail_reply_approve_effect_digest;
 pub use effect::origin_mirror_push_effect_digest;
 // The spend lease and RSI top-up doors' effects (2k10).
 pub use effect::{rsi_top_up_effect_digest, spend_lease_top_up_effect_digest};
+// The world settings door's effect (2k11).
+pub use effect::world_privacy_set_effect_digest;
 // The sign act's effect (2k6b).
 pub use effect::sign_effect_digest;
 // The slip conversion and grant back doors' effects (2k7b). The mints'

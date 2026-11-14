@@ -357,7 +357,9 @@ async fn list(
 /// as his own act, in either direction (`applied`, the receipt), unless his
 /// widen falls under "widen needs every owner" (`asked`, the request his own
 /// yes already counts on). The body is `vault.worlds.privacy.set`'s input; a
-/// `seen` revision other than the current one is a conflict.
+/// `seen` revision other than the current one is a conflict. With
+/// `check_in_ref` the vault's Owner applies an asker's approved check-in for
+/// exactly this change; the receipt records the decision (2k11).
 async fn set(
     auth: CoreAuth,
     headers: HeaderMap,
@@ -371,11 +373,13 @@ async fn set(
     let body = payload.read(&server).await?;
     let outcome = blocking(move || -> OwnerResult<WorldPrivacyOutcome> {
         let (world, settings, seen) = body.parse()?;
+        let check_in_ref = body.check_in_ref()?;
         Ok(server.vault().set_world_privacy_by(
             &ActAuthority::Owner(holder, surface),
             world,
             settings,
             seen,
+            check_in_ref,
         )?)
     })
     .await?;

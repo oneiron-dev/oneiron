@@ -50,9 +50,29 @@ pub struct WorldPrivacySetInput {
     /// current one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seen: Option<String>,
+    /// An asker's approved check-in for exactly this change, as 32 hex: the
+    /// vault's Owner applies it on their own proof, at the holder's door
+    /// only (2k11). Absent on every other call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 impl WorldPrivacySetInput {
+    /// The check-in the input names, when it names one.
+    ///
+    /// # Errors
+    /// [`Error::InvalidConfig`] for a `check_in_ref` that is not 32 hex.
+    pub fn check_in_ref(&self) -> Result<Option<EntityId>> {
+        self.check_in_ref
+            .as_deref()
+            .map(|hex| {
+                EntityId::from_hex(hex).map_err(|_| {
+                    Error::InvalidConfig("check_in_ref is not a check-in id".to_owned())
+                })
+            })
+            .transpose()
+    }
+
     /// The world, the settings and the revision the input names.
     ///
     /// # Errors
