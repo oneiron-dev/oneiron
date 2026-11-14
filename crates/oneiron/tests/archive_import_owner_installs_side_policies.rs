@@ -593,6 +593,20 @@ fn a_holder_learning_row_over_the_destination_owner_cap_is_held_back() {
     );
 
     let (_source_dir, source) = open_source_vault();
+    // The engine-controls Grant is an owner act this install carries
+    // (`ActSurface::ThisInstall`): root the source, give it a keystore and
+    // serve its machine profile first, in the order
+    // `test_doors::steward::open_owner_carrier_vault` uses.
+    let issuer = oneiron::test_support::provision_engine_machines(&source);
+    source
+        .ensure_embedded_owner_actor()
+        .expect("the source's embedded owner");
+    source.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    source
+        .ensure_serving_install_profile(&issuer, oneiron::authority::MachineRole::Unanswered)
+        .expect("this install carries the owner's acts");
     let source_owner = owner_proof(&source);
     let holder = fixed_id(0x3A);
     source
