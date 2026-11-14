@@ -67168,7 +67168,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ArtifactUnlocks",
@@ -92783,7 +92783,7 @@
      "path": "src/vault/open/mod.rs",
      "purpose": "Vault open and bootstrap: open doors, privacy posture and live-window attachment",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 15
      }
     },
@@ -99132,8 +99132,8 @@
      "path": "src/world_keys/vault_key.rs",
      "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
      "surface": {
-      "crate-vis": 17,
-      "re-export": 3
+      "crate-vis": 19,
+      "re-export": 4
      }
     },
     {
@@ -99163,9 +99163,35 @@
      "path": "src/world_keys/vault_key/kit.rs",
      "purpose": "The data-key kit (FIX 4532): the owner's 2-of-3 copy of the vault data key this handle holds, issued on his…",
      "surface": {
-      "crate-vis": 2,
-      "fn": 3,
+      "crate-vis": 7,
+      "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/vault_key/kit_passkey.rs",
+     "purpose": "The synced passkey as one data-key kit piece (census L10-18; CROSS-ARCH-0019 #vault-20-unlock: \"One switch…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RecoveryPresetAnyTwoChange",
+      "RecoveryPresetChange",
+      "RecoverySheet"
+     ],
+     "path": "src/world_keys/vault_key/recovery_preset.rs",
+     "purpose": "The owner's recovery preset and the printed recovery sheet it issues (CROSS-ARCH-0019 #vault-20-unlock…",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 7,
+      "struct": 3
      }
     },
     {
@@ -99203,6 +99229,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "KitPasskey",
       "NewVaultKeyWrap",
       "VaultKeyUnlock"
      ],
@@ -99211,7 +99238,8 @@
      "surface": {
       "enum": 2,
       "fn": 3,
-      "re-export": 1
+      "re-export": 1,
+      "struct": 1
      }
     },
     {
@@ -102057,6 +102085,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/recovery_preset_nobody_but_me.rs",
+     "purpose": "The \"Nobody but me\" recovery preset (census L10-18, PR 1; CROSS-ARCH-0019 #vault-20-unlock, PQC-KIT A): the…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -104858,17 +104894,17 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 72,
+     "files": 74,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 272,
+   "over_bar": 273,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7564,
-   "test_files": 1283
+   "source_files": 7566,
+   "test_files": 1284
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -113614,6 +113650,7 @@
       "ArtifactKind",
       "KeyHeader",
       "KeyHeaderWrap",
+      "RecoveryPreset",
       "VaultKeyWrapInfo",
       "VaultKeyWrapKind"
      ],
@@ -113621,8 +113658,8 @@
      "purpose": "The artifact kinds and the key header's wire form (moved from the engine's `recovery::checkpoint::artifact`…",
      "surface": {
       "const": 2,
-      "enum": 2,
-      "fn": 8,
+      "enum": 3,
+      "fn": 10,
       "struct": 3
      }
     },
@@ -133806,7 +133843,7 @@
      "path": "src/api/owner_routes/vault_key_routes.rs",
      "purpose": "`/v1/owner/vault-key`: the vault data key's wraps on a running server (OF-570 E1), the host half of the…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -135441,6 +135478,7 @@
       "PacksCommand",
       "RecoverClockArgs",
       "RecoverWindowArgs",
+      "RecoveryPresetArg",
       "RestoreArgs",
       "RunArgs",
       "RunDecisionArgs",
@@ -135466,14 +135504,15 @@
       "VaultKeyArgs",
       "VaultKeyCommand",
       "VaultKeyNamedArgs",
+      "VaultKeyRecoveryPresetArgs",
       "VaultKeyResealArgs",
       "WhoamiArgs"
      ],
      "path": "src/cli/owner_args.rs",
      "purpose": "Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret…",
      "surface": {
-      "enum": 16,
-      "struct": 49
+      "enum": 17,
+      "struct": 50
      }
     },
     {
@@ -135796,7 +135835,7 @@
      "path": "src/commands/credential_file.rs",
      "purpose": "A file holding a credential, readable by its owner alone",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -136268,7 +136307,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/owner/recovery_kit/issue.rs",
@@ -144393,7 +144432,7 @@
      "path": "src/owner/vault_key.rs",
      "purpose": "The vault data key's public side, shared by `oneiron vault-key`, `oneiron restore` and `/v1/owner/vault-key`…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 23
      }
     },
     {
