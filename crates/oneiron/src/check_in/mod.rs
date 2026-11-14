@@ -104,4 +104,7 @@ pub(crate) use wake::next_check_in_due_at;
 
 // The erase doors' apply shape (2k2; P25-SHAPE Q1 = A).
 pub(crate) use effect::{AppliedCheckIn, owner_act_decision_in_txn};
-pub use effect::{legal_hold_erase_effect_digest, outbound_call_request_erase_effect_digest};
+pub use effect::{
+    legal_hold_erase_effect_digest, outbound_call_request_erase_effect_digest,
+    text_history_erase_effect_digest,
+};
