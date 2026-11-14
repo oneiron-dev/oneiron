@@ -3,6 +3,7 @@
 //! each pass reads one row at a time from it; the dependency queues, id sets
 //! and maps grow in the index as well, so no archive-wide row state stays in
 //! memory. The rows still go in through one write transaction.
+mod issue_archive_restore;
 mod owner_archive_restore;
 mod seed_replacement;
 
@@ -239,6 +240,12 @@ impl Vault {
         // results' are; the values custody holds are read in the writer.
         let _bodies = self.pin_all_result_bodies();
         let mint = super::asset_reserve::reserved_asset_mint(self, &archive)?;
+        // The filing resolver opens read txns, so resolve each subject before the writer.
+        let issue_routes = if owner.is_some() {
+            issue_archive_restore::artifact_routes(self, &archive, secrets)?
+        } else {
+            BTreeMap::new()
+        };
         let mut wtxn = self.store.env.write_txn()?;
         let seeds = EngineSeedIdentities::load()?;
         let restore_fresh =
@@ -355,6 +362,19 @@ impl Vault {
                     unchanged_entities += 1;
                     continue;
                 }
+                // A pack seed the destination holds unchanged apart from its
+                // seed times stays the destination's row. It compares on its
+                // archived body before that body is rebuilt: the carrier of a
+                // seeded skill whose tree a no-secrets export redacted has no
+                // rebuilt body.
+                if seeds.is_pack_seed(row.entity_type, &id)
+                    && matches_seed_row_apart_from_seed_times(&row, &existing, &row.body, secrets)
+                {
+                    validate_existing_source(self, &wtxn, &row, &archive, &at, secrets)?;
+                    // Keep the destination seed's birth metadata as well as its header.
+                    unchanged_entities += 1;
+                    continue;
+                }
                 let body =
                     imported_body(&row, &archive.index, &archive.files, secrets, owner_restore)?;
                 if matches_row(
@@ -377,13 +397,12 @@ impl Vault {
                     continue;
                 }
                 if seeds.is_pack_seed(row.entity_type, &id)
-                    && (matches_seed_row_apart_from_seed_times(&row, &existing, &row.body, secrets)
-                        || matches_seed_row_apart_from_seed_times(
-                            &row,
-                            &existing,
-                            &ExportBody::from_bytes_with(&body, row.entity_type, secrets),
-                            secrets,
-                        ))
+                    && matches_seed_row_apart_from_seed_times(
+                        &row,
+                        &existing,
+                        &ExportBody::from_bytes_with(&body, row.entity_type, secrets),
+                        secrets,
+                    )
                 {
                     validate_existing_source(self, &wtxn, &row, &archive, &at, secrets)?;
                     // Keep the destination seed's birth metadata as well as its header.
@@ -502,6 +521,19 @@ impl Vault {
         }
         let mut inserted_entities = pending + model_imports.inserted + inserted_descriptors;
         let mut destination_omissions = Vec::new();
+        // ISSUE stayed omitted through generic indexing; only this owner's permit restores it.
+        if let Some(permit) = permit.as_ref() {
+            let (inserted, unchanged) = issue_archive_restore::restore_in_txn(
+                self,
+                &mut wtxn,
+                &mut archive,
+                permit,
+                &issue_routes,
+                secrets,
+            )?;
+            inserted_entities += inserted;
+            unchanged_entities += unchanged;
+        }
         // Resolve reference dependencies without assuming UUID or export order.
         // A cycle or an unavailable subject fails without a partial commit.
         // Each round queues what waits on no pending id, then restores it.
@@ -1236,7 +1268,9 @@ fn owed_secrets_in_txn(
 }
 
 /// A stored skill's source package against the archive's: the tree reads
-/// under the archive's `secrets`, so writer and reader agree.
+/// under the archive's `secrets`, so writer and reader agree. A tree the
+/// export redacted (a seeded built-in setup skill in a no-secrets archive)
+/// compares as the redacted tree the stored package exports to.
 fn validate_existing_source<R: Read + Seek>(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -1250,11 +1284,12 @@ fn validate_existing_source<R: Read + Seek>(
     }
     let bundle: ExportSkillBundle = archive.hydrated(at.loc)?;
     if let Some(tree) = &bundle.source_tree {
-        let files = tree.import_files_in_with(&archive.files, secrets)?;
         let stored = vault
             .export_hub_package_in_txn(txn, &parse_id(&row.id)?)?
             .ok_or_else(|| invalid("existing skill has no matching stored source package"))?;
-        if stored.export_files()? != files || Some(stored.format) != bundle.source_format {
+        if !tree.matches_stored_in_with(&archive.files, &stored.export_files()?, secrets)?
+            || Some(stored.format) != bundle.source_format
+        {
             return Err(invalid(
                 "existing skill source package differs from archive",
             ));
