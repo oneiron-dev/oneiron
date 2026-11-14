@@ -3,13 +3,16 @@
 //! `#decision-federation-26`): a trickle is allowed, a burst over the
 //! device's own baseline is deferred, or isolated and proposed, and the home
 //! gets it back by itself once the device's rate is at its baseline again.
+//! A held burst whose device no longer stands as its connection proved it
+//! (its Write credential's slip expired or revoked since) ends
+//! `StaleAuthority` and is never handed back.
 //!
 //! Run: `cargo test --locked -p oneiron --all-features --test device_burst_admission`.
 
 use std::sync::Arc;
 
 use loro::{ExportMode, LoroDoc};
-use oneiron::authority::PeerMachine;
+use oneiron::authority::{HostSlipIssuer, PeerMachine};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
 use oneiron::store::ports::ManualClock;
@@ -61,19 +64,7 @@ fn home(unusual_rate: FederationBurstOutcome) -> TestResult<Home> {
         },
         None,
     );
-    vault.set_federation_burst_policy(
-        &owner,
-        BurstPeer::Device(&device),
-        FederationBurstPolicy {
-            baseline: Some(FederationBurstBaseline {
-                name: "steady".into(),
-                writes_per_sec: 1.0,
-                structural_streak: 1.0,
-            }),
-            unusual_rate,
-            unusual_streak: FederationBurstOutcome::IsolateAndPropose,
-        },
-    )?;
+    vault.set_federation_burst_policy(&owner, BurstPeer::Device(&device), steady(unusual_rate))?;
     let window = WindowKey::try_new("2023-11").ok_or("window key")?;
     Ok(Home {
         _dir: dir,
@@ -87,7 +78,63 @@ fn home(unusual_rate: FederationBurstOutcome) -> TestResult<Home> {
     })
 }
 
+/// The owner's policy for a device here: a baseline of one write a second,
+/// a burst over it routed to `unusual_rate`.
+fn steady(unusual_rate: FederationBurstOutcome) -> FederationBurstPolicy {
+    FederationBurstPolicy {
+        baseline: Some(FederationBurstBaseline {
+            name: "steady".into(),
+            writes_per_sec: 1.0,
+            structural_streak: 1.0,
+        }),
+        unusual_rate,
+        unusual_streak: FederationBurstOutcome::IsolateAndPropose,
+    }
+}
+
 impl Home {
+    /// Mints the slip `slip_id` for the owner from the host root, live for
+    /// `ttl_secs` from now, and answers the issuer that can revoke it.
+    fn mint_slip(&self, slip_id: [u8; 32], ttl_secs: u64) -> TestResult<HostSlipIssuer> {
+        let owner = self.vault.ensure_embedded_owner_actor()?;
+        let issuer =
+            HostSlipIssuer::from_secret(b"device-burst-test-host-secret").expect("host issuer");
+        let root = self.vault.ensure_host_root_slip(&issuer)?;
+        let issued_at = self.vault.capability_slip_now()?;
+        let mut claims = root.claims.clone();
+        claims.slip_id = slip_id;
+        claims.holder_ref = owner.to_hex();
+        claims.actor_class = Some("human".into());
+        claims.issued_at = issued_at;
+        claims.expires_at = issued_at + ttl_secs;
+        claims.ttl_secs = ttl_secs;
+        self.vault.mint_capability_slip(&issuer, claims)?;
+        Ok(issuer)
+    }
+
+    /// A device of this home whose connection proved `machine` and bound its
+    /// Write credential with the slip `slip`, under the steady baseline that
+    /// defers a burst.
+    fn device_with_slip(&self, machine: PeerMachine, slip: [u8; 32]) -> TestResult<DevicePeer> {
+        let device = DevicePeer::of_connection(machine, Some(slip));
+        self.vault.set_federation_burst_policy(
+            &self.owner,
+            BurstPeer::Device(&device),
+            steady(FederationBurstOutcome::Defer),
+        )?;
+        Ok(device)
+    }
+
+    /// A burst of `device` over its baseline, held: answers its batch's
+    /// address.
+    fn hold_burst(&self, device: &DevicePeer) -> TestResult<String> {
+        let burst = self.rows_update(BURST_ROWS)?;
+        match admit_device_window_update(&self.vault, device, &self.window, &burst, &[])? {
+            DeviceBurstAdmission::Defer { batch_ref } => Ok(batch_ref),
+            other => panic!("a burst over the device's baseline is deferred: {other:?}"),
+        }
+    }
+
     /// One update from the device adding `rows` rows to the window.
     fn rows_update(&self, rows: usize) -> TestResult<Vec<u8>> {
         let before = self.doc.oplog_vv();
@@ -110,9 +157,17 @@ impl Home {
     }
 
     fn receipt(&self, batch_ref: &str) -> TestResult<FederationBurstReceipt> {
+        self.receipt_of(&self.device, batch_ref)
+    }
+
+    fn receipt_of(
+        &self,
+        device: &DevicePeer,
+        batch_ref: &str,
+    ) -> TestResult<FederationBurstReceipt> {
         Ok(self.vault.federation_burst_disposition_as_owner(
             &self.owner,
-            BurstPeer::Device(&self.device),
+            BurstPeer::Device(device),
             batch_ref,
         )?)
     }
@@ -242,6 +297,64 @@ fn an_isolated_device_burst_is_proposed_and_replays_without_a_human() -> TestRes
         ),
         "the receipt keeps the original disposition: {:?}",
         landed.disposition
+    );
+    Ok(())
+}
+
+#[test]
+fn a_held_burst_ends_stale_once_its_slip_expires() -> TestResult {
+    let home = home(FederationBurstOutcome::Defer)?;
+    let slip = [0x41; 32];
+    home.mint_slip(slip, 60)?;
+    let device = home.device_with_slip(PeerMachine::Unknown, slip)?;
+    let batch_ref = home.hold_burst(&device)?;
+    assert_eq!(
+        home.receipt_of(&device, &batch_ref)?.state,
+        FederationBurstWorkState::Pending
+    );
+
+    // Past the slip's lifetime, and the device's rate back at its baseline.
+    home.clock.set(NOW + 120);
+    let due = ready_device_work(&home.vault)?;
+    assert!(
+        due.is_empty(),
+        "a burst held under a slip that has expired since is not handed back: {due:?}"
+    );
+    assert_eq!(
+        home.receipt_of(&device, &batch_ref)?.state,
+        FederationBurstWorkState::StaleAuthority
+    );
+    Ok(())
+}
+
+#[test]
+fn a_held_burst_ends_stale_once_its_machines_slip_is_revoked() -> TestResult {
+    let home = home(FederationBurstOutcome::Defer)?;
+    let slip = [0x42; 32];
+    let issuer = home.mint_slip(slip, 3_600)?;
+    let device = home.device_with_slip(
+        PeerMachine::Proven {
+            machine: home.machine,
+            key: [7; 32],
+        },
+        slip,
+    )?;
+    let batch_ref = home.hold_burst(&device)?;
+
+    home.vault.revoke_capability_slip(&issuer, slip)?;
+    home.clock.set(NOW + 2);
+    let due = ready_device_work(&home.vault)?;
+    assert!(
+        due.is_empty(),
+        "a burst held under a machine whose slip is revoked since is not handed back: {due:?}"
+    );
+    let ended = home.receipt_of(&device, &batch_ref)?;
+    assert_eq!(ended.state, FederationBurstWorkState::StaleAuthority);
+    assert_eq!(
+        ended.peer,
+        FederationBurstPeerRef::Machine {
+            machine: home.machine
+        }
     );
     Ok(())
 }
