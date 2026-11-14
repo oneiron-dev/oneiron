@@ -108,13 +108,13 @@ fn settle_evidence_ids(references: &[String]) -> MemoryResult<Vec<EntityId>> {
     Ok(ids)
 }
 
-/// What the host lends a conflict-settlement attempt's bound verdicts: its
-/// decision ladder and its learned bands for one call.
+/// Lends the host's native decision resources for one admitted attempt's bound verdict.
 ///
-/// The lender holds the host's ladder and policy while the attempt holds its
-/// lease. Each verdict runs its one decision inside [`Self::lend`], so the
-/// host's seats, wording and bands stay the host's and the verdict's
-/// receipts and spend stay the verdict's own.
+/// Settlement runs its decision inside [`Self::lend`], borrowing the host's ladder
+/// and learned bands. Extraction runs its checked pack inside
+/// [`Self::lend_extraction`], borrowing its held decisions and admitted pass resources.
+/// The host retains its seats, wording and bands; each verdict retains its own
+/// receipts and spend.
 pub trait DreamerDecisionLender: Send + Sync {
     /// Runs `decide` with the host's decision ladder and learned bands.
     ///
@@ -134,6 +134,22 @@ pub trait DreamerDecisionLender: Send + Sync {
             &DecisionBandPolicy,
         ) -> crate::Result<TypedDecision>,
     ) -> crate::Result<TypedDecision>;
+
+    /// Runs the engine's extraction read with this attempt's borrowed pass resources.
+    ///
+    /// The default lends nothing, so hosts without an extraction lender keep refusing
+    /// the read after its checked rebuild. A lender runs the callback rather than
+    /// manufacturing an answer or keeping a second receipt store.
+    ///
+    /// # Errors
+    ///
+    /// The extraction read's own failures and the host's lending failures.
+    fn lend_extraction(
+        &self,
+        _decide: &mut dyn FnMut(super::ExtractionDecisionLoan<'_>) -> MemoryResult<AiVerdict>,
+    ) -> MemoryResult<Option<AiVerdict>> {
+        Ok(None)
+    }
 }
 
 impl DreamerAttemptBinding {

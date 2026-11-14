@@ -17,9 +17,21 @@ use crate::model_decision::{
     HumanAskReason, MAX_DECISION_STATE_BYTES, RoleRank,
 };
 
+mod execution;
 pub(in crate::dreamer_consolidation) mod identity_choice;
+#[cfg(oneiron_test_support)]
+mod native_parity;
 mod read;
+pub(crate) use execution::evidence_version_for_row;
+pub(in crate::dreamer_consolidation) use execution::{
+    ChargeSink, VerdictRead, decide_pack_with_charges,
+};
 pub(super) use identity_choice::FinalChoice;
+#[cfg(oneiron_test_support)]
+pub(crate) use native_parity::{
+    NativeFixtureMember, NativePackOutcome, NativeResolutionFixture,
+    native_resolution_pack_for_test,
+};
 pub(in crate::dreamer_consolidation) use read::{Decider, ScopedRead};
 
 /// The answer that names no listed id.
@@ -412,7 +424,7 @@ fn holds(ask: &DecisionAsk) -> bool {
 /// person questions, so every request a pack splits into shows the same
 /// labels. A read's own questions always take the first numbers however many
 /// suffix questions follow, and only those numbers ever render into a state.
-fn label_questions_with(
+pub(in crate::dreamer_consolidation) fn label_questions_with(
     paired: Option<&DecisionQuestion>,
     person: Option<&DecisionQuestion>,
     labels: &mut CallLabelMap,
@@ -428,7 +440,7 @@ fn label_questions_with(
 /// boards and the owners; its boards when it has no leader but the Dreamer
 /// itself; the owners when the vault folds no such project. Never the
 /// Dreamer: a system actor holds no role.
-fn ask_route_for(
+pub(in crate::dreamer_consolidation) fn ask_route_for(
     vault: &crate::Vault,
     dreamer: EntityId,
     project: Option<EntityId>,
@@ -524,112 +536,39 @@ impl ConsolidationExecutor<'_> {
         sources: Option<Vec<EntityId>>,
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
-        let vault = step_ctx.vault;
         let call = self.role(DREAMER_VERDICT_ROLE);
-        let seal = |request: LlmRequest| -> Result<LlmRequest> {
-            let mut request = vault
-                .authorize_model_role(DREAMER_VERDICT_ROLE, request, &call.inference)?
-                .into_request();
-            super::super::roles::bind_reasoning(vault, call.backend, &mut request)?;
-            Ok(request)
-        };
         // Every decision's receipt names the version of each evidence body
         // the branch pinned.
         let versions = resources.evidence_versions(evidence);
-        let mut spent = Vec::new();
-        let decided = self
-            .decider()
-            .decide_scoped(
-                ScopedRead {
-                    step: step_ctx,
-                    pass,
-                    call: &call,
-                    shell: verdict_shell(&call, resources.scope())?,
-                    seal: &seal,
-                    versions: &versions,
-                    to,
-                    correlation,
-                    evidence,
-                    state,
-                    ceiling: VERDICT_CEILING,
-                    // Each pack passes the rows it rendered (FIX 11526).
-                    sources,
-                },
-                questions,
+        decide_pack_with_charges(
+            VerdictRead {
+                step: step_ctx,
+                pass,
+                decider: self.decider(),
+                call: &call,
+                scope: resources.scope(),
+                versions: &versions,
+                to,
+                correlation,
+                evidence,
+                state,
                 labels,
-                &mut spent,
-            )
-            .await;
-        // Every generation that finished is spent, whatever the pack's outcome: a later
-        // step that traps or fails leaves the prefix on the tally.
-        for (index, (_, usage, binding, _)) in spent.iter().enumerate() {
-            if let Some(binding) = binding {
-                if let Err(error) =
-                    charges.record_terminal(vault, binding.attempt_id, binding.step_hash, usage)
-                {
-                    for (_, usage, _, memoized) in &spent[index..] {
-                        if !*memoized {
-                            charges.record_usage(usage);
-                        }
-                    }
-                    if let Some(usage) = decided
-                        .as_ref()
-                        .err()
-                        .and_then(DurableStepError::spent_usage)
-                    {
-                        charges.record_usage(usage);
-                    }
-                    return Err(error.into());
-                }
-            } else {
-                charges.record_usage(usage);
-            }
-        }
-        decided
-    }
-}
-
-/// The verdict role's request for a typed read: its model, scope and binding, with no
-/// messages yet.
-fn verdict_shell(call: &RoleCall<'_>, scope: &oneiron_model::llm::Scope) -> Result<LlmRequest> {
-    let keyless = call.inference.selected_keyless();
-    let paid = call.inference.selected_paid();
-    Ok(LlmRequest {
-        model: call.model.clone(),
-        envelope: CallEnvelope {
-            seat_effort: None,
-            scope: scope.clone(),
-            purpose: CallPurpose::Consolidation,
-            class: CallClass::Durable {
-                fallback: oneiron_model::llm::DeterministicFallback {
-                    name: "json_rules_v1".into(),
-                    config: None,
-                },
+                // Each pack passes the rows it rendered (FIX 11526).
+                sources,
+                deadline_ms: None,
+                ceiling: None,
             },
-            tier: TierPrecedence::for_purpose(
-                &CallPurpose::Consolidation,
-                ModelTierRef("consolidation".into()),
-            ),
-            response_format: ResponseFormat::Text,
-            locality: call.inference.selected_locality().ok_or_else(|| {
-                crate::Error::InvalidConfig("consolidation host binding needs locality".into())
-            })?,
-            host_keyless: keyless,
-            host_paid: paid,
-        }
-        .with_purpose_defaults(),
-        messages: Vec::new(),
-        tools: Vec::new(),
-        params: BTreeMap::new(),
-        provider_options: BTreeMap::new(),
-        host_segments: None,
-    })
+            questions,
+            ChargeSink::Borrowed(charges),
+        )
+        .await
+    }
 }
 
 /// Which read of a pack one state is for: the whole pack, one of its pages,
 /// or a final identity choice (FIX 8693).
 #[derive(Debug, Clone, Copy)]
-pub(super) enum StatePart {
+pub(in crate::dreamer_consolidation) enum StatePart {
     Whole,
     Page { page: usize, pages: usize },
     Final,
@@ -689,12 +628,12 @@ impl ConflictRows {
     }
 
     /// Every candidate's index, in order.
-    pub(super) fn all(&self) -> Vec<usize> {
+    pub(in crate::dreamer_consolidation) fn all(&self) -> Vec<usize> {
         (0..self.candidates.len()).collect()
     }
 
     /// The indexes of the candidates `ids` name, in their order.
-    pub(super) fn indexes(&self, ids: &[EntityId]) -> Vec<usize> {
+    pub(in crate::dreamer_consolidation) fn indexes(&self, ids: &[EntityId]) -> Vec<usize> {
         ids.iter()
             .filter_map(|id| self.candidates.iter().position(|row| row.0 == *id))
             .collect()
@@ -710,7 +649,7 @@ impl ConflictRows {
 
     /// The state one read of the pack takes: the predicate, every prior head
     /// and the candidates at `shown`, each whole, marked as `part`'s.
-    pub(super) fn state(
+    pub(in crate::dreamer_consolidation) fn state(
         &self,
         shown: &[usize],
         part: StatePart,

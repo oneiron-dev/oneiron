@@ -20,9 +20,30 @@ use oneiron_model::llm::{DreamerFailureDecision, LlmResponse, LlmUsage};
 /// unbilled memo (for example, after a trap refunded its reservation) still
 /// belongs in the next settlement; a paid checkpoint memo does not.
 #[derive(Default)]
-pub(super) struct StepChargeTally {
+pub struct StepChargeTally {
     pub(super) units: u64,
     pub(super) step_bindings: Vec<StepEffectBinding>,
+    /// Holds every spent generation the shared verdict execution accounted, in order.
+    /// It serves test observation only: production settlement reads units and bindings
+    /// alone.
+    #[cfg(oneiron_test_support)]
+    pub(super) spent_observations: Vec<SpentObservation>,
+}
+
+/// Describes one spent generation the shared verdict execution accounted: its request
+/// hash, its usage, its durable binding when it claimed one, and whether it replayed
+/// a memo. It serves test observation only.
+#[cfg(oneiron_test_support)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpentObservation {
+    /// Holds the spent request hash.
+    pub hash: [u8; 32],
+    /// Holds the spent call's usage.
+    pub usage: LlmUsage,
+    /// Holds the durable step the spend claimed, or none for unclaimed usage.
+    pub binding: Option<StepEffectBinding>,
+    /// Tells whether the spend replayed a memoized response.
+    pub memoized: bool,
 }
 
 impl StepChargeTally {
@@ -260,6 +281,36 @@ impl StepChargeTally {
     /// (FIX 7508), charged once when its parent stops waiting on it.
     pub(super) fn record_units(&mut self, units: u64) {
         self.units = self.units.saturating_add(units);
+    }
+
+    /// Creates an empty tally, holding no units, bindings or observations.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the units tallied so far.
+    pub fn units(&self) -> u64 {
+        self.units
+    }
+
+    /// Returns the terminal step bindings tallied so far.
+    pub fn step_bindings(&self) -> &[StepEffectBinding] {
+        &self.step_bindings
+    }
+
+    /// Moves this tally's units and bindings into `units` and `bindings`, leaving it
+    /// empty. Test observations stay for the parity read.
+    pub fn drain_into(&mut self, units: &mut u64, bindings: &mut Vec<StepEffectBinding>) {
+        *units = units.saturating_add(self.units);
+        self.units = 0;
+        bindings.extend(self.step_bindings.drain(..));
+    }
+
+    /// Returns every spent generation accounted so far, in order. It serves test
+    /// observation only.
+    #[cfg(oneiron_test_support)]
+    pub fn spent_observations(&self) -> &[SpentObservation] {
+        &self.spent_observations
     }
 }
 

@@ -16,7 +16,16 @@ mod root_bridge;
 
 use conflicts::{ConflictInput, ResolvedSets};
 pub use decisions::ConsolidationDecisions;
-pub(super) use decisions::{Decider, ScopedRead};
+pub(crate) use decisions::evidence_version_for_row;
+pub(super) use decisions::{
+    ChargeSink, Decider, ScopedRead, StatePart, VerdictRead, ask_route_for,
+    decide_pack_with_charges, label_questions_with,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use decisions::{
+    NativeFixtureMember, NativePackOutcome, NativeResolutionFixture,
+    native_resolution_pack_for_test,
+};
 use merge_resolution::MergeResolution;
 
 use super::evidence::{

@@ -665,7 +665,10 @@ fn yes_no() -> crate::llm::decision::AnswerContract {
 /// `ai.verdict`'s answer: the ladder's answer on the request's contract, its
 /// probability (P(yes) for a yes/no, else the answer's confidence; none for a
 /// Box or a Point whose coordinates were not read), the rung whose answer
-/// stands (none when the call abstained), and the decision's receipt.
+/// stands (none when the call abstained), and the decision's receipt. A bound
+/// extraction verdict also answers every pack question in `pack`, in pack order,
+/// with the top level fields equal to the first entry; every other verdict leaves
+/// `pack` empty.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AiVerdict {
     pub answer: crate::llm::decision::DecisionAnswer,
@@ -694,6 +697,12 @@ pub struct AiVerdict {
     /// refs, kinds and the caller's own state are never cut.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence_cut_at_bytes: Option<u64>,
+    /// Contains every answered pack question in pack order, one entry per pack question.
+    /// A bound extraction verdict answers the whole pack here, with the top level
+    /// answer, probability, rung and receipt equal to the first entry. Every other
+    /// verdict leaves this empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pack: Option<Vec<super::extraction_verdict::AiVerdictPackEntry>>,
 }
 
 impl From<crate::llm::decision::TypedDecision> for AiVerdict {
@@ -708,6 +717,7 @@ impl From<crate::llm::decision::TypedDecision> for AiVerdict {
             screenshot: false,
             until_ms: None,
             evidence_cut_at_bytes: None,
+            pack: None,
         }
     }
 }

@@ -50,7 +50,9 @@ pub(crate) use self::admission::AdmittedBudgetLine;
 pub use crate::dreamer_plugin_suggest::DREAMER_PLUGIN_SUGGEST_ATTEMPT_TYPE;
 
 // Untangle 6.9c PR 3: a strength attempt's in-process credential.
-pub use self::attempt_binding::{DreamerAttemptBinding, DreamerDecisionLender};
+pub use self::attempt_binding::{
+    DreamerAttemptBinding, DreamerDecisionLender, ExtractionDecisionLoan,
+};
 pub use self::claim_authoring::*;
 pub use self::codec::*;
 pub use self::constants::*;

@@ -17,13 +17,22 @@ use oneiron::test_doors::extraction_inputs::{
     settle_extraction_rows_in_project, witness_extraction_turns,
 };
 use oneiron::test_doors::extraction_verdict::{
-    dreamer_extraction_verdict_source_version, land_extraction_verdict_listing_claim,
+    ExtractionVerdictFixture, attach_extraction_verdict_lender,
+    dreamer_extraction_verdict_source_version, fixture_charge_binding_count, fixture_charge_units,
+    fixture_spent_observations, land_extraction_verdict_listing_claim,
+    run_extraction_verdict_native_pack,
 };
 use oneiron::test_doors::steward::{STEWARD_VERBS, dreamer, stand_steward_grant};
 use oneiron::test_doors::untangle_regressions::seed_named_person;
-use oneiron::{AttemptId, EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::{
+    AttemptId, BudgetLease, EdgeActorClass, EntityId, FatalLlmError, LlmBackend, LlmCapability,
+    LlmError, LlmGenerateFuture, LlmRequest, LlmStreamResult, ModelId, UnsupportedCapability,
+    Vault, VaultConfig,
+};
+use oneiron_testkit::{ScriptedBackend, Step};
 use serde_json::{Value, json};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Returns a fixture or assertion error without hiding its source.
 type ExtractionVerdictTestResult<T> = Result<T, Box<dyn std::error::Error>>;
@@ -576,5 +585,195 @@ fn other_facets_keep_their_verdict_rules() -> ExtractionVerdictTestResult<()> {
         panic!("an extraction binding refuses a settlement page state");
     };
     assert_eq!(extraction_decode.code, MEMORY_CODE_BAD_REQUEST);
+    Ok(())
+}
+
+/// Answers the one pack generation from a per-request scripted backend and counts the
+/// generations it serves.
+struct ParityReasoner {
+    /// Holds the fixed both-question reply text.
+    reply: String,
+    /// Declares the reply's input tokens.
+    input_tokens: u64,
+    /// Declares the reply's output tokens.
+    output_tokens: u64,
+    /// Counts the generations served so far.
+    calls: AtomicUsize,
+}
+
+impl ParityReasoner {
+    /// Builds a reasoner answering every generation with `reply`, declaring the token counts.
+    fn new(reply: String, input_tokens: u64, output_tokens: u64) -> Self {
+        Self {
+            reply,
+            input_tokens,
+            output_tokens,
+            calls: AtomicUsize::new(0),
+        }
+    }
+
+    /// Returns the generations served so far.
+    fn call_count(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl LlmBackend for ParityReasoner {
+    /// The scripted backend answers every model, so this reasoner does too.
+    fn supports(&self, _model: &ModelId, _capability: LlmCapability) -> bool {
+        true
+    }
+
+    /// Answers the generation from a scripted backend matching this request's digest.
+    fn generate<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        let reply = self.reply.clone();
+        let (input_tokens, output_tokens) = (self.input_tokens, self.output_tokens);
+        Box::pin(async move {
+            let digest = ScriptedBackend::digest_of(&request);
+            let backend = ScriptedBackend::new(vec![
+                Step::text("parity-pack", digest, reply)
+                    .buffered()
+                    .usage(input_tokens, output_tokens),
+            ])
+            .map_err(|error| {
+                LlmError::Fatal(FatalLlmError::InvalidRequestDetail {
+                    message: format!("the parity scripted backend did not build: {error}"),
+                    code: None,
+                })
+            })?;
+            let response = backend.generate(request, lease).await;
+            let seen = backend.finish();
+            self.calls.fetch_add(seen.len(), Ordering::SeqCst);
+            response
+        })
+    }
+
+    /// The parity legs never stream; a streamed call fails loudly.
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(LlmError::Fatal(FatalLlmError::Unsupported(
+            UnsupportedCapability {
+                capability: LlmCapability::Streaming,
+                model: None,
+                reason: None,
+            },
+        )))
+    }
+}
+
+/// Builds the fixed pack reply answering accumulate for the resolution question and none
+/// for the identity question, with every shown label weighted.
+fn parity_pack_reply() -> String {
+    json!({
+        "Q1": {"merge": 0.05, "supersede": 0.05, "accumulate": 0.85, "escalate": 0.05},
+        "Q2": {"none": 0.7, "C1": 0.2, "C2": 0.1},
+    })
+    .to_string()
+}
+
+/// Reads the same whole resolution pack through the native oracle and the bound verdict
+/// and answers the same: equal answers, probabilities, rungs and question ids in pack
+/// order, the top level fields equal to the first pack entry, the bound generation
+/// replaying the native sealed request from its memo, and one terminal charge for the
+/// shared attempt.
+#[test]
+fn extraction_native_pack_matches_bound_verdict() -> ExtractionVerdictTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Arc::new(open_extraction_verdict_vault(&dir)?);
+    let actor = dreamer(&vault)?;
+    stand_steward_grant(&vault, actor, &STEWARD_VERBS)?;
+    let subject = EntityId::now();
+    seed_named_person(&vault, &subject, "owen", vault.now_recorded_at())?;
+    let witnessed = witness_extraction_turns(&vault, &["owen likes tea", "owen likes coffee"])?;
+    let (id, admitted) = enqueue_admitted_extraction_attempt(&vault, &witnessed.turns, QUEUE_NOW)?;
+    let page_binding = bind_extraction(&vault, &admitted)?;
+    let page = read_bound_extraction_page(&page_binding, &extraction_attempt_hex(id))?;
+    let turns = page_turns_with_versions(&page);
+    assert_eq!(turns.len(), 2);
+    let pack = json!({
+        "read": "resolution",
+        "part": {"kind": "whole"},
+        "candidates": [
+            extraction_candidate(&subject.to_hex(), "profile.hobby", json!("tea"), &turns[0].0, turns[0].1.clone()),
+            extraction_candidate(&subject.to_hex(), "profile.hobby", json!("coffee"), &turns[1].0, turns[1].1.clone()),
+        ],
+        "listed": [],
+        "priors": [],
+        "questions": [
+            {"key": ["resolution"], "options": native_resolution_options()},
+            {"key": ["identity", "0"], "options": ["none", "candidate:0", "candidate:1"]},
+        ],
+        "earlier": [],
+    });
+    let reasoner = Arc::new(ParityReasoner::new(parity_pack_reply(), 100, 50));
+    let fixture = ExtractionVerdictFixture::new(reasoner.clone())?;
+    let native = run_extraction_verdict_native_pack(&vault, &admitted, &pack, &fixture);
+    let binding = attach_extraction_verdict_lender(bind_extraction(&vault, &admitted)?, &fixture);
+    let bound = invoke_bound_verdict(
+        &binding,
+        extraction_verdict_request("resolution", native_resolution_options(), pack),
+    );
+    let native = native.expect("the native leg reads its pack");
+    let bound = bound.expect("the bound leg answers its pack");
+    assert_eq!(native.resolution.as_deref(), Some("accumulate"));
+    assert_eq!(native.identity, None);
+    let entries = bound["pack"]
+        .as_array()
+        .expect("the bound verdict answers its pack");
+    assert_eq!(entries.len(), 2);
+    assert_eq!(native.answers.len(), 2);
+    assert_eq!(entries[0]["key"], json!(["resolution"]));
+    assert_eq!(entries[1]["key"], json!(["identity", "0"]));
+    for (index, (answer, entry)) in native.answers.iter().zip(entries.iter()).enumerate() {
+        assert_eq!(answer.question_index, index);
+        assert_eq!(answer.answer, entry["answer"]);
+        assert_eq!(entry["p"].as_f64(), answer.p);
+        assert!(answer.p.is_some_and(|p| p > 0.5 && p < 1.0));
+        assert_eq!(answer.rung, entry["rung"]);
+        assert_eq!(
+            Some(answer.question_id.as_str()),
+            entry["question"].as_str()
+        );
+        let mut native_receipt = answer.receipt.clone();
+        let mut bound_receipt = entry["receipt"].clone();
+        for receipt in [&mut native_receipt, &mut bound_receipt] {
+            if let Some(used) = receipt.pointer_mut("/time/used_ms") {
+                *used = Value::from(0);
+            }
+        }
+        assert!(native_receipt.pointer("/time/used_ms").is_some());
+        assert_eq!(native_receipt, bound_receipt);
+    }
+    assert_eq!(bound["answer"], entries[0]["answer"]);
+    assert_eq!(bound["p"], entries[0]["p"]);
+    assert_eq!(bound["rung"], entries[0]["rung"]);
+    assert_eq!(bound["receipt"], entries[0]["receipt"]);
+    assert_eq!(native.spent.len(), 1);
+    assert!(!native.spent[0].memoized);
+    assert_eq!(native.tally_units, 150);
+    assert_eq!(native.tally_bindings, 1);
+    let spent = fixture_spent_observations(&fixture);
+    assert_eq!(spent.len(), 2);
+    assert!(!spent[0].memoized);
+    assert!(spent[1].memoized);
+    assert_eq!(spent[0].request_hash_hex, spent[1].request_hash_hex);
+    assert_eq!(spent[0], native.spent[0]);
+    assert_eq!(spent[1].request_hash_hex, native.spent[0].request_hash_hex);
+    assert_eq!(spent[0].step_hash_hex, spent[1].step_hash_hex);
+    assert!(spent[0].step_hash_hex.is_some());
+    assert_eq!(spent[0].attempt_hex, spent[1].attempt_hex);
+    for observation in &spent {
+        assert_eq!(observation.input_total, 100);
+        assert_eq!(observation.output_total, 50);
+    }
+    assert_eq!(fixture_charge_units(&fixture), native.tally_units);
+    assert_eq!(
+        fixture_charge_binding_count(&fixture),
+        native.tally_bindings
+    );
+    assert_eq!(reasoner.call_count(), 1);
     Ok(())
 }
