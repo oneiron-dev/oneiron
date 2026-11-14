@@ -5,10 +5,8 @@ use crate::{VadAnnotation, VadAnnotationSource, VaultConfig};
 #[test]
 fn composite_is_provenanced_idempotent_and_neutral_when_unknown() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let config = VaultConfig {
-        map_size: 64 * 1024 * 1024,
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::device();
+    config.map_size = 64 * 1024 * 1024;
     let vault = Vault::open(dir.path(), config.clone()).expect("open source state-index fixture");
     // The host's signal predicates are its own; without a rule they take the
     // criticality floor and wait for the owner before the index reads them.
@@ -84,6 +82,7 @@ fn composite_is_provenanced_idempotent_and_neutral_when_unknown() -> Result<()> 
             crate::registry::ENTITY_TYPE_CLAIM,
             time,
             10,
+            None,
             &forged_bytes,
         )
         .commit()?;
@@ -111,11 +110,11 @@ fn composite_is_provenanced_idempotent_and_neutral_when_unknown() -> Result<()> 
     );
     assert_eq!(vault.state_index(&EntityId::now())?, StateIndex::default());
     // Reference strings survive credential nulling without a generic binary exemption.
-    let export = vault.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+    let export = vault.export_whole_vault(false)?;
     let target_dir = tempfile::tempdir()?;
     let target =
         Vault::open(target_dir.path(), config.clone()).expect("open restore state-index fixture");
-    target.import_whole_vault_json(export.bytes())?;
+    target.import_whole_vault_archive(export.bytes())?;
     let restored = target.get_claim(&id)?.unwrap();
     assert_eq!(
         restored.evidence,

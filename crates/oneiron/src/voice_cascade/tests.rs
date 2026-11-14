@@ -482,14 +482,16 @@ impl CascadeControl for TestControl {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-VOICE-CASCADE-TESTS-ITEMS]: the lib test target's type check fails here (4 errors: E0061 x3, E0533 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn hosted_eviction_repoints_banked_identity_to_self_hosted_spine() -> Result<()> {
+    use crate::llm::ModelLocality;
     use crate::voice_cascade::hosted_tts::{
         HostedProvider, HostedTransport, HostedTtsAdapter, HostedWork,
     };
-    use crate::voice_identity::ref_bank::{VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip};
+    use crate::voice_identity::ref_bank::{
+        VoiceRefOrigin, VoiceRefPack, VoiceRefSubjectKind, VoiceRegisterClip, VoiceRenderDecision,
+    };
+    use crate::voice_identity::{VoiceConsentBasis, VoiceConsentState};
     #[derive(Default)]
     struct Queue(Vec<HostedWork>);
     impl HostedTransport for Queue {
@@ -504,7 +506,9 @@ fn hosted_eviction_repoints_banked_identity_to_self_hosted_spine() -> Result<()>
         id: "owner-voice-refs".into(),
         voice_id: "owner-voice".into(),
         owner: entity(6),
-        origin: VoiceRefOrigin::Captured,
+        origin: VoiceRefOrigin::Captured {
+            consent_event_ref: "grant-owner-voice".into(),
+        },
         clips: vec![VoiceRegisterClip {
             register: "neutral".into(),
             media_type: "audio/wav".into(),
@@ -512,10 +516,28 @@ fn hosted_eviction_repoints_banked_identity_to_self_hosted_spine() -> Result<()>
             transcript: "reference".into(),
         }],
     };
+    vault.record_voice_render_consent(&VoiceRenderDecision {
+        event_id: "grant-owner-voice".into(),
+        voice_id: pack.voice_id.clone(),
+        subject: pack.owner,
+        subject_kind: VoiceRefSubjectKind::Person,
+        recorded_by: pack.owner,
+        occurred_at: 1,
+        reach: ModelLocality::ThirdParty,
+        basis: Some(VoiceConsentBasis::ConversationalNotice {
+            notice: "grant".into(),
+        }),
+        state: VoiceConsentState::Granted,
+    })?;
     vault.store_voice_ref_pack(&pack)?;
     for provider in [HostedProvider::Cartesia, HostedProvider::ElevenLabsFlash] {
-        let request = vault.prepare_voice_clone(&pack.voice_id, provider.target(), false)?;
-        vault.record_voice_target_clone(&request, "ephemeral-voice", 1)?;
+        let request = vault.prepare_voice_clone(
+            &pack.voice_id,
+            provider.target(),
+            false,
+            ModelLocality::ThirdParty,
+        )?;
+        vault.record_voice_target_clone(&request, "ephemeral-voice", 1, false)?;
         let mut session = VoiceCascadeSession::new(Arc::clone(&vault), config())?;
         let old = start(&mut session, false)?.generation;
         let mut hosted =
@@ -541,7 +563,12 @@ fn hosted_eviction_repoints_banked_identity_to_self_hosted_spine() -> Result<()>
         assert!(hosted.receive_pcm(old, 0, 1, &[1, 0]).is_err());
         assert!(hosted.filter_pcm(&session, frame).is_none());
         drop(hosted);
-        let spine = vault.prepare_voice_clone(&pack.voice_id, "voxcpm2", false)?;
+        let spine = vault.prepare_voice_clone(
+            &pack.voice_id,
+            "voxcpm2",
+            false,
+            ModelLocality::OwnServer,
+        )?;
         assert_eq!(
             vault
                 .voice_identity(&spine.voice_id)?

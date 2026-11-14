@@ -19,8 +19,6 @@ use std::time::{Duration, Instant};
 
 mod actor_binding;
 mod basic_fold;
-// FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-COOPERATIVE-DELETION]: the lib test target's type check fails here (4 errors: E0609 x3, E0308 x1); port it, then drop this gate
-#[cfg(any())]
 mod cooperative_deletion;
 mod critical_confirm;
 mod federation_confirm;
