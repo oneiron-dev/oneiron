@@ -48,8 +48,10 @@ const MAX_NOTE_BYTES: usize = 1024 * 1024;
 pub(super) const PART_MARK: &str = "#part";
 
 /// A Files source's part mark (FIX 6942): `<path>/#part<n>`. Its walk reads
-/// files of every name, but none below a file, so no real path is one. The
-/// engine owns it: a Files search lists a part's row as its file.
+/// files of every name, so a real file named `#part<n>` in a folder at
+/// `<path>` has a part's path; a folder is never a file, so the two never meet
+/// in one ledger. The engine owns it: a Files search lists a part's row as its
+/// file when the ledger holds a file at `<path>`.
 pub(super) use oneiron::note::FILES_PART_MARK;
 
 /// The longest title a note keeps.
