@@ -533,6 +533,18 @@ pub(crate) fn import_into_live_window(
     doc.import(bytes)
 }
 
+/// Runs `import`, a peer's update into a live window's document with its
+/// Observer callbacks, under the live-window turn of `materializer`, the one
+/// every window of its manager shares: [`import_into_live_window`] for an
+/// import outside the engine that keeps its own origin (a home socket's
+/// own-device push, `doc.import_with(update, origin)`). It waits for an
+/// indexed pass over a live window to end, and a pass waits for it (L7-45).
+/// Hold nothing else across it.
+pub fn with_live_window_turn<T>(materializer: &Materializer, import: impl FnOnce() -> T) -> T {
+    let _turn = materializer.enter_live_window();
+    import()
+}
+
 /// Import-merges the persisted sync_state record for `key` — the
 /// `d:w:{key}` snapshot plus every pending `u:w:{key}:*` update — into
 /// `doc`, returning the `u:` row KEYS that were merged.

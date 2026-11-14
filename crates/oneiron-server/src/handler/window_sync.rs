@@ -497,12 +497,20 @@ pub(super) async fn handle_window_sync(
                 &doc,
                 update,
             );
+            // The window is a live window of the reassert manager: the import
+            // and its callbacks take the live-window turn, so an indexed pass
+            // over it never meets them halfway (L7-45).
             let imported = match oneiron::sync::with_own_device_push(
                 server.vault(),
                 conn_state.peer_machine(server.vault()),
                 (&key, &doc),
                 update,
-                || doc.import_with(update, &origin),
+                || {
+                    oneiron::sync::window::with_live_window_turn(
+                        server.reassert_manager.materializer(),
+                        || doc.import_with(update, &origin),
+                    )
+                },
             ) {
                 Ok(imported) => imported,
                 Err(e) => {
