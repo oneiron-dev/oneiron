@@ -102,6 +102,14 @@ pub(crate) fn booking_availability_input_schema() -> Value {
             "visitor_tz": nonblank_string_schema(),
             "constraint": { "oneOf": [{ "type": "null" }, booking_constraint_input_schema()] },
             "session_ref": nonblank_string_schema(),
+            // Optional: a length from the event card's allowed set
+            // (BK-VARIABLE-DURATION); absent, the event type's default.
+            "duration_min": {
+                "oneOf": [
+                    { "type": "null" },
+                    { "type": "integer", "minimum": 1, "maximum": u16::MAX },
+                ],
+            },
         }),
     )
 }
