@@ -4,6 +4,10 @@
 //! trunk whose audience is the owner and two of the agents: `agent`, whose
 //! Grant lists both add verbs, and `ungranted`, whose Grant lists neither.
 //! `seeker` and the person stay out of the thread.
+//!
+//! [`Org::with_agent_led_room`] also births a second project led by `agent`
+//! alone (P2.6a3): `agent` answers its home room's admission, and `seeker`'s
+//! join of that room, which the owner files, holds on it.
 #![allow(dead_code)]
 
 use std::collections::BTreeSet;
@@ -26,7 +30,8 @@ use oneiron::verbs::{
     mint_agent_grant_as,
 };
 use oneiron::workspace_roster::{
-    ProjectRecord, ThreadAudienceAddRequest, ThreadAudienceHistory, ThreadAudienceReceipt,
+    ConsentAnswer, ConsentPart, JoinOutcome, JoinRequest, JoinSubject, ProjectRecord,
+    ThreadAudienceAddRequest, ThreadAudienceHistory, ThreadAudienceReceipt,
 };
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
@@ -34,6 +39,7 @@ use serde_json::json;
 
 pub(crate) const ADD: &str = "vault.rooms.thread_audience.add";
 pub(crate) const APPROVE: &str = "vault.rooms.thread_join.approve";
+pub(crate) const CONSENT: &str = "vault.rooms.consent";
 
 pub(crate) struct Org {
     _dir: tempfile::TempDir,
@@ -50,10 +56,24 @@ pub(crate) struct Org {
     pub(crate) room: EntityId,
     pub(crate) anchor: EntityId,
     pub(crate) thread: EntityId,
+    /// The home room of a second project `agent` leads alone, seating no
+    /// one else ([`Org::with_agent_led_room`]).
+    pub(crate) led_room: Option<EntityId>,
+    pub(crate) owner_proof: AuthenticatedOwner,
 }
 
 impl Org {
     pub(crate) fn new() -> Self {
+        Self::build(false)
+    }
+
+    /// [`Org::new`] with a second project under the root that `agent` leads
+    /// alone, born before the vault is rooted.
+    pub(crate) fn with_agent_led_room() -> Self {
+        Self::build(true)
+    }
+
+    fn build(agent_leads: bool) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
         vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
@@ -86,6 +106,15 @@ impl Org {
             .put_project(project, &record, vault.now_recorded_at())
             .expect("the project");
         let room = EntityId::from_hex(&record.home_room).expect("home room id");
+        let led_room = agent_leads.then(|| {
+            let led = EntityId::now();
+            let record =
+                ProjectRecord::new(led, Some(root), root, agent).expect("an agent-led project");
+            vault
+                .put_project(led, &record, vault.now_recorded_at())
+                .expect("the agent-led project");
+            EntityId::from_hex(&record.home_room).expect("its home room id")
+        });
         vault.prepare_install_signing().expect("install signing");
         let issuer = vault.bootstrap_host_slip_issuer().expect("host issuer");
         vault.ensure_host_root_slip(&issuer).expect("host root");
@@ -108,6 +137,8 @@ impl Org {
             room,
             anchor: EntityId::now(),
             thread: EntityId::now(),
+            led_room,
+            owner_proof,
         };
         org.speak(org.anchor, None);
         org.speak(org.thread, Some(BTreeSet::from([owner, agent, ungranted])));
@@ -142,6 +173,39 @@ impl Org {
                 assertions: Default::default(),
             })
             .expect("the owner speaks");
+    }
+
+    /// The owner files `seeker`'s join of the agent-led room, for the
+    /// vault's own agent: its own yes, the owner's membership, no paid work.
+    /// It holds on the room's admission, which only `agent` answers.
+    pub(crate) fn file_seeker_join(&self) -> JoinOutcome {
+        self.vault
+            .memory(self.owner, EdgeActorClass::Human)
+            .rooms_join(&JoinRequest {
+                room: self.led_room.expect("an Org with an agent-led room"),
+                branch: None,
+                subject: JoinSubject::Agent(self.seeker),
+                paid: false,
+                spend_scope: None,
+                intent_key: "seeker-joins-the-led-room".to_owned(),
+            })
+            .expect("the owner files the seeker's join")
+    }
+
+    /// `memory`'s Admission yes to the join `join_ref`.
+    pub(crate) fn admit(
+        &self,
+        memory: &Memory<'_>,
+        join_ref: &str,
+        check_in_ref: Option<&str>,
+    ) -> MemoryResult<JoinOutcome> {
+        memory.rooms_consent(&ConsentAnswer {
+            join_ref: join_ref.to_owned(),
+            part: ConsentPart::Admission,
+            grant: true,
+            spend_scope: None,
+            check_in_ref: check_in_ref.map(str::to_owned),
+        })
     }
 
     pub(crate) fn as_agent(&self, agent: EntityId) -> Memory<'_> {
