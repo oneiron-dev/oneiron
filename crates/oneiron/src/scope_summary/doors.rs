@@ -936,50 +936,67 @@ pub(crate) fn merge_word_sources_through_in(
 }
 
 impl Vault {
+    /// Mints an independent retained SESSION with id `id` inside the
+    /// caller's write transaction, hung off its spawning TURN by a
+    /// `SpawnedBy` edge: the one sub-session shape sync admission checks.
+    /// The caller mints the id; an approved plan's run hangs its derived
+    /// SESSION here (agent-runtime-v1.md:342).
+    pub(crate) fn spawn_dag_sub_session_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        turn: &EntityId,
+        actor: WriteActor,
+        id: EntityId,
+        now: u64,
+    ) -> Result<()> {
+        actor_in_txn(&self.store, txn, actor)?;
+        let conversation = conversation_of(&self.store, txn, turn)?;
+        crate::conversation_dag::migrate_in_txn(self, txn, &conversation)?;
+        let mut body = Vec::new();
+        rmpv::encode::write_value(
+            &mut body,
+            &Value::Map(vec![
+                (
+                    Value::from("actor"),
+                    Value::from(actor.entity_ref().to_hex()),
+                ),
+                (Value::from("dag_spawning_turn"), Value::from(turn.to_hex())),
+            ]),
+        )
+        .map_err(|_| invalid("session encode failed"))?;
+        self.batch_in()
+            .put(
+                &id,
+                ENTITY_TYPE_SESSION,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                &body,
+            )
+            .edge_with_value_fields(
+                &id,
+                EdgeKind::SpawnedBy,
+                turn,
+                EdgeValueFields {
+                    weight: 1.0,
+                    created_at: now,
+                    vad: Vad::NEUTRAL,
+                    provenance: None,
+                },
+            )
+            .apply(txn)?;
+        Ok(())
+    }
+
     /// Mints an independent retained SESSION. It never takes the global
     /// open-session pointer or aliases an existing sitting.
     pub fn spawn_dag_sub_session(&self, turn: &EntityId, actor: WriteActor) -> Result<EntityId> {
         let now = self.store.clock.now_recorded_at();
         self.with_write_txn_grouped(|txn| {
-            actor_in_txn(&self.store, txn, actor)?;
-            let conversation = conversation_of(&self.store, txn, turn)?;
-            crate::conversation_dag::migrate_in_txn(self, txn, &conversation)?;
             let id = self.store.clock.entity_id()?;
-            let mut body = Vec::new();
-            rmpv::encode::write_value(
-                &mut body,
-                &Value::Map(vec![
-                    (
-                        Value::from("actor"),
-                        Value::from(actor.entity_ref().to_hex()),
-                    ),
-                    (Value::from("dag_spawning_turn"), Value::from(turn.to_hex())),
-                ]),
-            )
-            .map_err(|_| invalid("session encode failed"))?;
-            self.batch_in()
-                .put(
-                    &id,
-                    ENTITY_TYPE_SESSION,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &body,
-                )
-                .edge_with_value_fields(
-                    &id,
-                    EdgeKind::SpawnedBy,
-                    turn,
-                    EdgeValueFields {
-                        weight: 1.0,
-                        created_at: now,
-                        vad: Vad::NEUTRAL,
-                        provenance: None,
-                    },
-                )
-                .apply(txn)?;
+            self.spawn_dag_sub_session_in_txn(txn, turn, actor, id, now)?;
             Ok(id)
         })
     }

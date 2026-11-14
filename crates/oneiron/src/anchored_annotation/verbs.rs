@@ -487,6 +487,7 @@ impl Memory<'_> {
             head_claim_id: thread.head_claim_id,
             comments,
             brief,
+            sub_session_id: thread.sub_session_id,
         })
     }
 

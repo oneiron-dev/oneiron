@@ -445,6 +445,9 @@ pub struct AnnotationThread {
     pub drift: Option<DriftMarker>,
     /// The `Active` head claim id (the supersession target for state changes).
     pub head_claim_id: EntityId,
+    /// The sub-session of the plan run this thread's approval started
+    /// (agent-runtime-v1.md:342); `None` on every other thread.
+    pub sub_session_id: Option<EntityId>,
 }
 
 impl AnnotationThread {
