@@ -504,6 +504,23 @@ impl NoteDocument {
         Ok(())
     }
 
+    /// Rewrites the live body to `text` by the smallest edits that make it,
+    /// as [`Self::mask_body`] does, its commit naming the ruling person's
+    /// stamp token `stamp`: a found key's value back where the mask left its
+    /// handle (FIX L6-03-NOTE-RULING-KEEPS-DOC-HANDLE).
+    pub(super) fn restore_body(&self, text: &str, stamp: ActorStamp) -> Result<()> {
+        let options = loro::UpdateOptions {
+            timeout_ms: None,
+            use_refined_diff: true,
+        };
+        self.doc
+            .get_text(BODY)
+            .update(text, options)
+            .map_err(|_| invalid("NOTE restore update"))?;
+        commit_stamped(&self.doc, stamp);
+        Ok(())
+    }
+
     /// Sets the title, its commit naming the writer's stamp token `stamp`
     /// (FIX 10930).
     pub(super) fn set_title(&self, title: &str, stamp: ActorStamp) -> Result<()> {
