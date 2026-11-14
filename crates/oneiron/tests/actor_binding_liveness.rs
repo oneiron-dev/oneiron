@@ -10,10 +10,16 @@
 //! that landed before the binding leaves it: the person is deleted while the
 //! host key binds a stand-in, then the host key binds the deleted person.
 //!
+//! The lead's ruling L9-52-OWNER-SELF-DELETE = B (14 Nov) rides on top: no
+//! delete door deletes the PERSON that holds the vault's last Active owner
+//! binding, and the refusal names both ways out (another owner first, or
+//! erasing the vault). A person no live binding names is deleted as before.
+//!
 //! Red on main: a deleted bound owner still classes VaultOwner in a room and
-//! still holds owner verbs and task verbs, and a deleted agent-bound person
-//! still classes VaultAgent. Guards (pass on main too): the same doors serve
-//! the live bound owner and the live agent-bound person.
+//! still holds owner verbs and task verbs, a deleted agent-bound person still
+//! classes VaultAgent, and the last bound owner's PERSON is deleted. Guards
+//! (pass on main too): the same doors serve the live bound owner and the live
+//! agent-bound person, and an unbound person's delete passes.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test actor_binding_liveness`.
 #![cfg(oneiron_test_support)]
@@ -24,7 +30,8 @@ use std::sync::Arc;
 use oneiron::authority::{HostSlipIssuer, actor_binding_is_active};
 use oneiron::disclosure::RoomParty;
 use oneiron::memory::{
-    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_OWNER_BINDING_REQUIRED, Memory, SafeDeleteReason,
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_OWNER_BINDING_REQUIRED, Memory,
+    SafeDeleteReason,
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::task_verb::{TaskCreateSpec, TaskHandle, TaskStatusQuery};
@@ -194,5 +201,56 @@ fn a_deleted_owner_holding_its_binding_takes_no_task_verb() {
     assert!(
         refused.message.contains("deleted actor's binding"),
         "{refused:?}"
+    );
+}
+
+/// The guard's refusal names both ways out of it.
+fn names_both_ways_out(message: &str) -> bool {
+    message.contains("add another owner first") && message.contains("erase the vault")
+}
+
+#[test]
+fn the_last_bound_owners_person_is_not_deleted_and_the_refusal_names_both_ways_out() {
+    let f = fixture();
+    let refused = f
+        .memory(f.owner)
+        .safe_delete(&f.owner.to_hex(), SafeDeleteReason::UserDelete)
+        .expect_err("the last bound owner deletes their own person");
+    assert_eq!(refused.code, MEMORY_CODE_INVALID_STATE, "{refused:?}");
+    assert!(names_both_ways_out(&refused.message), "{refused:?}");
+    let host = f
+        .vault
+        .delete_entity(&f.owner)
+        .expect_err("the host door deletes the last bound owner's person");
+    assert!(names_both_ways_out(&host.to_string()), "{host:?}");
+    assert!(
+        !f.vault.is_deleted_shell(&f.owner).expect("shell read"),
+        "the owner's person stays live"
+    );
+    let unbound = live_person(&f.vault);
+    f.memory(f.owner)
+        .safe_delete(&unbound.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("a person no binding names is deleted as before");
+}
+
+#[test]
+fn the_guard_follows_the_live_binding_not_the_embedded_owner() {
+    let f = fixture();
+    let heir = live_person(&f.vault);
+    bind_host_actor(&f.vault, &f.issuer, heir, "human").expect("the host key binds the heir");
+    assert!(
+        f.vault
+            .delete_entity(&f.owner)
+            .expect("the embedded owner, no longer bound, is deleted"),
+        "the owner's person existed"
+    );
+    let refused = f
+        .vault
+        .delete_entity(&heir)
+        .expect_err("the person holding the last binding");
+    assert!(names_both_ways_out(&refused.to_string()), "{refused:?}");
+    assert!(
+        !f.vault.is_deleted_shell(&heir).expect("shell read"),
+        "the heir's person stays live"
     );
 }

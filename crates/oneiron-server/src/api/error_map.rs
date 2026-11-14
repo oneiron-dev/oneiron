@@ -152,6 +152,16 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
                 "Remove public access, preserve evidence, and follow the known-CSAM hosted media runbook.",
             ],
         ),
+        ErrorKind::LastBoundOwnerDelete => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState {
+                state: Some("last_bound_owner_delete".to_owned()),
+            },
+            [
+                "Add another owner first; then this person can be deleted.",
+                "Erase the vault if ending it is the goal.",
+            ],
+        ),
         ErrorKind::GateWriteRejected => ApiError::new(
             error.to_string(),
             ApiErrorDetails::InvalidState {

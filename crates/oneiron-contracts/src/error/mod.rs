@@ -84,6 +84,8 @@ pub enum ErrorKind {
     InvalidAuthorityLogBody,
     /// An authority door refused a well-formed request and named its rule.
     AuthorityRefused,
+    /// A delete of the PERSON that holds the vault's last owner binding.
+    LastBoundOwnerDelete,
     /// The checkpoint root policy cannot be fixed or chosen as asked.
     CheckpointPolicyRefused,
     /// The owner's checkpoint policy choice named a stale revision.

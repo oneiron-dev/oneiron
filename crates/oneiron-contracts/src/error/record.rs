@@ -227,6 +227,15 @@ pub enum RecordError {
     /// never echoes a token, key or hidden id. Nothing was written.
     #[error("{0}")]
     AuthorityRefused(&'static str),
+    /// A delete of the PERSON that holds the vault's last Active owner
+    /// binding (the lead's L9-52-OWNER-SELF-DELETE = B, 14 Nov 2026): the
+    /// vault would keep no owner, and no ceremony binds one again. The two
+    /// ways out are another owner first, or erasing the vault. Nothing was
+    /// written.
+    #[error(
+        "this person holds the vault's last owner binding, so deleting them would leave the vault with no owner: add another owner first, or erase the vault if ending it is the goal"
+    )]
+    LastBoundOwnerDelete,
     /// The vault's checkpoint root policy cannot be fixed, or the owner's
     /// choice of it cannot stand, and the reason names which rule refused
     /// (mesh PR2c, K06): no eligible root, a quorum the roots cannot meet or
@@ -495,6 +504,7 @@ impl RecordError {
             Self::InvalidFederationGrantBody(_) => ErrorKind::InvalidFederationGrantBody,
             Self::InvalidAuthorityLogBody(_) => ErrorKind::InvalidAuthorityLogBody,
             Self::AuthorityRefused(_) => ErrorKind::AuthorityRefused,
+            Self::LastBoundOwnerDelete => ErrorKind::LastBoundOwnerDelete,
             Self::CheckpointPolicyRefused(_) => ErrorKind::CheckpointPolicyRefused,
             Self::CheckpointPolicyRevisionStale { .. } => ErrorKind::CheckpointPolicyRevisionStale,
             Self::WorldRecipientLimit(_) => ErrorKind::WorldRecipientLimit,
