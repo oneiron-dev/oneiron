@@ -1817,14 +1817,35 @@ pub(super) fn open_agent_runs_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Vec<(EntityId, AgentRunTaskBody)>> {
+    agent_runs_in(vault, txn, false)
+}
+
+/// Every settled agent-run TASK and its body, read in `txn` (FIX 4889): what
+/// the custody reconcile judges. A body this version does not read is passed
+/// over.
+pub(super) fn settled_agent_runs_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(EntityId, AgentRunTaskBody)>> {
+    agent_runs_in(vault, txn, true)
+}
+
+/// Every agent-run TASK and its body, read in `txn`, that carries an outcome
+/// when `settled` and none otherwise. A body this version does not read is
+/// passed over.
+fn agent_runs_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    settled: bool,
+) -> Result<Vec<(EntityId, AgentRunTaskBody)>> {
     let mut runs = Vec::new();
     for task_ref in vault
         .store
         .port_entity_ids_by_type(txn, ENTITY_TYPE_TASK, None)?
     {
         let task_ref = task_ref?;
-        // A run TASK a hard erase took is no run to release or hand over
-        // (REVIEW-6615).
+        // A run TASK a hard erase took is no run to release, hand over or
+        // settle (REVIEW-6615).
         if agent_run_task_erased_in(&vault.store, txn, task_ref)? {
             continue;
         }
@@ -1837,7 +1858,7 @@ pub(super) fn open_agent_runs_in(
         let Ok(body) = decode_agent_run_task_body(raw.entity_type, &raw.body) else {
             continue;
         };
-        if body.outcome.is_none() {
+        if body.outcome.is_some() == settled {
             runs.push((task_ref, body));
         }
     }

@@ -15,8 +15,9 @@
 
 use super::resident::{resident_run_id, resident_run_input};
 use super::run_task::{
-    AGENT_RUN_EXECUTOR_MOVED, AgentRunFence, AgentRunLeaseTake, agent_run_moved_in,
-    agent_run_unrun_cause_in, outlived_root_in, take_agent_run_lease_in_txn,
+    AGENT_RUN_EXECUTOR_MOVED, AGENT_RUN_SETTLED_ELSEWHERE, AgentRunFence, AgentRunLeaseTake,
+    agent_run_moved_in, agent_run_task_body_in, agent_run_task_ref_in, agent_run_unrun_cause_in,
+    outlived_root_in, take_agent_run_lease_in_txn,
 };
 use super::workflow_record::is_wrapper;
 use super::{
@@ -182,7 +183,8 @@ impl AgentDispatcher<'_> {
     /// receipts go and its spend lease settles, as [`Self::end_withdrawn`]
     /// ends a try. Neither its run TASK nor the TASK it realizes changes:
     /// the run is not this machine's to run. A try another worker took
-    /// first, or whose run is this machine's again, is left as it is.
+    /// first, or whose run is this machine's again, is left as it is. On the
+    /// custody machine a moved run keeps its scope open (FIX 4889).
     fn end_unrun_agent_run(&self, id: AttemptId, lease_owner: &str, now: u64) -> Result<()> {
         let ended = self.vault.with_write_txn_grouped(|txn| {
             let Some(row) = AttemptQueue::new(self.vault).get_in_write_txn(&*txn, id)? else {
@@ -225,9 +227,10 @@ impl AgentDispatcher<'_> {
     /// writer the fence is read again, and the try fails for good with
     /// `agent_run_executor_moved` under `lease_owner`, its step receipts go
     /// and its spend lease settles, with no change to its run TASK or the
-    /// TASK it realizes. `false` while the fence holds, so the settlement
-    /// goes on; `true` once the run stood down, or another worker took its
-    /// lease meanwhile.
+    /// TASK it realizes. On the custody machine the scope stays open (FIX
+    /// 4889). `false` while the fence holds, so the settlement goes on;
+    /// `true` once the run stood down, or another worker took its lease
+    /// meanwhile.
     ///
     /// # Errors
     /// Storage errors.
@@ -280,7 +283,8 @@ impl AgentDispatcher<'_> {
     /// Fails the leased try `attempt` for good with `cause` and nothing run,
     /// in the caller's write: its step receipts go and its spend lease
     /// settles. The TASK it realizes is not reported: its run is another
-    /// machine's.
+    /// machine's. On the custody machine (FIX 4889) a moved run keeps its
+    /// scope open, and a run settled elsewhere folds the other shares first.
     fn end_leased_unrun_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -302,8 +306,54 @@ impl AgentDispatcher<'_> {
         )?;
         crate::dreamer_runner::DreamerRunnerStore::new(self.vault)
             .cleanup_step_receipts_in_txn(txn, attempt.id)?;
-        self.settle_child_in_txn(txn, &attempt.id, now)?;
+        match self.custody_fold_for_unrun_in(&*txn, attempt)? {
+            // The run goes on on another machine: its scope here stays open,
+            // so its parent keeps holding the whole carve (FIX 4889).
+            Some(_) if cause == AGENT_RUN_EXECUTOR_MOVED => {}
+            Some((task_ref, fold)) if cause == AGENT_RUN_SETTLED_ELSEWHERE => {
+                self.settle_custody_scope_in_txn(txn, attempt.id, task_ref, fold, now)?;
+            }
+            _ => {
+                self.settle_child_in_txn(txn, &attempt.id, now)?;
+            }
+        }
         Ok(())
+    }
+
+    /// The fold the custody machine owes the run `attempt` ends unrun with
+    /// (FIX 4889): its TASK and what the other machines spent less what this
+    /// machine folded already. `None` for a try with no run TASK, a child try,
+    /// an unreadable TASK, an unmetered run, or a run in another machine's
+    /// custody.
+    fn custody_fold_for_unrun_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        attempt: &AttemptRecord,
+    ) -> Result<Option<(EntityId, u64)>> {
+        let Some(link) = agent_run_task_ref_in(self.vault, txn, attempt)? else {
+            return Ok(None);
+        };
+        if link.child {
+            return Ok(None);
+        }
+        let body = match agent_run_task_body_in(self.vault, txn, link.task_ref) {
+            Ok(Some(body)) => body,
+            Ok(None) | Err(crate::error::Error::Record(_)) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let Some(carry) = body.spend.as_ref() else {
+            return Ok(None);
+        };
+        let Some(node) = crate::identity::read_client_id_in_txn(self.vault, txn)? else {
+            return Ok(None);
+        };
+        if carry.custody_node != node {
+            return Ok(None);
+        }
+        let fold = carry
+            .spent_elsewhere(node)
+            .saturating_sub(carry.custody_folded_units);
+        Ok(Some((link.task_ref, fold)))
     }
 
     /// Tells the attempt observers and the TASK board a try ended.

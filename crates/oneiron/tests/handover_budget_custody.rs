@@ -26,6 +26,7 @@ use oneiron::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext,
     DEFAULT_BASE_LOGICAL_ID, DispatchAgent, SpawnSpend, SpendScopeId, SpendState,
 };
+use oneiron::attempt_queue::{AttemptQueue, CompleteAttempt};
 use oneiron::dreamer_runner::{DreamerHomeNodeCandidate, DreamerRunnerStore};
 use oneiron::llm::run_admission::{DeclaredMaximum, LeaseUnit, MaximumShown};
 use oneiron::store::ports::{IdGen, ManualClock};
@@ -246,6 +247,68 @@ fn taker_waits_when_the_reservation_is_spent() {
             .is_none(),
         "B holds no scope for a run whose reservation is spent"
     );
+}
+
+#[test]
+fn handed_over_run_keeps_one_counter() {
+    let (a, b) = machines();
+    let x = dispatched_run(&a, &b, 20);
+    let reap = b
+        .vault
+        .reap_agent_run_leases(&|_: &AgentDefinition| true)
+        .unwrap();
+    assert_eq!(reap.taken, 1, "B takes the run A released");
+    // B's take rides the window to A; A resumes from its close so its pump
+    // judges the run instead of passing over it.
+    let doc_a = a.doc();
+    let doc_b = b.doc();
+    exchange(&doc_a, &doc_b);
+    a.vault.resume_executor_leases();
+    let claimed = AgentDispatcher::new(&a.vault)
+        .claim_agent_run(x, "pump-a", T0)
+        .unwrap();
+    assert!(claimed.is_none(), "A stands down: B holds the run");
+    let claimed = AgentDispatcher::new(&b.vault)
+        .claim_agent_run(x, "pump-b", T0 + 2)
+        .unwrap()
+        .expect("B claims the run it took");
+    let scope_id = SpendScopeId::for_attempt(&x);
+    AgentDispatcher::new(&b.vault)
+        .charge(&scope_id, 30)
+        .unwrap();
+    let leased = claimed.status.attempt;
+    AttemptQueue::new(&b.vault)
+        .complete(CompleteAttempt {
+            id: x,
+            lease_owner: "pump-b".to_owned(),
+            attempt_count: leased.attempt_count,
+            now: leased.updated_at,
+        })
+        .unwrap();
+    let doc_a = a.doc();
+    let doc_b = b.doc();
+    exchange(&doc_a, &doc_b);
+    // PR 1's head has no `reconcile_handed_over_spend`; there A's stand-down
+    // settled X at 20, so R spent 20 and free 80.
+    assert_eq!(a.vault.reconcile_handed_over_spend().unwrap(), 1);
+    assert_eq!(a.vault.reconcile_handed_over_spend().unwrap(), 0);
+    let root = SpendScopeId::launch("handover-budget-custody-root").unwrap();
+    let r = AgentDispatcher::new(&a.vault)
+        .read_spend_scope(&root)
+        .unwrap()
+        .unwrap();
+    // PR 1 head: spent 20 (X settled at 20 on stand-down).
+    assert_eq!(r.spent_units, 50);
+    let free = r.cap_units - r.spent_units - r.held_units;
+    // PR 1 head: free 80.
+    assert_eq!(free, 50);
+    let x_scope = AgentDispatcher::new(&a.vault)
+        .read_spend_scope(&scope_id)
+        .unwrap()
+        .unwrap();
+    // PR 1 head: spent 20 (settled at stand-down, before B's 30).
+    assert_eq!(x_scope.spent_units, 50);
+    assert_eq!(x_scope.state, SpendState::Closed);
 }
 
 #[test]

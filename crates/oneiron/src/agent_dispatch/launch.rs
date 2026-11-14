@@ -18,7 +18,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::run_admission::LeaseUnit;
 
+use super::run_task::AgentRunSpendCarry;
 use super::spend_calibration::ExpectedSpend;
+use super::spend_custody::HandedOverLaunchReserve;
 use super::spend_record::{ChildSpend, SCOPE, SpendRefused, SpendScope, SpendScopeId, SpendState};
 use super::widen_record::invalid;
 use super::{
@@ -251,14 +253,15 @@ impl AgentDispatcher<'_> {
     /// Reserves on this machine the spend of `attempt`, the try of an agent
     /// run this machine takes over, in the take's write (FIX 4747 slice 6),
     /// as `handed_over_launch_reserve` rules from the launch statement
-    /// `input` froze, less what every other machine spent of it
-    /// (`spent_elsewhere`, from the run TASK's carry). A scope that already
-    /// stands here for `attempt` is kept.
-    /// A pinned scope keeps the Grant `input` froze as its funding (FIX
-    /// 7766), as the dispatch's own reserve did.
-    /// A room-bound run proves its join again under the scope it reserves
-    /// under, as its dispatch did. `false` when this machine cannot fund it:
-    /// the take writes nothing, and the run waits.
+    /// `input` froze, less what every other machine spent of it (FIX 4889,
+    /// from the run TASK's `carry`). A scope the run spends under here
+    /// through its retry chain is kept when open. On the custody machine the
+    /// kept scope folds the other shares (FIX 4889); elsewhere a kept pinned
+    /// scope is capped to the remainder. A pinned scope keeps the Grant
+    /// `input` froze as its funding (FIX 7766), as the dispatch's own reserve
+    /// did. A room-bound run proves its join again under the scope it
+    /// reserves under, as its dispatch did. `Unfunded` when this machine
+    /// cannot fund it: the take writes nothing, and the run waits.
     ///
     /// # Errors
     ///
@@ -268,18 +271,24 @@ impl AgentDispatcher<'_> {
         txn: &mut heed::RwTxn<'_>,
         attempt: AttemptId,
         input: &AgentDispatchInput,
-        spent_elsewhere: u64,
+        carry: Option<&AgentRunSpendCarry>,
+        node: u64,
         now: u64,
-    ) -> Result<bool> {
-        if SCOPE.contains(
-            &self.vault.store,
-            txn,
-            &SpendScopeId::for_attempt(&attempt).0,
-        )? {
-            return Ok(true);
+    ) -> Result<HandedOverLaunchReserve> {
+        match self.attempt_spend_scope_in_txn(txn, attempt)? {
+            Some(kept) if kept.state == SpendState::Open => {
+                return self.keep_handed_over_scope_in_txn(txn, attempt, kept, input, carry, node);
+            }
+            // A settled scope under the try's own id stands as it is, as
+            // before FIX 4889: a second scope under that id is refused.
+            Some(kept) if kept.scope == SpendScopeId::for_attempt(&attempt) => {
+                return Ok(HandedOverLaunchReserve::Reserved { folded: 0 });
+            }
+            Some(_) | None => {}
         }
+        let spent_elsewhere = carry.map_or(0, |carry| carry.spent_elsewhere(node));
         let Some(statement) = input.launch.as_ref() else {
-            return Ok(true);
+            return Ok(HandedOverLaunchReserve::Reserved { folded: 0 });
         };
         let tree_here = match &statement.parent_scope {
             Some(parent) => match SCOPE.get(&self.vault.store, txn, &parent.0)? {
@@ -296,7 +305,7 @@ impl AgentDispatcher<'_> {
             input.room.is_some(),
             spent_elsewhere,
         ) {
-            HandedOverReserve::Unfunded => return Ok(false),
+            HandedOverReserve::Unfunded => return Ok(HandedOverLaunchReserve::Unfunded),
             HandedOverReserve::Reserve(LaunchReserve::Unmetered) => {}
             HandedOverReserve::Reserve(LaunchReserve::Pinned { unit, cap_units }) => {
                 self.open_pinned_scope_in_txn(
@@ -314,7 +323,7 @@ impl AgentDispatcher<'_> {
                     Ok(_) => {}
                     Err(SpendRefused::Engine(error)) => return Err(error),
                     Err(SpendRefused::OverCap { .. } | SpendRefused::Start(_)) => {
-                        return Ok(false);
+                        return Ok(HandedOverLaunchReserve::Unfunded);
                     }
                 }
             }
@@ -327,11 +336,13 @@ impl AgentDispatcher<'_> {
                 statement.parent_scope.as_ref(),
             ) {
                 Ok(_) => {}
-                Err(Error::Claim(_) | Error::Artifact(_)) => return Ok(false),
+                Err(Error::Claim(_) | Error::Artifact(_)) => {
+                    return Ok(HandedOverLaunchReserve::Unfunded);
+                }
                 Err(error) => return Err(error),
             }
         }
-        Ok(true)
+        Ok(HandedOverLaunchReserve::Reserved { folded: 0 })
     }
 }
 
