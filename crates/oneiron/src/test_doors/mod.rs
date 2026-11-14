@@ -24,6 +24,7 @@ pub mod code_reply_healer;
 pub mod code_run_answer;
 pub mod code_run_write_identity;
 pub mod code_view_fork;
+pub mod comm_late_stop;
 pub mod comm_thread_member_claim_reads;
 pub mod connector_key_suspend;
 pub mod consolidation;
@@ -42,6 +43,7 @@ pub mod free_time_cycle_writer;
 pub mod free_time_handoff;
 pub mod grant_roles;
 pub mod graph_ask_centre;
+pub mod history_import_rows;
 #[cfg(feature = "sync")]
 pub mod guest_turn_counterparty;
 #[cfg(feature = "sync")]
@@ -68,6 +70,7 @@ pub mod note_bm25f_repair;
 pub mod off_record_shell;
 pub mod outbound_grant_index;
 pub mod own_device_message_replay;
+pub mod pack_encode_work;
 pub mod pad_offer_invalidation;
 pub mod park_typed_wait;
 pub mod provenance_body_checkpoint;
