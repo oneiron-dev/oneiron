@@ -472,3 +472,52 @@ pub(crate) fn retire_authority_overlay_subject_for_test(
     vault.store.finish_erasable_retirements()?;
     Ok(())
 }
+
+/// The fence (census L5-22 1a-iii commit 7): the home handoff's carrier
+/// asks only a handoff key's holder to retire; an authority overlay key's
+/// holder clears through the overlay carrier, never here.
+#[cfg(test)]
+mod holder_fence_tests {
+    use super::{held_overlay_custody_for_test, retire_authority_overlay_subject_for_test, seal};
+    use crate::entity_id::EntityId;
+    use crate::store::home_handoff_custody::holder_retirements;
+    use crate::{Vault, VaultConfig};
+
+    /// A retired overlay key's holder is never asked by the handoff
+    /// carrier: not even once this install's custody obligations complete.
+    #[test]
+    fn a_retired_overlay_keys_holder_is_never_asked_by_the_handoff_carrier() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+        vault.create_vault_key().unwrap();
+        let subject = EntityId::now();
+        vault
+            .with_write_txn_grouped(|txn| {
+                seal(&vault.store, txn, &subject, &[0xA5; 32], b"overlay record")
+            })
+            .unwrap();
+        let (live, _) = held_overlay_custody_for_test(&vault, &subject).unwrap();
+        assert_eq!(live.len(), 1, "the sealed key is the one live key");
+        let holder = EntityId::now();
+        let custody = vault.store.core.key_custody.local().unwrap();
+        custody.record_holder(&live[0].0, &holder).unwrap();
+        retire_authority_overlay_subject_for_test(&vault, &subject).unwrap();
+        let backup = tempfile::tempdir().unwrap();
+        vault.publish_custody(backup.path(), &[], None).unwrap();
+        let item = custody.erasable_by_ref(&live[0].0).unwrap().unwrap();
+        let obligations = vault
+            .store
+            .custody_obligations_of(&item.subject(&custody).unwrap())
+            .unwrap();
+        assert!(
+            !obligations.is_empty() && obligations.iter().all(|(_, done)| *done),
+            "the fixture completes its retired overlay key's custody obligations",
+        );
+        let owed = holder_retirements(&vault.store).unwrap();
+        assert!(
+            owed.iter().all(|debt| debt.holder != holder),
+            "the handoff carrier must never ask an overlay key's holder to retire",
+        );
+    }
+}
