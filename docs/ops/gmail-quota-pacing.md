@@ -13,10 +13,12 @@ request before it is made and counts the bytes of every answer. That includes
 the requests one call makes past its first: a text part Gmail keeps apart is
 read as an attachment (20), and the credential check before a step's first call
 reads the profile (1). A label change in the change feed is read again as a
-metadata read (20). The meter's windows are kept on the source, so the host's
-steps and the owner's steps share them, and a restart does not reset them. One
-source's steps run one at a time: a second step waits for the first to end, so
-neither overwrites the other's charges or its rest.
+metadata read (20). An opened attachment that rides inline in its part is read
+in the whole message (60); one Gmail keeps apart is read by its id (20). The
+meter's windows are kept on the source, so the host's steps and the owner's
+steps share them, and a restart does not reset them. One source's steps run one
+at a time: a second step waits for the first to end, so neither overwrites the
+other's charges or its rest.
 
 - The change feed (`history.list` and the anchor) may spend the whole minute.
 - The copy (the newest-first listing, bodies, opened attachments) spends at most
