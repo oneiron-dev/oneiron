@@ -9,6 +9,11 @@
 //! - `Vault::apply_signed_re_root`, a move signed on another vault that
 //!   holds the same authority (`recover_vaults_independently`).
 //!
+//! An owner that commits an authority row in a raw write transaction with no
+//! watch (`Vault::mint_capability_slip`, one of the 51 the L7-31 read map
+//! found) leaves the stamp to the next watched commit on its thread, of any
+//! kind (Engine RULING NEXT-ROW-9 = A, Fri 13 Nov 19:43 JST).
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test re_root_stale_sweep`.
 
 use std::sync::Arc;
@@ -34,6 +39,8 @@ const MEMBER: &str = "owen";
 const NEXT_ROOT_SEED: u8 = 0x33;
 /// The foreign world the severed pact delivered (foreign id range).
 const WORLD_SEED: u8 = 0xF6;
+/// A second world the pact delivered, registered by the watched commit.
+const OTHER_WORLD_SEED: u8 = 0xF7;
 
 /// One rooted vault with its owner bound to its own host.
 struct Side {
@@ -202,4 +209,57 @@ fn a_root_move_signed_elsewhere_stores_the_stale_stamp_it_owes_before_it_returns
         .apply_signed_re_root(&moved)
         .expect("the move signed on the member applies on the receiver");
     assert_stamped(&receiver, world, "apply_signed_re_root");
+}
+
+/// The host mints the owner a person credential: `mint_capability_slip`
+/// stages an authority row in a raw write transaction and commits it with no
+/// watch of its own.
+fn mint_owner_credential(side: &Side) {
+    let owner = side
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("owner actor");
+    let root = side
+        .vault
+        .ensure_host_root_slip(&side.issuer)
+        .expect("the host root slip");
+    let issued_at = side.vault.capability_slip_now().expect("slip clock");
+    let mut claims = root.claims;
+    claims.slip_id = [0x5C; 32];
+    claims.holder_ref = owner.to_hex();
+    claims.actor_class = Some("human".into());
+    claims.issued_at = issued_at;
+    claims.expires_at = issued_at + 3_600;
+    claims.ttl_secs = 3_600;
+    side.vault
+        .mint_capability_slip(&side.issuer, claims)
+        .expect("the owner's credential");
+}
+
+/// The unwatched mint sweeps nothing itself; the next watched commit on the
+/// thread, here a grouped write that registers a second world, stores the
+/// stamp the mint's commit owed. Red on the stack head before this fix: that
+/// commit's watch held the mint's note aside and handed it back at its drop,
+/// so no sweep ran until the vault's next open.
+#[test]
+fn an_unwatched_authority_commit_is_swept_by_the_next_watched_commit() {
+    let member = side(0x11);
+    let company = side(0x22);
+    let pact_id = severed_pact(&member, &company);
+    let world = owe_a_stamp(&member.vault, pact_id);
+
+    mint_owner_credential(&member);
+    assert!(
+        foreign_world_stale_stamp(&member.vault, world)
+            .expect("stamp read")
+            .is_none(),
+        "control: the unwatched mint sweeps nothing on its own"
+    );
+    let other = ForeignWorldId::from_entity_id(
+        EntityId::from_bytes([OTHER_WORLD_SEED; 16]).expect("valid world id"),
+    )
+    .expect("the seed sits in the foreign world id range");
+    register_foreign_world_for_pact(&member.vault, &pact_id, other)
+        .expect("the second world registers in a watched write");
+    assert_stamped(&member.vault, world, "the next watched commit");
 }
