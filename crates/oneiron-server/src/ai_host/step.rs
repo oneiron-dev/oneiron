@@ -37,13 +37,14 @@ use oneiron::self_heal::audit::ObjectiveConfession;
 use oneiron::skill_optimize::union_source_rows;
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, Error,
-    LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef, ResponseFormat,
+    ErrorKind, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef, ResponseFormat,
     TierPrecedence, Vault, WriteActor,
 };
 
 use super::CHAT_ROLE;
 use super::live_lease::{self, LiveLease};
 use super::payer_funding::{PayerFault, attempt_grant_funding, requires_payer, scope_run_funding};
+use super::step_failure::StepRetryCause;
 use crate::models::{ModelCallBinding, ModelRuntime};
 use crate::server::SyncServer;
 
@@ -144,11 +145,10 @@ fn step_objectives(step: &AgentDispatchStatus, request: Option<&str>) -> Vec<Str
         .collect()
 }
 
-/// Why a step did not produce its output, and whether a later try of the
-/// same call may succeed (a model call the provider answered with a
-/// retryable error).
+/// Why a step did not produce its output, and why a later try of the same
+/// call may succeed, when it may.
 pub(super) struct StepFault {
-    pub(super) retryable: bool,
+    pub(super) retry: Option<StepRetryCause>,
     /// The step's meter ran out (`BudgetDenied::Exhausted`) before the call
     /// was answered: its run holds at the cap, paused with its checkpoint,
     /// and is neither failed nor retried (OF-541).
@@ -166,12 +166,54 @@ pub(super) struct StepFault {
 impl From<Error> for StepFault {
     fn from(error: Error) -> Self {
         Self {
-            retryable: false,
+            retry: None,
             exhausted: false,
             payer: None,
             hook_wait: false,
             error,
         }
+    }
+}
+
+/// The run a workflow step's leaf runs as: its calls' metering run, and the
+/// root of its `self.use` invocations (`secret_use::self_use_run`).
+pub(super) fn step_run_id(leaf: AttemptId) -> oneiron::Result<String> {
+    Ok(format!(
+        "workflow-step:{}",
+        EntityId::from_bytes(*leaf.as_bytes())?.to_hex()
+    ))
+}
+
+/// The invocation of the `ordinal`-th `self.use` call of the step on `leaf`,
+/// as the step builds it.
+#[cfg(oneiron_test_support)]
+pub(super) fn self_use_invocation(
+    leaf: AttemptId,
+    ordinal: u64,
+) -> oneiron::Result<oneiron::runtime_hooks::InvocationId> {
+    Ok(oneiron::runtime_hooks::InvocationId::of_run_step(
+        &secret_use::self_use_run(&step_run_id(leaf)?),
+        ordinal,
+    ))
+}
+
+/// The fault of a park whose durable write failed after its hook saved the
+/// ask (the tool checkpoint with its Hook pause). Only a store fault (storage,
+/// I/O, a full map) may try the same leaf again: the retry runs from the
+/// cursor checkpoint before the park, rebuilds the call's invocation and
+/// finds that ask. A lease fence, a fenced meter, a body admission refusal or
+/// a missing checkpoint route ends the step, as before. A call resumed from
+/// its own park retries the same way: its committed checkpoint still holds
+/// that park's wait, which the requeue keeps, so the retry resumes the call
+/// with its invocation and use ordinal ([WORKFLOW-PARK-RESUMED-CALL-RETRY]).
+pub(super) fn park_save_fault(error: Error) -> StepFault {
+    let store_fault = matches!(
+        error.kind(),
+        ErrorKind::Storage | ErrorKind::Io | ErrorKind::MapFull
+    );
+    StepFault {
+        retry: store_fault.then_some(StepRetryCause::ParkSaveFailed),
+        ..StepFault::from(error)
     }
 }
 
@@ -729,10 +771,7 @@ impl StepRunner {
         } else {
             None
         };
-        let run_id = format!(
-            "workflow-step:{}",
-            oneiron::EntityId::from_bytes(*attempt.id.as_bytes())?.to_hex()
-        );
+        let run_id = step_run_id(attempt.id)?;
         let charged = match carried {
             Some(units) => units.div_ceil(reserve),
             None => u64::from(earlier).saturating_mul(ladder.rungs() as u64),
@@ -790,7 +829,7 @@ impl StepRunner {
                 }
                 let error = Error::InvalidConfig(format!("workflow step {fault}"));
                 return Err(StepFault {
-                    retryable: false,
+                    retry: None,
                     exhausted: false,
                     payer: held.then_some(fault),
                     hook_wait: false,
@@ -807,7 +846,7 @@ impl StepRunner {
             None => logical_budget_units,
         };
         let budget = |denied: oneiron::llm::BudgetDenied| StepFault {
-            retryable: false,
+            retry: None,
             // A host-paid call nothing funds, or a resident's spent share,
             // holds the run at its cap as the spent meter it read as before D3.
             exhausted: matches!(
@@ -948,9 +987,11 @@ impl StepRunner {
             // A park fences the meter: no handle of it admits again, and the
             // workflow resumes only on the meter its checkpoint rebuilds (FIX
             // BUDGET-PARK). A cursor save is a snapshot: the conversation goes
-            // on with this meter. A park whose durable write then fails ends
-            // the step with that error (StepConversationFault::Checkpoint),
-            // so nothing runs on the fenced meter.
+            // on with this meter. A park whose durable write then fails
+            // returns at once (StepConversationFault::ParkSave), so nothing
+            // runs on the fenced meter: a store fault tries the same leaf
+            // again from its cursor checkpoint, anything else ends the step
+            // (`park_save_fault`).
             let budget = if wait.is_some() {
                 guard.park()
             } else {
@@ -1031,7 +1072,7 @@ impl StepRunner {
             // stamp leaves the leaf unattributed, not failed.
             Ok(StepConversation::HookPending(wait)) => {
                 return Err(StepFault {
-                    retryable: false,
+                    retry: None,
                     exhausted: false,
                     payer: None,
                     hook_wait: true,
@@ -1051,6 +1092,7 @@ impl StepRunner {
                 (response, binding, final_request, rounds)
             }
             Err(StepConversationFault::Checkpoint(error)) => return Err(error.into()),
+            Err(StepConversationFault::ParkSave(error)) => return Err(park_save_fault(error)),
             Err(StepConversationFault::Model(oneiron::llm::LlmError::BudgetDenied(denied))) => {
                 return Err(budget(denied));
             }
@@ -1064,7 +1106,7 @@ impl StepRunner {
                         .insert(attempt.id, chain);
                 }
                 return Err(StepFault {
-                    retryable,
+                    retry: retryable.then_some(StepRetryCause::ModelCallFailed),
                     exhausted: false,
                     payer: None,
                     hook_wait: false,

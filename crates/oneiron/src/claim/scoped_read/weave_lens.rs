@@ -35,9 +35,9 @@ use crate::learning::LearningCell;
 use crate::lens::{
     ButtonControl, CollectionAtom, GeneratedLens, GeneratedUiActionDeclaration,
     GeneratedUiActionTier, GeneratedUiStateSnapshot, HostedLensRender, LedgerCell, LedgerRowAtom,
-    LensAtom, LensAtomId, LensBackingTarget, LensHandleName, LensHandleRef, LensHandleRole,
-    LensMount, LensNode, LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText,
-    SectionAtom, SelfUiAction, SelfUiActionId, SelfUiControl, SelfUiControlId, SelfUiValue,
+    LensAtom, LensAtomId, LensBackingTarget, LensHandleName, LensHandleRef, LensMount, LensNode,
+    LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText, SectionAtom, SelfUiAction,
+    SelfUiActionId, SelfUiControl, SelfUiControlId, SelfUiValue,
 };
 use crate::provenance::EdgeRef;
 use crate::skill_hub::pack_catalog::{WEAVE_LENS_PACK_NAME, WEAVE_REPORT_LENS};
@@ -67,9 +67,12 @@ const CONCERN_OUTCOME_VERB: &str = "self.inbox.concern.outcome";
 /// The skill file whose body is the instruction.
 const SKILL_FILE: &str = "SKILL.md";
 
-fn invalid(reason: &str) -> Error {
-    Error::InvalidConfig(format!("weave lens: {reason}"))
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::claim::scoped_read::weave_lens::{
+    WeaveLensPlanLine, WeaveLensPlanSection,
+};
+#[doc(hidden)]
+use oneiron_verb_wire::claim::scoped_read::weave_lens::{invalid, item_key, required_text};
 
 /// The shipped `weave-report` skill's lens (ARCH-0063 §6): the first-party
 /// lens pack's [`WEAVE_REPORT_LENS`], mounted on that pack's skill, with the
@@ -89,22 +92,6 @@ pub struct WeaveLensPlan {
     pub title: String,
     pub wrong_label: String,
     pub sections: Vec<WeaveLensPlanSection>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WeaveLensPlanSection {
-    pub heading: String,
-    #[serde(default)]
-    pub summary: Vec<String>,
-    pub items: Vec<WeaveLensPlanLine>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WeaveLensPlanLine {
-    pub key: String,
-    pub line: String,
 }
 
 /// One period's render, saved on its digest row: the plan and what made it.
@@ -138,10 +125,6 @@ pub const WEAVE_LENS_PLAN_REPAIRS: usize = 1;
 /// report moved between its two reads.
 pub const WEAVE_LIVE_LENS_REREADS: usize = 1;
 
-fn item_key(section: usize, item: usize) -> String {
-    format!("{section}.{item}")
-}
-
 fn keyed_items(report: &WeaveReport) -> BTreeMap<String, &WeaveItem> {
     report
         .sections
@@ -155,13 +138,6 @@ fn keyed_items(report: &WeaveReport) -> BTreeMap<String, &WeaveItem> {
                 .map(move |(i, item)| (item_key(s, i), item))
         })
         .collect()
-}
-
-fn required_text(value: &str, what: &str) -> Result<LensText> {
-    if value.trim().is_empty() {
-        return Err(invalid(&format!("the plan's {what} is empty")));
-    }
-    LensText::new(value.to_owned())
 }
 
 impl WeaveLensPlan {
@@ -541,16 +517,9 @@ pub(super) fn compose_weave_lens_framed(
         let reads: Vec<_> = sources.iter().map(|id| PointRead::id(*id)).collect();
         for (index, row) in read.read(&reads, None)?.value.into_iter().enumerate() {
             let Some(row) = row else { continue };
-            let (target, role) = if row.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-                (
-                    LensBackingTarget::claim(row.id, row.id.to_hex(), row.content_hash)?,
-                    LensHandleRole::ClaimSet,
-                )
-            } else {
-                (
-                    LensBackingTarget::entity(row.id, row.id.to_hex(), row.content_hash)?,
-                    LensHandleRole::EntitySet,
-                )
+            // A source with no short id binds no handle, as an unread one.
+            let Some((target, role)) = LensBackingTarget::of_read_row(read.vault(), &row)? else {
+                continue;
             };
             let name = LensHandleName::new(format!("weave-{index}"))?;
             frame.mint_backing_ref(read, name.clone(), role, target)?;

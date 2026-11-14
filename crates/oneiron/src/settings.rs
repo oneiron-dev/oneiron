@@ -34,7 +34,7 @@ pub(crate) use destination::{
 };
 pub(crate) use device_local::{
     device_local_keeps_among, device_local_worlds_at, device_local_worlds_for,
-    device_local_worlds_for_machine, off_device_readable_in,
+    device_local_worlds_for_machine, off_device_readable_in, off_device_readable_in_txn,
 };
 pub(crate) use device_only::{
     CarriedWorlds, carried_worlds_in, device_only_recipient_worlds,

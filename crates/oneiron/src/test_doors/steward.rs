@@ -3,7 +3,6 @@
 
 use std::collections::BTreeSet;
 
-use crate::attempt_queue::AttemptId;
 use crate::dreamer_consolidation::strength::ConsolidationStrengthPolicy;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -16,6 +15,8 @@ pub const STEWARD_VERBS: [&str; 4] = grant_scope::STEWARD_VERBS;
 pub const STEWARD_READ_VERB: &str = grant_scope::STEWARD_READ_VERB;
 /// The Steward's `archive` verb.
 pub const STEWARD_ARCHIVE_VERB: &str = grant_scope::STEWARD_ARCHIVE_VERB;
+/// The Steward's `delete` verb.
+pub const STEWARD_DELETE_VERB: &str = grant_scope::STEWARD_DELETE_VERB;
 
 /// What the Dreamer may do now, as the policy fold reads its rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,15 +25,6 @@ pub struct WeaveReach {
     pub reads: bool,
     /// It lands what it derives Auto.
     pub lands_auto: bool,
-}
-
-/// One strength-archive receipt written for a claim.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StrengthArchiveReceipt {
-    /// The grant the archive was judged by.
-    pub grant_ref: Option<String>,
-    /// The read frontier the archive saw.
-    pub read_frontier_hash: [u8; 32],
 }
 
 /// The Dreamer's actor id.
@@ -204,44 +196,6 @@ pub fn archive_every_quiet_claim(vault: &Vault) -> Result<()> {
         archive_below: 1.0,
         quiet_ms: 1,
     })
-}
-
-/// A clock reading thirty days after the vault's recorded now, in ms.
-#[must_use]
-pub fn a_month_on_ms(vault: &Vault) -> u64 {
-    (vault.now_recorded_at() + 30 * 86_400).saturating_mul(1_000)
-}
-
-/// Runs the strength archive for the Dreamer's `attempt` at `now_ms`; the
-/// number of claims it archived.
-///
-/// # Errors
-///
-/// The vault's.
-pub fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u64) -> Result<u64> {
-    crate::dreamer_consolidation::strength::archive_quiet_claims(vault, attempt, now_ms)
-}
-
-/// The strength-archive receipts written for `claim`.
-///
-/// # Errors
-///
-/// The vault's.
-pub fn strength_archive_receipts(
-    vault: &Vault,
-    claim: &EntityId,
-) -> Result<Vec<StrengthArchiveReceipt>> {
-    let txn = vault.store.env.read_txn()?;
-    Ok(vault
-        .store
-        .gate_decisions_for_claim_in_txn(&txn, claim.as_bytes())?
-        .into_iter()
-        .filter(|record| record.content_kind == "dreamer_strength_archive")
-        .map(|record| StrengthArchiveReceipt {
-            grant_ref: record.grant_ref,
-            read_frontier_hash: record.read_frontier_hash,
-        })
-        .collect())
 }
 
 /// Where a base agent's Steward grant stands, as the host's first mint or
@@ -446,6 +400,71 @@ pub fn write_upper_case_dreamer_permit(vault: &Vault) -> Result<()> {
             (Value::from("receipted"), Value::Boolean(true)),
             (Value::from("warned"), Value::Boolean(true)),
         ]);
+        Ok(())
+    })
+}
+
+/// The shipped policy with one more grant-policy row: a Steward holder row
+/// for `holder` on the vault's root that holds the worlds `worlds` (every
+/// world when `None`) and the verbs `verbs` (every verb when `None`), every
+/// other data axis whole. The owner's standing word that narrows what one
+/// Steward holds (RULING REMINT-POLICY-ROWS = A).
+///
+/// # Errors
+///
+/// The vault's.
+pub fn write_steward_holder_row(
+    vault: &Vault,
+    holder: EntityId,
+    worlds: Option<&[EntityId]>,
+    verbs: Option<&[&str]>,
+) -> Result<()> {
+    use crate::federation::grant_policy::{GrantPolicyRow, ROWS_KEY, encode_row};
+    use crate::federation::{FederationGrantRole, FederationGrantScope, Scope, ScopeId};
+    let root = {
+        let txn = vault.store.env.read_txn()?;
+        vault.steward_root_scope_in_txn(&txn)?
+    };
+    let FederationGrantScope::Vault { vault_id } = root else {
+        return Err(Error::InvariantViolation(
+            "a Steward grant names a vault root",
+        ));
+    };
+    let mut scope = Scope::top();
+    if let Some(worlds) = worlds {
+        scope.worlds = worlds.iter().map(|world| ScopeId(*world)).collect();
+    }
+    if let Some(verbs) = verbs {
+        scope.verbs = verbs.iter().map(|verb| (*verb).to_owned()).collect();
+    }
+    let row = encode_row(&GrantPolicyRow::HolderOverride {
+        role: FederationGrantRole::Steward,
+        vault_id,
+        holder,
+        scope,
+    })?;
+    rewrite_shipped_policy(vault, |entries| {
+        let rmpv::Value::Array(rows) = policy_entry(entries, ROWS_KEY)? else {
+            return Err(Error::InvalidConfig(
+                "the grant-policy rows are not a list".into(),
+            ));
+        };
+        rows.push(row);
+        Ok(())
+    })
+}
+
+/// The shipped policy with an empty grant-policy row list: no precedence
+/// row and no role default, so no Steward scope resolves, as an owner who
+/// emptied the list leaves it.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn empty_grant_policy_rows(vault: &Vault) -> Result<()> {
+    rewrite_shipped_policy(vault, |entries| {
+        *policy_entry(entries, crate::federation::grant_policy::ROWS_KEY)? =
+            rmpv::Value::Array(Vec::new());
         Ok(())
     })
 }
