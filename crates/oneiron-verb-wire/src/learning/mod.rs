@@ -1,0 +1,25 @@
+pub use crate::claim::learning_evidence::Anchor;
+pub use crate::claim::learning_evidence::EvidenceSource;
+pub use crate::claim::learning_evidence::Observation;
+pub use crate::claim::learning_predicate::LearningPredicate;
+pub use crate::receipt::task_type_ref::ROOT_TYPE_NODE;
+pub use oneiron_base::learning_estimate::BetaView;
+pub use oneiron_base::learning_estimate::ESTIMATOR_VERSION;
+pub use oneiron_base::learning_estimate::Estimate;
+pub use oneiron_base::learning_estimate::EstimateForm;
+pub use oneiron_base::learning_estimate::EstimateLabels;
+pub use oneiron_base::learning_estimate::EstimateValue;
+pub use oneiron_base::learning_estimate::Prior;
+pub use oneiron_base::learning_estimate::PriorOrigin;
+pub use oneiron_base::learning_estimate::Window;
+pub use oneiron_store::write_envelope::learning_predicate::LEARNING_NAMESPACE;
+pub use oneiron_store::write_envelope::learning_predicate::LEARNING_PREDICATES;
+pub use oneiron_store::write_envelope::learning_predicate::PREDICATE_LEARNING_EDIT_COST;
+pub use oneiron_store::write_envelope::learning_predicate::PREDICATE_LEARNING_RELIABILITY;
+pub use oneiron_store::write_envelope::learning_predicate::PREDICATE_LEARNING_RETEST_NOISE;
+pub use oneiron_store::write_envelope::learning_predicate::PREDICATE_LEARNING_SETTING;
+pub use oneiron_store::write_envelope::learning_predicate::is_learning_predicate;
+
+pub mod cell;
+pub mod doors;
+pub mod honesty;

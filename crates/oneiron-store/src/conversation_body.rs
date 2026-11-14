@@ -28,7 +28,9 @@ impl ConversationKind {
 }
 
 /// A room role is authority, not an actor class: agent PERSON records can hold it.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RoomRole {
     Owner,

@@ -91,17 +91,8 @@ impl ConnectorIssuerTransition {
     }
 }
 
-/// One connector's open issuer transition, as the steady-state views
-/// surface it: the issuers, when it was detected, and the catalog slate
-/// rows it holds. Value-less: no witness or credential pointers.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ConnectorIssuerHaltView {
-    pub old_issuer: String,
-    pub new_issuer: String,
-    pub detected_at: u64,
-    /// Catalog slate rows the halt holds, by tool name.
-    pub dependent_rows: Vec<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::connector_key::credential_binding::ConnectorIssuerHaltView;
 
 /// One catalog connector credential slot's durable binding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
