@@ -149,8 +149,10 @@ fn writes_shared_content_in_txn(
 /// itself, holder key and bounds alike. A slip narrowed or handed on to
 /// another key since shows other claims than its mint; and a proof verified
 /// against a snapshot other than this vault's may name a live slip id, but
-/// not the claims this vault minted under it.
-fn minted_as_shown(
+/// not the claims this vault minted under it. Every door whose effect
+/// outlives the room under the slip's authority asks it: a save here, and
+/// an export ([`OffRecordSession::export_talk_by`]).
+pub(super) fn minted_as_shown(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     credential: &VerifiedSlip,
