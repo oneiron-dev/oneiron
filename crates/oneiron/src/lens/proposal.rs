@@ -40,21 +40,8 @@ pub(super) const SLOTS: SideTable<String, LensSlotRecord, Named> =
 /// The most rows one `vault.lenses.list` page returns.
 pub const LENS_LIST_MAX_PAGE: usize = 200;
 
-/// One pack lens slot: an installed pack and one of its skills.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LensSlot {
-    pub pack_name: String,
-    /// The SKILL's 32-hex entity id.
-    pub skill_id: String,
-}
-
-impl LensSlot {
-    pub(super) fn skill(&self) -> MemoryResult<EntityId> {
-        EntityId::from_hex(&self.skill_id)
-            .map_err(|_| MemoryError::bad_request("slot.skill_id is a 32-hex SKILL id"))
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::lens::proposal::{LensListRequest, LensSlot};
 
 /// `vault.lenses.propose`'s input: a frozen compiled tree for one slot, the
 /// pack content it was compiled against, and its authored intent. The host
@@ -78,26 +65,6 @@ pub struct LensProposeRequest {
     /// it belongs to. Omitted, where this credential is bound to author.
     #[serde(default)]
     pub scope: Option<LensScope>,
-}
-
-/// `vault.lenses.list`'s input: one page of proposals in lens-id order.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LensListRequest {
-    /// Only this pack's proposals.
-    #[serde(default)]
-    pub pack_name: Option<String>,
-    /// The `next_after` of the page before.
-    #[serde(default)]
-    pub after: Option<String>,
-    #[serde(default)]
-    pub limit: Option<u32>,
-    /// Carry each proposal's frozen tree. A reader narrowed to some worlds
-    /// or facets gets the trees of the proposals whose scope its read
-    /// admits, each whole and only while it reads every row the tree names
-    /// (FIX 2136).
-    #[serde(default)]
-    pub with_compiled: bool,
 }
 
 /// Where a proposal stands in its slot.

@@ -50,16 +50,8 @@ use super::*;
 
 pub use crate::machine_destination::EffectiveRead;
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum EffectiveModelOrder {
-    Inherit,
-    Ordered(Vec<String>),
-    /// Concurrent edits named different orders.
-    Conflicted,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::authority::world_privacy::EffectiveModelOrder;
 
 /// One world's settings as the fold decides them.
 #[derive(
