@@ -14,6 +14,7 @@
 
 mod conflicts_page;
 mod evidence_spans;
+mod extraction_inputs;
 mod policy_preflight;
 mod run_reader;
 mod settings_doors;
@@ -30,10 +31,16 @@ pub use conflicts_page::{
 pub(crate) use conflicts_page::{
     conflict_reader_in_txn, conflict_served_in_txn, conflicts_page_bound,
 };
+pub(crate) use evidence_spans::evidence_spans_bound;
 pub use evidence_spans::{
     EVIDENCE_SPANS_MASKED_KEY_CROSSES_MESSAGES, EVIDENCE_SPANS_MAX_RANGES, EvidenceMessageSlice,
     EvidenceRange, EvidenceSourceStatus, EvidenceSpan, EvidenceSpans, EvidenceSpansRequest,
     evidence_spans, validate_evidence_spans,
+};
+pub(crate) use extraction_inputs::extraction_inputs_page_bound;
+pub use extraction_inputs::{
+    ExtractionInputsPage, ExtractionInputsPageRequest, ExtractionPolicy, ExtractionTurn,
+    extraction_inputs_page,
 };
 pub use policy_preflight::{
     POLICY_PREFLIGHT_MAX_REFS, PolicyPreflight, PolicyPreflightAct, PolicyPreflightRef,

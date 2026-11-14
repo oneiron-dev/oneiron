@@ -1,4 +1,4 @@
-//! A bound client's verb calls, limited to its admitted maintenance facet.
+//! A bound client's verb calls, limited to its admitted Dreamer facet.
 //! Each call crosses its row's one verb-hook boundary, with the binding
 //! proved before the hooks and again in the call's own transaction.
 
@@ -10,7 +10,10 @@ use super::{BoundFacet, DreamerAttemptBinding, facet_batch, facet_refused};
 use crate::derive::DeriveCommitInput;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::runtime_hooks::InvocationId;
-use crate::snapshot_read::{ConflictsPageRequest, StrengthObservationsPageRequest};
+use crate::snapshot_read::{
+    ConflictsPageRequest, EvidenceSpansRequest, ExtractionInputsPageRequest,
+    StrengthObservationsPageRequest,
+};
 use crate::task_verb::verb_hook_boundary::{typed_row, typed_row_validated};
 use crate::verbs::{AiVerdictRequest, VERB_TABLE};
 
@@ -18,6 +21,10 @@ use crate::verbs::{AiVerdictRequest, VERB_TABLE};
 const STRENGTH_PAGE_VERB: &str = "vault.consolidation.strength.observations.page";
 /// The conflicts page a conflict-settlement attempt reads.
 const CONFLICTS_PAGE_VERB: &str = "vault.consolidation.conflicts.page";
+/// The inputs page an extraction attempt reads.
+const EXTRACTION_INPUTS_PAGE_VERB: &str = "vault.consolidation.extraction.inputs.page";
+/// The evidence spans an extraction attempt reads.
+const EVIDENCE_SPANS_VERB: &str = "vault.evidence.spans";
 /// The typed question a conflict-settlement attempt asks the host's ladder.
 const AI_VERDICT_VERB: &str = "ai.verdict";
 /// The commit that lands items admitted by the bound facet.
@@ -29,7 +36,8 @@ impl DreamerAttemptBinding {
     ///
     /// Strength admits its observations page and Archive commits. Conflict
     /// settlement admits its conflicts page, typed verdicts on the host's
-    /// lent ladder and Settle commits. A commit takes the batch itself,
+    /// lent ladder and Settle commits. Extraction admits its inputs page and
+    /// evidence spans, and no commit. A commit takes the batch itself,
     /// `{"items": [...], "sources": [...]}`: the binding is the live run,
     /// so no `live_run` attachment wraps it.
     ///
@@ -51,6 +59,9 @@ impl DreamerAttemptBinding {
                     verb,
                     CONFLICTS_PAGE_VERB | AI_VERDICT_VERB | DERIVE_COMMIT_VERB
                 )
+            }
+            BoundFacet::Extraction => {
+                matches!(verb, EXTRACTION_INPUTS_PAGE_VERB | EVIDENCE_SPANS_VERB)
             }
         };
         if !admitted {
@@ -77,6 +88,18 @@ impl DreamerAttemptBinding {
                     crate::snapshot_read::conflicts_page_bound(&memory, &input, self)
                 })?)
             }
+            EXTRACTION_INPUTS_PAGE_VERB => {
+                let input: ExtractionInputsPageRequest = decode(verb, input)?;
+                encode(&typed_row(&memory, &VERB_TABLE, verb, input, |input| {
+                    crate::snapshot_read::extraction_inputs_page_bound(&memory, &input, self)
+                })?)
+            }
+            EVIDENCE_SPANS_VERB => {
+                let input: EvidenceSpansRequest = decode(verb, input)?;
+                encode(&typed_row(&memory, &VERB_TABLE, verb, input, |input| {
+                    crate::snapshot_read::evidence_spans_bound(&memory, &input, self)
+                })?)
+            }
             AI_VERDICT_VERB => {
                 let input: AiVerdictRequest = decode(verb, input)?;
                 encode(&typed_row(&memory, &VERB_TABLE, verb, input, |input| {
@@ -88,6 +111,7 @@ impl DreamerAttemptBinding {
                 let validate = match self.facet {
                     BoundFacet::Strength => validate_strength_commit,
                     BoundFacet::ConflictSettle => validate_conflict_settle_commit,
+                    BoundFacet::Extraction => return Err(facet_refused(self.facet)),
                 };
                 encode(&typed_row_validated(
                     &memory,
