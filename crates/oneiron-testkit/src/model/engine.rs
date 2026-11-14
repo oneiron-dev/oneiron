@@ -123,6 +123,7 @@ impl EngineVault {
         let clock = FakeClock::at(FAKE_EPOCH);
         let keystore = Arc::new(MemoryKeystore::new());
         let vault = open(&directory, &clock, &keystore)?;
+        eprintln!("## PF-OPEN {}", fd_census(directory.path()));
         let owner = vault
             .ensure_embedded_owner_actor()
             .map_err(|error| format!("the embedded owner: {error:?}"))?;
@@ -414,7 +415,12 @@ impl EngineVault {
     /// keystore. The owner is the same actor and proves itself again.
     fn restart(&mut self) -> Result<(), String> {
         drop(self.vault.take());
+        let after_drop = fd_census(self.directory.path());
         let vault = open(&self.directory, &self.clock, &self.keystore)?;
+        eprintln!(
+            "## PF-RESTART after_drop {after_drop} after_open {}",
+            fd_census(self.directory.path())
+        );
         let owner = vault
             .ensure_embedded_owner_actor()
             .map_err(|error| format!("the embedded owner after the restart: {error:?}"))?;
@@ -540,6 +546,27 @@ impl EngineVault {
         keys.sort_unstable();
         keys
     }
+}
+
+/// PAGE-FULL probe (lane branch only): the process's open descriptors on
+/// files under `dir`, by path relative to it, and the process's thread count.
+pub fn fd_census(dir: &std::path::Path) -> String {
+    let root = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    match std::fs::read_dir("/proc/self/fd") {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                if let Ok(target) = std::fs::read_link(entry.path()) {
+                    if let Ok(relative) = target.strip_prefix(&root) {
+                        *counts.entry(format!("/{}", relative.display())).or_default() += 1;
+                    }
+                }
+            }
+        }
+        Err(error) => return format!("fds=unavailable({error})"),
+    }
+    let threads = std::fs::read_dir("/proc/self/task").map_or(0, Iterator::count);
+    format!("fds={counts:?} threads={threads}")
 }
 
 fn open(
@@ -681,9 +708,13 @@ pub fn check_sequence(seed: u64, steps: &[Step], universe: &Universe) -> Result<
         if outcome != Outcome::Applied {
             return Err(format!("{}: the model did not apply it: {outcome:?}", at()));
         }
-        engine
-            .apply(step)
-            .map_err(|error| format!("{}: the engine refused it: {error}", at()))?;
+        engine.apply(step).map_err(|error| {
+            format!(
+                "{}: the engine refused it: {error} [PF-CENSUS {}]",
+                at(),
+                fd_census(engine.directory.path())
+            )
+        })?;
         let observed = engine
             .observe(&model)
             .map_err(|error| format!("{}: read back: {error}", at()))?;
