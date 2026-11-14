@@ -45,10 +45,10 @@
 //! arrives before the removal and the fold, not the door, must drop it.
 //! `a_revoked_keys_withheld_handoff_installs_no_root` runs red or as a guard.
 //! Guard: `an_enrolment_the_revocation_saw_stands`. The fold's refold of a
-//! world or owner choice above a refused row never folds back a choice the
-//! fence refuses for its own signer (REVIEW-7987); red before that:
-//! `a_revoked_install_keys_choices_stay_refused_through_the_refold` (the
-//! second choice folds again).
+//! world edit above a refused row never folds back an edit the fence refuses
+//! for its own signer (REVIEW-7987); red before that:
+//! `a_revoked_install_keys_world_edits_stay_refused_through_the_refold` (the
+//! second edit folds again, and its world stays narrowed).
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test owner_enrol`.
 #![cfg(oneiron_test_support)]
@@ -60,9 +60,9 @@ use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, ActorBindingStatus,
     AuthorityAttestation, AuthorityEntryHash, AuthorityKey, AuthorityLogEntry, AuthorityOp,
-    AuthoritySignature, AuthorityTier, CheckpointRootChoice, DeviceAuthority, HostSlipIssuer,
-    MachineRole, OwnerKeyEnrollment, ROLE_AGENT, authority_entry_hash, authority_transcript,
-    decode_authority_log_entry_body, encode_authority_log_entry_body,
+    AuthoritySignature, AuthorityTier, DeviceAuthority, HostSlipIssuer, MachineRole,
+    OwnerKeyEnrollment, ROLE_AGENT, ReadLocation, WorldPrivacy, authority_entry_hash,
+    authority_transcript, decode_authority_log_entry_body, encode_authority_log_entry_body,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
@@ -702,20 +702,20 @@ fn a_replica_holding_a_revoked_keys_revocation_drops_it_when_the_removal_arrives
 }
 
 impl Shared {
-    /// The one row the history gained since `before`.
-    fn row_since(&self, before: &[Vec<u8>]) -> AuthorityEntryHash {
+    /// The one world edit among the rows the history gained since `before`;
+    /// the edit's world key work may sign rows of its own.
+    fn world_edit_since(&self, before: &[Vec<u8>]) -> AuthorityEntryHash {
         let held: BTreeSet<&Vec<u8>> = before.iter().collect();
-        let new: Vec<AuthorityEntryHash> = self
+        let edits: Vec<AuthorityEntryHash> = self
             .history()
             .iter()
             .filter(|row| !held.contains(row))
-            .map(|row| {
-                authority_entry_hash(&decode_authority_log_entry_body(row).expect("a row"))
-                    .expect("a hash")
-            })
+            .map(|row| decode_authority_log_entry_body(row).expect("a row"))
+            .filter(|entry| matches!(entry.op, AuthorityOp::WorldPrivacy(_)))
+            .map(|entry| authority_entry_hash(&entry).expect("a hash"))
             .collect();
-        assert_eq!(new.len(), 1, "one new row: {new:?}");
-        new[0]
+        assert_eq!(edits.len(), 1, "one new world edit: {edits:?}");
+        edits[0]
     }
 
     fn is_valid(&self, hash: &AuthorityEntryHash) -> bool {
@@ -727,44 +727,66 @@ impl Shared {
     }
 }
 
-/// The host install's key carries two checkpoint policy choices of the
-/// owner, the second on the first. A host-root revocation of that key,
-/// signed on the heads before both, arrives after them. Its fence refuses
-/// both for their own signer, and the fold's refold of a choice above a
-/// refused row folds neither back (REVIEW-7987).
+/// The host install's key carries two world edits of the owner, the second
+/// signed on the first and naming another world, one no edit had touched. A
+/// host-root revocation of that key, signed on the heads before both, arrives
+/// after them. Its fence refuses both for their own signer, and the fold's
+/// refold of a world edit above a refused row folds neither back: the second
+/// world reads as one no edit touched (REVIEW-7987). Two owner choices cannot
+/// show this: a choice names the revision its parents carry, so the second
+/// never folds above a refused first.
 #[test]
-fn a_revoked_install_keys_choices_stay_refused_through_the_refold() {
+fn a_revoked_install_keys_world_edits_stay_refused_through_the_refold() {
     let shared = shared();
+    let owner = proof(&shared.vault, shared.owner);
+    let world = |name: &str| {
+        shared
+            .vault
+            .create_world(&owner, name, shared.vault.now_recorded_at())
+            .expect("a world")
+    };
+    let first_world = world("First world");
+    let second_world = world("Second world");
+    let untouched = world("Untouched world");
     let revocation =
         oneiron::test_doors::install_key_revocation::withheld_revocation_of_this_install(
             &shared.vault,
             &shared.issuer,
         )
         .expect("the withheld revocation of the host install's key");
-    let owner = ActAuthority::Owner(proof(&shared.vault, shared.owner), ActSurface::ThisInstall);
-    let before = shared.history();
-    shared
-        .vault
-        .set_checkpoint_policy_as(
-            &owner,
-            Some(CheckpointRootChoice {
-                roots: vec![shared.issuer.public_key()],
-                quorum: 1,
-                hardware: false,
-            }),
-            None,
-        )
-        .expect("the first choice");
-    let first = shared.row_since(&before);
-    let before = shared.history();
-    shared
-        .vault
-        .set_checkpoint_policy_as(&owner, None, None)
-        .expect("the second choice");
-    let second = shared.row_since(&before);
+    let edit = |world: EntityId| {
+        let before = shared.history();
+        shared
+            .vault
+            .set_world_privacy_as(
+                &owner,
+                ActSurface::ThisInstall,
+                world,
+                WorldPrivacy {
+                    read: ReadLocation::MyMachines,
+                    ..WorldPrivacy::default()
+                },
+                None,
+            )
+            .expect("the owner keeps the world on their machines");
+        shared.world_edit_since(&before)
+    };
+    let reads = |world: EntityId| {
+        shared
+            .vault
+            .world_privacy(world)
+            .expect("the world's settings")
+    };
+    let first = edit(first_world);
+    let second = edit(second_world);
     assert!(
         shared.is_valid(&first) && shared.is_valid(&second),
-        "precondition: both choices fold before the revocation arrives"
+        "precondition: both edits fold before the revocation arrives"
+    );
+    assert_ne!(
+        reads(second_world),
+        reads(untouched),
+        "precondition: the second edit narrows its world"
     );
 
     shared
@@ -774,11 +796,16 @@ fn a_revoked_install_keys_choices_stay_refused_through_the_refold() {
 
     assert!(
         !shared.is_valid(&first),
-        "the fence refuses the first choice, signed by the revoked key off its line"
+        "the fence refuses the first edit, signed by the revoked key off its line"
     );
     assert!(
         !shared.is_valid(&second),
-        "the refold does not fold the second choice back above the refused first"
+        "the refold does not fold the second edit back above the refused first"
+    );
+    assert_eq!(
+        reads(second_world),
+        reads(untouched),
+        "the second world reads as one no edit touched"
     );
 }
 
