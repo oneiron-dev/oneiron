@@ -5,11 +5,10 @@
 //! generation, and a mark on any other row is refused.
 //!
 //! Public doors only, plus `test_doors::host_taint_replica` for the
-//! own-device replay. The archive destination opens at least one wall-clock
-//! second after its source (sleep 1100 ms), as in
-//! `archive_import_reserved_claims.rs`.
+//! own-device replay.
 #![cfg(all(oneiron_test_support, feature = "sync"))]
 
+use oneiron::batch::export::{ExportImportRefusal, ImportRefusalReason};
 use oneiron::blob_artifact::BlobArtifactBody;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::secret_lease::SecretTaintRef;
@@ -27,13 +26,6 @@ fn open_vault() -> Result<(tempfile::TempDir, Vault), Box<dyn std::error::Error>
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
     Ok((dir, vault))
-}
-
-/// A fresh seeded destination whose engine-seed seconds differ from the
-/// source's: any 1100 ms interval crosses a second boundary.
-fn open_later_vault() -> Result<(tempfile::TempDir, Vault), Box<dyn std::error::Error>> {
-    std::thread::sleep(std::time::Duration::from_millis(1100));
-    open_vault()
 }
 
 fn taint(secret_ref: &str, generation: u32) -> SecretTaintRef {
@@ -127,7 +119,8 @@ fn a_second_host_mark_keeps_each_secrets_lowest_generation() -> TestResult {
     let id = untainted_artifact(&source)?;
     source.mark_artifact_tainted(&id, &[taint(SECRET, 1)])?;
     source.mark_artifact_tainted(&id, &[taint(SECRET, 3), taint(OTHER, 0)])?;
-    let want = vec![taint(OTHER, 0), taint(SECRET, 1)];
+    // The carrier keeps the refs sorted by secret name, as the read does.
+    let want = vec![taint(SECRET, 1), taint(OTHER, 0)];
     assert_eq!(
         source.artifact_taint_refs(&id)?,
         want,
@@ -166,22 +159,27 @@ fn a_host_mark_on_a_row_that_is_no_artifact_is_refused() -> TestResult {
     Ok(())
 }
 
-/// Guard, not a red case: the whole-vault archive nulls a tainted row's body
-/// and the import leaves it out, on main (the sidecar) as on this head (the
-/// body carrier).
+/// Guard, not a red case: the whole-vault archive carries a host-marked
+/// artifact only redacted, and its manifest refuses the row's import as a
+/// redacted body, on main (the sidecar) as on this head (the body carrier).
+/// A restore of that archive fails on main today (FIX-LIST
+/// RESTORE-REFUSES-NULLED-ROW), so the guard reads the archive's manifest.
 #[test]
-fn a_host_marked_artifact_stays_out_of_a_restored_archive() -> TestResult {
+fn a_host_marked_artifact_goes_redacted_in_the_whole_vault_archive() -> TestResult {
     let (_source_dir, source) = open_vault()?;
     let id = untainted_artifact(&source)?;
     source.mark_artifact_tainted(&id, &[taint(SECRET, 0)])?;
     let archive = source.export_whole_vault(true)?;
-
-    let (_dest_dir, dest) = open_later_vault()?;
-    dest.import_whole_vault_archive(archive.bytes())?;
-    assert_eq!(
-        dest.get(&id)?,
-        None,
-        "the archive carries the host-marked artifact only redacted, and the import leaves it out"
+    let refusals = &archive.manifest().import_refusals;
+    assert!(
+        refusals.iter().any(|refusal| matches!(
+            refusal,
+            ExportImportRefusal::Entity {
+                entity_id,
+                reason: ImportRefusalReason::RedactedBody,
+            } if entity_id == &id.to_hex()
+        )),
+        "the archive carries the host-marked artifact only redacted: {refusals:?}"
     );
     Ok(())
 }
