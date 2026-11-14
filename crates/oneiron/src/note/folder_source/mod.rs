@@ -188,6 +188,15 @@ impl FolderSourceFile {
             _ => FileReadiness::Text,
         }
     }
+
+    /// Whether `text` is the file's text as the last rescan that took the
+    /// file read it: the text of the revision the ledger names. A note the
+    /// owner edited since, or one that keeps its text while the file's
+    /// change waits as a proposal, holds other text.
+    #[must_use]
+    pub fn holds_file_text(&self, text: &str) -> bool {
+        !self.file_hash.is_empty() && text_hash(text) == self.file_hash
+    }
 }
 
 /// One file the folder holds, as written.

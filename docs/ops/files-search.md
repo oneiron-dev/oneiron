@@ -61,8 +61,10 @@ beside `file`). The owner can ask about a file and get an answer with citations 
 - **The files read.** With no `file`, the door runs `vault.files.sources.search` for the question
   and reads the first 5 files with text it found, in its order; a file held by its name only has no
   text and is passed over. Each file's note is read from its start, up to 12,000 characters, at the
-  revision its ledger holds. `read` in the answer lists them, numbered from 1; `hits` is the
-  search's answer.
+  revision its ledger holds. A note that no longer holds that revision's text (the owner edited it
+  since the rescan that took the file, or the file's change waits as a proposal) is not read, as a
+  file with no text is not: a citation names the revision, so its quote must be the revision's own
+  text. `read` in the answer lists them, numbered from 1; `hits` is the search's answer.
 - **One model call.** The question and the files go in one call of this server's house chat role,
   metered on the owner's budget line. The model is asked for JSON: an answer with `[n]` after each
   claim, and citations, each a file number and a quote copied from that file.
