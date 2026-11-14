@@ -15,11 +15,12 @@
 //! that takes a person's own proof among the shared-vault rows: the member
 //! reads, his receipts and notices and his own leave (stage 1), and the
 //! Admin powers, the invitee's answer, objections and erase asks, his own
-//! record erase, the shared policy, trusted contacts and the workspace rows
-//! (stage 2). Whether he holds a power is the engine's roster and role check,
-//! never this list. The same action signs his `/mcp` call of one of those
-//! doors and the upgrade of his held MCP socket, whose calls reach those
-//! doors alone (`api::mcp_gateway::person_call`).
+//! record erase, his answers to a found key whose value he wrote, the
+//! shared policy, trusted contacts and the workspace rows (stage 2). Whether
+//! he holds a power is the engine's roster and role check, never this list.
+//! The same action signs his `/mcp` call of one of those doors and the
+//! upgrade of his held MCP socket, whose calls reach those doors alone
+//! (`api::mcp_gateway::person_call`).
 
 use axum::http::{Extensions, HeaderMap};
 use oneiron::claim::CallerLocality;

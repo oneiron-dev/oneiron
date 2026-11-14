@@ -111,6 +111,7 @@ mod files_doors;
 mod fold_doors;
 mod follower_keyframe_doors;
 mod foreign_code_doors;
+mod found_key_answer_doors;
 pub(super) mod free_time_doors;
 mod gate_policy_doors;
 mod git_push_doors;
