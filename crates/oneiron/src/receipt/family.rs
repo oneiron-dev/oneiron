@@ -657,6 +657,9 @@ pub(crate) fn gate_decision_receipt_from_base(record: &GateDecisionRecord) -> Re
         receipt.fields.insert("criticality".into(), "normal".into());
     }
     receipt
+        .fields
+        .extend(crate::claim::owner_ruling_receipt_fields(record));
+    receipt
 }
 
 pub(crate) use crate::store::gate_receipt::gate_decision_receipt;

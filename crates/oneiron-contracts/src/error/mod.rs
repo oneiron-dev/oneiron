@@ -56,6 +56,8 @@ pub enum ErrorKind {
     Storage,
     /// A verb hook skipped or asked, or a blocking one failed safe.
     VerbHookStopped,
+    /// The act waits on a check-in its door opened (P24-SHAPE Q4 = A).
+    CheckInPending,
     Io,
     DimensionMismatch,
     InvalidVector,
@@ -219,6 +221,8 @@ pub enum ErrorKind {
     IndexedTextTooLarge,
     UpstreamToolFailure,
     RetrievalStageCut,
+    /// A decision read stopped at its provider's token cap before its answer.
+    DecisionReadTokenCap,
     /// No provider answered a model call that may be sent again later.
     ProviderUnavailable,
     /// A durable step's committed trap already parked its attempt.
@@ -421,6 +425,9 @@ pub enum ErrorKind {
     ArchivedVault,
     HostActionRequiresSupportGrant,
     StorageIdMismatch,
+    /// A custody door for one purpose of erasable key was handed another
+    /// purpose's key (FIX 23943).
+    ErasableKeyPurposeMismatch,
     /// A nonce spend met the writer lease another process holds on the vault
     /// (FIX 12023 W0).
     VaultServedElsewhere,
@@ -478,6 +485,13 @@ pub enum Error {
     /// A verb hook stopped the verb (ARCH-0080 §3).
     #[error("{0}")]
     VerbHook(Box<VerbHookStop>),
+    /// The act waits on the pending check-in this names, 32 hex: its door
+    /// opened or found it for the exact effect and committed it, and ran
+    /// nothing (ARCH-0082 #composing; P24-SHAPE Q4 = A).
+    #[error(
+        "the act waits on check-in {0}: call again naming it as check_in_ref once a holder approves"
+    )]
+    CheckInPending(String),
     /// Encountered malformed key or value bytes.
     #[error("invalid key or value bytes")]
     InvalidKey,
@@ -514,6 +528,12 @@ pub enum Error {
     /// partial work, so it never leaves the retrieval it was raised in.
     #[error("retrieval stage cut at its deadline")]
     RetrievalStageCut,
+    /// A decision provider's read stopped at its token cap before its answer
+    /// (ARCH-0076 #receipt): an unfinished reply is not an answer. The
+    /// decision ladder that asked catches it and closes on a receipt whose
+    /// stop cause names the cap, so it never leaves the decision call.
+    #[error("decision read stopped at its token cap")]
+    DecisionReadTokenCap,
     /// No provider answered a model call a host door made for a run (FIX
     /// 3194): nothing kept the call, and it may be sent again in
     /// `retry_after` seconds. A run's door raises it in place of a refusal,
@@ -696,6 +716,7 @@ impl Error {
             Self::ArithmeticOverflow(_) => ErrorKind::ArithmeticOverflow,
             Self::InvariantViolation(_) => ErrorKind::InvariantViolation,
             Self::VerbHook(_) => ErrorKind::VerbHookStopped,
+            Self::CheckInPending(_) => ErrorKind::CheckInPending,
             Self::InvalidKey => ErrorKind::InvalidKey,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
             Self::IndexOverflow(_) => ErrorKind::IndexOverflow,
@@ -705,6 +726,7 @@ impl Error {
             Self::EdgeNotFound => ErrorKind::EdgeNotFound,
             Self::UpstreamToolFailure { .. } => ErrorKind::UpstreamToolFailure,
             Self::RetrievalStageCut => ErrorKind::RetrievalStageCut,
+            Self::DecisionReadTokenCap => ErrorKind::DecisionReadTokenCap,
             Self::ProviderUnavailable { .. } => ErrorKind::ProviderUnavailable,
             Self::DurableStepTrapped => ErrorKind::DurableStepTrapped,
             Self::AgentRunExecutorMoved => ErrorKind::AgentRunExecutorMoved,

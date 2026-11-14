@@ -24,7 +24,7 @@ fn fixture() -> Result<(tempfile::TempDir, crate::Vault, ClaimBody, WriteEnvelop
             })
             .collect::<Result<Vec<_>>>()?;
         for id in ids {
-            crate::batch::deindex_entity_for_test(&vault.store, wtxn, &id)?;
+            crate::batch::deindex_entity_for_test(&vault, wtxn, &id)?;
         }
         Ok(())
     })?;

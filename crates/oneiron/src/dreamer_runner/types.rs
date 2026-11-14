@@ -101,8 +101,11 @@ pub use crate::store::consolidation_scope::DreamerConsolidationScope;
 /// Speaker role of a TURN entity as seen by the Dreamer extraction lane.
 ///
 /// GATE-10: only [`DreamerTurnRole::User`] and [`DreamerTurnRole::Assistant`]
-/// turns may seed first-party claims; every other role — including
-/// [`DreamerTurnRole::Unknown`] — is excluded fail-closed.
+/// turns may seed first-party claims. A [`DreamerTurnRole::Counterparty`]
+/// turn (imported speech from somebody else, such as received mail) feeds
+/// extraction too, but only as imported evidence, never as a first-party
+/// claim. Every other role — including [`DreamerTurnRole::Unknown`] — is
+/// excluded fail-closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum DreamerTurnRole {
@@ -112,6 +115,7 @@ pub enum DreamerTurnRole {
     Tool,
     Injected,
     Unknown,
+    Counterparty,
 }
 
 impl DreamerTurnRole {
@@ -125,6 +129,7 @@ impl DreamerTurnRole {
             Self::Tool => "tool",
             Self::Injected => "injected",
             Self::Unknown => "unknown",
+            Self::Counterparty => "counterparty",
         }
     }
 }
@@ -132,8 +137,9 @@ impl DreamerTurnRole {
 /// Classify a TURN's stored speaker string into a [`DreamerTurnRole`].
 ///
 /// Ingest already lowercase-normalizes `speaker|role|author`; this trims and
-/// lowercases again defensively. The generic role vocabulary is fixed; a
-/// host's own assistant voice names arrive through
+/// lowercases again defensively. The generic role vocabulary is fixed, and
+/// `counterparty` classifies before any configured name; a host's own
+/// assistant voice names arrive through
 /// `VaultConfig::assistant_display_names` and classify as
 /// [`DreamerTurnRole::Assistant`] after the same normalization. Absent,
 /// empty, or novel speaker strings map to [`DreamerTurnRole::Unknown`],
@@ -153,6 +159,7 @@ pub fn dreamer_turn_role(
         "system" | "system_prompt" | "developer" => DreamerTurnRole::System,
         "tool" | "function" | "tool_result" | "tool_call" => DreamerTurnRole::Tool,
         "cron" | "metadata" | "injected" => DreamerTurnRole::Injected,
+        "counterparty" => DreamerTurnRole::Counterparty,
         "" => DreamerTurnRole::Unknown,
         _ if assistant_display_names
             .iter()
@@ -164,10 +171,14 @@ pub fn dreamer_turn_role(
     }
 }
 
-/// GATE-10 admissibility: only User and Assistant turns feed extraction.
+/// GATE-10 admissibility: only User, Assistant and Counterparty turns feed
+/// extraction; a Counterparty turn's claims are imported, never first-party.
 #[must_use]
 pub const fn dreamer_extraction_role_admissible(role: DreamerTurnRole) -> bool {
-    matches!(role, DreamerTurnRole::User | DreamerTurnRole::Assistant)
+    matches!(
+        role,
+        DreamerTurnRole::User | DreamerTurnRole::Assistant | DreamerTurnRole::Counterparty
+    )
 }
 
 /// Candidate node signals for home-node MACRO election.
@@ -721,6 +732,35 @@ pub fn dreamer_failed_on_refused_step(
         budget_refusal: Some(refusal.clone()),
         step_bindings: step_bindings.to_vec(),
     })
+}
+
+/// The spent model seat a failed durable step waits on, with the reset its refusal stated
+/// (SEAT-PARK-MODEL-STEP-PATH): a login-backed seat's spent window that states its reset gives
+/// `(seat, Some(reset))`, and its lapsed login gives `(seat, None)`; the try parks on that seat's
+/// wait, which the seat's available write wakes. `None` for every other step error, an API key's
+/// refusal and a window that states no reset among them, which park as
+/// [`dreamer_park_cause_of_step`] says.
+#[must_use]
+pub(crate) fn dreamer_seat_refusal_of_step(
+    error: &crate::model_step_error::DurableStepError,
+) -> Option<(ModelSeatId, Option<u64>)> {
+    use crate::model_step_error::DurableStepError;
+    use oneiron_model::llm::{FatalLlmError, LlmError, RetryableLlmError, SpentKind};
+    let (DurableStepError::Llm(source)
+    | DurableStepError::ClassifiedLlm { source, .. }
+    | DurableStepError::SpentLlm { source, .. }) = error
+    else {
+        return None;
+    };
+    match source {
+        LlmError::Retryable(RetryableLlmError::QuotaSpent {
+            kind: SpentKind::Window,
+            seat: Some(seat),
+            ..
+        }) => crate::llm::stated_reset_at(source).map(|reset| (*seat, Some(reset))),
+        LlmError::Fatal(FatalLlmError::SeatSignedOut { seat }) => Some((*seat, None)),
+        _ => None,
+    }
 }
 
 /// Private parked-attempt row keyed by attempt id.

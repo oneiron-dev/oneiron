@@ -81,6 +81,10 @@ const DECLARED_CARDINALITY: &[(&str, ClaimCardinality)] = &[
     ("character.backstory", ClaimCardinality::Set),
     // ARCH-0022 predicate registry additions, line 282 (multi).
     ("character.dynamic", ClaimCardinality::Set),
+    // Engine ruling 13 Nov 12:58 (the linker's role edges): a person holds
+    // many relationships of one word, so a second `relationship.friend`
+    // stands beside the first and never supersedes it.
+    ("relationship.*", ClaimCardinality::Set),
 ];
 
 /// Exact rows beat namespace wildcards regardless of table order. A wildcard
@@ -102,48 +106,8 @@ fn declared_cardinality(predicate: &str) -> ClaimCardinality {
     wildcard.map_or(ClaimCardinality::Single, |(_, cardinality)| cardinality)
 }
 
-/// One claim to commit. `approval` is deliberately NOT settable by callers
-/// (pin 2); the facade computes the request and the gate decides.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ClaimInput {
-    /// Caller-supplied deterministic 32-hex claim id; `None` ⇒ generated.
-    /// Load-bearing for ONE-258's idempotent backfill.
-    pub id: Option<String>,
-    /// Dotted predicate (open vocabulary; `edge.*` reserved).
-    pub predicate: String,
-    /// Subject entity ref (short-id ref or 32-hex).
-    pub subject_ref: String,
-    /// Claim value (JSON, stored as MessagePack).
-    pub value: serde_json::Value,
-    /// Calibrated-absolute confidence in `[0, 1]`.
-    pub confidence: f32,
-    /// `ClaimSource::as_str` value: `user_stated`/`observed`/`inferred`/
-    /// `imported`/`tool_output`/`generated`.
-    pub source: String,
-    /// Optional WORLD entity ref.
-    pub world_ref: Option<String>,
-    /// Optional RELATIONSHIP refs: absent means all relationships, `[]` the
-    /// explicit empty set, otherwise every listed relationship. Unknown or
-    /// wrong-kind refs are rejected.
-    #[serde(default)]
-    pub relationship_ref: Option<Vec<String>>,
-    /// Optional scope map (e.g. `{"sensitivity": 0}`).
-    pub scope: Option<serde_json::Value>,
-    /// Validity window start (Unix seconds).
-    pub valid_from: Option<u64>,
-    /// Validity window end (Unix seconds).
-    pub valid_to: Option<u64>,
-    /// Backdating passthrough; `None` ⇒ now (Unix seconds).
-    pub occurred_at: Option<u64>,
-    /// Backdating passthrough; `None` ⇒ now (Unix seconds).
-    pub learned_at: Option<u64>,
-    /// Optional salience in `[0, 1]`.
-    pub salience: Option<f32>,
-    /// The band and basis a calibrated producer gave `confidence`; absent
-    /// means the house band of the number (FIX 7761).
-    #[serde(default)]
-    pub confidence_details: Option<crate::claim::ConfidenceDetails>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::claims::ClaimInput;
 
 /// Receipt for one committed claim. A refused element of a batch never
 /// gets one: it answers [`CommitOutcome::Refused`] instead (OF-063).
@@ -338,8 +302,10 @@ pub struct MemoryReceipt {
     pub claim: Option<crate::lens::RecordRef>,
     /// A receipt's own fields (a hook run's hook, CODE id, body hash
     /// and run key), with its trigger, job and principal refs. A code capture
-    /// names its repo artifact and retained snapshot hash; otherwise empty on a
-    /// gate-ledger row.
+    /// names its repo artifact and retained snapshot hash; the owner's ruling
+    /// over their own agent's claim names the superseded claim and its author
+    /// (`superseded`, `superseded_author`, `superseded_author_class`);
+    /// otherwise empty on a gate-ledger row.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub fields: std::collections::BTreeMap<String, String>,
 }
@@ -360,6 +326,7 @@ pub(in crate::memory) use self::commit::{BatchClaim, BatchRefusal};
 mod prompted;
 mod settle;
 
+pub(in crate::memory) use settle::ConflictHeadIndex;
 pub use settle::{
     ClaimChangeVerdict, ClaimProposalReview, ClaimProposalReviewRequest, ClaimSettleDecision,
     ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer, ClaimSettlementReason,

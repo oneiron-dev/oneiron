@@ -78,6 +78,52 @@ pub(crate) async fn vault_agents_powers_set(
     .await
 }
 
+/// Plan mode (SETTING = A): the owner sets an agent's plan mode; the setter
+/// revalidates the proof in its own writer.
+pub(crate) async fn vault_agents_plan_mode_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::agent_def::AgentPlanModeSetRequest,
+) -> MaybeListed<oneiron::agent_def::AgentPlanModeView> {
+    const VERB: &str = "vault.agents.plan_mode.set";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| {
+            oneiron::agent_def::set_agent_plan_mode_from_request_as(server.vault(), &owner, input)
+                .map_err(MemoryError::from)
+        },
+        |view| Some(vec![view.agent_def_ref]),
+    )
+    .await
+}
+
+/// Optional memory (L9-32-PICK-WRITER): the owner sets the optional recall
+/// an agent takes as a reader; the setter revalidates the proof in its own
+/// writer.
+pub(crate) async fn vault_agents_optional_memory_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::agent_def::AgentOptionalMemorySetRequest,
+) -> MaybeListed<oneiron::agent_def::AgentOptionalMemoryState> {
+    const VERB: &str = "vault.agents.optional_memory.set";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| {
+            oneiron::agent_def::set_agent_optional_memory_from_request_as(
+                server.vault(),
+                &owner,
+                input,
+            )
+        },
+        |state| Some(vec![state.agent_def_ref]),
+    )
+    .await
+}
+
 pub(crate) async fn vault_agents_get(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

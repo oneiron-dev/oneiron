@@ -835,7 +835,11 @@ impl Memory<'_> {
         });
         // A repo file's bytes read masked but at the owner's own door (FIX 7608).
         let stored_body = self.repo_lane_body_in_txn(txn, &row.id, row.entity_type, body, known)?;
-        let mut body = decode_body_json(&stored_body);
+        // Every reader but the owner reads the body the typed Nulled rule
+        // releases (ruling EXPORTDOORS Q4 = A); a withheld body leaves the
+        // view its id and metadata, without a body.
+        let released = lane.released_body_in(txn, row.entity_type, &stored_body)?;
+        let mut body = released.as_deref().and_then(decode_body_json);
         // A key the lift sweep marked in a record's text reads as its handle
         // to all but the owner (OF-067).
         if let Some(value) = &mut body

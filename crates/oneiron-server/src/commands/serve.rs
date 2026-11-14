@@ -18,6 +18,7 @@ use super::{history_import, local_servers};
 
 mod hooks;
 mod page_seal;
+mod sleep_release;
 mod startup_gate;
 mod stop;
 mod workers;
@@ -67,6 +68,12 @@ pub(super) async fn serve_anchored(
         dimensions = config.dimensions,
         "starting oneiron sync server"
     );
+    // Every request this process serves gets the same OpenAPI document; it is
+    // assembled beside the start-up, so the first GET /api/openapi.json finds
+    // it built (FIX [SLOW-FACADE-CALLS-COORDINATION-08]: 2.05 s in the dev build).
+    if let Err(error) = crate::api::spawn_openapi_document_precompute() {
+        tracing::warn!(%error, "the OpenAPI document is assembled on its first request instead");
+    }
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
     // systemd or launchd may have bound the socket and hold the secrets;
     // otherwise this binds `addr` itself. Read once, at process entry.
@@ -393,6 +400,10 @@ pub(crate) async fn build_server(
         // The `[policy]` section's owner-plane wording and settings (FIX
         // 5042); an embedding host may set its own after this.
         .with_owner_policy_config(config.policy.owner_policy_config());
+    // The image organ the host names by its program (L4-15); organs run
+    // on unix hosts only.
+    #[cfg(unix)]
+    sync_server.install_image_organ_from_env();
     // Its browser readiness starts from the `[browser]` section and its
     // runtime binding, with no supervisor's runtime fact (FIX 7670).
     sync_server
@@ -413,7 +424,38 @@ pub(crate) async fn build_server(
     } else {
         sync_server
     };
+    // Bound before any worker starts, so every admitted call is attributed.
+    bind_vault_owner_usage_metering(&sync_server);
     Ok((sync_server, gpu_poller))
+}
+
+/// Binds a self-hosted vault's usage meter to the vault's own billing owner,
+/// its embedded owner, whose account owner spend bills
+/// (`PayerAccount::VaultOwner`, `ai_host::payer_funding`). Settled calls,
+/// recalls and embed fills are then recorded, and the nightly training-offer
+/// pass has a workload to read (FIX 11011, FIX 22868). Any other posture
+/// stays unmetered here: the cloud names a hosted vault's billing owner, and
+/// serve never invents one. A failed bind (a vault whose authority log has no
+/// genesis yet: no auth secret on a fresh vault) leaves this start unmetered,
+/// as every reader of the meter allows; the next start binds it again.
+fn bind_vault_owner_usage_metering(server: &SyncServer) {
+    if server.vault().privacy_posture() != oneiron::HostingPrivacyPosture::SelfHostLocal {
+        return;
+    }
+    let bound = || -> anyhow::Result<()> {
+        let owner = oneiron::EntityId::derive(
+            oneiron_contracts::entity_id::derived_domains::EMBEDDED_OWNER_ACTOR,
+            &[],
+        )?;
+        server.bind_usage_metering(owner.to_hex())?;
+        Ok(())
+    };
+    if let Err(error) = bound() {
+        tracing::warn!(
+            %error,
+            "usage is not metered on this start; the next start binds it again"
+        );
+    }
 }
 
 /// One embedder build: its slot, the pool it routes through, and only the
