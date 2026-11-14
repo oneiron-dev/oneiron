@@ -117,6 +117,7 @@ pub mod model_step_context;
 pub(crate) mod model_step_effect;
 pub mod model_step_error;
 pub use oneiron_store::model_step_record;
+pub mod phonetic_learned;
 pub mod pipeline;
 pub(crate) mod ppr;
 pub mod ppr_community;
