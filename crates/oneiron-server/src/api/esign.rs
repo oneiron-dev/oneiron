@@ -1,9 +1,13 @@
-//! Session-less signing ceremony. The public link carries the capability in its
-//! fragment (`/sign#<token>`); after loading, the client scrubs it and sends it
-//! only in the `x-oneiron-esign-capability` header of each ceremony POST, which
-//! the vault admits before the body is read (`ingress`, FIX 3808). A call
-//! that also presents a vault credential is classed by it: an agent's Complete
-//! is an automated sign act, whoever's link it holds.
+//! The signing ceremony. The public link carries the capability in its
+//! fragment (`/sign#<token>`); after loading, the page scrubs it and trades
+//! it once for a single-use exchange (`POST /sign/exchange`), which a
+//! top-level form POST to `/sign/session` consumes to open a signing session
+//! in a Secure, HttpOnly, SameSite=Strict cookie named for its ceremony
+//! (ARCH-0064a [SGN-03], `signing_session`). Each ceremony POST names its
+//! ceremony and carries only that cookie; the vault admits the link's
+//! capability it stands for before the body is read (`ingress`, FIX 3808).
+//! A call that also presents a vault credential is classed by it: an
+//! agent's Complete is an automated sign act, whoever's link it holds.
 use crate::server::SyncServer;
 pub(crate) mod delivery_outbox;
 mod editor_auth;
@@ -17,15 +21,17 @@ mod parse_lease;
 mod presentation;
 #[cfg(unix)]
 pub(crate) mod seal_worker;
+mod signing_session;
 use crate::machine::MemoryRefusal;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, State};
-use axum::http::{StatusCode, header, request::Parts};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header, request::Parts};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use ingress::SigningIngress;
 use oneiron::blob_artifact::esign::{EsignSigningImageView, SigningCaller};
+use signing_session::{SessionLifetimes, SigningSessions};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -53,23 +59,149 @@ pub(super) fn editor_routes() -> Router<Arc<SyncServer>> {
 }
 
 /// Only the signing ceremony bypasses the hosted device-lease gate. Every
-/// action and document read still checks the bearer capability in the vault,
-/// from its header and before its body. An admitted body has no size refusal:
-/// it spools whole under the disk floor and its size is the `[limits]
-/// esign_body_bytes` row, so no `DefaultBodyLimit` sits on these routes.
+/// action and document read still checks the link's capability in the
+/// vault, from its session and before its body. An admitted body has no size
+/// refusal: it spools whole under the disk floor and its size is the
+/// `[limits] esign_body_bytes` row, so no `DefaultBodyLimit` sits on these
+/// routes. The sessions live in this router's own registry.
 pub(super) fn public_routes() -> Router<Arc<SyncServer>> {
+    public_routes_over(SigningSessions::default())
+}
+
+/// The public signing routes over `sessions`.
+fn public_routes_over(sessions: SigningSessions) -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/sign", get(page))
         // A signing link is `/sign#<token>`: a capability in the request path
         // reaches server and proxy logs (F37), so a path token is refused,
         // never served.
         .route("/sign/{token}", get(path_token_refused))
+        .route("/sign/exchange", post(exchange))
+        .route("/sign/session", post(open_session))
         .route("/sign/action", post(action))
         .route("/sign/pdf", post(pdf))
         .route("/sign/image", post(image))
         .route("/sign/preview", post(presentation::preview))
         .route("/sign/signature", post(presentation::signature))
+        .layer(axum::Extension(sessions))
         .layer(axum::middleware::from_fn(private_response))
+}
+
+/// The test door's handle on a public signing router's sessions.
+#[cfg(oneiron_test_support)]
+pub(crate) struct SigningRegistry(SigningSessions);
+
+#[cfg(oneiron_test_support)]
+impl SigningRegistry {
+    /// How many links, pending exchanges and open sessions the router
+    /// holds.
+    pub(crate) fn held(&self) -> (usize, usize, usize) {
+        self.0.held()
+    }
+}
+
+/// The public signing routes, as `build_app` merges them, over a registry
+/// the test door can read.
+#[cfg(oneiron_test_support)]
+pub(crate) fn public_routes_with_registry() -> (Router<Arc<SyncServer>>, SigningRegistry) {
+    let sessions = SigningSessions::default();
+    (
+        public_routes_over(sessions.clone()),
+        SigningRegistry(sessions),
+    )
+}
+
+/// `POST /sign/exchange`: the one door that reads a link's capability, from
+/// the `x-oneiron-esign-capability` header. The vault admits it as every
+/// ceremony door's session does; the answer is a single-use exchange that
+/// lives `[limits] esign_exchange_seconds`, and replaces any exchange the
+/// link had pending. The registry keeps the link no longer than the vault's
+/// clock admits it. The emailed link stays reusable.
+async fn exchange(
+    State(server): State<Arc<SyncServer>>,
+    axum::Extension(sessions): axum::Extension<SigningSessions>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(token) = ingress::link_capability(&headers) else {
+        return refused();
+    };
+    let Ok(admitted) = server.vault.admit_esign_ingress(&token) else {
+        return refused();
+    };
+    crate::http_listener::authenticated();
+    let lifetimes = SessionLifetimes::from_limits(&server.config.limits);
+    let open_for = admitted
+        .admitted_until()
+        .saturating_sub(server.vault.now_recorded_at());
+    let link_ends = Instant::now().checked_add(std::time::Duration::from_secs(open_for));
+    let exchange = sessions.mint_exchange(&token, link_ends, lifetimes);
+    Json(serde_json::json!({ "exchange": exchange })).into_response()
+}
+
+/// The most bytes `POST /sign/session`'s form may hold: its one field and a
+/// 64-character exchange, with room to spare. It is a fixed form, not a
+/// payload; a longer body is not an exchange.
+const SESSION_FORM_BYTES: usize = 1024;
+
+/// `POST /sign/session`: the page's top-level form POST, `exchange=<hex>`.
+/// A live exchange is consumed here, at once, and opens its link's signing
+/// session, replacing any session the link had open: the answer redirects to
+/// the page at its ceremony's address, `/sign?ceremony=<id>`, and sets the
+/// session cookie named for that ceremony, Secure, HttpOnly, SameSite=Strict
+/// and scoped to `/sign`. An unknown, used or expired exchange, or a POST a
+/// browser marks as sent from another site, opens nothing and sets no cookie.
+async fn open_session(
+    State(server): State<Arc<SyncServer>>,
+    axum::Extension(sessions): axum::Extension<SigningSessions>,
+    headers: HeaderMap,
+    body: Body,
+) -> Response {
+    // Another site may not open a session it minted in this browser.
+    if headers
+        .get("sec-fetch-site")
+        .is_some_and(|site| site.as_bytes() != b"same-origin")
+    {
+        return session_refused();
+    }
+    let Ok(form) = axum::body::to_bytes(body, SESSION_FORM_BYTES).await else {
+        return session_refused();
+    };
+    let presented = std::str::from_utf8(&form).ok().and_then(|form| {
+        form.split('&').find_map(|pair| {
+            pair.trim()
+                .strip_prefix(signing_session::EXCHANGE_FIELD)
+                .and_then(|rest| rest.strip_prefix('='))
+        })
+    });
+    let lifetimes = SessionLifetimes::from_limits(&server.config.limits);
+    let Some(opened) = presented.and_then(|exchange| sessions.open_session(exchange, lifetimes))
+    else {
+        return session_refused();
+    };
+    let cookie = signing_session::session_set_cookie(&opened.ceremony, &opened.id);
+    let location = signing_session::page_location(&opened.ceremony);
+    let (Ok(cookie), Ok(location)) = (
+        HeaderValue::from_str(&cookie),
+        HeaderValue::from_str(&location),
+    ) else {
+        return session_refused();
+    };
+    (
+        StatusCode::SEE_OTHER,
+        [(header::LOCATION, location), (header::SET_COOKIE, cookie)],
+    )
+        .into_response()
+}
+
+/// A refused session opening. The form POST is a page navigation, so its
+/// answer is words for the signer, never a cookie.
+fn session_refused() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        "The signing request is unavailable. Reopen the invitation or contact its sender.",
+    )
+        .into_response()
 }
 async fn action(
     State(server): State<Arc<SyncServer>>,
@@ -120,13 +252,13 @@ async fn action(
     }
 }
 /// Who the signing call shows itself to be. A browser signer sends no
-/// credential (the page posts with `credentials: "omit"`), so the capability
-/// stands alone; a call that presents one is classed by the actor class its
-/// credential binds, and only `human` is a person. A credential that does not
-/// verify is refused. On a managed vault a call its supervisor attested for
-/// the vault's owner, with no credential of its own, is that person while
-/// the vault records him as its live owner; otherwise its capability stands
-/// alone, as a browser signer's does.
+/// credential (the page posts only its signing session's cookie), so the
+/// capability stands alone; a call that presents one is classed by the
+/// actor class its credential binds, and only `human` is a person. A
+/// credential that does not verify is refused. On a managed vault a call its
+/// supervisor attested for the vault's owner, with no credential of its own,
+/// is that person while the vault records him as its live owner; otherwise
+/// its capability stands alone, as a browser signer's does.
 fn signing_caller(
     request: &Parts,
     server: &SyncServer,
@@ -661,10 +793,56 @@ mod tests {
         (dir, server, token)
     }
 
+    /// Opens a signing session for `token` the way the page does: the
+    /// exchange door, then the session form. Answers the `Cookie` value and
+    /// the ceremony it is named for.
+    async fn signing_session(app: &Router, token: &str) -> (String, String) {
+        let exchange = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sign/exchange")
+                    .header("x-oneiron-esign-capability", token)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(exchange.status(), StatusCode::OK);
+        let exchange: serde_json::Value =
+            serde_json::from_slice(&to_bytes(exchange.into_body(), 4096).await.unwrap()).unwrap();
+        let opened = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sign/session")
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .body(Body::from(format!(
+                        "exchange={}",
+                        exchange["exchange"].as_str().unwrap()
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(opened.status(), StatusCode::SEE_OTHER);
+        let cookie = opened.headers()[header::SET_COOKIE].to_str().unwrap();
+        let pair = cookie.split(';').next().unwrap().to_owned();
+        let ceremony = pair
+            .split_once('=')
+            .and_then(|(name, _)| name.strip_prefix(signing_session::SESSION_COOKIE_PREFIX))
+            .unwrap()
+            .to_owned();
+        (pair, ceremony)
+    }
+
     #[tokio::test]
     async fn forwarded_headers_cannot_replace_the_signing_transport_peer() {
         let (_dir, server, token) = signing_transport_fixture();
         let app = public_routes().with_state(server);
+        let (cookie, ceremony) = signing_session(&app, &token).await;
         for path in ["/sign/action", "/sign/pdf", "/sign/preview"] {
             let body = if path == "/sign/action" {
                 serde_json::json!({"action":{"action":"load"}})
@@ -678,7 +856,8 @@ mod tests {
                         .method("POST")
                         .uri(path)
                         .header(header::CONTENT_TYPE, "application/json")
-                        .header("x-oneiron-esign-capability", token.as_str())
+                        .header(header::COOKIE, cookie.as_str())
+                        .header(signing_session::CEREMONY_HEADER, ceremony.as_str())
                         .header("x-forwarded-for", "192.0.2.7")
                         .header("forwarded", "for=192.0.2.7")
                         .body(Body::from(body.to_string()))

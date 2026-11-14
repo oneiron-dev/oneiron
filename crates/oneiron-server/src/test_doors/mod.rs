@@ -20,6 +20,7 @@ pub mod native_board;
 pub mod openapi_document;
 pub mod replay_admission;
 pub mod resident_pump;
+pub mod signing_session;
 pub mod siwc_seat;
 pub mod solved_runs;
 pub mod wire_health_sweep;
