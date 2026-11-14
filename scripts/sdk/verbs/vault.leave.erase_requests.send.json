@@ -1,0 +1,16 @@
+{
+  "name": "vault.leave.erase_requests.send",
+  "description": "The owner asks another vault in one action to erase what it holds from this one: one courtesy ask per ended pact with it, signed and queued for delivery. Nothing is erased by force.",
+  "input": "crate::task_verb::sdk::LeaveEraseRequestsSendRequest",
+  "output": "crate::task_verb::sdk::LeaveEraseRequestsSent",
+  "call": "crate::task_verb::sdk::courtesy_delete_host_only(memory, \"vault.leave.erase_requests.send\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "outbound_send",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

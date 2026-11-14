@@ -439,7 +439,7 @@ pub(crate) fn world_registered_to_pact_in(
 }
 
 /// The worlds registered to one pact.
-fn registered_worlds(
+pub(super) fn registered_worlds(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     pact_id: &[u8; 32],

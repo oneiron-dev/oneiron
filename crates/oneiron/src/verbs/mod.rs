@@ -60,6 +60,7 @@ mod host;
 mod hub;
 mod identity_topology;
 mod inquiry;
+mod leave;
 mod legal_hold;
 // The build-time closure of the verb table over linked `self.*` operations.
 mod linked_self_surface;
@@ -398,6 +399,7 @@ pub use self::host::*;
 pub use self::hub::*;
 pub use self::identity_topology::*;
 pub use self::inquiry::*;
+pub use self::leave::*;
 pub use self::legal_hold::*;
 pub use self::live_run::*;
 pub use self::live_voice::*;

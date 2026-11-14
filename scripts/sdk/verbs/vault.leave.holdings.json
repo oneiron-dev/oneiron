@@ -1,0 +1,16 @@
+{
+  "name": "vault.leave.holdings",
+  "description": "What this vault holds from another vault by attribution, world by world, for the owner after a leave: each world a delivery from it landed in, with the records still held here.",
+  "input": "crate::task_verb::sdk::LeaveHoldingsRequest",
+  "output": "crate::task_verb::sdk::LeaveHoldings",
+  "call": "crate::task_verb::sdk::read_leave_holdings(memory.vault(), &memory.embedded_owner(\"vault.leave.holdings\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

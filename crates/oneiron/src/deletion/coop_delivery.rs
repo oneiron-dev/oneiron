@@ -32,6 +32,7 @@ use crate::{EntityId, Error, Result, Vault};
 use oneiron_authority::authority::FederationPactStatus;
 
 mod answer;
+mod leave;
 mod redact;
 mod refresh;
 mod restrict;

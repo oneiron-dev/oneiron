@@ -121,6 +121,9 @@ pub use shared_creation::{
 pub(crate) mod courtesy_scope;
 pub(crate) mod delivery_record;
 pub use delivery_record::FederationDeliveryRecord;
+// What this vault holds from another, by attribution (L7-09).
+mod holdings;
+pub use holdings::{HeldWorld, Holdings};
 mod foreign_world;
 pub use foreign_world::pact_foreign_world;
 pub(crate) use foreign_world::{PactDelivery, foreign_world_for};

@@ -243,6 +243,21 @@ pub struct InquiryEdgeRef {
     pub grant: EntityId,
 }
 
+/// `vault.inquiry.edge.end`'s input: the company (its vault, 64 hex) whose
+/// inquiry edges end, as the member leaves it.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InquiryEdgeEndRequest {
+    pub company_vault: String,
+}
+
+/// `vault.inquiry.edge.end`'s answer: one revoke per edge it ended, none
+/// when nothing was left to end.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct InquiryEdgesEnded {
+    pub ended: Vec<GuestRevokeResponse>,
+}
+
 /// `vault.inquiry.scope.open`'s input: one statement opened to the edge's
 /// company, in the member's words, and the claim it was drawn from (kept
 /// member-local; never part of an answer).
@@ -346,7 +361,7 @@ fn bad_request(message: &str) -> MemoryError {
 }
 
 /// A vault id on the wire: 64 hex.
-fn vault_id(field: &str, hex: &str) -> MemoryResult<AuthorityVaultId> {
+pub(super) fn vault_id(field: &str, hex: &str) -> MemoryResult<AuthorityVaultId> {
     let refused = || bad_request(&format!("{field} is not 32 bytes of hex"));
     if hex.len() != 64 {
         return Err(refused());
@@ -866,6 +881,39 @@ pub fn revoke_inquiry_edge_embedded(
     Err(host_key_only(
         "vault.inquiry.edge.revoke",
         "signs the pact disconnect",
+    ))
+}
+
+/// `vault.inquiry.edge.end` on a server: [`Vault::end_inquiry_edges_with`],
+/// the member's half of leaving a company, approved by `owner`; each pact
+/// disconnect is signed with `issuer`.
+///
+/// # Errors
+///
+/// `company_vault` is not 64 hex; the engine's refusals.
+pub fn end_inquiry_edges_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    issuer: &HostSlipIssuer,
+    input: InquiryEdgeEndRequest,
+) -> MemoryResult<InquiryEdgesEnded> {
+    let company_vault_id = vault_id("company_vault", &input.company_vault)?;
+    let ended = vault.end_inquiry_edges_with(owner, issuer, &company_vault_id)?;
+    Ok(InquiryEdgesEnded {
+        ended: ended.into_iter().map(project_guest_revoke).collect(),
+    })
+}
+
+/// `vault.inquiry.edge.end` on an embedded handle: the member's call,
+/// refused, because each pact disconnect is signed with the host's own key.
+pub fn end_inquiry_edges_embedded(
+    memory: &Memory<'_>,
+    _input: InquiryEdgeEndRequest,
+) -> MemoryResult<InquiryEdgesEnded> {
+    let _owner = memory.embedded_owner("vault.inquiry.edge.end")?;
+    Err(host_key_only(
+        "vault.inquiry.edge.end",
+        "signs each pact disconnect",
     ))
 }
 

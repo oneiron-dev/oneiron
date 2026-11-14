@@ -20,8 +20,8 @@ use oneiron::receipt::GuestRevokeResponse;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{
     self, EmptyRequest, InquireAnswer, InquireRequest, InquiryAnswerRequest, InquiryAnswerView,
-    InquiryEdgeMintRequest, InquiryEdgePrepareJoinRequest, InquiryEdgeRef,
-    InquiryEdgeTermsChangeRequest, InquiryEdgeTermsChanged, InquiryEdgeView,
+    InquiryEdgeEndRequest, InquiryEdgeMintRequest, InquiryEdgePrepareJoinRequest, InquiryEdgeRef,
+    InquiryEdgeTermsChangeRequest, InquiryEdgeTermsChanged, InquiryEdgeView, InquiryEdgesEnded,
     InquiryJoinPreparedView, InquiryLog, InquiryReciprocalGrantMintRequest,
     InquiryReciprocalGrantMinted, InquiryRouteOpenRequest, InquiryRouteOpened,
     InquiryScopeCloseRequest, InquiryScopeClosed, InquiryScopeItemView, InquiryScopeItems,
@@ -180,6 +180,46 @@ pub(crate) async fn vault_inquiry_edge_revoke(
     let rows = answer.as_ref().map_or_else(
         |_| Vec::new(),
         |revoked| vec![revoked.grant_ref, revoked.guest_ref],
+    );
+    (answer, rows)
+}
+
+/// `vault.inquiry.edge.end`: the member ends every inquiry edge to one
+/// company as it leaves (L7-09); each pact disconnect is signed with the
+/// host's slip issuer.
+pub(crate) async fn vault_inquiry_edge_end(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: InquiryEdgeEndRequest,
+) -> Listed<InquiryEdgesEnded> {
+    const VERB: &str = "vault.inquiry.edge.end";
+    let owner = match super::owner_binding::facade_owner(server, auth, VERB) {
+        Ok(owner) => owner,
+        Err(refusal) => return refused(refusal),
+    };
+    let server = Arc::clone(server);
+    let answer = clock_ingress::run_blocking(move || -> MemoryResult<InquiryEdgesEnded> {
+        crate::api::pairing::with_issuer(&server, |issuer| {
+            Ok(sdk::end_inquiry_edges_as(
+                server.vault(),
+                &owner,
+                issuer,
+                input,
+            ))
+        })
+        .map_err(|_| no_host_key(VERB))?
+    })
+    .await
+    .unwrap_or_else(|_| Err(internal(VERB)));
+    let rows = answer.as_ref().map_or_else(
+        |_| Vec::new(),
+        |ended| {
+            ended
+                .ended
+                .iter()
+                .flat_map(|revoked| [revoked.grant_ref, revoked.guest_ref])
+                .collect()
+        },
     );
     (answer, rows)
 }

@@ -14,7 +14,8 @@ use oneiron::deletion::{
 };
 use oneiron::task_verb::sdk::{
     CourtesyDeleteAnswerRequest, CourtesyDeleteIncoming, CourtesyDeleteSendRequest,
-    CourtesyDeleteSent, courtesy_delete_incoming_ask, courtesy_delete_sent_ask,
+    CourtesyDeleteSent, LeaveEraseRequestsSendRequest, LeaveEraseRequestsSent,
+    courtesy_delete_incoming_ask, courtesy_delete_sent_ask, leave_erase_requests_sent,
 };
 use rand_core::RngCore;
 
@@ -115,6 +116,25 @@ pub(crate) fn send(
     request: &CourtesyDeleteSendRequest,
 ) -> OwnerResult<CourtesyDeleteSent> {
     send_with(&CourtesySender::of(server), owner, request)
+}
+
+/// The one action of a leave (ARCH-0043 #leaving-a-company, L7-09): asks
+/// `peer_vault` to erase what it holds from this vault, one ask per pact
+/// with it that this vault ended, each about all the pact delivered, signed
+/// with this host's key and queued for the peer's courtesy route.
+pub(crate) fn send_leave(
+    server: &SyncServer,
+    owner: &AuthenticatedOwner,
+    request: &LeaveEraseRequestsSendRequest,
+) -> OwnerResult<LeaveEraseRequestsSent> {
+    let peer_vault = hex_field::<32>("peer_vault", &request.peer_vault)?;
+    let destination = peer_url("peer", &request.peer, COOP_DELETION_PEER_PATH)?;
+    let notices = with_issuer(server, |issuer| {
+        server
+            .vault()
+            .send_leave_erase_requests(owner, issuer, &peer_vault, &destination, now())
+    })?;
+    Ok(leave_erase_requests_sent(notices))
 }
 
 /// [`send`] with the vault and key `sender` lends.

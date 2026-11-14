@@ -149,6 +149,32 @@ pub(crate) fn decode_delivered_record(bytes: &[u8]) -> Result<DeliveredRecord> {
     })
 }
 
+/// One delivery-history row as the ledger keeps it: the key's pact, epoch
+/// and record, and the value's origin, digest and world.
+fn delivery_row(key: &str, value: &[u8]) -> Result<FederationDeliveryRecord> {
+    let (pact_epoch, record) = key.rsplit_once(':').ok_or_else(corrupt)?;
+    let source_ref = EntityId::from_hex(record)
+        .ok()
+        .filter(|id| id.to_hex() == record)
+        .ok_or_else(corrupt)?;
+    let (pact, epoch) = pact_epoch.split_once(':').ok_or_else(corrupt)?;
+    let delivering_pact = blake3::Hash::from_hex(pact).map_err(|_| corrupt())?;
+    let consent_epoch = u64::from_str_radix(epoch, 16)
+        .ok()
+        .filter(|_| epoch.len() == 16)
+        .ok_or_else(corrupt)?;
+    let record = decode_delivered_record(value)?;
+    Ok(FederationDeliveryRecord {
+        source_ref,
+        delivering_pact: *delivering_pact.as_bytes(),
+        consent_epoch,
+        grant_ref: record.origin.grant_ref,
+        source_vault: record.origin.source_vault,
+        delivered_row_hash: record.row_hash,
+        world: record.world,
+    })
+}
+
 /// Reads only locally retained delivery facts, never a peer's evidence fields
 /// or a reconstruction from the current authority fold.
 pub(crate) fn delivery_history_in_txn(
@@ -162,7 +188,7 @@ pub(crate) fn delivery_history_in_txn(
     }
     for row in DELIVERED.iter_from(store, txn, b"")? {
         let (key, value) = row?;
-        let (pact_epoch, record) = key.rsplit_once(':').ok_or_else(corrupt)?;
+        let (_, record) = key.rsplit_once(':').ok_or_else(corrupt)?;
         let source = EntityId::from_hex(record).map_err(|_| corrupt())?;
         if source.to_hex() != record {
             return Err(corrupt());
@@ -170,25 +196,31 @@ pub(crate) fn delivery_history_in_txn(
         if !sources.contains(&source) {
             continue;
         }
-        let (pact, epoch) = pact_epoch.split_once(':').ok_or_else(corrupt)?;
-        let delivering_pact = blake3::Hash::from_hex(pact).map_err(|_| corrupt())?;
-        let consent_epoch = u64::from_str_radix(epoch, 16)
-            .ok()
-            .filter(|_| epoch.len() == 16)
-            .ok_or_else(corrupt)?;
-        let record = decode_delivered_record(&value)?;
         history
             .entry(source)
             .or_default()
-            .push(FederationDeliveryRecord {
-                source_ref: source,
-                delivering_pact: *delivering_pact.as_bytes(),
-                consent_epoch,
-                grant_ref: record.origin.grant_ref,
-                source_vault: record.origin.source_vault,
-                delivered_row_hash: record.row_hash,
-                world: record.world,
-            });
+            .push(delivery_row(&key, &value)?);
+    }
+    Ok(history)
+}
+
+/// Every retained delivery whose origin is `source_vault`, at any pact and
+/// epoch, in ledger order: what this vault holds from that vault by
+/// attribution (ARCH-0043 #leaving-a-company, L7-09). Like
+/// [`delivery_history_in_txn`], it reads delivery facts only, not today's
+/// grants or bytes.
+pub(crate) fn delivery_history_from_vault_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    source_vault: &[u8; 32],
+) -> Result<Vec<FederationDeliveryRecord>> {
+    let mut history = Vec::new();
+    for row in DELIVERED.iter_from(store, txn, b"")? {
+        let (key, value) = row?;
+        let delivered = delivery_row(&key, &value)?;
+        if delivered.source_vault == *source_vault {
+            history.push(delivered);
+        }
     }
     Ok(history)
 }
