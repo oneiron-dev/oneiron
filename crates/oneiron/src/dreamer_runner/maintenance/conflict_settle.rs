@@ -42,7 +42,7 @@ impl DreamerRunnerStore<'_> {
                 input: Value::Nil,
                 parent_attempt: None,
             },
-            Some(CONFLICT_SETTLE_FACET.into()),
+            None,
             run_id,
             now,
         )?;

@@ -199,8 +199,8 @@ pub(crate) fn run_ask(
     evidence: &[EntityId],
 ) -> Result<TypedDecision> {
     measure_state(vault, &ask.state);
-    let rungs = LabelledRungs::of(&decisions.ladder, &ask.labels);
-    let ladder = rungs.ladder(&decisions.ladder);
+    let _rungs = LabelledRungs::of(&decisions.ladder, &ask.labels);
+    let ladder = &decisions.ladder;
     ladder.run(
         &ask.question,
         decisions.principal,

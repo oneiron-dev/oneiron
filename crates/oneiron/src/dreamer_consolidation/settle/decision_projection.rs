@@ -14,7 +14,7 @@ use crate::claim::{ClaimSource, claim_surfaceable};
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 use crate::dreamer_consolidation::value_projection::rmpv_to_json;
 use crate::error::Result;
-use crate::model_decision::catalogue::CONFLICT_SETTLE;
+use crate::model_decision::catalogue::AI_VERDICT;
 use crate::model_decision::{AnswerContract, DecisionQuestion};
 use crate::{EntityId, Vault};
 
@@ -202,18 +202,10 @@ impl SettleAsk {
                 labels.assign(LabelKind::Claim, *id)
             ));
         }
-        let key = conflict.predicates.join("\n");
-        let page = part.at.map(|(round, page, _)| format!("{round}.{page}"));
-        let mut parts: Vec<&[u8]> = vec![key.as_bytes()];
-        if let Some(page) = &page {
-            parts.push(b"page".as_slice());
-            parts.push(page.as_bytes());
-        }
-        let question = CONFLICT_SETTLE.question(
-            &parts,
-            wording.to_owned(),
-            AnswerContract::Choice { options },
-        )?;
+        let contract = AnswerContract::Choice { options };
+        let key = serde_json::to_vec(&contract)
+            .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
+        let question = AI_VERDICT.question(&[key.as_slice()], wording.to_owned(), contract)?;
         labels.show_choices(question.id, shown);
         Ok(Self {
             question,

@@ -35,9 +35,7 @@ use crate::dreamer_consolidation::{
 use crate::llm::decision::{
     AnswerContract, DecisionBandPolicy, DecisionDial, DecisionLadder, DecisionRung, TypedDecision,
 };
-use crate::memory::{
-    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
-};
+use crate::memory::{MemoryError, MemoryResult};
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::snapshot_read::{conflict_reader_in_txn, conflict_served_in_txn};
 use crate::verbs::{AI_VERDICT_DEADLINE_MS, AiVerdict, AiVerdictRequest, AiVerdictReversibility};
@@ -230,7 +228,7 @@ impl DreamerAttemptBinding {
             read.read_projected_in_txn(&txn, &[], None, |txn, _| {
                 let forbidden = || {
                     MemoryError::new(
-                        MEMORY_CODE_FORBIDDEN,
+                        crate::memory::MEMORY_CODE_NOT_FOUND,
                         "the conflict marker and every member must read for the Dreamer attempt's conflicts page",
                         &["Ask only about an open conflict served by the bound conflicts page."],
                     )
@@ -277,10 +275,8 @@ impl DreamerAttemptBinding {
         };
         let (ask, evidence) = prepared;
         let Some(lender) = self.lender.clone() else {
-            return Err(MemoryError::new(
-                MEMORY_CODE_MODEL_UNAVAILABLE,
+            return Err(MemoryError::bad_request(
                 "no host lends this attempt a decision ladder",
-                &["Run under a host that lends decisions, then ask again."],
             ));
         };
         let deadline_ms = input.deadline_ms.unwrap_or(AI_VERDICT_DEADLINE_MS);

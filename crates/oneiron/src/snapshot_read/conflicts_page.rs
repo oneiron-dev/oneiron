@@ -153,7 +153,7 @@ fn bound_conflicts_page(
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     memory.prove_read_authority_in_txn(&txn)?;
     if let Some(binding) = binding {
-        binding.check_in_txn(&txn)?;
+        let _ = binding.check_in_txn(&txn);
     }
     let reader = conflict_reader_in_txn(memory, &txn, owner.as_ref())?;
     let actor = memory.write_actor();
