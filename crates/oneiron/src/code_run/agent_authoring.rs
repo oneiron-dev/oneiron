@@ -12,23 +12,8 @@ use crate::{EntityId, Error, Result, TimeRange};
 
 use super::SelfAgentDefinitionPutCall;
 
-/// `vault.agents.put`'s row input: the new definition's id and the guest's
-/// draft, which [`parse_agent_put_request`] reads.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPutInput {
-    pub id: String,
-    pub definition: serde_json::Value,
-}
-
-/// `vault.agents.put`'s row reply: the id written, and `active` or
-/// `proposed`.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPutOutput {
-    pub id: String,
-    pub disposition: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::code_run::agent_authoring::{AgentPutInput, AgentPutOutput};
 
 // FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
 #[cfg(any())]
