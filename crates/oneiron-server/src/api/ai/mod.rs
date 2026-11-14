@@ -236,21 +236,19 @@ struct QuotaAnswer {
 /// its reset, and `use_fallback` (`{"choice": "use_fallback", "fallback":
 /// "<model>"}`) sends its calls to that model on another provider while it
 /// stays parked.
+///
+/// The answer is an owner act, so it goes through the owner door: the
+/// caller must own this vault, not merely hold a full-vault slip, which is a
+/// scope and names no act (FIX-LIST OWNER-GRADE-IS-NOT-OWNERSHIP). The owner's
+/// own slips and a self-hosted root acting as the owner pass; a hosted
+/// operator's root keeps its typed refusal (FIX 2222).
 async fn answer_quota(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Path(question): Path<String>,
     Json(answer): Json<QuotaAnswer>,
 ) -> Response {
-    if !auth.is_owner_grade() {
-        return refusal(
-            StatusCode::FORBIDDEN,
-            "owner_required",
-            "quota questions are the owner's",
-        );
-    }
-    // FIX 2222: an owner act; a hosted operator's root is refused, typed.
-    if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
+    if let Err(error) = crate::api::owner_routes::owner(&auth, &server) {
         return error.into_response();
     }
     match server.ai.model_runtime().answer_quota(
