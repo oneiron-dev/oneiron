@@ -4,7 +4,10 @@
 //! [`Vault::admit_git_receive_pack_in_txn`] admits, in this order:
 //! - **Owner**: the pusher is the vault's live owner. Every form he pushed
 //!   with before keeps working; the transport's credential gates are his as
-//!   they were.
+//!   they were. On the lease route his push is held to his own lease's
+//!   fence (the checkout live and his on this repository, its TASK
+//!   standing, its attempt running), and no run Grant is asked of him: his
+//!   authority is this arm, not a Grant (L4-06-OWNER-LEASE-PUSH).
 //! - **Grant**: a live GitPush grant names the pusher and a repo whose CODE
 //!   anchor resolves, through its stored CODE and PROJECT records, to the
 //!   very Git object store being served. The owner who granted it is still
@@ -105,9 +108,18 @@ impl Vault {
         ticket: Option<&str>,
         portable: Option<(&RepoPortableId, EntityId)>,
     ) -> Result<GitPushAdmission> {
-        let owner = self.git_push_owner_in_txn(txn, caller.principal)?;
+        if self.git_push_owner_in_txn(txn, caller.principal)? {
+            let leased = ticket
+                .map(|ticket| self.git_push_owner_lease_in_txn(txn, caller, served, ticket))
+                .transpose()?;
+            return held_to_lease(
+                GitPushStamp::new(GitPushArm::Owner, caller, served),
+                leased.as_ref(),
+                served,
+            );
+        }
         let selection = match portable {
-            Some((portable, project)) if !owner && caller.host => self
+            Some((portable, project)) if caller.host => self
                 .resolve_repo_anchor_by_portable_in_txn(txn, portable)?
                 .map(|repo| GitPushRepo { repo, project }),
             _ => None,
@@ -117,13 +129,6 @@ impl Vault {
                 self.git_push_checkout_admits_in_txn(txn, caller, served, ticket, selection)
             })
             .transpose()?;
-        if owner {
-            return held_to_lease(
-                GitPushStamp::new(GitPushArm::Owner, caller, served),
-                leased.as_ref(),
-                served,
-            );
-        }
         if !caller.host {
             return Err(refused(&served.name, IN_PROCESS_OWNER_ONLY));
         }
@@ -340,8 +345,8 @@ impl Vault {
                         .naming(membership.grant, repo, anchor)
                         .with_checkout(GitPushCheckout {
                             ticket: ticket.to_owned(),
-                            repo,
-                            class: class_byte(class),
+                            repo: Some(repo),
+                            class: Some(class_byte(class)),
                         });
                     return Ok(Ok(stamp));
                 }
@@ -354,6 +359,30 @@ impl Vault {
         } else {
             NO_RUN_GRANT
         }))
+    }
+
+    /// The owner's own lease, held to its fence alone
+    /// (L4-06-OWNER-LEASE-PUSH): the ticket's exact checkout and epoch, live
+    /// and his on the served repo, its TASK standing and its attempt
+    /// running. His authority is the Owner arm, not a Grant (canon G1-PUSH
+    /// = D), so no run Grant is asked of him, and the lease names no run
+    /// repo or class.
+    fn git_push_owner_lease_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        caller: &GitPushCaller,
+        served: &ServedPushRepo,
+        ticket: &str,
+    ) -> Result<std::result::Result<GitPushStamp, &'static str>> {
+        if !self.git_push_checkout_stands_in_txn(txn, caller.principal, served, ticket)? {
+            return Ok(Err(STALE_CHECKOUT));
+        }
+        Ok(Ok(GitPushStamp::new(GitPushArm::Owner, caller, served)
+            .with_checkout(GitPushCheckout {
+                ticket: ticket.to_owned(),
+                repo: None,
+                class: None,
+            })))
     }
 
     /// The liveness fence of a lease push: the ticket's exact checkout id
@@ -512,7 +541,10 @@ impl Vault {
     /// The same checkout, and over every ref move and changed path of the
     /// push a live Grant of the pusher's over this repo: the one the push
     /// was admitted under or another, never a refusal of what a live Grant
-    /// allows (FIX 7138). Answers the Grant that admitted each ref move.
+    /// allows (FIX 7138). Answers the Grant that admitted each ref move. The
+    /// owner's own lease is held to the same checkout alone: the Owner
+    /// arm's recheck already read him and his credential again, and no run
+    /// Grant bounds him (L4-06-OWNER-LEASE-PUSH).
     fn git_push_checkout_rechecks_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -525,14 +557,10 @@ impl Vault {
         let Some(checkout) = stamp.checkout.as_ref() else {
             return Err(no_longer());
         };
-        let (ticket, anchor_repo) = (checkout.ticket.as_str(), checkout.repo);
-        let Some(class) = EdgeActorClass::try_from_u8(checkout.class) else {
-            return Err(no_longer());
-        };
         let lease = crate::credential_door::require_checkout_lease_in_txn(
             self,
             txn,
-            ticket,
+            checkout.ticket.as_str(),
             &principal.to_hex(),
             repo,
         )
@@ -547,6 +575,15 @@ impl Vault {
         {
             return Err(refused(&stamp.served, STALE_CHECKOUT));
         }
+        if matches!(stamp.arm, GitPushArm::Owner) {
+            return Ok(BTreeMap::new());
+        }
+        let (Some(anchor_repo), Some(class)) = (
+            checkout.repo,
+            checkout.class.and_then(EdgeActorClass::try_from_u8),
+        ) else {
+            return Err(no_longer());
+        };
         let mut admitted = BTreeMap::new();
         for change in changes {
             let target = RepoTarget {

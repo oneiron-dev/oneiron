@@ -167,15 +167,19 @@ impl GitPushArm {
     }
 }
 
-/// The checkout lease a push named (FIX 8729): its ticket, the run's CODE
-/// and PROJECT over the served store, and the run's class. A push that names
-/// one is held to it whatever arm admits it. It holds no secret bytes: the
-/// ticket is the checkout's id and epoch.
+/// The checkout lease a push named (FIX 8729): its ticket and, on a run's
+/// lease, the run's CODE and PROJECT over the served store and the run's
+/// class. The owner's own lease names neither: no run Grant bounds him
+/// (L4-06-OWNER-LEASE-PUSH). A push that names one is held to it whatever
+/// arm admits it. It holds no secret bytes: the ticket is the checkout's id
+/// and epoch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct GitPushCheckout {
     pub(super) ticket: String,
-    pub(super) repo: GitPushRepo,
-    pub(super) class: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) repo: Option<GitPushRepo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) class: Option<u8>,
 }
 
 /// What one admitted push stands on: the arm, the pusher, the Grant and the
@@ -324,13 +328,20 @@ impl GitPushStamp {
                         (Value::from("ticket"), Value::from(checkout.ticket.as_str())),
                         (
                             Value::from("repo"),
-                            Value::from(checkout.repo.repo.to_hex()),
+                            checkout
+                                .repo
+                                .map_or(Value::Nil, |repo| Value::from(repo.repo.to_hex())),
                         ),
                         (
                             Value::from("project"),
-                            Value::from(checkout.repo.project.to_hex()),
+                            checkout
+                                .repo
+                                .map_or(Value::Nil, |repo| Value::from(repo.project.to_hex())),
                         ),
-                        (Value::from("class"), Value::from(checkout.class)),
+                        (
+                            Value::from("class"),
+                            checkout.class.map_or(Value::Nil, Value::from),
+                        ),
                     ])
                 }),
             ),
