@@ -96,7 +96,10 @@ fn author_and_admin_delete_require_authority_and_write_role_receipts() {
         .join_member(room, bob.entity_ref(), owner, 2, HistoryChoice::Share)
         .unwrap();
     let first = vault
-        .append_dag_record(&record(&vault, room, bob, 4))
+        .append_dag_record(
+            &vault.memory(bob.entity_ref(), bob.actor_class()),
+            &record(&vault, room, bob, 4),
+        )
         .unwrap()
         .id;
     assert_eq!(
@@ -114,7 +117,10 @@ fn author_and_admin_delete_require_authority_and_write_role_receipts() {
         ErrorKind::ConversationDenied
     );
     let second = vault
-        .append_dag_record(&record(&vault, room, owner, 5))
+        .append_dag_record(
+            &vault.memory(owner.entity_ref(), owner.actor_class()),
+            &record(&vault, room, owner, 5),
+        )
         .unwrap()
         .id;
     assert_eq!(
@@ -162,15 +168,25 @@ fn erasure_covers_trunk_thread_and_sub_session_without_rewriting_ledger() {
         .join_member(room, bob.entity_ref(), owner, 2, HistoryChoice::Share)
         .unwrap();
     let root = vault
-        .append_dag_record(&record(&vault, room, owner, 4))
+        .append_dag_record(
+            &vault.memory(owner.entity_ref(), owner.actor_class()),
+            &record(&vault, room, owner, 4),
+        )
         .unwrap()
         .id;
     let trunk = vault
-        .append_dag_record(&record(&vault, room, bob, 5))
+        .append_dag_record(
+            &vault.memory(bob.entity_ref(), bob.actor_class()),
+            &record(&vault, room, bob, 5),
+        )
         .unwrap()
         .id;
     let thread = vault
-        .reply_in_thread(root, &record(&vault, room, bob, 6))
+        .reply_in_thread(
+            &vault.memory(bob.entity_ref(), bob.actor_class()),
+            root,
+            &record(&vault, room, bob, 6),
+        )
         .unwrap()
         .id;
     let session = vault.spawn_dag_sub_session(&root, owner).unwrap();
@@ -178,11 +194,23 @@ fn erasure_covers_trunk_thread_and_sub_session_without_rewriting_ledger() {
     worker.parent = Some(root);
     worker.session = Some(session);
     worker.advance = false;
-    let worker = vault.append_dag_record(&worker).unwrap().id;
+    let worker = vault
+        .append_dag_record(
+            &vault.memory(worker.actor.entity_ref(), worker.actor.actor_class()),
+            &worker,
+        )
+        .unwrap()
+        .id;
     let mut reply = record(&vault, room, owner, 8);
     reply.reply_to = Some(trunk);
     reply.parent = Some(trunk);
-    let pointer = vault.append_dag_record(&reply).unwrap().id;
+    let pointer = vault
+        .append_dag_record(
+            &vault.memory(reply.actor.entity_ref(), reply.actor.actor_class()),
+            &reply,
+        )
+        .unwrap()
+        .id;
     let only_erased = crate::actor_claims::write_actor_claim(
         &vault,
         crate::actor_claims::ActorClaimRow::Lesson {
@@ -210,7 +238,7 @@ fn erasure_covers_trunk_thread_and_sub_session_without_rewriting_ledger() {
     // the scoped-read/retrieval regressions).
     assert!(vault.get_claim(&only_erased).unwrap().is_some());
     assert!(vault.get_claim(&corroborated).unwrap().is_some());
-    assert_eq!(outcomes.len(), 3);
+    assert_eq!(outcomes.outcomes.len(), 3);
     for id in [trunk, thread, worker] {
         assert!(vault.get(&id).unwrap().is_none());
     }
@@ -220,6 +248,7 @@ fn erasure_covers_trunk_thread_and_sub_session_without_rewriting_ledger() {
         vault
             .erase_room_person(room, bob.entity_ref(), owner)
             .unwrap()
+            .outcomes
             .is_empty()
     );
     let append = AppendRecord {
@@ -240,11 +269,20 @@ fn erasure_covers_trunk_thread_and_sub_session_without_rewriting_ledger() {
         actor: bob,
         thread_audience: None,
     };
-    let fresh = vault.append_dag_record(&append).unwrap().id;
+    let fresh = vault
+        .append_dag_record(
+            &vault.memory(append.actor.entity_ref(), append.actor.actor_class()),
+            &append,
+        )
+        .unwrap()
+        .id;
     assert!(vault.get(&fresh).unwrap().is_some());
-    let strip = vault.reply_strip(&pointer).unwrap().unwrap();
-    assert!(strip.redacted && strip.stale && strip.text.is_none());
-    for outcome in outcomes {
+    permit_reads(&vault, &[owner.entity_ref()]);
+    let read = vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new(owner.entity_ref().to_hex()).unwrap());
+    let strip = vault.reply_strip(&read, &pointer).unwrap().unwrap();
+    assert!(strip.redacted && strip.stale == Some(true) && strip.text.is_none());
+    for outcome in &outcomes.outcomes {
         let receipt = outcome.receipt_id.unwrap();
         let raw = vault.get_raw_unsealed(&receipt).unwrap().unwrap();
         assert_eq!(raw[0], crate::registry::ENTITY_TYPE_REDACTION_AUDIT);
@@ -305,7 +343,10 @@ fn conflicted_roots_never_restore_local_creator_or_initial_role_powers() {
         .join_member(room, bob.entity_ref(), owner, 2, HistoryChoice::Share)
         .unwrap();
     let record = vault
-        .append_dag_record(&record(&vault, room, bob, 3))
+        .append_dag_record(
+            &vault.memory(bob.entity_ref(), bob.actor_class()),
+            &record(&vault, room, bob, 3),
+        )
         .unwrap()
         .id;
     let saved = vault.get(&record).unwrap();
@@ -361,11 +402,17 @@ fn room_soft_shell_escalates_through_authorized_gdpr_and_keeps_dag_usable() {
         .join_member(room, bob.entity_ref(), owner, 2, HistoryChoice::Share)
         .unwrap();
     let first = vault
-        .append_dag_record(&record(&vault, room, bob, 3))
+        .append_dag_record(
+            &vault.memory(bob.entity_ref(), bob.actor_class()),
+            &record(&vault, room, bob, 3),
+        )
         .unwrap()
         .id;
     let next = vault
-        .append_dag_record(&record(&vault, room, owner, 4))
+        .append_dag_record(
+            &vault.memory(owner.entity_ref(), owner.actor_class()),
+            &record(&vault, room, owner, 4),
+        )
         .unwrap()
         .id;
     vault
@@ -382,9 +429,9 @@ fn room_soft_shell_escalates_through_authorized_gdpr_and_keeps_dag_usable() {
     let erased = vault
         .erase_room_person(room, bob.entity_ref(), owner)
         .unwrap();
-    assert_eq!(erased.len(), 1);
-    assert!(erased[0].receipt_id.is_some());
-    assert!(erased[0].sweep_key.is_some());
+    assert_eq!(erased.outcomes.len(), 1);
+    assert!(erased.outcomes[0].receipt_id.is_some());
+    assert!(erased.outcomes[0].sweep_key.is_some());
     assert!(vault.get_raw_unsealed(&first).unwrap().is_none());
     assert_eq!(
         vault
@@ -397,6 +444,7 @@ fn room_soft_shell_escalates_through_authorized_gdpr_and_keeps_dag_usable() {
         vault
             .erase_room_person(room, bob.entity_ref(), owner)
             .unwrap()
+            .outcomes
             .is_empty()
     );
 }
@@ -408,11 +456,17 @@ fn a_deleted_dag_record_keeps_no_hash_of_its_words() {
     // and is the same fixed value whatever the deleted words were.
     let (_dir, vault, owner, room, _) = fixture();
     let soft = vault
-        .append_dag_record(&record(&vault, room, owner, 3))
+        .append_dag_record(
+            &vault.memory(owner.entity_ref(), owner.actor_class()),
+            &record(&vault, room, owner, 3),
+        )
         .unwrap()
         .id;
     let hard = vault
-        .append_dag_record(&record(&vault, room, owner, 4))
+        .append_dag_record(
+            &vault.memory(owner.entity_ref(), owner.actor_class()),
+            &record(&vault, room, owner, 4),
+        )
         .unwrap()
         .id;
     let pin = |id| crate::conversation_dag::stored_body_pin_for_test(&vault, &id).unwrap();
@@ -425,7 +479,14 @@ fn a_deleted_dag_record_keeps_no_hash_of_its_words() {
     let recreate = |id: &EntityId, row: &crate::ports::EntityRecord, replicated: bool| {
         let builder = vault.batch();
         let builder = if replicated {
-            builder.put_replicated(id, row.entity_type, row.occurred, row.learned_at, &row.body)
+            builder.put_replicated(
+                id,
+                row.entity_type,
+                row.occurred,
+                row.learned_at,
+                None,
+                &row.body,
+            )
         } else {
             builder.put(id, row.entity_type, row.occurred, row.learned_at, &row.body)
         };
@@ -477,15 +538,24 @@ fn deleting_root_middle_or_head_keeps_live_trunk_and_append() {
     for removed in 0..3 {
         let (_dir, vault, owner, room, _) = fixture();
         let first = vault
-            .append_dag_record(&record(&vault, room, owner, 3))
+            .append_dag_record(
+                &vault.memory(owner.entity_ref(), owner.actor_class()),
+                &record(&vault, room, owner, 3),
+            )
             .unwrap()
             .id;
         let middle = vault
-            .append_dag_record(&record(&vault, room, owner, 4))
+            .append_dag_record(
+                &vault.memory(owner.entity_ref(), owner.actor_class()),
+                &record(&vault, room, owner, 4),
+            )
             .unwrap()
             .id;
         let head = vault
-            .append_dag_record(&record(&vault, room, owner, 5))
+            .append_dag_record(
+                &vault.memory(owner.entity_ref(), owner.actor_class()),
+                &record(&vault, room, owner, 5),
+            )
             .unwrap()
             .id;
         let rows = [first, middle, head];
@@ -525,7 +595,10 @@ fn deleting_root_middle_or_head_keeps_live_trunk_and_append() {
         vault.move_head(&room, &remaining[0]).unwrap();
         vault.move_head(&room, remaining.last().unwrap()).unwrap();
         let appended = vault
-            .append_dag_record(&record(&vault, room, owner, 6))
+            .append_dag_record(
+                &vault.memory(owner.entity_ref(), owner.actor_class()),
+                &record(&vault, room, owner, 6),
+            )
             .unwrap()
             .id;
         assert_eq!(
@@ -579,6 +652,7 @@ fn imported_turn_has_unknown_person_author_but_owner_can_policy_delete_it() {
         vault
             .erase_room_person(room, bob, owner)
             .unwrap()
+            .outcomes
             .is_empty()
     );
     assert!(
@@ -594,11 +668,17 @@ fn imported_turn_has_unknown_person_author_but_owner_can_policy_delete_it() {
 fn replayed_soft_then_hard_room_tombstone_keeps_surviving_line() {
     let (_dir, vault, owner, room, _) = fixture();
     let root = vault
-        .append_dag_record(&record(&vault, room, owner, 3))
+        .append_dag_record(
+            &vault.memory(owner.entity_ref(), owner.actor_class()),
+            &record(&vault, room, owner, 3),
+        )
         .unwrap()
         .id;
     let child = vault
-        .append_dag_record(&record(&vault, room, owner, 4))
+        .append_dag_record(
+            &vault.memory(owner.entity_ref(), owner.actor_class()),
+            &record(&vault, room, owner, 4),
+        )
         .unwrap()
         .id;
     let request = *uuid::Uuid::now_v7().as_bytes();
@@ -668,7 +748,10 @@ fn room_admin_can_policy_hard_delete_an_authors_soft_shell() {
         .set_room_role(room, bob.entity_ref(), RoomRole::Admin, owner)
         .unwrap();
     let root = vault
-        .append_dag_record(&record(&vault, room, owner, 3))
+        .append_dag_record(
+            &vault.memory(owner.entity_ref(), owner.actor_class()),
+            &record(&vault, room, owner, 3),
+        )
         .unwrap()
         .id;
     vault
@@ -700,7 +783,10 @@ fn erasure_pages_over_mixed_authors_and_soft_shells_without_skipping() {
     for at in 3..10 {
         let writer = if at % 2 == 0 { bob } else { owner };
         let id = vault
-            .append_dag_record(&record(&vault, room, writer, at))
+            .append_dag_record(
+                &vault.memory(writer.entity_ref(), writer.actor_class()),
+                &record(&vault, room, writer, at),
+            )
             .unwrap()
             .id;
         if writer == bob {
@@ -716,8 +802,13 @@ fn erasure_pages_over_mixed_authors_and_soft_shells_without_skipping() {
     let outcomes = vault
         .erase_room_person(room, bob.entity_ref(), owner)
         .unwrap();
-    assert_eq!(outcomes.len(), theirs.len());
-    assert!(outcomes.iter().all(|outcome| outcome.receipt_id.is_some()));
+    assert_eq!(outcomes.outcomes.len(), theirs.len());
+    assert!(
+        outcomes
+            .outcomes
+            .iter()
+            .all(|outcome| outcome.receipt_id.is_some())
+    );
     for id in theirs {
         assert!(vault.get(&id).unwrap().is_none());
     }
@@ -736,6 +827,7 @@ fn erasure_pages_over_mixed_authors_and_soft_shells_without_skipping() {
         vault
             .erase_room_person(room, bob.entity_ref(), owner)
             .unwrap()
+            .outcomes
             .is_empty()
     );
 }
@@ -792,7 +884,10 @@ fn vault_room_policy_narrows_admin_delete_and_owner_role_delegation() {
         .set_room_role(room, bob.entity_ref(), RoomRole::Admin, owner)
         .unwrap();
     let root = vault
-        .append_dag_record(&record(&vault, room, owner, 3))
+        .append_dag_record(
+            &vault.memory(owner.entity_ref(), owner.actor_class()),
+            &record(&vault, room, owner, 3),
+        )
         .unwrap()
         .id;
     install_room_rules(
@@ -833,17 +928,24 @@ fn completed_room_erasure_uses_current_vault_policy_for_fresh_ids() {
         .join_member(room, bob.entity_ref(), owner, 2, HistoryChoice::Share)
         .unwrap();
     let root = vault
-        .append_dag_record(&record(&vault, room, owner, 3))
+        .append_dag_record(
+            &vault.memory(owner.entity_ref(), owner.actor_class()),
+            &record(&vault, room, owner, 3),
+        )
         .unwrap()
         .id;
     let prior = vault
-        .append_dag_record(&record(&vault, room, bob, 4))
+        .append_dag_record(
+            &vault.memory(bob.entity_ref(), bob.actor_class()),
+            &record(&vault, room, bob, 4),
+        )
         .unwrap()
         .id;
     assert_eq!(
         vault
             .erase_room_person(room, bob.entity_ref(), owner)
             .unwrap()
+            .outcomes
             .len(),
         1
     );
@@ -852,7 +954,12 @@ fn completed_room_erasure_uses_current_vault_policy_for_fresh_ids() {
     fresh.parent = Some(root);
     fresh.advance = false;
     assert!(
-        vault.append_dag_record(&fresh).is_ok(),
+        vault
+            .append_dag_record(
+                &vault.memory(fresh.actor.entity_ref(), fresh.actor.actor_class()),
+                &fresh,
+            )
+            .is_ok(),
         "shipped policy permits fresh IDs after the completed sweep"
     );
     install_room_rules(
@@ -866,12 +973,21 @@ fn completed_room_erasure_uses_current_vault_policy_for_fresh_ids() {
         )],
     );
     assert_eq!(
-        vault.append_dag_record(&fresh).unwrap_err().kind(),
-        ErrorKind::InvalidConversationDag
+        vault
+            .append_dag_record(
+                &vault.memory(fresh.actor.entity_ref(), fresh.actor.actor_class()),
+                &fresh,
+            )
+            .unwrap_err()
+            .code,
+        crate::memory::MEMORY_CODE_BAD_REQUEST
     );
     assert!(
         vault
-            .append_dag_record(&record(&vault, room, owner, 6))
+            .append_dag_record(
+                &vault.memory(owner.entity_ref(), owner.actor_class()),
+                &record(&vault, room, owner, 6),
+            )
             .is_ok()
     );
 }
@@ -887,7 +1003,10 @@ fn room_holder_override_cannot_widen_vault_delete_ceiling() {
         .set_room_role(room, bob.entity_ref(), RoomRole::Admin, owner)
         .unwrap();
     let record = vault
-        .append_dag_record(&record(&vault, room, owner, 3))
+        .append_dag_record(
+            &vault.memory(owner.entity_ref(), owner.actor_class()),
+            &record(&vault, room, owner, 3),
+        )
         .unwrap()
         .id;
     install_room_rules(
@@ -948,11 +1067,17 @@ fn manifest_seeded_before_room_rows_uses_shipped_room_defaults() {
     )
     .unwrap();
     let owned = vault
-        .append_dag_record(&record(&vault, room, owner, 3))
+        .append_dag_record(
+            &vault.memory(owner.entity_ref(), owner.actor_class()),
+            &record(&vault, room, owner, 3),
+        )
         .unwrap()
         .id;
     let bobs = vault
-        .append_dag_record(&record(&vault, room, bob, 4))
+        .append_dag_record(
+            &vault.memory(bob.entity_ref(), bob.actor_class()),
+            &record(&vault, room, bob, 4),
+        )
         .unwrap()
         .id;
     assert!(
