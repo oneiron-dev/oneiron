@@ -89,6 +89,7 @@ pub mod seat_park_model_step;
 pub mod shared_act_family;
 pub mod skill_gate;
 pub mod skill_hub_restore;
+pub mod skill_optimize_files;
 pub mod skill_package;
 pub mod skill_read_hold;
 pub mod source_audience;

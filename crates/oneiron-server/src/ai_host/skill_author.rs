@@ -27,8 +27,8 @@ use oneiron::failure_ladder::HealerCase;
 use oneiron::limit_ask::EngineLimit;
 use oneiron::self_heal::HealEvidenceContext;
 use oneiron::skill_optimize::{
-    RejectedSkillEditReason, SKILL_OPTIMIZE_CALL_PURPOSE_NAME, SkillEditDraft, SkillOptimizeAuthor,
-    SkillOptimizeBrief, union_source_rows,
+    RejectedSkillEditReason, SKILL_OPTIMIZE_CALL_PURPOSE_NAME, SkillEditDraft, SkillFileEdit,
+    SkillOptimizeAuthor, SkillOptimizeBrief, union_source_rows,
 };
 use oneiron::{EntityId, Error, LlmMessageRole, Vault};
 use serde::Deserialize;
@@ -435,6 +435,9 @@ fn brief_data(vault: &Vault, brief: &SkillOptimizeBrief) -> serde_json::Value {
             })
         })
         .collect();
+    for file in &brief.files {
+        longest = longest.max(file.content.as_ref().map_or(0, String::len));
+    }
     let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
     let mut data = serde_json::json!({
         "skill_id": brief.skill_id,
@@ -457,6 +460,20 @@ fn brief_data(vault: &Vault, brief: &SkillOptimizeBrief) -> serde_json::Value {
         let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, dials.len() as u64);
         data["policy_dials"] = serde_json::Value::Object(dials.clone());
     }
+    // The files an edit may replace whole (census L9-02): each with its text
+    // while the brief carries it, by path alone past the brief's bounds.
+    if !brief.files.is_empty() {
+        let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, brief.files.len() as u64);
+        let files: Vec<_> = brief
+            .files
+            .iter()
+            .map(|file| match &file.content {
+                Some(content) => serde_json::json!({ "path": file.path, "content": content }),
+                None => serde_json::json!({ "path": file.path }),
+            })
+            .collect();
+        data["files"] = serde_json::Value::Array(files);
+    }
     data
 }
 
@@ -467,10 +484,22 @@ enum DraftWire {
     Edit {
         instructions: String,
         rationale: String,
+        /// The brief's files the edit replaces whole; absent for an
+        /// instructions-only edit (census L9-02).
+        #[serde(default)]
+        files: Vec<FileEditWire>,
     },
     Decline {
         rationale: String,
     },
+}
+
+/// One file an edit replaces, as the Coach writes it: an existing path from
+/// the brief's `files` and that file's complete new text.
+#[derive(Deserialize)]
+struct FileEditWire {
+    path: String,
+    content: String,
 }
 
 /// Native grant terms as data, using the same codec as the engine's term digest.
@@ -534,9 +563,17 @@ fn parse_draft(text: &str) -> Option<SkillEditDraft> {
             DraftWire::Edit {
                 instructions,
                 rationale,
+                files,
             } => SkillEditDraft::Edit {
                 desc: instructions,
                 rationale,
+                files: files
+                    .into_iter()
+                    .map(|file| SkillFileEdit {
+                        path: file.path,
+                        content: file.content,
+                    })
+                    .collect(),
             },
             DraftWire::Decline { rationale } => SkillEditDraft::Decline { rationale },
         },
