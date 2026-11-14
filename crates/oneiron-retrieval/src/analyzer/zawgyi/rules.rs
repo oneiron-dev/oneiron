@@ -355,13 +355,13 @@ pub(super) static STEPS: LazyLock<Option<Vec<Step>>> = LazyLock::new(compile_ste
 fn compile_steps() -> Option<Vec<Step>> {
     let mut steps = Vec::with_capacity(RULES.len());
     for rule in &RULES {
-        match rule {
+        match *rule {
             Rule::Pattern(pattern, replacement) => {
-                let regex = regex::Regex::new(*pattern).ok()?;
-                steps.push(Step::Pattern(regex, *replacement));
+                let regex = regex::Regex::new(pattern).ok()?;
+                steps.push(Step::Pattern(regex, replacement));
             }
             Rule::Custom(func) => {
-                steps.push(Step::Custom(*func));
+                steps.push(Step::Custom(func));
             }
         }
     }

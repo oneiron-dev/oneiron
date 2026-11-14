@@ -508,8 +508,23 @@ fn zawgyi_conversion_is_off_without_its_flag() {
 
 #[test]
 fn a_latin_word_beside_zawgyi_is_untouched() {
+    // Zawgyi's word-initial E (U+1031) is a SpacingMark, so grapheme
+    // segmentation joins it to the space before it.
     let input = format!("word {ZAWGYI_NAYPYIDAW}");
     let expected = format!("word {UNICODE_NAYPYIDAW}");
+    let out = normalize_with_offset_map(&input, &NormalizationPolicy::default());
+    assert_eq!(out.as_str(), expected.as_str());
+    // The converted word maps back to the original word, E included.
+    assert_eq!(out.remap(5), 5);
+    let end = u32::try_from(expected.len()).expect("short test input");
+    let input_end = u32::try_from(input.len()).expect("short test input");
+    assert_eq!(out.remap_end(end), input_end);
+}
+
+#[test]
+fn every_word_of_a_zawgyi_phrase_is_converted() {
+    let input = format!("{ZAWGYI_NAYPYIDAW} {ZAWGYI_NAYPYIDAW}");
+    let expected = format!("{UNICODE_NAYPYIDAW} {UNICODE_NAYPYIDAW}");
     let out = normalize_with_offset_map(&input, &NormalizationPolicy::default());
     assert_eq!(out.as_str(), expected.as_str());
 }

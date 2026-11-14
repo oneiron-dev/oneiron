@@ -183,7 +183,8 @@ pub fn normalize_with_offset_map<'a>(
     let zawgyi_input = policy.myanmar_zawgyi && zawgyi::is_zawgyi(input);
     let mut previous_myanmar = false;
 
-    // One unit is one grapheme, or the graphemes one Khmer syllable spans.
+    // One unit is one grapheme, the graphemes one Khmer syllable spans, or
+    // one Myanmar run of Zawgyi input.
     let mut unit_start = 0;
     let mut unit_end = 0;
     let mut normalize_unit = |start: usize, end: usize, out: &mut String| {
@@ -217,7 +218,23 @@ pub fn normalize_with_offset_map<'a>(
         out.push_str(&chunk);
         boundaries.push((out.len() as u32, end as u32));
     };
-    for (orig_start, grapheme) in input.grapheme_indices(true) {
+    // Zawgyi types the vowel sign E (U+1031, a SpacingMark) before its
+    // consonant, so grapheme segmentation attaches a word-initial E to the
+    // space or letter before it. For Zawgyi input such a grapheme is split at
+    // its first Myanmar char, so the E opens the Myanmar run it belongs to and
+    // the run's offsets start at the E.
+    let pieces = input.grapheme_indices(true).flat_map(|(start, grapheme)| {
+        let split = if zawgyi_input {
+            grapheme.find(zawgyi::is_myanmar).filter(|&at| at > 0)
+        } else {
+            None
+        };
+        let (head, tail) = grapheme.split_at(split.unwrap_or(grapheme.len()));
+        [(start, head), (start + head.len(), tail)]
+            .into_iter()
+            .filter(|(_, piece)| !piece.is_empty())
+    });
+    for (orig_start, grapheme) in pieces {
         let khmer_joins = syllables
             .as_mut()
             .is_some_and(|scanner| scanner.joins_previous(grapheme));

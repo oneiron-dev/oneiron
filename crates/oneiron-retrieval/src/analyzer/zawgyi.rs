@@ -19,7 +19,9 @@
 //!
 //! Conversion runs only on input the detector puts above [`ZAWGYI_THRESHOLD`]
 //! (P(Zawgyi) > 0.95, myanmar-tools' suggested cut). It runs per Myanmar run (a
-//! maximal run of graphemes that start with a Myanmar-block character), so `^`
+//! maximal run of graphemes that start with a Myanmar-block character; a
+//! grapheme that starts elsewhere but holds a Myanmar char, such as a space
+//! with Zawgyi's pre-base E attached, is first split at that char), so `^`
 //! and `$` in Rabbit's rules mean the run's ends, and Rabbit's space / ZWSP
 //! rules never see a space or ZWSP (they are not run characters). A run boundary
 //! therefore makes rule 69 (`([^U+1040-U+1049])U+1040$`, a word-final zero read
