@@ -445,11 +445,13 @@ fn pump_once(
                 }
             });
             // FIX 11532: the solo leaf's team receipt, after its own settle;
-            // a receipt failure logs and the workflow goes on.
+            // a receipt failure logs and the workflow goes on. No retry
+            // follows a completed leaf, so the spend it carried goes too.
             if let Some((leaf, _)) = claimed
                 && progress.is_ok()
                 && leaf_completed(vault, leaf)
             {
+                super::step::drop_carried_spend(vault, leaf);
                 if let Err(error) = oneiron::team::record_solo_receipt(vault, leaf, now_secs()) {
                     tracing::warn!(kind = ?error.kind(), ?leaf, "a workflow leaf's solo receipt was not recorded");
                 }
@@ -507,7 +509,7 @@ fn pump_once(
                         match settle(vault, *root, step, LEASE_OWNER, backoff, now_secs()) {
                             Ok(FailureLadderOutcome::Retried { .. }) => {}
                             Ok(_) => {
-                                runner.forget(step.leaf);
+                                runner.forget(vault, step.leaf);
                                 // FIX 11532: the solo leaf's team receipt, after its
                                 // own end; a receipt failure logs and the stop stands.
                                 if let Err(error) =
