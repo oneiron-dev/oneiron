@@ -196,6 +196,12 @@ archive_max_entries = 262144      # raise it for a zip with more entries
 # storage_cap_bytes = 10737418240 # the vault's storage cap, in bytes
 ```
 
+A Google Takeout `.zip` imported into a mailbox (`vault.mail.sources.import_mbox`)
+passes the same check, with each mbox file's first bytes checked as an mbox. Its
+entry cap is the call's own `archive_max_entries` input (262,144 when absent),
+which the refusal names; its report lists the skipped entries in
+`skipped_entries`.
+
 ## The report
 
 stdout is one JSON document of counts: per conversation (its source id, kind,
