@@ -8,25 +8,30 @@
 //! - The member side: `vault.inquiry.answer` (the member's word leaves the
 //!   vault; act `outbound_send`), `vault.inquiry.list` ("Asked about you"),
 //!   `vault.inquiry.scope.open` / `.close` / `.list`, and
-//!   `vault.inquiry.edge.mint` / `.revoke` / `.terms.change`.
+//!   `vault.inquiry.edge.mint` / `.revoke` / `.terms.change`, and
+//!   `vault.inquiry.edge.prepare_join` (the edge a company's accept takes
+//!   with the member's seat; L7-04).
 //!
 //! The engine doors in `crate::inquiry` judge every act; these fns only
 //! parse the wire and project the answer. A row that signs with the host's
-//! own key (`vault.inquire`, the route open, the edge revoke) is refused on
-//! an embedded handle, which holds none.
+//! own key (`vault.inquire`, the route open, the edge revoke, the join
+//! prepare) is refused on an embedded handle, which holds none.
 
 use serde::{Deserialize, Serialize};
 
-use super::EmptyRequest;
-use crate::authority::{AuthorityVaultId, CapabilitySlip, HostSlipIssuer};
+use super::{EmptyRequest, InquiryEdgeOffer, Offer};
+use crate::authority::{
+    AuthorityKey, AuthorityVaultId, CapabilitySlip, ConnectOffer, FederationPactGesture,
+    HostSlipIssuer, ScopeOpeningKey,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::federation::FederationDirectionScope;
 use crate::inquiry::{
     InquiryAnswer, InquiryCheckInMode, InquiryDecider, InquiryEdge, InquiryEdgeReciprocalGrant,
-    InquiryEdgeRequest, InquiryKeep, InquiryLogEntry, InquiryMemberAnswer, InquiryRoute,
-    InquiryRouteRequest, InquiryScopeItem, InquirySendRequest, InquirySent, InquiryStatement,
-    InquiryTermsChange, InquiryTierCeiling, InquiryTransport,
+    InquiryEdgeRequest, InquiryJoinOffer, InquiryJoinPrepared, InquiryKeep, InquiryLogEntry,
+    InquiryMemberAnswer, InquiryRoute, InquiryRouteRequest, InquiryScopeItem, InquirySendRequest,
+    InquirySent, InquiryStatement, InquiryTermsChange, InquiryTierCeiling, InquiryTransport,
 };
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::receipt::{GuestRevokeResponse, project_guest_revoke};
@@ -168,6 +173,28 @@ pub struct InquiryEdgeMintRequest {
     pub keep_allowed: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<u64>,
+}
+
+/// `vault.inquiry.edge.prepare_join`'s input: the company's vault (64 hex)
+/// and name, and the member's name as the company's WORLD of the edge reads
+/// it. The edge takes the member defaults; the member changes its terms
+/// after the join.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InquiryEdgePrepareJoinRequest {
+    pub company_vault: String,
+    pub company_name: String,
+    pub member_name: String,
+}
+
+/// `vault.inquiry.edge.prepare_join`'s answer: the member's edge, inert
+/// until the company's counter is applied on its grant, and the offer the
+/// company's accept takes with the seat. The offer carries the pact's scope
+/// opening key: it travels only in this answer and to the company's host.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct InquiryJoinPreparedView {
+    pub edge: InquiryEdgeView,
+    pub offer: InquiryEdgeOffer,
 }
 
 /// `vault.inquiry.edge.terms.change`'s input: the edge, and the terms the
@@ -391,6 +418,72 @@ fn log_row(entry: &InquiryLogEntry) -> InquiryLogRow {
             .map(|by| decider_token(by).to_owned()),
         decided_at: entry.decided_at,
     }
+}
+
+/// A Connect half on the wire, as the owner's Connect doors carry it: each
+/// byte field lower hex, and the signer's public key.
+#[must_use]
+pub fn connect_offer_wire(offer: &ConnectOffer) -> Offer {
+    let signer = match &offer.gesture.signer {
+        AuthorityKey::Ed25519(bytes) => bytes_to_hex_lower(bytes),
+        AuthorityKey::P256(bytes) => bytes_to_hex_lower(bytes),
+    };
+    Offer {
+        pact: bytes_to_hex_lower(&offer.pact_id),
+        nonce: bytes_to_hex_lower(&offer.pact_nonce),
+        from: bytes_to_hex_lower(&offer.from_vault),
+        to: bytes_to_hex_lower(&offer.to_vault),
+        scope: offer.pact_scope.clone(),
+        signer,
+        signature: bytes_to_hex_lower(&offer.gesture.signature),
+        key: bytes_to_hex_lower(offer.scope_key.expose()),
+    }
+}
+
+/// `N` bytes of hex in the wire field `field`.
+fn hex_field<const N: usize>(field: &str, value: &str) -> MemoryResult<[u8; N]> {
+    crate::deletion::parse_hex(value)
+        .ok_or_else(|| bad_request(&format!("{field} is not {} hex", N * 2)))
+}
+
+/// A host's Connect half from the wire; its signer is the host's Ed25519
+/// key, as a host-root key always is.
+///
+/// # Errors
+///
+/// A field that is not hex of its length.
+pub fn connect_offer_from_wire(offer: &Offer) -> MemoryResult<ConnectOffer> {
+    Ok(ConnectOffer {
+        from_vault: hex_field("inquiry_edge.connect.from", &offer.from)?,
+        to_vault: hex_field("inquiry_edge.connect.to", &offer.to)?,
+        pact_id: hex_field("inquiry_edge.connect.pact", &offer.pact)?,
+        pact_nonce: hex_field("inquiry_edge.connect.nonce", &offer.nonce)?,
+        pact_scope: offer.scope.clone(),
+        gesture: FederationPactGesture {
+            signer: AuthorityKey::Ed25519(hex_field("inquiry_edge.connect.signer", &offer.signer)?),
+            signature: hex_field::<64>("inquiry_edge.connect.signature", &offer.signature)?
+                .to_vec(),
+        },
+        scope_key: ScopeOpeningKey::from_bytes(hex_field("inquiry_edge.connect.key", &offer.key)?),
+    })
+}
+
+/// The wire form of a member's join offer.
+pub(super) fn inquiry_edge_offer_wire(offer: &InquiryJoinOffer) -> InquiryEdgeOffer {
+    InquiryEdgeOffer {
+        member_name: offer.member_name.clone(),
+        connect: connect_offer_wire(&offer.connect),
+    }
+}
+
+/// A member's join offer from the wire.
+pub(super) fn inquiry_join_offer_from_wire(
+    offer: &InquiryEdgeOffer,
+) -> MemoryResult<InquiryJoinOffer> {
+    Ok(InquiryJoinOffer {
+        member_name: offer.member_name.clone(),
+        connect: connect_offer_from_wire(&offer.connect)?,
+    })
 }
 
 fn edge_view(edge: &InquiryEdge) -> MemoryResult<InquiryEdgeView> {
@@ -655,6 +748,55 @@ pub fn mint_inquiry_edge_embedded(
 ) -> MemoryResult<InquiryEdgeView> {
     let owner = memory.embedded_owner("vault.inquiry.edge.mint")?;
     mint_inquiry_edge_as(memory.vault(), &owner, input)
+}
+
+/// `vault.inquiry.edge.prepare_join` on a server: the member's vault
+/// prepares its inquiry edge to the company it joins
+/// ([`Vault::prepare_inquiry_edge_for_join`]) on the member defaults, and
+/// offers its Connect, signed by this host's `issuer` (Engine ruling
+/// L7-04-PREPARE-VERB = A). An owner act; no agent path until the owner
+/// grants one.
+///
+/// # Errors
+///
+/// A company vault that does not parse; the engine's refusals (a live
+/// Connect with the company among them).
+pub fn prepare_inquiry_edge_join_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    issuer: &HostSlipIssuer,
+    input: InquiryEdgePrepareJoinRequest,
+) -> MemoryResult<InquiryJoinPreparedView> {
+    let company_vault_id = vault_id("company_vault", &input.company_vault)?;
+    let prepared: InquiryJoinPrepared = vault.prepare_inquiry_edge_for_join(
+        owner,
+        issuer,
+        company_vault_id,
+        &input.company_name,
+        &input.member_name,
+    )?;
+    Ok(InquiryJoinPreparedView {
+        edge: edge_view(&prepared.edge)?,
+        offer: inquiry_edge_offer_wire(&prepared.offer),
+    })
+}
+
+/// `vault.inquiry.edge.prepare_join` on an embedded handle: the owner's
+/// call, refused, because the Connect offer is signed with the host's own
+/// key.
+///
+/// # Errors
+///
+/// No embedded owner; always the host-key refusal.
+pub fn prepare_inquiry_edge_join_embedded(
+    memory: &Memory<'_>,
+    _input: InquiryEdgePrepareJoinRequest,
+) -> MemoryResult<InquiryJoinPreparedView> {
+    let _owner = memory.embedded_owner("vault.inquiry.edge.prepare_join")?;
+    Err(host_key_only(
+        "vault.inquiry.edge.prepare_join",
+        "signs the Connect offer",
+    ))
 }
 
 /// `vault.inquiry.edge.terms.change`: the member changes an edge's terms

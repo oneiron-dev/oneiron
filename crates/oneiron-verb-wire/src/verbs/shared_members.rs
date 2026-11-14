@@ -5,6 +5,8 @@ use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::verbs::federation::Offer;
+
 /// One of the caller's own invitations, by the id its `MemberInvited`
 /// receipt named.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -117,4 +119,47 @@ pub struct GuestSlipMinted {
     /// The `v2.slip.` credential.
     pub slip: String,
     pub expires_at: u64,
+}
+
+/// A member's inquiry edge offered to the company at joining (L7-04;
+/// federation.md #inquiry-first-build: "the edge is created at joining"):
+/// the member's name, as the company's WORLD of the edge reads it, and the
+/// member host's half of the Connect, which carries the pact's scope opening
+/// key, so it travels only between the two hosts and is never logged.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InquiryEdgeOffer {
+    pub member_name: String,
+    pub connect: Offer,
+}
+
+/// `vault.members.accept_with_inquiry_edge`'s input: the invitee's own
+/// invitation and the inquiry edge their personal vault offers.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SharedInvitationAcceptWithInquiryEdgeRequest {
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
+    pub vault_id: u64,
+    pub invitation: String,
+    pub inquiry_edge: InquiryEdgeOffer,
+}
+
+/// `vault.members.inquiry_edge.attach`'s input: the shared vault the caller
+/// holds a live seat in, and the inquiry edge their personal vault offers.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SharedInquiryEdgeAttachRequest {
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
+    pub vault_id: u64,
+    pub inquiry_edge: InquiryEdgeOffer,
+}
+
+/// `vault.members.inquiry_edge.attach`'s answer: the company host's counter,
+/// which the member's vault applies on its edge's grant. It carries the
+/// pact's scope opening key and is written to no receipt or log.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SharedInquiryEdgeAttached {
+    pub counter: Offer,
 }

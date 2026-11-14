@@ -5,12 +5,13 @@ use oneiron_vault_contract::BINDING_HEADER;
 use serde::Deserialize;
 
 /// The facade doors an invitee's own slip (FIX 1925) reaches: its
-/// invitation's list, acceptance (plain or with a member credential) and decline.
-/// Anywhere else it holds no scope.
-pub(crate) const INVITEE_DOORS: [&str; 4] = [
+/// invitation's list, acceptance (plain, with a member credential or with
+/// the seat's inquiry edge) and decline. Anywhere else it holds no scope.
+pub(crate) const INVITEE_DOORS: [&str; 5] = [
     "vault.members.invitations",
     "vault.members.accept",
     "vault.members.accept_with_credential",
+    "vault.members.accept_with_inquiry_edge",
     "vault.members.decline",
 ];
 

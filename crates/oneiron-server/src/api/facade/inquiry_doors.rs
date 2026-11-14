@@ -9,9 +9,10 @@
 //! - The company Owner's `vault.inquiry.route.open` and
 //!   `vault.inquiry.reciprocal_grant.mint`, and the member's
 //!   `vault.inquiry.answer`, `.list`, `.scope.*` and `.edge.*` (the terms
-//!   change among them): the vault owner's proof, which each engine door
-//!   revalidates in its own transaction. The route open and the edge
-//!   revoke also sign with the host's slip issuer.
+//!   change and the join prepare among them): the vault owner's proof,
+//!   which each engine door revalidates in its own transaction. The route
+//!   open, the edge revoke and the join prepare also sign with the host's
+//!   slip issuer.
 use std::sync::Arc;
 
 use oneiron::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
@@ -19,10 +20,12 @@ use oneiron::receipt::GuestRevokeResponse;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{
     self, EmptyRequest, InquireAnswer, InquireRequest, InquiryAnswerRequest, InquiryAnswerView,
-    InquiryEdgeMintRequest, InquiryEdgeRef, InquiryEdgeTermsChangeRequest, InquiryEdgeTermsChanged,
-    InquiryEdgeView, InquiryLog, InquiryReciprocalGrantMintRequest, InquiryReciprocalGrantMinted,
-    InquiryRouteOpenRequest, InquiryRouteOpened, InquiryScopeCloseRequest, InquiryScopeClosed,
-    InquiryScopeItemView, InquiryScopeItems, InquiryScopeOpenRequest,
+    InquiryEdgeMintRequest, InquiryEdgePrepareJoinRequest, InquiryEdgeRef,
+    InquiryEdgeTermsChangeRequest, InquiryEdgeTermsChanged, InquiryEdgeView,
+    InquiryJoinPreparedView, InquiryLog, InquiryReciprocalGrantMintRequest,
+    InquiryReciprocalGrantMinted, InquiryRouteOpenRequest, InquiryRouteOpened,
+    InquiryScopeCloseRequest, InquiryScopeClosed, InquiryScopeItemView, InquiryScopeItems,
+    InquiryScopeOpenRequest,
 };
 use oneiron::{EdgeActorClass, EntityId};
 
@@ -177,6 +180,47 @@ pub(crate) async fn vault_inquiry_edge_revoke(
     let rows = answer.as_ref().map_or_else(
         |_| Vec::new(),
         |revoked| vec![revoked.grant_ref, revoked.guest_ref],
+    );
+    (answer, rows)
+}
+
+/// `vault.inquiry.edge.prepare_join`: the member's vault prepares its
+/// inquiry edge to the company it joins and offers its Connect, signed with
+/// this host's slip issuer. An owner act; no agent path (Engine ruling
+/// L7-04-PREPARE-VERB = A).
+pub(crate) async fn vault_inquiry_edge_prepare_join(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: InquiryEdgePrepareJoinRequest,
+) -> Listed<InquiryJoinPreparedView> {
+    const VERB: &str = "vault.inquiry.edge.prepare_join";
+    let owner = match super::owner_binding::facade_owner(server, auth, VERB) {
+        Ok(owner) => owner,
+        Err(refusal) => return refused(refusal),
+    };
+    let server = Arc::clone(server);
+    let answer = clock_ingress::run_blocking(move || -> MemoryResult<InquiryJoinPreparedView> {
+        crate::api::pairing::with_issuer(&server, |issuer| {
+            Ok(sdk::prepare_inquiry_edge_join_as(
+                server.vault(),
+                &owner,
+                issuer,
+                input,
+            ))
+        })
+        .map_err(|_| no_host_key(VERB))?
+    })
+    .await
+    .unwrap_or_else(|_| Err(internal(VERB)));
+    let rows = answer.as_ref().map_or_else(
+        |_| Vec::new(),
+        |prepared| {
+            vec![
+                prepared.edge.grant,
+                prepared.edge.guest_actor,
+                prepared.edge.opened_world,
+            ]
+        },
     );
     (answer, rows)
 }

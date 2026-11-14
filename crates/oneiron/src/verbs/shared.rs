@@ -18,6 +18,8 @@ use crate::federation::{
 use crate::memory::{MemoryError, MemoryResult, ProducerRows};
 use crate::{EntityId, Vault};
 
+use super::Offer;
+
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::shared::{
     HandoffAlarmRequest, SharedActRequest, SharedAddOwnerRequest, SharedMemberAskIdRequest,
@@ -128,6 +130,17 @@ pub struct InvitationSlip {
 pub struct SharedInvitationAcceptedWithCredential {
     pub receipt: SharedActExecutionReceipt,
     pub credential: MemberSlip,
+}
+
+/// `vault.members.accept_with_inquiry_edge`'s answer: the acceptance receipt
+/// and the company host's counter on the member's inquiry edge, both from
+/// the one writer that gave the seat (L7-04). The counter carries the pact's
+/// scope opening key: it is written to no receipt or log, and the member's
+/// vault applies it on its edge's grant.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedInvitationAcceptedWithInquiryEdge {
+    pub receipt: SharedActExecutionReceipt,
+    pub inquiry_edge_counter: Offer,
 }
 
 impl MemberSlip {

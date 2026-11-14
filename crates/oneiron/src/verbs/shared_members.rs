@@ -5,9 +5,13 @@
 //! Owner's objection and its withdrawal, the started and matured notices, and
 //! a Member's or Admin's ask that the Owners erase a record; and the owner's
 //! guest slip mint (OF-232). Each fn passes the engine exactly what it asks
-//! for.
+//! for. The inquiry edge a seat carries (L7-04) joins at the accept
+//! (`vault.members.accept_with_inquiry_edge`) or later on the member's own
+//! seat (`vault.members.inquiry_edge.attach`); both sign the company's half
+//! of the Connect with the host's key, so an embedded handle refuses them.
 use serde::{Deserialize, Serialize};
 
+use super::inquiry::{connect_offer_wire, inquiry_join_offer_from_wire};
 use crate::authority::HostSlipIssuer;
 use crate::consent::AuthenticatedOwner;
 use crate::federation::{
@@ -17,14 +21,16 @@ use crate::federation::{
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::task_verb::sdk::{
     InvitationSlip, MemberSlip, SharedActRequest, SharedInvitationAcceptedWithCredential,
-    SharedVaultRequest,
+    SharedInvitationAcceptedWithInquiryEdge, SharedVaultRequest,
 };
 use crate::{EntityId, Vault};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::shared_members::{
-    GuestSlipMintRequest, GuestSlipMinted, InvitationCodeRequest, InvitationSlipRequest,
-    SharedEraseAskCloseRequest, SharedEraseAskRequest, SharedInvitationAcceptWithCredentialRequest,
+    GuestSlipMintRequest, GuestSlipMinted, InquiryEdgeOffer, InvitationCodeRequest,
+    InvitationSlipRequest, SharedEraseAskCloseRequest, SharedEraseAskRequest,
+    SharedInquiryEdgeAttachRequest, SharedInquiryEdgeAttached,
+    SharedInvitationAcceptWithCredentialRequest, SharedInvitationAcceptWithInquiryEdgeRequest,
     SharedInvitationRequest, SharedInvitationWithdrawRequest,
 };
 
@@ -78,6 +84,97 @@ pub fn accept_shared_invitation_with_credential_embedded(
     Err(MemoryError::new(
         MEMORY_CODE_INVALID_STATE,
         "vault.members.accept_with_credential signs the member's credential with the host's own key; an embedded vault holds none",
+        &[super::host::SERVED_CLIENT_HINT],
+    ))
+}
+
+/// `vault.members.accept_with_inquiry_edge`: accepts the invitation and,
+/// in the same writer, the company's half of the inquiry edge the invitee's
+/// personal vault offers ([`Vault::accept_shared_invitation_with_inquiry_edge`];
+/// Engine ruling L7-04-COMPANY-HALF = A: the seat's giver approves it),
+/// signed by the host's `issuer`. The counter goes back in this answer only.
+///
+/// # Errors
+///
+/// An offer that does not parse; the engine's refusals, after which
+/// neither the seat nor the edge stands.
+pub fn accept_shared_invitation_with_inquiry_edge_as(
+    vault: &Vault,
+    invitee: &AuthenticatedOwner,
+    issuer: &HostSlipIssuer,
+    input: SharedInvitationAcceptWithInquiryEdgeRequest,
+) -> MemoryResult<SharedInvitationAcceptedWithInquiryEdge> {
+    let edge = inquiry_join_offer_from_wire(&input.inquiry_edge)?;
+    let (receipt, counter) = vault.accept_shared_invitation_with_inquiry_edge(
+        invitee,
+        input.vault_id,
+        &input.invitation,
+        issuer,
+        &edge,
+    )?;
+    Ok(SharedInvitationAcceptedWithInquiryEdge {
+        receipt,
+        inquiry_edge_counter: connect_offer_wire(&counter),
+    })
+}
+
+/// `vault.members.accept_with_inquiry_edge` on an embedded handle: refused,
+/// because the company's half of the Connect is signed with a host key no
+/// embedded vault holds.
+///
+/// # Errors
+///
+/// No embedded owner; always the host-key refusal.
+pub fn accept_shared_invitation_with_inquiry_edge_embedded(
+    memory: &Memory<'_>,
+    _input: SharedInvitationAcceptWithInquiryEdgeRequest,
+) -> MemoryResult<SharedInvitationAcceptedWithInquiryEdge> {
+    let _owner = memory.embedded_owner("vault.members.accept_with_inquiry_edge")?;
+    Err(MemoryError::new(
+        MEMORY_CODE_INVALID_STATE,
+        "vault.members.accept_with_inquiry_edge signs the company's half of the Connect with the host's own key; an embedded vault holds none",
+        &[super::host::SERVED_CLIENT_HINT],
+    ))
+}
+
+/// `vault.members.inquiry_edge.attach`: a member whose seat was accepted
+/// without an offer joins their inquiry edge later, on their own live seat
+/// and person proof, through the accept's writer
+/// ([`Vault::attach_inquiry_edge_to_seat`]; Engine ruling
+/// L7-04-NO-PERSONAL-VAULT = A), signed by the host's `issuer`. No Owner
+/// act. An exact repeat answers the same counter.
+///
+/// # Errors
+///
+/// An offer that does not parse; the engine's refusals (no live seat of
+/// the caller's, a live Connect with the member's vault).
+pub fn attach_inquiry_edge_to_seat_as(
+    vault: &Vault,
+    member: &AuthenticatedOwner,
+    issuer: &HostSlipIssuer,
+    input: SharedInquiryEdgeAttachRequest,
+) -> MemoryResult<SharedInquiryEdgeAttached> {
+    let edge = inquiry_join_offer_from_wire(&input.inquiry_edge)?;
+    let counter = vault.attach_inquiry_edge_to_seat(member, issuer, input.vault_id, &edge)?;
+    Ok(SharedInquiryEdgeAttached {
+        counter: connect_offer_wire(&counter),
+    })
+}
+
+/// `vault.members.inquiry_edge.attach` on an embedded handle: refused, as
+/// [`accept_shared_invitation_with_inquiry_edge_embedded`].
+///
+/// # Errors
+///
+/// No embedded owner; always the host-key refusal.
+pub fn attach_inquiry_edge_to_seat_embedded(
+    memory: &Memory<'_>,
+    _input: SharedInquiryEdgeAttachRequest,
+) -> MemoryResult<SharedInquiryEdgeAttached> {
+    let _owner = memory.embedded_owner("vault.members.inquiry_edge.attach")?;
+    Err(MemoryError::new(
+        MEMORY_CODE_INVALID_STATE,
+        "vault.members.inquiry_edge.attach signs the company's half of the Connect with the host's own key; an embedded vault holds none",
         &[super::host::SERVED_CLIENT_HINT],
     ))
 }

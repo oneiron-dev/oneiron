@@ -8,6 +8,9 @@
 //! owner's guest slip mint (OF-232), under the owner's proof and the host's
 //! slip issuer. An invitee's own slip (FIX 1925) lists, accepts or declines
 //! only the invitation it names, on the key the invitee bound (FIX 8745).
+//! The seat's inquiry edge (L7-04) joins at the accept or later on the
+//! member's own seat; both sign the company's half of the Connect with the
+//! host's slip issuer.
 //!
 //! Every row here but the erase pair lists its rows (`host_door_lists`), as
 //! `shared_act_doors` says: invitations, objections, notices and erase asks
@@ -27,9 +30,10 @@ use oneiron::task_verb::sdk::{
     self, ActAnswer, GuestSlipMintRequest, GuestSlipMinted, InvitationCode, InvitationCodeRequest,
     InvitationSlip, InvitationSlipRequest, RecordEraseConfirmRequest, RecordEraseOutcome,
     RecordErasePreview, RecordEraseRequest, SharedActRequest, SharedEraseAskCloseRequest,
-    SharedEraseAskRequest, SharedInvitationAcceptWithCredentialRequest,
-    SharedInvitationAcceptedWithCredential, SharedInvitationRequest,
-    SharedInvitationWithdrawRequest, SharedVaultRequest,
+    SharedEraseAskRequest, SharedInquiryEdgeAttachRequest, SharedInquiryEdgeAttached,
+    SharedInvitationAcceptWithCredentialRequest, SharedInvitationAcceptWithInquiryEdgeRequest,
+    SharedInvitationAcceptedWithCredential, SharedInvitationAcceptedWithInquiryEdge,
+    SharedInvitationRequest, SharedInvitationWithdrawRequest, SharedVaultRequest,
 };
 
 use super::host_doors::support::{
@@ -236,6 +240,70 @@ pub(crate) async fn vault_members_accept_with_credential(
             .map_err(|_| internal(VERB))?
         },
         move |accepted| receipt_rows(vault.vault(), &accepted.receipt),
+    )
+    .await
+}
+
+/// `vault.members.accept_with_inquiry_edge`: accepts the invitee's own
+/// invitation and the company's half of the inquiry edge their personal
+/// vault offers, in one writer, signed with the host's slip issuer; the
+/// counter goes back in the answer only.
+pub(crate) async fn vault_members_accept_with_inquiry_edge(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SharedInvitationAcceptWithInquiryEdgeRequest,
+) -> MaybeListed<SharedInvitationAcceptedWithInquiryEdge> {
+    const VERB: &str = "vault.members.accept_with_inquiry_edge";
+    let invitee = person(server, auth, VERB).and_then(|invitee| {
+        require_slip_invitation(auth, VERB, &input.invitation).map(|()| invitee)
+    });
+    let vault = Arc::clone(server);
+    as_person_naming(
+        server,
+        VERB,
+        invitee,
+        move |server, invitee| {
+            crate::api::pairing::with_issuer(server, |issuer| {
+                Ok(sdk::accept_shared_invitation_with_inquiry_edge_as(
+                    server.vault(),
+                    &invitee,
+                    issuer,
+                    input,
+                ))
+            })
+            .map_err(|_| internal(VERB))?
+        },
+        move |accepted| receipt_rows(vault.vault(), &accepted.receipt),
+    )
+    .await
+}
+
+/// `vault.members.inquiry_edge.attach`: a member joins their inquiry edge
+/// to their own live seat after an accept without one, under their own
+/// proof and the host's slip issuer. No Owner act; the engine checks the
+/// seat.
+pub(crate) async fn vault_members_inquiry_edge_attach(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SharedInquiryEdgeAttachRequest,
+) -> MaybeListed<SharedInquiryEdgeAttached> {
+    const VERB: &str = "vault.members.inquiry_edge.attach";
+    as_person_naming(
+        server,
+        VERB,
+        person(server, auth, VERB),
+        move |server, member| {
+            crate::api::pairing::with_issuer(server, |issuer| {
+                Ok(sdk::attach_inquiry_edge_to_seat_as(
+                    server.vault(),
+                    &member,
+                    issuer,
+                    input,
+                ))
+            })
+            .map_err(|_| internal(VERB))?
+        },
+        |_| Some(Vec::new()),
     )
     .await
 }

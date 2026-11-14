@@ -1,0 +1,16 @@
+{
+  "name": "vault.members.inquiry_edge.attach",
+  "description": "A member whose seat was accepted without an inquiry edge joins the edge their personal vault offers to their own live seat; the answer carries the company host's counter, logged nowhere.",
+  "input": "crate::task_verb::sdk::SharedInquiryEdgeAttachRequest",
+  "output": "crate::task_verb::sdk::SharedInquiryEdgeAttached",
+  "call": "crate::task_verb::sdk::attach_inquiry_edge_to_seat_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "grant_widen",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "shared_person"
+}

@@ -36,10 +36,11 @@ use crate::server::SyncServer;
 /// Admin powers (members added, changed, removed and delegated, invitations
 /// withdrawn and their slips, a Steward's member asks filed, read, applied
 /// and declined, shared acts proposed and executed), the
-/// invitee's accept and decline, objections and erase asks, his own record
+/// invitee's accept (plain or with the seat's inquiry edge) and decline, the
+/// inquiry edge he joins to his own seat later, objections and erase asks, his own record
 /// erase, the shared policy's proposal and answer, his trusted contacts and
 /// the workspace rows.
-pub(crate) const MANAGED_PERSON_DOORS: [&str; 43] = [
+pub(crate) const MANAGED_PERSON_DOORS: [&str; 45] = [
     "vault.members.invitations",
     "vault.shared.erase_asks",
     "vault.shared.receipt",
@@ -64,6 +65,8 @@ pub(crate) const MANAGED_PERSON_DOORS: [&str; 43] = [
     "vault.shared.owner_change_wait.set",
     "vault.shared.execute",
     "vault.members.accept",
+    "vault.members.accept_with_inquiry_edge",
+    "vault.members.inquiry_edge.attach",
     "vault.members.decline",
     "vault.shared.object",
     "vault.shared.withdraw_objection",
