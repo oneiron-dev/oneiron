@@ -84,6 +84,7 @@ mod campaign;
 mod campaign_actions;
 pub mod campaign_records;
 mod can;
+mod can_verb;
 pub mod caps;
 pub mod channel_doors;
 mod chat;
@@ -198,7 +199,7 @@ pub(crate) use authorship::{
     require_claim_self_grant_in_txn,
 };
 pub use booking::EmergencyInstructionInput;
-pub use can::{CanAnswer, CanEffectAnswer, CanEffectVerdict};
+pub use can::{CanAnswer, CanEffectAnswer, CanEffectVerdict, CanVerbAnswer, CanVerbGate};
 pub use chat::{ChatAbstentionReason, ChatDepth, ChatOptions, ChatResponse, ChatScope};
 pub use chat_composer::{ChatComposeRequest, ChatComposer, ComposedChatAnswer};
 pub use claim_admission::{

@@ -8027,6 +8027,7 @@ dependencies = [
  "oneiron-linkedin-policy",
  "oneiron-model",
  "oneiron-policy-vocabulary",
+ "oneiron-records",
  "oneiron-retrieval",
  "oneiron-run-budget",
  "oneiron-sandbox-contract",
@@ -8036,6 +8037,7 @@ dependencies = [
  "oneiron-store",
  "oneiron-testkit",
  "oneiron-vault-contract",
+ "oneiron-verb-wire",
  "oneiron-wake-contract",
  "oneiron-web-fetch",
  "oneiron-xlsx-formula",
@@ -8398,11 +8400,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-dreamer"
+version = "0.1.0"
+dependencies = [
+ "oneiron-remote",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-driver"
 version = "0.1.0"
 dependencies = [
  "oneiron",
+ "oneiron-dreamer",
  "oneiron-llm-local",
+ "oneiron-remote",
  "rmpv",
  "serde_json",
  "tempfile",
@@ -8760,6 +8773,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-records"
+version = "0.1.0"
+dependencies = [
+ "oneiron-verb-wire",
+]
+
+[[package]]
 name = "oneiron-remote"
 version = "0.1.0"
 dependencies = [
@@ -8805,6 +8825,7 @@ dependencies = [
 name = "oneiron-ruler"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
  "serde_json_canonicalizer",
@@ -9082,6 +9103,38 @@ dependencies = [
  "tempfile",
  "tokio",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-verb-wire"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "ed25519-dalek 2.2.0",
+ "loro",
+ "oneiron-authority",
+ "oneiron-base",
+ "oneiron-code-check",
+ "oneiron-code-source",
+ "oneiron-consent-state",
+ "oneiron-contracts",
+ "oneiron-crypto",
+ "oneiron-delivery-vocabulary",
+ "oneiron-docedit",
+ "oneiron-lens-wire",
+ "oneiron-linkedin-policy",
+ "oneiron-model",
+ "oneiron-retrieval",
+ "oneiron-run-budget",
+ "oneiron-skill-attribution",
+ "oneiron-store",
+ "oneiron-wake-contract",
+ "oneiron-web-fetch",
+ "rmp-serde",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
