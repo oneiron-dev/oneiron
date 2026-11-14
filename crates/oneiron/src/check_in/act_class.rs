@@ -127,7 +127,11 @@ impl ActClass {
     /// (DEC-0006 #undo-class): its row is one-way and it is not [`Self::Sign`].
     /// Sign is one-way but its H is the signer's own (ARCH-0082:205;
     /// L8-49-SIGN = A), so it keeps its own preview. Today this is true for
-    /// exactly [`Self::Erase`] and [`Self::VaultDelete`].
+    /// [`Self::Erase`], [`Self::VaultDelete`] and
+    /// [`Self::ProtectedRefRewriteOrDelete`]. No verb row has the last class:
+    /// a protected-ref push asks through the origin's own floor
+    /// (`origin::smart_http::protected_ref_confirm`), so the shared confirm
+    /// gates the erase and vault-delete verbs.
     #[must_use]
     pub fn owner_confirms(self) -> bool {
         self.row().undo.is_one_way() && self != Self::Sign

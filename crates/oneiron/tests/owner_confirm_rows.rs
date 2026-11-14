@@ -2,8 +2,9 @@
 //!
 //! The table names each verb the shared confirm gates, each row's proof
 //! matches its verb row's `host_door_proof`, and only the hold keeps until
-//! used. Only one-way acts but sign take the confirm: erase and vault
-//! delete.
+//! used. Only one-way acts but sign take the confirm: erase, vault delete
+//! and the protected-ref rewrite or delete. No verb row has the last class
+//! (a protected-ref push asks through the origin's own floor).
 //!
 //! Head only: it uses the new table and its proof and keep types.
 //!
@@ -77,7 +78,11 @@ fn only_one_way_acts_but_sign_take_the_owner_confirm() {
     }
     assert_eq!(
         confirming,
-        BTreeSet::from([ActClass::Erase, ActClass::VaultDelete]),
-        "only erase and vault delete take the confirm"
+        BTreeSet::from([
+            ActClass::Erase,
+            ActClass::VaultDelete,
+            ActClass::ProtectedRefRewriteOrDelete,
+        ]),
+        "only erase, vault delete and the protected-ref rewrite take the confirm"
     );
 }
