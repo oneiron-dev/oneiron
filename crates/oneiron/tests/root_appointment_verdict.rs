@@ -14,6 +14,8 @@
 //!
 //! Pure folds over hand-signed rows: a genesis root key, an owner root its
 //! anchor signs, and the rows that leave the roster with no live root key.
+//! The PLAN's tests 12 and 16 (what the recovered world keeps) come with
+//! part (b2).
 
 #![cfg(oneiron_test_support)]
 
@@ -21,15 +23,18 @@ use ed25519_dalek::{Signer, SigningKey};
 use oneiron::EntityId;
 use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, AppointmentVerdict, AppointmentVoidReason, AuthorityAttestation,
-    AuthorityEntryHash, AuthorityFold, AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry,
-    AuthorityOp, AuthoritySignature, AuthorityTier, AuthorityVaultId, DeviceAuthority,
-    GenesisRecoveryStep, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey, OwnerRootRecord,
-    PinnedRoot, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
-    ROOT_APPOINTMENT_SUCCESSOR_PROOF_KIND, RecoveryRootId, RootAppointment, authority_entry_hash,
-    authority_transcript, decode_authority_log_entry_body, encode_authority_log_entry_body,
-    genesis_vault_id, root_appointment_challenge,
+    AuthorityConfirmAction, AuthorityConfirmKind, AuthorityEntryHash, AuthorityFold,
+    AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
+    AuthorityTier, AuthorityVaultId, DeviceAuthority, GenesisRecoveryStep,
+    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey, OwnerRootRecord, PinnedRoot,
+    ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROOT_APPOINTMENT_SUCCESSOR_PROOF_KIND,
+    RecoveryRootId, RootAppointment, authority_entry_hash, authority_transcript,
+    decode_authority_log_entry_body, encode_authority_log_entry_body, genesis_vault_id,
+    root_appointment_challenge,
 };
-use oneiron::test_doors::root_appointment::{fold_under_pin, whole_and_resumed_folds};
+use oneiron::test_doors::root_appointment::{
+    fold_under_pin, in_host_custody, whole_and_resumed_folds,
+};
 use oneiron::world_keys::RecoveryRootSeed;
 
 const ROOT_SEED: u8 = 41;
@@ -1219,4 +1224,196 @@ fn a_resumed_fold_expires_an_old_keys_approval_as_the_whole_fold_does() {
     );
     assert_eq!(resumed.valid_entries, whole.valid_entries);
     assert_eq!(resumed.roster, whole.roster);
+}
+
+// The PLAN's tests 12 and 16 (adversarial reads: round 2 finding 5, round 1
+// finding 11): what the recovered world keeps.
+
+/// A federation confirmation; two that share a nonce collide.
+fn confirmation(id: u8, nonce: u8) -> AuthorityOp {
+    AuthorityOp::FederationConfirm(AuthorityConfirmAction {
+        kind: AuthorityConfirmKind::Accept,
+        confirm_id: [id; 32],
+        peer_vault_id: [96; 32],
+        epoch: 1,
+        nonce: [nonce; 16],
+    })
+}
+
+/// Whether `confirm` stands in `fold`: a valid entry, or a consumed
+/// confirmation id and nonce.
+fn confirm_stands(fold: &AuthorityFold, confirm: AuthorityEntryHash) -> bool {
+    fold.valid_entries.contains(&confirm) || fold.federation_confirms.contains_key(&confirm)
+}
+
+/// PLAN v3 test 12 (round-2 finding 5): the genesis root key signs two
+/// confirmations that share one nonce, and a handoff over each. Alone, one
+/// of the two stands. The handoffs conflict, and each fences the other's
+/// confirmation, so neither stands. The appointment over both handoffs
+/// counts, with the world its ancestry's fold gave: neither confirmation
+/// stands in the install's fold either, so no nonce contender comes back.
+#[test]
+fn the_recovered_world_is_the_ancestry_fold() {
+    let mut log = Log::new();
+    let root_key = log.root_key.clone();
+    let first = log.sign(&root_key, 1, vec![log.owner_root], confirmation(1, 3));
+    let second = log.sign(&root_key, 1, vec![log.owner_root], confirmation(2, 3));
+    let alone = log.fold();
+    assert_eq!(
+        [first, second]
+            .into_iter()
+            .filter(|confirm| confirm_stands(&alone, *confirm))
+            .count(),
+        1,
+        "alone, one of two confirmations that share a nonce stands: {:?}",
+        alone.issues
+    );
+    let first_handoff = log.sign(
+        &root_key,
+        2,
+        vec![first],
+        AuthorityOp::ReRoot {
+            new_device: device(
+                key_of(&signing(FIRST_HANDOFF_SEED)),
+                ROLE_OWNER | ROLE_ADMIN,
+            ),
+        },
+    );
+    let second_handoff = log.sign(
+        &root_key,
+        2,
+        vec![second],
+        AuthorityOp::ReRoot {
+            new_device: device(
+                key_of(&signing(SECOND_HANDOFF_SEED)),
+                ROLE_OWNER | ROLE_ADMIN,
+            ),
+        },
+    );
+    let handoffs = [first_handoff, second_handoff];
+    let fenced = log.fold();
+    assert!(rootless(&fenced), "{:?}", fenced.issues);
+    for confirm in [first, second] {
+        assert!(
+            !confirm_stands(&fenced, confirm),
+            "the conflicting handoffs fence both confirmations: {:?}",
+            fenced.issues
+        );
+    }
+
+    let successor = signing(110);
+    let appointment = log.appoint(2, log.witnesses(&handoffs), &successor);
+    let binding = log.sign(
+        &successor,
+        1,
+        vec![appointment],
+        AuthorityOp::BindActor {
+            authority_key: key_of(&successor),
+            actor_ref: EntityId::from_bytes([0x11; 16]).expect("an id"),
+            actor_class: "human".to_owned(),
+            epoch: 1,
+        },
+    );
+    let fold = log.fold();
+
+    assert_eq!(
+        verdict(&fold, appointment),
+        Some(AppointmentVerdict::Valid),
+        "{:?}",
+        fold.issues
+    );
+    assert!(
+        fold.valid_entries.contains(&binding),
+        "the successor's binding stands: {:?}",
+        fold.issues
+    );
+    assert!(live(&fold, &key_of(&successor)));
+    assert!(!rootless(&fold), "{:?}", fold.issues);
+    for confirm in [first, second] {
+        assert!(
+            !confirm_stands(&fold, confirm),
+            "the recovered world keeps both confirmations refused: {:?}",
+            fold.issues
+        );
+    }
+    for handoff in handoffs {
+        assert!(!fold.valid_entries.contains(&handoff));
+    }
+    assert!(
+        !fold
+            .issues
+            .iter()
+            .any(|issue| matches!(issue, AuthorityFoldIssue::UnsettledHandoff(_))),
+        "the recovered line raises no unsettled handoff: {:?}",
+        fold.issues
+    );
+}
+
+/// PLAN v3 test 16 (round-1 finding 11): the genesis root key enrols the
+/// anchor's public key as a cloud-custodial agent device, which takes no
+/// possession of the anchor key, and the handoff fork follows. The roster
+/// marks the anchor key as the host's, yet the successor the anchor appoints
+/// starts its own custody line: no roster key admitted it, so the host's
+/// custody does not reach it.
+#[test]
+fn the_successor_starts_its_own_custody_line() {
+    let mut log = Log::new();
+    let root_key = log.root_key.clone();
+    let anchor = key_of(&log.anchor);
+    let mut custodial = device(anchor.clone(), ROLE_AGENT);
+    custodial.tier = AuthorityTier::CloudCustodial;
+    let enrolment = log.sign(
+        &root_key,
+        1,
+        vec![log.owner_root],
+        AuthorityOp::EnrollDevice { device: custodial },
+    );
+    let handoffs: Vec<_> = [(2, FIRST_HANDOFF_SEED), (3, SECOND_HANDOFF_SEED)]
+        .into_iter()
+        .map(|(seq, seed)| {
+            log.sign(
+                &root_key,
+                seq,
+                vec![enrolment],
+                AuthorityOp::ReRoot {
+                    new_device: device(key_of(&signing(seed)), ROLE_OWNER | ROLE_ADMIN),
+                },
+            )
+        })
+        .collect();
+    let before = log.fold();
+    assert!(
+        before.valid_entries.contains(&enrolment),
+        "{:?}",
+        before.issues
+    );
+    assert!(
+        in_host_custody(&before, &anchor),
+        "the roster marks the anchor key as the host's"
+    );
+    assert!(rootless(&before), "{:?}", before.issues);
+
+    let successor = signing(111);
+    let appointment = log.appoint(2, log.witnesses(&handoffs), &successor);
+    let fold = log.fold();
+
+    assert_eq!(
+        verdict(&fold, appointment),
+        Some(AppointmentVerdict::Valid),
+        "{:?}",
+        fold.issues
+    );
+    assert!(live(&fold, &key_of(&successor)));
+    assert_eq!(
+        fold.roster[&key_of(&successor)].roles,
+        ROLE_OWNER | ROLE_ADMIN
+    );
+    assert!(
+        in_host_custody(&fold, &anchor),
+        "the anchor key's custody mark stays"
+    );
+    assert!(
+        !in_host_custody(&fold, &key_of(&successor)),
+        "no roster key admitted the successor, so the host's custody does not reach it"
+    );
 }

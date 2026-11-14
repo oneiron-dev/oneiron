@@ -23,13 +23,21 @@
 //! commits: the second is refused before it makes a key, so the install's
 //! owner signing slot still holds the successor the roster names live.
 //!
-//! Red before part (b2): every test here but the last, which needs its test
-//! door. The door answered `AppointmentUnavailable`; the import held the
-//! appointment as a row no admitter signed, its witnesses signed by a key
-//! the conflict retired, and the successor's binding with it. Red before the
-//! fix of review-b2's P1: the last test, since the second run dropped the
-//! slot's seed before its writer read the roster, and the live successor
-//! was a key no install held.
+//! The owner's second install awaits the root a pin request this install
+//! carries names (PLAN v3 test 7): an awaited root is no pin, so the second
+//! install stores the root's appointment without judging it, and its door
+//! refuses, until the owner pins the root at that install's own pin door.
+//!
+//! Red before part (b2): every test here but the slot test
+//! (`a_door_run_beside_a_committed_appointment_keeps_the_successor_in_the_slot`),
+//! which needs its test door. The door answered `AppointmentUnavailable`;
+//! the import held the appointment as a row no admitter signed, its
+//! witnesses signed by a key the conflict retired, and the successor's
+//! binding with it. Red before the fix of review-b2's P1: the slot test,
+//! since the second run dropped the slot's seed before its writer read the
+//! roster, and the live successor was a key no install held. Red with the
+//! pickup pinning a carried root (as before CARRIED-PIN): the awaited-root
+//! test, whose second install then holds a pin no owner confirmed there.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test owner_anchor_appointment`.
 #![cfg(oneiron_test_support)]
@@ -39,12 +47,13 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
-    AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AuthorityAttestation,
-    AuthorityEntryHash, AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry, AuthorityOp,
-    AuthoritySignature, AuthorityTier, DeviceAuthority, HostSlipIssuer, MachineRole,
-    OwnerKeyEnrollment, ROLE_ADMIN, ROLE_AGENT, ROLE_OWNER, ROOT_APPOINTMENT_SUCCESSOR_PROOF_KIND,
-    RecoveryRootId, RootAppointment, authority_entry_hash, authority_transcript,
-    decode_authority_log_entry_body, encode_authority_log_entry_body, root_appointment_challenge,
+    AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AppointmentVerdict,
+    AuthorityAttestation, AuthorityEntryHash, AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry,
+    AuthorityOp, AuthoritySignature, AuthorityTier, DeviceAuthority, HostSlipIssuer,
+    MachineOwnership, MachineRole, OwnerKeyEnrollment, ROLE_ADMIN, ROLE_AGENT, ROLE_OWNER,
+    ROOT_APPOINTMENT_SUCCESSOR_PROOF_KIND, RecoveryRootId, RootAppointment, RootChange,
+    authority_entry_hash, authority_transcript, decode_authority_log_entry_body,
+    encode_authority_log_entry_body, root_appointment_challenge,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED;
@@ -599,4 +608,243 @@ fn a_door_run_beside_a_committed_appointment_keeps_the_successor_in_the_slot() {
         "the install's owner signing slot holds the live successor"
     );
     assert!(owned.passes_owner_verbs());
+}
+
+/// The owner's second install: enrolled as his through the hosted console,
+/// never pinned. It takes the vault's authority history from the first
+/// install, as sync does.
+struct SecondInstall {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    machine: EntityId,
+    held: BTreeSet<Vec<u8>>,
+}
+
+impl Owned {
+    /// Enrols the owner's second install, as the hosted console does, and
+    /// hands it this install's history.
+    fn enrol_second_install(&self) -> SecondInstall {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault = Vault::open(dir.path(), VaultConfig::device()).expect("the second install");
+        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+        let key = vault
+            .machine_encryption_key(self.vault_id)
+            .expect("the second install's encryption key");
+        let request = vault
+            .machine_enrolment_request(self.vault_id, key)
+            .expect("the second install's enrolment request");
+        self.vault
+            .enroll_machine(
+                &proof(&self.vault, self.person),
+                ActSurface::HostedConsole,
+                &request,
+                MachineRole::Owned(MachineOwnership::Yours),
+                None,
+            )
+            .expect("the owner enrols the second install as his");
+        vault
+            .ensure_embedded_owner_actor()
+            .expect("the owner on the second install");
+        let mut second = SecondInstall {
+            _dir: dir,
+            vault,
+            machine: request.machine,
+            held: BTreeSet::new(),
+        };
+        second.take(self);
+        second
+    }
+
+    /// Records a pin of this install's root on `target`, carried by this
+    /// install as the hosted console's act.
+    fn request_pin(&self, target: EntityId) {
+        let receipt = self
+            .vault
+            .request_root_change(
+                &proof(&self.vault, self.person),
+                ActSurface::HostedConsole,
+                target,
+                RootChange::Pin { root: self.root },
+            )
+            .expect("the pin request");
+        assert!(
+            receipt.request.is_some(),
+            "the pin request is recorded for the second install: {receipt:?}"
+        );
+    }
+}
+
+impl SecondInstall {
+    /// Imports the rows of `from`'s history this install does not hold yet.
+    fn take(&mut self, from: &Owned) {
+        let new: Vec<Vec<u8>> = from
+            .vault
+            .export_signed_authority_history()
+            .expect("the first install's history")
+            .into_iter()
+            .filter(|row| !self.held.contains(row))
+            .collect();
+        self.vault
+            .import_signed_authority_history(&new)
+            .expect("the second install takes the rows");
+        self.held.extend(new);
+    }
+
+    /// Two syncs and pickups: the first may only commit the wait for a root
+    /// whose record the install does not store yet.
+    fn sync_and_pick_up(&mut self, from: &Owned) {
+        for _ in 0..2 {
+            self.take(from);
+            let _drain = self
+                .vault
+                .run_pending_owner_work(|| true)
+                .expect("the second install's pickup");
+        }
+        self.take(from);
+    }
+
+    fn owner(&self) -> AuthenticatedOwner {
+        let person = self
+            .vault
+            .ensure_embedded_owner_actor()
+            .expect("the owner on the second install");
+        proof(&self.vault, person)
+    }
+
+    fn pinned(&self) -> Option<RecoveryRootId> {
+        self.vault
+            .owner_root_view(None, 16)
+            .expect("the second install's roots")
+            .pinned
+    }
+
+    fn awaiting(&self) -> Option<RecoveryRootId> {
+        self.vault
+            .owner_root_view(None, 16)
+            .expect("the second install's roots")
+            .awaiting
+            .map(|awaited| awaited.root)
+    }
+
+    fn stored(&self) -> usize {
+        self.vault
+            .export_signed_authority_history()
+            .expect("the second install's history")
+            .len()
+    }
+
+    fn live(&self, key: &AuthorityKey) -> bool {
+        self.vault
+            .authority_fold()
+            .expect("the second install's fold")
+            .roster
+            .get(key)
+            .is_some_and(|device| !device.revoked)
+    }
+
+    fn rootless(&self) -> bool {
+        self.vault
+            .authority_fold()
+            .expect("the second install's fold")
+            .issues
+            .contains(&AuthorityFoldIssue::NoRootKey)
+    }
+
+    fn valid(&self, row: &AuthorityEntryHash) -> bool {
+        self.vault
+            .authority_fold()
+            .expect("the second install's fold")
+            .valid_entries
+            .contains(row)
+    }
+
+    /// The verdict the install's fold names for a refused appointment.
+    fn refused_as(&self, appointment: AuthorityEntryHash) -> Option<AppointmentVerdict> {
+        self.vault
+            .authority_fold()
+            .expect("the second install's fold")
+            .issues
+            .iter()
+            .find_map(|issue| match issue {
+                AuthorityFoldIssue::AppointmentRefused { entry, verdict }
+                    if *entry == appointment =>
+                {
+                    Some(*verdict)
+                }
+                _ => None,
+            })
+    }
+}
+
+/// PLAN v3 test 7 (round-1 finding 1): this install carries a pin of its
+/// root for the owner's second install, which never pinned one. The pickup
+/// leaves the root awaited there. The fork, and the root's appointment of a
+/// successor signed outside the door, reach the second install: it stores
+/// the appointment and does not judge it, since an awaited root is no pin,
+/// so the successor has no standing there and the door refuses with the pin
+/// door's name. Once the owner pins the root at the second install's own pin
+/// door, it counts the stored appointment, and the successor's binding lands.
+#[test]
+fn an_awaited_root_counts_no_appointment_until_the_pin_door_writes_it() {
+    let owned = owned();
+    let mut second = owned.enrol_second_install();
+    owned.request_pin(second.machine);
+    second.sync_and_pick_up(&owned);
+    assert_eq!(second.pinned(), None, "a carried pin request sets no pin");
+    assert_eq!(
+        second.awaiting(),
+        Some(owned.root),
+        "the second install awaits the requested root"
+    );
+
+    let heads = owned.heads();
+    let witnesses = owned.fork();
+    second.take(&owned);
+    assert!(second.rootless(), "the fork reaches the second install");
+    let successor = signing(SUCCESSOR_SEED);
+    let parents: Vec<_> = witnesses.iter().chain(&heads).copied().collect();
+    let (appointment, binding) = owned.appointment_and_binding(&successor, parents);
+    second
+        .vault
+        .import_signed_authority_history(&[bytes(&appointment)])
+        .expect("the second install stores the appointment of the root it awaits");
+
+    assert_eq!(
+        second.refused_as(hash(&appointment)),
+        Some(AppointmentVerdict::Unjudged),
+        "an awaited root judges no appointment"
+    );
+    assert!(
+        !second.live(&key_of(&successor)),
+        "the successor has no standing on the second install"
+    );
+    assert!(second.rootless());
+    let stored = second.stored();
+    let refusal = second
+        .vault
+        .appoint_owner_root(&second.owner(), &owned.seed, None)
+        .expect_err("an awaited root is no pin for the door");
+    assert!(
+        refusal.to_string().contains("pin_owner_root"),
+        "the refusal names the pin door: {refusal}"
+    );
+    assert_eq!(second.stored(), stored, "the refusal writes nothing");
+
+    second
+        .vault
+        .pin_owner_root(&second.owner(), owned.root)
+        .expect("the owner pins the awaited root at the second install's pin door");
+
+    assert_eq!(second.pinned(), Some(owned.root));
+    assert!(
+        second.valid(&hash(&appointment)),
+        "the pinned root's stored appointment counts"
+    );
+    assert!(second.live(&key_of(&successor)));
+    assert!(!second.rootless());
+    second
+        .vault
+        .import_signed_authority_history(&[bytes(&binding)])
+        .expect("the successor's binding lands");
+    assert!(second.valid(&hash(&binding)));
 }

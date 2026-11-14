@@ -1,13 +1,15 @@
 //! Doors for `tests/root_appointment_verdict.rs` (OWNER-ANCHOR-ROOT-RECOVERY
 //! parts (a) and (b1)): the reference fold of a vault's own log under a pin,
 //! which the appointment judge reads, and the stored-log fold whole and
-//! resumed from a base. For `tests/owner_anchor_appointment.rs` (part (b2)):
+//! resumed from a base, and whether a fold holds a key in the host's custody
+//! (PLAN v3 test 16). For `tests/owner_anchor_appointment.rs` (part (b2)):
 //! the appointment door with a step run between its read-only check and its
 //! writer.
 
 use crate::Vault;
 use crate::authority::{
-    AuthorityFold, AuthorityLogEntry, PinnedRoot, RootAppointmentReceipt, fold_own_authority_log,
+    AuthorityFold, AuthorityKey, AuthorityLogEntry, PinnedRoot, RootAppointmentReceipt,
+    fold_own_authority_log,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
@@ -37,6 +39,13 @@ pub fn whole_and_resumed_folds(
     window_secs: u64,
 ) -> (AuthorityFold, Option<AuthorityFold>) {
     crate::authority::whole_and_resumed_folds_for_test(entries, base_len, pin, window_secs)
+}
+
+/// Whether `fold` holds `key` in the host's custody: a key the roster marks
+/// as the host's, or one such a key admitted, directly or through others.
+#[must_use]
+pub fn in_host_custody(fold: &AuthorityFold, key: &AuthorityKey) -> bool {
+    fold.in_host_custody(key)
 }
 
 /// [`Vault::appoint_owner_root`] with `between` run after the door's
