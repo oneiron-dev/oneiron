@@ -32,6 +32,19 @@ const CUSTODY_WORK_KEYS: [&str; 7] = [
     "recipients",
     "authority",
 ];
+/// A screened revoke's keys: a custody work's, then its screen
+/// ([`CustodyRevokeScreen`]).
+const SCREENED_CUSTODY_WORK_KEYS: [&str; 8] = [
+    OP_KEY_KIND,
+    "change",
+    "generation",
+    "input",
+    "holder",
+    "recipients",
+    "authority",
+    "screen",
+];
+const REVOKE_SCREEN_KEYS: [&str; 2] = ["record", "digest"];
 const PERMIT_KEYS: [&str; 3] = ["machine", "profile", "encryption_key"];
 const PERMIT_PIECES_KEYS: [&str; 3] = ["set", "count", "pieces"];
 
@@ -133,6 +146,24 @@ impl CustodyRequestAuthority {
             Self::PinnedKit { root } => Some(root),
         }
     }
+}
+
+/// The value-free screen a found-key ruling's revoke carries
+/// (L6-03-RULED-SCREEN-LOCAL; Engine RULING 14 Nov 08:35): the record the
+/// ruled value sits in, and that value's digest keyed by the vault's screen
+/// key, which every install of the vault derives from its one data key. No
+/// value, and no unkeyed hash a short value could be guessed back from,
+/// rides here. Every machine that folds the revoke keeps the value as
+/// written in that record, so the owner's ruling, or the writer's, holds on
+/// all of the owner's machines.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub struct CustodyRevokeScreen {
+    /// The record, or the file's ASSET, the ruled value sits in.
+    pub record: EntityId,
+    /// The keyed digest of the record and the ruled value.
+    pub digest: [u8; 32],
 }
 
 /// One install the owner permits to hold a custody change's bytes, bound to
@@ -529,6 +560,13 @@ impl CustodyPermitPieces {
 /// Permits past one row ride in pieces (FIX 11866): the entry carries
 /// their commitment and no permit inline, and the request as the fold keeps
 /// it carries exactly the set it commits to.
+///
+/// Only an install's revoke carries a ruling's screen
+/// ([`CustodyRevokeScreen`]); its digest is never zero.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each field of the custody body, read once"
+)]
 pub(super) fn validate_custody(
     request: &OwnerWorkRequest,
     change: CustodyChange,
@@ -537,7 +575,15 @@ pub(super) fn validate_custody(
     recipients: &CustodyPermitSet,
     pieces: Option<CustodyPermitPieces>,
     authority: CustodyRequestAuthority,
+    screen: Option<CustodyRevokeScreen>,
 ) -> Result<()> {
+    if let Some(screen) = screen
+        && (change != CustodyChange::Revoke
+            || authority.kit_root().is_some()
+            || screen.digest == [0; 32])
+    {
+        return Err(invalid_authority());
+    }
     let permitted = match pieces {
         None => !recipients.is_empty() && recipients.is_ascending(),
         Some(pieces) => {
@@ -583,7 +629,10 @@ pub(super) fn validate_custody(
 /// (recipients empty); a permit map is machine, profile, then encryption
 /// key; the authority is nil for an install's, the pinned root's id for the
 /// kit's. Permits in pieces (FIX 11866) state, in recipients' place, their
-/// commitment's map: set, count, then pieces.
+/// commitment's map: set, count, then pieces. A ruling's revoke states its
+/// screen last, as a map of record then digest; every other request has no
+/// screen key, so its bytes, and its hash, are what they were before the
+/// screen existed.
 pub(super) fn custody_work_value(
     change: CustodyChange,
     generation: u32,
@@ -591,6 +640,7 @@ pub(super) fn custody_work_value(
     holder: Option<EntityId>,
     (recipients, pieces): (&CustodyPermitSet, Option<CustodyPermitPieces>),
     authority: CustodyRequestAuthority,
+    screen: Option<CustodyRevokeScreen>,
 ) -> Value {
     let recipients = match (CUSTODY_SHARED_BODY, pieces) {
         (CustodyBodyShape::CloneNotCopy, None) => {
@@ -598,7 +648,7 @@ pub(super) fn custody_work_value(
         }
         (CustodyBodyShape::CloneNotCopy, Some(pieces)) => permit_pieces_value(pieces),
     };
-    Value::Map(vec![
+    let mut work = vec![
         (
             Value::from(OP_KEY_KIND),
             Value::from(OwnerWorkKind::Custody.as_str()),
@@ -617,7 +667,17 @@ pub(super) fn custody_work_value(
                 .kit_root()
                 .map_or(Value::Nil, |root| binary_value(root.0)),
         ),
-    ])
+    ];
+    if let Some(screen) = screen {
+        work.push((
+            Value::from("screen"),
+            Value::Map(vec![
+                (Value::from("record"), Value::from(screen.record.to_hex())),
+                (Value::from("digest"), binary_value(screen.digest)),
+            ]),
+        ));
+    }
+    Value::Map(work)
 }
 
 /// The bytes `recipients` take encoded as a custody request's row carries
@@ -676,7 +736,12 @@ pub(super) fn decode_permit_pieces(value: &Value) -> Result<CustodyPermitPieces>
 /// commitment of a set in pieces, whose permits the entry does not carry
 /// (FIX 11866). The shape is the request's ([`validate_custody`]).
 pub(super) fn decode_custody_work(work: &[(Value, Value)]) -> Result<OwnerWorkBody> {
-    validate_keys(work, &CUSTODY_WORK_KEYS)?;
+    let screened = work.iter().any(|(key, _)| key.as_str() == Some("screen"));
+    if screened {
+        validate_keys(work, &SCREENED_CUSTODY_WORK_KEYS)?;
+    } else {
+        validate_keys(work, &CUSTODY_WORK_KEYS)?;
+    }
     let listed = required(work, "recipients")?;
     let (recipients, pieces) = match (CUSTODY_SHARED_BODY, listed) {
         (CustodyBodyShape::CloneNotCopy, Value::Array(permits)) => (
@@ -716,6 +781,21 @@ pub(super) fn decode_custody_work(work: &[(Value, Value)]) -> Result<OwnerWorkBo
                 root: RecoveryRootId(decode_hash(value)?),
             },
         },
+        screen: if screened {
+            Some(decode_revoke_screen(required(work, "screen")?)?)
+        } else {
+            None
+        },
+    })
+}
+
+/// A ruling's screen, strictly: record, then digest.
+fn decode_revoke_screen(value: &Value) -> Result<CustodyRevokeScreen> {
+    let entries = map_entries(value)?;
+    validate_keys(entries, &REVOKE_SCREEN_KEYS)?;
+    Ok(CustodyRevokeScreen {
+        record: decode_canonical_id(required(entries, "record")?)?,
+        digest: decode_hash(required(entries, "digest")?)?,
     })
 }
 

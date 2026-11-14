@@ -339,6 +339,10 @@ pub struct StoreCore {
     /// lock closes the gate and waits for the runtime's release before the
     /// key goes. Never persisted.
     pub(crate) inference_snapshots: crate::store::snapshot_lifecycle::SnapshotLifecycle,
+    /// The vault's ruled-screen key, held while the vault data key is held
+    /// (L6-03-RULED-SCREEN-LOCAL): what the write door tests a ruled value's
+    /// digest with. Never persisted.
+    pub(crate) ruled_screen: crate::secret_custody::RuledScreenSlot,
     pub(crate) clock: crate::ports::StoreClock,
     /// The single writer's group commit (ARCH-0019, OF-536): concurrent
     /// logical writes share one write transaction and one fsync.

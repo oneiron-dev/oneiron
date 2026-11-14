@@ -285,6 +285,9 @@ impl Vault {
     }
 
     fn hold_vault_key(&self, key: VaultDataKey) {
+        self.store
+            .ruled_screen
+            .admit(&key, self.vault_id().as_bytes());
         *self
             .world_keys
             .vault_key
@@ -330,6 +333,7 @@ impl Vault {
                 )
             })?,
         }
+        self.store.ruled_screen.admit(key, &vault_id);
         *self
             .world_keys
             .vault_key

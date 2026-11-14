@@ -27,6 +27,10 @@
 //!   text by choice, with the same restore, revoke and kept-value screen but a
 //!   distinct action and receipt reason.
 //!
+//! Either ruling holds on all of the owner's machines (L6-03-RULED-SCREEN-LOCAL):
+//! its value-free screen ([`ruled_screen`]) goes with the revoke to every
+//! other install of the vault.
+//!
 //! A batch that masks many keys in one record raises one notice for it. The
 //! mask writes inside the batch's own transaction, where no vault is at
 //! hand, so it leaves the record due ([`note_found_keys_in_txn`]); the
@@ -35,7 +39,12 @@
 mod actions;
 mod page;
 mod purpose;
+mod ruled_screen;
 pub(crate) use purpose::purpose_questions_in_txn;
+use ruled_screen::RuledScreenKey;
+pub(crate) use ruled_screen::{
+    RuledScreenSlot, hold_ruled_screen_in_txn, holds_ruled_screen_in_txn,
+};
 
 pub(crate) use self::actions::{HANDLE_TEXT_OPEN, unmask_value};
 
@@ -346,7 +355,8 @@ pub(super) fn found_key_custody_in_txn(
 /// custody's mask origin is rebound `old` -> `new` only when it still names
 /// `old`, so a known value the row references keeps its owner. Skips cleanly
 /// when `old` holds nothing. Runs in the caller's write transaction, with the
-/// row move it follows: the handles the new row keeps still resolve.
+/// row move it follows: the handles the new row keeps still resolve. The
+/// ruled screen of `old` joins `new`'s the same way.
 pub(crate) fn move_side_row_custody_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -356,6 +366,7 @@ pub(crate) fn move_side_row_custody_in_txn(
     if old == new {
         return Ok(());
     }
+    ruled_screen::move_ruled_screen_in_txn(store, wtxn, old, new)?;
     if let Some(old_found) = FOUND.get(store, wtxn, old)? {
         for key in &old_found.keys {
             crate::batch::secret_scan::rebind_mask_origin_in_txn(
@@ -399,14 +410,25 @@ pub(crate) fn move_side_row_custody_in_txn(
 /// The values the owner ruled no secret or kept as text by choice, by record:
 /// the write door reads none of them as a hit in that record, and the mask
 /// leaves each as written. Each value is read from its revoked custody record
-/// and wiped when dropped; no digest of it is kept anywhere.
+/// on the install where the ruling was made, and wiped when dropped. On
+/// every install the record's ruled screen holds each value's keyed digest
+/// instead ([`ruled_screen`], L6-03-RULED-SCREEN-LOCAL): a hit, or one of its
+/// spellings, whose digest the screen holds is a kept value too. With no
+/// screen key held here, the screen tests nothing and the door masks as
+/// before.
 #[derive(Clone, Default)]
-pub(crate) struct KeptValues(HashMap<EntityId, Vec<Zeroizing<Vec<u8>>>>);
+pub(crate) struct KeptValues {
+    values: HashMap<EntityId, Vec<Zeroizing<Vec<u8>>>>,
+    /// Each record's ruled digests, ascending, and the key that tests them.
+    screens: HashMap<EntityId, Vec<[u8; 32]>>,
+    key: Option<std::sync::Arc<RuledScreenKey>>,
+}
 
 impl std::fmt::Debug for KeptValues {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("KeptValues")
-            .field("records", &self.0.len())
+            .field("records", &self.values.len())
+            .field("screened", &self.screens.len())
             .finish()
     }
 }
@@ -418,10 +440,18 @@ impl KeptValues {
         txn: &RoTxn<'_>,
         records: impl IntoIterator<Item = EntityId>,
     ) -> Result<Self> {
+        let key = store.ruled_screen.get();
         let mut kept = HashMap::new();
+        let mut screens = HashMap::new();
         for record in records {
-            if kept.contains_key(&record) {
+            if kept.contains_key(&record) || screens.contains_key(&record) {
                 continue;
+            }
+            if key.is_some() {
+                let digests = ruled_screen::ruled_digests_in_txn(store, txn, &record)?;
+                if !digests.is_empty() {
+                    screens.insert(record, digests);
+                }
             }
             let Some(found) = FOUND.get(store, txn, &record)? else {
                 continue;
@@ -437,40 +467,78 @@ impl KeptValues {
                 kept.insert(record, values);
             }
         }
-        Ok(Self(kept))
+        Ok(Self {
+            values: kept,
+            key: key.filter(|_| !screens.is_empty()),
+            screens,
+        })
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.values.is_empty() && self.screens.is_empty()
     }
 
     /// Whether the owner ruled a value no secret or kept it as text in
     /// `record`.
     pub(crate) fn holds_record(&self, record: &EntityId) -> bool {
-        self.0.contains_key(record)
+        self.values.contains_key(record) || self.screens.contains_key(record)
     }
 
     /// Whether the owner ruled `value` no secret or kept it as text in `record`,
     /// as it is or as one of its spellings decodes (base64, percent or JSON
     /// escapes): the choice covers the value however it is written (FIX 2725).
     pub(crate) fn holds(&self, record: &EntityId, value: &[u8]) -> bool {
-        let Some(values) = self.0.get(record) else {
-            return false;
+        self.ruled_spelling(record, value).is_some()
+    }
+
+    /// The value the owner ruled in `record` that `value` spells: `value`
+    /// itself, or the decoding of it that is the ruled value; `None` when it
+    /// spells none.
+    fn ruled_spelling(&self, record: &EntityId, value: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
+        let values = self.values.get(record);
+        let screen = self.screens.get(record).zip(self.key.as_deref());
+        if values.is_none() && screen.is_none() {
+            return None;
+        }
+        let ruled = |bytes: &[u8]| {
+            values.is_some_and(|values| values.iter().any(|kept| kept.as_slice() == bytes))
+                || screen
+                    .is_some_and(|(digests, key)| digests.binary_search(&key.digest(bytes)).is_ok())
         };
-        let ruled = |bytes: &[u8]| values.iter().any(|kept| kept.as_slice() == bytes);
-        ruled(value)
-            || super::known_values::decodings(value)
-                .iter()
-                .any(|decoded| ruled(decoded.as_slice()))
+        if ruled(value) {
+            return Some(Zeroizing::new(value.to_vec()));
+        }
+        super::known_values::decodings(value)
+            .into_iter()
+            .find(|decoded| ruled(decoded.as_slice()))
+            .map(|decoded| Zeroizing::new(decoded.to_vec()))
     }
 
     /// `bytes` of `record` with each kept value's raw or encoded spelling
     /// overwritten by the mask's filler, for the door's scan; `None` when none
-    /// sits there.
+    /// sits there. A value this install knows only by its screen is found
+    /// where the door's text rules place a span: a span whose bytes, or one
+    /// of their spellings, the screen holds is the ruled value for this
+    /// scan, and every spelling of it is filled as a held value's is.
     pub(crate) fn screened(&self, record: &EntityId, bytes: &[u8]) -> Option<Vec<u8>> {
-        let values = self.0.get(record)?;
+        let mut found = Vec::new();
+        if self.screens.contains_key(record) {
+            for span in crate::batch::secret_scan::rule_spans(bytes) {
+                if let Some(value) = bytes
+                    .get(span)
+                    .and_then(|hit| self.ruled_spelling(record, hit))
+                {
+                    found.push(value);
+                }
+            }
+        }
+        let held = self
+            .values
+            .get(record)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
         let mut copy = None::<Vec<u8>>;
-        for value in values.iter().filter(|value| !value.is_empty()) {
+        for value in held.iter().chain(&found).filter(|value| !value.is_empty()) {
             for span in super::known_values::occurrences(bytes, value) {
                 copy.get_or_insert_with(|| bytes.to_vec())[span].fill(b'*');
             }

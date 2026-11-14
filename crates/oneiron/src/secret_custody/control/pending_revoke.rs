@@ -23,8 +23,9 @@
 use super::super::read_secret_custody_meta_in_txn;
 use super::super::transition::custody_portable;
 use super::super::types::SecretCustodyStatus;
+use super::revoked::CustodyRevokeAct;
 use super::{CustodyKeptHere, SecretCustodyWork};
-use crate::authority::{ActBy, ActSurface, AuthorityFold};
+use crate::authority::{ActBy, AuthorityFold};
 use crate::error::{Error, Result, SecretError};
 use crate::store::pending_custody_revoke::{PENDING, PendingRevoke};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
@@ -84,28 +85,27 @@ pub(super) fn can_carry_in_txn(
     }
 }
 
-/// Keeps the carry of `owner`'s revoke of record `id`, at `generation`, as
-/// the act `by` names (the owner's, or the writer's own [`ActBy::Person`]),
-/// pending in the revoke's own transaction (CALLS
+/// Keeps the carry of `act`'s revoke of record `id`, at `generation`, as the
+/// act its `by` names (the owner's, or the writer's own [`ActBy::Person`]),
+/// with its screen, pending in the revoke's own transaction (CALLS
 /// CUSTODY_REVOKE_PENDING_CARRY), and returns the work that says so.
 pub(super) fn defer_revoke_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
-    owner: EntityId,
-    by: ActBy,
-    surface: ActSurface,
+    act: CustodyRevokeAct,
     generation: u32,
     at: u64,
 ) -> Result<SecretCustodyWork> {
     match CUSTODY_REVOKE_PENDING_CARRY {
         CustodyRevokePendingCarry::CarryWhenSignerLoads => {
             let pending = PendingRevoke {
-                owner,
-                surface,
+                owner: act.actor,
+                surface: act.surface,
                 at,
                 generation,
-                by_person: by == ActBy::Person,
+                by_person: act.by == ActBy::Person,
+                screen: act.screen,
             };
             PENDING.put(&vault.store, txn, &id, &pending)?;
             Ok(SecretCustodyWork::kept(CustodyKeptHere::CarryPending))
@@ -237,16 +237,14 @@ impl Vault {
             PENDING.delete(&self.store, txn, &id)?;
             return Ok(false);
         }
+        let act = CustodyRevokeAct {
+            actor: pending.owner,
+            by: pending.by(),
+            surface: pending.surface,
+            screen: pending.screen,
+        };
         let carried = self
-            .carry_revoke_for_in_txn(
-                txn,
-                pending.owner,
-                pending.by(),
-                pending.surface,
-                id,
-                &record,
-                pending.at,
-            )?
+            .carry_revoke_for_in_txn(txn, act, id, &record, pending.at)?
             .is_some();
         if carried {
             PENDING.delete(&self.store, txn, &id)?;

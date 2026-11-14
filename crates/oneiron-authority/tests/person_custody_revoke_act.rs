@@ -56,6 +56,7 @@ fn revoke() -> OwnerWorkBody {
         recipients: CustodyPermitSet::default(),
         pieces: None,
         authority: CustodyRequestAuthority::Install,
+        screen: None,
     }
 }
 
@@ -74,6 +75,7 @@ fn active(change: CustodyChange, holder: EntityId) -> OwnerWorkBody {
         }]),
         pieces: None,
         authority: CustodyRequestAuthority::Install,
+        screen: None,
     }
 }
 

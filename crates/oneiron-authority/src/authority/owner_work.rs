@@ -68,7 +68,8 @@ pub(super) use self::cancel::{decode_owner_work_cancel, owner_work_cancel_value}
 pub use self::custody::{
     CUSTODY_RECIPIENT_SET_DOMAIN, CUSTODY_WORK_REVISION_CONTEXT, CustodyChange,
     CustodyPermitPieces, CustodyPermitSet, CustodyRecipientPermit, CustodyRecipientPermits,
-    CustodyRequestAuthority, custody_recipient_set, custody_recipients_encoded_len,
+    CustodyRequestAuthority, CustodyRevokeScreen, custody_recipient_set,
+    custody_recipients_encoded_len,
 };
 pub use self::export::ExportSecretWork;
 pub use self::import_mark::{
@@ -331,7 +332,10 @@ pub enum OwnerWorkBody {
     /// `recipients` is empty as the entry carries it, and the fold fills it
     /// from the [`CustodyPermitPiece`] rows in the request's causal past.
     /// Every request the fold keeps on one joined set shares its permits
-    /// ([`CustodyPermitSet`], FIX 12281, 12370).
+    /// ([`CustodyPermitSet`], FIX 12281, 12370). The revoke of a found key
+    /// the owner, or its writer, ruled no secret or kept as text carries the
+    /// ruling's value-free `screen` ([`CustodyRevokeScreen`]); no other
+    /// request does.
     Custody {
         change: CustodyChange,
         generation: u32,
@@ -340,6 +344,8 @@ pub enum OwnerWorkBody {
         recipients: CustodyPermitSet,
         pieces: Option<CustodyPermitPieces>,
         authority: CustodyRequestAuthority,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        screen: Option<CustodyRevokeScreen>,
     },
     /// One custody secret an owner export met and its exporting install
     /// could not open, for its holder to seal to the owner's chosen
@@ -502,11 +508,12 @@ impl OwnerWorkRequest {
             recipients,
             pieces,
             authority,
+            screen,
             ..
         } = &self.work
         {
             custody::validate_custody(
-                self, *change, *input, *holder, recipients, *pieces, *authority,
+                self, *change, *input, *holder, recipients, *pieces, *authority, *screen,
             )?;
         }
         // An export secret request carries the export's own act.
@@ -582,6 +589,7 @@ pub(super) fn owner_work_request_value(request: &OwnerWorkRequest) -> Value {
             recipients,
             pieces,
             authority,
+            screen,
         } => custody::custody_work_value(
             *change,
             *generation,
@@ -589,6 +597,7 @@ pub(super) fn owner_work_request_value(request: &OwnerWorkRequest) -> Value {
             *holder,
             (recipients, *pieces),
             *authority,
+            *screen,
         ),
         OwnerWorkBody::ExportSecret(work) => export::export_secret_work_value(work),
     };
