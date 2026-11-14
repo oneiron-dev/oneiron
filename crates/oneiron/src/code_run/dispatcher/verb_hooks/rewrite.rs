@@ -255,6 +255,7 @@ pub(super) fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
     Ok(match call {
         SelfCall::Speak(speech) => SelfCall::Speak(speech_rewrite(speech, args)?),
         SelfCall::Think(speech) => SelfCall::Think(speech_rewrite(speech, args)?),
+        SelfCall::ThinkAloud(speech) => SelfCall::ThinkAloud(speech_rewrite(speech, args)?),
         SelfCall::Express(speech) => SelfCall::Express(speech_rewrite(speech, args)?),
         SelfCall::Ask(_) => SelfCall::Ask(SelfAskCall::new(decode::<PromptArgs>(args)?.prompt)),
         SelfCall::DestructiveFixture(_) => SelfCall::DestructiveFixture(

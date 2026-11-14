@@ -433,6 +433,7 @@ fn note(
             from_project: from_project.map(str::to_owned),
             to_project: to_project.map(str::to_owned),
         },
+        crate::memory::MessageMarks::default(),
         check,
         record,
     )

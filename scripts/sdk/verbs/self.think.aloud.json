@@ -1,0 +1,9 @@
+{
+  "name": "self.think.aloud",
+  "input": "crate::code_run::ThinkAloudInput",
+  "output": "crate::code_run::SpeechOutput",
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "context": "run",
+  "effect": "ThinkAloud"
+}

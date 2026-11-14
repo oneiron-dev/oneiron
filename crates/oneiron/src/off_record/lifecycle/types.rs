@@ -207,6 +207,9 @@ pub enum ExecutorUtterance {
     Speak,
     /// Reasoning the run kept for itself.
     Think,
+    /// Reasoning the run publishes (`self.think.aloud`, L8-25): a thought
+    /// shown in the run's own bubble stream, addressed to no one.
+    ThinkAloud,
     /// Non-verbal expression accompanying a turn.
     Express,
     /// Host-selected, hidden receipt for the report-blocked effect.
@@ -220,6 +223,7 @@ impl ExecutorUtterance {
         match self {
             Self::Speak => "executor.speak",
             Self::Think => "executor.think",
+            Self::ThinkAloud => "executor.think_aloud",
             Self::Express => "executor.express",
             Self::ReportBlocked => crate::code_run::blocked::BLOCKED_REPORT_MESSAGE_TYPE,
         }
@@ -229,11 +233,12 @@ impl ExecutorUtterance {
     ///
     /// Speak and express are both ADDRESSED — one in words, one not — so both
     /// are visible. Think is the run's own reasoning: it is durably witnessed,
-    /// and deliberately not shown.
+    /// and deliberately not shown. A thought aloud is that reasoning
+    /// published, so it is shown.
     #[must_use]
     pub const fn is_visible(self) -> bool {
         match self {
-            Self::Speak | Self::Express => true,
+            Self::Speak | Self::Express | Self::ThinkAloud => true,
             Self::Think | Self::ReportBlocked => false,
         }
     }

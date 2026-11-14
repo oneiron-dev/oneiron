@@ -37,8 +37,15 @@
     // argument still throws where it is passed.
     const later = sending => Promise.resolve().then(sending);
     // `self.fold` takes `(span, {note?})`, sent as `[from, through]` or `[[from, through], {note}]`.
+    // `say` takes `(text or result, {to?, kind?, refs?})`, sent as one object: `{text, ...}` for
+    // words, `{result, ...}` for a result card by its ref; a lone object with no ref is the input.
+    const sayInput = (body, options) => typeof body === "string" ? {...options, text: body}
+      : body && typeof body === "object" && options === undefined && (body.ref ?? body.handle ?? body.name) === undefined ? body
+      : {...options, result: refOf(body)};
     const verb = name => name === "self.fold"
       ? (span, options) => { const text = verbInput(options === undefined ? span : [span, options]); return later(() => send(name, text)).then(decode); }
+      : name === "say"
+      ? (body, options) => { const text = verbInput(sayInput(body, options)); return later(() => send(name, text)).then(decode); }
       : (input = {}) => { const text = verbInput(input); return later(() => send(name, text)).then(decode); };
     // A call under a root the SDK does not have (`tools.`, `self.mcp.`,
     // `memory.`) or of a verb a root does not hold is sent as written: the

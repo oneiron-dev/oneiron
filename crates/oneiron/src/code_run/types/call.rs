@@ -55,6 +55,8 @@ pub enum SelfCall {
     Speak(SelfSpeechCall),
     /// Public first-party `self.think(text)` (ONE-1686, RT-04).
     Think(SelfSpeechCall),
+    /// The `self.think.aloud` run row (L8-25): a thought the run publishes.
+    ThinkAloud(SelfSpeechCall),
     /// Public first-party `self.express(text)` (ONE-1686, RT-04).
     Express(SelfSpeechCall),
     ReportBlocked(super::blocked::SelfReportBlockedCall),
@@ -138,6 +140,7 @@ impl SelfCall {
             Self::Context(_) => SelfEffect::Context,
             Self::Speak(_) => SelfEffect::Speak,
             Self::Think(_) => SelfEffect::Think,
+            Self::ThinkAloud(_) => SelfEffect::ThinkAloud,
             Self::Express(_) => SelfEffect::Express,
             Self::ReportBlocked(_) => SelfEffect::ReportBlocked,
             Self::InferenceDefaultsRead => SelfEffect::InferenceDefaultsRead,
@@ -196,6 +199,7 @@ impl SelfCall {
         match self {
             Self::Speak(call) => Self::Speak(call.with_bridge_stamp(order, occurred_at)),
             Self::Think(call) => Self::Think(call.with_bridge_stamp(order, occurred_at)),
+            Self::ThinkAloud(call) => Self::ThinkAloud(call.with_bridge_stamp(order, occurred_at)),
             Self::Express(call) => Self::Express(call.with_bridge_stamp(order, occurred_at)),
             Self::ReportBlocked(call) => Self::ReportBlocked(call.stamped(order, occurred_at)),
             other => other,
