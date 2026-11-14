@@ -371,8 +371,8 @@ fn scorecard_pack_embed_pins_finished_vectors() {
     }
     assert_eq!(floats.len(), 8 * 4);
     // [3, 4, 0, 0] / 5 rounded through f16: 0.6 -> 1229 * 2^-11, 0.8 -> 1638 * 2^-11.
-    // Written as literals so this file needs no `half` and compiles on main.
-    let want = [0.600_097_656_25_f32, 0.799_804_687_5_f32, 0.0, 0.0];
+    // Written as exact f32 quotients so this file needs no `half` and compiles on main.
+    let want = [1229.0_f32 / 2048.0, 1638.0_f32 / 2048.0, 0.0, 0.0];
     for row in floats.chunks_exact(4) {
         assert_eq!(row, want.as_slice());
     }
