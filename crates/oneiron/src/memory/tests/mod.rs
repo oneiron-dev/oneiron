@@ -27,8 +27,6 @@ mod shared_effects;
 mod support;
 mod takes_notes;
 mod witness_policy;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-WITNESS-TURNS]: the lib test target's type check fails here (41 errors: E0063 x28, E0061 x7, E0599 x4, E0608 x1, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 mod witness_turns;
 
 use super::reads::*;
