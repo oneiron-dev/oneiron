@@ -1052,8 +1052,9 @@ suite.test(test, "SYNC-07", "A claim from a connected vault lands only under the
  */
 suite.todo(test, "SYNC-08", "waits on an EngineFixture opt-in that binds the mesh listener on loopback peers (ONEIRON_MESH_BIND is environment-only and the fixture strips ONEIRON_*) and an enrolled same-vault device syncing over oneiron/sync/1");
 
-/* SYNC-09 — decision: WRITTEN (partial). The ID is a placeholder until
- *   OPUS-E2E-1 names the plan row (Engine RULING 12 Nov 2026 22:00).
+/* SYNC-09 — covers part of its promise (the runner sets its status). The ID
+ *   is a placeholder until OPUS-E2E-1 names the plan row (Engine RULING 12 Nov
+ *   2026 22:00).
  * Promise: a freshly enrolled device keeps its paired credential fresh. Its
  *   renewal at start comes before its first sync lands the vault's authority
  *   log, so it cannot sign a machine proof yet; once that log lands the device
