@@ -26,9 +26,10 @@
 //! concurrent taker finds the lease moved, or the try's id taken, and does
 //! nothing; two machines that take at once resolve as the lease does, by
 //! whole-row LWW and the fence, so one executor stands down once copies
-//! agree. The take reserves the run's launch spend here as its dispatch did
-//! (`AgentDispatcher::reserve_handed_over_launch_in_txn`), and seeds nothing
-//! the other machine spent: cross-node budget custody is FIX 4889.
+//! agree. The take reserves only what the launch reserved less what the
+//! other machines spent of it, as the run TASK's spend carry records it
+//! (FIX 4889), and waits when nothing is left; the machine whose tree
+//! funded the launch keeps the one counter (canon ARCH-0026:242).
 //!
 //! The same pass renews this machine's own lease on each run with a try
 //! pending in its queue (`own_agent_run_lease_renewal`): a parked or queued
@@ -53,8 +54,8 @@ use std::collections::BTreeMap;
 
 use super::run_task::{
     AgentRunExecutorLease, AgentRunTaskBody, agent_run_lease_held_until, agent_run_lease_renewal,
-    agent_run_task_body_in, agent_run_task_ref_in, closing, open_agent_runs_in,
-    update_agent_run_task_body_in_txn,
+    agent_run_task_body_in, agent_run_task_ref_in, attempt_id_from_hex, closing,
+    open_agent_runs_in, update_agent_run_task_body_in_txn,
 };
 use super::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatcher, decode_agent_dispatch_input,
@@ -673,10 +674,15 @@ fn take_expired_agent_run_in_txn(
             if !super::agent_run::agent_pump_claims_in(vault, &savepoint, &record)? {
                 return Ok(AgentRunTake::Waits(NOT_THE_AGENT_PUMPS));
             }
+            let spent_elsewhere = body
+                .spend
+                .as_ref()
+                .map_or(0, |carry| carry.spent_elsewhere(node_id));
             if !AgentDispatcher::new(vault).reserve_handed_over_launch_in_txn(
                 &mut savepoint,
                 record.id,
                 &input,
+                spent_elsewhere,
                 now,
             )? {
                 return Ok(AgentRunTake::Waits(LAUNCH_UNFUNDED_HERE));
@@ -715,9 +721,4 @@ fn frozen_dispatch_input(payload: &[u8]) -> Option<AgentDispatchInput> {
         return None;
     }
     decode_agent_dispatch_input(&payload.input).ok()
-}
-
-/// An attempt id from the 32-hex form a run TASK stores it in.
-fn attempt_id_from_hex(hex: &str) -> Option<AttemptId> {
-    AttemptId::from_bytes(&crate::task_verb::decode_hex::<16>(hex)?).ok()
 }
