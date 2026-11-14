@@ -21,7 +21,7 @@ mod revisions_read;
 
 /// One resolved read target: the entity a reference names, at its frontier.
 /// `None` is a reference that resolves to nothing, never a withheld row.
-pub(crate) type ReadTargetSlot = Option<(EntityId, ReadMode)>;
+pub(super) type ReadTargetSlot = Option<(EntityId, ReadMode)>;
 
 /// One slot of a named read's views ([`Memory::read_named_views`]): the
 /// view, `None` where a collection read omits the row, or the refusal of the
@@ -511,7 +511,7 @@ impl Memory<'_> {
 
     /// Resolves one entity reference at `mode` without reading its body.
     /// Resolution maps a name to an id; admission is the lane's read.
-    pub(crate) fn read_target(
+    pub(super) fn read_target(
         &self,
         reference: &str,
         mode: ReadMode,
@@ -667,7 +667,7 @@ impl Memory<'_> {
 
     /// [`Self::read_named_view`] in the caller's snapshot `txn`, which the
     /// caller opened: it persists no grant time of its own (FIX 22102).
-    pub(crate) fn read_named_view_in_txn(
+    pub(super) fn read_named_view_in_txn(
         &self,
         lane: &ScopedRead<'_>,
         txn: &heed::RoTxn<'_>,

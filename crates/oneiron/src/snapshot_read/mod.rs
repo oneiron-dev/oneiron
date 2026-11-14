@@ -23,10 +23,12 @@ mod source_version;
 mod strength_observations;
 pub(crate) mod tables;
 
-pub(crate) use conflicts_page::conflicts_page_bound;
 pub use conflicts_page::{
     ConflictAlternative, ConflictMember, ConflictsPage, ConflictsPageRequest, ObservedConflict,
     conflicts_page,
+};
+pub(crate) use conflicts_page::{
+    conflict_reader_in_txn, conflict_served_in_txn, conflicts_page_bound,
 };
 pub use evidence_spans::{
     EVIDENCE_SPANS_MASKED_KEY_CROSSES_MESSAGES, EVIDENCE_SPANS_MAX_RANGES, EvidenceMessageSlice,
@@ -61,7 +63,7 @@ pub use strength_observations::{
 };
 pub(crate) use strength_observations::{
     classify_observation_sources_in_txn, observation_reader_scope_for_actor_in_txn,
-    observed_claim_reads_in_txn, strength_observations_page_bound,
+    strength_observations_page_bound,
 };
 // The integration tests' doors name a cited source's version as a caller's
 // read serves it (untangle 6.7a).

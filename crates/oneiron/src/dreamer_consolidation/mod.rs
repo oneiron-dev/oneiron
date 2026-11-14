@@ -78,7 +78,7 @@ pub mod routing;
 mod running_buckets;
 mod scope_summary_attempt;
 pub mod selection;
-mod settle;
+pub(crate) mod settle;
 mod sieve_attempt;
 mod sieve_decisions;
 mod sieve_ports;

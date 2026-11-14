@@ -93,7 +93,7 @@ pub struct ConflictAlternative {
 
 /// Who reads the page: the proven owner, who answers every open conflict,
 /// or a delegate reader within its record scope (`None` is the whole vault).
-enum ConflictReader {
+pub(crate) enum ConflictReader {
     Owner,
     Delegate(Option<Scope>),
 }
@@ -209,7 +209,7 @@ fn bound_conflicts_page(
 /// The reader the caller is: the owner under its proof, or a non-owner with
 /// a live Steward read (or a base agent whose manifest rows still stand in
 /// place of a grant).
-fn conflict_reader_in_txn(
+pub(crate) fn conflict_reader_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
     owner: Option<&crate::consent::AuthenticatedOwner>,
@@ -232,7 +232,7 @@ fn conflict_reader_in_txn(
 /// Whether the page serves `conflict` to `reader`: its marker and every
 /// member read for the caller, and, for a delegate, no settlement of it was
 /// reverted and the owner holds no review of its subject.
-fn conflict_served_in_txn(
+pub(crate) fn conflict_served_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     read: &ScopedRead<'_>,

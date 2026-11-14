@@ -19,13 +19,15 @@ use oneiron::dreamer_runner::{
 };
 use oneiron::dreamer_wake::DreamerAttemptExecution;
 use oneiron::llm::decision::{
-    DecisionAnswer, DecisionBandPolicy, DecisionCall, DecisionLadder, DecisionProvider,
-    DecisionRung, HumanDecisionQueue, HumanDecisionRequest, ProviderDecision, ProviderPin,
-    TypedDecision,
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionCall, DecisionLadder,
+    DecisionProvider, DecisionQuestion, DecisionRung, HumanDecisionQueue, HumanDecisionRequest,
+    ProviderDecision, ProviderPin, TypedDecision,
 };
 use oneiron::memory::{
-    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError,
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_LEASE_REQUIRED,
+    MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError,
 };
+use oneiron::model_decision::catalogue::CONFLICT_SETTLE;
 use oneiron::test_doors::consolidation::{consolidate_unbound_turn_pair, open_dreamer_vault};
 use oneiron::test_doors::derive::{
     Claim, Derived, Named, claim_lifecycle, commit, narrow_steward_grant_to_project, open_conflict,
@@ -53,51 +55,68 @@ const COMMIT: &str = "vault.derive.commit";
 const STRENGTH_PAGE: &str = "vault.consolidation.strength.observations.page";
 /// The queue clock every admission and release here runs at, in seconds.
 const QUEUE_NOW: u64 = 1_000;
+/// Supplies the wording every settlement ask here uses, so the request and expected
+/// question share it.
+const CONFLICT_VERDICT_WORDING: &str = "Which member keeps?";
 
 /// What the fake lender saw: how many verdicts ran through it, the principal the ladder
-/// decided for, the evidence its Big provider read and the rung whose answer stands. The
-/// receipt keeps no dial ceiling (see `DecisionReceipt`), so the answered rung is not a
-/// ceiling proof; the ceiling probe below proves the cap another way.
+/// decided for, the evidence its Big provider read, the shown options and question Big
+/// answered, and the rung whose answer stands. The receipt keeps no dial ceiling (see
+/// `DecisionReceipt`), so the answered rung is not a ceiling proof; the ceiling probe
+/// below proves the cap another way.
 #[derive(Debug, Clone, Default)]
 struct Recorded {
     calls: usize,
     principal: Option<EntityId>,
     evidence: Vec<EntityId>,
+    shown_options: Vec<String>,
+    question: Option<DecisionQuestion>,
     answered: Option<DecisionRung>,
 }
 
-/// The host's lent decisions, faked: Big answers every call with one fixed Choice, or
-/// abstains when built abstaining, and the lender records the Dreamer principal, the rung
-/// whose answer stands and the evidence Big read. The provider sees evidence only;
-/// principal and rung come from the decided `TypedDecision` after `decide` returns. The
-/// receipt keeps no dial ceiling, so this records no ceiling; the abstain probe proves the
-/// cap by never reaching the person.
+/// The host's lent decisions, faked: Big answers the shown option at the test's index,
+/// or abstains when built abstaining, and the lender records the Dreamer principal, the
+/// rung whose answer stands, the evidence Big read and the shown options and question it
+/// saw. The provider sees the shown question and evidence only; principal and rung come
+/// from the decided `TypedDecision` after `decide` returns. The receipt keeps no dial
+/// ceiling, so this records no ceiling; the abstain probe proves the cap by never
+/// reaching the person.
 struct FakeLender {
-    choice: Option<String>,
+    pick: Option<usize>,
     recorded: Mutex<Recorded>,
 }
 
 impl FakeLender {
-    fn new(choice: &str) -> Self {
+    fn new(pick: usize) -> Self {
         Self {
-            choice: Some(choice.to_owned()),
+            pick: Some(pick),
             recorded: Mutex::new(Recorded::default()),
         }
     }
 
     fn abstaining() -> Self {
         Self {
-            choice: None,
+            pick: None,
             recorded: Mutex::new(Recorded::default()),
         }
     }
 }
 
-/// Big, fixed: one Choice at high confidence, or an abstain when built without one,
-/// recording the evidence it read either way.
+/// Records the evidence, shown options and shown question Big read when it
+/// answered the call.
+#[derive(Debug, Clone, Default)]
+struct BigSeen {
+    evidence: Vec<EntityId>,
+    shown_options: Vec<String>,
+    question: Option<DecisionQuestion>,
+}
+
+/// Selects the shown option at the configured index with high confidence, or abstains
+/// when no index is configured. It records the evidence, shown options and question
+/// it read either way.
 struct FixedBig {
-    choice: Option<String>,
-    seen: Mutex<Vec<EntityId>>,
+    pick: Option<usize>,
+    seen: Mutex<BigSeen>,
 }
 
 impl DecisionProvider for FixedBig {
@@ -110,16 +129,30 @@ impl DecisionProvider for FixedBig {
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
-        *self.seen.lock().expect("big seen") = call.evidence.to_vec();
-        match &self.choice {
-            Some(choice) => Ok(ProviderDecision {
-                answer: DecisionAnswer::Choice(choice.clone()),
-                probability: Some(0.9),
-                paired: None,
-                person: None,
-                served: None,
-                cost_per_thousand: None,
-            }),
+        let shown_options = match &call.question.contract {
+            AnswerContract::Choice { options } => options.clone(),
+            _ => Vec::new(),
+        };
+        *self.seen.lock().expect("big seen") = BigSeen {
+            evidence: call.evidence.to_vec(),
+            shown_options: shown_options.clone(),
+            question: Some(call.question.clone()),
+        };
+        match self.pick {
+            Some(pick) => {
+                let chosen = shown_options
+                    .get(pick)
+                    .expect("Big pick is a shown option")
+                    .clone();
+                Ok(ProviderDecision {
+                    answer: DecisionAnswer::Choice(chosen),
+                    probability: Some(0.9),
+                    paired: None,
+                    person: None,
+                    served: None,
+                    cost_per_thousand: None,
+                })
+            }
             None => Ok(ProviderDecision {
                 answer: DecisionAnswer::Abstain,
                 probability: None,
@@ -149,9 +182,10 @@ impl DreamerDecisionLender for FakeLender {
             &DecisionBandPolicy,
         ) -> oneiron::Result<TypedDecision>,
     ) -> oneiron::Result<TypedDecision> {
+        self.recorded.lock().expect("fake lender recorded").calls += 1;
         let big = FixedBig {
-            choice: self.choice.clone(),
-            seen: Mutex::new(Vec::new()),
+            pick: self.pick,
+            seen: Mutex::new(BigSeen::default()),
         };
         let human = NoHuman;
         let ladder = DecisionLadder {
@@ -174,10 +208,12 @@ impl DreamerDecisionLender for FakeLender {
         };
         let policy = DecisionBandPolicy::default();
         let decision = decide(&ladder, &policy)?;
+        let seen = big.seen.lock().expect("big seen").clone();
         let mut recorded = self.recorded.lock().expect("fake lender recorded");
-        recorded.calls += 1;
         recorded.principal = Some(decision.receipt.principal);
-        recorded.evidence = big.seen.lock().expect("big seen").clone();
+        recorded.evidence = seen.evidence;
+        recorded.shown_options = seen.shown_options;
+        recorded.question = seen.question;
         recorded.answered = decision.receipt.time.and_then(|time| time.answered);
         Ok(decision)
     }
@@ -301,7 +337,8 @@ fn conflict_setup(dir: &tempfile::TempDir) -> ConflictTestResult<ConflictSetup> 
     let person = seed_person(&vault, "owen")?;
     let turn = witness_turn(&vault, "call me owen")?;
     let (first, second) = commit_conflicting_pair(&vault, dreamer, person, turn)?;
-    let marker = open_conflict(&vault, second, first)?;
+    // The marker names `[first, second]`, so the whole ask offers them in that order.
+    let marker = open_conflict(&vault, first, second)?;
     assert!(
         enqueue_conflict_settle_attempt(&vault, QUEUE_NOW)?,
         "a fresh vault enqueues"
@@ -319,10 +356,11 @@ fn conflict_setup(dir: &tempfile::TempDir) -> ConflictTestResult<ConflictSetup> 
 }
 
 /// [`conflict_setup`] with the client bound to the admitted attempt, lent the fake ladder
-/// answering every verdict with `owen`.
+/// answering every verdict with the shown option at index 4, the second keep of the whole
+/// ask.
 fn bound_conflict(dir: &tempfile::TempDir) -> ConflictTestResult<BoundConflict> {
     let setup = conflict_setup(dir)?;
-    let lender = Arc::new(FakeLender::new("owen"));
+    let lender = Arc::new(FakeLender::new(4));
     let lent: Arc<dyn DreamerDecisionLender> = lender.clone();
     let binding = setup
         .vault
@@ -374,14 +412,30 @@ fn page_and_settle(bound: &BoundConflict) -> ConflictTestResult<Value> {
     }))
 }
 
-/// One `ai.verdict` asking Big to choose between the fixture names, over the conflict's
-/// marker and members as evidence.
+/// Builds canonical settlement options in offered order, starting with hold both,
+/// dismiss and escalate, then adding a keep per row.
+fn canonical_options(offered: &[EntityId]) -> Vec<String> {
+    let mut options = vec![
+        "hold_both".to_owned(),
+        "dismiss".to_owned(),
+        "escalate".to_owned(),
+    ];
+    for id in offered {
+        options.push(format!("keep:{}", id.to_hex()));
+    }
+    options
+}
+
+/// Builds one whole-conflict `ai.verdict` with the marker and both members as evidence,
+/// canonical whole options, outbound-effect reversibility and no page.
 fn verdict_request(marker: EntityId, first: EntityId, second: EntityId) -> Value {
     json!({
-        "question": "Which member keeps?",
-        "contract": {"kind": "choice", "options": ["owen", "yuki"]},
+        "question": CONFLICT_VERDICT_WORDING,
+        "contract": {"kind": "choice", "options": canonical_options(&[first, second])},
         "evidence": [marker.to_hex(), first.to_hex(), second.to_hex()],
         "ceiling": "big",
+        "reversibility": "outbound_effect",
+        "state": null,
     })
 }
 
@@ -502,11 +556,12 @@ fn bound_conflict_client_reads_page_verdict_and_commits_settle_keep_as_dreamer()
     );
 
     // The verdict runs on the lent ladder for the Dreamer, over the conflict's evidence,
-    // and answers the lender's fixed Choice.
+    // and answers the canonical keep Big picked by its shown index.
     let verdict = bound.client.agent_verb(VERDICT, verdict_input)?;
+    let expected_keep = format!("keep:{}", bound.second.to_hex());
     assert_eq!(
         verdict["answer"],
-        json!({"kind": "choice", "value": "owen"}),
+        json!({"kind": "choice", "value": expected_keep}),
         "{verdict}"
     );
     assert_eq!(verdict["rung"], "big", "{verdict}");
@@ -528,7 +583,42 @@ fn bound_conflict_client_reads_page_verdict_and_commits_settle_keep_as_dreamer()
     let mut expected = vec![bound.marker, bound.first, bound.second];
     expected.sort();
     assert_eq!(seen, expected, "Big reads the conflict's evidence");
+    // Big saw call-local labels, not hex: no shown option holds either member's hex.
+    assert_eq!(recorded.shown_options.len(), 5, "{recorded:?}");
+    assert_eq!(
+        &recorded.shown_options[..3],
+        &["hold_both", "dismiss", "escalate"]
+    );
+    for shown in &recorded.shown_options {
+        assert!(
+            !shown.contains(&bound.first.to_hex()) && !shown.contains(&bound.second.to_hex()),
+            "Big saw labels, not hex: {recorded:?}"
+        );
+    }
+    // The question is today's: the `CONFLICT_SETTLE` family keyed by the contested
+    // predicates, over the same wording and options.
+    let canonical = canonical_options(&[bound.first, bound.second]);
+    let expected_question = CONFLICT_SETTLE
+        .question(
+            &["preference.coffee".as_bytes()],
+            CONFLICT_VERDICT_WORDING.to_owned(),
+            AnswerContract::Choice { options: canonical },
+        )
+        .expect("the expected settlement question builds");
+    let asked = recorded.question.as_ref().expect("Big saw a question");
+    assert_eq!(asked.id, expected_question.id, "the question is today's");
+    assert_eq!(asked.text, CONFLICT_VERDICT_WORDING);
 
+    // The commit keeps the member the answer names.
+    let kept = verdict["answer"]["value"]
+        .as_str()
+        .and_then(|answer| answer.strip_prefix("keep:"))
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+        .expect("the verdict names a canonical keep");
+    let settle = json!({
+        "items": [settle_item(bound.marker, kept)],
+        "sources": [],
+    });
     let view = bound.client.agent_verb(COMMIT, settle)?;
     assert_eq!(view["items"][0]["landed"], true, "{view}");
     let batches = bound.vault.derive_batches_of(bound.dreamer)?;
@@ -626,6 +716,10 @@ fn strength_binding_refuses_conflict_page_verdict_and_settle() -> ConflictTestRe
     archive_every_quiet_claim(&vault)?;
     let admitted = enqueue_strength_attempt(&vault, observed.seed, QUEUE_NOW)?;
     let client = OneironClient::for_dreamer_attempt(vault.bind_dreamer_attempt(&admitted)?);
+    let person = seed_person(&vault, "owen")?;
+    let turn = witness_turn(&vault, "call me owen")?;
+    let (first, second) = commit_conflicting_pair(&vault, dreamer, person, turn)?;
+    let marker = open_conflict(&vault, first, second)?;
     let before = vault.derive_batches_of(dreamer)?.len();
 
     let facet = "the Dreamer strength facet does not admit this operation";
@@ -635,12 +729,12 @@ fn strength_binding_refuses_conflict_page_verdict_and_settle() -> ConflictTestRe
         facet,
     );
     refused(
-        client.agent_verb(VERDICT, json!({})),
+        client.agent_verb(VERDICT, verdict_request(marker, first, second)),
         MEMORY_CODE_FORBIDDEN,
         facet,
     );
     let settle = json!({
-        "items": [settle_item(EntityId::now(), EntityId::now())],
+        "items": [settle_item(marker, second)],
         "sources": [],
     });
     refused(
@@ -742,10 +836,10 @@ fn unread_verdict_evidence_is_forbidden() -> ConflictTestResult<()> {
     let vault = Arc::new(vault);
     let dreamer = dreamer(&vault)?;
 
-    // Each TURN names both people, so either TURN holds either quote, and each claim lands
-    // in its own TURN's project. The pass returns the first TURN; the second settles into
-    // the named project, so narrowing to it leaves the first TURN unread.
-    let other_project = EntityId::now();
+    // As `crates/oneiron/tests/conflicts_page.rs`
+    // `a_conflict_with_a_member_the_reader_does_not_read_is_left_out`: each TURN names
+    // both people, so either TURN holds either quote, and each claim lands in its own
+    // TURN's project.
     let reply = json!({
         "persons": [
             {"id": "new:P1", "name": "owen", "evidence_turn_refs": ["T1"]},
@@ -767,75 +861,280 @@ fn unread_verdict_evidence_is_forbidden() -> ConflictTestResult<()> {
         &vault,
         "call me owen, and this is yuki",
         "call me yuki, and this is owen",
-        other_project,
+        EntityId::now(),
         &reply,
     )?;
     assert_eq!(pass.landed.len(), 2);
-    let first_turn = pass.turn;
-    let mut projects = Vec::new();
-    let mut readable = None;
-    for claim in &pass.landed {
-        let project = claim_project(&vault, *claim)?;
-        if project == other_project {
-            readable = Some(*claim);
-        }
-        projects.push(project);
-    }
+    let mut claims = pass.landed;
+    claims.sort_by_key(EntityId::to_hex);
+    let (read, unread) = (claims[0], claims[1]);
+    let read_project = claim_project(&vault, read)?;
     assert_ne!(
-        projects[0], projects[1],
+        read_project,
+        claim_project(&vault, unread)?,
         "each claim lands in its own TURN's project"
     );
-    let readable = readable.expect("one claim lands in the narrowed-to project");
+    // The marker inherits its project from the member the Dreamer keeps reading, so the
+    // marker reads and only the member is outside the grant.
+    let marker = open_conflict(&vault, read, unread)?;
     let grant = stand_steward_grant(&vault, dreamer, &STEWARD_VERBS)?;
-    narrow_steward_grant_to_project(&vault, grant, other_project)?;
-
+    narrow_steward_grant_to_project(&vault, grant, read_project)?;
     assert!(
         enqueue_conflict_settle_attempt(&vault, QUEUE_NOW)?,
         "a fresh vault enqueues"
     );
     let admitted = admit_conflict_settle_attempt(&vault, QUEUE_NOW)?;
-    let lender = Arc::new(FakeLender::new("owen"));
+    let lender = Arc::new(FakeLender::new(3));
     let lent: Arc<dyn DreamerDecisionLender> = lender.clone();
     let client = OneironClient::for_dreamer_attempt(
         vault.bind_dreamer_attempt(&admitted)?.lend_decisions(lent),
     );
+    let before = vault.derive_batches_of(dreamer)?.len();
 
-    // A valid hex32 ref outside the Dreamer's scoped read is forbidden before any
-    // provider sees it, rather than being omitted or reported as missing.
-    let unread_input = json!({
-        "question": "Which name?",
-        "contract": {"kind": "choice", "options": ["owen", "yuki"]},
-        "evidence": [first_turn.to_hex()],
+    // The bound page leaves the conflict out whole, as the unbound page does for the
+    // narrowed reader.
+    let page = client.agent_verb(PAGE, json!({}))?;
+    let conflicts = page["value"]["conflicts"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the page serves conflicts: {page}"));
+    assert!(
+        conflicts.is_empty(),
+        "the unread member withholds the conflict: {page}"
+    );
+    let served = page.to_string();
+    assert!(!served.contains(&marker.to_hex()));
+    assert!(!served.contains(&read.to_hex()));
+    assert!(!served.contains(&unread.to_hex()));
+
+    // Asking only the readable member still refuses: the verdict checks the marker and
+    // every member, not just the offered rows, before any lender call.
+    let offered = json!({
+        "question": CONFLICT_VERDICT_WORDING,
+        "contract": {"kind": "choice", "options": canonical_options(&[read])},
+        "evidence": [marker.to_hex(), read.to_hex()],
         "ceiling": "big",
+        "reversibility": "outbound_effect",
+        "state": null,
     });
-    let refusal = client
-        .agent_verb(VERDICT, unread_input)
-        .expect_err("unread evidence refuses");
-    assert_eq!(refusal.code, MEMORY_CODE_FORBIDDEN, "{refusal:?}");
+    let about =
+        "the conflict marker and every member must read for the Dreamer attempt's conflicts page";
+    refused(
+        client.agent_verb(VERDICT, offered),
+        MEMORY_CODE_FORBIDDEN,
+        about,
+    );
+    // An unknown marker is not served either.
+    let unknown = json!({
+        "question": CONFLICT_VERDICT_WORDING,
+        "contract": {"kind": "choice", "options": canonical_options(&[read])},
+        "evidence": [EntityId::now().to_hex(), read.to_hex()],
+        "ceiling": "big",
+        "reversibility": "outbound_effect",
+        "state": null,
+    });
+    refused(
+        client.agent_verb(VERDICT, unknown),
+        MEMORY_CODE_FORBIDDEN,
+        about,
+    );
+    assert_eq!(
+        vault.derive_batches_of(dreamer)?.len(),
+        before,
+        "a refused verdict wrote"
+    );
     assert_eq!(
         lender.recorded.lock().expect("lender recorded").calls,
         0,
-        "an unread ref runs no verdict"
+        "an unread conflict runs no verdict"
     );
+    Ok(())
+}
 
-    // The readable ref still verdicts: the narrow, not the bind, withholds.
-    let read_input = json!({
-        "question": "Which name?",
+#[test]
+fn verdict_with_wrong_options_names_expected() -> ConflictTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let bound = bound_conflict(&dir)?;
+    let before = written(&bound)?;
+    let input = json!({
+        "question": CONFLICT_VERDICT_WORDING,
         "contract": {"kind": "choice", "options": ["owen", "yuki"]},
-        "evidence": [readable.to_hex()],
+        "evidence": [bound.marker.to_hex(), bound.first.to_hex(), bound.second.to_hex()],
         "ceiling": "big",
+        "reversibility": "outbound_effect",
+        "state": null,
     });
-    let verdict = client.agent_verb(VERDICT, read_input)?;
+    let refusal = bound
+        .client
+        .agent_verb(VERDICT, input)
+        .expect_err("wrong options refuse");
+    assert_eq!(refusal.code, MEMORY_CODE_BAD_REQUEST, "{refusal:?}");
+    assert!(
+        refusal
+            .message
+            .contains("settlement contract must match the expected options"),
+        "{refusal:?}"
+    );
+    assert!(
+        refusal.message.contains(&bound.second.to_hex()),
+        "the error names the expected options: {refusal:?}"
+    );
+    assert_eq!(written(&bound)?, before, "a refused verdict wrote");
+    assert_eq!(
+        bound.lender.recorded.lock().expect("lender recorded").calls,
+        0,
+        "a refused verdict runs no lender call"
+    );
+    Ok(())
+}
+
+#[test]
+fn verdict_with_non_row_member_is_bad_request() -> ConflictTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let bound = bound_conflict(&dir)?;
+    let before = written(&bound)?;
+    let input = json!({
+        "question": CONFLICT_VERDICT_WORDING,
+        "contract": {"kind": "choice", "options": canonical_options(&[bound.person])},
+        "evidence": [bound.marker.to_hex(), bound.person.to_hex()],
+        "ceiling": "big",
+        "reversibility": "outbound_effect",
+        "state": null,
+    });
+    refused(
+        bound.client.agent_verb(VERDICT, input),
+        MEMORY_CODE_BAD_REQUEST,
+        "each offered member must be a settlement row of the conflict",
+    );
+    assert_eq!(written(&bound)?, before, "a refused verdict wrote");
+    assert_eq!(
+        bound.lender.recorded.lock().expect("lender recorded").calls,
+        0,
+        "a refused verdict runs no lender call"
+    );
+    Ok(())
+}
+
+#[test]
+fn verdict_with_reversible_read_is_bad_request() -> ConflictTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let bound = bound_conflict(&dir)?;
+    let before = written(&bound)?;
+    let input = json!({
+        "question": CONFLICT_VERDICT_WORDING,
+        "contract": {"kind": "choice", "options": canonical_options(&[bound.first, bound.second])},
+        "evidence": [bound.marker.to_hex(), bound.first.to_hex(), bound.second.to_hex()],
+        "ceiling": "big",
+        "reversibility": "reversible_read",
+        "state": null,
+    });
+    refused(
+        bound.client.agent_verb(VERDICT, input),
+        MEMORY_CODE_BAD_REQUEST,
+        "requires outbound_effect reversibility",
+    );
+    assert_eq!(written(&bound)?, before, "a refused verdict wrote");
+    assert_eq!(
+        bound.lender.recorded.lock().expect("lender recorded").calls,
+        0,
+        "a refused verdict runs no lender call"
+    );
+    Ok(())
+}
+
+#[test]
+fn verdict_with_member_as_marker_is_forbidden() -> ConflictTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let bound = bound_conflict(&dir)?;
+    let before = written(&bound)?;
+    // `evidence[0]` names a member, not the marker.
+    let input = json!({
+        "question": CONFLICT_VERDICT_WORDING,
+        "contract": {"kind": "choice", "options": canonical_options(&[bound.second])},
+        "evidence": [bound.first.to_hex(), bound.second.to_hex()],
+        "ceiling": "big",
+        "reversibility": "outbound_effect",
+        "state": null,
+    });
+    refused(
+        bound.client.agent_verb(VERDICT, input),
+        MEMORY_CODE_FORBIDDEN,
+        "the conflict marker and every member must read for the Dreamer attempt's conflicts page",
+    );
+    assert_eq!(written(&bound)?, before, "a refused verdict wrote");
+    assert_eq!(
+        bound.lender.recorded.lock().expect("lender recorded").calls,
+        0,
+        "a refused verdict runs no lender call"
+    );
+    Ok(())
+}
+
+#[test]
+fn paged_verdict_asks_with_page_key() -> ConflictTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let setup = conflict_setup(&dir)?;
+    let lender = Arc::new(FakeLender::new(3));
+    let lent: Arc<dyn DreamerDecisionLender> = lender.clone();
+    let client = OneironClient::for_dreamer_attempt(
+        setup
+            .vault
+            .bind_dreamer_attempt(&setup.admitted)?
+            .lend_decisions(lent),
+    );
+    // The second page of two, offering the second member alone.
+    let input = json!({
+        "question": CONFLICT_VERDICT_WORDING,
+        "contract": {"kind": "choice", "options": canonical_options(&[setup.second])},
+        "evidence": [setup.marker.to_hex(), setup.second.to_hex()],
+        "ceiling": "big",
+        "reversibility": "outbound_effect",
+        "state": {"round": 0, "page": 1, "pages": 2, "page_answers": []},
+    });
+    let verdict = client.agent_verb(VERDICT, input)?;
+    let expected_keep = format!("keep:{}", setup.second.to_hex());
     assert_eq!(
         verdict["answer"],
-        json!({"kind": "choice", "value": "owen"}),
+        json!({"kind": "choice", "value": expected_keep}),
         "{verdict}"
     );
+    assert_eq!(verdict["rung"], "big", "{verdict}");
+    let recorded = lender.recorded.lock().expect("lender recorded").clone();
+    assert_eq!(recorded.calls, 1, "one verdict ran through the lender");
     assert_eq!(
-        lender.recorded.lock().expect("lender recorded").calls,
-        1,
-        "the readable ref verdicts"
+        recorded.principal,
+        Some(setup.dreamer),
+        "the ladder decides for the Dreamer"
     );
+    assert_eq!(recorded.answered, Some(DecisionRung::Big), "Big answers");
+    // The ladder still reads the marker and every member, not just the offered one.
+    let mut seen = recorded.evidence.clone();
+    seen.sort();
+    let mut expected = vec![setup.marker, setup.first, setup.second];
+    expected.sort();
+    assert_eq!(seen, expected, "Big reads the whole conflict's evidence");
+    // The paged question is keyed with the page. This test checks the key before the
+    // labels and the whole-ask test checks the labels before the key, so each of the two
+    // fails at its own assertion when only that one is lost.
+    let canonical = canonical_options(&[setup.second]);
+    let expected_question = CONFLICT_SETTLE
+        .question(
+            &["preference.coffee".as_bytes(), b"page", b"0.1"],
+            CONFLICT_VERDICT_WORDING.to_owned(),
+            AnswerContract::Choice { options: canonical },
+        )
+        .expect("the expected paged question builds");
+    let asked = recorded.question.as_ref().expect("Big saw a question");
+    assert_eq!(
+        asked.id, expected_question.id,
+        "the paged question is keyed"
+    );
+    assert_eq!(recorded.shown_options.len(), 4, "{recorded:?}");
+    for shown in &recorded.shown_options {
+        assert!(
+            !shown.contains(&setup.first.to_hex()) && !shown.contains(&setup.second.to_hex()),
+            "Big saw labels, not hex: {recorded:?}"
+        );
+    }
     Ok(())
 }
 
@@ -954,7 +1253,12 @@ fn native_conflict_settle_dispatch_parks_without_host() -> ConflictTestResult<()
         "a fresh vault enqueues"
     );
     let admitted = admit_conflict_settle_attempt(&vault, QUEUE_NOW)?;
-    match execute_unlent_conflict_settle(&vault, &admitted, QUEUE_NOW)? {
+    let execution = execute_unlent_conflict_settle(&vault, &admitted, QUEUE_NOW)?;
+    assert!(
+        matches!(&execution, DreamerAttemptExecution::Park { .. }),
+        "native dispatch parks without a host: {execution:?}"
+    );
+    match execution {
         DreamerAttemptExecution::Park { reason, cause } => {
             assert_eq!(cause, DreamerParkCause::Retry);
             assert!(reason.contains("no host lends"), "{reason}");

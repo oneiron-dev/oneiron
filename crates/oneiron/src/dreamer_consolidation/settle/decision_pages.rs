@@ -27,6 +27,7 @@ use super::{
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind, LabelledRungs};
 use crate::error::Result;
 use crate::limit_ask::EngineLimit;
+use crate::llm::decision::TypedDecision;
 use crate::model_decision::{DecisionAnswer, MAX_DECISION_STATE_BYTES, Reversibility};
 use crate::{EntityId, Vault};
 
@@ -75,7 +76,7 @@ pub(in crate::dreamer_consolidation) fn split_pages<T: Copy>(
 
 /// What one page of a settlement answered, short of leaving it parked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PageAnswer {
+pub(crate) enum PageAnswer {
     Keep(EntityId),
     HoldBoth,
     Dismiss,
@@ -186,20 +187,21 @@ pub(super) fn rule(
     }
 }
 
-/// One settlement ask through the ladder, each model rung reading the ask's
-/// own labels; the question, its answer and the settlement stay canonical
-/// (FIX 7506). Keeping one closes the others, so a cut abstains rather than
-/// taking a held answer.
-fn run(
+/// Runs one settlement ask with each model rung reading call-local labels.
+/// The question, answer and receipt stay canonical (FIX 7506). The state is
+/// measured whole before the call. The ladder uses the ask's principal,
+/// dial, bands and deadline with outbound-effect reversibility over the
+/// conflict's evidence.
+pub(crate) fn run_ask(
     decisions: &ConflictSettleDecisions<'_>,
     vault: &Vault,
     ask: &SettleAsk,
     evidence: &[EntityId],
-) -> Result<Option<ConflictSettlement>> {
+) -> Result<TypedDecision> {
     measure_state(vault, &ask.state);
     let rungs = LabelledRungs::of(&decisions.ladder, &ask.labels);
     let ladder = rungs.ladder(&decisions.ladder);
-    let decision = ladder.run(
+    ladder.run(
         &ask.question,
         decisions.principal,
         evidence,
@@ -208,7 +210,19 @@ fn run(
         &decisions.bands,
         Reversibility::OutboundEffect,
         decisions.deadline,
-    )?;
+    )
+}
+
+/// Maps [`run_ask`]'s canonical Choice answer to a settlement. Keeping one
+/// closes the others, so a cut abstains rather than taking a held answer.
+/// Other answer kinds leave the conflict parked.
+fn run(
+    decisions: &ConflictSettleDecisions<'_>,
+    vault: &Vault,
+    ask: &SettleAsk,
+    evidence: &[EntityId],
+) -> Result<Option<ConflictSettlement>> {
+    let decision = run_ask(decisions, vault, ask, evidence)?;
     let DecisionAnswer::Choice(answer) = &decision.answer else {
         return Ok(None);
     };
