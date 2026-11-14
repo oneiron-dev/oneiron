@@ -66,6 +66,11 @@ struct Files {
     /// Each warning, reported beside the counts.
     #[serde(skip)]
     warnings: Vec<ImportWarning>,
+    /// The entries of a zipped export the archive pre-check skipped, in the
+    /// archive's order: each is also a warning. A hosted job keeps them in
+    /// its row.
+    #[serde(skip)]
+    archive_skips: Vec<SkippedEntry>,
 }
 
 #[derive(Serialize, Default)]
@@ -341,7 +346,7 @@ fn decode(
             .map_err(|error| anyhow::anyhow!("{}: {error}", shown.display()))
     };
     if matches!(source, HistorySource::Chatgpt | HistorySource::Claude) {
-        let (text, skipped) = read_export(path, bounds)?;
+        let (text, archive_skips) = read_export(path, bounds)?;
         let file = HistoryFile {
             stem: EXPORT_CONVERSATIONS.to_owned(),
             parent: None,
@@ -353,13 +358,14 @@ fn decode(
             Files {
                 read: 1,
                 decoded,
-                warnings: skipped
-                    .into_iter()
+                warnings: archive_skips
+                    .iter()
                     .map(|skip| ImportWarning::ArchiveEntrySkipped {
-                        name: skip.name,
+                        name: skip.name.clone(),
                         reason: skip.reason.as_str(),
                     })
                     .collect(),
+                archive_skips,
                 ..Files::default()
             },
             conversations,

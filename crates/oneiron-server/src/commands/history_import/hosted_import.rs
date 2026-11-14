@@ -26,15 +26,16 @@
 //! ([`oneiron::Vault::hosted_import_create`]) of each whole folder that has
 //! none, at a second of its own, so the import has a review of its own. It
 //! then takes up every unended job, oldest first. It decodes the export as
-//! `oneiron import` does, sorts it earliest first, and lands each
-//! conversation from the job's place on, keeping the place after each one.
-//! A restart's first pass takes each job up at its place. When every
-//! conversation has landed, the import's one inbox row is written, the
-//! Dreamer is queued, the job ends Landed and its folder is removed. An
-//! export that is gone, changed or does not decode ends its job Failed with
-//! the reason, and the folder is removed: it would fail the same way on
-//! every later pass. A failure of the vault leaves the job where it is for
-//! the next pass.
+//! `oneiron import` does, through the archive pre-check, and keeps in the
+//! row what the export holds and the entries the pre-check skipped. It sorts
+//! the conversations earliest first and lands each one from the job's place
+//! on, keeping the place after each one. A restart's first pass takes each
+//! job up at its place. When every conversation has landed, the import's
+//! one inbox row is written, the Dreamer is queued, the job ends Landed and
+//! its folder is removed. An export that is gone, changed, refused by the
+//! pre-check or does not decode ends its job Failed with the reason, and the
+//! folder is removed: it would fail the same way on every later pass. A
+//! failure of the vault leaves the job where it is for the next pass.
 //!
 //! A job asked to cancel (`vault.imports.cancel`) is Cancelling. Its worker
 //! reads the row again before each conversation, so a cancel that comes
@@ -889,12 +890,12 @@ impl HostedImports {
             fail(vault, &folder, id, "the staged export is gone or changed")?;
             return Ok(true);
         };
-        let mut conversations = match decode(
+        let (archive_skips, mut conversations) = match decode(
             source,
             &export,
             &ExportBounds::staged(self.archive_entry_cap),
         ) {
-            Ok((_, conversations)) => conversations,
+            Ok((files, conversations)) => (files.archive_skips, conversations),
             Err(error) => {
                 fail(vault, &folder, id, &format!("{error:#}"))?;
                 return Ok(true);
@@ -905,7 +906,12 @@ impl HostedImports {
             .iter()
             .map(|conversation| u64::try_from(conversation.messages.len()).unwrap_or(u64::MAX))
             .sum();
-        vault.hosted_import_decoded(id, u64::try_from(conversations.len())?, messages)?;
+        vault.hosted_import_decoded(
+            id,
+            u64::try_from(conversations.len())?,
+            messages,
+            &archive_skips,
+        )?;
         let owner = crate::owner::local_owner(vault)?;
         let mut cursor = job.cursor;
         for (landed_here, conversation) in conversations
