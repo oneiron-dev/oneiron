@@ -5,11 +5,14 @@
 //! cross-encoder's marks, as before.
 //!
 //! Each case recalls at high through `POST /v1/core/facade/vault.recall` as
-//! the owner, on a loopback `/v1/rerank`. A probe recall on a vault of the
-//! same rows, on the default line, reads what the recall sends (its bytes
-//! `B` and its pairs `n`). Then a line one unit short of the price refuses
-//! the call unsent with `BUDGET_SPENT`, and a line of exactly the price
-//! sends it once.
+//! the owner, on a loopback `/v1/rerank`. The passages sit in a WORLD of
+//! their own, and the recall reads that world without base reality, so the
+//! rerank block is the five passages in every fresh vault and never the
+//! bootstrap rows (skill provenance and scan verdicts, whose choice and text
+//! differ per vault). A probe recall on a vault of the same rows, on the
+//! default line, reads what the recall sends (its bytes `B` and its pairs
+//! `n`). Then a line one unit short of the price refuses the call unsent
+//! with `BUDGET_SPENT`, and a line of exactly the price sends it once.
 
 #[path = "support/engine_stack.rs"]
 mod engine_stack;
@@ -28,7 +31,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use engine_stack::run_on_engine_stack;
 use oneiron::authority::{HostSlipIssuer, holder_proof_challenge};
 use oneiron::federation::Scope;
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, TimeRange, Vault,
     VaultConfig,
@@ -190,8 +193,19 @@ fn owner_auth(vault: &Vault, issuer: &HostSlipIssuer) -> (String, String) {
     (format!("Bearer {bearer}"), binding)
 }
 
-/// Each of [`PASSAGES`] as an auto claim about one person, indexed.
-fn seed(vault: &Vault) {
+/// Each of [`PASSAGES`] as an auto claim about one person in a fresh WORLD,
+/// indexed; answers the world.
+fn seed(vault: &Vault) -> EntityId {
+    let world = EntityId::now();
+    vault
+        .put_entity(
+            &world,
+            ENTITY_TYPE_WORLD,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"rerank template world",
+        )
+        .expect("rerank template world row");
     let subject = EntityId::now();
     vault
         .put_entity(
@@ -203,7 +217,7 @@ fn seed(vault: &Vault) {
         )
         .expect("rerank template subject row");
     for text in PASSAGES {
-        let body = ClaimBody::new(
+        let mut body = ClaimBody::new(
             "profile.note",
             ClaimSubject::Entity(subject),
             rmpv::Value::from(text),
@@ -212,6 +226,7 @@ fn seed(vault: &Vault) {
             ClaimLifecycleStatus::Active,
         )
         .expect("rerank template claim body");
+        body.world = Some(world);
         let id = EntityId::now();
         vault
             .put_claim(&id, &body, TimeRange { start: 10, end: 10 }, 10)
@@ -233,6 +248,7 @@ fn seed(vault: &Vault) {
         "FIXTURE: the seeded rows are indexed: {:?}",
         published.failed
     );
+    world
 }
 
 /// What one recall at high answered: its HTTP status and body.
@@ -242,7 +258,7 @@ struct Recalled {
 }
 
 /// A fresh vault of [`PASSAGES`] served on `models`, recalled once at high
-/// as its owner, from this device.
+/// as its owner, from this device, in the passages' world without base.
 async fn recall_high(models: &ModelsConfig) -> Recalled {
     let dir = tempfile::tempdir().expect("rerank template dir");
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("vault"));
@@ -257,7 +273,7 @@ async fn recall_high(models: &ModelsConfig) -> Recalled {
     .expect("rerank template server");
     let (server, host) = AiHost::attach(server, Some(models)).await;
     let router = build_app(Arc::new(server));
-    seed(&vault);
+    let world = seed(&vault);
     let issuer = vault
         .load_host_slip_issuer()
         .expect("rerank template host issuer");
@@ -269,7 +285,19 @@ async fn recall_high(models: &ModelsConfig) -> Recalled {
         .header("authorization", auth.0.as_str())
         .header("x-oneiron-binding", auth.1.as_str())
         .body(Body::from(
-            json!({"query": QUERY, "effort": "high", "limit": 10}).to_string(),
+            json!({
+                "query": QUERY,
+                "effort": "high",
+                "limit": 10,
+                "scope": {
+                    "worlds": {
+                        "kind": "world",
+                        "world_ref": world.to_hex(),
+                        "include_base": false,
+                    },
+                },
+            })
+            .to_string(),
         ))
         .expect("rerank template request");
     request
@@ -335,9 +363,14 @@ async fn probe() -> Payload {
         "FIXTURE: the reranker reads the query"
     );
     let documents = sent_documents(&seen[0]);
-    assert!(
-        documents.len() >= 2,
-        "FIXTURE: the recall reranks a block of the seeded passages: {documents:?}"
+    let mut seeded: Vec<String> = PASSAGES
+        .iter()
+        .map(|passage| format!("profile.note: {passage}"))
+        .collect();
+    seeded.sort();
+    assert_eq!(
+        documents, seeded,
+        "FIXTURE: the recall reranks a block of exactly the seeded passages"
     );
     let query = u64::try_from(QUERY.len()).expect("query bytes");
     let word_units: u64 = documents
