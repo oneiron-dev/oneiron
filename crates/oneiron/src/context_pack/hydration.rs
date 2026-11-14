@@ -213,14 +213,10 @@ pub(super) fn hydrate_entity(
         return Err(Error::CorruptedIndex("entity metadata header"));
     };
 
+    // A NOTE is judged on its stored core: an Indexed or Pinned revision
+    // reads as the logical body with its prose, which the core codec refuses.
     if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
-        && !crate::note::note_body_readable(
-            store,
-            rtxn,
-            &id,
-            &raw[ENTITY_METADATA_HEADER_LEN..],
-            None,
-        )?
+        && !crate::note::ordinary_entity_visible(store, rtxn, &id)?
     {
         return Ok(None);
     }
