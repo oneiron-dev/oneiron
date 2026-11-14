@@ -326,7 +326,10 @@ pub(super) fn run_one(
         COACH_SKILL_DISTILL_FACET => distill(server, admitted),
         COACH_SKILL_DISCOVERY_FACET => super::skill_discovery::run(server, admitted),
         COACH_JUDGE_SWAP_FACET => super::judge_swap::run(server, admitted, now),
-        COACH_TRAINING_OFFER_FACET => super::training_offer::draft(server, admitted, now),
+        COACH_TRAINING_OFFER_FACET => {
+            let window = super::training_offer::rolling_window(now);
+            super::training_offer::draft(server, admitted, now, window).map(|_| ())
+        }
         COACH_EVAL_AUTHORING_FACET => super::eval_authoring::run(server, admitted, now),
         COACH_BROWSER_PROGRAMS_FACET => super::coach_browser_programs::run(server, admitted, now),
         COACH_SITE_SKILLS_FACET => super::coach_site_skills::run(server, admitted, now),

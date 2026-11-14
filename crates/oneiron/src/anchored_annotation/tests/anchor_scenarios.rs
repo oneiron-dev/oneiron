@@ -4,19 +4,16 @@
 //! across markup, a deleted or rewritten sentence, an element that disappears
 //! and returns, and anchors on an old version.
 //!
-//! DOCX locators are stored but not re-anchored yet, so every DOCX bump
-//! drifts. The passing DOCX tests are the "never invent an anchor" half: each
-//! builds a version where the selected text is gone but something a weaker
-//! matcher would take for it is still there (the same offsets, an identical
-//! copy, the same run layout, the same paragraph slot), and asserts that the
-//! thread stays visibly drifted on its old version. They hold that line for
-//! the OF-368 re-anchor work. The ignored tests are that work's targets: the
-//! true re-anchor cases, with the expected mapping written out.
+//! The DOCX cases that need only public paths run in the integration test
+//! `crates/oneiron/tests/anchor_docx_scenarios.rs`: the OF-368 re-anchor
+//! cases (one-character and CJK selections, repeated text, a selection across
+//! runs), the "never invent an anchor" cases, and a returning paragraph that
+//! is offered for a one-click reattach, never bound on a guess. The DOCX case
+//! here reads an old thread head through the crate's codec.
 //!
 //! A DOCX `para_path` here is the docedit block id (`p_1`, `p_2`, ..., the
 //! handle the DOCX edit door targets), and characters are Unicode scalar
-//! values, as in docedit's own spans. If OF-368 settles on another path form,
-//! `docx_span` and the expected locators change; the expected text does not.
+//! values, as in docedit's own spans.
 
 use super::*;
 use crate::claim::ClaimLifecycleStatus;
@@ -239,65 +236,6 @@ fn old_head(vault: &Vault, thread: &AnnotationThread) -> (ThreadHead, ClaimLifec
 // ---------------------------------------------------------------------------
 
 #[test]
-fn docx_one_char_and_cjk_selections_drift_when_their_text_is_replaced() {
-    let v1 = docx(&[&[("Hello world", false)], &[("東京は晴れ", false)]]);
-    // Same lengths, so the old offsets now select "t" and "大阪".
-    let v2 = docx(&[&[("Hello there", false)], &[("大阪は晴れ", false)]]);
-    let one = docx_at("p_1", 6, 7);
-    let cjk = docx_at("p_2", 0, 2);
-    assert_eq!(docx_span(&v1, &one).as_deref(), Some("w"));
-    assert_eq!(docx_span(&v1, &cjk).as_deref(), Some("東京"));
-    assert_eq!(docx_span(&v2, &one).as_deref(), Some("t"));
-    assert_eq!(docx_span(&v2, &cjk).as_deref(), Some("大阪"));
-
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let (artifact, actor) = put_artifact(&vault, "notes.docx", DOCX_MIME, &v1);
-    let threads = [
-        open(&vault, artifact, 1, &one, actor),
-        open(&vault, artifact, 1, &cjk, actor),
-    ];
-    upload(&vault, &artifact, actor, &v2, 12);
-    let summary = sweep(&vault, &artifact, 1, 2, &[], actor);
-    assert!(summary.remapped.is_empty());
-    assert_eq!(summary.drifted.len(), 2);
-    for thread in &threads {
-        assert_pinned(&vault, &artifact, thread, &thread.anchor.locator, 1, 2);
-    }
-    // The pinned version still holds both selections.
-    let pinned = vault
-        .read_blob_artifact_version(&artifact, 1)
-        .unwrap()
-        .unwrap();
-    assert_eq!(docx_span(&pinned, &one).as_deref(), Some("w"));
-    assert_eq!(docx_span(&pinned, &cjk).as_deref(), Some("東京"));
-}
-
-#[test]
-#[ignore = "OF-368 re-anchor target: one-char and CJK selections follow text inserted before them"]
-fn docx_one_char_and_cjk_selections_follow_an_insert_before_them() {
-    let v1 = docx(&[&[("Hello world", false)], &[("東京は晴れ", false)]]);
-    let v2 = docx(&[
-        &[("Oh, Hello world", false)],
-        &[("今日、東京は晴れ", false)],
-    ]);
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let (artifact, actor) = put_artifact(&vault, "notes.docx", DOCX_MIME, &v1);
-    let one = open(&vault, artifact, 1, &docx_at("p_1", 6, 7), actor);
-    let cjk = open(&vault, artifact, 1, &docx_at("p_2", 0, 2), actor);
-    upload(&vault, &artifact, actor, &v2, 12);
-    let summary = sweep(&vault, &artifact, 1, 2, &[], actor);
-    assert!(summary.drifted.is_empty());
-    assert_eq!(summary.remapped.len(), 2);
-
-    let moved_one = docx_at("p_1", 10, 11);
-    let moved_cjk = docx_at("p_2", 3, 5);
-    assert_mapped(&vault, &artifact, &one, 2, &moved_one);
-    assert_mapped(&vault, &artifact, &cjk, 2, &moved_cjk);
-    assert_eq!(docx_span(&v2, &moved_one).as_deref(), Some("w"));
-    assert_eq!(docx_span(&v2, &moved_cjk).as_deref(), Some("東京"));
-}
-
-#[test]
 fn xlsx_single_cell_on_a_cjk_sheet_follows_only_its_own_sheet() {
     let cell = Locator::xlsx("売上", "C3").unwrap();
     // Sheets whose names share a prefix with the anchor's are other sheets.
@@ -340,47 +278,6 @@ fn xlsx_single_cell_on_a_cjk_sheet_follows_only_its_own_sheet() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn docx_repeated_text_anchor_never_jumps_to_the_surviving_copy() {
-    let v1 = docx(&[&[("the cat and the dog", false)]]);
-    // The second "the" goes; the first stays where it was.
-    let v2 = docx(&[&[("the cat and a dog", false)]]);
-    let second = docx_at("p_1", 12, 15);
-    let first = docx_at("p_1", 0, 3);
-    assert_eq!(docx_span(&v1, &second).as_deref(), Some("the"));
-    assert_eq!(docx_span(&v2, &first).as_deref(), Some("the"));
-
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let (artifact, actor) = put_artifact(&vault, "notes.docx", DOCX_MIME, &v1);
-    let thread = open(&vault, artifact, 1, &second, actor);
-    upload(&vault, &artifact, actor, &v2, 12);
-    let summary = sweep(&vault, &artifact, 1, 2, &[], actor);
-    assert!(summary.remapped.is_empty());
-    assert_pinned(&vault, &artifact, &thread, &second, 1, 2);
-}
-
-#[test]
-#[ignore = "OF-368 re-anchor target: each repeated-text anchor keeps its own occurrence"]
-fn docx_repeated_text_anchors_keep_their_own_occurrence() {
-    let v1 = docx(&[&[("the cat and the dog", false)]]);
-    let v2 = docx(&[&[("So the cat and the dog", false)]]);
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let (artifact, actor) = put_artifact(&vault, "notes.docx", DOCX_MIME, &v1);
-    let first = open(&vault, artifact, 1, &docx_at("p_1", 0, 3), actor);
-    let second = open(&vault, artifact, 1, &docx_at("p_1", 12, 15), actor);
-    upload(&vault, &artifact, actor, &v2, 12);
-    let summary = sweep(&vault, &artifact, 1, 2, &[], actor);
-    assert!(summary.drifted.is_empty());
-
-    // Both copies read "the" in v2; each thread keeps the one it was on.
-    let moved_first = docx_at("p_1", 3, 6);
-    let moved_second = docx_at("p_1", 15, 18);
-    assert_eq!(docx_span(&v2, &moved_first).as_deref(), Some("the"));
-    assert_eq!(docx_span(&v2, &moved_second).as_deref(), Some("the"));
-    assert_mapped(&vault, &artifact, &first, 2, &moved_first);
-    assert_mapped(&vault, &artifact, &second, 2, &moved_second);
-}
-
-#[test]
 fn pptx_duplicated_shape_never_rebinds_to_either_copy() {
     let mut v2 = support::parts(false);
     let slide = String::from_utf8(v2[SLIDE].clone()).unwrap();
@@ -409,82 +306,8 @@ fn pptx_duplicated_shape_never_rebinds_to_either_copy() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. A selection that crosses markup
-// ---------------------------------------------------------------------------
-
-#[test]
-fn docx_selection_across_runs_drifts_when_the_same_run_layout_holds_other_text() {
-    let v1 = docx(&[&[("Plain ", false), ("bold", true), (" tail", false)]]);
-    // Same run lengths and the same bold run, all of it new text.
-    let v2 = docx(&[&[("Fresh ", false), ("copy", true), (" here", false)]]);
-    let across = docx_at("p_1", 4, 12);
-    assert_eq!(docx_span(&v1, &across).as_deref(), Some("n bold t"));
-    assert_eq!(docx_span(&v2, &across).as_deref(), Some("h copy h"));
-
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let (artifact, actor) = put_artifact(&vault, "notes.docx", DOCX_MIME, &v1);
-    let thread = open(&vault, artifact, 1, &across, actor);
-    upload(&vault, &artifact, actor, &v2, 12);
-    let summary = sweep(&vault, &artifact, 1, 2, &[], actor);
-    assert!(summary.remapped.is_empty());
-    assert_pinned(&vault, &artifact, &thread, &across, 1, 2);
-}
-
-#[test]
-#[ignore = "OF-368 re-anchor target: a selection across runs survives a markup-only change"]
-fn docx_selection_across_runs_survives_a_markup_only_change() {
-    let v1 = docx(&[&[("Plain ", false), ("bold", true), (" tail", false)]]);
-    // The bold goes and the three runs merge; the text is the same.
-    let v2 = docx(&[&[("Plain bold tail", false)]]);
-    let across = docx_at("p_1", 4, 12);
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let (artifact, actor) = put_artifact(&vault, "notes.docx", DOCX_MIME, &v1);
-    let thread = open(&vault, artifact, 1, &across, actor);
-    upload(&vault, &artifact, actor, &v2, 12);
-    let summary = sweep(&vault, &artifact, 1, 2, &[], actor);
-    assert!(summary.drifted.is_empty());
-    assert_mapped(&vault, &artifact, &thread, 2, &across);
-    assert_eq!(docx_span(&v2, &across).as_deref(), Some("n bold t"));
-}
-
-// ---------------------------------------------------------------------------
 // 4. A sentence that is deleted or rewritten
 // ---------------------------------------------------------------------------
-
-#[test]
-fn docx_deleted_and_rewritten_sentences_stay_visibly_unanchored() {
-    let v1 = docx(&[
-        &[("Keep this. Rewrite this one.", false)],
-        &[("Keep that. Delete this one.", false)],
-    ]);
-    let v2 = docx(&[
-        &[("Keep this. Something else now.", false)],
-        &[("Keep that.", false)],
-    ]);
-    let rewritten = docx_at("p_1", 11, 28);
-    let deleted = docx_at("p_2", 11, 27);
-    assert_eq!(
-        docx_span(&v1, &rewritten).as_deref(),
-        Some("Rewrite this one.")
-    );
-    assert_eq!(
-        docx_span(&v1, &deleted).as_deref(),
-        Some("Delete this one.")
-    );
-
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let (artifact, actor) = put_artifact(&vault, "notes.docx", DOCX_MIME, &v1);
-    let threads = [
-        open(&vault, artifact, 1, &rewritten, actor),
-        open(&vault, artifact, 1, &deleted, actor),
-    ];
-    upload(&vault, &artifact, actor, &v2, 12);
-    let summary = sweep(&vault, &artifact, 1, 2, &[], actor);
-    assert!(summary.remapped.is_empty());
-    for thread in &threads {
-        assert_pinned(&vault, &artifact, thread, &thread.anchor.locator, 1, 2);
-    }
-}
 
 #[test]
 fn pptx_rewritten_shape_text_drifts_a_shape_thread() {
@@ -513,59 +336,6 @@ fn pptx_rewritten_shape_text_drifts_a_shape_thread() {
 // ---------------------------------------------------------------------------
 // 5. An element that disappears and later returns
 // ---------------------------------------------------------------------------
-
-#[test]
-fn docx_paragraph_slot_taken_by_other_text_never_rebinds_a_lost_anchor() {
-    let v1 = docx(&[&[("Intro.", false)], &[("Budget: 40k.", false)]]);
-    let v2 = docx(&[&[("Intro.", false)]]);
-    // A different paragraph arrives in the old slot, the same length.
-    let v3 = docx(&[&[("Intro.", false)], &[("Timeline: Q3", false)]]);
-    let budget = docx_at("p_2", 0, 12);
-    assert_eq!(docx_span(&v1, &budget).as_deref(), Some("Budget: 40k."));
-    assert_eq!(docx_span(&v2, &budget), None);
-    assert_eq!(docx_span(&v3, &budget).as_deref(), Some("Timeline: Q3"));
-
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let (artifact, actor) = put_artifact(&vault, "notes.docx", DOCX_MIME, &v1);
-    let thread = open(&vault, artifact, 1, &budget, actor);
-    upload(&vault, &artifact, actor, &v2, 12);
-    assert_eq!(sweep(&vault, &artifact, 1, 2, &[], actor).drifted.len(), 1);
-    assert_pinned(&vault, &artifact, &thread, &budget, 1, 2);
-    let lost_head = live(&vault, &artifact, &thread).head_claim_id;
-
-    // A thread opened on v1 now is still live, so the 1 -> 3 sweep shows it the
-    // other paragraph in the old slot; the lost thread it must pass over.
-    let late = open(&vault, artifact, 1, &budget, actor);
-    upload(&vault, &artifact, actor, &v3, 14);
-    let summary = sweep(&vault, &artifact, 1, 3, &[], actor);
-    assert!(summary.remapped.is_empty());
-    assert_eq!(summary.drifted.len(), 1);
-    assert_eq!(summary.drifted[0].thread_id, late.thread_id);
-    assert_pinned(&vault, &artifact, &late, &budget, 1, 3);
-    // Still lost, and no new head per bump while it stays lost.
-    assert_pinned(&vault, &artifact, &thread, &budget, 1, 2);
-    assert_eq!(live(&vault, &artifact, &thread).head_claim_id, lost_head);
-}
-
-#[test]
-#[ignore = "OF-368 re-anchor target: a drifted anchor re-binds when its exact paragraph returns"]
-fn docx_drifted_anchor_rebinds_when_its_paragraph_returns() {
-    let v1 = docx(&[&[("Intro.", false)], &[("Budget: 40k.", false)]]);
-    let v2 = docx(&[&[("Intro.", false)]]);
-    let v3 = docx(&[&[("Intro.", false)], &[("Budget: 40k.", false)]]);
-    let budget = docx_at("p_2", 0, 12);
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let (artifact, actor) = put_artifact(&vault, "notes.docx", DOCX_MIME, &v1);
-    let thread = open(&vault, artifact, 1, &budget, actor);
-    upload(&vault, &artifact, actor, &v2, 12);
-    sweep(&vault, &artifact, 1, 2, &[], actor);
-    assert_pinned(&vault, &artifact, &thread, &budget, 1, 2);
-
-    upload(&vault, &artifact, actor, &v3, 14);
-    sweep(&vault, &artifact, 2, 3, &[], actor);
-    assert_mapped(&vault, &artifact, &thread, 3, &budget);
-    assert_eq!(docx_span(&v3, &budget).as_deref(), Some("Budget: 40k."));
-}
 
 #[test]
 fn xlsx_removed_sheet_that_returns_by_name_never_rebinds_a_lost_anchor() {
