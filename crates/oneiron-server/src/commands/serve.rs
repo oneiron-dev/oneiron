@@ -18,6 +18,7 @@ use super::{history_import, local_servers};
 
 mod hooks;
 mod page_seal;
+mod sleep_release;
 mod startup_gate;
 mod stop;
 mod workers;
