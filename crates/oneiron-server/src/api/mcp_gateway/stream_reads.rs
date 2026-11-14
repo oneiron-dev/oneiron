@@ -1,7 +1,9 @@
 //! Own-task STREAM lines as one connection's credential may read them now:
 //! the board publisher admits each event under this predicate, and the result
 //! drain reads every queued `tasks:` line again before it rides. A host wake
-//! adapter reads each drained wake's TASK again under the same predicate.
+//! adapter reads each drained wake's TASK again under the same predicate. A
+//! queued `children:` line rides only while its child's committed spawner is
+//! the connection's actor (census L2-38).
 
 use super::board_setup::mcp_scope_admits_row;
 use super::mcp_scoped_read;
@@ -10,7 +12,8 @@ use crate::server::SyncServer;
 
 /// The frame less every queued TASK line this reader may not be shown now:
 /// its TASK is gone from the board (erased, cancelled, acknowledged) or no
-/// longer readable by this credential. `None` when nothing is left.
+/// longer readable by this credential, and less every child line whose child
+/// this actor did not spawn. `None` when nothing is left.
 pub(super) fn mcp_live_task_lines(
     server: &SyncServer,
     actor: &McpResolvedActor,
@@ -23,21 +26,34 @@ pub(super) fn mcp_live_task_lines(
         row.key.strip_prefix("tasks:").is_none_or(|task| {
             oneiron::EntityId::from_hex(task)
                 .is_ok_and(|task| mcp_stream_reads_task(&server.vault, actor, &task))
-        })
+        }) && row
+            .key
+            .strip_prefix(oneiron::context_board::CHILD_DONE_KEY_PREFIX)
+            .is_none_or(|child| {
+                oneiron::context_board::child_spawner(&server.vault, child)
+                    .is_ok_and(|spawner| spawner == Some(actor.actor_ref))
+            })
     });
     (!rows.is_empty()).then_some(frame)
 }
 
-/// The frame less everything but its own-task `tasks:` lines: all a narrowed
-/// connection's carrier may deliver, since only TASK rows are projected
-/// through its world and facet ceiling. `None` when nothing is left.
+/// The frame less everything but its own-task `tasks:` lines and its own
+/// children's `children:` lines: all a narrowed connection's carrier may
+/// deliver, since only TASK rows are projected through its world and facet
+/// ceiling, and a connection's children are its own lineage (Engine RULING
+/// L2-38-CHILD-KEY = A). `None` when nothing is left.
 pub(super) fn mcp_own_task_lines(
     mut frame: oneiron::context_board::BoardStreamFrame,
 ) -> Option<oneiron::context_board::BoardStreamFrame> {
     let oneiron::context_board::FrameKind::Delta(rows) = &mut frame.kind else {
         return None;
     };
-    rows.retain(|row| row.key.starts_with("tasks:"));
+    rows.retain(|row| {
+        row.key.starts_with("tasks:")
+            || row
+                .key
+                .starts_with(oneiron::context_board::CHILD_DONE_KEY_PREFIX)
+    });
     (!rows.is_empty()).then_some(frame)
 }
 

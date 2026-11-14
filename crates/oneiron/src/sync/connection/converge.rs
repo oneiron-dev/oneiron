@@ -295,7 +295,7 @@ impl SyncConnection {
     /// for windows outside `keys` too: it reads on while the home sends
     /// anything, and gives up only after `MAX_CONVERGENCE_ROUNDS` pumps in a
     /// row read nothing. `true` once every key holds.
-    async fn pump_until_each(
+    pub(super) async fn pump_until_each(
         &self,
         write: &mut WsSink,
         read: &mut WsSource,

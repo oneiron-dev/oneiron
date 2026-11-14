@@ -35,6 +35,7 @@
 //! pack's notice mark or retirement-day move included (FIX 22059).
 
 mod claim_vad_payment;
+mod lapse_writer;
 mod report;
 mod schedule;
 mod sweeps;
@@ -46,6 +47,9 @@ mod wake;
 
 pub(crate) use self::claim_vad_payment::ClaimVadPayment;
 pub use self::claim_vad_payment::ClaimVadPaymentWorker;
+pub(crate) use self::lapse_writer::{
+    commitment_lapse_writer_id, ensure_commitment_lapse_writer_machine,
+};
 pub use self::report::{
     HardEraseWork, HousekeepingReport, SecretLiftWork, SweepOutcome, SweepReport, SweepWork,
 };
@@ -90,8 +94,9 @@ impl Vault {
     /// row of the report. Unless the host has asked it to stop, the pass
     /// first runs one capped communication projector pass, then releases
     /// the due watcher ticks and prunes the hook feeds once (FIX 22180),
-    /// whose failures are logged and never fail a sweep, and drops the
-    /// task-held inquiry answers whose task has ended. The model pack
+    /// whose failures are logged and never fail a sweep, drops the
+    /// task-held inquiry answers whose task has ended, and advances the
+    /// pending check-ins due by now (ROLES-CHECKIN P2.3). The model pack
     /// retirement sweep runs against no model access: a host that binds
     /// model offers calls [`Self::housekeeping_with_access`].
     pub fn housekeeping(&self, budget: HousekeepingBudget) -> Result<HousekeepingReport> {
@@ -115,6 +120,7 @@ impl Vault {
         }
         release_ticks_and_prune_hook_feeds(self, &deadline);
         evict_ended_inquiry_answers(self, &deadline);
+        advance_due_check_ins(self, &deadline);
         #[cfg(feature = "sync")]
         admit_carried_turn_program_wakes(self, &deadline);
         self.housekeeping_pass(Selection::Due, budget, access)
@@ -123,8 +129,8 @@ impl Vault {
     /// Runs every engine sweep now, due or not, and reschedules each from
     /// now: the owner's "run housekeeping now". Unless the host has asked it
     /// to stop, it first releases the due watcher ticks and prunes the hook
-    /// feeds once and drops the ended tasks' inquiry answers, as
-    /// [`Self::housekeeping`] does, so `oneiron maintain` settles a stopped
+    /// feeds once, drops the ended tasks' inquiry answers and advances the
+    /// due pending check-ins, as [`Self::housekeeping`] does, so `oneiron maintain` settles a stopped
     /// vault's due watch TASKs (FIX 22180). The model pack
     /// retirement sweep runs against no model access: a host that holds model
     /// offers, `serve` or `oneiron maintain` with the offers its config and
@@ -144,6 +150,7 @@ impl Vault {
         let deadline = budget.deadline();
         release_ticks_and_prune_hook_feeds(self, &deadline);
         evict_ended_inquiry_answers(self, &deadline);
+        advance_due_check_ins(self, &deadline);
         #[cfg(feature = "sync")]
         admit_carried_turn_program_wakes(self, &deadline);
         self.housekeeping_pass(Selection::All, budget, access)
@@ -169,7 +176,8 @@ impl Vault {
     /// deadline (FIX 8753), and the first day to come on which the model
     /// pack retirement pass owes work, a notice mark with no notice recorded
     /// or a retirement-day move (FIX 22059), and the next due watcher tick on
-    /// the node that releases them (FIX 22180). Cache and retention hygiene
+    /// the node that releases them (FIX 22180), and the first due pending
+    /// check-in (ROLES-CHECKIN P2.3). Cache and retention hygiene
     /// never wake a vault. Reads one row per sweep, the schedule, the
     /// retained work queues, the installed model packs' kept checks (FIX
     /// 20043) and notice records, and the first due index row, so a host can
@@ -214,6 +222,11 @@ impl Vault {
         // The next due timer turn program (untangle slice 6.8c), released
         // where the ticks are, on the same carrier.
         if let Some(at) = crate::dreamer_runner::next_program_timer_at(self)? {
+            owed.push((HousekeepingSweep::ModelPackRetirement, at));
+        }
+        // The first due pending check-in (ROLES-CHECKIN P2.3, 2e): the
+        // pass above advances it, on the same carrier.
+        if let Some(at) = crate::check_in::next_check_in_due_at(self)? {
             owed.push((HousekeepingSweep::ModelPackRetirement, at));
         }
         let mut earliest: Option<u64> = None;
@@ -496,5 +509,18 @@ fn evict_ended_inquiry_answers(vault: &Vault, deadline: &Deadline) {
     }
     if let Err(error) = vault.evict_inquiry_answers() {
         tracing::warn!(%error, "housekeeping: ended inquiry answers wait for the next pass");
+    }
+}
+
+/// Advances the pending check-ins due by now (ROLES-CHECKIN P2.3, 2e): a
+/// rung whose wait is over climbs, the asker's `until` lets the ask go, and
+/// the chain's end applies canon's table "When nobody answers". A row that
+/// fails stays due for the next pass.
+fn advance_due_check_ins(vault: &Vault, deadline: &Deadline) {
+    if deadline.stopped() {
+        return;
+    }
+    if let Err(error) = vault.advance_due_check_ins() {
+        tracing::warn!(%error, "housekeeping: due check-ins wait for the next pass");
     }
 }

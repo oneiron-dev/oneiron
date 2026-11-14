@@ -12,7 +12,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::temporal::TimeRange;
-use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
+use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope};
 
 use super::codec::commitment_claim_candidate_from_body;
 use super::{CommitmentStatus, PREDICATE_COMMITMENT_RECORD, decode_commitment_value};
@@ -161,7 +161,9 @@ pub(crate) fn lapse_commitments_in_txn(
 ///
 /// The preflight judged and recorded each lapse under its successor's id
 /// ([`lapse_claim_id`]), so the successor's apply consumes that receipt
-/// identity instead of minting another.
+/// identity instead of minting another. A System writer's envelope is signed
+/// per successor with the signer the host retained for it, as the preflight
+/// signed it ([`lapse_envelope_for`]).
 #[expect(
     clippy::too_many_arguments,
     reason = "the lapse helper threads the batch apply chokepoint's existing handles verbatim"
@@ -185,10 +187,11 @@ fn lapse_through_successors_in_txn(
     let mut ops = Vec::with_capacity(pending.len() * 2);
     for lapse in pending {
         let successor = lapse.id;
+        let envelope = lapse_envelope_for(store, &*wtxn, &lapse, envelope)?;
         ops.push(BatchOp::ClaimCandidate {
             id: successor,
             candidate: Box::new(lapse.candidate),
-            envelope: envelope.clone(),
+            envelope,
             occurred: lapse.occurred,
             learned_at,
             internal_lexical_query_hint: false,
@@ -217,6 +220,7 @@ fn lapse_through_successors_in_txn(
             analyzer,
             wtxn,
             (successor, commitment),
+            envelope.actor(),
             learned_at,
             text_index_trusted,
         )?;
@@ -224,20 +228,51 @@ fn lapse_through_successors_in_txn(
     Ok(())
 }
 
+/// The envelope one lapse successor is written under: `envelope` itself, or,
+/// for a System writer (the housekeeping pass's commitment lapse writer), a
+/// copy signed over this successor's body with the signer the host retained
+/// for the writer. The batch preflight and the apply both call this, so the
+/// Gate judges the bytes the apply stores. Without a retained signer the copy
+/// stays unsigned and the write door refuses the MACHINE author.
+pub(crate) fn lapse_envelope_for(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    lapse: &PendingCommitmentLapse,
+    envelope: &WriteEnvelope,
+) -> Result<WriteEnvelope> {
+    let mut signed = envelope.clone();
+    crate::authority::sign_retained_machine_claim_for_store_in_txn(
+        store,
+        txn,
+        &lapse.id,
+        &lapse.candidate,
+        &mut signed,
+    )?;
+    Ok(signed)
+}
+
 /// Supersedes `predecessor` with `successor` in the caller's transaction, as
 /// [`Vault::supersede_claim_in_txn`](crate::Vault::supersede_claim_in_txn)
 /// does, for the batch apply, which holds the store and not the vault.
 ///
-/// The predecessor closes `superseded` at `now` (a MACHINE-born one through
-/// the owner's signed close), and the `supersedes` edge and the revision pair
-/// land with it. Every write stages in the caller's transaction, so a refusal
+/// The predecessor closes `superseded` at `now`, a MACHINE-born one inside
+/// its own validity window, and the `supersedes` edge and the revision pair
+/// land with it. A MACHINE-born predecessor closes through the host's signed
+/// close, attributed to `writer` when the lapse is a System writer's (the
+/// housekeeping pass's commitment lapse writer) and to the owner otherwise,
+/// as before. Every write stages in the caller's transaction, so a refusal
 /// takes the whole batch down with it.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the lapse helper threads the batch apply chokepoint's existing handles verbatim"
+)]
 fn supersede_with_successor_in_txn(
     store: &crate::store::Store,
     config: &crate::config::VaultConfig,
     analyzer: &crate::analyzer::MultilingualAnalyzer,
     wtxn: &mut heed::RwTxn<'_>,
     (successor, predecessor): (EntityId, EntityId),
+    writer: WriteActor,
     now: u64,
     text_index_trusted: bool,
 ) -> Result<()> {
@@ -245,8 +280,17 @@ fn supersede_with_successor_in_txn(
     let (mut body, header) = active_claim_parts_in(store, &*wtxn, &predecessor)?;
     crate::Vault::require_source_trust_supersession_rights(&successor_body, &body)?;
     // As the claim supersession: before its occurred start the predecessor
-    // closes at that start, and the supersession keeps the real `now`.
-    let closed_end = now.max(header.occurred_start);
+    // closes at that start, and the supersession keeps the real `now`. A
+    // MACHINE-born predecessor keeps its own validity end, which its signed
+    // history requires: a projected instance's window is its due instant,
+    // and the sweep runs after it.
+    let machine = crate::authority::machine_claim_needs_history(store, &*wtxn, &body)?;
+    let end = if machine {
+        crate::claim::transition::machine_close_end(&body, now)
+    } else {
+        now
+    };
+    let closed_end = end.max(header.occurred_start);
     let revisions = crate::claim::supersession_diff::capture_in_store_txn(
         store,
         &*wtxn,
@@ -254,8 +298,15 @@ fn supersede_with_successor_in_txn(
         successor,
     )?;
     body.lifecycle = ClaimLifecycleStatus::Superseded;
-    body.valid_to = Some(now);
-    if crate::authority::machine_claim_needs_history(store, &*wtxn, &body)? {
+    body.valid_to = Some(end);
+    if machine {
+        let (closer, closer_class) = match writer.actor_class() {
+            EdgeActorClass::System => (writer.entity_ref(), EdgeActorClass::System),
+            EdgeActorClass::Human | EdgeActorClass::Agent => (
+                crate::vault::embedded_owner_actor_id()?,
+                EdgeActorClass::Human,
+            ),
+        };
         body = stage_machine_claim_transition(
             store,
             config,
@@ -263,9 +314,9 @@ fn supersede_with_successor_in_txn(
             wtxn,
             predecessor,
             ClaimTransitionKind::SupersedeClose,
-            TransitionDelta::ValidTo(now),
-            crate::vault::embedded_owner_actor_id()?,
-            EdgeActorClass::Human,
+            TransitionDelta::ValidTo(end),
+            closer,
+            closer_class,
             TimeRange {
                 start: now,
                 end: now,

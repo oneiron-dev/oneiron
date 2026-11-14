@@ -137,7 +137,7 @@ pub(super) fn run(
             let report = crate::commitment_lifecycle::lapse_overdue_commitments(
                 vault,
                 now,
-                &lapse_envelope()?,
+                &lapse_envelope(vault)?,
             )?;
             SweepWork::Commitments {
                 lapsed: count(report.lapsed.len()),
@@ -509,17 +509,25 @@ fn body_line_index_rebuild(vault: &Vault, deadline: &Deadline) -> Result<Run> {
     Ok(complete(rebuilt, failed, dropped, !had_remainder))
 }
 
-/// The envelope the host lapses an overdue instance under: the vault owner's,
-/// as the owner-typed lifecycle doors act, observing that a due time passed.
-/// The instance is the projector's signed birth, which only an ordinary
-/// successor may replace; the projector's own envelope would have to rewrite
-/// that birth.
-fn lapse_envelope() -> Result<WriteEnvelope> {
-    Ok(WriteEnvelope::new(
-        WriteActor::new(
+/// The envelope the host lapses an overdue instance under, observing that a
+/// due time passed. The pass lapses because time ran out, which is no
+/// person's act, so it writes as the commitment lapse writer, a System
+/// MACHINE (L9-42-LAPSE-WRITER = A), when the policy in force names a ceiling
+/// for it and the host retained its signer. Otherwise it writes as the vault
+/// owner, as the owner-typed lifecycle doors act, which it did before that
+/// writer. Either way the instance is the projector's signed birth, which
+/// only an ordinary successor may replace; the projector's own envelope would
+/// have to rewrite that birth.
+fn lapse_envelope(vault: &Vault) -> Result<WriteEnvelope> {
+    let actor = match super::lapse_writer::commitment_lapse_writer(vault)? {
+        Some(writer) => WriteActor::new(writer, EdgeActorClass::System),
+        None => WriteActor::new(
             crate::vault::embedded_owner_actor_id()?,
             EdgeActorClass::Human,
         ),
+    };
+    Ok(WriteEnvelope::new(
+        actor,
         ClaimSource::Observed,
         WriteProvenance::new(rmpv::Value::from(COMMITMENT_LAPSE_PROVENANCE))?,
         ClaimApprovalStatus::Auto,

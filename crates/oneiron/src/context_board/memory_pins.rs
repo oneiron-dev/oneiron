@@ -223,8 +223,8 @@ pub(super) fn pinned_row(
     };
     if let Some(disclosure) = disclosure {
         let txn = reader.vault().store.env.read_txn()?;
-        if !disclosure.admits(
-            &reader.vault().store,
+        if !disclosure.admits_in(
+            reader.vault(),
             &txn,
             &hydrated.id,
             hydrated.entity_type,
