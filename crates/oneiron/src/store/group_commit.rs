@@ -898,6 +898,23 @@ impl Store {
             && self.group_commit.detached.wait_settled_until(deadline)
     }
 
+    /// Blocks until the write transaction open now, if any, has committed or
+    /// rolled back: it takes the writer once and gives it back, writing
+    /// nothing. A stretch's flip back off record and its close call it after
+    /// they publish the new mode generation, so a base write that passed its
+    /// last route check before that commits before they return, and one that
+    /// checks after it is refused (ARCH-0052 #d5-proof-open). It takes the
+    /// writer past the archive seal, as it writes nothing: a sealed vault's
+    /// close does not fail on it. A thread inside a write holds the writer
+    /// itself, so no other write is open, and it does not wait.
+    pub(crate) fn wait_for_open_write_txn(&self) -> Result<(), Error> {
+        if active_write_txn_depth() > 0 {
+            return Ok(());
+        }
+        self.env.past_seal_write_txn()?.abort();
+        Ok(())
+    }
+
     /// [`Self::group_write`] for a write whose `Ok` keeps its rows and whose
     /// `Err` drops them.
     pub(crate) fn write_in_group<T>(

@@ -204,6 +204,7 @@ impl<'vault> OffRecordSession<'vault> {
         recheck()?;
         let was = state.record.mode;
         super::vault_api::set_entry_mode(
+            &self.vault.store,
             &self.entry,
             &mut state,
             &self.session_ref,
@@ -309,6 +310,7 @@ impl<'vault> OffRecordSession<'vault> {
             return Ok(());
         }
         super::vault_api::set_entry_mode(
+            &self.vault.store,
             &self.entry,
             &mut state,
             &self.session_ref,

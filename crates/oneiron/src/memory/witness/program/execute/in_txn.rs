@@ -256,10 +256,11 @@ impl Memory<'_> {
         // (state -> writer), so a base writer taking it (writer -> state)
         // would invert the order. `revalidate` takes only the overlay's
         // own lifecycle lock, which no holder ever blocks on the base
-        // writer for. What remains uncovered is the instant between this
-        // check and `wtxn.commit()`; closing that would require the flip
-        // to drain base writers the way `seal_writes` drains overlay
-        // segments.
+        // writer for. The instant between this check and the commit is the
+        // flip's and the close's to cover: each takes the writer once after
+        // it publishes (`Store::wait_for_open_write_txn`), so a witness that
+        // passed here commits before either returns (ARCH-0052
+        // #d5-proof-open).
         if let WitnessSink::Base(base) = sink
             && let Some(route) = base.route
         {

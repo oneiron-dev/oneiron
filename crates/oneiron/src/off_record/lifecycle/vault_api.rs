@@ -325,7 +325,10 @@ impl Vault {
     ///
     /// Both directions publish a fresh overlay mode generation under the held
     /// state lock, so a `SessionWriteRoute` minted before the flip is refused
-    /// by `SessionWriteRoute::revalidate` before it can stage or commit.
+    /// by `SessionWriteRoute::revalidate` before it can stage or commit. A
+    /// flip back off record then waits for the base write open now, so one
+    /// that passed its last route check before the flip commits before the
+    /// flip returns (ARCH-0052 #d5-proof-open).
     pub fn set_off_record_session_mode(
         &self,
         session_ref: &str,
@@ -357,7 +360,7 @@ impl Vault {
                 },
             ));
         }
-        set_entry_mode(&entry, &mut state, session_ref, mode)
+        set_entry_mode(&self.store, &entry, &mut state, session_ref, mode)
     }
 
     /// Opens the session-local emit receipt log bound to a live off-record
@@ -399,7 +402,10 @@ impl Vault {
     /// which every mutator rejects with [`OffRecordError::OffRecordSessionClosing`](crate::error::OffRecordError::OffRecordSessionClosing), so
     /// nothing writes into a room that is going away. Each later phase
     /// re-reads the record and fails closed on drift instead of trusting the
-    /// frozen snapshot. The registry entry is dropped LAST, so a close
+    /// frozen snapshot. A stretch on record waits, once its overlay closed,
+    /// for the base write open now, so one that passed its last route check
+    /// before the close commits before the close returns (ARCH-0052
+    /// #d5-proof-open). The registry entry is dropped LAST, so a close
     /// interrupted mid-way can simply be called again (mint a fresh empty log
     /// via [`Vault::off_record_receipt_log`] to retry).
     pub fn close_off_record_session(
@@ -577,6 +583,14 @@ impl Vault {
         // no promoted row to spare from one.
         let turns_deleted = overlay_transcript_deleted;
 
+        // On record, the overlay's close bumped the mode generation, so a
+        // base write that checks its route from here is refused. One that
+        // passed its last check before commits before this close returns:
+        // the close waits for the writer once (ARCH-0052 #d5-proof-open).
+        if record.mode == OffRecordMode::OnRecord {
+            self.store.wait_for_open_write_txn()?;
+        }
+
         // Validate the frozen in-process record one last time, then drop the
         // registry entry. Neither the session record nor its content ever had
         // a durable row to remove.
@@ -631,7 +645,13 @@ fn vet_roomless_session_ref(session_ref: &str) -> Result<()> {
 /// [`Vault::set_off_record_session_mode`]). A handle passes its own entry, so
 /// the flip lands on the stretch it holds, never on one that took its name
 /// since.
+///
+/// A flip back off record waits, once it published, for the base write
+/// open now (ARCH-0052 #d5-proof-open). The state lock stays held across
+/// that wait, the order every session mutator already takes (state, then
+/// writer): no base writer takes the state lock.
 pub(super) fn set_entry_mode(
+    store: &crate::store::Store,
     entry: &OffRecordSessionEntry,
     state: &mut OffRecordSessionEntryState,
     session_ref: &str,
@@ -668,5 +688,11 @@ pub(super) fn set_entry_mode(
         state.continuation_shell = None;
     }
     entry.publish_state(state);
+    // The rearm bumped the mode generation, so a base write that checks its
+    // route from here is refused. One that passed its last check before
+    // commits before this flip returns.
+    if mode == OffRecordMode::OffRecord {
+        store.wait_for_open_write_txn()?;
+    }
     Ok(state.record.clone())
 }
