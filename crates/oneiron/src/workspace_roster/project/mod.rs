@@ -100,6 +100,9 @@ pub(crate) use revision::{
     PROJECT_REVISION_SHORT_ID_PREFIX, is_project_revision_type, project_revision_type,
 };
 pub use revision::{ProjectRevision, ProjectRevisionHash, ProjectRevisionProof};
+pub use room_facet_set::{
+    ProjectRoomFacetsSetRequest, ProjectRoomFacetsState, set_project_room_facets_from_request_as,
+};
 pub use roster::{ProjectRosterWriteOutcome, ProjectRosterWriteRequest};
 // FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-REVIEW-TESTS]: the lib test target's type check fails here (6 errors: E0061 x4, E0063 x2); port it, then drop this gate
 #[cfg(any())]

@@ -18,9 +18,12 @@ pub fn set_room_facets_by_request(
     signer: &OwnerProjectSigner<'_>,
     request: serde_json::Value,
 ) -> std::result::Result<serde_json::Value, String> {
-    // RED SEAM: no request door runs the owner's set yet.
-    let _ = (vault, owner, signer, request);
-    Err("vault.projects.room_facets.set has no door".to_owned())
+    let request = serde_json::from_value(request).map_err(|error| error.to_string())?;
+    let state = crate::workspace_roster::set_project_room_facets_from_request_as(
+        vault, owner, signer, request,
+    )
+    .map_err(|error| format!("{error:?}"))?;
+    serde_json::to_value(state).map_err(|error| error.to_string())
 }
 
 /// The owner sets `project`'s room facet set; `None` drops it.

@@ -177,6 +177,7 @@ mod policy_doors;
 mod proactivity_digest_doors;
 mod program_read_doors;
 mod project_card_doors;
+mod project_room_facet_doors;
 mod proxy_doors;
 mod reaction_doors;
 mod receipts;

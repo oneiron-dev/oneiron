@@ -165,8 +165,9 @@ pub use project::{
     ProjectForkEvidence, ProjectForkOutcome, ProjectFrontier, ProjectHistoryOverBudget,
     ProjectHistoryPolicy, ProjectHistoryQuestion, ProjectParentWitness, ProjectRank,
     ProjectResolution, ProjectRevision, ProjectRevisionHash, ProjectRevisionProof,
-    ProjectRosterWriteOutcome, ProjectRosterWriteRequest, ProjectSeal, ProjectWitness,
-    ProjectWriteOutcome,
+    ProjectRoomFacetsSetRequest, ProjectRoomFacetsState, ProjectRosterWriteOutcome,
+    ProjectRosterWriteRequest, ProjectSeal, ProjectWitness, ProjectWriteOutcome,
+    set_project_room_facets_from_request_as,
 };
 pub use project::{
     GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,

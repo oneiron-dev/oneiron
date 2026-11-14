@@ -282,6 +282,8 @@ pub(crate) use super::vector_doors::*;
 pub(crate) use super::stream_recovery_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
+// The owner's room facet set door (L7-39 PR 3), likewise.
+pub(crate) use super::project_room_facet_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
 // The plugin Context Board section doors (DOOR-112), likewise.
