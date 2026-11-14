@@ -779,6 +779,8 @@ fn a_revoked_install_keys_choices_stay_refused_through_the_refold() {
     assert!(
         !shared.is_valid(&second),
         "the refold does not fold the second choice back above the refused first"
+    );
+}
 
 /// The embedded owner hands ownership to a new Owner and stays as Admin,
 /// which revokes the host root's binding of them; the new Owner hands it
