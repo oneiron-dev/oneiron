@@ -138,7 +138,8 @@ pub(crate) use self::found_keys::purpose_questions_in_txn;
 pub use self::found_keys::{
     FOUND_KEY_REASON_KEPT_AS_TEXT, FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard,
     FoundKeyCursor, FoundKeyNotice, FoundKeyNoticePage, FoundKeySettled,
-    NOTIFICATION_PRODUCER_FOUND_KEY,
+    NOTIFICATION_PRODUCER_FOUND_KEY, WrittenFoundKeyCard, WrittenFoundKeyCursor,
+    WrittenFoundKeyPage, WrittenFoundKeySettled,
 };
 pub(crate) use self::found_keys::{
     FoundNote, KeptValues, RuledScreenSlot, erase_found_key_actor_in_txn, found_key_actions_in_txn,
