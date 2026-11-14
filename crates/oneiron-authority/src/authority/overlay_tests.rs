@@ -2783,3 +2783,127 @@ fn equal_values_commit_differently_by_path_and_seed() {
     assert_ne!(value_at(&first, readable), value_at(&second, readable));
     assert_ne!(value_at(&first, editable), value_at(&second, editable));
 }
+
+#[test]
+fn a_sealed_row_verifies_as_structure_with_the_fields_its_signer_rule_reads() {
+    let mint = signed_slip_mint();
+    let bytes = encode_authority_log_entry_body(&mint).expect("the signed mint encodes");
+    let row = verify_authority_public_row(&bytes)
+        .expect("a sealed signed mint verifies without its overlay record");
+    assert_eq!(row.standing(), &PublicStanding::SlipMint);
+    assert_eq!(
+        row.scaffold().hash,
+        authority_entry_hash(&mint).expect("the mint has a hash"),
+    );
+    let structure = FoldRow::PassThrough(row);
+    assert_eq!(
+        structure.hash().expect("a pass-through row has its hash"),
+        authority_entry_hash(&mint).expect("the mint has a hash"),
+    );
+    assert_eq!(structure.signer(), &mint.signer);
+    assert_eq!(structure.cosigns(), mint.cosigns.as_slice());
+    assert_eq!(structure.seq(), mint.seq);
+    assert_eq!(structure.parent_hashes(), mint.parent_hashes.as_slice());
+    assert_eq!(structure.vault_id(), mint.vault_id);
+    assert!(structure.open().is_none());
+    assert_eq!(FoldRow::Open(mint.clone()).open(), Some(&mint));
+
+    let AuthorityOp::EnrollDevice { mut device } = sample_named("EnrollDevice") else {
+        panic!("the device sample must enroll a device");
+    };
+    device.attestation.kind = "manufacturer-attestation/v1".to_owned();
+    device.attestation.evidence = vec![3, 4];
+    let op = AuthorityOp::EnrollDevice {
+        device: device.clone(),
+    };
+    let seed = authority_overlay_seed_for(&op).expect("identifying evidence gets a seed");
+    assert!(seed.is_some());
+    let enroll = signed_entry(op, seed);
+    let bytes = encode_authority_log_entry_body(&enroll).expect("the signed enrollment encodes");
+    let row = verify_authority_public_row(&bytes)
+        .expect("a sealed signed enrollment verifies without its overlay record");
+    assert_eq!(
+        row.standing(),
+        &PublicStanding::EnrollDevice {
+            key: device.key.clone(),
+            tier: device.tier,
+            roles: device.roles,
+        },
+    );
+}
+
+#[test]
+fn a_row_with_nothing_sealed_or_a_broken_signature_is_not_structure() {
+    let revoke = signed_entry(sample_named("SlipRevoke"), None);
+    let plain = encode_authority_log_entry_body(&revoke).expect("the signed revoke encodes");
+    assert!(
+        verify_authority_public_row(&plain).is_err(),
+        "a row with nothing sealed opens whole, it never passes through",
+    );
+    let mint = signed_slip_mint();
+    let sealed = encode_authority_log_entry_body(&mint).expect("the signed mint encodes");
+    let signature_offset = sealed
+        .windows(mint.signer.signature.len())
+        .position(|part| part == mint.signer.signature.as_slice())
+        .expect("the stored body contains its raw signature bytes");
+    let mut tampered = sealed;
+    tampered[signature_offset] ^= 1;
+    assert!(verify_authority_public_row(&tampered).is_err());
+}
+
+#[test]
+fn a_commitment_node_sits_only_at_an_overlay_leaf_path_of_its_kind() {
+    let node = Value::Ext(AUTHORITY_OVERLAY_EXT_TYPE, vec![1; 32]);
+    let mint = |key: &str, value: Value| {
+        Value::Map(vec![
+            (Value::from(OP_KEY_KIND), Value::from(OP_KIND_SLIP_MINT)),
+            (Value::from(key), value),
+        ])
+    };
+    assert!(commitments_sit_at_leaf_paths(
+        &mint(SLIP_KEY_RECORDS, node.clone()),
+        OP_KIND_SLIP_MINT,
+    ));
+    assert!(!commitments_sit_at_leaf_paths(
+        &mint(
+            SLIP_KEY_RECORDS,
+            Value::Ext(AUTHORITY_OVERLAY_EXT_TYPE, vec![1; 31]),
+        ),
+        OP_KIND_SLIP_MINT,
+    ));
+    assert!(!commitments_sit_at_leaf_paths(
+        &mint(SLIP_KEY_RECORDS, Value::Array(vec![node.clone()])),
+        OP_KIND_SLIP_MINT,
+    ));
+    assert!(!commitments_sit_at_leaf_paths(
+        &mint(SLIP_KEY_RECORDS, node.clone()),
+        OP_KIND_SLIP_REVOKE,
+    ));
+    assert!(!commitments_sit_at_leaf_paths(
+        &mint("binding_key", node.clone()),
+        OP_KIND_SLIP_MINT,
+    ));
+    let enroll = |attestation_kind: &str| {
+        Value::Map(vec![
+            (Value::from(OP_KEY_KIND), Value::from(OP_KIND_ENROLL_DEVICE)),
+            (
+                Value::from("device"),
+                Value::Map(vec![(
+                    Value::from("attestation"),
+                    Value::Map(vec![
+                        (Value::from(KEY_ATTEST_KIND), Value::from(attestation_kind)),
+                        (Value::from(KEY_ATTEST_EVIDENCE), node.clone()),
+                    ]),
+                )]),
+            ),
+        ])
+    };
+    assert!(commitments_sit_at_leaf_paths(
+        &enroll("manufacturer-attestation/v1"),
+        OP_KIND_ENROLL_DEVICE,
+    ));
+    assert!(
+        !commitments_sit_at_leaf_paths(&enroll(HOST_ROOT_ATTESTATION_KIND), OP_KIND_ENROLL_DEVICE),
+        "evidence of a kind that names nothing stays in the scaffold",
+    );
+}
