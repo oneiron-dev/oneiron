@@ -66,6 +66,9 @@ impl Reranker for ArousalReranker {
     fn id(&self) -> &str {
         &self.id
     }
+    fn deterministic(&self) -> bool {
+        true
+    }
     fn rerank(&self, _: &str, candidates: &[RerankCandidate<'_>]) -> Result<Vec<f32>> {
         Ok(candidates
             .iter()
@@ -105,6 +108,9 @@ impl EmotionSimilarityReranker {
 impl Reranker for EmotionSimilarityReranker {
     fn id(&self) -> &str {
         &self.id
+    }
+    fn deterministic(&self) -> bool {
+        true
     }
     fn rerank(&self, _: &str, candidates: &[RerankCandidate<'_>]) -> Result<Vec<f32>> {
         Ok(candidates

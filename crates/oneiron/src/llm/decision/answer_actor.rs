@@ -105,4 +105,32 @@ pub(crate) fn erase_ask_actor_in_txn(
     Ok(())
 }
 
+/// Erasing what asks were asked over (FIX 3520): each ask whose pack state
+/// `names` holds drops that state, and one still open is withdrawn
+/// ([`DecisionAsk::forget_pack_state`]). Its question, evidence, times and
+/// any answer stay. One-way, in the erase's own transaction. It wakes no
+/// waiter: its one caller's asks, the health check's, are polled, never
+/// waited on.
+///
+/// # Errors
+///
+/// Storage errors, or an ask row that cannot be read.
+pub(crate) fn forget_ask_states_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    names: impl Fn(&serde_json::Value) -> bool,
+) -> Result<()> {
+    let now = vault.store.clock.now_recorded_at();
+    let mut asks = Vec::new();
+    for (seq, mut ask) in ASKS.scan(&vault.store, wtxn)? {
+        if ask.pack_state.as_ref().is_some_and(&names) && ask.forget_pack_state(now) {
+            asks.push((seq, ask));
+        }
+    }
+    for (seq, ask) in asks {
+        ASKS.put(&vault.store, wtxn, &seq, &ask)?;
+    }
+    Ok(())
+}
+
 pub use crate::model_decision::AnswerActor;

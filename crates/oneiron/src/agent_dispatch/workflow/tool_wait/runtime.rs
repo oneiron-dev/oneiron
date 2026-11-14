@@ -374,13 +374,15 @@ pub(crate) fn requeue_failure_in_txn(
     }
     // Erasure can race a paid provider failure. Requeue the fenced leaf,
     // never its body; the next pump cancels its erased form before claim.
-    if row.content.is_some()
-        && checked_content(vault, txn, &actual, &located)?
-            .progress
-            .wait
-            .is_some()
-    {
-        return Err(invalid("workflow checkpoint retry has pending wait"));
+    //
+    // A checkpoint that still holds a wait on this leased leaf is a call
+    // resumed from its own park: the hook's hold was released before this
+    // claim, and the retained round saves no cursor before that call parks
+    // again. The retry keeps the checkpoint as it is, so the next claim
+    // resumes the same call with its invocation and use ordinal and finds
+    // the ask its hook saved ([WORKFLOW-PARK-RESUMED-CALL-RETRY]).
+    if row.content.is_some() {
+        checked_content(vault, txn, &actual, &located)?;
     }
     let reason = input
         .last_error
