@@ -159,6 +159,7 @@ impl LensRenderFrame {
                         source_card_id: render.card_id.clone(),
                         source_element_id: event.element_id.clone(),
                         selected_context: Vec::new(),
+                        state: next_state,
                     },
                 }
             }

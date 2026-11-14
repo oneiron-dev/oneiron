@@ -148,6 +148,18 @@ impl LensRenderFrame {
         Ok(backing_ref.clone())
     }
 
+    /// Every row this frame binds, proved again under `scoped_read` now
+    /// (GENUI-STATE-PERSIST): a held card handed back on a reload names only
+    /// rows its reader still reads, as each event's backing refs are proved
+    /// again. The first row the read no longer admits, or that moved since the
+    /// render, refuses.
+    pub fn reprove_backing_refs(&self, scoped_read: &ScopedRead<'_>) -> Result<()> {
+        for backing_ref in &self.backing_refs {
+            self.resolve_backing_ref_token(scoped_read, &backing_ref.token)?;
+        }
+        Ok(())
+    }
+
     /// Turn a client atom selection into engine-issued read reach.
     ///
     /// The request names no target. The node is looked up in the exact render this
