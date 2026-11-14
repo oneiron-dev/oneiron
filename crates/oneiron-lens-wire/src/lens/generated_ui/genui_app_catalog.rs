@@ -264,8 +264,9 @@ pub struct GeneratedUiComponentAtom {
     pub catalog: GeneratedUiCatalogName,
     pub name: GeneratedUiComponentName,
     /// Plain JSON in which any value may be an expression of the closed tier
-    /// (ARCH-0048 G5 #2): `{"$state": "/<key>"}` or a `$computed` call. Only a
-    /// surface that declares [`GeneratedUiExpressionProfile`](super::GeneratedUiExpressionProfile)
+    /// (ARCH-0048 G5 #2): `{"$state": "/<key>"}`, a `$computed` call, a `$cond`
+    /// over the closed predicate algebra or a `$template`. Only a surface that
+    /// declares [`GeneratedUiExpressionProfile`](super::GeneratedUiExpressionProfile)
     /// keeps a component whose props hold one, and it resolves each against the
     /// card's `$state`, so the component sees plain values only.
     #[serde(default = "admit_any_props")]
