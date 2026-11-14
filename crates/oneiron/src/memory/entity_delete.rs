@@ -7,7 +7,9 @@ use super::{
     DeleteReceipt, DeleteRequestState, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_OWNER_BINDING_REQUIRED,
     Memory, MemoryError, MemoryResult, SafeDeleteReason,
 };
-use crate::check_in::{ActClass, CheckInDecision, CheckInScope, DoorAct, DoorCheckIn, RolePreset};
+use crate::check_in::{
+    ActClass, CheckInDecision, CheckInMode, CheckInScope, DoorAct, DoorCheckIn, RolePreset,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{
     AdmittedDeleteDoor, DeleteEntityOptions, DeleteEntityPreview, DeleteReason,
@@ -76,7 +78,10 @@ impl Memory<'_> {
     /// by role. A person the delete authority admits by role is judged under
     /// their membership role, in a writer of its own before the delete's
     /// rail: a Deputy's delete goes as `sure`, an Admin's and a Member's
-    /// never ask, and a Steward's always asks. A delete that asks commits
+    /// never ask, a Steward's delete of its own NOTE or TASK goes as
+    /// `own_item`, and a Steward's delete of another's item in scope always
+    /// asks (Engine ruling STEWARD-DELETE-WAIT = B: no role has less than a
+    /// Member's "go, own items"). A delete that asks commits
     /// its pending check-in alone, deletes nothing and answers
     /// `CHECK_IN_PENDING` naming it; once it is approved, the call that names
     /// it as `check_in_ref` spends it in that writer and deletes, and a
@@ -175,7 +180,7 @@ impl Memory<'_> {
                 .map_err(|refusal| role_delete_refusal(refusal, &owner_refusal))
         };
         let (judged, decision) =
-            match self.role_delete_check_in(id, reason, &authority, check_in_ref)? {
+            match self.role_delete_check_in(&target, reason, &authority, check_in_ref)? {
                 RoleDeleteCheckIn::Go {
                     authority: judged,
                     decision,
@@ -196,7 +201,7 @@ impl Memory<'_> {
         Ok(receipt)
     }
 
-    /// The check-in `self.actor`'s delete of `id` by role runs on, judged in
+    /// The check-in `self.actor`'s delete of `target` by role runs on, judged in
     /// a writer of its own before the delete's rail (2k5; P25-SHAPE Q1 =
     /// A): `authority` read there, then the Owner on their own proof, an
     /// agent unjudged (PR 3's act gate), and a person under their
@@ -211,7 +216,7 @@ impl Memory<'_> {
     /// [`check_in::person_door_check_in_in_txn`].
     fn role_delete_check_in(
         &self,
-        id: EntityId,
+        target: &DeleteTarget,
         reason: DeleteReason,
         authority: &dyn Fn(&heed::RoTxn<'_>) -> MemoryResult<DeleteAuthority>,
         check_in_ref: Option<&EntityId>,
@@ -233,7 +238,7 @@ impl Memory<'_> {
                         self.vault,
                         txn,
                         self.actor,
-                        &id,
+                        target,
                         reason,
                         check_in_ref,
                     )? {
@@ -586,10 +591,12 @@ fn spends_no_check_in() -> MemoryError {
     )
 }
 
-/// `person`'s delete of `record` for `reason`, judged under their
+/// `person`'s delete of `target` for `reason`, judged under their
 /// membership role in `txn`, the judge's writer (2k5; P25-SHAPE Q1 = A):
 /// the digest of the exact delete, the grant their pending check-in climbs
-/// from, and `check_in_ref` when they name an approved one.
+/// from, and `check_in_ref` when they name an approved one. A Steward's
+/// delete of its own NOTE or TASK goes at once as `own_item`, as a Member's
+/// does (Engine ruling STEWARD-DELETE-WAIT = B).
 ///
 /// # Errors
 ///
@@ -599,7 +606,7 @@ fn person_delete_check_in_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     person: EntityId,
-    record: &EntityId,
+    target: &DeleteTarget,
     reason: DeleteReason,
     check_in_ref: Option<&EntityId>,
 ) -> crate::Result<DoorCheckIn> {
@@ -611,14 +618,25 @@ fn person_delete_check_in_in_txn(
     let (grant, role) = vault
         .member_grant_in_txn(txn, creation.vault_id, person)?
         .ok_or_else(not_member)?;
+    let role = RolePreset::of_grant_role(role);
+    if role == RolePreset::Steward && target.owned_by_in(vault, txn, person)? {
+        return Ok(DoorCheckIn::Go(CheckInDecision {
+            act_class: ActClass::Delete.as_str().to_owned(),
+            role: role.as_str().to_owned(),
+            mode: Some(CheckInMode::NeverAsk.as_str().to_owned()),
+            basis: "own_item".to_owned(),
+            check_in: None,
+            requester: None,
+        }));
+    }
     let act = DoorAct {
         person,
-        role: RolePreset::of_grant_role(role),
+        role,
         grant,
         verb: DELETE_VERB,
         act: ActClass::Delete,
         scope: CheckInScope::default(),
-        effect_digest: check_in::record_delete_effect_digest(record, reason),
+        effect_digest: check_in::record_delete_effect_digest(&target.id(), reason),
     };
     let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
     check_in::person_door_check_in_in_txn(vault, txn, &act, check_in_ref, now)

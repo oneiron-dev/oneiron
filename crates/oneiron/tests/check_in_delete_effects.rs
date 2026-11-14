@@ -9,12 +9,16 @@
 //! - A Deputy's delete in scope goes on their own judgment (`sure`); an
 //!   Admin's delete in scope and a Member's delete of the NOTE it wrote never
 //!   ask. Each receipt names the role and why the delete went.
-//! - A Steward's delete in scope always asks (the table's Steward cell is
-//!   "propose"; the Steward holds the power, so it waits): the door commits
-//!   the pending check-in alone, deletes nothing and answers
-//!   `CHECK_IN_PENDING` naming it; a repeat names the same one. Before the
-//!   Owner approves, the named check-in deletes nothing. Once approved, the
-//!   call that names it deletes, spends it and its receipt names it.
+//! - A Steward's delete of another's item in scope always asks (the
+//!   table's Steward cell is "propose"; the Steward holds the power, so it
+//!   waits): the door commits the pending check-in alone, deletes nothing and
+//!   answers `CHECK_IN_PENDING` naming it; a repeat names the same one.
+//!   Before the Owner approves, the named check-in deletes nothing. Once
+//!   approved, the call that names it deletes, spends it and its receipt
+//!   names it.
+//! - A Steward's delete of its own NOTE goes at once with basis `own_item`,
+//!   as a Member's does (Engine ruling STEWARD-DELETE-WAIT = B, 14 Nov 16:11:
+//!   no role has less than a Member's "go, own items").
 //!
 //! The vault is rooted, and its human binding is the owner's (H149), so each
 //! other person deletes by the live `human` credential this host mints them,
@@ -339,6 +343,31 @@ fn a_deputy_an_admin_and_a_member_delete_at_once_and_record_why() {
             "the {role}'s receipt names the role and why it went"
         );
     }
+}
+
+#[test]
+fn a_stewards_delete_of_its_own_note_goes_at_once_as_own_item() {
+    let org = Org::new();
+    let note = org.member_note();
+    org.vault
+        .change_shared_member_role(
+            &proof(&org.vault, org.owner),
+            SHARED,
+            org.member,
+            Role::Steward,
+            None,
+        )
+        .expect("the Owner makes the NOTE's author a Steward");
+    let receipt = org
+        .delete(org.member, &note, None)
+        .expect("the Steward's own NOTE goes at once");
+    assert!(receipt.existed);
+    assert!(org.deleted(&note), "the Steward's own delete applied");
+    assert_eq!(
+        receipt.check_in,
+        Some(decision("steward", Some("full-access"), "own_item", None)),
+        "the receipt names its own item as why it went"
+    );
 }
 
 #[test]
