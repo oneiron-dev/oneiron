@@ -384,6 +384,56 @@ pub(super) enum SliceFate {
     },
 }
 
+/// Accounts one borrowed slice outcome into `charges`, without consuming it.
+///
+/// The charging statements and their order match `tally_slice_outcome`
+/// exactly: a finished step records its terminal binding, spent schema and
+/// finalize refusals record their usage, and any other spent error records
+/// its usage or the unsaved usage when it carries none. Trapped steps,
+/// finalize and hard-cut checkpoints, and budget refusals spend nothing. A
+/// bound generation step calls this before moving its original outcome into
+/// the shared receipt converter, so native and bound charge one
+/// implementation with no copies.
+pub(super) fn charge_borrowed_slice_outcome(
+    vault: &Vault,
+    outcome: &DurableStepResult<StepOutcome>,
+    unsaved_usage: Option<&LlmUsage>,
+    charges: &mut StepChargeTally,
+) -> Result<()> {
+    match outcome {
+        Ok(StepOutcome::Finished {
+            binding, response, ..
+        }) => {
+            charges.record_terminal(
+                vault,
+                binding.attempt_id,
+                binding.step_hash,
+                &response.usage,
+            )?;
+        }
+        Ok(StepOutcome::Trapped { .. }) => {}
+        Err(DurableStepError::SpentFinalizeRefused { usage }) => {
+            charges.record_usage(usage);
+        }
+        Err(DurableStepError::SpentSchemaValidation { usage, .. }) => {
+            charges.record_usage(usage);
+        }
+        Err(DurableStepError::FinalizeRefused | DurableStepError::DeadlineHardCut) => {}
+        // A refused step spent nothing: no usage to record.
+        Err(DurableStepError::BudgetRefused(_)) => {}
+        Err(error) => {
+            if let DurableStepError::SpentLlm { usage, .. }
+            | DurableStepError::SpentFallback { usage, .. } = error
+            {
+                charges.record_usage(usage);
+            } else if let Some(usage) = unsaved_usage {
+                charges.record_usage(usage);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Accounts one slice step's outcome into `charges` and reports its
 /// fate. `record_terminal` and `record_usage` are the only charge
 /// sources for a partition (it registers no metered run line), so
@@ -394,59 +444,38 @@ pub(super) fn tally_slice_outcome(
     unsaved_usage: Option<LlmUsage>,
     charges: &mut StepChargeTally,
 ) -> Result<SliceFate> {
+    charge_borrowed_slice_outcome(vault, &outcome, unsaved_usage.as_ref(), charges)?;
     Ok(match outcome {
         Ok(StepOutcome::Finished {
             binding,
             response,
             failure_policy,
             ..
-        }) => {
-            charges.record_terminal(
-                vault,
-                binding.attempt_id,
-                binding.step_hash,
-                &response.usage,
-            )?;
-            SliceFate::Finished {
-                binding,
-                response,
-                failure_policy,
-            }
-        }
+        }) => SliceFate::Finished {
+            binding,
+            response,
+            failure_policy,
+        },
         Ok(StepOutcome::Trapped { .. }) => SliceFate::Trapped,
-        Err(DurableStepError::SpentFinalizeRefused { usage }) => {
-            charges.record_usage(&usage);
-            SliceFate::Checkpoint
-        }
-        Err(DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
-            charges.record_usage(&usage);
+        Err(DurableStepError::SpentFinalizeRefused { .. }) => SliceFate::Checkpoint,
+        Err(DurableStepError::SpentSchemaValidation { errors, .. }) => {
             SliceFate::Refused(format!("extraction reply refused: {}", errors.join("; ")))
         }
         Err(DurableStepError::FinalizeRefused | DurableStepError::DeadlineHardCut) => {
             SliceFate::Checkpoint
         }
-        // A refused step spent nothing: no usage to record.
         Err(ref error @ DurableStepError::BudgetRefused(ref refusal)) => SliceFate::BudgetRefused {
             reason: error.to_string(),
             refusal: refusal.clone(),
         },
-        Err(error) => {
-            if let DurableStepError::SpentLlm { usage, .. }
-            | DurableStepError::SpentFallback { usage, .. } = &error
-            {
-                charges.record_usage(usage);
-            } else if let Some(usage) = unsaved_usage {
-                charges.record_usage(&usage);
-            }
-            match crate::dreamer_runner::dreamer_seat_refusal_of_step(&error) {
-                Some((seat, reset_at_s)) => SliceFate::SeatRefused {
-                    reason: error.to_string(),
-                    seat,
-                    reset_at_s,
-                },
-                None => SliceFate::Refused(error.to_string()),
-            }
-        }
+        Err(error) => match crate::dreamer_runner::dreamer_seat_refusal_of_step(&error) {
+            Some((seat, reset_at_s)) => SliceFate::SeatRefused {
+                reason: error.to_string(),
+                seat,
+                reset_at_s,
+            },
+            None => SliceFate::Refused(error.to_string()),
+        },
     })
 }
 

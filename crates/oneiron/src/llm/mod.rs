@@ -57,6 +57,12 @@ pub mod score_scraper;
 pub mod seat;
 mod step;
 pub use step::public as model_step;
+#[cfg(oneiron_test_support)]
+pub(crate) use step::step_state_present_for_attempt;
+pub(crate) use step::{
+    call_as_step_with_unsaved_usage, request_hash_step_receipt_in_txn, request_hash_submit_receipt,
+};
+
 pub mod tagger;
 
 pub use step::{

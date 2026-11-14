@@ -150,6 +150,23 @@ pub trait DreamerDecisionLender: Send + Sync {
     ) -> MemoryResult<Option<AiVerdict>> {
         Ok(None)
     }
+
+    /// Runs a bound generation step with this attempt's borrowed extraction role.
+    ///
+    /// The default lends nothing. The callback owns the durable answer and charge;
+    /// the host retains its backend, guard, pass clock, tally and runtime.
+    ///
+    /// # Errors
+    ///
+    /// The generation step's own failures and the host's lending failures.
+    fn lend_extraction_step(
+        &self,
+        _step: &mut dyn FnMut(
+            super::ExtractionStepLoan<'_>,
+        ) -> MemoryResult<crate::llm::model_step::ModelStepReceipt>,
+    ) -> MemoryResult<Option<crate::llm::model_step::ModelStepReceipt>> {
+        Ok(None)
+    }
 }
 
 impl DreamerAttemptBinding {

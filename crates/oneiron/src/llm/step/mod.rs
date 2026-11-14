@@ -25,6 +25,7 @@ pub use schema::validate_json_schema;
 mod peer_wait;
 // FIX 4816: a durable step's recovery from its saved work.
 mod recovery;
+mod request_hash_step;
 mod response_bodies;
 // FIX 6225: a step claim holds its oversize response's exact version.
 mod response_pins;
@@ -36,6 +37,7 @@ mod step_claim;
 // FIX 4816: the memo index's keys, admission, lookup and deindex.
 mod step_index;
 mod step_only;
+mod step_result;
 mod step_state;
 // FIX 9929: a public submission's kept copies under body custody.
 mod submission_custody;
@@ -63,6 +65,11 @@ pub(crate) use self::execute::{
 pub use self::peer_wait::{
     PeerResultWaitBinding, reconcile_peer_result_signals, register_peer_result_wait,
     send_peer_result_signal,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::request_hash_step::step_state_present_for_attempt;
+pub(crate) use self::request_hash_step::{
+    call_as_step_with_unsaved_usage, request_hash_step_receipt_in_txn, request_hash_submit_receipt,
 };
 pub(crate) use self::retry::stated_reset_at;
 pub(crate) use self::trap::{

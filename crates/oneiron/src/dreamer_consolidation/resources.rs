@@ -12,6 +12,7 @@ use super::conflict::{
 use super::wake_plan::PreparedWake;
 
 mod bound_read;
+mod extraction_scope;
 mod nightly_link_grant;
 mod parts;
 mod pins;

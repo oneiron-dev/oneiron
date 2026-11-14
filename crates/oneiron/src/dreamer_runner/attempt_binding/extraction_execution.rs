@@ -62,88 +62,77 @@ impl DreamerAttemptBinding {
             .ok_or_else(extraction_loan_unavailable)?;
         let mut decide = |loan: ExtractionDecisionLoan<'_>| {
             self.check()?;
-            std::thread::scope(|scope| {
-                scope
-                    .spawn(|| {
-                        let read = ExtractionReadExecution {
-                            vault: &self.vault,
-                            attempt: self.lease.attempt(),
-                            run: self.run.clone(),
-                            actor: self.actor(),
-                            execution: &checked.execution,
-                            versions: &checked.versions,
-                            loan: &loan,
-                            deadline_ms: input.deadline_ms,
-                            ceiling: input.ceiling,
-                        };
-                        let decisions = loan
-                            .runtime
-                            .block_on(execute_checked_read(read))
-                            .map_err(extraction_read_error)?
-                            .ok_or_else(|| {
-                                MemoryError::new(
-                                    MEMORY_CODE_MODEL_UNAVAILABLE,
-                                    "the native extraction read parked without an answer",
-                                    &[],
-                                )
-                            })?;
-                        if decisions.len() != checked.keys.len() || decisions.is_empty() {
-                            return Err(MemoryError::new(
-                                MEMORY_CODE_INTERNAL,
-                                "the native extraction read returned a different question count",
-                                &[],
-                            ));
-                        }
-                        let mut pack = Vec::with_capacity(decisions.len());
-                        for (key, kept) in checked.keys.iter().zip(decisions) {
-                            // The answer native acts on: a role holder's once the question
-                            // went up the role chain, none while that ask waits.
-                            let answer = kept.answer().cloned().ok_or_else(|| {
-                                MemoryError::new(
-                                    MEMORY_CODE_MODEL_UNAVAILABLE,
-                                    "the native extraction read waits on a role holder's answer",
-                                    &[],
-                                )
-                            })?;
-                            let p = kept.probability();
-                            let decision = kept.decision;
-                            pack.push(AiVerdictPackEntry {
-                                key: key.clone(),
-                                answer,
-                                p,
-                                rung: decision.receipt.time.and_then(|time| time.answered),
-                                question: decision.receipt.question,
-                                receipt: decision.receipt,
-                            });
-                        }
-                        let first = pack.first().ok_or_else(|| {
-                            MemoryError::new(
-                                MEMORY_CODE_INTERNAL,
-                                "the native extraction read returned no first question",
-                                &[],
-                            )
-                        })?;
-                        Ok(AiVerdict {
-                            answer: first.answer.clone(),
-                            p: first.p,
-                            rung: first.rung,
-                            receipt: first.receipt.clone(),
-                            presence: None,
-                            outcome: None,
-                            screenshot: false,
-                            until_ms: None,
-                            evidence_cut_at_bytes: None,
-                            pack: Some(pack),
-                        })
-                    })
-                    .join()
-                    .map_err(|_| {
+            join_extraction_thread(|| {
+                let read = ExtractionReadExecution {
+                    vault: &self.vault,
+                    attempt: self.lease.attempt(),
+                    run: self.run.clone(),
+                    actor: self.actor(),
+                    execution: &checked.execution,
+                    versions: &checked.versions,
+                    loan: &loan,
+                    deadline_ms: input.deadline_ms,
+                    ceiling: input.ceiling,
+                };
+                let decisions = loan
+                    .runtime
+                    .block_on(execute_checked_read(read))
+                    .map_err(extraction_read_error)?
+                    .ok_or_else(|| {
                         MemoryError::new(
-                            MEMORY_CODE_INTERNAL,
-                            "the extraction read thread panicked",
+                            MEMORY_CODE_MODEL_UNAVAILABLE,
+                            "the native extraction read parked without an answer",
                             &[],
                         )
-                    })?
+                    })?;
+                if decisions.len() != checked.keys.len() || decisions.is_empty() {
+                    return Err(MemoryError::new(
+                        MEMORY_CODE_INTERNAL,
+                        "the native extraction read returned a different question count",
+                        &[],
+                    ));
+                }
+                let mut pack = Vec::with_capacity(decisions.len());
+                for (key, kept) in checked.keys.iter().zip(decisions) {
+                    // The answer native acts on: a role holder's once the question
+                    // went up the role chain, none while that ask waits.
+                    let answer = kept.answer().cloned().ok_or_else(|| {
+                        MemoryError::new(
+                            MEMORY_CODE_MODEL_UNAVAILABLE,
+                            "the native extraction read waits on a role holder's answer",
+                            &[],
+                        )
+                    })?;
+                    let p = kept.probability();
+                    let decision = kept.decision;
+                    pack.push(AiVerdictPackEntry {
+                        key: key.clone(),
+                        answer,
+                        p,
+                        rung: decision.receipt.time.and_then(|time| time.answered),
+                        question: decision.receipt.question,
+                        receipt: decision.receipt,
+                    });
+                }
+                let first = pack.first().ok_or_else(|| {
+                    MemoryError::new(
+                        MEMORY_CODE_INTERNAL,
+                        "the native extraction read returned no first question",
+                        &[],
+                    )
+                })?;
+                Ok(AiVerdict {
+                    answer: first.answer.clone(),
+                    p: first.p,
+                    rung: first.rung,
+                    receipt: first.receipt.clone(),
+                    presence: None,
+                    outcome: None,
+                    screenshot: false,
+                    until_ms: None,
+                    evidence_cut_at_bytes: None,
+                    pack: Some(pack),
+                })
             })
         };
         lender
@@ -165,10 +154,25 @@ fn extraction_read_error(error: DurableStepError) -> MemoryError {
 }
 
 /// Keeps the checked no-loan refusal identical for every unstaffed extraction host.
-fn extraction_loan_unavailable() -> MemoryError {
+pub(super) fn extraction_loan_unavailable() -> MemoryError {
     MemoryError::new(
         MEMORY_CODE_MODEL_UNAVAILABLE,
         "no extraction loan is lent to this attempt",
         &["The extraction attempt parks until its host lends an extraction read."],
     )
+}
+
+/// Runs extraction work on the existing joined scoped-thread bridge.
+pub(super) fn join_extraction_thread<T: Send>(
+    run: impl FnOnce() -> MemoryResult<T> + Send,
+) -> MemoryResult<T> {
+    std::thread::scope(|scope| {
+        scope.spawn(run).join().map_err(|_| {
+            MemoryError::new(
+                MEMORY_CODE_INTERNAL,
+                "the extraction read thread panicked",
+                &[],
+            )
+        })?
+    })
 }
