@@ -19,6 +19,66 @@ pub struct BookingPageTokenResponse {
     pub page_token: String,
 }
 
+/// The owner mints a personal link to one published booking page for one
+/// recipient (BK-PERSONAL-LINKS): the page names them and locks the
+/// booker email to theirs.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingPersonalLinkMintRequest {
+    pub page_ref: String,
+    pub recipient_email: String,
+    pub recipient_name: String,
+}
+
+/// The raw link token, returned here once and never again, beside the link.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BookingPersonalLinkMintResponse {
+    pub token: String,
+    pub link: BookingPersonalLink,
+}
+
+/// One personal link as its owner reads it. `link_ref` names it to a
+/// revocation; it is a digest, never the token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BookingPersonalLink {
+    pub link_ref: String,
+    pub page_ref: String,
+    pub recipient_email: String,
+    pub recipient_name: String,
+    pub minted_at: u64,
+    /// When the link ended; absent while it is live.
+    pub ended_at: Option<u64>,
+    /// Why it ended: `not_recipient` (its recipient answered "not you?") or
+    /// `revoked`.
+    pub ended_reason: Option<String>,
+}
+
+/// The owner ends one personal link, by the `link_ref` its mint returned.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingPersonalLinkRevokeRequest {
+    pub link_ref: String,
+}
+
+/// `revoked` is false when the link had already ended.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BookingPersonalLinkRevokeResponse {
+    pub revoked: bool,
+}
+
+/// The owner lists every personal link minted to one booking page.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingPersonalLinkListRequest {
+    pub page_ref: String,
+}
+
+/// Live and ended links, each without its token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BookingPersonalLinkListResponse {
+    pub links: Vec<BookingPersonalLink>,
+}
+
 /// A move proves authority with this booking's reschedule token only.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]

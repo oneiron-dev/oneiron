@@ -42,6 +42,52 @@ pub(crate) fn booking_error(error: crate::booking::BookingError) -> MemoryError 
 }
 
 impl Memory<'_> {
+    /// Mints a personal link to `page_ref` for `recipient`, as this actor
+    /// (BK-PERSONAL-LINKS), on the vault's clock. The raw token is in the
+    /// return value only.
+    ///
+    /// # Errors
+    ///
+    /// A bad request for an unusable recipient, an unpublished page or an
+    /// actor without live authority; an internal error for storage.
+    pub fn mint_personal_booking_link(
+        &self,
+        page_ref: EntityId,
+        recipient: &crate::booking::PersonalLinkRecipient,
+    ) -> MemoryResult<crate::booking::PersonalLinkMint> {
+        crate::booking::mint_personal_booking_link(
+            self,
+            page_ref,
+            recipient,
+            self.vault.now_recorded_at(),
+        )
+        .map_err(booking_error)
+    }
+
+    /// Ends the personal link `link_ref` names, as its minter or an owner.
+    /// `false` when it had already ended.
+    ///
+    /// # Errors
+    ///
+    /// A bad request for an unknown link or an actor who may not end it; an
+    /// internal error for storage.
+    pub fn revoke_personal_booking_link(&self, link_ref: &str) -> MemoryResult<bool> {
+        crate::booking::revoke_personal_booking_link(self, link_ref, self.vault.now_recorded_at())
+            .map_err(booking_error)
+    }
+
+    /// Every personal link minted to `page_ref`, live and ended.
+    ///
+    /// # Errors
+    ///
+    /// An internal error for storage.
+    pub fn personal_booking_links(
+        &self,
+        page_ref: EntityId,
+    ) -> MemoryResult<Vec<crate::booking::PersonalBookingLink>> {
+        crate::booking::personal_booking_links(self.vault, page_ref).map_err(booking_error)
+    }
+
     /// Logs the single lane-owned stamp under the existing owner-verb checks.
     /// Actor validity and owner authority are checked in the stamp transaction.
     pub fn record_emergency_instruction(

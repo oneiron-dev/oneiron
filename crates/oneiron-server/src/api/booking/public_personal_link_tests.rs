@@ -343,3 +343,114 @@ async fn a_personal_link_ends_with_its_revocation_and_its_page() {
     fixture.publish_page(fixture.page, true, 1, until);
     let _ = page_json(&fixture, &second.token).await;
 }
+
+/// One owner verb through the facade, as `principal` holding an owner-grade
+/// human credential: status and JSON body (`null` for an empty one).
+async fn facade_verb(
+    fixture: &Fixture,
+    principal: EntityId,
+    verb: &str,
+    body: Value,
+) -> (StatusCode, Value) {
+    let recipe = format!("principal_ref={};actor_class=human", principal.to_hex());
+    let (slip, key) = crate::test_credentials::credential(&fixture.server, &recipe);
+    let request = crate::test_credentials::bind_slip_request(
+        &fixture.server,
+        &slip,
+        &key,
+        Request::builder()
+            .method("POST")
+            .uri(format!("/v1/core/facade/{verb}"))
+            .header(CONTENT_TYPE, "application/json")
+            .extension(ConnectInfo(
+                "127.0.0.1:43123".parse::<SocketAddr>().expect("peer"),
+            ))
+            .body(Body::from(body.to_string()))
+            .expect("request"),
+    );
+    let response = crate::build_app(fixture.server.clone())
+        .oneshot(request)
+        .await
+        .expect("response");
+    let status = response.status();
+    let body = bytes(response).await;
+    (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+async fn the_owner_mints_lists_and_revokes_personal_links_through_its_verbs() {
+    let fixture = Fixture::new();
+    let page_ref = fixture.page.to_hex();
+
+    // Only the owner mints.
+    let (status, _) = facade_verb(
+        &fixture,
+        id(0x78),
+        "vault.booking.personal_link.mint",
+        json!({"page_ref": page_ref, "recipient_email": "a@example.test", "recipient_name": "Ada"}),
+    )
+    .await;
+    assert_ne!(status, StatusCode::OK, "a non-owner mints nothing");
+
+    let (status, minted) = facade_verb(
+        &fixture,
+        id(0x77),
+        "vault.booking.personal_link.mint",
+        json!({"page_ref": page_ref, "recipient_email": "A@Example.test", "recipient_name": "Ada"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{minted}");
+    let token = minted["token"].as_str().expect("token").to_owned();
+    let link_ref = minted["link"]["link_ref"]
+        .as_str()
+        .expect("link_ref")
+        .to_owned();
+    assert!(token.starts_with("bkr_"));
+    assert_eq!(minted["link"]["recipient_email"], "a@example.test");
+    assert_eq!(minted["link"]["page_ref"], page_ref.as_str());
+    assert!(minted["link"]["ended_at"].is_null());
+
+    // The minted link serves its page, naming its recipient.
+    let page = page_json(&fixture, &token).await;
+    assert_eq!(page["recipient"]["name"], "Ada");
+
+    // The list names it without its token.
+    let (status, listed) = facade_verb(
+        &fixture,
+        id(0x77),
+        "vault.booking.personal_link.list",
+        json!({"page_ref": page_ref}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(listed["links"].as_array().map(Vec::len), Some(1));
+    assert_eq!(listed["links"][0]["link_ref"], link_ref.as_str());
+    assert!(!listed.to_string().contains(&token));
+
+    // Revoked, it is a dead link, and the list says why.
+    let (status, revoked) = facade_verb(
+        &fixture,
+        id(0x77),
+        "vault.booking.personal_link.revoke",
+        json!({"link_ref": link_ref}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{revoked}");
+    assert_eq!(revoked, json!({"revoked": true}));
+    let (status, _) = answer(
+        &fixture,
+        "GET",
+        &format!("/public/booking/{token}"),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (_, listed) = facade_verb(
+        &fixture,
+        id(0x77),
+        "vault.booking.personal_link.list",
+        json!({"page_ref": page_ref}),
+    )
+    .await;
+    assert_eq!(listed["links"][0]["ended_reason"], "revoked");
+}
