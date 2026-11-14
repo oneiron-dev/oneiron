@@ -1,8 +1,8 @@
 /**
  * Reads one crafted package in its own process, through one door (`sheet`,
  * the default: sheet S1; or `outline`), and prints one JSON line: the answer
- * (the refusal's budget line, or how many rows or sheets the read gave) and
- * how long the read took. The test that starts it bounds its time, and a
+ * (the refusal's budget line, or how many rows or sheets the read gave), how
+ * long the read took, and the most resident memory the child held. The test that starts it bounds its time, and a
  * watch on its own thread ({@link ./memory-watch.ts}) bounds its memory, so a
  * read that never ends fails that test instead of stopping the runner.
  */
@@ -27,5 +27,10 @@ try {
 } catch (err) {
   answer = err instanceof WorkbookBudgetError ? { refused: err.line } : { failed: String(err) };
 }
-console.log(JSON.stringify({ answer, readMs: Math.round(performance.now() - started) }));
+const readMs = Math.round(performance.now() - started);
+const peakBytes = await new Promise<number>((resolve) => {
+  watch.onmessage = (event: MessageEvent<number>) => resolve(event.data);
+  watch.postMessage("peak");
+});
+console.log(JSON.stringify({ answer, readMs, peakMiB: Math.round(peakBytes / 1024 ** 2) }));
 watch.terminate();

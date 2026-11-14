@@ -12,10 +12,14 @@ export const TEST_LIMIT_MS = 90_000;
 /** The door a child reads through: sheet S1, or the workbook outline. */
 export type ChildDoor = "sheet" | "outline";
 
-/** What a child read gave: its answer, and how long the read itself took when it answered. */
+/**
+ * What a child read gave: its answer, and, when it answered, how long the read
+ * itself took and the most resident memory the child held.
+ */
 export interface ChildRead {
   readonly answer: unknown;
   readonly readMs?: number;
+  readonly peakMiB?: number;
 }
 
 export function readInChild(kind: CraftedKind, door: ChildDoor = "sheet"): ChildRead {
