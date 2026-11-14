@@ -133,6 +133,18 @@ struct RefusedLine {
     reason: &'static str,
 }
 
+/// `refusal`'s one `refused` line, its line feed included.
+fn refused_line(refusal: Refusal) -> serde_json::Result<Vec<u8>> {
+    let (code, reason) = refusal.wire();
+    let mut line = serde_json::to_vec(&RefusedLine {
+        op: "refused",
+        code,
+        reason,
+    })?;
+    line.push(b'\n');
+    Ok(line)
+}
+
 /// `refusal` as the error its hello's call ends with.
 pub(super) fn refused(refusal: Refusal) -> io::Error {
     io::Error::new(io::ErrorKind::PermissionDenied, refusal)
@@ -148,14 +160,49 @@ pub(super) async fn refuse(stream: &mut UnixStream, error: &io::Error) {
         .and_then(|inner| inner.downcast_ref::<Refusal>())
         .copied()
         .unwrap_or(Refusal::Unavailable);
-    let (code, reason) = refusal.wire();
-    let Ok(mut line) = serde_json::to_vec(&RefusedLine {
-        op: "refused",
-        code,
-        reason,
-    }) else {
+    let Ok(line) = refused_line(refusal) else {
         return;
     };
-    line.push(b'\n');
     let _ = tokio::time::timeout(REFUSAL_WRITE, stream.write_all(&line)).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A reap pause's `refused` line names its capacity bound and the
+    /// self-host route, in the shape the managed HTTP body carries (L9-61).
+    #[test]
+    fn a_reap_pause_hello_line_names_its_capacity_bound_and_the_self_host_route() {
+        let line = refused_line(Refusal::WritesFrozen).expect("line");
+        assert_eq!(line.last(), Some(&b'\n'));
+        let line: serde_json::Value = serde_json::from_slice(&line).expect("json");
+        assert_eq!(line["op"], "refused");
+        assert_eq!(line["code"], "writes_frozen");
+        assert_eq!(
+            line["bound"],
+            serde_json::json!({
+                "kind": "capacity",
+                "resource": "vault_lifecycle_allocation",
+                "phase": "reap_prepare",
+            })
+        );
+        assert_eq!(
+            line["self_hosted"],
+            serde_json::json!({"supported": true, "condition": "no_service_reap_limit"})
+        );
+        let reason = line["reason"].as_str().expect("reason");
+        assert!(reason.contains("a capacity bound"), "{reason}");
+        assert!(reason.contains("self-hosted vault"), "{reason}");
+    }
+
+    /// Any other refusal's line carries no bound.
+    #[test]
+    fn another_hello_refusal_line_carries_no_bound() {
+        let line = refused_line(Refusal::NoHello).expect("line");
+        let line: serde_json::Value = serde_json::from_slice(&line).expect("json");
+        assert_eq!(line["code"], "no_hello");
+        assert!(line.get("bound").is_none(), "{line}");
+        assert!(line.get("self_hosted").is_none(), "{line}");
+    }
 }

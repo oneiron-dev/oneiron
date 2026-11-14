@@ -19,3 +19,30 @@ pub(super) fn writes_frozen_body(error: &ManagedError) -> serde_json::Value {
         },
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The managed HTTP body names the capacity bound and the self-host
+    /// route, in the shape every other door serves (L9-61).
+    #[test]
+    fn the_managed_body_names_the_capacity_bound_and_the_self_host_route() {
+        let body = writes_frozen_body(&ManagedError::WritesFrozen);
+        assert_eq!(
+            body["bound"],
+            serde_json::json!({
+                "kind": "capacity",
+                "resource": "vault_lifecycle_allocation",
+                "phase": "reap_prepare",
+            })
+        );
+        assert_eq!(
+            body["self_hosted"],
+            serde_json::json!({"supported": true, "condition": "no_service_reap_limit"})
+        );
+        let message = body["message"].as_str().expect("message");
+        assert!(message.contains("a capacity bound"), "{message}");
+        assert!(message.contains("self-hosted vault"), "{message}");
+    }
+}

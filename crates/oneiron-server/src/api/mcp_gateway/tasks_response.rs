@@ -1024,4 +1024,49 @@ mod tests {
         // Only the list the producer names is its page.
         assert_eq!(output["rows"], json!([1, 2, 3]));
     }
+
+    /// A reap pause's MCP refusal names its capacity bound and the
+    /// self-host route in `error.data`, in the shape the managed HTTP body
+    /// carries, and keeps its kind (L9-61).
+    #[test]
+    fn a_reap_pause_mcp_refusal_names_its_capacity_bound_and_the_self_host_route() {
+        let refusal = super::super::mcp_facade_error(oneiron::MemoryError::new(
+            crate::managed::WRITES_FROZEN_TAG,
+            crate::managed::ManagedError::WritesFrozen.to_string(),
+            &[],
+        ));
+        let response = mcp_error_response(json!(7), refusal);
+        let error = &response["error"];
+        assert_eq!(error["code"], -32020);
+        let data = &error["data"];
+        assert_eq!(data["kind"], "writes_frozen");
+        assert_eq!(
+            data["bound"],
+            json!({
+                "kind": "capacity",
+                "resource": "vault_lifecycle_allocation",
+                "phase": "reap_prepare",
+            })
+        );
+        assert_eq!(
+            data["self_hosted"],
+            json!({"supported": true, "condition": "no_service_reap_limit"})
+        );
+        let message = data["human_message"].as_str().expect("human_message");
+        assert!(message.contains("a capacity bound"), "{message}");
+    }
+
+    /// Any other MCP refusal's `error.data` carries no bound.
+    #[test]
+    fn another_mcp_refusal_carries_no_bound() {
+        let refusal = super::super::mcp_facade_error(oneiron::MemoryError::new(
+            oneiron::MEMORY_CODE_FORBIDDEN,
+            "refused",
+            &[],
+        ));
+        let response = mcp_error_response(json!(8), refusal);
+        let data = &response["error"]["data"];
+        assert!(data.get("bound").is_none(), "{data}");
+        assert!(data.get("self_hosted").is_none(), "{data}");
+    }
 }
