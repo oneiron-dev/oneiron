@@ -151,12 +151,13 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
                 "official seat executor does not inject credential handles".to_owned(),
             ));
         }
-        let (mut command, fence_outcome) = match &self.runner_fence {
+        // `_scratch` is the fenced CLI's TMPDIR: it stays until the run ends.
+        let (mut command, fence_outcome, _scratch) = match &self.runner_fence {
             Some(fence) => {
-                let (command, outcome) = fence.command(&spec.program);
-                (command, Some(outcome))
+                let runner = fence.command(&spec.program, &self.workdir);
+                (runner.command, Some(runner.outcome), runner.scratch)
             }
-            None => (oneiron_spawn::command(&spec.program), None),
+            None => (oneiron_spawn::command(&spec.program), None, None),
         };
         command
             .args(&spec.argv)

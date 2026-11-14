@@ -7,8 +7,9 @@
 //! the proof, and hands each runner its command and its session manifest.
 
 use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
@@ -53,27 +54,110 @@ impl HostRunnerFence {
         &self.outcome
     }
 
-    /// A command for `program` under the fence, and the outcome its
-    /// session's manifest carries. Where the rule cannot be built for this
-    /// spawn, the runner still runs, unfenced and unproven (canon
-    /// `#fence-unproven`: the engine never refuses the run).
+    /// The command for `program`, started in `workdir` under the fence,
+    /// with the outcome its session's manifest carries and a private temp
+    /// directory as its `TMPDIR`. The temp directory exists before the rule
+    /// is built, so the runner can write there even where the system temp
+    /// directory is on the way to a removed tree.
+    ///
+    /// The runner still runs, unfenced and unproven, where the rule cannot
+    /// be built for this spawn, and where `workdir` or its git directories
+    /// lie in a removed tree: a masked copy's checkout is a worktree of a
+    /// repository in the vault's data tree (FIX 7608), and git there needs
+    /// that repository. Canon `#fence-unproven`: the engine never refuses
+    /// the run.
     #[must_use]
-    pub fn command(&self, program: impl AsRef<OsStr>) -> (Command, RunnerFenceOutcome) {
-        match self.fence.command(program.as_ref()) {
-            Ok(command) => (command, self.outcome.clone()),
-            Err(error) => {
+    pub fn command(&self, program: impl AsRef<OsStr>, workdir: &Path) -> RunnerCommand {
+        let scratch = tempfile::Builder::new()
+            .prefix("oneiron-runner-")
+            .tempdir()
+            .inspect_err(|error| {
                 tracing::warn!(
                     error = %error,
-                    "runner fence: the rule could not be built for a runner; it runs unproven"
+                    "runner fence: no private temp directory for a runner"
                 );
-                let unproven = RunnerFenceOutcome {
-                    proven: false,
-                    ..self.outcome.clone()
-                };
-                (oneiron_spawn::command(program), unproven)
+            })
+            .ok();
+        let (mut command, outcome) = if self.needs_removed_tree(workdir) {
+            tracing::warn!(
+                "runner fence: a runner's working tree needs a removed tree (a masked \
+                 checkout's repository in the vault); it runs unproven"
+            );
+            (oneiron_spawn::command(program), self.unproven())
+        } else {
+            match self.fence.command(program.as_ref()) {
+                Ok(command) => (command, self.outcome.clone()),
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        "runner fence: the rule could not be built for a runner; it runs unproven"
+                    );
+                    (oneiron_spawn::command(program), self.unproven())
+                }
             }
+        };
+        command.current_dir(workdir);
+        if let Some(scratch) = &scratch {
+            command.env("TMPDIR", scratch.path());
+        }
+        RunnerCommand {
+            command,
+            outcome,
+            scratch,
         }
     }
+
+    /// This host's outcome for a runner that runs without the rule.
+    fn unproven(&self) -> RunnerFenceOutcome {
+        RunnerFenceOutcome {
+            proven: false,
+            ..self.outcome.clone()
+        }
+    }
+
+    /// Whether a runner working in `workdir` needs a removed tree: the tree
+    /// itself, its git directory, or the common directory of the repository
+    /// a linked worktree belongs to lies in one.
+    fn needs_removed_tree(&self, workdir: &Path) -> bool {
+        let removed = self.fence.removed();
+        std::iter::once(workdir.to_path_buf())
+            .chain(git_dirs(workdir))
+            .filter_map(|path| fs::canonicalize(path).ok())
+            .any(|path| removed.iter().any(|tree| path.starts_with(tree)))
+    }
+}
+
+/// One runner's command under the fence, what its session's manifest
+/// states, and the private temp directory it writes in. Keep this value
+/// until the runner has exited: dropping it removes the temp directory.
+#[derive(Debug)]
+pub struct RunnerCommand {
+    /// The command, with its working directory and `TMPDIR` set.
+    pub command: Command,
+    /// What this runner's session manifest states.
+    pub outcome: RunnerFenceOutcome,
+    /// The runner's `TMPDIR`; `None` where it could not be made.
+    pub scratch: Option<tempfile::TempDir>,
+}
+
+/// The git directories a working tree at `workdir` uses: its `.git`, and
+/// for a linked worktree (a `.git` file `gitdir: <dir>`) that directory and
+/// the common directory its `commondir` file names.
+fn git_dirs(workdir: &Path) -> Vec<PathBuf> {
+    let dot_git = workdir.join(".git");
+    let named = fs::read_to_string(&dot_git).ok().and_then(|text| {
+        text.lines()
+            .next()
+            .and_then(|line| line.strip_prefix("gitdir:"))
+            .map(|dir| workdir.join(dir.trim()))
+    });
+    let Some(git_dir) = named else {
+        return vec![dot_git];
+    };
+    let common = fs::read_to_string(git_dir.join("commondir"))
+        .ok()
+        .map(|dir| git_dir.join(dir.trim()));
+    std::iter::once(git_dir).chain(common).collect()
 }
 
 /// The session manifest of one runner session: `backend` names the runner,
