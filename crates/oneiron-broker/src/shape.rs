@@ -151,6 +151,15 @@ pub enum Shape {
     /// The query holds only `supportsAllDrives` and `fields`, so no `alt`
     /// asks for the file's content.
     DriveFileGet,
+    /// One stored file's content, `GET …/drive/v3/files/{id}`, no body,
+    /// Bearer, with the one query `alt=media&supportsAllDrives=true` and no
+    /// other: no `acknowledgeAbuse` fetches a file Google flagged. The reply
+    /// is the file's bytes, buffered up to [`crate::MAX_BODY`].
+    DriveFileDownload,
+    /// One Google file's content in one format,
+    /// `GET …/drive/v3/files/{id}/export`, no body, Bearer. The query holds
+    /// only `mimeType`. The reply is the export's bytes, buffered as above.
+    DriveFileExport,
     /// Microsoft Graph v1.0, Excel workbooks (L3-17): a workbook session,
     /// `POST …/v1.0/me/drive/items/{id}/workbook/createSession`, JSON, Bearer.
     ExcelCreateSession,
@@ -274,7 +283,8 @@ const fn gemini(
 }
 
 /// A workspace REST row (Google Workspace, Microsoft Graph): the user's
-/// OAuth access token as Bearer, no model on the wire, a buffered JSON reply.
+/// OAuth access token as Bearer, no model on the wire, a buffered reply: JSON,
+/// or a Drive file's content.
 const fn workspace(
     method: &'static str,
     endpoint: &'static [&'static str],
@@ -623,6 +633,22 @@ const DRIVE_FILE_GET: Row = workspace(
     Body::Empty,
 );
 
+const DRIVE_FILE_DOWNLOAD: Row = workspace(
+    "GET",
+    &["drive", "v3", "files", "{id}"],
+    Some("alt=media&supportsAllDrives=true"),
+    &[],
+    Body::Empty,
+);
+
+const DRIVE_FILE_EXPORT: Row = workspace(
+    "GET",
+    &["drive", "v3", "files", "{id}", "export"],
+    None,
+    &["mimeType"],
+    Body::Empty,
+);
+
 /// The workbook of one drive item, under the signed-in user's drive.
 const EXCEL_CREATE_SESSION: Row = workspace(
     "POST",
@@ -741,6 +767,8 @@ impl Shape {
             Self::DriveChangesStartPageToken => &DRIVE_CHANGES_START_PAGE_TOKEN,
             Self::DriveChangesList => &DRIVE_CHANGES_LIST,
             Self::DriveFileGet => &DRIVE_FILE_GET,
+            Self::DriveFileDownload => &DRIVE_FILE_DOWNLOAD,
+            Self::DriveFileExport => &DRIVE_FILE_EXPORT,
             Self::ExcelCreateSession => &EXCEL_CREATE_SESSION,
             Self::ExcelRangeGet => &EXCEL_RANGE_GET,
             Self::ExcelRangeUpdate => &EXCEL_RANGE_UPDATE,

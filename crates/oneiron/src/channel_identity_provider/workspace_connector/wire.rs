@@ -7,11 +7,14 @@
 //! reaches the broker before the engine reads the grant at the custody door;
 //! the broker adds the access token as `Authorization: Bearer`, sends once
 //! over verified TLS, and strips the token from the reply. The token goes to
-//! the broker with that one request and to nothing else.
+//! the broker with that one request and to nothing else. The host hands the
+//! reply back as it came; the engine reads it ([`WorkspaceWireOutcome::answered`]).
 
 use std::fmt::Debug;
 
-use serde_json::Value;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+use serde_json::{Value, json};
 
 use super::ARGUMENTS_INVALID;
 
@@ -66,6 +69,12 @@ pub enum WorkspaceEndpoint {
     DriveChangesList,
     /// Drive v3: `GET /drive/v3/files/{id}`, one file's metadata.
     DriveFileGet,
+    /// Drive v3: `GET /drive/v3/files/{id}?alt=media&supportsAllDrives=true`,
+    /// one stored file's content.
+    DriveFileDownload,
+    /// Drive v3: `GET /drive/v3/files/{id}/export?mimeType=…`, one Google
+    /// file's content in one format.
+    DriveFileExport,
     /// Graph v1.0: `POST /v1.0/me/drive/items/{id}/workbook/createSession`.
     ExcelCreateSession,
     /// Graph v1.0: `GET /v1.0/me/drive/items/{id}/workbook/worksheets/{name}/range(address='{a1}')`.
@@ -87,9 +96,11 @@ impl WorkspaceEndpoint {
             | Self::SheetsBatchUpdate => SHEETS_ORIGIN,
             Self::DocsDocumentGet | Self::DocsBatchUpdate => DOCS_ORIGIN,
             Self::SlidesPresentationGet | Self::SlidesBatchUpdate => SLIDES_ORIGIN,
-            Self::DriveChangesStartPageToken | Self::DriveChangesList | Self::DriveFileGet => {
-                DRIVE_ORIGIN
-            }
+            Self::DriveChangesStartPageToken
+            | Self::DriveChangesList
+            | Self::DriveFileGet
+            | Self::DriveFileDownload
+            | Self::DriveFileExport => DRIVE_ORIGIN,
             Self::ExcelCreateSession
             | Self::ExcelRangeGet
             | Self::ExcelRangeUpdate
@@ -108,9 +119,11 @@ impl WorkspaceEndpoint {
             | Self::SheetsBatchUpdate => "sheets.v4",
             Self::DocsDocumentGet | Self::DocsBatchUpdate => "docs.v1",
             Self::SlidesPresentationGet | Self::SlidesBatchUpdate => "slides.v1",
-            Self::DriveChangesStartPageToken | Self::DriveChangesList | Self::DriveFileGet => {
-                "drive.v3"
-            }
+            Self::DriveChangesStartPageToken
+            | Self::DriveChangesList
+            | Self::DriveFileGet
+            | Self::DriveFileDownload
+            | Self::DriveFileExport => "drive.v3",
             Self::ExcelCreateSession
             | Self::ExcelRangeGet
             | Self::ExcelRangeUpdate
@@ -130,6 +143,8 @@ impl WorkspaceEndpoint {
             | Self::DriveChangesStartPageToken
             | Self::DriveChangesList
             | Self::DriveFileGet
+            | Self::DriveFileDownload
+            | Self::DriveFileExport
             | Self::ExcelRangeGet => "GET",
             Self::SheetsValuesBatchUpdate
             | Self::SheetsBatchUpdate
@@ -139,6 +154,13 @@ impl WorkspaceEndpoint {
             | Self::ExcelCloseSession => "POST",
             Self::ExcelRangeUpdate => "PATCH",
         }
+    }
+
+    /// Whether a success answers a file's content, its bytes as sent, rather
+    /// than one JSON body: Drive's download and export.
+    #[must_use]
+    pub const fn answers_content(self) -> bool {
+        matches!(self, Self::DriveFileDownload | Self::DriveFileExport)
     }
 
     /// The endpoint's name in a request digest.
@@ -155,6 +177,8 @@ impl WorkspaceEndpoint {
             Self::DriveChangesStartPageToken => "drive.changes.getStartPageToken",
             Self::DriveChangesList => "drive.changes.list",
             Self::DriveFileGet => "drive.files.get",
+            Self::DriveFileDownload => "drive.files.download",
+            Self::DriveFileExport => "drive.files.export",
             Self::ExcelCreateSession => "excel.workbook.createSession",
             Self::ExcelRangeGet => "excel.range.get",
             Self::ExcelRangeUpdate => "excel.range.update",
@@ -308,6 +332,10 @@ pub enum WorkspaceWireOutcome {
     /// The provider answered: its status, and its body read as JSON with the
     /// credential stripped; a body that is not JSON reads as `null`.
     Answered { status: u16, body: Value },
+    /// The provider answered a content read
+    /// ([`WorkspaceEndpoint::answers_content`]) with a success: the file's
+    /// content, the credential stripped.
+    Content(WorkspaceContent),
     /// Nothing reached the provider: why, as a code.
     NotSent(String),
     /// The request may have reached the provider, and no answer came back:
@@ -316,11 +344,82 @@ pub enum WorkspaceWireOutcome {
 }
 
 impl WorkspaceWireOutcome {
-    /// The provider's body, when it answered with a success status.
+    /// What the provider's reply to a request of `endpoint` came to: its
+    /// `status`, the media type its `content-type` header named, if any, and
+    /// its `body` with the credential stripped. A content read's success
+    /// answers the body as [`Self::Content`]; every other reply answers as
+    /// [`Self::Answered`], an error from a content read included.
+    #[must_use]
+    pub fn answered(
+        endpoint: WorkspaceEndpoint,
+        status: u16,
+        content_type: Option<&str>,
+        body: &[u8],
+    ) -> Self {
+        if endpoint.answers_content() && (200..300).contains(&status) {
+            return Self::Content(WorkspaceContent::new(content_type, body.to_vec()));
+        }
+        Self::Answered {
+            status,
+            body: serde_json::from_slice(body).unwrap_or(Value::Null),
+        }
+    }
+
+    /// The provider's JSON body, when it answered with a success status.
     pub(super) fn success(&self) -> Option<&Value> {
         match self {
             Self::Answered { status, body } if (200..300).contains(status) => Some(body),
             _ => None,
         }
+    }
+}
+
+/// One file's content as a content read answered it: the bytes as the
+/// provider sent them, and their media type. The broker buffers the reply
+/// up to its frame bound (16 MiB) and fails a longer one, so a file is
+/// answered whole or not at all, never cut.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceContent {
+    media_type: String,
+    bytes: Vec<u8>,
+}
+
+impl WorkspaceContent {
+    /// `bytes` under the media type of `content_type`, the header's value
+    /// without its parameters, in lowercase: `application/octet-stream` when
+    /// the reply named none.
+    #[must_use]
+    pub fn new(content_type: Option<&str>, bytes: Vec<u8>) -> Self {
+        let media_type = content_type
+            .and_then(|value| value.split(';').next())
+            .map(|essence| essence.trim().to_ascii_lowercase())
+            .filter(|essence| !essence.is_empty())
+            .unwrap_or_else(|| "application/octet-stream".to_owned());
+        Self { media_type, bytes }
+    }
+
+    /// The media type, such as `text/plain`.
+    #[must_use]
+    pub fn media_type(&self) -> &str {
+        &self.media_type
+    }
+
+    /// The bytes as the provider sent them.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// The tool's output: `mimeType`, `size` in bytes, and the content as
+    /// `text` when it is UTF-8, without a leading byte-order mark, else as
+    /// standard base64 in `contentBase64`.
+    #[must_use]
+    pub fn output(&self) -> Value {
+        let mut output = json!({ "mimeType": self.media_type, "size": self.bytes.len() });
+        match std::str::from_utf8(&self.bytes) {
+            Ok(text) => output["text"] = Value::from(text.strip_prefix('\u{feff}').unwrap_or(text)),
+            Err(_) => output["contentBase64"] = Value::from(STANDARD.encode(&self.bytes)),
+        }
+        output
     }
 }

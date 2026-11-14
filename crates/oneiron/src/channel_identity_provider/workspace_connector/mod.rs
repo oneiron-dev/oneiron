@@ -57,8 +57,8 @@ mod wire;
 
 pub use self::receipt::workspace_effect_reason;
 pub use self::wire::{
-    WorkspaceBrokerCall, WorkspaceBrokerHost, WorkspaceEndpoint, WorkspaceWireOutcome,
-    WorkspaceWireRequest,
+    WorkspaceBrokerCall, WorkspaceBrokerHost, WorkspaceContent, WorkspaceEndpoint,
+    WorkspaceWireOutcome, WorkspaceWireRequest,
 };
 
 use std::collections::BTreeSet;
