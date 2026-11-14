@@ -35,12 +35,12 @@ use oneiron::store::ports::ManualClock;
 use oneiron::task_verb::{
     ConsultPayloadRef, TaskAskDefault, TaskAskGuest, TaskAskQuestion, TaskAskSpec, TaskAskTarget,
 };
-use oneiron::test_doors::ask_guest::check_disclosure;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derive::{
     Claim, Derived, Evidence, Named, batches_of, claim_evidence_admissible, commit,
     commit_with_sources, grant_core_read, source_version, supports,
 };
+use oneiron::test_doors::guest_ask_disclosure::check_disclosure;
 use oneiron::test_doors::steward::dreamer;
 use oneiron::test_doors::untangle_regressions::embedding_test_config;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};

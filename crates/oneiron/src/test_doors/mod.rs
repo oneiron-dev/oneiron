@@ -8,7 +8,6 @@ pub mod advisory_rate_window;
 pub mod agent_definition_scans;
 pub mod approval_target_round_trip;
 pub mod archive_import;
-pub mod ask_guest;
 pub mod authority_stored_damage;
 pub mod authority_view_grant;
 pub mod authority_world_undo;
@@ -47,6 +46,7 @@ pub mod free_time_cycle_writer;
 pub mod free_time_handoff;
 pub mod grant_roles;
 pub mod graph_ask_centre;
+pub mod guest_ask_disclosure;
 #[cfg(feature = "sync")]
 pub mod guest_turn_counterparty;
 pub mod history_import_rows;
