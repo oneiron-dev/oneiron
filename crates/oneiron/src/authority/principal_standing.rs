@@ -132,7 +132,7 @@ pub(crate) fn principal_standing_in(
     class: EdgeActorClass,
     verb: &str,
 ) -> Result<Option<PrincipalStanding>> {
-    Ok(principal_standing_or_lapse_in(home, txn, principal, class, verb)?.ok())
+    Ok(principal_standing_or_lapse_in(home, txn, principal, class, verb, None)?.ok())
 }
 
 /// [`principal_standing_in_txn`], naming why the principal does not stand:
@@ -148,16 +148,51 @@ pub(crate) fn principal_standing_or_lapse_in_txn(
     class: EdgeActorClass,
     verb: &str,
 ) -> Result<std::result::Result<PrincipalStanding, NoStanding>> {
-    principal_standing_or_lapse_in(StandingHome::Vault(vault), txn, principal, class, verb)
+    principal_standing_or_lapse_in(
+        StandingHome::Vault(vault),
+        txn,
+        principal,
+        class,
+        verb,
+        None,
+    )
 }
 
-/// [`principal_standing_or_lapse_in_txn`], its snapshot read through `home`.
+/// [`principal_standing_or_lapse_in_txn`] for an act that sits somewhere:
+/// of an agent's Grants that stand for `verb`, the first in id order whose
+/// bounds `covers` the act, else the first that stands. One Grant still
+/// answers alone: an earlier Grant narrowed away from the act does not hide
+/// a later one that reaches it, and no two are unioned.
+/// # Errors
+/// As [`principal_standing_in_txn`].
+pub(crate) fn principal_standing_covering_or_lapse_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    class: EdgeActorClass,
+    verb: &str,
+    covers: &dyn Fn(&FederationGrant) -> bool,
+) -> Result<std::result::Result<PrincipalStanding, NoStanding>> {
+    principal_standing_or_lapse_in(
+        StandingHome::Vault(vault),
+        txn,
+        principal,
+        class,
+        verb,
+        Some(covers),
+    )
+}
+
+/// [`principal_standing_or_lapse_in_txn`], its snapshot read through `home`;
+/// with `covers`, the agent's Grant is picked as
+/// [`principal_standing_covering_or_lapse_in_txn`] picks it.
 fn principal_standing_or_lapse_in(
     home: StandingHome<'_>,
     txn: &heed::RoTxn<'_>,
     principal: EntityId,
     class: EdgeActorClass,
     verb: &str,
+    covers: Option<&dyn Fn(&FederationGrant) -> bool>,
 ) -> Result<std::result::Result<PrincipalStanding, NoStanding>> {
     let grant = match class {
         EdgeActorClass::Human => {
@@ -170,7 +205,7 @@ fn principal_standing_or_lapse_in(
             if !live_agent_principal_in(home.store(), txn, principal, class)? {
                 return Ok(Err(NoStanding::NotStanding));
             }
-            match agent_grant_listing_in(home, txn, principal, verb)? {
+            match agent_grant_listing_in(home, txn, principal, verb, covers)? {
                 Ok(grant) => Some(grant),
                 Err(no_standing) => return Ok(Err(no_standing)),
             }
@@ -237,14 +272,17 @@ pub(crate) fn live_agent_principal_in(
 /// confers now, was given by a live owner of this vault, lists `verb` in its
 /// explicit verb set or names a verb class that admits it (FIX 8735) and,
 /// on a shared vault, keeps its pact membership
-/// ([`AgentGrantStanding::stands_in_txn`]). With none, the lapse when a
-/// Grant failed on its pact membership alone. The owner's verb-class rows
-/// are read once, and only when one of the agent's Grants names a class.
+/// ([`AgentGrantStanding::stands_in_txn`]); with `covers`, the first such
+/// Grant `covers` holds, else the first such Grant. With none, the lapse
+/// when a Grant failed on its pact membership alone. The owner's verb-class
+/// rows are read once, and only when one of the agent's Grants names a
+/// class.
 fn agent_grant_listing_in(
     home: StandingHome<'_>,
     txn: &heed::RoTxn<'_>,
     agent: EntityId,
     verb: &str,
+    covers: Option<&dyn Fn(&FederationGrant) -> bool>,
 ) -> Result<std::result::Result<EntityId, NoStanding>> {
     let now = home.instant_secs_in(txn)?;
     let owners = home.owners_in(txn)?;
@@ -258,6 +296,7 @@ fn agent_grant_listing_in(
             .map(|standing| &standing.grant),
     )?;
     let mut lapsed = false;
+    let mut first = None;
     for standing in grants {
         if !standing.stands_for(agent, verb, now, &owners, &classes) {
             continue;
@@ -266,7 +305,15 @@ fn agent_grant_listing_in(
             lapsed = true;
             continue;
         }
-        return Ok(Ok(standing.id));
+        if covers.is_none_or(|covers| covers(&standing.grant)) {
+            return Ok(Ok(standing.id));
+        }
+        if first.is_none() {
+            first = Some(standing.id);
+        }
+    }
+    if let Some(first) = first {
+        return Ok(Ok(first));
     }
     Ok(Err(if lapsed {
         NoStanding::PactStandingLapsed

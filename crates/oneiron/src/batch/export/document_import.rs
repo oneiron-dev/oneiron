@@ -1179,7 +1179,7 @@ fn restore_secrets_in_txn<R: Read + Seek>(
             ));
         }
         let Some(body) = &secret.body else {
-            missing.push(secret.metadata.clone());
+            missing.push(secret.metadata);
             continue;
         };
         let body = base64::engine::general_purpose::STANDARD

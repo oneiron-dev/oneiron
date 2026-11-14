@@ -1,18 +1,11 @@
 //! Typed weave publication and persisted correction reads for the bound reader.
-use super::{ClaimReadStatus, ScopedReadReceipt, WeaveLinkCorrectionView, WeaveWrongLinkRequest};
+use super::{ClaimReadStatus, WeaveLinkCorrectionView, WeaveWrongLinkRequest};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::Memory;
 use oneiron_contracts::memory::MemoryResult;
-use serde::{Deserialize, Serialize};
 
-/// A completed publication. Read its sections through `vault.weave.digest`
-/// with `scheduled_for`; the trigger does not run the lens's model step.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct WeaveDigestRendered {
-    pub scheduled_for: u64,
-    pub rendered_at: u64,
-    pub narrowing: ScopedReadReceipt,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::claim::scoped_read::weave_trigger::WeaveDigestRendered;
 
 impl Memory<'_> {
     /// Publish the bound reader's due period through the same live scoped

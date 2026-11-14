@@ -244,10 +244,9 @@ pub enum DreamerLandingRow {
     GeneratedPermit,
 }
 
-/// The owner narrowed the Dreamer's landing
-/// (`test_util::seeded_without_dreamer_landing_row`): the seeded default
-/// without `row`, its read grant and its other landing row kept, and still
-/// the untouched seed.
+/// The owner narrowed the Dreamer's landing: the seeded default without
+/// `row`, its read grant and its other landing row kept, and still the
+/// untouched seed.
 ///
 /// # Errors
 /// The store's.
@@ -520,17 +519,6 @@ pub fn micro_attempt(vault: &Vault) -> Result<Option<AttemptId>> {
         .into_iter()
         .find(|row| row.kind == crate::DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND)
         .map(|row| row.id))
-}
-
-/// The strength archive (`strength::archive_quiet_claims`), as the scoring
-/// attempt `attempt` runs it at `now_ms`. Returns how many claims it
-/// archived.
-///
-/// # Errors
-/// The archive's.
-#[doc(hidden)]
-pub fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u64) -> Result<u64> {
-    crate::dreamer_consolidation::strength::archive_quiet_claims(vault, attempt, now_ms)
 }
 
 /// One gate decision the ledger holds for a claim, in plain values.

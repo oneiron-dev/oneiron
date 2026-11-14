@@ -75,8 +75,8 @@ pub(super) const MAX_TEXT_BYTES: usize = 512;
 /// Upper bound for verbatim RFC 5545 recurrence text.
 pub(super) const MAX_RRULE_BYTES: usize = 2048;
 
-/// Content hashes are SHA-256 sized.
-pub(super) const CONTENT_HASH_LEN: usize = 32;
+#[doc(hidden)]
+pub(super) use oneiron_verb_wire::calendar::claims::predicates::CONTENT_HASH_LEN;
 
 /// ICS `TRANSP` property value mapping to [`CalendarBusyTransparency::Busy`](crate::calendar::CalendarBusyTransparency::Busy).
 pub const ICS_TRANSP_OPAQUE: &str = "OPAQUE";

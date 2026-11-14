@@ -270,10 +270,12 @@ impl SyncClient {
         if !self.full_window_exchange_allowed(window_key)? {
             return Ok(());
         }
-        window
-            .doc
-            .import(update)
-            .map_err(|_| TransportError::InvalidPayload("queued update import failed"))?;
+        crate::sync::window::import_into_live_window(
+            self.manager.materializer(),
+            &window.doc,
+            update,
+        )
+        .map_err(|_| TransportError::InvalidPayload("queued update import failed"))?;
         Ok(())
     }
 }

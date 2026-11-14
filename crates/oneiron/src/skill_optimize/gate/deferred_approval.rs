@@ -25,7 +25,8 @@ pub(super) fn record_deferred_approval_in_txn(
         disposition,
         accepted: false,
         tradeoff_resolution: Some(resolution),
-        goal_revision: goal_definition_in_txn(vault, txn, &pending.skill)?.revision,
+        // Integrity: stamp the post-pick revision, not goal content.
+        goal_revision: goal_definition_in_txn(vault, txn, &pending.skill, None)?.revision,
         cycle: cycle.as_str().to_owned(),
         at,
         ..pending

@@ -69,6 +69,7 @@ pub(crate) fn record_external_effect_policy(
                 None => "policy_precedence_shipped_default".to_owned(),
             }))
             .chain(decision.delegation_narrowing_receipt())
+            .chain(decision.charter_stamp_receipt())
             .collect(),
         system_notices: Vec::new(),
         actor_class: input.actor.actor_class.clone(),

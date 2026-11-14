@@ -33,8 +33,8 @@ impl Vault {
             ));
         }
         // The served door's source choice: a builtin is not a catalog
-        // connector's scoped call, and neither is the built-in Google Sheets
-        // connector, which answers before the MCP driver.
+        // connector's scoped call, and neither is a built-in workspace module
+        // (`google.sheets`), which answers before the MCP driver.
         match ConnectorSource::resolve(request.source, &request.name) {
             ConnectorSource::Builtin
                 if request.name != crate::web_connector::WEB_CONNECTOR_NAME =>
@@ -47,11 +47,11 @@ impl Vault {
                 ));
             }
             ConnectorSource::Catalog
-                if request.name
-                    == crate::channel_identity_provider::sheets::SHEETS_CATALOG_NAME =>
+                if crate::channel_identity_provider::workspace_connector::module(&request.name)
+                    .is_some() =>
             {
                 return Err(IntentLedgerError::InvalidInput(
-                    "can judges catalog connector calls; the built-in Google Sheets connector is not judged here",
+                    "can judges catalog connector calls; a built-in workspace connector is not judged here",
                 ));
             }
             ConnectorSource::Catalog => {}

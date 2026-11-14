@@ -6,49 +6,16 @@
 //! checks them against the config and asks the taste questions through the
 //! decisions the host lends. The report is returned, not stored.
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::autoreason_campaign::authoring::authoring_campaign;
 use crate::autoreason_campaign::{
-    BlindCampaignJudgeInput, CampaignCost, CampaignError, CampaignEvaluationSplit,
-    CampaignExecutableArm, CampaignSmokeOutcome, CampaignSplitReport, CampaignTasteDecisions,
-    build_campaign_split_report,
+    CampaignError, CampaignSplitReport, CampaignTasteDecisions, build_campaign_split_report,
 };
-use crate::entity_id::EntityId;
-use crate::extraction_eval::{Of360ExtractionRun, Of360GoldDataset};
 use crate::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
 
-/// `vault.research.evaluate_split`'s input: one arm's run on one split.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CampaignSplitWire {
-    /// The campaign's root attempt.
-    pub root: EntityId,
-    /// The arm that ran.
-    #[schemars(with = "serde_json::Value")]
-    pub arm: CampaignExecutableArm,
-    /// The split it ran on: `search` or `held_out`.
-    #[schemars(with = "serde_json::Value")]
-    pub split: CampaignEvaluationSplit,
-    /// The split's OF-360 gold, at the id and revision the config pins.
-    #[schemars(with = "serde_json::Value")]
-    pub dataset: Of360GoldDataset,
-    /// The arm's parsed output on that gold.
-    #[schemars(with = "serde_json::Value")]
-    pub run: Of360ExtractionRun,
-    /// What the run cost, as observed.
-    #[schemars(with = "serde_json::Value")]
-    pub cost: CampaignCost,
-    /// The claim, its evidence and the external gold anchor, with no arm,
-    /// run or campaign named: all a taste provider sees.
-    #[schemars(with = "serde_json::Value")]
-    pub blind: BlindCampaignJudgeInput,
-    /// The run's smoke outcome; a killed run still reports, scored zero.
-    #[schemars(with = "serde_json::Value")]
-    pub smoke: CampaignSmokeOutcome,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::campaign_split::CampaignSplitWire;
 
 /// Scores `input`'s arm on its split under the campaign bound at its root,
 /// asking the taste questions through `taste`.
