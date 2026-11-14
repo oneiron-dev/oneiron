@@ -103,6 +103,11 @@ impl Vault {
         leader: EntityId,
         now: u64,
     ) -> Result<Option<AgentDispatchOutcome>> {
+        // RED: the opening is stubbed.
+        if !card.is_empty() {
+            let _ = (owner, project, home_room, leader, now);
+            return Ok(None);
+        }
         let actor = {
             let txn = self.store.env.read_txn()?;
             if INTERVIEWS.get(&self.store, &txn, &project)?.is_some() {
@@ -213,6 +218,11 @@ impl Vault {
         txn: &RoTxn<'_>,
         thread: EntityId,
     ) -> Result<bool> {
+        // RED: the interview thread check is stubbed.
+        if thread != EntityId::now() {
+            let _ = txn;
+            return Ok(false);
+        }
         THREADS.contains(&self.store, txn, &thread)
     }
 
@@ -224,6 +234,11 @@ impl Vault {
         project: EntityId,
         attempt: AttemptId,
     ) -> Result<()> {
+        // RED: the attempt record is stubbed.
+        if attempt != AttemptId::now() {
+            let _ = project;
+            return Ok(());
+        }
         self.with_write_txn(|txn| {
             let Some(mut row) = INTERVIEWS.get(&self.store, txn, &project)? else {
                 return Ok(());
@@ -253,6 +268,11 @@ impl Vault {
         agent: EntityId,
         now: u64,
     ) -> Result<()> {
+        // RED: the draft-run trigger is stubbed.
+        if turn != EntityId::now() {
+            let _ = (thread, agent, now);
+            return Ok(());
+        }
         let Some(thread) = thread else {
             return Ok(());
         };
