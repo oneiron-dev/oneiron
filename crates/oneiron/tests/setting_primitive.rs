@@ -239,7 +239,11 @@ fn the_owner_sets_reads_lists_and_clears_a_key() {
     assert_eq!(read["revision"], json!(revision));
 
     let again = call(&me, SET, set(key, vault_scope(), json!(9)));
-    assert_eq!(again["sequence"], Value::Null, "an equal value writes nothing");
+    assert_eq!(
+        again["sequence"],
+        Value::Null,
+        "an equal value writes nothing"
+    );
     assert_eq!(again["revision"], json!(revision));
 
     let moved = refused(
@@ -269,9 +273,15 @@ fn the_owner_sets_reads_lists_and_clears_a_key() {
         json!({ "key": key, "scope": vault_scope(), "value": null }),
     );
     assert_eq!(cleared["revision"], json!(0), "{cleared}");
-    assert_eq!(get(&me, key, json!([]))["source"], json!({ "from": "default" }));
+    assert_eq!(
+        get(&me, key, json!([]))["source"],
+        json!({ "from": "default" })
+    );
 
-    assert!(refused(&me, SET, set("test.no_such_key", vault_scope(), json!(1))).contains("no setting key"));
+    assert!(
+        refused(&me, SET, set("test.no_such_key", vault_scope(), json!(1)))
+            .contains("no setting key")
+    );
     refused(&me, SET, set(key, agent_scope(fx.owner), json!(1)));
     call(
         &me,
@@ -300,7 +310,11 @@ fn the_owner_sets_reads_lists_and_clears_a_key() {
     call(&me, SET, set("test.hooked", vault_scope(), json!(1)));
     call(&me, SET, set("test.hooked", vault_scope(), json!(1)));
     call(&me, SET, set("test.hooked", vault_scope(), json!(2)));
-    assert_eq!(hooked_changes() - before, 2, "the hook runs once per change");
+    assert_eq!(
+        hooked_changes() - before,
+        2,
+        "the hook runs once per change"
+    );
 }
 
 #[test]
@@ -374,19 +388,35 @@ fn a_class_holder_sets_inside_the_owners_cap_and_never_replaces_the_owners_row()
 
     call(&me, SET, set(key, vault_scope(), json!(8)));
     let above = call(&them, SET, set(key, project(place), json!(9)));
-    assert_eq!(above["status"], json!("pending"), "above the owner's cap: {above}");
+    assert_eq!(
+        above["status"],
+        json!("pending"),
+        "above the owner's cap: {above}"
+    );
     let owners = call(&them, SET, set(key, vault_scope(), json!(5)));
-    assert_eq!(owners["status"], json!("pending"), "the owner's own row: {owners}");
+    assert_eq!(
+        owners["status"],
+        json!("pending"),
+        "the owner's own row: {owners}"
+    );
     let pin = call(
         &them,
         SET,
         json!({ "key": key, "scope": project(place), "pin": true, "value": 3 }),
     );
-    assert_eq!(pin["status"], json!("pending"), "a pin is the owner's: {pin}");
+    assert_eq!(
+        pin["status"],
+        json!("pending"),
+        "a pin is the owner's: {pin}"
+    );
 
     call(&me, SET, set(key, vault_scope(), json!(2)));
     let capped = get(&them, key, json!([project(place)]));
-    assert_eq!(capped["value"], json!(2), "the owner's lower cap decides: {capped}");
+    assert_eq!(
+        capped["value"],
+        json!(2),
+        "the owner's lower cap decides: {capped}"
+    );
     assert_eq!(
         capped["source"],
         json!({ "from": "row", "scope": { "kind": "vault" } })
@@ -396,7 +426,11 @@ fn a_class_holder_sets_inside_the_owners_cap_and_never_replaces_the_owners_row()
     fx.grant(other, &[SET, GET]);
     let stranger = fx.as_agent(other);
     refused(&stranger, GET, json!({ "key": key }));
-    call(&me, SET, set("test.member_banner", vault_scope(), json!("hello")));
+    call(
+        &me,
+        SET,
+        set("test.member_banner", vault_scope(), json!("hello")),
+    );
     assert_eq!(
         get(&stranger, "test.member_banner", json!([]))["value"],
         json!("hello"),
@@ -427,8 +461,16 @@ fn any_other_agent_change_waits_on_a_check_in_and_applies_once_approved() {
     assert_eq!(pending["status"], json!("pending"), "{pending}");
     let handle = pending["check_in"].as_str().expect("a handle").to_owned();
     let again = call(&them, SET, ask.clone());
-    assert_eq!(again["check_in"], json!(handle), "the same ask finds its check-in");
-    assert_eq!(get(&me, key, json!([]))["value"], json!(7), "nothing applied yet");
+    assert_eq!(
+        again["check_in"],
+        json!(handle),
+        "the same ask finds its check-in"
+    );
+    assert_eq!(
+        get(&me, key, json!([]))["value"],
+        json!(7),
+        "nothing applied yet"
+    );
 
     let id = EntityId::from_hex(&handle).expect("hex id");
     let row = fx
@@ -464,7 +506,11 @@ fn any_other_agent_change_waits_on_a_check_in_and_applies_once_approved() {
 
     let ungranted = fx.agent();
     fx.grant(ungranted, &[GET]);
-    refused(&fx.as_agent(ungranted), SET, set(key, vault_scope(), json!(5)));
+    refused(
+        &fx.as_agent(ungranted),
+        SET,
+        set(key, vault_scope(), json!(5)),
+    );
 }
 
 #[test]
@@ -477,7 +523,11 @@ fn the_owners_pin_decides_and_an_unreadable_row_reads_the_strictest_value() {
     let place = EntityId::now();
     let key = "test.work_budget";
 
-    call(&fx.as_agent(holder), SET, set(key, project(place), json!(6)));
+    call(
+        &fx.as_agent(holder),
+        SET,
+        set(key, project(place), json!(6)),
+    );
     call(
         &me,
         SET,
@@ -493,7 +543,11 @@ fn the_owners_pin_decides_and_an_unreadable_row_reads_the_strictest_value() {
     plant_undecodable_row(&fx.vault, "test.owner_number", SettingScope::Vault)
         .expect("a damaged row");
     let damaged = get(&me, "test.owner_number", json!([]));
-    assert_eq!(damaged["value"], json!(0), "the strictest value, never the default: {damaged}");
+    assert_eq!(
+        damaged["value"],
+        json!(0),
+        "the strictest value, never the default: {damaged}"
+    );
     assert_eq!(
         damaged["source"],
         json!({ "from": "unreadable", "scope": { "kind": "vault" } })
@@ -522,5 +576,9 @@ fn a_subject_tightens_its_own_row_and_asks_to_loosen_it() {
 
     let other = fx.agent();
     let theirs = call(&them, SET, set(key, agent_scope(other), json!(true)));
-    assert_eq!(theirs["status"], json!("pending"), "another's row asks: {theirs}");
+    assert_eq!(
+        theirs["status"],
+        json!("pending"),
+        "another's row asks: {theirs}"
+    );
 }
