@@ -12,7 +12,7 @@
 
 use std::collections::BTreeMap;
 
-use super::super::branch::BranchAxes;
+use super::super::ConsolidationBranchPlan;
 use super::super::call_labels::{CallLabelMap, LabelKind};
 use super::super::conflict::{
     ConflictIdentity, PriorHead, candidate_facts, conflict_open_marker_id, route_bound_priors,
@@ -38,12 +38,12 @@ use crate::attempt_queue::AttemptId;
 use crate::claim::{ClaimSource, ScopedRead, validate_predicate};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::verbs::{ExtractionPack, ExtractionPart, PackQuestion};
+use crate::verbs::{CandidateOperand, ExtractionPart, PackQuestion};
 use crate::write_envelope::ClaimCandidate;
 
 /// One pack candidate as the rebuild checked it: its native id, the flat
 /// facts correction states read, and the assembled proposal grouping reads.
-pub(super) struct CheckedCandidate {
+pub(crate) struct CheckedCandidate {
     /// The native deterministic id derived for its operand.
     pub(super) claim_id: EntityId,
     /// The operand subject correction states read.
@@ -55,7 +55,7 @@ pub(super) struct CheckedCandidate {
     /// The branch project its sources share, as the native build stamps it.
     pub(super) project: EntityId,
     /// The assembled proposal with its native id, as nomination routes it.
-    pub(super) proposal: PromotionCandidate,
+    pub(crate) proposal: PromotionCandidate,
 }
 
 /// One listed claim as the rebuild holds it: its id and subject with its
@@ -73,9 +73,9 @@ pub(super) struct CorrectionListed {
 
 /// The pack candidates checked with their eligible pairs and listing: every
 /// plan below rebuilds from this projection, never from the job's claims.
-pub(super) struct CheckedPack {
+pub(crate) struct CheckedPack {
     /// The checked candidates, in pack order.
-    pub(super) rows: Vec<CheckedCandidate>,
+    pub(crate) rows: Vec<CheckedCandidate>,
     /// The eligible (candidate position, listed index) pairs, in native order.
     pub(super) pairs: Vec<(usize, usize)>,
     /// The rebuilt listing, in native first-seen order.
@@ -126,7 +126,7 @@ impl BuiltConflict {
 /// `reference` as the id it names: 32 lowercase hex digits that round-trip.
 /// The bound handler pins subjects, turns and claims, but not corrected
 /// claims or relationships, so every id parses here, canonically.
-fn parse_reference(reference: &str) -> Result<EntityId> {
+pub(in crate::dreamer_consolidation) fn parse_reference(reference: &str) -> Result<EntityId> {
     let id = EntityId::from_hex(reference).map_err(|_| {
         invalid_consolidation("extraction references must be 32 lowercase hex digits")
     })?;
@@ -210,19 +210,19 @@ pub(super) fn correction_project(checked: &CheckedPack) -> Option<EntityId> {
 /// evidence, each corrected claim a listed head it repeats, each relationship
 /// inside the bound set, each project the common one of its turns, and each
 /// id derived with the native deterministic id.
-pub(super) fn check_pack_candidates(
-    pack: &ExtractionPack,
+pub(crate) fn check_pack_candidates(
+    candidates: &[CandidateOperand],
     bound: &BoundBranchRead,
     attempt: AttemptId,
-    axes: &BranchAxes,
+    branch: &ConsolidationBranchPlan<EntityId>,
 ) -> Result<CheckedPack> {
-    let mut subjects = Vec::with_capacity(pack.candidates.len());
-    for operand in &pack.candidates {
+    let mut subjects = Vec::with_capacity(candidates.len());
+    for operand in candidates {
         subjects.push(parse_reference(&operand.subject)?);
     }
     let (pairs, listed) = correction_sets(&subjects, bound)?;
-    let mut rows = Vec::with_capacity(pack.candidates.len());
-    for (position, (operand, subject)) in pack.candidates.iter().zip(&subjects).enumerate() {
+    let mut rows = Vec::with_capacity(candidates.len());
+    for (position, (operand, subject)) in candidates.iter().zip(&subjects).enumerate() {
         validate_predicate(&operand.predicate, false).map_err(|_| {
             invalid_consolidation("extracted candidate's predicate breaks the claim grammar")
         })?;
@@ -297,8 +297,8 @@ pub(super) fn check_pack_candidates(
             confidence: 0.0,
             lexical_hints: Vec::new(),
             project,
-            world: axes.world_ref,
-            facet: axes.facet_ref,
+            world: branch.world_ref,
+            facet: branch.facet_ref,
             scope_relationship: bound.relationship(),
         };
         let candidate = assemble_identity_candidate(&input)?;

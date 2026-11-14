@@ -13,7 +13,7 @@ use crate::memory::{MemoryError, MemoryResult};
 use crate::runtime_hooks::InvocationId;
 use crate::snapshot_read::{
     ConflictsPageRequest, EvidenceSpansRequest, ExtractionInputsPageRequest,
-    StrengthObservationsPageRequest,
+    ExtractionObservationsPageRequest, StrengthObservationsPageRequest,
 };
 use crate::task_verb::verb_hook_boundary::{typed_row, typed_row_validated};
 use crate::verbs::{AiVerdictRequest, VERB_TABLE};
@@ -24,6 +24,8 @@ const STRENGTH_PAGE_VERB: &str = "vault.consolidation.strength.observations.page
 const CONFLICTS_PAGE_VERB: &str = "vault.consolidation.conflicts.page";
 /// The inputs page an extraction attempt reads.
 const EXTRACTION_INPUTS_PAGE_VERB: &str = "vault.consolidation.extraction.inputs.page";
+/// The word-free candidate facts an extraction attempt reads.
+const EXTRACTION_OBSERVATIONS_PAGE_VERB: &str = "vault.consolidation.extraction.observations.page";
 /// The evidence spans an extraction attempt reads.
 const EVIDENCE_SPANS_VERB: &str = "vault.evidence.spans";
 /// The typed verdict admitted by conflict settlement and extraction.
@@ -41,7 +43,7 @@ impl DreamerAttemptBinding {
     ///
     /// Strength admits its observations page and Archive commits. Conflict
     /// settlement admits its conflicts page, typed verdicts on the host's
-    /// lent ladder and Settle commits. Extraction admits its inputs page,
+    /// lent ladder and Settle commits. Extraction admits its inputs and observations pages,
     /// evidence spans, checked verdict packs and bound generation steps with their
     /// receipts, and no commit. A commit takes the batch itself,
     /// `{"items": [...], "sources": [...]}`: the binding is the live run,
@@ -70,6 +72,7 @@ impl DreamerAttemptBinding {
                 matches!(
                     verb,
                     EXTRACTION_INPUTS_PAGE_VERB
+                        | EXTRACTION_OBSERVATIONS_PAGE_VERB
                         | EVIDENCE_SPANS_VERB
                         | AI_VERDICT_VERB
                         | EXTRACTION_STEP_SUBMIT_VERB
@@ -105,6 +108,12 @@ impl DreamerAttemptBinding {
                 let input: ExtractionInputsPageRequest = decode(verb, input)?;
                 encode(&typed_row(&memory, &VERB_TABLE, verb, input, |input| {
                     crate::snapshot_read::extraction_inputs_page_bound(&memory, &input, self)
+                })?)
+            }
+            EXTRACTION_OBSERVATIONS_PAGE_VERB => {
+                let input: ExtractionObservationsPageRequest = decode(verb, input)?;
+                encode(&typed_row(&memory, &VERB_TABLE, verb, input, |input| {
+                    crate::snapshot_read::extraction_observations_page_bound(&memory, &input, self)
                 })?)
             }
             EVIDENCE_SPANS_VERB => {

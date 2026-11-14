@@ -205,6 +205,52 @@ pub(super) fn tournament_claim_of_verified(
     })
 }
 
+/// The evidence timing and diversity inputs for one selection candidate.
+/// Native assembly and the bound read share this shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SelectionEvidenceFacts {
+    /// The native verified citation count.
+    pub(crate) evidence_count: usize,
+    /// The earliest evidence time, with the native candidate-time fallback.
+    pub(crate) first_seen_ms: u64,
+    /// The latest verified evidence time in Unix milliseconds.
+    pub(crate) latest_ms: u64,
+    /// The native distinct speaker-or-claim set size.
+    pub(crate) diversity: usize,
+}
+
+/// Fold verified signal sources into selection timing and diversity.
+/// Each source contributes its stored time, a turn contributes its folded speaker, and a claim contributes its own id.
+/// An empty source list falls back to the candidate time.
+pub(super) fn selection_evidence_facts(
+    signal_sources: &[(EntityId, bool)],
+    evidence_count: usize,
+    learned_at_fallback_ms: u64,
+    mut time_ms_of: impl FnMut(&EntityId) -> Result<u64>,
+    mut speaker_of: impl FnMut(&EntityId) -> Result<Option<String>>,
+) -> Result<SelectionEvidenceFacts> {
+    let mut earliest = None;
+    let mut latest = 0;
+    let mut sessions = BTreeSet::new();
+    for (id, claim) in signal_sources {
+        let learned_at = time_ms_of(id)?;
+        earliest = Some(earliest.map_or(learned_at, |at: u64| at.min(learned_at)));
+        latest = latest.max(learned_at);
+        if *claim {
+            sessions.insert(id.to_hex());
+        } else if let Some(speaker) = speaker_of(id)? {
+            sessions.insert(speaker.trim().to_lowercase());
+        }
+    }
+    Ok(SelectionEvidenceFacts {
+        evidence_count,
+        first_seen_ms: earliest.unwrap_or(learned_at_fallback_ms),
+        latest_ms: latest,
+        diversity: sessions.len(),
+    })
+}
+
+/// The selection row for one verified candidate.
 fn selection_input(
     resources: &BranchResources<'_>,
     candidate: &VerifiedCandidate,
@@ -214,35 +260,34 @@ fn selection_input(
     new_refs: u64,
 ) -> Result<SelectionCandidate> {
     let facts = candidate_facts(&candidate.proposal.candidate)?;
-    let mut earliest = None;
-    let mut latest = 0;
-    let mut sessions = BTreeSet::new();
-    for (id, _hash, claim) in candidate.evidence.signal_sources() {
-        let learned_at = resources
-            .evidence_time(resources.scope(), &id)?
-            .saturating_mul(1_000);
-        earliest = Some(earliest.map_or(learned_at, |at: u64| at.min(learned_at)));
-        latest = latest.max(learned_at);
-        if claim {
-            sessions.insert(id.to_hex());
-        } else if let Some(speaker) = resources.turn(resources.scope(), &id)?.speaker {
-            sessions.insert(speaker.trim().to_lowercase());
-        }
-    }
+    let signal_sources: Vec<(EntityId, bool)> = candidate
+        .evidence
+        .signal_sources()
+        .into_iter()
+        .map(|(id, _hash, claim)| (id, claim))
+        .collect();
     let count = candidate.evidence.count();
+    let scope = resources.scope();
+    // A candidate's learned_at is Unix seconds (FIX 8695).
+    let evidence = selection_evidence_facts(
+        &signal_sources,
+        count,
+        candidate.learned_at.saturating_mul(1_000),
+        |id| Ok(resources.evidence_time(scope, id)?.saturating_mul(1_000)),
+        |id| Ok(resources.turn(scope, id)?.speaker),
+    )?;
     let signals = StrengthSignals::from_evidence(
         &facts.predicate,
-        count,
-        latest,
-        sessions.len(),
+        evidence.evidence_count,
+        evidence.latest_ms,
+        evidence.diversity,
         now,
         config,
     );
     Ok(SelectionCandidate {
         claim_id: candidate.claim_id,
-        // A candidate's learned_at is Unix seconds (FIX 8695).
-        first_seen_ms: earliest.unwrap_or(candidate.learned_at.saturating_mul(1_000)),
-        evidence_count: count,
+        first_seen_ms: evidence.first_seen_ms,
+        evidence_count: evidence.evidence_count,
         fan_in,
         new_refs,
         signals,

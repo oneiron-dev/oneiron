@@ -124,7 +124,15 @@ impl Vault {
     /// Storage errors, and a stored row that does not decode.
     pub fn snapshot_read_settings(&self) -> Result<SnapshotReadSettings> {
         let txn = self.store.env.read_txn()?;
-        Ok(SETTINGS.get(&self.store, &txn, &())?.unwrap_or_default())
+        self.snapshot_read_settings_in_txn(&txn)
+    }
+
+    /// Reads the effective snapshot bounds in the caller's existing transaction.
+    pub(crate) fn snapshot_read_settings_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<SnapshotReadSettings> {
+        Ok(SETTINGS.get(&self.store, txn, &())?.unwrap_or_default())
     }
 
     /// [`Self::snapshot_read_settings`] under the owner's proof.

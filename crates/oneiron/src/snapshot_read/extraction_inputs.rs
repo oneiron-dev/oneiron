@@ -327,7 +327,7 @@ pub(crate) fn extraction_turn_in_txn(
 }
 
 /// Pins the effective policy with its extraction-specific domain and canonical JSON bytes.
-fn extraction_policy_pin(policy: &ExtractionPolicy) -> Result<String> {
+pub(crate) fn extraction_policy_pin(policy: &ExtractionPolicy) -> Result<String> {
     let encoded =
         serde_json::to_vec(policy).map_err(|error| Error::InvalidConfig(error.to_string()))?;
     let mut hash = blake3::Hasher::new();
@@ -337,7 +337,7 @@ fn extraction_policy_pin(policy: &ExtractionPolicy) -> Result<String> {
 }
 
 /// Decodes the attempt identifier in its one lowercase hexadecimal spelling.
-fn extraction_attempt_key(attempt: &str) -> MemoryResult<EntityId> {
+pub(super) fn extraction_attempt_key(attempt: &str) -> MemoryResult<EntityId> {
     let id = EntityId::from_hex(attempt).map_err(|_| invalid_extraction_attempt())?;
     if id.to_hex() != attempt {
         return Err(invalid_extraction_attempt());

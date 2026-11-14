@@ -146,7 +146,7 @@ pub(super) fn served_turn_text_in_txn(
 /// # Errors
 ///
 /// Storage errors.
-pub(super) fn turn_lifted_keys_in_txn(
+pub(crate) fn turn_lifted_keys_in_txn(
     memory: &crate::memory::Memory<'_>,
     read: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,

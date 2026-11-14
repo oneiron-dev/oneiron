@@ -196,7 +196,8 @@ fn root(parents: &[usize], mut i: usize) -> usize {
     }
     i
 }
-fn cosine(a: &[f32], b: &[f32]) -> Result<f64> {
+/// Computes the native double-precision cosine and refuses invalid stored vectors.
+pub(crate) fn cosine(a: &[f32], b: &[f32]) -> Result<f64> {
     if a.len() != b.len() || a.is_empty() || a.iter().chain(b).any(|v| !v.is_finite()) {
         return Err(Error::InvalidConfig("invalid nomination embedding".into()));
     }

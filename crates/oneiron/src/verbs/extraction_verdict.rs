@@ -91,7 +91,7 @@ pub struct ExtractionPack {
 /// extracted candidate. The subject and predicate shape are checked, the value stays a
 /// proposal never written or trusted, and the relationship, topic and corrected claim are
 /// proposals the native identifier build needs.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CandidateOperand {
     /// The candidate subject as 32 lowercase hexadecimal digits.
@@ -115,7 +115,7 @@ pub struct CandidateOperand {
 
 /// One source turn a candidate cites: the turn reference with the version the job read,
 /// and the optional byte span the candidate quotes.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TurnEvidence {
     /// The source turn as 32 lowercase hexadecimal digits.

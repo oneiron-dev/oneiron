@@ -15,6 +15,7 @@
 mod conflicts_page;
 mod evidence_spans;
 mod extraction_inputs;
+mod extraction_observations;
 mod policy_preflight;
 mod run_reader;
 mod settings_doors;
@@ -45,6 +46,11 @@ pub(crate) use extraction_inputs::{
     extraction_inputs_page_bound, extraction_reader_scope_in_txn, extraction_turn_in_txn,
     queued_extraction_branch_in_txn,
 };
+pub(crate) use extraction_observations::extraction_observations_page_bound;
+pub use extraction_observations::{
+    CandidateObservation, ExtractionObservationsPage, ExtractionObservationsPageRequest,
+    PriorObservation, ReplayObservation, SimilarityScore, extraction_observations_page,
+};
 pub use policy_preflight::{
     POLICY_PREFLIGHT_MAX_REFS, PolicyPreflight, PolicyPreflightAct, PolicyPreflightRef,
     PolicyPreflightRequest, PolicyPreflightVerdict, policy_preflight, validate_policy_preflight,
@@ -66,8 +72,8 @@ pub use snapshot::{
     SNAPSHOT_MAX_KINDS, SnapshotHandle, SnapshotKind, SnapshotOpenRequest, SnapshotPage,
     SnapshotPageRequest, SnapshotRow, snapshot_open, snapshot_page, validate_snapshot_open,
 };
-pub(crate) use source_version::source_version_in_txn;
 pub use source_version::{SourceVersion, SourceVersionCheck};
+pub(crate) use source_version::{source_version_in_txn, turn_lifted_keys_in_txn};
 pub use strength_observations::{
     ObservedClaim, ObservedClaimStatus, ObservedSignals, ObservedSource, StrengthObservationsPage,
     StrengthObservationsPageRequest, strength_observations_page,
