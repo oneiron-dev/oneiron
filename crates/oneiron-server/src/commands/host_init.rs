@@ -13,6 +13,14 @@ const TEMPLATES: &[(&str, &[u8])] = &[
         include_bytes!("../../../../deploy/systemd/oneiron.socket"),
     ),
     (
+        "systemd/oneiron-broker@.service",
+        include_bytes!("../../../../deploy/systemd/oneiron-broker@.service"),
+    ),
+    (
+        "sysusers.d/oneiron-broker.conf",
+        include_bytes!("../../../../deploy/sysusers.d/oneiron-broker.conf"),
+    ),
+    (
         "launchd/com.oneiron.server.plist",
         include_bytes!("../../../../deploy/launchd/com.oneiron.server.plist"),
     ),
@@ -35,8 +43,8 @@ pub fn host_init(args: HostInitArgs) -> anyhow::Result<()> {
         let status = oneiron_spawn::command(hook).arg(&args.path).status()?;
         anyhow::ensure!(status.success(), "encryption hook failed");
     }
-    // The template directories this call made: two templates share
-    // `systemd/`, and only a directory made here takes a second one.
+    // The template directories this call made: several templates share
+    // `systemd/`, and only a directory made here takes another one.
     let mut made = std::collections::BTreeSet::new();
     for (name, bytes) in TEMPLATES {
         let path = args.path.join(name);
