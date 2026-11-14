@@ -12,7 +12,9 @@ use super::super::{REASON_MNEMONIC, secret_scan_error, write_payload_hit};
 use super::body::reads_as_text;
 use super::split_phrase;
 use super::text_log::{TextLog, TextSpans};
-use super::{FileKey, Masker, REASON_KNOWN_VALUE, escaped_span, file_spans, merged, occurrences};
+use super::{
+    FileKey, Masker, REASON_KNOWN_VALUE, escaped_span, file_spans_kept, merged, occurrences,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::file_secret_marks::MemberStep;
@@ -42,12 +44,17 @@ impl Masker {
         // discovered, and nothing is minted (FIX 8644).
         let mut spans = Vec::new();
         if !self.known_only {
-            spans = file_spans(leaf);
+            // A value the owner kept in the record is read filled, as the
+            // door's scan reads it, so a key next to it is placed on its own
+            // (L6-03-RULED-SCREEN-MERGED-SPAN).
+            spans = file_spans_kept(leaf, |value| self.is_kept(value));
             // A value a structured reading places (a credential field), wherever
-            // its bytes sit in the leaf.
+            // its bytes sit in the leaf. The reading leaves the record's kept
+            // values out as this one does.
             let mut fields = Masker {
                 mints: true,
                 at: self.at.clone(),
+                kept: self.kept.clone(),
                 ..Masker::default()
             };
             // A leaf no decoder takes is read as one text, whose spans are
@@ -70,6 +77,13 @@ impl Masker {
                 spans.extend(hits.into_iter().map(|span| (span, found.reason)));
             }
         }
+        // A kept value's own span is left out before the spans merge, so it
+        // never joins a key next to it.
+        spans.retain(|(span, _)| {
+            !leaf
+                .get(span.clone())
+                .is_some_and(|value| self.is_kept(value))
+        });
         for (span, reason) in merged(spans) {
             if known
                 .iter()

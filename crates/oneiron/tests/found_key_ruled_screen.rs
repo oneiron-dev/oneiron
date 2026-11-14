@@ -5,6 +5,12 @@
 //! before it masks. While the vault key is locked, a ruling waits, because
 //! it would not reach the owner's other machines.
 //!
+//! Engine RULING 14 Nov 10:27 (row C, L6-03-RULED-SCREEN-MERGED-SPAN): a ruled
+//! value stays as written where the text rules place it next to another
+//! span, on the ruling install and on the others: a key beside it is masked
+//! on its own, and a word the rules read around it is no hit once the ruled
+//! value is filled.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test found_key_ruled_screen`.
 
 use std::sync::Arc;
@@ -196,6 +202,94 @@ fn a_ruling_waits_while_the_vault_key_is_locked() -> TestResult {
     assert!(
         holds_token(&stored(&vault, &id)?),
         "with the key unlocked, the ruling stands"
+    );
+    Ok(())
+}
+
+/// An AWS access key id the door's provider rule places by its own span.
+const OTHER_KEY: &str = "AKIA0123456789ABCDEF";
+
+/// A record body whose notes hold `notes`.
+fn notes_body(notes: &str) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({ "notes": notes })).expect("FIXTURE: the body encodes")
+}
+
+/// The stored notes of record `id`.
+fn stored_notes(vault: &Vault, id: &EntityId) -> Result<String, Box<dyn std::error::Error>> {
+    let body: serde_json::Value = serde_json::from_slice(&stored(vault, id)?)?;
+    Ok(body["notes"]
+        .as_str()
+        .ok_or("FIXTURE: the stored body keeps its notes")?
+        .to_owned())
+}
+
+/// A record whose token the owner ruled no secret, on this install, or, with
+/// `screen_only`, as the owner's other machine holds it: the ruling's
+/// carried revoke folded, none of the record's found keys.
+fn ruled_record(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    screen_only: bool,
+) -> Result<EntityId, Box<dyn std::error::Error>> {
+    let (id, handle) = masked_record(vault, owner)?;
+    vault.rule_found_key_not_a_secret(owner, ActSurface::ThisInstall, &handle)?;
+    assert!(
+        holds_token(&stored(vault, &id)?),
+        "FIXTURE: the ruling put the value back"
+    );
+    if screen_only {
+        forget_found_keys_of(vault, id)?;
+        vault.run_pending_owner_work(|| true)?;
+    }
+    Ok(id)
+}
+
+/// The ruled token and a key next to it in one assigned word: the
+/// credential rule spans the word, each provider rule its own token.
+fn ruled_value_next_to_a_key(screen_only: bool) -> TestResult {
+    let (_dir, vault, owner) = open_vault()?;
+    let id = ruled_record(&vault, &owner, screen_only)?;
+    let body = notes_body(&format!("password={TOKEN}/{OTHER_KEY}"));
+    put(&vault, &id, 2, &body)
+        .unwrap_or_else(|error| panic!("the record, written again, lands: {error:?}"));
+    let notes = stored_notes(&vault, &id)?;
+    assert!(
+        notes.starts_with(&format!("password={TOKEN}/[secret sc")),
+        "the ruled value stays as written next to the key beside it: {notes}"
+    );
+    assert!(
+        !notes.contains(OTHER_KEY),
+        "the key beside the ruled value is masked on its own: {notes}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_ruled_value_next_to_a_key_stays_text_on_the_ruling_install() -> TestResult {
+    ruled_value_next_to_a_key(false)
+}
+
+#[test]
+fn a_ruled_value_next_to_a_key_stays_text_where_only_its_carried_revoke_reaches() -> TestResult {
+    ruled_value_next_to_a_key(true)
+}
+
+#[test]
+fn a_ruled_value_inside_an_assigned_word_stays_text_where_only_its_carried_revoke_reaches()
+-> TestResult {
+    let (_dir, vault, owner) = open_vault()?;
+    let id = ruled_record(&vault, &owner, true)?;
+    // The credential rule reads the whole word, in the body's bytes too (the
+    // comma opens its own segment there); with the ruled token filled, as the
+    // ruling install fills it, the word is no secret.
+    let body = notes_body(&format!("deploy, token={TOKEN}:v2"));
+    put(&vault, &id, 2, &body)
+        .unwrap_or_else(|error| panic!("the record, written again, lands: {error:?}"));
+    assert_eq!(
+        stored(&vault, &id)?,
+        body,
+        "a ruled value inside a word the rules read around it stays as written where only \
+         the ruling's revoke reached"
     );
     Ok(())
 }

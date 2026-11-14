@@ -6,13 +6,51 @@ pub(crate) use oneiron_store::batch::secret_scan::mask::text_spans::*;
 use super::super::shapes;
 use super::super::{REASON_MNEMONIC, REASON_PRIVATE_KEY, provider_token_spans};
 use super::{REASON_BLOCKLIST, REASON_SENSITIVE_ENV};
+use crate::file_secret_marks::FILLER;
 use std::ops::Range;
+use zeroize::Zeroizing;
 
 /// The spans of `text` the write door's text rules place, merged where they
 /// meet, in order: a private-key block, a blocklist entry, a provider key
 /// token, an assigned value under a credential name, and a recovery phrase.
 pub(super) fn secret_spans(text: &str) -> Vec<(Range<usize>, &'static str)> {
     merged(rule_placed_spans(text))
+}
+
+/// [`secret_spans`] of a text in a record where the owner ruled values no
+/// secret or kept them as text (FIX 8646, L6-03-RULED-SCREEN-MERGED-SPAN): a
+/// span one rule places on a value `kept` reads as kept is no hit, and the
+/// rules read the text again with each such value filled, as the door's scan
+/// reads it. A key the rules placed next to a kept value, or a word they
+/// read around it, is then placed on its own, and the kept value stays as
+/// written (`password=<kept>/[secret sc12]`). A value that is only part of a
+/// span, such as the head of a longer token, is no rule's span alone: it is
+/// not filled, and the span is masked whole.
+pub(super) fn secret_spans_kept(
+    text: &str,
+    kept: impl Fn(&[u8]) -> bool,
+) -> Vec<(Range<usize>, &'static str)> {
+    let placed = rule_placed_spans(text);
+    let kept_spans: Vec<Range<usize>> = placed
+        .iter()
+        .map(|(span, _)| span.clone())
+        .filter(|span| text.as_bytes().get(span.clone()).is_some_and(&kept))
+        .collect();
+    if kept_spans.is_empty() {
+        return merged(placed);
+    }
+    let mut filled = Zeroizing::new(text.as_bytes().to_vec());
+    for span in kept_spans {
+        if let Some(bytes) = filled.get_mut(span) {
+            bytes.fill(FILLER);
+        }
+    }
+    match std::str::from_utf8(&filled) {
+        Ok(filled) => merged(rule_placed_spans(filled)),
+        // A span that cuts a char: the text is read as written, and the
+        // kept value is masked with its neighbour (fail closed).
+        Err(_) => merged(placed),
+    }
 }
 
 /// Each span one of the write door's text rules places in `text`, as that
@@ -46,6 +84,15 @@ fn rule_placed_spans(text: &str) -> Vec<(Range<usize>, &'static str)> {
 /// their offsets in its bytes.
 pub(super) fn file_spans(data: &[u8]) -> Vec<(Range<usize>, &'static str)> {
     text_run_spans(data, secret_spans)
+}
+
+/// [`secret_spans_kept`] in each run of text in a file, at their offsets in
+/// its bytes.
+pub(super) fn file_spans_kept(
+    data: &[u8],
+    kept: impl Fn(&[u8]) -> bool,
+) -> Vec<(Range<usize>, &'static str)> {
+    text_run_spans(data, |text| secret_spans_kept(text, &kept))
 }
 
 /// [`rule_placed_spans`] in each run of text in a file, at their offsets in
