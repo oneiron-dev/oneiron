@@ -11,6 +11,9 @@
 //! A CLAIM write about a person, and a door that drops one of its facts
 //! without a new body (FIX 3196), hide its lines at once, in that door's own
 //! transaction, until the next pass reads the facts again.
+//!
+//! The public (band 0) line is also what the person embeds: a landing and a
+//! revert mark the person in their own write ([`crate::embed::mark_person_in_txn`]).
 
 use super::request_sources::{CallBackend, SourcedBackend};
 use super::residency::spent_or_deferred;
@@ -47,6 +50,7 @@ mod sources;
 pub(crate) use claim_hooks::{
     erase_person_about_in_txn, mark_person_about_dropped_in_txn, mark_person_about_moved_in_txn,
 };
+pub(crate) use sources::public_about_line_in_txn;
 
 /// The four sensitivity bands, public (0) to restricted (3).
 const TOP_BAND: u8 = 3;
@@ -333,6 +337,9 @@ pub(crate) fn publish_person_about_in_txn(
     row.asked = written_from;
     row.moved = false;
     PERSON_ABOUT.put(&vault.store, txn, &person, &row)?;
+    // The person's vector is of its public line: marked at the line landed,
+    // or dropped when the landing left it none.
+    crate::embed::mark_person_in_txn(vault, txn, person)?;
     Ok(Ok(()))
 }
 
@@ -480,6 +487,9 @@ pub(super) fn revert_person_about_in_txn(
     row.lines = prior.lines;
     row.at = prior.at;
     PERSON_ABOUT.put(&vault.store, txn, &person, &row)?;
+    // The reverted line never ranks the person again: the vector follows the
+    // line the revert left, or drops while that line is hidden.
+    crate::embed::mark_person_in_txn(vault, txn, person)?;
     Ok(true)
 }
 

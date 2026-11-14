@@ -12,6 +12,7 @@ pub(crate) mod home_vectors;
 pub use home_vectors::HomeClaimVector;
 mod locality;
 mod media;
+mod person;
 #[cfg(feature = "sync")]
 mod release;
 mod repo_projection;
@@ -47,6 +48,7 @@ pub(crate) use media::text_vector_sources_in_txn;
 pub use media::{
     MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome, UnboundMediaSample,
 };
+pub(crate) use person::mark_person_in_txn;
 pub use repo_projection::{RepoDerivedIndexReport, RepoDerivedIndexTextAuthor};
 pub(crate) use repo_projection::{
     apply_ops_session_projected, discard_repo_derived_index_copy_in_txn,
@@ -881,6 +883,28 @@ fn pending_input_in_txn(
             PendingEmbeddingInput {
                 entity_id: *id,
                 payload: PendingEmbeddingPayload::TurnText(text),
+                pending_embedding_token: token,
+            },
+            raw.entity_type,
+        )));
+    }
+
+    // A PERSON embeds its public `about` line, read now, and the lease
+    // commits to exactly that line, as a TURN's does to its text. A line
+    // hidden since it was marked retires the job; the vector of the line it
+    // was stays until the Dreamer writes the line again.
+    if raw.entity_type == crate::registry::ENTITY_TYPE_PERSON {
+        let Some(line) = crate::dreamer_consolidation::public_about_line_in_txn(vault, wtxn, id)?
+        else {
+            return Ok(None);
+        };
+        let token = vault
+            .store
+            .mark_pending_embedding(wtxn, id, line.as_bytes())?;
+        return Ok(Some((
+            PendingEmbeddingInput {
+                entity_id: *id,
+                payload: PendingEmbeddingPayload::SummaryText(line),
                 pending_embedding_token: token,
             },
             raw.entity_type,

@@ -19,13 +19,18 @@ pub(super) const REFILL: SideTable<EntityId, (), Raw> =
 ///
 /// Runs inside the swap, before it drops the vectors. A record the worker
 /// embeds is queued by the swap itself, and one whose live body is gone has
-/// nothing to embed.
+/// nothing to embed. A PERSON is never marked: the worker is the one producer
+/// of its vector (ruling PERSON-VECTOR-CHOICES, D2), and idle has no payload
+/// for it. A person whose line is hidden at the swap loses its vector with
+/// every other record's and gets one again once its next landing marks it; a
+/// mark here would let idle drop the vector that landing fills.
 pub(crate) fn schedule_vector_refills(vault: &Vault, wtxn: &mut heed::RwTxn<'_>) -> Result<()> {
     for id in crate::hnsw::collect_vector_ids(&vault.store, wtxn)? {
         let Some(record) = vault.store.port_entity_record(wtxn, &id)? else {
             continue;
         };
         if record.entity_type != crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+            && record.entity_type != crate::registry::ENTITY_TYPE_PERSON
             && crate::embed::embeddable_payload_in_txn(
                 vault,
                 wtxn,
