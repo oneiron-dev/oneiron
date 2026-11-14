@@ -10,9 +10,6 @@
 //! snapshot, never a reservation, and the next pass decides the batch as it
 //! always does (CALLS `FIX 6740 empty and broken states`).
 
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-
 use super::{HELD, HeldBatch, HeldStage};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -29,42 +26,8 @@ const NO_APPROVAL_DIGEST: &str = "the held failure-signal batch names no approve
 /// Frozen quantities whose sum does not fit.
 const SIGNAL_COUNT_OVERFLOW: &str = "the held failure-signal batch's quantities overflow";
 
-/// The failure-signal batch the vault carries, as its owner reads it before
-/// he presses (FIX 6740; CALLS `FIX 6740 view shape`). `content` is the
-/// batch exactly as it was first serialized and is sent, and
-/// `approval_digest` the one value `vault.consent.approve_once` or
-/// `vault.consent.deny` takes for it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct HeldFailureSignalBatchView {
-    /// Its random id.
-    pub batch_id: String,
-    /// The publisher endpoint it was built for, and is sent to.
-    pub endpoint: String,
-    /// The send ref every send of it carries: `failure_signals:batch:{batch_id}`.
-    pub send_ref: String,
-    /// Its content ref: `failure_signals:digest:{content_digest}`.
-    pub content_ref: String,
-    /// The batch JSON, the exact UTF-8 the publisher receives.
-    pub content: String,
-    /// Lowercase hex BLAKE3 of `content`'s bytes.
-    pub content_digest: String,
-    /// The approve-once digest the owner's press on it names, 64 lower-hex.
-    pub approval_digest: String,
-    /// The aggregate count rows it froze.
-    pub count_rows: u64,
-    /// The sum of the quantities those rows froze.
-    pub signal_count: u64,
-    /// The code-fix records it carries.
-    pub code_fix_records: u64,
-    /// Whether the deployment let the publisher train on it when it was
-    /// built.
-    pub training_permitted: bool,
-    /// Seconds since the epoch.
-    pub created_at: u64,
-    /// Where its custody stood after its last send: `staged`, `held` or
-    /// `admitted`. A record only, never proof the owner is still awaited.
-    pub custody_stage: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::failure_signals::held::read::HeldFailureSignalBatchView;
 
 impl Vault {
     /// `vault.consent.failure_signals_held`: the batch this vault carries,
