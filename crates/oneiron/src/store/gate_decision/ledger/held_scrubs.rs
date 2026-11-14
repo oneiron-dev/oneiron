@@ -1,17 +1,19 @@
-//! What an erase owes a Gate decision a legal hold keeps (FIX 7993, 7994).
+//! What an erase owes a Gate decision a cooperative restriction keeps (FIX
+//! 7993, 7994).
 //!
 //! An erase reaches the Gate ledger twice: a claim's erase turns every
 //! decision bound to the claim, or a bundle citing it, into its retention
 //! skeleton, and an actor's erase clears the `actor_ref` of every decision
 //! that names it. Each decision lives in one exterior-key partition, its
-//! claim's or the claim-free one a bundle shares (`retention`). A legal hold
-//! on that partition keeps the decision whole, its claim references and
-//! indexes too, and the erase goes on: it owes the decision its scrub in
-//! [`PENDING_SCRUB`], in its own transaction. Each due legal-hold pass
-//! settles every owed scrub no hold keeps any more, and the erase's overall
-//! final row waits on what is still owed (`deletion::receipt_final`). A
-//! restore re-derives a hard erase's claim scrubs from its `dt:` markers, so
-//! an image cannot bring a cited bundle back whole.
+//! claim's or the claim-free one a bundle shares (`retention`). A
+//! restriction on that partition keeps the decision whole, its claim
+//! references and indexes too, and the erase goes on: it owes the decision
+//! its scrub in [`PENDING_SCRUB`], in its own transaction. Each settle pass
+//! settles every owed scrub no restriction keeps any more, and the erase's
+//! overall final row waits on what is still owed
+//! (`deletion::receipt_final`). A restore re-derives a hard erase's claim
+//! scrubs from its `dt:` markers, so an image cannot bring a cited bundle
+//! back whole.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -114,12 +116,12 @@ impl Store {
     /// its rows, so every door that tears a held claim (facade, batch, cascade
     /// or replay) is refused here, before anything is rewritten.
     ///
-    /// A decision in another partition a hold keeps, a claim-free bundle
-    /// citing the claim while that partition is held, is no refusal (FIX
-    /// 7994): every decision's own partition is read before anything changes,
-    /// a held one keeps its bytes, its claim references and its indexes, and
-    /// the erase owes it its skeleton. `true` when anything changed, an owed
-    /// scrub included; never whether the erase is complete.
+    /// A decision in another partition a restriction keeps, a claim-free
+    /// bundle citing the claim while that partition is held, is no refusal
+    /// (FIX 7994): every decision's own partition is read before anything
+    /// changes, a held one keeps its bytes, its claim references and its
+    /// indexes, and the erase owes it its skeleton. `true` when anything
+    /// changed, an owed scrub included; never whether the erase is complete.
     ///
     /// `erase` is set for an erase (FIX 7955): only it retires the claim's
     /// decision key, so a restore of an older image cannot open what it
@@ -179,9 +181,9 @@ impl Store {
     /// whose every constituent is one, becomes its retention skeleton in
     /// place at `at`, as an erase leaves it: identifier-only immutable
     /// history. Local only: nothing is owed, and no tray, obligation, key or
-    /// other reader's saved weave digest is touched. A decision a hold keeps,
-    /// a bundle that names a claim that stays, and a batch preflight's future
-    /// receipt keep their bytes, and so does a claim-bound decision whose
+    /// other reader's saved weave digest is touched. A decision a restriction
+    /// keeps, a bundle that names a claim that stays, and a batch preflight's
+    /// future receipt keep their bytes, and so does a claim-bound decision whose
     /// reasons a saved weave period copies: shared content, which a later
     /// erase still finds and scrubs with it. The number made skeletons.
     pub(crate) fn discard_claim_gate_payload_in_txn(
@@ -223,8 +225,8 @@ impl Store {
     }
 
     /// The unredacted decisions bound to `claim_id` or citing it, each with
-    /// whether a legal hold keeps its own partition, all read before anything
-    /// changes.
+    /// whether a cooperative restriction keeps its own partition, all read
+    /// before anything changes.
     fn claim_decisions_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -323,8 +325,8 @@ impl Store {
         owe_gate_scrub_in_txn(self, wtxn, kind, source, decision, redacted_at)
     }
 
-    /// Owes `decision` the clear of erased actor `actor` while a hold keeps
-    /// the decision's partition (FIX 7993).
+    /// Owes `decision` the clear of erased actor `actor` while a restriction
+    /// keeps the decision's partition (FIX 7993).
     pub(in crate::store) fn owe_gate_actor_scrub_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -335,9 +337,9 @@ impl Store {
         self.owe_gate_scrub_in_txn(wtxn, OwedScrub::Actor, actor, decision, at)
     }
 
-    /// Whether erased claim `source` owes `decision` its skeleton while a hold
-    /// keeps the decision's own partition: the one residue of a claim's erase
-    /// that is no corruption.
+    /// Whether erased claim `source` owes `decision` its skeleton while a
+    /// restriction keeps the decision's own partition: the one residue of a
+    /// claim's erase that is no corruption.
     fn claim_scrub_held_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -356,7 +358,8 @@ impl Store {
 
     /// Whether a decision bound to or citing `claim` is still left for its
     /// erase to scrub: an unredacted one, but for one owed its skeleton while
-    /// a hold keeps its partition, which the due pass settles (FIX 7994).
+    /// a restriction keeps its partition, which the settle pass settles (FIX
+    /// 7994).
     /// [`Self::verify_claim_erasure_by_scan_in_txn`] still names every
     /// unredacted one.
     pub(crate) fn claim_decisions_left_to_scrub_in_txn(
@@ -390,10 +393,10 @@ impl Store {
         Ok(())
     }
 
-    /// Whether a decision is still owed a scrub for one of `sources`: a hold
-    /// keeps its partition, or its hold lifted and no due pass has settled it
-    /// yet. An erase of those ids is not complete while one is
-    /// (`deletion::receipt_final`).
+    /// Whether a decision is still owed a scrub for one of `sources`: a
+    /// restriction keeps its partition, or its restriction lifted and no
+    /// settle pass has settled it yet. An erase of those ids is not complete
+    /// while one is (`deletion::receipt_final`).
     pub(crate) fn gate_scrubs_owed_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -411,8 +414,8 @@ impl Store {
         Ok(false)
     }
 
-    /// Settles, in a due legal-hold pass's transaction, each owed scrub no
-    /// legal hold keeps any more: a decision whose partition no hold keeps
+    /// Settles, in a settle pass's transaction, each owed scrub no restriction
+    /// keeps any more: a decision whose partition no restriction keeps
     /// takes its skeleton when an erased claim owes it one, else names none of
     /// its erased actors, and what it was owed goes. A decision already gone,
     /// or sealed under a key no one holds any more, owes nothing. Whether
@@ -481,9 +484,9 @@ impl Store {
     /// A restore's Gate claim scrubs for the hard-erased ids `erased`, in its
     /// image-write transaction (FIX 7994): each decision the image brought
     /// back bound to one of them, or a bundle citing one, takes its skeleton
-    /// again, or is owed it while a hold keeps its partition. An owed scrub
-    /// is live state an image never takes away. Nothing is refused and no
-    /// entity erase runs again.
+    /// again, or is owed it while a restriction keeps its partition. An owed
+    /// scrub is live state an image never takes away. Nothing is refused
+    /// and no entity erase runs again.
     pub(crate) fn rerun_gate_claim_scrubs_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,

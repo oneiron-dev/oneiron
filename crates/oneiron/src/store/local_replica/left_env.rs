@@ -4,10 +4,10 @@
 //! then empties the environment by raw walks over every database, not by the
 //! delete tear or demotion. Every canonical row goes with its projections,
 //! documents, windows and residence rows, of any kind and in any state. Kept
-//! are the authority log and MACHINE rows, a held record (a world key pad whose
-//! world or sealed claim is held, too) with the side rows its bodies stand on,
-//! a held partition's gate decisions, and the side rows the host still talks
-//! to its home with and reopens this environment by. A kept entity is indexed
+//! are the authority log and MACHINE rows, a record a cooperative restriction
+//! keeps (a world key pad whose world or sealed claim is held, too) with the
+//! side rows its bodies stand on, and the side rows the host still talks to
+//! its home with and reopens this environment by. A kept entity is indexed
 //! again in each text, phonetic or vector index the purge clears (FIX 2415).
 //! Nothing else is written: no tombstone, deletion marker, audit row, Loro op,
 //! outbox row, receipt or release row.
@@ -27,7 +27,6 @@ use crate::registry;
 use crate::side_table::{self, Named, SideDb, SideTable, SideTableDecl};
 use crate::store::Store;
 use crate::store::embedding::EmbeddingProvenance;
-use crate::store::gate_decision::HeldGateRows;
 
 /// The text each document was indexed with. Key: id16.
 const INDEX_SOURCE_TEXT: SideTable<EntityId, Vec<(String, String)>, Named> =
@@ -126,13 +125,9 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::DELETION_IDENTITY_SOFT_DELETE_MARKER,
     &side_table::SYNC_HISTORY_FREE_WINDOW,
     &side_table::PROVENANCE_WITHHELD_SECRET,
-    // Legal holds: definitions, targets, logs, use limits, pending erases.
+    // Legal holds: definitions and logs.
     &side_table::LEGAL_HOLD_ROW,
-    &side_table::LEGAL_HOLD_TARGET,
     &side_table::LEGAL_HOLD_EVENT,
-    &side_table::LEGAL_HOLD_ERASE_LINK,
-    &side_table::LEGAL_HOLD_USE_LIMIT,
-    &side_table::LEGAL_HOLD_PENDING_ERASE,
     &side_table::LEGAL_HOLD_HOST_ROW,
     &side_table::LEGAL_HOLD_HOST_PROSPECTIVE,
     &side_table::LEGAL_HOLD_HOST_PROSPECTIVE_OUTBOX,
@@ -174,24 +169,6 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::SCOPE_POLICY_SWEEP_DONE,
 ];
 
-/// The gate-decision ledger and every family beside it: partitions,
-/// retention, claim and grant indexes, pending scrubs. A row stays when it is
-/// one of the [`HeldGateRows`] a standing hold keeps, or names a kept entity.
-/// Its key custody is kept always ([`LEAVE_KEPT_FAMILIES`]).
-static GATE_LEDGER_FAMILIES: &[&SideTableDecl] = &[
-    &side_table::GATE_DECISION_LEDGER,
-    &side_table::GATE_DECISION_CLAIM_CONTEXT,
-    &side_table::GATE_DECISION_GRANT_REF_INDEX,
-    &side_table::GATE_DECISION_PARTITION_RETAIN_UNTIL,
-    &side_table::GATE_DECISION_RETENTION_CONTEXT,
-    &side_table::GATE_DECISION_CLAIM_INDEX,
-    &side_table::GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE,
-    &side_table::GATE_DECISION_CLAIM_REF_INDEX,
-    &side_table::GATE_DECISION_CLAIM_REFS,
-    &side_table::GATE_DECISION_UNAPPLIED_PREFLIGHT,
-    &side_table::GATE_DECISION_PENDING_SCRUB,
-];
-
 /// Most kept entities one result names; [`LeftEnvPurge::kept_total`] counts
 /// them all.
 #[allow(dead_code, reason = "L03's OF-158 leave calls this")]
@@ -220,10 +197,6 @@ pub(crate) struct LeftEnvPurge {
     /// Side rows under no declared prefix, left in place. Counted over the
     /// rows this call walked: exact once `complete`.
     pub(crate) unknown_rows: usize,
-    /// Gate-decision rows a standing legal hold keeps ([`HeldGateRows`]):
-    /// a held partition's decisions and the rows they stand on. Counted over
-    /// the rows this call walked: exact once `complete`.
-    pub(crate) held_ledger_rows: usize,
     /// `false` while the row budget ran out: call again.
     pub(crate) complete: bool,
 }
@@ -244,15 +217,14 @@ impl LeftEnvPurge {
 /// its outbox, and no observer, window manager or worker can refill this
 /// environment.
 ///
-/// Every entity row goes but the [`LEAVE_KEPT_KINDS`], a row a standing legal
-/// hold names, and the pack map carrier the kept head pin names (the vault's
-/// open refuses without it). A row of the type, time, short-id or side
-/// databases stays when its key names a kept entity, an edge when both its
-/// ends are kept, and a side row when its family is in
-/// [`LEAVE_KEPT_FAMILIES`] or under no declared prefix. A kept record's bodies
-/// keep the digest-keyed rows they stand on, and a held gate partition keeps
-/// its decisions and their rows ([`HeldGateRows`]); both are planned before
-/// the first deletion. PPR, job and queue databases are cleared whole. The
+/// Every entity row goes but the [`LEAVE_KEPT_KINDS`], a row a cooperative
+/// restriction keeps, and the pack map carrier the kept head pin names (the
+/// vault's open refuses without it). A row of the type, time, short-id or
+/// side databases stays when its key names a kept entity, an edge when both
+/// its ends are kept, and a side row when its family is in
+/// [`LEAVE_KEPT_FAMILIES`] or under no declared prefix. A kept record's
+/// bodies keep the digest-keyed rows they stand on, planned before the first
+/// deletion. PPR, job and queue databases are cleared whole. The
 /// text, phonetic and vector indexes are cleared whole while they hold a row
 /// of an entity that goes, the HNSW graph shape with the vectors while its
 /// compatibility pins stay, and each kept entity is then indexed in them
@@ -320,19 +292,17 @@ impl Budget {
 
 /// The side rows a leave keeps beyond the rows that name a kept entity,
 /// planned before its first deletion: the digest-keyed rows a kept record's
-/// bodies stand on (FIX 8850), and the gate-decision rows a standing hold
-/// keeps (FIX 8851).
+/// bodies stand on (FIX 8850).
 struct Held {
     bodies: HashSet<Vec<u8>>,
-    gate: HeldGateRows,
 }
 
 impl Held {
-    fn plan(store: &Store, txn: &RoTxn<'_>, kept: &Kept) -> Result<Self> {
+    fn plan(_store: &Store, _txn: &RoTxn<'_>, _kept: &Kept) -> Result<Self> {
         let mut bodies = HashSet::new();
         // Body custody rows exist on unix only.
         #[cfg(unix)]
-        for raw in &kept.raw {
+        for raw in &_kept.raw {
             let Ok(bytes) = <[u8; 16]>::try_from(raw.as_slice()) else {
                 continue;
             };
@@ -340,8 +310,8 @@ impl Held {
                 continue;
             };
             crate::provenance::body::retained_body_side_keys_in_txn(
-                store,
-                txn,
+                _store,
+                _txn,
                 &owner,
                 &mut bodies,
             )?;
@@ -349,11 +319,8 @@ impl Held {
         // The kept removal archives' files, owned by their receipts, which
         // are no kept entity (FIX 3679).
         #[cfg(unix)]
-        crate::federation::removal_archive_body_keys_in_txn(store, txn, &mut bodies)?;
-        Ok(Self {
-            bodies,
-            gate: store.held_gate_rows_in_txn(txn)?,
-        })
+        crate::federation::removal_archive_body_keys_in_txn(_store, _txn, &mut bodies)?;
+        Ok(Self { bodies })
     }
 }
 
@@ -442,16 +409,6 @@ fn keep_reason(
     let kind = EntityMetadataHeader::parse(raw).map(|header| header.entity_type);
     if let Some(kind) = kind.filter(|kind| LEAVE_KEPT_KINDS.contains(kind)) {
         return Ok(Some(KeepReason::Kind(kind)));
-    }
-    if crate::store::legal_hold::legal_hold_held_in_txn(store, txn, id.as_bytes())? {
-        return Ok(Some(KeepReason::LegalHold));
-    }
-    // A pad is its world key's erasable half: a hold on the world or on a
-    // claim the key seals keeps it, as the delete guard refuses it (OF-470).
-    if kind == Some(registry::ENTITY_TYPE_WORLD_KEY_PAD)
-        && crate::world_keys::legal_hold_pad_world_in_txn(store, txn, raw)?
-    {
-        return Ok(Some(KeepReason::LegalHold));
     }
     if crate::store::legal_hold::held_in_txn(store, txn, id.as_bytes())?
         || (kind == Some(registry::ENTITY_TYPE_WORLD_KEY_PAD)
@@ -798,7 +755,6 @@ fn sweep_side_tables(
         families.doomed(key.as_bytes(), kept, held, &mut counts)
     })?;
     report.unknown_rows = counts.unknown;
-    report.held_ledger_rows = counts.held_ledger;
     Ok(())
 }
 
@@ -875,15 +831,12 @@ enum Fate {
     Swept,
     /// In [`LEAVE_KEPT_FAMILIES`].
     Kept,
-    /// In [`GATE_LEDGER_FAMILIES`]: swept, but for the [`HeldGateRows`].
-    Gate,
 }
 
 /// The side rows a walk left in place without a family that always stays.
 #[derive(Default)]
 struct SideCounts {
     unknown: usize,
-    held_ledger: usize,
 }
 
 /// One side database's declared families in prefix order, each with its
@@ -895,11 +848,6 @@ impl Families {
         let fate = |decl: &SideTableDecl| {
             if kept_family(decl) {
                 Fate::Kept
-            } else if GATE_LEDGER_FAMILIES
-                .iter()
-                .any(|gate| std::ptr::eq(*gate, decl))
-            {
-                Fate::Gate
             } else {
                 Fate::Swept
             }
@@ -913,17 +861,12 @@ impl Families {
     }
 
     /// Whether a side row goes: its family is swept, its key names no kept
-    /// entity and no kept body stands on it. A row under no declared prefix,
-    /// or a gate-decision row a hold keeps, stays and is counted.
+    /// entity and no kept body stands on it. A row under no declared prefix
+    /// stays and is counted.
     fn doomed(&self, key: &[u8], kept: &Kept, held: &Held, counts: &mut SideCounts) -> bool {
         match self.fate(key) {
             Some(Fate::Swept) => !held.bodies.contains(key) && !kept.named_in(key),
             Some(Fate::Kept) => false,
-            Some(Fate::Gate) if held.gate.keeps(key) => {
-                counts.held_ledger += 1;
-                false
-            }
-            Some(Fate::Gate) => !kept.named_in(key),
             None => {
                 counts.unknown += 1;
                 false

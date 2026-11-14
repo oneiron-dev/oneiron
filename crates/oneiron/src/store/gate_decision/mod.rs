@@ -11,8 +11,6 @@ mod clone_source;
 pub(crate) use clone_source::GateCloneComponent;
 mod context;
 mod keys;
-#[cfg(feature = "sync")]
-mod leave;
 mod ledger;
 mod lookup;
 mod orcb;
@@ -61,8 +59,6 @@ pub(in crate::store) use self::keys::{
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE, GATE_DECISION_KEY_PREFIX,
     gate_decision_upper_bound,
 };
-#[cfg(feature = "sync")]
-pub(in crate::store) use self::leave::HeldGateRows;
 pub(crate) use self::ledger::{RoomGateDecision, stage_room_gate_decision_in_txn};
 
 pub(in crate::store) use self::types::GATE_DIFF_HANDLE_MAX_LEN;

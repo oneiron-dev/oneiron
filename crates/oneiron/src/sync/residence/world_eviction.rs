@@ -50,7 +50,6 @@ use crate::Vault;
 use crate::authority::{AuthorityFold, EffectiveRead};
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
-use crate::store::legal_hold::{HoldActor, is_hold_refusal};
 use crate::store::local_replica::{
     KeepControls, KeepReason, discard_bundle_payload_in_txn, remove_local_members_in_txn,
     remove_local_replica_window_in_txn,
@@ -511,16 +510,9 @@ fn evict_cached_items(vault: &Vault, worlds: &BTreeSet<EntityId>) -> Result<(usi
     })
 }
 
-/// Whether a legal hold keeps `item`'s cache; any other failure fails.
+/// Whether a cooperative restriction keeps `item`'s cache.
 fn cache_held(vault: &Vault, txn: &heed::RoTxn<'_>, item: EntityId) -> Result<bool> {
-    match vault
-        .store
-        .reject_legal_holds_in_txn(txn, &[item], &HoldActor::UNATTRIBUTED)
-    {
-        Ok(()) => Ok(false),
-        Err(error) if is_hold_refusal(&error) => Ok(true),
-        Err(error) => Err(error),
-    }
+    crate::store::legal_hold::held_in_txn(&vault.store, txn, item.as_bytes())
 }
 
 /// Removes `window`'s local copy in bounded steps, with the window held

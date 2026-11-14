@@ -73,7 +73,6 @@ use crate::store::setting_seed::GROUP_COMMIT_MAX_WRITES;
 use crate::store::setting_seed::GROUP_COMMIT_WINDOW_MS;
 use crate::store::setting_seed::SettingSpec;
 
-use super::legal_hold::RefusalBatch;
 use super::{Store, StoreCore, active_write_txn_depth};
 
 mod detached;
@@ -718,11 +717,7 @@ impl Store {
     }
 
     /// [`Self::group_write`] for a write of either kind: a
-    /// [`Callback::Opaque`] write runs as a group of its own. Each write's
-    /// legal-hold refusals reach their logs in its group's own transaction,
-    /// kept whatever its rows did, so they are durable when it answers and no
-    /// writer is taken again while its answer lives (FIX 2435); a write nested
-    /// in a held writer leaves them to its outer write.
+    /// [`Callback::Opaque`] write runs as a group of its own.
     pub(crate) fn group_write_as<T, E>(
         &self,
         callback: Callback,
@@ -792,12 +787,10 @@ impl Store {
     /// before that commit loses rows whose answer already went out; the
     /// store's drop waits for it.
     ///
-    /// It carries the legal-hold refusals queued outside any door's writer, as
-    /// a leading write does. A write whose rows are dropped, or that holds
-    /// what settles only at the commit (hold-log rows it wrote, a session
-    /// segment it commits after the base), answers after the commit as any
-    /// write does, and so does one that leads its group itself because the
-    /// store's leader could not take it.
+    /// A write whose rows are dropped, or that holds what settles only at
+    /// the commit (a session segment it commits after the base), answers
+    /// after the commit as any write does, and so does one that leads its
+    /// group itself because the store's leader could not take it.
     #[allow(
         dead_code,
         reason = "the call receipt moved to the detached door (FIX 12023); this door stays for a \
@@ -959,53 +952,29 @@ impl Store {
         let mut detached = DetachedGroup::new(closing);
         self.core.run_queued_detached(&mut shared, &mut detached);
         // The leader's rows go next, in a transaction nested in the shared
-        // one, so dropping them keeps the refusals logged beside them.
-        let (staged, refusals) = self.stage(&mut shared, write);
-        // An engine write's group also carries the refusals queued outside
-        // any door's writer, as its flush did. An opaque one, which may be a
-        // commit that moves no backup mark (FIX 6730), carries its own alone.
-        let mut refusals = match callback {
-            Callback::Audited => refusals.with_queued(),
-            Callback::Opaque => refusals,
-        };
+        // one, so dropping them drops nothing else.
+        let staged = self.stage(&mut shared, write);
         let answer = match staged {
             Staged::Kept(answer) => answer,
             Staged::Dropped(answer) => {
                 // Nothing of it joined: the group closes at once, carrying
-                // only those refusals and the detached writes that ran before
-                // it, and drops whole when there are none.
-                let logged = refusals.write_in(&mut shared);
+                // only the detached writes that ran before it, and drops
+                // whole when there are none.
                 if detached.ran() > 0 {
-                    let _ = self.core.close_group(
-                        shared,
-                        &limits,
-                        opened,
-                        (1, 0),
-                        true,
-                        Some(refusals),
-                        detached,
-                    );
+                    let _ = self
+                        .core
+                        .close_group(shared, &limits, opened, (1, 0), true, detached);
                     return answer;
                 }
-                if logged {
-                    refusals.landed(shared.commit().is_ok());
-                } else {
-                    drop(shared);
-                }
+                drop(shared);
                 group.hand_off(Some((&self.core, &limits)));
                 return answer;
             }
             Staged::Panicked(panic) => {
                 if detached.ran() > 0 {
-                    let _ = self.core.close_group(
-                        shared,
-                        &limits,
-                        opened,
-                        (1, 0),
-                        true,
-                        None,
-                        detached,
-                    );
+                    let _ = self
+                        .core
+                        .close_group(shared, &limits, opened, (1, 0), true, detached);
                 } else {
                     drop(shared);
                     group.hand_off(Some((&self.core, &limits)));
@@ -1013,19 +982,10 @@ impl Store {
                 resume_unwind(panic);
             }
         };
-        refusals.write_in(&mut shared);
         // An opaque leader runs alone (no member is ever opaque).
         let closes = callback == Callback::Opaque || holds_postcommit_permit();
         self.core
-            .close_group(
-                shared,
-                &limits,
-                opened,
-                (1, 1),
-                closes,
-                Some(refusals),
-                detached,
-            )
+            .close_group(shared, &limits, opened, (1, 1), closes, detached)
             .map_err(|err| E::from(Error::from(err)))?;
         answer
     }
@@ -1040,33 +1000,23 @@ impl Store {
     where
         E: From<Error>,
     {
-        let (staged, refusals, logged) = {
+        let staged = {
             // SAFETY: the leader lent its open transaction and stays blocked in
             // `Ticket::run` until this thread reports `Ran` below. This
             // reference and the nested transactions under it all end inside
             // this block, before that report.
             let parent = unsafe { &mut *shared.0 };
-            let (staged, refusals) = self.stage(parent, write);
-            // A deferred-commit write also carries the refusals queued
-            // outside any door's writer, as the leader it stands in for
-            // would: its group may have no leader write to carry them.
-            let mut refusals = match answer_at {
-                AnswerAt::Commit => refusals,
-                AnswerAt::Stage => refusals.with_queued(),
-            };
-            // Its refusals join the group whatever its rows did.
-            let logged = !matches!(staged, Staged::Panicked(_)) && refusals.write_in(parent);
-            (staged, refusals, logged)
+            self.stage(parent, write)
         };
         match staged {
             Staged::Kept(answer) => {
                 let closes = holds_postcommit_permit();
                 // A deferred-commit write answers once its rows are in the
-                // group, unless it holds what settles only at the commit:
-                // hold-log rows it wrote there, or a session segment it
-                // commits after the base. It is counted before it reports, so
-                // the leader settles it with this group's commit.
-                let answers_staged = answer_at == AnswerAt::Stage && !logged && !closes;
+                // group, unless it holds what settles only at the commit: a
+                // session segment it commits after the base. It is counted
+                // before it reports, so the leader settles it with this
+                // group's commit.
+                let answers_staged = answer_at == AnswerAt::Stage && !closes;
                 if answers_staged {
                     self.group_commit.deferred.answer();
                 }
@@ -1075,7 +1025,6 @@ impl Store {
                     return answer;
                 }
                 let lost = ticket.wait_settled();
-                refusals.landed(lost.is_none());
                 match lost {
                     None => answer,
                     Some(lost) => Err(E::from(Error::from(lost))),
@@ -1089,7 +1038,6 @@ impl Store {
                     closes: false,
                 });
                 let lost = ticket.wait_settled();
-                refusals.landed(lost.is_none());
                 match (lost, answer) {
                     (Some(lost), Ok(_)) => Err(E::from(Error::from(lost))),
                     (_, answer) => answer,
@@ -1106,17 +1054,15 @@ impl Store {
     }
 
     /// Runs `write` in a transaction nested in `parent`, keeping or dropping
-    /// its rows as it says. The refusals it queues on this thread meanwhile
-    /// come back as its own batch, for the caller to log in `parent`.
+    /// its rows as it says.
     fn stage<T, E>(
         &self,
         parent: &mut RwTxn<'_>,
         write: impl FnOnce(&mut RwTxn<'_>) -> Rows<T, E>,
-    ) -> (Staged<T, E>, RefusalBatch<'_>)
+    ) -> Staged<T, E>
     where
         E: From<Error>,
     {
-        let attempt = self.begin_refusal_attempt();
         let _known_index = crate::store::known_value_index::known_index_scope(); // (FIX 12210)
         let staged = match self.env.nested_write_txn(parent) {
             Err(err) => Staged::Dropped(Err(E::from(Error::from(err)))),
@@ -1133,16 +1079,16 @@ impl Store {
                 Err(panic) => Staged::Panicked(panic),
             },
         };
-        (staged, attempt.finish())
+        staged
     }
 }
 
 impl StoreCore {
     /// The rest of an open group after its leader's own rows: each queued
-    /// write in turn until the group closes, then one commit, the leader's
-    /// refusals settled, every member settled and the writer passed on. `ran`
-    /// writes ran in it before the members, `kept` of them keeping rows, and
-    /// `detached` holds the detached writes that ran before them (FIX 12023).
+    /// write in turn until the group closes, then one commit, every member
+    /// settled and the writer passed on. `ran` writes ran in it before the
+    /// members, `kept` of them keeping rows, and `detached` holds the
+    /// detached writes that ran before them (FIX 12023).
     #[allow(clippy::too_many_arguments)]
     fn close_group(
         self: &Arc<Self>,
@@ -1151,7 +1097,6 @@ impl StoreCore {
         opened: Instant,
         (ran, mut kept): (usize, usize),
         mut closes: bool,
-        refusals: Option<RefusalBatch<'_>>,
         mut detached: DetachedGroup<'_>,
     ) -> heed::Result<()> {
         let group = &self.group_commit;
@@ -1218,9 +1163,6 @@ impl StoreCore {
                 "a group commit failed after its deferred-commit writes answered; their rows are lost"
             );
         }
-        if let Some(refusals) = refusals {
-            refusals.landed(committed.is_ok());
-        }
         // Every member waits for this, kept rows or not: an answer read in the
         // shared transaction may rest on rows an earlier member staged.
         for ticket in &members {
@@ -1241,9 +1183,7 @@ impl StoreCore {
 
     /// Leads the group a deferred-commit or detached write took the writer
     /// for. It has no write of its own: the writes queued there run in arrival
-    /// order, as in any group, and it commits once. Its deferred-commit
-    /// members carry the legal-hold refusals queued outside any writer, which
-    /// a leader with a write would carry.
+    /// order, as in any group, and it commits once.
     fn lead_deferred_commit_group(self: &Arc<Self>, limits: &Limits) {
         let group = &self.group_commit;
         let shared = match self.env.write_txn() {
@@ -1270,7 +1210,6 @@ impl StoreCore {
             opened,
             (0, 0),
             false,
-            None,
             DetachedGroup::new(None),
         );
     }

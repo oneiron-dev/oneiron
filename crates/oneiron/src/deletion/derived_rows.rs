@@ -26,7 +26,6 @@ const ERASERS: &[EntitySideRowEraser] = &[
     |write, txn, id| crate::edit_roundtrip::deck_create::erase_in_txn(write.store, txn, id),
     |write, txn, id| erase_stream_seeds_in_txn(write.store, txn, id),
     crate::conversation::erase_chat_breakpoints_in_txn,
-    |write, txn, id| crate::store::legal_hold::erase_in_txn(write.store, txn, id),
     erase_room_side_rows,
     |write, txn, id| crate::task_verb::erase_report_journal_in_txn(write.store, txn, id),
     |write, txn, id| crate::task_verb::erase_lifecycle_receipts_in_txn(write.store, txn, id),

@@ -59,9 +59,9 @@ pub use owner_args::{
     GuestRevokeArgs, GuestsCommand, SecretRevealArgs, SecretRevokeArgs, SecretRewrapArgs,
 };
 pub use owner_args::{
-    LegalHoldLiftAndEraseArgs, LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldProduceArgs,
-    LegalHoldTargetArgs, LegalHoldWidenArgs, LegalHoldsCommand, SecretSourceArgs, UnlockMethod,
-    VaultKeyAddDeviceArgs, VaultKeyArgs, VaultKeyCommand, VaultKeyNamedArgs, VaultKeyResealArgs,
+    LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldProduceArgs, LegalHoldTargetArgs,
+    LegalHoldWidenArgs, LegalHoldsCommand, SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs,
+    VaultKeyArgs, VaultKeyCommand, VaultKeyNamedArgs, VaultKeyResealArgs,
 };
 pub use owner_args::{
     PackRemoveArgs, PacksCommand, SubscriptionListArgs, SubscriptionPutArgs,

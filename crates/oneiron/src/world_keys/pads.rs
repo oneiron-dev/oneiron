@@ -251,11 +251,9 @@ pub(crate) fn world_pad_windows_in_txn(
         .collect())
 }
 
-/// Refuses destroying `world`'s keys while a legal hold stands on the world or
-/// on a claim its key seals: destroying the key destroys every such claim's
-/// sealed bytes, and every path that destroys bytes reads the hold. The
-/// refusal records `actor`, the deleting actor and its privacy erase flag
-/// (FIX 3059).
+/// Refuses destroying `world`'s keys while a cooperative restriction stands
+/// on the world or on a claim its key seals: destroying the key destroys
+/// every such claim's sealed bytes.
 fn reject_held_world_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -331,13 +329,14 @@ fn world_keys_destroyed_fact_in_txn(
     DESTROYED.contains(store, txn, &HexId(world))
 }
 
-/// Refuses erasing a pad row among `ids` while a legal hold stands on the pad's
-/// world or on a claim its key seals ([`reject_held_world_in_txn`]): the pad is
-/// the world key's erasable half, so erasing it destroys those sealed bytes too
-/// (OF-470). A missing row, a row of another kind and a header-only pad shell,
-/// whose pad is already gone, pass; so does a world whose keys were destroyed
-/// already, as in [`destroy_world_keys_in_txn`]. A hold on an id itself stays
-/// the caller's check. No pad byte leaves its row.
+/// Refuses erasing a pad row among `ids` while a cooperative restriction
+/// stands on the pad's world or on a claim its key seals
+/// ([`reject_held_world_in_txn`]): the pad is the world key's erasable half,
+/// so erasing it destroys those sealed bytes too. A missing row, a row of
+/// another kind and a header-only pad shell, whose pad is already gone, pass;
+/// so does a world whose keys were destroyed already, as in
+/// [`destroy_world_keys_in_txn`]. A restriction on an id itself stays the
+/// caller's check. No pad byte leaves its row.
 pub(crate) fn reject_held_pad_world_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -346,9 +345,7 @@ pub(crate) fn reject_held_pad_world_in_txn(
     reject_held_pad_world_as_in_txn(store, txn, ids, &HoldActor::UNATTRIBUTED)
 }
 
-/// [`reject_held_pad_world_in_txn`] for a delete whose actor is known: a
-/// refusal records `actor` and its privacy erase flag, as the direct check
-/// on the pad's id does (FIX 3059).
+/// [`reject_held_pad_world_in_txn`] for a delete whose actor is known.
 pub(crate) fn reject_held_pad_world_as_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -376,11 +373,12 @@ pub(crate) fn reject_held_pad_world_as_in_txn(
     Ok(())
 }
 
-/// Whether a legal hold stands on the world of the pad row `raw` or on a claim
-/// its key seals: [`reject_held_pad_world_in_txn`]'s read as a bool, for a walk
-/// that keeps the pad rather than refusing (OF-470). A row of another kind, a
-/// header-only pad shell and a world whose keys were destroyed already read
-/// false. A hold on the pad id itself stays the caller's check.
+/// Whether a cooperative restriction stands on the world of the pad row
+/// `raw` or on a claim its key seals:
+/// [`reject_held_pad_world_in_txn`]'s read as a bool, for a walk that keeps
+/// the pad rather than refusing. A row of another kind, a header-only pad
+/// shell and a world whose keys were destroyed already read false. A
+/// restriction on the pad id itself stays the caller's check.
 pub(crate) fn held_pad_world_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -413,47 +411,11 @@ pub(crate) fn held_pad_world_in_txn(
     Ok(false)
 }
 
-/// The real-legal-hold-only version of the pad keep query, for truthful
-/// reason reports. Cooperative restrictions are not legal-hold facts.
-pub(crate) fn legal_hold_pad_world_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    raw: &[u8],
-) -> Result<bool> {
-    if raw.len() == ENTITY_METADATA_HEADER_LEN {
-        return Ok(false);
-    }
-    // A body that does not decode names no world: it reads unheld, warned
-    // with no byte of it, so the walk drops it.
-    let world = match pad_body_world(raw) {
-        None => return Ok(false),
-        Some(Ok(world)) => world,
-        Some(Err(_)) => {
-            tracing::warn!("a world key pad row that does not decode reads as unheld");
-            return Ok(false);
-        }
-    };
-    if world_keys_destroyed_fact_in_txn(store, txn, world)? {
-        return Ok(false);
-    }
-    if crate::store::legal_hold::legal_hold_held_in_txn(store, txn, world.as_bytes())? {
-        return Ok(true);
-    }
-    for id in sealed_claims_in_txn(store, txn, world)? {
-        if crate::store::legal_hold::legal_hold_held_in_txn(store, txn, id.as_bytes())? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
 /// Refuses destroying the pad row `raw` read from a carrier, a window value
-/// or a cached body that no canonical row may back, while a legal hold
-/// stands on its world or on a claim its key seals (OF-470, FIX 3061): the
-/// refusal is queued with `actor`, on that world and those claims, as
-/// [`reject_held_world_in_txn`] queues it. What [`held_pad_world_in_txn`]
-/// reads as unheld passes, an undecodable pad among it. A hold on the pad id
-/// itself stays the caller's check.
+/// or a cached body that no canonical row may back, while a cooperative
+/// restriction stands on its world or on a claim its key seals (FIX 3061).
+/// What [`held_pad_world_in_txn`] reads as unheld passes, an undecodable pad
+/// among it. A restriction on the pad id itself stays the caller's check.
 #[cfg(feature = "sync")]
 pub(crate) fn reject_held_pad_carrier_in_txn(
     store: &Store,

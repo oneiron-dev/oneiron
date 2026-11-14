@@ -36,7 +36,7 @@ use super::{persist_window_doc_in_txn, write_window_svf_in_txn};
 use crate::Vault;
 use crate::error::{ArtifactError, Error, Result, SyncEngineContext};
 use crate::ports::{WindowAddress, WindowDeletionRows};
-use crate::store::legal_hold::{HoldActor, is_hold_refusal};
+use crate::store::legal_hold::HoldActor;
 use crate::sync::carrier_holds::CarrierInventory;
 
 /// A rebuilt window cut and ready to install; nothing is persisted yet.
@@ -166,29 +166,22 @@ impl PreparedRebootstrap {
     }
 }
 
-/// Refuses, before any work, a re-bootstrap whose cut a legal hold would
-/// stop: one naming any row `doc` carries or carried, or the world of a pad
-/// it holds or held (FIX 3061). A held refusal is in its hold log before
-/// this returns: once the read snapshot ended, and only then, it takes a
-/// writer of its own (FIX 2433). No materializer lock is held here.
+/// Refuses, before any work, a re-bootstrap whose cut a cooperative
+/// restriction would stop: one naming any row `doc` carries or carried, or
+/// the world of a pad it holds or held (FIX 3061). No materializer lock is
+/// held here.
 pub(crate) fn reject_held_rebootstrap(
     vault: &Vault,
     doc: &LoroDoc,
     actor: &HoldActor,
 ) -> Result<()> {
     let holds = CarrierInventory::of_window(doc);
-    let refusals = vault.store.begin_refusal_attempt();
-    let checked = vault
+    vault
         .store
         .env
         .read_txn()
         .map_err(Error::from)
-        .and_then(|rtxn| holds.reject_held_in_txn(&vault.store, &rtxn, actor));
-    let refusals = refusals.finish();
-    if checked.as_ref().is_err_and(is_hold_refusal) {
-        refusals.settle_now();
-    }
-    checked
+        .and_then(|rtxn| holds.reject_held_in_txn(&vault.store, &rtxn, actor))
 }
 
 /// Writes into `doc` the rebuilt value of every root-map key it differs on,

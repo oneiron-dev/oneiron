@@ -198,9 +198,6 @@ impl Pass<'_> {
             parent.commit()?;
             Ok(())
         });
-        // A refusal a hold made is logged once the chunk's writer ended,
-        // committed or dropped.
-        vault.store.flush_legal_hold_refusals_settled();
         committed?;
         if claims_changed {
             vault.verb_hook_bindings_changed();

@@ -238,11 +238,9 @@ pub fn widen_proposals(command: crate::cli::WidenProposalsCommand) -> anyhow::Re
 
 /// The owner's legal holds (OF-470) on a stopped vault; `serve` answers the
 /// same at `/v1/owner/legal-holds`. `lift` lifts a hold and destroys its
-/// sealed copy; "Lift the hold and erase?" prints its title and prompt
-/// first, and acts only with `--yes`.
+/// sealed copy; nothing in the vault is erased by it.
 pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()> {
     use crate::cli::{LegalHoldPlaceArgs, LegalHoldWidenArgs, LegalHoldsCommand};
-    use oneiron::deletion::{LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE};
     use oneiron::task_verb::sdk;
 
     let (serve, route) = match &command {
@@ -255,17 +253,6 @@ pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()>
         LegalHoldsCommand::Lift(args) => (&args.serve, "POST /v1/owner/legal-holds/lift --data -"),
         LegalHoldsCommand::Produce(args) => {
             (&args.serve, "POST /v1/owner/legal-holds/produce --data -")
-        }
-        LegalHoldsCommand::LiftAndErase(args) => {
-            eprintln!("{LIFT_AND_ERASE_TITLE}\n{LIFT_AND_ERASE_PROMPT}");
-            anyhow::ensure!(
-                args.yes,
-                "nothing was lifted or erased; run it again with --yes to confirm"
-            );
-            (
-                &args.serve,
-                "POST /v1/owner/legal-holds/lift-and-erase --data -",
-            )
         }
     };
     let config = resolve_serve_config(serve)?;
@@ -355,40 +342,6 @@ pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()>
                 request,
                 |request: sdk::LegalHoldProduceRequest| {
                     sdk::produce_legal_hold_as(&vault, &owner, request).map_err(memory_refusal)
-                },
-            )?
-        }
-        LegalHoldsCommand::LiftAndErase(args) => {
-            let records = args
-                .records
-                .iter()
-                .map(|record| hold_id_arg(record))
-                .collect::<anyhow::Result<Vec<_>>>()?;
-            let claim_free_partition = args.claim_free_partition;
-            // The one confirm shows the holds it lifts, read once from this
-            // vault, and acts only on what it showed (FIX 1462).
-            let shown_state =
-                vault.lift_and_erase_shown_state(&owner, &records, claim_free_partition)?;
-            eprintln!("{}", serde_json::to_string_pretty(&shown_state.holds)?);
-            let request = sdk::LegalHoldLiftAndEraseRequest {
-                records,
-                claim_free_partition,
-                shown_state,
-            };
-            hooked_row(
-                &vault,
-                actor,
-                "vault.legal_holds.lift_and_erase",
-                request,
-                |request: sdk::LegalHoldLiftAndEraseRequest| {
-                    Ok(sdk::LegalHoldLiftAndErased::from(
-                        vault.confirm_lift_legal_hold_and_erase(
-                            &owner,
-                            &request.records,
-                            request.claim_free_partition,
-                            &request.shown_state,
-                        )?,
-                    ))
                 },
             )?
         }

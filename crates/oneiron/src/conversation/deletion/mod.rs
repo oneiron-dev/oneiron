@@ -482,10 +482,6 @@ impl Vault {
     /// Hard-erases this PERSON's live and soft-erased records in keyset pages.
     /// The local append fence commits before any page, and every page rechecks
     /// authority. A retry starts at the beginning and skips completed purges.
-    /// A record a legal hold names is kept (C5): its refusal goes to the
-    /// hold's log once per request, it is neither deleted nor among the
-    /// outcomes, and the report counts it once in `kept`. A kept TURN's
-    /// MESSAGEs are not reached through it.
     pub fn erase_room_person(
         &self,
         room: EntityId,
@@ -642,10 +638,7 @@ impl Vault {
             ROOM_ERASURES.put(&self.store, txn, &(room, person), &[2])?;
             Ok(())
         })?;
-        Ok(RoomPersonEraseOutcome {
-            outcomes,
-            kept: progress.kept.len(),
-        })
+        Ok(RoomPersonEraseOutcome { outcomes })
     }
 }
 

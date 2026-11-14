@@ -61,8 +61,8 @@ fn intent_claim(intent: &RetirementIntent) -> Result<[u8; 16]> {
 }
 
 impl Store {
-    /// Whether a legal hold stands on the partition: the one hold store's
-    /// answer (OF-470), never a second marker.
+    /// Whether a cooperative restriction stands on the partition: the one
+    /// hold store's answer, never a second marker.
     pub(crate) fn gate_partition_held_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -118,11 +118,9 @@ impl Store {
 }
 
 /// The `vault_meta` prefixes of the rows [`checkpoint_retirements`] reads.
-pub(super) fn retirement_prefixes() -> [&'static [u8]; 3] {
-    let [holds] = legal_hold::target_prefixes();
+pub(super) fn retirement_prefixes() -> [&'static [u8]; 2] {
     [
         retirement_prefix(),
-        holds,
         side_table::COOPERATIVE_RESTRICTION.prefix,
     ]
 }
@@ -162,7 +160,7 @@ pub(super) fn checkpoint_retirements(
         if intent.subject.kind() != CustodyKind::ClaimDecision {
             continue;
         }
-        let held = legal_hold::rows_hold_claim(rows, &intent_claim(&intent)?);
+        let held = legal_hold::rows_keep_record(rows, &intent_claim(&intent)?)?;
         let carried = intent.cause == RetireCause::Erase || !held;
         retirements.push((intent, carried));
     }
@@ -354,7 +352,7 @@ impl Vault {
         // and the decision scrubs it kept (FIX 7993, 7994).
         if !held {
             self.note_backup_hold_recheck();
-            self.run_due_legal_hold_erases()?;
+            self.settle_held_scrubs()?;
         }
         Ok(())
     }
@@ -531,20 +529,12 @@ impl Vault {
         let mut live_claims = BTreeSet::new();
         let mut removed_claims = BTreeSet::new();
         let mut held_partitions = BTreeSet::new();
-        // Held partitions with rows past the horizon: the sweep's refusal.
-        let mut refused_partitions = BTreeSet::new();
         self.store.for_each_gate_decision_in_txn(&txn, |record| {
             let claim = record.claim_id;
             if self
                 .store
                 .gate_partition_held_in_txn(&txn, claim.as_ref())?
             {
-                if policy
-                    .horizon_for(self.store.gate_retention_context_in_txn(&txn, &record)?)
-                    .is_some_and(|horizon| record.created_at < now.saturating_sub(horizon))
-                {
-                    refused_partitions.insert(claim);
-                }
                 held_partitions.insert(claim);
                 if let Some(claim) = claim {
                     live_claims.insert(claim);
@@ -587,11 +577,6 @@ impl Vault {
             }
             Ok(())
         })?;
-        for claim in refused_partitions {
-            let claim = claim.map(EntityId::from_bytes).transpose()?;
-            let target = LegalHoldTarget::GatePartition(claim);
-            legal_hold::log_timer_refusal_in_txn(&self.store, &mut txn, target, now)?;
-        }
         for claim in held_partitions {
             let partition = Partition(claim);
             let previous = RETAIN_UNTIL

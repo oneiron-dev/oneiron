@@ -611,10 +611,6 @@ crate::side_table::side_tables! {
     /// Vault-scoped structural-kind registration. Key: u8.
     STRUCTURAL_KIND_REGISTRY: VaultMeta b"kind_reg:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
-    /// The customer holds an owner's lift-and-erase confirm lifted from one record, until its
-    /// deletion receipt completes (OF-470 C4). Key: id16 (record).
-    LEGAL_HOLD_ERASE_LINK: VaultMeta b"legal_hold:erase_link:v1:" Named
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Customer holds' legal-hold log: ids, times and reason codes only (OF-470 C3). A host
     /// order's events are in `LEGAL_HOLD_HOST_EVENT`; the owner reads those through
     /// `LegalHold::owner_may_see`. Key: id16 (hold) + u64be (sequence).
@@ -643,23 +639,9 @@ crate::side_table::side_tables! {
     /// checkpoint image carries it. Key: id16 (hold).
     LEGAL_HOLD_HOST_ROW: VaultMeta b"legal_hold:host:row:v1:" Named
         [restore: not_imaged] [family: not_imaged] [tier: runtime];
-    /// An owner erase that waits: one the owner confirmed while a host order keeps it, or the
-    /// owner's plain delete only secret orders keep (FIX 1465), with its request's kind, reason
-    /// and generation, and the `erase` act a shared vault's veto window adds (FIX 9781). It names
-    /// no hold. Key: id16 (record).
-    LEGAL_HOLD_PENDING_ERASE: VaultMeta b"legal_hold:pending_erase:v1:" Named
-        [restore: live] [family: unclassified] [tier: canonical];
     /// A customer legal hold naming records or gate-decision partitions (OF-470). Key: id16
     /// (hold).
     LEGAL_HOLD_ROW: VaultMeta b"legal_hold:row:v1:" Named
-        [restore: live] [family: unclassified] [tier: canonical];
-    /// What a standing customer hold holds; the value is empty. Key: held key (1 + id16, or 17
-    /// zero bytes for the claim-free gate partition) + id16 (hold).
-    LEGAL_HOLD_TARGET: VaultMeta b"legal_hold:target:v1:" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
-    /// A record kept after a refused privacy erasure, serving only that legal reason (OF-470 C6).
-    /// Key: id16 (record).
-    LEGAL_HOLD_USE_LIMIT: VaultMeta b"legal_hold:use_limit:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
     /// Tracker-mirror outbox marker. Key: id16.
     LINEAR_TASK_DIRTY: VaultMeta b"linear.task_dirty.v1/" Raw Engine

@@ -404,8 +404,6 @@ pub(crate) fn recover_topology_delete_intents_on_open(vault: &crate::Vault) -> R
                 Ok(())
             }
         };
-        // A hold's refusal is logged now this item's writer has ended.
-        vault.store.flush_legal_hold_refusals_settled();
         completed?;
         effects.committed(vault);
     }

@@ -4,8 +4,8 @@
 //! A delete keeps an instance's key, so a kept backup restores what it
 //! deleted; an erase retires it at once. Between the two, an instance no
 //! row names may still be needed: by a writer that minted it and has yet to
-//! name it, by a kept checkpoint image or parked archive that carries it, or
-//! by a standing customer hold. [`body_retention_policy`] is the one hook that says
+//! name it, or by a kept checkpoint image or parked archive that carries it.
+//! [`body_retention_policy`] is the one hook that says
 //! when none does: only then is a Retention retirement staged for it, and
 //! only then do its historical obligations (each owner's
 //! response-to-instance row, each digest's remembered instance) expire with
@@ -51,9 +51,6 @@ pub(crate) enum KeepReason {
     Leased,
     /// A kept image or a parked archive carries it.
     KeptCopy,
-    /// A standing customer hold keeps every kept copy. A host order keeps
-    /// none: its clone holds its own keys in the host's legal-hold store.
-    Hold,
     /// Another host minted it: who holds its copies is not known here.
     NotMintedHere,
 }
@@ -73,7 +70,6 @@ pub(crate) enum RetentionVerdict {
 pub(crate) struct RetentionContext {
     named: BTreeSet<[u8; 16]>,
     owed: BTreeSet<[u8; 16]>,
-    hold: bool,
 }
 
 /// What the policy decides on from custody, read once per pass: every
@@ -87,17 +83,15 @@ pub(crate) struct RetentionHolders {
 /// CALLS "BODY_INSTANCE_RETENTION": the one policy for both a Retention
 /// shred of a body instance (FIX 6022) and the expiry of its historical
 /// obligations (FIX 6228). It shreds only an instance no row names, no
-/// erase owes, no lease holds, no kept copy carries, no standing hold
-/// keeps, and that this host minted; anything else keeps it.
+/// erase owes, no lease holds, no kept copy carries, and that this host
+/// minted; anything else keeps it.
 pub(crate) fn body_retention_policy(
     context: &RetentionContext,
     holders: &RetentionHolders,
     instance: &[u8; 16],
     leased: bool,
 ) -> RetentionVerdict {
-    let keep = if context.hold {
-        KeepReason::Hold
-    } else if context.named.contains(instance) {
+    let keep = if context.named.contains(instance) {
         KeepReason::LiveUse
     } else if context.owed.contains(instance) {
         KeepReason::ErasePending
@@ -139,15 +133,12 @@ impl RetentionContext {
         let Some(named) = named_in_txn(store, txn)? else {
             return Ok(None);
         };
-        // No legal hold keeps a body key (LEGAL-HOLD-USE = B, ARCH-0038
-        // #legal-hold-clone-ruling).
         Ok(Some(Self {
             named,
             owed: ERASE_PENDING
                 .scan_keys(store, txn, &[])?
                 .into_iter()
                 .collect(),
-            hold: false,
         }))
     }
 }
@@ -184,7 +175,7 @@ fn snapshots_see_last_commit(store: &Store, txn: &RoTxn<'_>) -> Result<bool> {
 
 /// Whether a Retention intent for `instance` may still run, read again by
 /// the finisher under the custody write guard and the LMDB writer: no lease,
-/// kept copy, standing hold or older read snapshot needs it now. Its live
+/// kept copy or older read snapshot needs it now. Its live
 /// uses the caller reads. `kept` is the pass's holder snapshot (FIX 9067),
 /// read once per holder epoch under the same guard; the lease, hold and
 /// snapshot checks stay per intent.
@@ -197,8 +188,6 @@ pub(super) fn retention_ready_in_txn(
     if store.core.key_custody.local().is_none() || !snapshots_see_last_commit(store, txn)? {
         return Ok(false);
     }
-    // No legal hold keeps a body key (LEGAL-HOLD-USE = B, ARCH-0038
-    // #legal-hold-clone-ruling).
     if store.core.key_custody.body_leased(instance) {
         return Ok(false);
     }

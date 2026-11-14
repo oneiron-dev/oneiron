@@ -1,15 +1,14 @@
-//! What a legal hold kept an erase from scrubbing, settled once it lifts
-//! (FIX 6386, 7993, 7994).
+//! What a cooperative restriction kept an erase from scrubbing, settled
+//! once it lifts (FIX 6386, 7993, 7994).
 //!
 //! An erase that meets a held row keeps the row whole and goes on: a born
 //! row's birth and its window carriers stay behind their actor's `dt:`
 //! marker, and a held Gate decision stays behind the scrub the erase owes it
 //! (`store::gate_decision`). A held relayed ask intent or result keeps both
 //! rows behind the retirement its holder's erase owes them (FIX 20468). Every
-//! due legal-hold pass settles all of them in its first transaction, whether
-//! or not an owner erase waits: an explicit or automatic host-order lift, an
-//! owner's narrowing confirm, a released gate-decision partition and the
-//! ordinary maintenance pass alike. What is still owed keeps the erase's
+//! settle pass settles all of them in one transaction, whether or not an
+//! erase waits: a host-order lift, a released gate-decision partition and
+//! the ordinary maintenance pass alike. What is still owed keeps the erase's
 //! overall final row owed (`deletion::receipt_final`): the erase stands, and
 //! reads completion pending until then.
 
@@ -21,10 +20,10 @@ use crate::error::Result;
 
 impl Vault {
     /// Settles, in the caller's writer, the scrubs held rows kept: the births
-    /// and carriers no hold keeps any more, which the `dt:` markers name,
-    /// each Gate decision's owed scrub whose partition no hold keeps, and each
-    /// owed relayed ask intent and its result once neither is held (FIX
-    /// 20468). A row still held stays as it is.
+    /// and carriers no restriction keeps any more, which the `dt:` markers
+    /// name, each Gate decision's owed scrub whose partition no restriction
+    /// keeps, and each owed relayed ask intent and its result once neither
+    /// is held (FIX 20468). A row still held stays as it is.
     pub(super) fn settle_held_scrubs_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -45,12 +44,13 @@ impl Vault {
     }
 }
 
-/// Whether a scrub a legal hold kept is still owed for one of an erase's
-/// `entity_ids`: a Gate decision's owed scrub, a relayed ask intent's owed
-/// retirement (FIX 20468), a birth or window carrier one of them made, or a
-/// stamp token naming one of them. Births and tokens are read only while a
-/// hold row is kept, standing or released: with none, none outlived its
-/// actor's scrub.
+/// Whether a scrub a cooperative restriction kept is still owed for one of
+/// an erase's `entity_ids`: a Gate decision's owed scrub, a relayed ask
+/// intent's owed retirement (FIX 20468), a birth or window carrier one of
+/// them made, or a stamp token naming one of them. Since PR 2 only a
+/// restriction can keep a birth, a token or a carrier, and the birth read
+/// scans every `ROW_BIRTH` row, so it runs only while a restriction is
+/// filed: with none, none outlived its actor's scrub.
 pub(in crate::deletion) fn held_scrubs_owed_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -83,13 +83,13 @@ pub(in crate::deletion) fn held_scrubs_owed_in_txn(
     if super::super::erase::held_ask_forward_intents_owed_in_txn(vault, txn, &sources)? {
         return Ok(true);
     }
-    if crate::store::legal_hold::holds_in_txn(&vault.store, txn)?.is_empty() {
+    if !crate::store::legal_hold::any_cooperative_restriction_in_txn(&vault.store, txn)? {
         return Ok(false);
     }
     if crate::provenance::birth::births_made_by_in_txn(&vault.store, txn, &ids)? {
         return Ok(true);
     }
-    // A stamp token a hold kept (FIX 10930, 11040).
+    // A stamp token a restriction kept (FIX 10930, 11040).
     if crate::provenance::actor_stamp_tokens_remain_in_txn(vault, txn, &ids)? {
         return Ok(true);
     }

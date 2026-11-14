@@ -174,10 +174,8 @@ pub(crate) enum KeepReason {
     Pending,
     /// An engine delete guard refuses it.
     Guarded,
-    /// A standing legal hold names it (OF-470).
-    LegalHold,
-    /// A TURN that is the origin of a provisional entity a kept tag set or a
-    /// legal hold still needs, which no kept turn's text can take over: its
+    /// A TURN that is the origin of a provisional entity a kept tag set still
+    /// needs, which no kept turn's text can take over: its
     /// tag set is that entity's only readable source here.
     ProvisionalOrigin,
     /// A content-addressed byte carrier ASSET whose bytes a holder this call
@@ -546,12 +544,6 @@ impl<'a> Census<'a> {
         let kind = header.entity_type;
         let reason = if self.keep.kinds.contains(&kind) {
             KeepReason::Kind(kind)
-        } else if crate::store::legal_hold::legal_hold_held_in_txn(self.store, txn, id.as_bytes())?
-            || crate::world_keys::legal_hold_pad_world_in_txn(self.store, txn, raw)?
-        {
-            // A pad whose world or sealed claim is held stays too, whatever
-            // kinds the caller keeps (OF-470).
-            KeepReason::LegalHold
         } else if crate::store::legal_hold::held_in_txn(self.store, txn, id.as_bytes())?
             || crate::world_keys::held_pad_world_in_txn(self.store, txn, raw)?
             || (self.keep.release_local_members

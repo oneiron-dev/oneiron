@@ -4,7 +4,7 @@
 //! Only the thin read cache of an unpromoted item is pruned: its body
 //! (`ri:b:`), text document (`ri:d:`), source provenance (`ri:s:`), opened marker (`ro:e:`) and touch row
 //! (`rt:e:`). The thin index, promoted windows, local writes, deletes and
-//! authority stay, and so does the cache of an item a legal hold names. No
+//! authority stay, and so does the cache of an item a cooperative restriction keeps. No
 //! tombstone or Loro operation is produced: a pruned item is fetched again on
 //! its next touch.
 //!
@@ -19,7 +19,6 @@ use crate::Vault;
 use crate::error::Result;
 use crate::ports::{WindowAddress, WindowDeletionRows};
 use crate::store::Store;
-use crate::store::legal_hold::{HoldActor, is_hold_refusal};
 use crate::store::local_replica::{KeepControls, remove_local_replica_window_in_txn};
 use crate::sync::WindowKey;
 
@@ -230,20 +229,15 @@ pub(crate) fn prune_thin_items_in_txn(
         if touched >= before {
             continue;
         }
-        // A legal hold keeps every byte of the rows it names, a cached
-        // copy too: a held item's cache stays (OF-470). So does a cached pad
-        // whose world, or a claim its key seals, a hold names, read from the
-        // cache before anything goes (FIX 3061). Any other failure fails.
+        // A cooperative restriction keeps every byte of the rows it names, a
+        // cached copy too: a held item's cache stays. So does a cached pad
+        // whose world, or a claim its key seals, a restriction names, read
+        // from the cache before anything goes (FIX 3061).
         let Ok(item) = EntityId::from_hex(id) else {
             continue;
         };
-        match vault
-            .store
-            .reject_legal_holds_in_txn(txn, &[item], &HoldActor::UNATTRIBUTED)
-        {
-            Ok(()) => {}
-            Err(error) if is_hold_refusal(&error) => continue,
-            Err(error) => return Err(error),
+        if crate::store::legal_hold::held_in_txn(&vault.store, txn, item.as_bytes())? {
+            continue;
         }
         if let Some(raw) = vault.store.sync_state.get(txn, &format!("ri:b:{id}"))?
             && crate::world_keys::held_pad_world_in_txn(&vault.store, txn, &raw)?

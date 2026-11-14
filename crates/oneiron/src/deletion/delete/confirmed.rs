@@ -13,10 +13,9 @@
 use std::cell::{Cell, RefCell};
 
 use crate::Vault;
-use crate::deletion::LegalHoldActorKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::store::legal_hold::{HoldActor, pending_erase_in_txn};
+use crate::store::legal_hold::HoldActor;
 
 use super::DeleteEntityOutcome;
 
@@ -31,21 +30,15 @@ pub(crate) enum ConfirmedEraseOutcome {
 }
 
 /// Who the confirmed erase of `record` that waits as request `generation`
-/// names as confirming it, as a hold's refusal names them: the owner its row
-/// records, else no one. `None` when no erase of it waits, or another
-/// request's does.
+/// names as confirming it: none. The waiting-erase store is gone, so no
+/// erase waits and every re-proof cancels.
 pub(crate) fn due_erase_requester_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    record: &EntityId,
-    generation: &EntityId,
+    _vault: &Vault,
+    _txn: &heed::RoTxn<'_>,
+    _record: &EntityId,
+    _generation: &EntityId,
 ) -> Result<Option<HoldActor>> {
-    Ok(pending_erase_in_txn(&vault.store, txn, record)?
-        .filter(|pending| pending.generation == *generation)
-        .map(|pending| match pending.confirmed_by {
-            None => HoldActor::UNATTRIBUTED,
-            Some(by) => HoldActor::new(LegalHoldActorKind::Owner, Some(by)),
-        }))
+    Ok(None)
 }
 
 /// A due confirmed erase on the delete rail: the request it runs, the

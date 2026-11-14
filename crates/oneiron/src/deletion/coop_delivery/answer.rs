@@ -144,7 +144,7 @@ impl Vault {
             }
             // A new choice replaces the old one but lifts no hold an earlier
             // legal hold answer placed. The owner lifts that only through
-            // `confirm_lift_legal_hold_and_erase`.
+            // `vault.legal_holds.lift`.
             filed.disposition = Some(CooperativeDeletionDisposition {
                 kind: answer.kind,
                 reason_code: answer.reason_code.clone(),
@@ -164,8 +164,6 @@ impl Vault {
         let filed = match written {
             Ok(filed) => filed,
             Err(error) => {
-                // A hold's refusal reaches its log once the writer has ended.
-                self.flush_legal_hold_refusals_after_failure();
                 if let Some(hold_id) = courtesy_hold_id {
                     self.remove_uncommitted_hold_copy(&hold_id);
                 }
@@ -205,7 +203,6 @@ impl Vault {
             (actor, pending)
         };
         let memory = self.memory(actor, EdgeActorClass::Human);
-        let mut failed = false;
         for record in pending {
             let removed = {
                 let txn = self.store.env.read_txn()?;
@@ -222,7 +219,6 @@ impl Vault {
                     Ok(receipt) if receipt.existed => CooperativeDeleteRecordState::Removed,
                     Ok(_) => CooperativeDeleteRecordState::Missing,
                     Err(error) => {
-                        failed = true;
                         tracing::warn!(
                             record = %record.to_hex(),
                             error = %error.message,
@@ -233,9 +229,6 @@ impl Vault {
                 }
             };
             self.settle_courtesy_record(key, operation_id, record, state)?;
-        }
-        if failed {
-            self.flush_legal_hold_refusals_after_failure();
         }
         let txn = self.store.env.read_txn()?;
         INCOMING

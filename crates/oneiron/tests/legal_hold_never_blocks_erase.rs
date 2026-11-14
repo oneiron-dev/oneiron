@@ -86,9 +86,7 @@ fn named_row(vault: &Vault, name: &str) -> TestResult<EntityId> {
 /// The owner's erase of a held PERSON succeeds: the confirm is `Ok`, the
 /// record reads gone, the hold still lists unlifted, and the sealed copy
 /// still holds the record's entity row. At the base 2dc78a6b the confirm
-/// fails with the held refusal "legal hold: a hold names this record, so it
-/// is not deleted" (`crates/oneiron/src/deletion/legal_hold/types.rs:21`,
-/// `LEGAL_HOLD_REFUSAL`, via `store/legal_hold/mod.rs:reject_held_key_in_txn`).
+/// fails with the held refusal.
 #[test]
 fn owner_hold_never_refuses_the_owners_erase() -> TestResult {
     let fixture = fixture()?;
@@ -139,27 +137,6 @@ fn owner_hold_never_refuses_the_owners_erase() -> TestResult {
                 && component.key == id.as_bytes().to_vec()
         }),
         "the sealed copy still holds the record's entity row"
-    );
-    Ok(())
-}
-
-/// A hold never keeps backups: with a hold standing,
-/// `legal_hold_keeps_backups` is false. At the base 2dc78a6b it is true
-/// (`crates/oneiron/src/recovery/checkpoint/host_holds.rs:131`, counted from
-/// `LegalHold::keeps_vault_data`).
-#[test]
-fn an_owner_hold_never_keeps_the_backups() -> TestResult {
-    let fixture = fixture()?;
-    let vault = &fixture.vault;
-    let id = named_row(vault, "held record")?;
-    vault
-        .place_legal_hold(&fixture.owner, vec![LegalHoldTarget::Record(id)], None)
-        .map_err(at("the owner's legal hold"))?;
-    assert!(
-        !vault
-            .legal_hold_keeps_backups()
-            .map_err(at("read the backup hold"))?,
-        "no hold keeps the backups"
     );
     Ok(())
 }

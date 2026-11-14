@@ -1,6 +1,6 @@
 //! The host doors of the owner's legal-hold rows (OF-470):
-//! `vault.legal_holds.place`, `.widen`, `.list`, `.log`, `.lift`, `.produce`,
-//! `.lift_and_erase` and `.withdraw_erase`. `host_doors` re-exports them, so
+//! `vault.legal_holds.place`, `.widen`, `.list`, `.log`, `.lift` and `.produce`.
+//! `host_doors` re-exports them, so
 //! the generated HTTP facade handler and the MCP dispatcher call them by the
 //! name every host door has, and a tool call, a code-mode call and an SDK
 //! call meet one admission: the vault owner's proof, as
@@ -14,9 +14,8 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::{LegalHold, LegalHoldEvent, LegalHoldTarget};
 use oneiron::memory::{MemoryResult, ProducerRows};
 use oneiron::task_verb::sdk::{
-    self, EmptyRequest, LegalHoldErasesWithdrawn, LegalHoldLiftAndEraseRequest,
-    LegalHoldLiftAndErased, LegalHoldLiftRequest, LegalHoldPlaceRequest, LegalHoldProduceRequest,
-    LegalHoldProduced, LegalHoldWidenRequest, LegalHoldWithdrawEraseRequest,
+    self, EmptyRequest, LegalHoldLiftRequest, LegalHoldPlaceRequest, LegalHoldProduceRequest,
+    LegalHoldProduced, LegalHoldWidenRequest,
 };
 
 use super::clock_ingress;
@@ -197,63 +196,6 @@ pub(crate) async fn vault_legal_holds_log(
             events
                 .iter()
                 .flat_map(|event| hold_targets(&event.targets))
-                .collect()
-        },
-    )
-    .await
-}
-
-/// `vault.legal_holds.lift_and_erase`: the owner's one "Lift the hold and
-/// erase?" confirm. It erases; the engine takes the owner's proof, the
-/// targets and the state the confirm showed, and checks that state itself
-/// (FIX 1462). Nothing here adds a token or prepares a state of its own. It
-/// lists the records its receipt names, and, on a stale confirm, the shown
-/// state it answers with (FIX 10399).
-pub(crate) async fn vault_legal_holds_lift_and_erase(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: LegalHoldLiftAndEraseRequest,
-) -> Listed<LegalHoldLiftAndErased> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.legal_holds.lift_and_erase",
-        move |server, owner| sdk::lift_legal_hold_and_erase_as(server.vault(), owner, input),
-        |erased| {
-            let mut rows: Vec<EntityId> =
-                erased.records.iter().map(|erased| erased.record).collect();
-            if let Some(changed) = erased.changed.as_ref() {
-                rows.extend(changed.records.iter().copied());
-                for hold in &changed.holds {
-                    rows.push(hold.hold_id);
-                    rows.extend(hold_targets(&hold.targets));
-                }
-            }
-            rows
-        },
-    )
-    .await
-}
-
-/// `vault.legal_holds.withdraw_erase`: the owner withdraws the erase that
-/// waits on each named record (FIX 10401). The engine takes the owner's
-/// proof and the records, unchanged, under the proof the confirm takes. It
-/// lists the records its answer names.
-pub(crate) async fn vault_legal_holds_withdraw_erase(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: LegalHoldWithdrawEraseRequest,
-) -> Listed<LegalHoldErasesWithdrawn> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.legal_holds.withdraw_erase",
-        move |server, owner| sdk::withdraw_legal_hold_erase_as(server.vault(), owner, input),
-        |withdrawn| {
-            withdrawn
-                .records
-                .iter()
-                .map(|withdrawn| withdrawn.record)
                 .collect()
         },
     )

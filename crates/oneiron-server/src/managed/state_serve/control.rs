@@ -9,8 +9,7 @@ use oneiron_vault_contract::relay_delete::RELAY_DELETE_REVISION;
 use oneiron_vault_contract::settings_paths::SETTINGS_PATHS_REVISION;
 use oneiron_vault_contract::slim_control::SLIM_RECOVERY_REVISION;
 use oneiron_vault_contract::{
-    CONTRACT_VERSION, CtlRequest, CtlResponse, LegalHoldsNotProven, LegalHoldsWire,
-    VmOutboxCompanionState,
+    CONTRACT_VERSION, CtlRequest, CtlResponse, LegalHoldsWire, VmOutboxCompanionState,
 };
 
 use super::ManagedState;
@@ -168,23 +167,10 @@ impl ManagedState {
                     owner_signing_recovered,
                 })
             }
-            // A read: a vault frozen for reap answers it and stays frozen. A
-            // read that fails answers not proven, never a count of none, so
-            // the erase that asked waits.
+            // A read: a vault frozen for reap answers it and stays frozen. No
+            // hold keeps anything, so no standing hold is ever counted.
             CtlRequest::LegalHolds => {
-                let legal_holds = match self.server.vault().standing_legal_holds() {
-                    Ok(standing) => LegalHoldsWire::Proven { standing },
-                    Err(error) => {
-                        tracing::warn!(
-                            kind = ?error.kind(),
-                            reason = "legal_hold_read_failed",
-                            "the standing legal holds did not read; answered not proven"
-                        );
-                        LegalHoldsWire::NotProven {
-                            reason: LegalHoldsNotProven::ReadFailed,
-                        }
-                    }
-                };
+                let legal_holds = LegalHoldsWire::Proven { standing: 0 };
                 Ok(CtlResponse::LegalHolds { legal_holds })
             }
             // A read: a vault frozen for reap answers it and stays frozen. A

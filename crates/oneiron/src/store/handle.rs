@@ -350,9 +350,6 @@ pub struct StoreCore {
     pub(crate) l2_base_cache: Mutex<crate::store::l2_evidence::L2BaseCache>,
     pub(in crate::store) ppr_cache_invalidation:
         &'static dyn crate::store::ppr_cache_invalidation::PprCacheInvalidation,
-    /// Legal-hold refusals waiting for their hold log: the refusing
-    /// transaction rolls back (OF-470). Never persisted.
-    pub(crate) legal_hold_refusals: super::legal_hold::LegalHoldRefusals,
     /// Wakes a HOST order's prospective capture worker after a new message
     /// is sealed to it (FIX 13866). Never persisted.
     pub(crate) host_legal_prospective: super::legal_hold::ProspectiveWake,

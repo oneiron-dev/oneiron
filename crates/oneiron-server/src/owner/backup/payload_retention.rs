@@ -143,10 +143,7 @@ fn sweep_orphans(vault: &oneiron::Vault, plan: &BackupPlan) -> anyhow::Result<()
     if orphans.is_empty() {
         return Ok(());
     }
-    vault.with_backup_hold_exclusion(|holds| -> anyhow::Result<()> {
-        if holds.keeps_backups() {
-            return Ok(());
-        }
+    vault.with_backup_hold_exclusion(|_holds| -> anyhow::Result<()> {
         let mut swept = false;
         for file in &orphans {
             match std::fs::remove_file(plan.dir.join(file)) {

@@ -196,9 +196,6 @@ pub(super) fn compact_all_windows(
                         state = WindowSweepState::Deferred;
                     }
                 }
-                Err(err) if super::holds::refused_by_hold(&err) => {
-                    super::holds::defer_held(run, &mut state);
-                }
                 Err(err) => state = WindowSweepState::Failed(format!("{:?}", err.kind())),
                 Ok(true) => run.windows_compacted += 1,
             }
@@ -527,7 +524,7 @@ pub(super) fn compact_window_with(
             ));
         }
 
-        // A legal hold keeps every row it names (OF-470): one this
+        // A cooperative restriction keeps every row it names: one this
         // compaction would destroy keeps the window as it is.
         if let Err(refused) = destroyed.reject_held_in_txn(
             &vault.store,
@@ -541,7 +538,7 @@ pub(super) fn compact_window_with(
                     "sweep: indexed legal hold row missing — compaction deferred"
                 );
             }
-            held.set(super::holds::refused_by_hold(&refused) || missing_hold);
+            held.set(missing_hold);
             return Err(refused);
         }
 

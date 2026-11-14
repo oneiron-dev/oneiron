@@ -348,9 +348,9 @@ pub async fn run_relay(config_path: &FsPath) -> anyhow::Result<()> {
     run_relay_with_hold_guard(config_path, None).await
 }
 
-/// [`run_relay`] with the host's hold guard on locker deletes (FIX 1488): a
-/// delete a standing hold covers defers instead of unlinking, and runs once
-/// the hold lifts. Only the host injects a guard; no [`RelayConfig`] field
+/// [`run_relay`] with the host's hold guard on locker deletes (FIX 1488):
+/// the guard runs the unlink inside the vault-deletion exclusion. Only the
+/// host injects a guard; no [`RelayConfig`] field
 /// can. `None` is exactly [`run_relay`]. A room with a guard is a guarded
 /// room (FIX 6826): its directories keep the modes its host provisioned,
 /// with no reset to owner-only, and its uploads are 0660, for its vault's

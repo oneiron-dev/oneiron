@@ -63,7 +63,6 @@ impl Vault {
             wtxn.commit()?;
             Ok((outcome, effects, claims_changed))
         });
-        self.store.flush_legal_hold_refusals_settled();
         // A fence its actor scrub committed reaches key custody now (FIX 11211).
         self.store.journal_staged_fence_facts();
         let (outcome, effects, claims_changed) = applied?;

@@ -124,8 +124,7 @@ fn reverify_record_delete(
 }
 
 impl Vault {
-    /// `progress` is the erase request's kept set: a GDPR split here skips
-    /// what the request already kept and adds what it newly keeps.
+    /// `progress` is the erase request's progress: no hold keeps any record.
     pub(super) fn delete_room_record_as(
         &self,
         room: EntityId,
@@ -150,10 +149,8 @@ impl Vault {
         let reverify = |txn: &heed::RoTxn<'_>| {
             reverify_record_delete(self, txn, room, record, actor, reason, subject)
         };
-        // A GDPR erase keeps what a legal hold names (C5). The MESSAGEs and
-        // the reactions below are split each on their own; a held one is
-        // left in place and the erase goes on. One the request already kept
-        // through another path is not split, logged or counted again.
+        // No hold keeps any record: the MESSAGEs and the reactions below
+        // are erased each on their own.
         let privacy = reason == DeleteReason::GdprDelete;
         // Delete selected MESSAGE content before its TURN loses the PartOf
         // edge. A personal operation never purges a different actor's row.

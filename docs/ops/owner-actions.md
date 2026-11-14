@@ -71,8 +71,7 @@ key derived from the vault's data key, and a restore checks the whole file befor
 anything. The first backup mints that data key, wrapped to this device's keystore, when the vault
 has none; a rehearsal or a restore on this device unlocks it from that wrap, and one on another
 host from a password, passkey or escrow wrap the backup carries (*The vault key on a new host*).
-The install that takes a backup signs it, and a restore checks that signature first. While any
-legal hold stands, no backup is pruned, whatever `keep` says.
+The install that takes a backup signs it, and a restore checks that signature first.
 
 An explicit owner backup (`oneiron backup` or `POST /v1/owner/backups`) keeps the whole
 canonical selection, including private worlds. Scheduled, managed-hourly and pre-idle backups
@@ -2620,20 +2619,21 @@ and MCP.
 
 ## Legal holds
 
-A legal hold keeps records from being deleted. While a hold names a record, its delete fails for
-agents, timers, members and you alike, and every other verb keeps working. A hold names records,
-or a claim's gate-decision key partition, and can carry an opaque matter reference (1 to 128 of
-`A-Z a-z 0-9 . _ : - /`, never free text). You can widen a hold. You lift it only through one
-confirm, "Lift the hold and erase?", which lifts your holds on the records it names and erases
-them. The hold log keeps ids, times and reason codes only, for the hold's life and 24 months
-after.
+A legal hold seals a separate copy of what it names outside the vault; erase,
+delete and compaction never read a hold. A hold names records, or a claim's
+gate-decision key partition, and can carry an opaque matter reference (1 to 128
+of `A-Z a-z 0-9 . _ : - /`, never free text). You can widen a hold. You end one
+only through `lift`, which destroys its sealed copy and erases nothing in the
+vault. The hold log keeps ids, times and reason codes only, for the hold's life
+and 24 months after.
 
 ```sh
 oneiron legal-holds place --record HEX [--record HEX] [--gate-partition HEX|none] [--matter-ref REF]
 oneiron legal-holds widen HOLD --record HEX
 oneiron legal-holds list
 oneiron legal-holds log
-oneiron legal-holds lift-and-erase RECORD [RECORD] --yes   # prints the prompt; acts only with --yes
+oneiron legal-holds lift --hold HEX
+oneiron legal-holds produce --hold HEX --recipient-key BASE64
 ```
 
 Routes take targets as `{"record": "<hex>"}`, `{"gate_partition": "<hex>"}` or
@@ -2647,26 +2647,17 @@ Routes take targets as `{"record": "<hex>"}`, `{"gate_partition": "<hex>"}` or
   routes, a courtesy delete's hold answer and the SDK verbs (`INVALID_STATE`). Nothing is held;
   hold the records that remain instead.
 - `GET /v1/owner/legal-holds/log` reads the log, oldest first.
-- `GET /v1/owner/legal-holds/lift-and-erase` returns the confirm's title and prompt, to show
-  before you `POST` it with `{"records": ["<hex>", ...]}`. Each record answers `erased` with its
-  receipt once the receipt is complete, `completion_pending` with the receipt and
-  `"reason": "historical_sweep"` while its history sweep is queued (the same rule self-hosted and
-  hosted), or `failed` (the hold is lifted; a plain delete retries).
+- `POST /v1/owner/legal-holds/lift` with `{"hold_id": "<hex>"}` lifts the hold and destroys its
+  sealed copy. Nothing in the vault is erased by it.
+- `POST /v1/owner/legal-holds/produce` with `{"hold_id": "<hex>", "recipient_public_key": "<base64>"}`
+  re-seals the hold's sealed copy to the recipient public key you name, and logs the access.
 
-The SDK verbs `vault.legal_holds.place`, `.widen`, `.list`, `.log` and `.lift_and_erase` do the
+The SDK verbs `vault.legal_holds.place`, `.widen`, `.list`, `.log`, `.lift` and `.produce` do the
 same under the owner's credential. Where Oneiron hosts the bytes, a legal order Oneiron must obey
 can also cover records. It keeps nothing in your vault: what it covers is copied, sealed, into the
 host's separate legal-hold store, and your deletes and erases run as usual. You cannot lift it. You
 see the order whole, with its reference and terms, unless the order itself requires silence; then
 you see nothing of it until that silence ends.
-
-An erase that still waits on a shared vault's veto window is yours to
-withdraw: the SDK verb `vault.legal_holds.withdraw_erase` with `{"records": ["<hex>", ...]}`
-answers each record `withdrawn`, `not_waiting`, `confirmed_by_another_owner` (only the Owner who
-confirmed it withdraws it; yours is the objection to its `erase` act), or `under_way` when its
-delete has already begun and runs to its end. A withdrawn erase erases nothing, its `erase` act
-goes, a hold the confirm lifted stays lifted, and each hold the confirm met logs
-`erase_withdrawn`.
 
 ## Erase a text's history
 
@@ -2677,7 +2668,7 @@ shared vault with two or more live Owners it erases nothing yet: it answers `"ou
 "waiting"` with the vault's started `erase` act, and every other Owner is told. Once the window
 passes with no objection, `POST /v1/owner/history/erase/execute` with `{"act_id": "..."}` runs
 it, and a retry returns the same receipt. `GET /v1/owner/history?entity=<hex>` lists the erases
-filed for a text. A legal hold on the text refuses the erase.
+filed for a text.
 
 ## The model catalog
 

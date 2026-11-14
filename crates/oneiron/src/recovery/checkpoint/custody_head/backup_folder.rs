@@ -18,13 +18,13 @@ fn expired_backup_copy() -> TargetPending {
 
 impl Vault {
     /// Removes only the automatic backup folder's copy of this lineage once
-    /// the Owners' vault-deletion deadline passes and no legal hold keeps it.
-    /// Local keys, other lineages and independent targets are untouched. This
-    /// is not a member drain or a target acknowledgement.
+    /// the Owners' vault-deletion deadline passes. Local keys, other lineages
+    /// and independent targets are untouched. This is not a member drain or a
+    /// target acknowledgement.
     ///
     /// # Errors
     ///
-    /// The deletion marker, holds, local custody or filesystem did not read,
+    /// The deletion marker, local custody or filesystem did not read,
     /// or the removal or its status could not be made durable.
     pub fn retire_deleted_backup_custody(&self, folder: &Path) -> Result<bool> {
         let folder = FolderTarget::at(folder.to_path_buf());
@@ -38,15 +38,10 @@ impl Vault {
         let Some(deletion) = self.shared_vault_deletion()? else {
             return Ok(false);
         };
-        if self.now_recorded_at() < deletion.backup_retain_until
-            || self.legal_hold_keeps_backups()?
-        {
+        if self.now_recorded_at() < deletion.backup_retain_until {
             return Ok(false);
         }
-        let retired = self.with_backup_hold_exclusion(|holds| -> Result<bool> {
-            if holds.keeps_backups() {
-                return Ok(false);
-            }
+        let retired = self.with_backup_hold_exclusion(|_holds| -> Result<bool> {
             self.store.remove_custody_backup_folder(folder)?;
             Ok(true)
         })??;

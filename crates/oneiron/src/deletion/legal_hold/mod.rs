@@ -24,7 +24,6 @@
 //! completed" (C4, row 04).
 
 pub(super) mod clone;
-mod confirmation;
 mod held_scrubs;
 pub(crate) mod prospective;
 mod types;
@@ -34,17 +33,12 @@ use std::fs;
 
 use oneiron_crypto::HybridPublicKey;
 
-pub use confirmation::{LiftAndEraseShownState, ShownCustomerHold};
 pub(in crate::deletion) use held_scrubs::held_scrubs_owed_in_txn;
 pub use types::*;
 
 use crate::consent::AuthenticatedOwner;
-use crate::deletion::ConfirmedEraseOutcome;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::memory::Memory;
-use crate::memory::erase_sweep::{RecordEraseSweep, RecordEraseSweepRequest};
-use crate::recovery::checkpoint::CUSTODY_RETIREMENT_COMPLETE;
 use crate::store::legal_hold::{self as hold_store, HoldActor};
 use crate::{HostingPrivacyPosture, Vault};
 
@@ -546,7 +540,7 @@ impl Vault {
     }
 
     /// Host-only door: lifts host order `hold_id` on the authority's release
-    /// notice, then runs the owner erases it kept waiting.
+    /// notice, then settles the scrubs no cooperative restriction keeps.
     ///
     /// A managed vault's host-order writes go through its supervisor, which
     /// holds them while the vault is frozen for a restore and applies them
@@ -579,7 +573,7 @@ impl Vault {
         })?;
         // The release committed: a delete it deferred asks again (FIX 1488).
         self.note_backup_hold_recheck();
-        self.run_due_legal_hold_erases()?;
+        self.settle_held_scrubs()?;
         Ok(hold)
     }
 
@@ -653,9 +647,8 @@ impl Vault {
 
     /// One legal-hold maintenance pass, for the host's housekeeping: lifts
     /// host orders whose stored end passed, tells the owner of orders whose
-    /// silence ended, runs owner erases nothing holds any more, writes
-    /// queued refusals, and drops log rows 24 months past their hold's
-    /// release.
+    /// silence ended, settles the scrubs no cooperative restriction keeps,
+    /// and drops log rows 24 months past their hold's release.
     pub fn maintain_legal_holds(&self) -> Result<LegalHoldMaintenance> {
         let lapsed = self.with_write_txn_grouped(|txn| {
             let now = self.store.clock.now_recorded_at();
@@ -695,86 +688,25 @@ impl Vault {
         // Each pass, once its lapses committed: a delete a lapsed order
         // deferred asks again (FIX 1488).
         self.note_backup_hold_recheck();
+        self.settle_held_scrubs()?;
         Ok(LegalHoldMaintenance {
             lapsed,
-            erased: self.run_due_legal_hold_erases()?,
-            refusals: self.flush_legal_hold_refusals()?,
             expired: self.sweep_legal_hold_log()?,
         })
     }
 
-    /// Runs each owner erase that waits whose record nothing holds now, as
-    /// its request asked: an explicit lift-and-erase hard, in a shared vault
-    /// with two or more Owners only once its own `erase` act completed (FIX
-    /// 9781); an explicit one whose act never started has it
-    /// started first (FIX 10401). A failed one stays for the next pass. One
-    /// whose request went or was replaced before its writer ran is
-    /// cancelled: nothing erased, counted or dropped (FIX 6337). A released
-    /// gate-decision partition runs it too.
-    pub(crate) fn run_due_legal_hold_erases(&self) -> Result<u64> {
-        self.start_missing_erase_acts()?;
-        // What a released hold kept from an erase's scrubs goes first,
-        // whether or not an erase waits (FIX 6280, 6386, 7993, 7994): then
-        // an erase it kept from completing completes (FIX 5844).
-        let (due, cancelled) = self.with_write_txn_grouped(|txn| {
-            let cancelled = self.settle_held_scrubs_in_txn(txn)?;
-            let due = hold_store::due_erases_in_txn(&self.store, txn)?;
-            Ok((due, cancelled))
-        })?;
+    /// Settles the scrubs a cooperative restriction kept: the births and
+    /// carriers, Gate decision scrubs and relayed ask rows no restriction
+    /// keeps any more (FIX 6280, 6386, 7993, 7994). Runs after a host-order
+    /// lift, a gate-partition release and each maintenance pass, whether or
+    /// not an erase waits; an erase a restriction kept from completing then
+    /// completes (FIX 5844).
+    pub(crate) fn settle_held_scrubs(&self) -> Result<()> {
+        let cancelled = self.with_write_txn_grouped(|txn| self.settle_held_scrubs_in_txn(txn))?;
         crate::attempt_queue::AttemptQueue::new(self)
             .erased_payload_cancellations_committed(&cancelled);
         self.finish_redaction_erases_logged();
-        let mut erased = 0_u64;
-        for (record, pending) in due {
-            match self.erase_act_cleared(&record, &pending) {
-                Ok(true) => {}
-                Ok(false) => continue,
-                Err(error) => {
-                    tracing::warn!(
-                        error = %error,
-                        "a confirmed erase stays pending on its veto window"
-                    );
-                    continue;
-                }
-            }
-            match self.due_confirmed_erase(&record, &pending) {
-                Ok(ConfirmedEraseOutcome::Completed(_)) => {
-                    self.with_write_txn_grouped(|txn| {
-                        hold_store::drop_pending_erase_in_txn(
-                            &self.store,
-                            txn,
-                            &record,
-                            &pending.generation,
-                        )
-                    })?;
-                    erased = erased.saturating_add(1);
-                }
-                // A row confirmed since stays for its own pass.
-                Ok(ConfirmedEraseOutcome::Cancelled) => {
-                    tracing::info!("a confirmed erase was cancelled: none waits any more");
-                }
-                Err(error) => tracing::warn!(
-                    error = %error,
-                    "a confirmed erase stays pending for the next legal hold pass"
-                ),
-            }
-        }
-        Ok(erased)
-    }
-
-    /// Writes the refusals still queued to the hold logs. Each refusing door
-    /// logs its own before it returns, so this writes what a failed log write
-    /// left. A refused privacy erasure keeps its record under a use limit
-    /// where Oneiron hosts the bytes, while any hold keeps it (C6, FIX
-    /// 8849). Returns how many were written.
-    pub fn flush_legal_hold_refusals(&self) -> Result<u64> {
-        self.store.flush_legal_hold_refusals_now()
-    }
-
-    /// After a failed delete: its refusal, if a hold refused it, reaches the
-    /// log. Never masks the delete's own error.
-    pub(crate) fn flush_legal_hold_refusals_after_failure(&self) {
-        self.store.flush_legal_hold_refusals_settled();
+        Ok(())
     }
 
     /// Drops hold-log rows and released holds 24 calendar months past the
@@ -784,61 +716,6 @@ impl Vault {
             hold_store::expire_in_txn(&self.store, txn, self.store.clock.now_recorded_at())
         })
     }
-
-    /// The use limit on a record kept after a refused privacy erasure, while
-    /// any standing hold, customer or host order, still names it: it serves
-    /// only the legal reason that kept it, for that whole retention (C6, FIX
-    /// 8849). Enforcing it on reads is the scope checks' (L02).
-    pub fn legal_hold_use_limit(&self, record: &EntityId) -> Result<Option<LegalHoldUseLimit>> {
-        let txn = self.store.env.read_txn()?;
-        hold_store::legal_hold_use_limit_in_txn(&self.store, &txn, record)
-    }
-}
-
-/// What an owner erase that ran reads as (C4, WILL-PLAN L01 row 04), one
-/// rule wherever the bytes live: erased once its receipt's signed final row
-/// is appended (its hard purge, its historical sweep, every custody
-/// retirement it bound and every scrub a hold kept finished, FIX 5844),
-/// else completion pending with the receipt and what it still waits on: its
-/// queued sweep, or its custody. A scrub a hold keeps owed names no reason.
-/// No receipt: nothing was there to erase.
-fn erase_status(
-    memory: &Memory<'_>,
-    owner: &AuthenticatedOwner,
-    receipt_ref: Option<String>,
-) -> LiftAndEraseStatus {
-    let Some(receipt_ref) = receipt_ref else {
-        return LiftAndEraseStatus::Erased { receipt_ref: None };
-    };
-    let request = RecordEraseSweepRequest {
-        receipt_ref: receipt_ref.clone(),
-    };
-    let reason = match memory.record_erase_sweep_as(owner, request) {
-        Ok(Some(sweep)) if sweep.erase_complete_at.is_some() => {
-            return LiftAndEraseStatus::Erased {
-                receipt_ref: Some(receipt_ref),
-            };
-        }
-        Ok(Some(sweep)) if sweep.sweep_queued_at.is_some() && sweep.sweep_complete_at.is_none() => {
-            Some(ErasePendingReason::HistoricalSweep)
-        }
-        Ok(Some(sweep)) if custody_pending(&sweep) => Some(ErasePendingReason::CustodyRetirement),
-        // Only a scrub a hold keeps owed is left (FIX 6386, 7993, 7994), or
-        // the receipt did not read, which proves nothing complete.
-        _ => None,
-    };
-    LiftAndEraseStatus::CompletionPending {
-        receipt_ref: Some(receipt_ref),
-        reason,
-    }
-}
-
-/// Whether a custody retirement the erase `sweep` reads bound is still owed.
-fn custody_pending(sweep: &RecordEraseSweep) -> bool {
-    sweep
-        .custody
-        .as_ref()
-        .is_some_and(|custody| custody.state != CUSTODY_RETIREMENT_COMPLETE)
 }
 
 fn standing_host_order_in_txn(
