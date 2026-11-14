@@ -93,32 +93,96 @@ fn sheet_cells(
     named_sheet_cells(bytes, &bundle.sheet, &|cell| targets.contains(cell))
 }
 
-// FIX [LIBTEST-QUARANTINE-EDIT-ROUNDTRIP-JUDGMENT-CELLS-TESTS]: the lib test target's type check fails here (10 errors: E0560 x8, E0277 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::edit_roundtrip::{RangeRef, SheetCellAnswer};
+    use crate::entity_id::EntityId;
+    use crate::llm::decision::{
+        AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionQuestion,
+        DecisionReceipt, DecisionRung, EvidenceVersion, ProviderPin, TypedDecision,
+    };
 
     fn bundle(sheet: &str, before: Option<CellValue>, value: CellValue) -> SheetAnswerBundle {
+        let question_id = EntityId::now();
+        let principal = EntityId::now();
+        let (contract, answer) = match &value {
+            CellValue::Number(n) => (
+                AnswerContract::Score {
+                    min: 0.0,
+                    max: 10.0,
+                },
+                DecisionAnswer::Score(*n),
+            ),
+            CellValue::Text(text) => (
+                AnswerContract::Choice {
+                    options: vec![text.clone()],
+                },
+                DecisionAnswer::Choice(text.clone()),
+            ),
+            CellValue::Bool(b) => (AnswerContract::Noul, DecisionAnswer::Noul(*b)),
+            CellValue::Blank | CellValue::Formula { .. } | CellValue::Error(_) => {
+                panic!("judgment-cells fixture only answers numbers, text and bools")
+            }
+        };
+        let band = DecisionBand::default();
+        let probability = 0.8;
+        let decision = TypedDecision {
+            answer,
+            probability: Some(probability),
+            evidence: vec![],
+            in_band: band.contains(probability),
+            receipt: DecisionReceipt {
+                question: question_id,
+                question_version: 1,
+                principal,
+                providers: vec![ProviderPin {
+                    rung: DecisionRung::Rule,
+                    model: "local".into(),
+                    version: "r1".into(),
+                }],
+                band,
+                band_version: 0,
+                evidence_versions: vec![EvidenceVersion {
+                    id: EntityId::now(),
+                    body_hash: [0; 32],
+                }],
+                cost_per_thousand: Some(0.0),
+                paired: vec![],
+                person: vec![],
+                time: None,
+                images: vec![],
+                think_row: None,
+                person_row: None,
+                rule: None,
+                asked: None,
+                state_cut: None,
+            },
+            human_ask: None,
+        };
         SheetAnswerBundle {
-            question: "fit".into(),
-            question_version: "q1".into(),
-            principal: "owner".into(),
+            question: DecisionQuestion {
+                id: question_id,
+                version: 1,
+                text: "fit".into(),
+                class: DecisionClass::Judgment,
+                contract,
+                accept_type: false,
+            },
+            principal,
             sheet: sheet.into(),
             range: RangeRef::parse("B2:B2").unwrap(),
             max_count_override: None,
+            reads: None,
+            base_live: None,
             answers: vec![SheetCellAnswer {
                 cell: CellRef::parse("B2").unwrap(),
                 before,
                 value: Some(value),
-                probability: 0.8,
-                confidence: 0.9,
-                rung: "rule".into(),
-                model: "local".into(),
-                revision: "r1".into(),
-                cost_per_thousand: 0.0,
-                evidence_versions: vec![],
+                decision,
+                source: None,
+                judged_version: None,
+                judged_live: None,
             }],
         }
     }
