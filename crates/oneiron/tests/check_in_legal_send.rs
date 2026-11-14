@@ -16,6 +16,9 @@
 //!   nothing. Once approved, the call that names it dispatches, spends it
 //!   and its view names it; a retry that names it again is the same send.
 //! - A Member's send waits too (no power of its own in the table).
+//! - A member's send whose `recipient_count` is not the document's is
+//!   refused as a bad request before any ask opens, so no approved check-in
+//!   is spent on a dispatch that refuses the count.
 //! - A reminder that names a check-in is refused: only a send checks in.
 //!
 //! The vault is rooted, and its human binding is the owner's (H149), so each
@@ -25,7 +28,8 @@
 //! document sends once.
 //!
 //! On 2k5e (e3fe73eb068) this file does not build: a dispatch request has no
-//! `check_in_ref`, and a dispatch view no `check_in`.
+//! `check_in_ref`, and a dispatch view no `check_in`. On 580209a90a6, before
+//! the count check, the count test fails: that send opens a check-in.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test check_in_legal_send`.
@@ -248,7 +252,21 @@ impl Org {
         document: EntityId,
         check_in_ref: Option<&str>,
     ) -> MemoryResult<EsignDispatchView> {
-        let request = Self::request(document, check_in_ref);
+        self.send_counting(person, document, 1, check_in_ref)
+    }
+
+    /// `person`'s send of `document`, counting `recipient_count` recipients.
+    fn send_counting(
+        &self,
+        person: EntityId,
+        document: EntityId,
+        recipient_count: usize,
+        check_in_ref: Option<&str>,
+    ) -> MemoryResult<EsignDispatchView> {
+        let request = EsignDispatchRequest {
+            recipient_count,
+            ..Self::request(document, check_in_ref)
+        };
         self.as_person(person, || {
             self.vault
                 .memory(person, EdgeActorClass::Human)
@@ -421,6 +439,26 @@ fn a_members_send_waits_on_a_check_in() {
         DocumentStatus::Draft,
         "a waiting send sends nothing"
     );
+}
+
+#[test]
+fn a_members_send_with_a_count_the_document_lacks_opens_no_check_in() {
+    let org = Org::new();
+    let document = org.draft();
+    let refused = org
+        .send_counting(org.admin, document, 2, None)
+        .expect_err("a send counting a recipient the document lacks is refused");
+    assert_eq!(
+        refused.code, MEMORY_CODE_BAD_REQUEST,
+        "the count is refused before any ask opens: {refused:?}"
+    );
+    assert_eq!(
+        org.status(document),
+        DocumentStatus::Draft,
+        "the refused send sent nothing"
+    );
+    let id = pending_id(org.send(org.admin, document, None));
+    assert!(!org.spent(&id), "the send with the right count asks");
 }
 
 #[test]
