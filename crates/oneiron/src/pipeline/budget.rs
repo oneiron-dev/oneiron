@@ -283,7 +283,7 @@ pub(super) fn withhold_undisclosed(
         let admitted = match metadata_cache.get(store, rtxn, &scored.id)? {
             Some(meta) => crate::context_pack::retained_copies::clamp_admits(
                 clamp,
-                store.base(),
+                store,
                 rtxn,
                 &scored.id,
                 meta.entity_type,

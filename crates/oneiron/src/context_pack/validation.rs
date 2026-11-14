@@ -49,7 +49,7 @@ pub(super) fn disclosure_admits_candidate(
     };
     super::retained_copies::clamp_admits(
         ctx,
-        store.base(),
+        store,
         rtxn,
         id,
         header.entity_type,
@@ -79,7 +79,7 @@ pub(crate) fn disclosure_admits_target(
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Err(Error::CorruptedIndex("entity metadata header"));
     };
-    super::retained_copies::clamp_admits(ctx, store.base(), rtxn, id, header.entity_type, None)
+    super::retained_copies::clamp_admits(ctx, store, rtxn, id, header.entity_type, None)
 }
 
 /// OF-365 enforcement point 4 — the final fail-closed sweep: re-checks every
@@ -100,7 +100,7 @@ pub(super) fn validate_pack_disclosure(
     for entity in results.iter().chain(neighbors.iter()) {
         if !super::retained_copies::clamp_admits(
             ctx,
-            store.base(),
+            store,
             rtxn,
             &entity.id,
             entity.entity_type,

@@ -400,9 +400,10 @@ impl ScopedRead<'_> {
         if entity.entity_type != crate::registry::ENTITY_TYPE_TURN {
             return Ok(true);
         }
+        let store = self.store_read();
         if let Some(clamp) = disclosure
-            && !clamp.admits(
-                &self.vault.store,
+            && !clamp.admits_from(
+                &store,
                 rtxn,
                 &entity.id,
                 crate::registry::ENTITY_TYPE_TURN,
@@ -419,7 +420,6 @@ impl ScopedRead<'_> {
             .map_or(crate::vault::ReadMode::Live, |revision| {
                 crate::vault::ReadMode::Pinned(crate::vault::RevisionRef(revision))
             });
-        let store = self.store_read();
         let Some(served) = crate::vault::entity_revision::served_turn_text_in_txn(
             self.vault, &store, rtxn, &entity.id, mode, true,
         )?

@@ -23,7 +23,7 @@ use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
 use crate::side_table::{self, Raw, SideTable};
-use crate::store::Store;
+use crate::store::{Store, StoreRead};
 use crate::temporal::TimeRange;
 use crate::vault::CLAIM_OF_DEFAULT_WEIGHT;
 use oneiron_authority::federation::Scope;
@@ -442,6 +442,23 @@ impl DisclosureContext {
         entity_type: u8,
         claim_body: Option<&ClaimBody>,
     ) -> Result<bool> {
+        self.admits_from(&store.read(), rtxn, id, entity_type, claim_body)
+    }
+
+    /// [`Self::admits`] on the content `store` reads: a context pack's own
+    /// read, a room's overlay ∪ base when the pack names a room. A pack bound
+    /// to a room stretch judges each row the stretch stages by what the room
+    /// holds for it, its row, edges and record-scope position, none of which
+    /// base holds (ARCH-0052 §2). Authority stays the vault's: rule 1's live
+    /// registry, owner Tier-A marks and retained-copy pacts are read on base.
+    pub(crate) fn admits_from(
+        &self,
+        store: &StoreRead<'_>,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        entity_type: u8,
+        claim_body: Option<&ClaimBody>,
+    ) -> Result<bool> {
         if self.mode == DisclosureMode::OwnerAlone {
             return Ok(true);
         }
@@ -471,7 +488,7 @@ impl DisclosureContext {
     /// [`Self::admits`] for one record's own row, not what it was written from.
     fn admits_row(
         &self,
-        store: &Store,
+        store: &StoreRead<'_>,
         rtxn: &RoTxn<'_>,
         id: &EntityId,
         entity_type: u8,
@@ -502,7 +519,14 @@ impl DisclosureContext {
             return Ok(false);
         };
         Ok(self.disclosable.admits(&record_scope)
-            && super::retained_copy_admits(store, rtxn, id, entity_type, claim_body, &row.body)?)
+            && super::retained_copy_admits(
+                store.base(),
+                rtxn,
+                id,
+                entity_type,
+                claim_body,
+                &row.body,
+            )?)
     }
 
     /// A withdrawn record never reaches anyone but the owner (P3): a deleted,
@@ -510,7 +534,7 @@ impl DisclosureContext {
     /// (closed, unconsented or stale), the live-record rule the scoped lane
     /// applies. A claim whose body does not decode is withdrawn too.
     fn live(
-        store: &Store,
+        store: &StoreRead<'_>,
         rtxn: &RoTxn<'_>,
         id: &EntityId,
         entity_type: u8,
@@ -544,13 +568,13 @@ impl DisclosureContext {
         entity_type: u8,
         claim_body: Option<&ClaimBody>,
     ) -> Result<bool> {
-        Self::below_tier_a_bound(store, rtxn, id, entity_type, claim_body, None)
+        Self::below_tier_a_bound(&store.read(), rtxn, id, entity_type, claim_body, None)
     }
 
     /// [`Self::below_tier_a`] in an assembly bound to the live room stretch
     /// `bound_stretch` names, as [`disclosure_tier_bound`] judges it.
     fn below_tier_a_bound(
-        store: &Store,
+        store: &StoreRead<'_>,
         rtxn: &RoTxn<'_>,
         id: &EntityId,
         entity_type: u8,
@@ -598,7 +622,7 @@ impl DisclosureContext {
     /// erasing write, so it does not count.
     fn admits_turn_messages(
         &self,
-        store: &Store,
+        store: &StoreRead<'_>,
         rtxn: &RoTxn<'_>,
         turn: &EntityId,
     ) -> Result<bool> {
@@ -610,7 +634,7 @@ impl DisclosureContext {
             if row.entity_type != ENTITY_TYPE_MESSAGE || row.body.is_empty() {
                 continue;
             }
-            if !self.admits(store, rtxn, &message, ENTITY_TYPE_MESSAGE, None)? {
+            if !self.admits_from(store, rtxn, &message, ENTITY_TYPE_MESSAGE, None)? {
                 return Ok(false);
             }
         }

@@ -272,7 +272,7 @@ pub(super) fn hydrate_entity(
     if let (Some(clamp), Some(body)) = (options.clamp, gated_claim_body)
         && !super::retained_copies::clamp_admits(
             clamp,
-            store.base(),
+            store,
             rtxn,
             &id,
             ENTITY_TYPE_CLAIM,
