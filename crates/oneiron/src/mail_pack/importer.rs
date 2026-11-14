@@ -91,6 +91,13 @@ pub struct MailSyncReport {
     /// read gives it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub copy_estimate: Option<MailCopyEstimate>,
+    /// When the host steps the source again, Unix seconds: once its quota
+    /// window opens after a step that ran out of it, at once after one that
+    /// ended on its budget. `None` once nothing is owed (the copy done, no
+    /// body or opened attachment waiting, no change-feed read cut short), or
+    /// from a wire that paces nothing: the host's periodic pass steps it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_step_at: Option<u64>,
 }
 
 impl MailSyncReport {
@@ -183,6 +190,22 @@ struct Step<'a> {
     newer_than: Option<u64>,
     at: u64,
     report: MailSyncReport,
+}
+
+/// Whether the import of `source` (its row `row`) owes more than its
+/// change feed brings: a change-feed read cut short, the listing under its
+/// copy setting, a body, or an attachment a reader opened.
+fn owes_more_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: EntityId,
+    row: &MailSourceRow,
+) -> Result<bool> {
+    let state = SYNC.get(&vault.store, txn, &source)?.unwrap_or_default();
+    Ok(state.history_page.is_some()
+        || (row.copy != MailCopySetting::SearchOnly && !state.backfill_done)
+        || !bodies_waiting_in(vault, txn, source, 1)?.is_empty()
+        || super::attachments::attachments_waiting_in(vault, txn, source)?)
 }
 
 /// Takes `anchor` as the source's anchor in `state`, with the mailbox's
@@ -924,10 +947,22 @@ impl Vault {
         })?;
         outcome?;
         step.report.copy_done = step.state()?.backfill_done;
-        step.report.copy_estimate = {
-            let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
-            copy_estimate_in(self, &txn, source_ref, &step.row)?
-        };
+        let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+        step.report.copy_estimate = copy_estimate_in(self, &txn, source_ref, &step.row)?;
+        // A copy runs at its share of the provider's quota (L3-16-COPY-PACE
+        // = A): the host steps it again once its window opens, or at once
+        // after a step its budget ended. A wire that paces nothing keeps the
+        // host's periodic pace.
+        step.report.next_step_at =
+            if metered.quota().is_some() && owes_more_in(self, &txn, source_ref, &step.row)? {
+                Some(
+                    step.report
+                        .quota_paused_until
+                        .unwrap_or_else(crate::unix_seconds_now),
+                )
+            } else {
+                None
+            };
         Ok(step.report)
     }
 }

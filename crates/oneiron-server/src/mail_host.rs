@@ -19,10 +19,16 @@
 //! (`Vault::subscribe_mail_source_wakes`; ARCH-0063 #mail-copy): search
 //! works on connect, recent mail copies first, and the copy's time is known
 //! from that first step. A lost wake waits for the next pass.
+//!
+//! A mailbox that copies is stepped again when its last step says
+//! (`MailSyncReport::next_step_at`, L3-16-COPY-PACE = A): once its quota
+//! window opens after a step that ran out of it, at once after one that
+//! ended on its budget. So a copy spends its share of the provider's quota,
+//! 75% of Gmail's per-user minute, rather than one step per pass.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oneiron::mail_pack::MailSyncBudget;
 use oneiron::{EntityId, Vault};
@@ -50,8 +56,13 @@ pub(crate) fn spawn_mail_source_syncs(
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut connected = server.vault().subscribe_mail_source_wakes();
         loop {
+            let next_step = server.mail_source_wakes.next_scheduled();
             let pass = tokio::select! {
                 _ = interval.tick() => Pass::Every,
+                () = sleep_until_unix(next_step) => {
+                    server.mail_source_wakes.take_due(unix_seconds_now());
+                    Pass::Woken
+                }
                 () = server.mail_source_wakes.notify.notified() => Pass::Woken,
                 received = connected.recv() => match received {
                     Ok(source) => {
@@ -82,12 +93,15 @@ pub(crate) fn spawn_mail_source_syncs(
 }
 
 /// The mail sources woken to step before the worker's next pass: by Gmail's
-/// notices, which the hook adds, and by a mailbox's connect. The worker
-/// takes it whole. A notice that comes while a step runs leaves one more
-/// wake.
+/// notices, which the hook adds, by a mailbox's connect, and by the next
+/// step a copying mailbox's last step named. The worker takes it whole. A
+/// notice that comes while a step runs leaves one more wake.
 #[derive(Default)]
 pub(crate) struct MailSourceWakes {
     woken: Mutex<BTreeSet<EntityId>>,
+    /// When each source owing more is stepped next, Unix seconds, as its
+    /// last step named it.
+    scheduled: Mutex<BTreeMap<EntityId, u64>>,
     notify: Notify,
 }
 
@@ -113,9 +127,71 @@ impl MailSourceWakes {
             .insert(source);
     }
 
+    /// Keeps `source`'s next step at `next`, as its last step named it; none
+    /// once it owes nothing.
+    fn schedule(&self, source: EntityId, next: Option<u64>) {
+        let mut scheduled = self
+            .scheduled
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        match next {
+            Some(at) => {
+                scheduled.insert(source, at);
+            }
+            None => {
+                scheduled.remove(&source);
+            }
+        }
+    }
+
+    /// The earliest next step kept.
+    fn next_scheduled(&self) -> Option<u64> {
+        self.scheduled
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .min()
+            .copied()
+    }
+
+    /// Wakes each source whose next step has come by `now`.
+    fn take_due(&self, now: u64) {
+        let mut scheduled = self
+            .scheduled
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let due: Vec<EntityId> = scheduled
+            .iter()
+            .filter(|(_, at)| **at <= now)
+            .map(|(source, _)| *source)
+            .collect();
+        let mut woken = self.woken.lock().unwrap_or_else(PoisonError::into_inner);
+        for source in due {
+            scheduled.remove(&source);
+            woken.insert(source);
+        }
+    }
+
     /// Takes every woken source.
     fn take(&self) -> BTreeSet<EntityId> {
         std::mem::take(&mut *self.woken.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+}
+
+/// Unix seconds now.
+fn unix_seconds_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
+}
+
+/// Sleeps until the Unix second `at`, or forever without one.
+async fn sleep_until_unix(at: Option<u64>) {
+    match at {
+        Some(at) => {
+            tokio::time::sleep(Duration::from_secs(at.saturating_sub(unix_seconds_now()))).await;
+        }
+        None => std::future::pending().await,
     }
 }
 
@@ -124,7 +200,8 @@ impl MailSourceWakes {
 enum Pass {
     /// Every due source, then every push channel that owes an act.
     Every,
-    /// The sources notices and connects woke.
+    /// The sources notices and connects woke, and those whose next step
+    /// has come.
     Woken,
 }
 
@@ -154,12 +231,19 @@ fn run_pass(server: &SyncServer, pass: Pass) {
         },
     };
     for source in sources {
-        if let Err(error) = vault.mail_source_sync_step(&owner, source, MailSyncBudget::default()) {
-            tracing::warn!(
-                source = %source.to_hex(),
-                error = %error,
-                "mail source sync step failed"
-            );
+        match vault.mail_source_sync_step(&owner, source, MailSyncBudget::default()) {
+            Ok(report) => server
+                .mail_source_wakes
+                .schedule(source, report.next_step_at),
+            Err(error) => {
+                // A failed step is read again at the next pass.
+                server.mail_source_wakes.schedule(source, None);
+                tracing::warn!(
+                    source = %source.to_hex(),
+                    error = %error,
+                    "mail source sync step failed"
+                );
+            }
         }
     }
     if matches!(pass, Pass::Every) {
