@@ -26,10 +26,13 @@
 //!   holder answers while its live grant and its own check-in admit the act,
 //!   and an agent holder's verdict comes from its caller.
 //!
+//! * the host that wakes a due check-in (PR 2, P2.3: 2e): each housekeeping
+//!   pass advances the open rows due by now, in due order, and the vault's
+//!   wake reads the first due row.
+//!
 //! Fan-out admission is the first caller, through [`check_in_with_mode`],
-//! because its mode comes from its own manifest rows. The host that wakes a
-//! due check-in (2e), the agent verbs (2f, 2l), the change path and the key
-//! and quorum proofs are later builds.
+//! because its mode comes from its own manifest rows. The agent verbs (2f,
+//! 2l), the change path and the key and quorum proofs are later builds.
 
 mod act_class;
 mod chain;
@@ -42,6 +45,7 @@ mod role_preset;
 pub(crate) mod tables;
 mod verb_act_class;
 mod waits;
+mod wake;
 
 pub use act_class::{ACT_CLASS, ActClass, ActClassRow, ModelCheck, ProofKind, UndoClass};
 // The chain 2e's host builds; until then only `test_doors::check_in` does.
@@ -49,16 +53,16 @@ pub use act_class::{ACT_CLASS, ActClass, ActClassRow, ModelCheck, ProofKind, Und
 pub(crate) use chain::{AgentHolderVerdict, NoAgentVerdict, VerifiedChain};
 pub use mode::CheckInMode;
 pub use pending::{
-    CapturedWait, DelayWindow, DelayWindowOpen, Extension, HolderAnswer, HolderKind, HolderReply,
-    Objection, OpenPendingCheckIn, PendingCheckIn, PendingState, Rung, RungEntry, RungHolder,
-    RungMembers,
+    CapturedWait, DelayWindow, DelayWindowOpen, EligibleBasis, Extension, HolderAnswer, HolderKind,
+    HolderReply, Objection, OpenPendingCheckIn, PendingCheckIn, PendingState, Rung, RungEntry,
+    RungHolder, RungMembers,
 };
 pub(crate) use pending::{erase_pending_check_in_actor_in_txn, pending_check_in_in_txn};
 // The doors 2c and 2e-2l call; until then only `test_doors::check_in` does.
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use pending::{
-    RungResolver, answer_pending_check_in_in_txn, extend_pending_check_in_in_txn,
-    open_pending_check_in_in_txn, record_objection_in_txn,
+    RungResolver, answer_pending_check_in_in_txn, consume_pending_check_in_in_txn,
+    extend_pending_check_in_in_txn, open_pending_check_in_in_txn, record_objection_in_txn,
 };
 pub(crate) use policy::{CHECK_IN_ROW_KEY, CheckInPolicyRead};
 pub use policy::{
@@ -75,3 +79,6 @@ pub use verb_act_class::{VerbActClass, verb_act_class};
 pub use waits::CheckInTransition;
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use waits::advance_pending_check_in_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use wake::due_rows;
+pub(crate) use wake::next_check_in_due_at;

@@ -10,6 +10,13 @@ crate::side_table::side_tables! {
         // ask a holder already answered, or settle one nobody answered.
         [restore: live] [family: unclassified] [tier: canonical]
         => crate::check_in::erase_pending_check_in_actor_in_txn;
+    /// Each open pending check-in by its next due time (ROLES-CHECKIN P2.3, 2e): the housekeeping
+    /// pass advances the rows due, in order, and `Vault::housekeeping_wake_at` reads the first.
+    /// Written with the row it indexes. Empty marker. Key: u64be (due time, Unix seconds) + id16
+    /// (the pending check-in).
+    CHECK_IN_DUE: VaultMeta b"check_in:due:v1:" Named
+        // Restore class: live, as the rows it indexes are.
+        [restore: live] [family: unclassified] [tier: canonical];
     /// One transition of a pending check-in, as the receipt family reads it (`check_in`): opened,
     /// climbed, skipped, extended, answered, let go, held, proceeded with an undo, window passed
     /// or objection held, written in the transition's own transaction. Key: string (the receipt

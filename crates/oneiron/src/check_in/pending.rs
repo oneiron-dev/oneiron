@@ -36,6 +36,49 @@ use crate::store::Store;
 pub(super) const PENDING: SideTable<EntityId, PendingCheckIn, Named> =
     SideTable::new(&side_table::CHECK_IN_PENDING);
 
+/// Each open pending check-in by its next due time (2e): the housekeeping
+/// pass reads it in order (`wake`), and the vault's wake reads its first row.
+pub(super) const DUE: SideTable<(u64, EntityId), (), Named> =
+    SideTable::new(&side_table::CHECK_IN_DUE);
+
+/// Writes `row` and moves its `DUE` entry to the row's next due time, or
+/// drops it once the row is final. Every write of a pending row comes here,
+/// so the index holds each open row once, at its due time; a row written
+/// before the index existed gains its entry at its next write.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn store_pending_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    row: &PendingCheckIn,
+) -> Result<()> {
+    let stored_due = PENDING
+        .get(store, txn, &row.id)?
+        .and_then(|stored| stored.next_due_at());
+    let due = row.next_due_at();
+    if let Some(at) = stored_due.filter(|at| Some(*at) != due) {
+        DUE.delete(store, txn, &(at, row.id))?;
+    }
+    if let Some(at) = due {
+        DUE.put(store, txn, &(at, row.id), &())?;
+    }
+    PENDING.put(store, txn, &row.id, row)
+}
+
+/// Deletes the row `id` and its `DUE` entry.
+fn delete_pending_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
+    if let Some(at) = PENDING
+        .get(store, txn, id)?
+        .and_then(|stored| stored.next_due_at())
+    {
+        DUE.delete(store, txn, &(at, *id))?;
+    }
+    PENDING.delete(store, txn, id)?;
+    Ok(())
+}
+
 /// A rung of the ladder above rung 1 (ARCH-0082 #ladder).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -263,6 +306,34 @@ pub enum PendingState {
     ObjectionHeld { at: u64 },
 }
 
+/// Why a settled check-in's act may run (Engine ruling P23-SHAPE Q3 = A).
+/// Three final states make it eligible, each on its own basis; every other
+/// state makes nothing eligible, so silence is never a yes outside canon's
+/// two no-answer rows (ARCH-0082 "When nobody answers").
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EligibleBasis {
+    /// A holder approved the exact effect.
+    Approved,
+    /// The chain ended in silence on an undoable act asked when unsure: it
+    /// runs with the undo plan the asker gave.
+    ProceedWithUndo,
+    /// The delay window ended in silence: that is the proof.
+    WindowPassed,
+}
+
+impl EligibleBasis {
+    /// The receipt token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Approved => "approved",
+            Self::ProceedWithUndo => "proceed_with_undo",
+            Self::WindowPassed => "window_passed",
+        }
+    }
+}
+
 /// A pending check-in.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PendingCheckIn {
@@ -296,6 +367,9 @@ pub struct PendingCheckIn {
     pub state: PendingState,
     /// The receipts written so far; the next receipt's sequence.
     pub transitions: u32,
+    /// When the act this row held ran, on its eligible basis: it runs once.
+    #[serde(default)]
+    pub consumed_at: Option<u64>,
 }
 
 impl PendingCheckIn {
@@ -303,6 +377,30 @@ impl PendingCheckIn {
     #[must_use]
     pub fn current_rung(&self) -> Option<&RungEntry> {
         self.rungs.last()
+    }
+
+    /// The basis on which the act this row holds may run, or `None`: an
+    /// allow-list over the states (P23-SHAPE Q3 = A). A denial, a let-go, a
+    /// hold, a standing objection or an open ask makes nothing eligible. It
+    /// says nothing of whether the act already ran (`consumed_at`).
+    #[must_use]
+    pub fn eligible_basis(&self) -> Option<EligibleBasis> {
+        match &self.state {
+            PendingState::Answered {
+                answer: HolderAnswer::Approve,
+                ..
+            } => Some(EligibleBasis::Approved),
+            PendingState::ProceedWithUndo { .. } => Some(EligibleBasis::ProceedWithUndo),
+            PendingState::WindowPassed { .. } => Some(EligibleBasis::WindowPassed),
+            PendingState::Open
+            | PendingState::Answered {
+                answer: HolderAnswer::Deny,
+                ..
+            }
+            | PendingState::LetGo { .. }
+            | PendingState::Held { .. }
+            | PendingState::ObjectionHeld { .. } => None,
+        }
     }
 
     /// The next instant a transition is due, for the host that wakes it:
@@ -436,6 +534,7 @@ pub(crate) fn open_pending_check_in_in_txn(
         chain_exhausted_at: None,
         state: PendingState::Open,
         transitions: 0,
+        consumed_at: None,
     };
     let fields = ReceiptFields::new(&row)
         .with("verb", row.verb.clone())
@@ -456,7 +555,7 @@ pub(crate) fn open_pending_check_in_in_txn(
         now,
     )?;
     enter_next_rung(vault, txn, &mut row, chain, now)?;
-    PENDING.put(&vault.store, txn, &row.id, &row)?;
+    store_pending_in_txn(&vault.store, txn, &row)?;
     Ok(row)
 }
 
@@ -552,7 +651,7 @@ pub(crate) fn answer_pending_check_in_in_txn(
         fields,
         now,
     )?;
-    PENDING.put(&vault.store, txn, &row.id, &row)?;
+    store_pending_in_txn(&vault.store, txn, &row)?;
     Ok(row)
 }
 
@@ -614,7 +713,7 @@ pub(crate) fn extend_pending_check_in_in_txn(
         fields,
         now,
     )?;
-    PENDING.put(&vault.store, txn, &row.id, &row)?;
+    store_pending_in_txn(&vault.store, txn, &row)?;
     Ok(row)
 }
 
@@ -649,8 +748,62 @@ pub(crate) fn record_objection_in_txn(
         by: Some(by),
         at: now,
     });
-    PENDING.put(store, txn, &row.id, &row)?;
+    store_pending_in_txn(store, txn, &row)?;
     Ok(row)
+}
+
+/// Spends the settled row `id` for the act it held, in the act's own `txn`
+/// at `now` (Engine ruling P23-SHAPE Q2 = A): the commit that runs the
+/// effect is the commit that marks the row used, so a replay or a second
+/// worker finds it used, and an abort leaves it eligible. Only the exact
+/// effect digest spends it, on an eligible basis
+/// ([`PendingCheckIn::eligible_basis`]). Writes a `consumed` receipt naming
+/// the basis. The act verbs that call it before they run are PR 3.
+///
+/// # Errors
+///
+/// No such row; another effect; a state that makes nothing eligible; a row
+/// already used; storage errors.
+#[cfg_attr(
+    not(oneiron_test_support),
+    allow(
+        dead_code,
+        reason = "PR 3's act gate spends it before an act runs; until then only the test door does"
+    )
+)]
+pub(crate) fn consume_pending_check_in_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    effect_digest: &[u8; 32],
+    now: u64,
+) -> Result<EligibleBasis> {
+    let mut row = PENDING
+        .get(&vault.store, txn, id)?
+        .ok_or(Error::EntityNotFound)?;
+    if row.effect_digest != *effect_digest {
+        return Err(refuse("the act is another effect than the one asked"));
+    }
+    let basis = row
+        .eligible_basis()
+        .ok_or_else(|| refuse("the check-in did not make the act eligible"))?;
+    if row.consumed_at.is_some() {
+        return Err(refuse("the act this check-in held already ran"));
+    }
+    row.consumed_at = Some(now);
+    let fields = ReceiptFields::new(&row).with("basis", basis.as_str().to_owned());
+    let asker = row.asker;
+    write_check_in_receipt_in_txn(
+        &vault.store,
+        txn,
+        &mut row,
+        CheckInOutcome::Consumed,
+        Some(asker),
+        fields,
+        now,
+    )?;
+    store_pending_in_txn(&vault.store, txn, &row)?;
+    Ok(basis)
 }
 
 /// The row `id`, open at `now`: not final, its `until` not passed and its
@@ -750,14 +903,14 @@ pub(crate) fn erase_pending_check_in_actor_in_txn(
             continue;
         }
         if scrub_row(&mut row, actor) {
-            changed.push((key, row));
+            changed.push(row);
         }
     }
     for key in removed {
-        PENDING.delete(&vault.store, wtxn, &key)?;
+        delete_pending_in_txn(&vault.store, wtxn, &key)?;
     }
-    for (key, row) in changed {
-        PENDING.put(&vault.store, wtxn, &key, &row)?;
+    for row in changed {
+        store_pending_in_txn(&vault.store, wtxn, &row)?;
     }
     Ok(())
 }
