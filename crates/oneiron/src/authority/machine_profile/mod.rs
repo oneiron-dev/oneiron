@@ -432,9 +432,13 @@ impl FoldedMachine {
     /// holds that node, since a custodial root's write says nothing for the
     /// owner. The vetoes of [`Self::trusted_under`] still hold over it and
     /// every chain `admitter` trusts: no chain removed or conflicted, their
-    /// keys agree, and no other machine claims the key. A live chain the
-    /// owner's say-so gives it in another role, an execution node for one,
-    /// wins. It is never mine; only its engine seals count (L7-34).
+    /// keys agree, and no other machine claims the key in a scope `admitter`
+    /// trusts. A live chain the owner's say-so gives it in another role, an
+    /// execution node for one, wins, unless a later say-so still standing saw
+    /// it ([`owner_answers::effective_chains`]): the owner's answer that it
+    /// is a hosted node outlives an older anchor mark. Say-sos that disagree
+    /// with none seeing the other give nothing. It is never mine; only its
+    /// engine seals count (L7-34).
     #[must_use]
     pub(super) fn hosted_node_under(&self, admitter: &MachineAdmitter) -> Option<&MachineProfile> {
         let roster = self
@@ -443,13 +447,17 @@ impl FoldedMachine {
             .filter(|roster| roster.is_live() && roster.profile.role == MachineRole::HostedNode)?;
         let mut chains = self.trust_chains(admitter);
         chains.push((MachineAdmitter::Roster, roster));
-        let vetoed = self.keys_unsettled(admitter, &chains)
-            || chains.iter().any(|(_, chain)| {
-                chain.removed
-                    || chain.conflicted
-                    || (chain.is_live() && chain.profile.role != MachineRole::HostedNode)
-            });
-        (!vetoed).then_some(&roster.profile)
+        if self.keys_unsettled(admitter, &chains)
+            || chains
+                .iter()
+                .any(|(_, chain)| chain.removed || chain.conflicted)
+        {
+            return None;
+        }
+        let other_role = owner_answers::effective_chains(chains)?
+            .iter()
+            .any(|(_, chain)| chain.is_live() && chain.profile.role != MachineRole::HostedNode);
+        (!other_role).then_some(&roster.profile)
     }
 
     /// Some chain here, trusted or not, names `machine_key`.
