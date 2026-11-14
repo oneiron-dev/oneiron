@@ -642,6 +642,11 @@ gets the owner door's 403, and a key an agent wrote stays yours to answer. The w
 handle in their own record, where the mask left `[secret sc12]`; the listing stays yours. Their
 answer's receipt and its carried revoke name them, not you.
 
+The same two rulings are also the facade verbs `vault.secrets.found.not_a_secret` and
+`vault.secrets.found.keep_as_text`, each taking `{"handle": "sc12"}`, under the same rule. A
+member of a managed vault, who has no credential of their own, gives them there on the person
+action the managed host signs for that one request. An agent is refused at both verbs.
+
 ## Bind a secret so an agent can use it
 
 An agent can hand a secret to a trusted operation, such as Slack's `auth.test`, with
