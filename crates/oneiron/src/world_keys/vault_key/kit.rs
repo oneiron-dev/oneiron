@@ -96,6 +96,25 @@ pub(super) struct DrawnVaultKeyKit {
 }
 
 impl DrawnVaultKeyKit {
+    /// Runs `keep` on the pieces [`Self::hand_over`] hands to the owner,
+    /// before it replaces the piece an earlier data-key kit kept in this
+    /// install's key slots: a failed keep leaves those slots as they were
+    /// (review of #7781). A `ThisMachine` home's piece moves to the end of
+    /// the list and is not offered; the other pieces keep their order.
+    pub(super) fn keep_owner_pieces(
+        &mut self,
+        keep: impl FnOnce(&[KitPiece]) -> Result<()>,
+    ) -> Result<()> {
+        // As `keep_this_machine_piece` decides: with no store the kit has
+        // no `ThisMachine` home, and every piece is the owner's.
+        let has_store = self.store.is_some();
+        let local =
+            move |piece: &KitPiece| has_store && piece.home() == Some(&PieceHome::ThisMachine);
+        self.pieces.sort_by_key(local);
+        let owned = self.pieces.iter().filter(|piece| !local(piece)).count();
+        keep(&self.pieces[..owned])
+    }
+
     /// Issue's last step, once its write went through: a `ThisMachine`
     /// home's piece to this install's key slots, replacing the piece an
     /// earlier data-key kit kept there (FIX 2063), and the other pieces

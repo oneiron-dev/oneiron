@@ -416,8 +416,10 @@ impl Vault {
         let mut drawn = self.draw_vault_key_kit(owner, issue, passkey)?;
         let point = drawn.point.take();
         let commitment = drawn.commitment;
+        // The owner's pieces are kept before this install's slot is
+        // replaced, so a failed keep leaves the earlier kit's local piece.
+        drawn.keep_owner_pieces(keep_pieces)?;
         let kit = drawn.hand_over(true)?;
-        keep_pieces(&kit.pieces)?;
         let preset = RecoveryPreset::NobodyButMeAnyTwo;
         let transition = self.begin_wrap_transition()?;
         let mut change = self.with_write_txn(|txn| {

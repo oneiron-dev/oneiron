@@ -3,7 +3,6 @@
 //! the kit's public facts printed. A piece, a code, the passphrase or a key
 //! never reaches the command line, a log or the JSON printed.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use oneiron::recovery::{
@@ -14,7 +13,6 @@ use oneiron::world_keys::{
     IssuedVaultKeyKit, IssuedWorldKit, KitPasskey, StoredCost, VaultKeyStatus,
 };
 use serde::Serialize;
-use zeroize::Zeroizing;
 
 use super::super::vault_key::{
     KeyNeed, UnlockRequest, open_with_unlock_for_secret, read_secret_file,
@@ -175,12 +173,8 @@ pub(super) fn issue_vault_key(args: RecoveryKitIssueArgs) -> anyhow::Result<()> 
         // as it was, and the files it made are removed.
         let mut files = Vec::new();
         let switched = vault.set_recovery_preset_any_two_as(&owner, &issue, passkey, |pieces| {
-            files = write_pieces(&args.out, pieces).map_err(|error| {
-                for piece in pieces {
-                    let _ = std::fs::remove_file(piece_file(&args.out, piece.x()));
-                }
-                oneiron::Error::Io(std::io::Error::other(error.to_string()))
-            })?;
+            files = write_pieces(&args.out, pieces)
+                .map_err(|error| oneiron::Error::Io(std::io::Error::other(error.to_string())))?;
             Ok(())
         });
         let switched = switched.map_err(|error| {
@@ -263,16 +257,21 @@ fn issue_inputs(
     Ok((homes, passphrase))
 }
 
-/// Writes each stored piece's recovery code to its owner-only file in `out`,
-/// and names the files.
+/// Writes each stored piece's recovery code to its new owner-only file in
+/// `out`, synced with its directory entry ([`credential_file::write_new`]),
+/// and names the files. On a failure the files this call made are removed,
+/// and no other: a path it did not create is never touched (review of #7781).
 fn write_pieces(out: &Path, pieces: &[KitPiece]) -> anyhow::Result<Vec<PieceFile>> {
-    let mut files = Vec::with_capacity(pieces.len());
+    let mut files: Vec<PieceFile> = Vec::with_capacity(pieces.len());
     for piece in pieces {
         let file = piece_file(out, piece.x());
-        let mut written = credential_file::create(&file)?;
-        let line = Zeroizing::new(format!("{}\n", piece.recovery_code().reveal()));
-        written.write_all(line.as_bytes())?;
-        written.sync_all()?;
+        let code = piece.recovery_code();
+        if let Err(error) = credential_file::write_new(&file, code.reveal().as_bytes()) {
+            for made in &files {
+                let _ = std::fs::remove_file(&made.file);
+            }
+            return Err(error);
+        }
         files.push(PieceFile { x: piece.x(), file });
     }
     Ok(files)
@@ -322,8 +321,16 @@ fn refuse_this_machine_without_keystore(
     Ok(())
 }
 
-/// `dir` and its parents; a directory it makes is owner-only.
+/// `dir` and its parents; a directory it makes is owner-only, and its entry
+/// is synced into its parent, so the piece files written in it last a crash
+/// (review of #7781).
 fn create_owner_dir(dir: &Path) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    let made: Vec<PathBuf> = dir
+        .ancestors()
+        .take_while(|ancestor| !ancestor.as_os_str().is_empty() && !ancestor.exists())
+        .map(Path::to_path_buf)
+        .collect();
     let mut builder = std::fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
@@ -333,5 +340,16 @@ fn create_owner_dir(dir: &Path) -> anyhow::Result<()> {
     }
     builder
         .create(dir)
-        .map_err(|error| anyhow::anyhow!("create {}: {error}", dir.display()))
+        .map_err(|error| anyhow::anyhow!("create {}: {error}", dir.display()))?;
+    #[cfg(unix)]
+    for made_dir in &made {
+        let parent = made_dir
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        std::fs::File::open(parent)
+            .and_then(|parent| parent.sync_all())
+            .map_err(|error| anyhow::anyhow!("sync {}: {error}", parent.display()))?;
+    }
+    Ok(())
 }
