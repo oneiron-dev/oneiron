@@ -14,6 +14,11 @@
 //! a history ledger) carries that revision's words, so the clamp follows the
 //! served body's sources, not the live row's (Sol review of #7513).
 //!
+//! A reply TURN that copies a summary, and the `merge.summary` header that
+//! names one, carry the summary's own words: the clamp judges the summary's
+//! row too (its Tier A, its stamp), not only the records it was written
+//! from (Sol review of #7692).
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test disclosure_summary_word_sources`.
 #![cfg(oneiron_test_support)]
@@ -31,7 +36,7 @@ use oneiron::test_doors::disclosure_word_sources::{
 use oneiron::test_doors::scope_summary::mint_scope_summary;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeActorClass, EntityId,
-    TimeRange, Vault, VaultConfig,
+    TimeRange, Vault, VaultConfig, WriteActor,
 };
 use rmpv::Value;
 use serde_json::json;
@@ -124,6 +129,21 @@ fn trunk_record(conversation: EntityId, parent: Option<&str>, text: &str) -> Dag
         quote: None,
         thread_audience: None,
     }
+}
+
+/// Lands the fixture's summary on the first trunk record as the owner asks,
+/// with its trunk reply: the `merge.summary` header claim, and the reply
+/// TURN that copies the summary's words.
+fn land_with_reply(fixture: &Fixture) -> TestResult<(EntityId, EntityId)> {
+    let [plan, _] = fixture.trunk;
+    let landed = fixture.vault.land_header(
+        &fixture.summary,
+        &plan,
+        WriteActor::new(fixture.owner, EdgeActorClass::Human),
+        true,
+    )?;
+    let reply = landed.record.ok_or("as_record lands a reply TURN")?;
+    Ok((landed.claim, reply))
 }
 
 /// A contact cleared to `clearance`, created in `vault`.
@@ -252,6 +272,46 @@ fn a_claim_revision_served_is_judged_on_the_sources_of_its_own_words() -> TestRe
     assert!(
         !clamp_admits_claim_revision_with_contact(vault, contact, COUNTERPARTY, &claim, &served)?,
         "the earlier revision carries the Tier-A plan's words"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_reply_copying_a_summary_is_refused_once_the_summary_is_tier_a() -> TestResult {
+    let fixture = open()?;
+    let vault = &fixture.vault;
+    let (_, reply) = land_with_reply(&fixture)?;
+    let contact = cleared_contact(vault, Scope::top())?;
+    assert!(
+        clamp_admits_with_contact(vault, contact, COUNTERPARTY, &reply)?,
+        "a contact cleared for every source reads the reply"
+    );
+    mark_tier_a(vault, &fixture.summary)?;
+    assert!(
+        !clamp_admits_with_contact(vault, contact, COUNTERPARTY, &fixture.summary)?,
+        "a Tier-A summary reaches no one but the owner"
+    );
+    assert!(
+        !clamp_admits_with_contact(vault, contact, COUNTERPARTY, &reply)?,
+        "the reply carries the Tier-A summary's words"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_merge_header_naming_a_summary_is_refused_once_the_summary_is_tier_a() -> TestResult {
+    let fixture = open()?;
+    let vault = &fixture.vault;
+    let (header, _) = land_with_reply(&fixture)?;
+    let contact = cleared_contact(vault, Scope::top())?;
+    assert!(
+        clamp_admits_with_contact(vault, contact, COUNTERPARTY, &header)?,
+        "a contact cleared for every source reads the header"
+    );
+    mark_tier_a(vault, &fixture.summary)?;
+    assert!(
+        !clamp_admits_with_contact(vault, contact, COUNTERPARTY, &header)?,
+        "the header serves the Tier-A summary's words"
     );
     Ok(())
 }
