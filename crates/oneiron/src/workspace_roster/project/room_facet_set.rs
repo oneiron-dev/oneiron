@@ -68,6 +68,33 @@ impl Vault {
                         }
                     }
                 }
+                // Narrowing or dropping the set leaves no child's set reading
+                // a facet this room no longer reads.
+                let reach = facets
+                    .clone()
+                    .or_else(|| (authority.slice.facet).map(|anchor| BTreeSet::from([anchor])));
+                let parent = id.to_hex();
+                for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+                    reader.store(),
+                    reader.txn(),
+                    kind,
+                    None,
+                )? {
+                    let child = row?;
+                    if child == id {
+                        continue;
+                    }
+                    if let Some(view) = reader.effective(child)?
+                        && view.room_facets.is_some()
+                        && view.parents.contains(&parent)
+                        && room_widens(reach.clone(), view.room_facet_reach())
+                    {
+                        return Err(RecordError::InvalidProjectBody(
+                            "a room facet set leaves no child's set outside it",
+                        )
+                        .into());
+                    }
+                }
                 (witness, authority)
             };
             let Some(signed) = &authority.roster else {

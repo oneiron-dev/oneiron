@@ -293,6 +293,9 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             ProjectVerdict::Quarantined(reason::MALFORMED)
         } else if authority.roster.is_some() {
             ProjectVerdict::Quarantined(reason::BOUNDARY_ROSTER)
+        } else if authority.room_facets.is_some() {
+            // Only a v4 proof signs a room facet set (L7-39).
+            ProjectVerdict::Quarantined(reason::ROOM_SET_AT_BIRTH)
         } else if Some(self.id) == self.reader.root() || !authority.parents.is_empty() {
             ProjectVerdict::Visible
         } else {

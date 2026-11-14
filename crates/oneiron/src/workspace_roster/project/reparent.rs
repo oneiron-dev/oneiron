@@ -21,7 +21,8 @@ impl Vault {
     /// `expected` the project serves now: the head's authority with the
     /// stored content, the new parents, the head each parent serves now as
     /// its witness, and each parent's leader added to the board. The signer
-    /// signs it as a v3 state over the frontier's witness anchor.
+    /// signs it at its [`ProjectRecord::signing_version`] (v4 when the head
+    /// carries a room facet set, else v3) over the frontier's witness anchor.
     /// [`Self::reparent_project`] builds it again in its own transaction, so a
     /// parent that moved since refuses the proof.
     pub fn reparent_candidate(
@@ -70,6 +71,7 @@ impl Vault {
         next.depth_remaining = head.depth_remaining;
         next.leader = head.leader;
         next.board = head.board;
+        next.room_facets = head.room_facets;
         if let Some(roster) = head.roster {
             next.roster = roster.into_iter().collect();
         }
@@ -140,6 +142,22 @@ impl Vault {
                             .ok_or_else(|| refused("a re-parent's parent serves no authority"))?;
                         if !authority_fits(&authority, &view) {
                             return Err(refused("project slice exceeds parent"));
+                        }
+                    }
+                } else if next.room_facets.is_some() {
+                    // The host's state is capped by the vault alone, yet a
+                    // room facet set still sits inside each parent's room
+                    // (L7-39); a board holder's is checked by `authority_fits`.
+                    for parent in &parents {
+                        let view = reader
+                            .effective(*parent)?
+                            .ok_or_else(|| refused("a re-parent's parent serves no authority"))?;
+                        if view.slice.is_none()
+                            || room_widens(view.room_facet_reach(), next.room_facets.clone())
+                        {
+                            return Err(refused(
+                                "a room facet set stays inside its parents' rooms",
+                            ));
                         }
                     }
                 }
