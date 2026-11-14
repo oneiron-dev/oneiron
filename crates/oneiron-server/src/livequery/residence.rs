@@ -5,6 +5,7 @@
 pub(super) mod tests;
 
 mod authority;
+mod authority_overlay_custody;
 mod bundle_access;
 mod bundle_commit;
 mod bundles;
@@ -63,6 +64,7 @@ pub(super) fn machine_method(method: &str) -> bool {
     method == "residence.claim.vector"
         || method == "residence.pad.fetch"
         || home_handoff::machine_method(method)
+        || authority_overlay_custody::machine_method(method)
 }
 
 pub(super) fn run_machine(
@@ -75,6 +77,8 @@ pub(super) fn run_machine(
         claim_vectors::read(server, peer, params)
     } else if method == "residence.pad.fetch" {
         pad_custody::pad_fetch_keys(server, peer, params)
+    } else if authority_overlay_custody::machine_method(method) {
+        authority_overlay_custody::run_machine(server, peer, method, params)
     } else {
         home_handoff::run_machine(server, peer, method, params)
     }
@@ -522,6 +526,9 @@ pub(super) fn run(
             }
             method if method.starts_with("residence.home_handoff.") => {
                 home_handoff::run(server, auth, peer, method, request.params)
+            }
+            method if method.starts_with("residence.authority_overlay.") => {
+                authority_overlay_custody::run(server, auth, peer, method, request.params)
             }
             method => custody::run(server, auth, peer, method, request.params),
         }

@@ -572,6 +572,19 @@ impl SyncConnection {
                                     }
                                 }
                             }
+                            // The authority overlay's keys between this machine and its
+                            // residence home (census L5-22 1a-iii commit 7): a home out
+                            // of reach is tried again on the next pass.
+                            if let Err(error) = crate::sync::client::exchange_authority_overlay_custody(
+                                manager.vault(),
+                                &config,
+                            )
+                            .await
+                            {
+                                let _ = events.send(SyncEvent::Error(format!(
+                                    "Authority overlay key exchange failed: {error}"
+                                )));
+                            }
                             // This machine's key custody to its residence home
                             // (KS-4A2): a home out of reach stays pending by name.
                             if let Err(error) = crate::sync::client::relay_custody(manager.vault(), &config).await {
