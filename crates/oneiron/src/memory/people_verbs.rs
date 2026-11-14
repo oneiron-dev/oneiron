@@ -4,10 +4,13 @@
 //! Every verb names persons by their `pr` handle and reads the roster through
 //! the caller's own read: a person the caller does not read is not there.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use serde::{Deserialize, Serialize};
 
 use super::{
-    Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
+    MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage,
+    WitnessReceipt, WitnessTurn,
 };
 use crate::access_grant::AccessGrantScope;
 use crate::agent_dispatch::{
@@ -15,7 +18,7 @@ use crate::agent_dispatch::{
 };
 use crate::attempt_queue::AttemptId;
 use crate::claim::ClaimReadStatus;
-use crate::context_board::{People, PersonRow};
+use crate::context_board::{ActorAttribution, People, PersonRow};
 use crate::store::conversation_body::{ConversationBody, ConversationKind};
 use crate::{EdgeActorClass, EntityId};
 
@@ -317,6 +320,50 @@ impl Memory<'_> {
         people.set_about(&mut |person| self.vault.person_about_sourced(person, ceiling))?;
         people.disclose_names(self.vault, read.actor_key())?;
         Ok(people)
+    }
+
+    /// How the caller's read names each of `actors`, keyed by the ref as
+    /// given ([`ActorAttribution`]): the persons `vault.people.list` reads
+    /// for this caller, their names disclosed by the same rule, loaded for
+    /// these actors alone. A ref that is no entity id names no one, and a
+    /// caller whose credential grants it no read names no one at all. The
+    /// table labels a page already served, never admits it: a caller this
+    /// read refuses (an unbound handle whose actor the vault does not hold)
+    /// keeps its page and names no one too.
+    pub(crate) fn actor_attributions(
+        &self,
+        actors: BTreeSet<String>,
+    ) -> MemoryResult<BTreeMap<String, ActorAttribution>> {
+        if actors.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let ids: BTreeSet<EntityId> = actors
+            .iter()
+            .filter_map(|actor| EntityId::from_hex(actor).ok())
+            .collect();
+        let read = match self.read_lane_if_granted(ClaimReadStatus::Surfaceable) {
+            Ok(read) => read,
+            Err(refusal) if refusal.code == MEMORY_CODE_FORBIDDEN => None,
+            Err(error) => return Err(error),
+        };
+        let people = match read {
+            Some(read) => {
+                let mut people = People::load_named(self.vault, unix_ms(), &ids, &mut |person| {
+                    read.is_entity_readable(&person)
+                })?;
+                people.disclose_names(self.vault, read.actor_key())?;
+                people
+            }
+            None => People::default(),
+        };
+        Ok(actors
+            .into_iter()
+            .map(|actor| {
+                let named = EntityId::from_hex(&actor)
+                    .map_or_else(|_| ActorAttribution::unknown(), |id| people.attribution(id));
+                (actor, named)
+            })
+            .collect())
     }
 
     fn person_by_handle<'p>(people: &'p People, pr: &str) -> MemoryResult<&'p PersonRow> {
