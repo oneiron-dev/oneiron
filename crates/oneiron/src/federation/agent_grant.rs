@@ -78,8 +78,8 @@ mod member_index;
 pub(crate) use member_index::{backfill_agent_grant_member_index, index_agent_grant_member_in_txn};
 mod withdrawal;
 
-/// The one-tap revoke command every agent grant carries.
-pub(crate) const AGENT_GRANT_REVOKE_COMMAND: &str = "vault.agents.grants.revoke";
+#[doc(hidden)]
+pub(crate) use oneiron_verb_wire::federation::agent_grant::AGENT_GRANT_REVOKE_COMMAND;
 
 const NO_VERB_LIST: &str = "an agent grant names its verbs: authority_scope.verbs must be a \
                             nonempty explicit set, or empty beside a nonempty verb_classes";

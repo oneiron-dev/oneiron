@@ -7,7 +7,7 @@
 
 use super::{McpCallContext, McpGatewayError, mcp_engine_error, mcp_page_cursor_error};
 use crate::server::SyncServer;
-use oneiron::settings::ReleaseHold;
+use oneiron::settings::{ReadDestination, ReleaseHold};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -47,28 +47,60 @@ pub(super) fn mcp_snapshot_releases(
 
 /// Whether a carrier frame may leave for `actor`: none of the rows it was
 /// derived from, the TASKs its delta rows are keyed by and `rider_rows`, nor
-/// any row it names, is one a device-local world keeps from the caller now.
+/// any row it names, is one a device-local world keeps from the caller now,
+/// and where each child its `children:` lines end works may go there too.
 pub(super) fn mcp_carrier_releases(
     server: &SyncServer,
     actor: &McpCallContext,
     frame: &oneiron::context_board::BoardStreamFrame,
     rider_rows: &[oneiron::EntityId],
 ) -> bool {
+    carrier_releases_toward(&server.vault, &actor.destination(), frame, rider_rows)
+}
+
+/// [`mcp_carrier_releases`] toward `destination`. A `children:` line names
+/// only its child's attempt, which no row scan places, so each is judged by
+/// where its child works, read from the child's own committed attempt
+/// (census L2-38, review round 1): one held, or one that does not read,
+/// keeps the whole frame here, as a held TASK line does.
+fn carrier_releases_toward(
+    vault: &oneiron::Vault,
+    destination: &ReadDestination,
+    frame: &oneiron::context_board::BoardStreamFrame,
+    rider_rows: &[oneiron::EntityId],
+) -> bool {
     let mut rows = rider_rows.to_vec();
     if let oneiron::context_board::FrameKind::Delta(delta) = &frame.kind {
-        rows.extend(
-            delta
-                .iter()
-                .filter_map(|row| row.key.strip_prefix("tasks:"))
-                .filter_map(|task| oneiron::EntityId::from_hex(task).ok()),
-        );
+        for row in delta {
+            if let Some(task) = row.key.strip_prefix("tasks:") {
+                rows.extend(oneiron::EntityId::from_hex(task).ok());
+            } else if let Some(child) = row
+                .key
+                .strip_prefix(oneiron::context_board::CHILD_DONE_KEY_PREFIX)
+                && !matches!(
+                    oneiron::context_board::child_release_hold(vault, child, destination),
+                    Ok(None)
+                )
+            {
+                return false;
+            }
+        }
     }
-    let destination = actor.destination();
     serde_json::to_vec(frame).is_ok_and(|bytes| {
-        let withheld =
-            crate::device_local::withholds_retained(&server.vault, destination, &rows, &bytes);
-        matches!(withheld, Ok(false))
+        let hold = crate::device_local::retained_hold(vault, destination, &rows, &bytes);
+        matches!(hold, Ok(None))
     })
+}
+
+/// [`mcp_carrier_releases`] with no rider rows, toward `destination`: the
+/// check a queued carrier frame passes before it rides and again at release.
+#[cfg(oneiron_test_support)]
+pub(crate) fn carrier_releases_for_test(
+    vault: &oneiron::Vault,
+    destination: &ReadDestination,
+    frame: &oneiron::context_board::BoardStreamFrame,
+) -> bool {
+    carrier_releases_toward(vault, destination, frame, &[])
 }
 
 /// Every result, fresh or a continuation of one its producer retained, is
