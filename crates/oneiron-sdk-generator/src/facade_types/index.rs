@@ -152,6 +152,9 @@ pub(crate) struct Index {
     /// The dependency set: every read file whose entries a lookup read (see the module doc), sorted. Nothing else of
     /// the crate sources reaches an output.
     pub(crate) dependencies: BTreeSet<FileKey>,
+    /// Never guess: a name that no file's own items, imports or globs resolve stays unresolved, where the lookup by
+    /// name would pick the nearest candidate (`Index::exact`).
+    exact: bool,
 }
 
 impl Index {
@@ -171,10 +174,20 @@ impl Index {
             use_cache: IndexMap::new(),
             guesses: IndexSet::new(),
             dependencies: BTreeSet::new(),
+            exact: false,
         };
         for crate_name in EAGER {
             index.load(crate_name)?;
         }
+        Ok(index)
+    }
+
+    /// Reads the `EAGER` crates into an index that never guesses (lib split W3-GEN): the item a path resolves to is
+    /// the one rustc names there, or the path is unresolved. A guess by name could name another crate's item of the
+    /// same name, and a type text emitted from it would still compile.
+    pub(crate) fn exact(root: &Path) -> Result<Self, GenerateError> {
+        let mut index = Self::new(root)?;
+        index.exact = true;
         Ok(index)
     }
 
@@ -452,6 +465,9 @@ impl Index {
                 }
             }
         }
+        if self.exact {
+            return Ok(None);
+        }
         Ok(self
             .by_name(name, &crate_name, &module, Some(&module))
             .map(Found::Item))
@@ -485,6 +501,9 @@ impl Index {
             if let Some(Found::Item(item)) = self.resolve_in(&target, &place, name, depth + 1)? {
                 return Ok(Some(Found::Item(item)));
             }
+        }
+        if self.exact {
+            return Ok(None);
         }
         Ok(self
             .by_name(name, crate_name, module, None)

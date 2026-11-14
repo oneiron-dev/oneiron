@@ -10,34 +10,13 @@ use oneiron_crypto::HybridPublicKey;
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
-use crate::deletion::{LegalHold, LegalHoldEvent, LegalHoldProduction, LegalHoldTarget};
+use crate::deletion::{LegalHold, LegalHoldEvent, LegalHoldProduction};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::{EntityId, Vault};
 
-/// `vault.legal_holds.place`'s input: what the owner's customer hold names,
-/// and an optional opaque matter reference.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LegalHoldPlaceRequest {
-    /// Each `{"record": "<hex>"}`, `{"gate_partition": "<hex>"}` (a claim's
-    /// gate-decision key partition), or `{"gate_partition": null}` (the
-    /// claim-free partition).
-    pub targets: Vec<LegalHoldTarget>,
-    /// An opaque id, never free text: 1 to 128 of A-Z a-z 0-9 . _ : - /.
-    #[serde(default)]
-    pub matter_ref: Option<String>,
-}
-
-/// `vault.legal_holds.widen`'s input: more targets for one of the owner's
-/// standing customer holds. A hold never narrows; `lift` ends it.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LegalHoldWidenRequest {
-    pub hold_id: EntityId,
-    /// As [`LegalHoldPlaceRequest::targets`].
-    pub targets: Vec<LegalHoldTarget>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::legal_hold::{LegalHoldPlaceRequest, LegalHoldWidenRequest};
 
 /// `vault.legal_holds.lift`'s input: the owner's customer hold to lift. The
 /// lift destroys its sealed copy; nothing in the vault is erased by it.

@@ -58,7 +58,12 @@ pub struct BoardStreamRegistry {
     pub(super) published_tasks: super::publish::PublishedTasks,
     pub(super) published_reviews: super::review::PublishedReviews,
     pub(super) published_room_wakes: super::room_wake::PublishedRoomWakes,
+    pub(super) published_task_wakes: super::task_wake::PublishedTaskWakes,
     attached: Arc<Notify>,
+    /// Signalled on each attach and on each connection's first bound reader,
+    /// so the host offers the staged TASK wakes to a connection that can now
+    /// read them (census L2-38).
+    task_wake_replay: Arc<Notify>,
 }
 
 impl BoardStreamRegistry {
@@ -87,6 +92,7 @@ impl BoardStreamRegistry {
         // so the reviews and room wakes queued for it are owed again.
         self.published_reviews.forget(&c);
         self.published_room_wakes.forget(&c);
+        self.published_task_wakes.forget(&c);
         self.connections.insert(
             c,
             StreamConnectionState {
@@ -100,6 +106,7 @@ impl BoardStreamRegistry {
             },
         );
         self.attached.notify_one();
+        self.task_wake_replay.notify_one();
     }
 
     /// Signalled on each attach, so the host's review pass reaches a
@@ -110,11 +117,29 @@ impl BoardStreamRegistry {
         Arc::clone(&self.attached)
     }
 
+    /// Signalled on each attach and on each [`Self::note_reader_bound`], so
+    /// the host's staged TASK wake pass reaches a connection once it can
+    /// read (census L2-38). A signal sent while nobody waits is kept for the
+    /// next wait.
+    #[must_use]
+    pub fn task_wake_replay_notifier(&self) -> Arc<Notify> {
+        Arc::clone(&self.task_wake_replay)
+    }
+
+    /// The host bound a connection's first reader: the staged TASK wakes it
+    /// may read are offered to it at the next pass. Registration attaches a
+    /// credential's connection before any call binds its reader, and an
+    /// unbound connection reads nothing.
+    pub fn note_reader_bound(&self) {
+        self.task_wake_replay.notify_one();
+    }
+
     /// Teardown drops the connection together with its queued wakes.
     pub fn detach(&mut self, c: &StreamConnectionId) {
         self.connections.remove(c);
         self.published_reviews.forget(c);
         self.published_room_wakes.forget(c);
+        self.published_task_wakes.forget(c);
     }
 
     fn change(

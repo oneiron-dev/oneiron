@@ -681,6 +681,11 @@ crate::side_table::side_tables! {
     OWN_RATE_CHECK: VaultMeta b"own_rate.check.v1\0" Named
         [restore: not_imaged] [family: not_imaged] [tier: runtime]
         => crate::store::own_rate_rows::erase_check_actor_in_txn;
+    /// Every own-rate crossing in the order it was kept, for the host's health check to read
+    /// past its cursor (ARCH-0044 C5); kept 30 days. Key: u64be (recorded at) + id16.
+    OWN_RATE_CHECK_ORDER: VaultMeta b"own_rate.check_order.v1\0" Named
+        [restore: not_imaged] [family: not_imaged] [tier: runtime]
+        => crate::store::own_rate_rows::erase_check_order_actor_in_txn;
     /// An own actor's act count in its current window per kind. Key: id16 + kind token.
     OWN_RATE_WINDOW: VaultMeta b"own_rate.window.v1\0" Named
         [restore: not_imaged] [family: not_imaged] [tier: runtime]
