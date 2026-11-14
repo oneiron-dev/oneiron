@@ -24,9 +24,8 @@ use crate::{EntityId, Result, Vault};
 /// The longest reason a rule row keeps, in bytes: the consent confirm's reason bound.
 pub const MAX_RULE_REASON_BYTES: usize = 1_024;
 
-/// What the Rule rung reports for the answer a standing row gives: certain of the answer
-/// the owner gave (P(yes) 1 or 0 for yes/no, 1 for any other answer).
-const RULE_CERTAINTY: f64 = 1.0;
+#[doc(hidden)]
+use oneiron_verb_wire::llm::decision::rules::RULE_CERTAINTY;
 
 pub use crate::model_decision::HostRuleRef;
 
