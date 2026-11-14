@@ -91,11 +91,32 @@ impl Vault {
         owner: &crate::consent::AuthenticatedOwner,
         policy: &OrgAdminPolicy,
     ) -> Result<(), OrgAdminError> {
+        self.configure_org_admin_with_check_in(owner, policy, None)
+            .map(drop)
+    }
+
+    /// [`Self::configure_org_admin_as_owner`] with the owner's check-in
+    /// decision: the owner's own act on their own proof, and with `applied`
+    /// another asker's approved check-in for this exact configuration,
+    /// spent in the same writer after every check (ROLES-CHECKIN 2k8;
+    /// P25-SHAPE Q1 = A).
+    pub(crate) fn configure_org_admin_with_check_in(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        policy: &OrgAdminPolicy,
+        applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> Result<crate::check_in::CheckInDecision, OrgAdminError> {
         let mut txn = self.store.env.write_txn()?;
         owner.owner_authored_write_in_txn(self, &txn)?;
         self.configure_org_admin_in_txn(&mut txn, policy)?;
+        let decision = crate::check_in::owner_act_decision_in_txn(
+            self,
+            &mut txn,
+            crate::check_in::ActClass::GrantWiden,
+            applied,
+        )?;
         txn.commit().map_err(crate::Error::from)?;
-        Ok(())
+        Ok(decision)
     }
 
     fn configure_org_admin_in_txn(

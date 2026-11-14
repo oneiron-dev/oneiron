@@ -1,6 +1,7 @@
 //! Named organization administration, one-hop Delegate grants and scoped member projections.
 use serde::{Deserialize, Serialize};
 
+use crate::check_in::{AppliedCheckIn, CheckInDecision};
 use crate::claim::{ClaimReadStatus, PointRead};
 use crate::consent::AuthenticatedOwner;
 use crate::federation::{
@@ -17,12 +18,21 @@ use crate::{EntityId, Vault};
 #[serde(deny_unknown_fields)]
 pub struct OrgAdminConfigureRequest {
     pub policy: OrgAdminPolicy,
+    /// Another asker's approved check-in for this exact configuration, 32
+    /// hex: the owner applies it on their own proof, and the configuring
+    /// writer spends it (ROLES-CHECKIN 2k8). Omitted: the owner's own act.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OrgAdminConfigured {
     pub org_ref: EntityId,
     pub configured: bool,
+    /// The decision the configuration ran on: the owner's own proof, naming
+    /// the asker's approved check-in it applied (ROLES-CHECKIN 2k8).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -105,18 +115,63 @@ fn org_error(error: OrgAdminError) -> MemoryError {
     }
 }
 
+/// `vault.org_admin.configure` under the owner's proof. Naming an org's
+/// admins and their powers widens their grants (ARCH-0082 #act-table "Widen
+/// another's grant"): the owner's own act goes on their own proof, never
+/// gated, and the answer records that decision (`check_in`). With
+/// `check_in_ref` the owner applies another asker's approved check-in for
+/// this exact configuration, spent in the configuring writer after every
+/// check (ROLES-CHECKIN 2k8; Engine RULING P25-SHAPE Q1 = A).
+///
+/// # Errors
+///
+/// `BAD_REQUEST` for a malformed `check_in_ref`; the configuration's
+/// refusals; a check-in that is not an approved ask for it.
 pub fn configure_org_admin_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: OrgAdminConfigureRequest,
 ) -> MemoryResult<OrgAdminConfigured> {
-    vault
-        .configure_org_admin_as_owner(owner, &input.policy)
+    let applied = match super::shared::check_in_ref(input.check_in_ref.as_deref())? {
+        Some(id) => Some(AppliedCheckIn {
+            id,
+            verb: "vault.org_admin.configure",
+            effect_digest: org_admin_configure_effect_digest(&input)?,
+        }),
+        None => None,
+    };
+    let decision = vault
+        .configure_org_admin_with_check_in(owner, &input.policy, applied.as_ref())
         .map_err(org_error)?;
     Ok(OrgAdminConfigured {
         org_ref: input.policy.org_ref(),
         configured: true,
+        check_in: Some(decision),
     })
+}
+
+/// The digest of the owner's org admin configuration `request`: the effect
+/// an asker's `vault.check_in.open` names for `vault.org_admin.configure`,
+/// and the one the owner's act spends (2k8; P25-SHAPE Q1 = A). BLAKE3, key
+/// derived from `oneiron check_in org admin configure v1`, over the
+/// request's MessagePack encoding with field names, without its
+/// `check_in_ref`: the org, its admins and their powers.
+///
+/// # Errors
+///
+/// The request does not encode.
+pub fn org_admin_configure_effect_digest(
+    request: &OrgAdminConfigureRequest,
+) -> MemoryResult<[u8; 32]> {
+    let configure = OrgAdminConfigureRequest {
+        check_in_ref: None,
+        ..request.clone()
+    };
+    let encoded = rmp_serde::to_vec_named(&configure)
+        .map_err(|_| crate::error::Error::InvariantViolation("org admin configure encode"))?;
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in org admin configure v1");
+    hasher.update(&encoded);
+    Ok(*hasher.finalize().as_bytes())
 }
 
 pub fn read_org_admin_powers(

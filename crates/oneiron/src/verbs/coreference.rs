@@ -41,6 +41,11 @@ pub struct CoreferenceShareConsentRequest {
     pub other_person: EntityId,
     /// One pact id, as 64 lowercase hex characters.
     pub pact: String,
+    /// Another asker's approved check-in for this exact consent, 32 hex: the
+    /// owner applies it on their own proof, and the consent's writer spends
+    /// it (ROLES-CHECKIN 2k8). Omitted: the owner's own consent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -49,6 +54,10 @@ pub struct CoreferenceShareConsentReceipt {
     pub other_person: EntityId,
     pub pact: String,
     pub consent_claim: EntityId,
+    /// The decision the consent ran on: the owner's own proof, naming the
+    /// asker's approved check-in it applied (ROLES-CHECKIN 2k8).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 /// Only link metadata is retracted. Neither person's original claims change.
@@ -125,31 +134,72 @@ pub fn confirm_coreference_as_owner(
 }
 
 /// The engine's existing per-pact consent door; a link is still not a read grant.
+/// The consent widens what the pact's peer reads: the owner's own consent
+/// goes on their own proof, never gated, and the answer records that
+/// decision (`check_in`). With `check_in_ref` the owner applies another
+/// asker's approved check-in for this exact consent, spent in the consent's
+/// writer (ROLES-CHECKIN 2k8; Engine RULING P25-SHAPE Q1 = A).
+///
+/// # Errors
+///
+/// `BAD_REQUEST` for a malformed `check_in_ref` or pact; the consent's
+/// refusals; a check-in that is not an approved ask for this consent.
 pub fn share_coreference_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: CoreferenceShareConsentRequest,
 ) -> MemoryResult<CoreferenceShareConsentReceipt> {
     let pact = input.pact_id()?;
-    let now = vault.now_recorded_at();
-    let consent_claim = crate::federation::coreference_share_consent_as_owner(
+    let applied = match super::shared::check_in_ref(input.check_in_ref.as_deref())? {
+        Some(id) => Some(crate::check_in::AppliedCheckIn {
+            id,
+            verb: "vault.federation.coreference.share_consent",
+            effect_digest: coreference_share_consent_effect_digest(&input)?,
+        }),
+        None => None,
+    };
+    let (consent_claim, decision) = crate::federation::coreference_share_consent_as_owner(
         vault,
         owner,
         input.local_person,
         input.other_person,
         &pact,
-        TimeRange {
-            start: now,
-            end: u64::MAX,
-        },
-        now,
+        vault.now_recorded_at(),
+        applied.as_ref(),
     )?;
     Ok(CoreferenceShareConsentReceipt {
         local_person: input.local_person,
         other_person: input.other_person,
         pact: input.pact,
         consent_claim,
+        check_in: Some(decision),
     })
+}
+
+/// The digest of the owner's share consent `request`: the effect an asker's
+/// `vault.check_in.open` names for
+/// `vault.federation.coreference.share_consent`, and the one the owner's
+/// consent spends (2k8; P25-SHAPE Q1 = A). BLAKE3, key derived from
+/// `oneiron check_in coreference share consent v1`, over the request's
+/// MessagePack encoding with field names, without its `check_in_ref`: the
+/// two people and the pact.
+///
+/// # Errors
+///
+/// The request does not encode.
+pub fn coreference_share_consent_effect_digest(
+    request: &CoreferenceShareConsentRequest,
+) -> MemoryResult<[u8; 32]> {
+    let consent = CoreferenceShareConsentRequest {
+        check_in_ref: None,
+        ..request.clone()
+    };
+    let encoded = rmp_serde::to_vec_named(&consent)
+        .map_err(|_| crate::error::Error::InvariantViolation("coreference share consent encode"))?;
+    let mut hasher =
+        blake3::Hasher::new_derive_key("oneiron check_in coreference share consent v1");
+    hasher.update(&encoded);
+    Ok(*hasher.finalize().as_bytes())
 }
 
 /// The owning engine unlink retracts metadata and removes both link orientations.
