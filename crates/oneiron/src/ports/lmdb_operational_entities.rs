@@ -57,14 +57,6 @@ impl EntityStoreMaintenance for Store {
         if scrubbed == stored {
             return Ok(false);
         }
-        // A scrubbed MACHINE names no endpoint: its key leaves the index in
-        // this write, since an erase's later purge reads only the shell.
-        crate::authority::reindex_mesh_machine_endpoint(
-            self,
-            txn,
-            id,
-            Some((entity_type, &scrubbed[ENTITY_METADATA_HEADER_LEN..])),
-        )?;
         self.entities.put(txn, id.as_bytes(), &scrubbed)?;
         super::audit_mutation_in_txn(
             self,
