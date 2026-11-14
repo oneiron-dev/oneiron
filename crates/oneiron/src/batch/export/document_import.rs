@@ -375,6 +375,16 @@ impl Vault {
                     unchanged_entities += 1;
                     continue;
                 }
+                // FIX RESTORE-REFUSES-NULLED-ROW: a body the export nulled (a
+                // tainted row, ARCH-0069 "Export nulls a tainted row", or any
+                // body it could not export whole) has no bytes to restore, and
+                // the manifest refuses that row's import (`RedactedBody`). The
+                // destination keeps its own row; the import leaves the archived
+                // one out, its links with it, instead of refusing the archive.
+                if matches!(row.body, ExportBody::Nulled) {
+                    archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
+                    continue;
+                }
                 let body =
                     imported_body(&row, &archive.index, &archive.files, secrets, owner_restore)?;
                 if matches_row(
@@ -430,6 +440,12 @@ impl Vault {
                     continue;
                 }
                 return Err(invalid("import ID collides with different entity data"));
+            }
+            // FIX RESTORE-REFUSES-NULLED-ROW, as above: a nulled archived body
+            // the destination does not hold is left out too.
+            if matches!(row.body, ExportBody::Nulled) {
+                archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
+                continue;
             }
             if row.entity_type == ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR {
                 let state =
