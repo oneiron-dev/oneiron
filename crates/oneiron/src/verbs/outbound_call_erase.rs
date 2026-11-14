@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::owner_confirm;
 use crate::EntityId;
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -22,6 +23,9 @@ pub struct OutboundCallRequestEraseRequest {
     /// The call's attempt, 32 hex.
     pub attempt: EntityId,
     pub call_seq: u64,
+    /// The confirm `vault.owner_confirm.preview` returned for this call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<String>,
 }
 
 /// `vault.outbound_calls.request.erase`'s answer: `false` for a call with no
@@ -40,6 +44,8 @@ pub fn erase_outbound_call_request_as_owner(
     owner: &AuthenticatedOwner,
     input: OutboundCallRequestEraseRequest,
 ) -> MemoryResult<OutboundCallRequestErased> {
+    let ask = owner_confirm::asked("vault.outbound_calls.request.erase", &input)?;
+    owner_confirm::admit(vault, owner, ask, &())?;
     let attempt_id = AttemptId::from_bytes(input.attempt.as_bytes())?;
     let erased = vault
         .erase_outbound_call_request_as_owner(owner, attempt_id, input.call_seq)

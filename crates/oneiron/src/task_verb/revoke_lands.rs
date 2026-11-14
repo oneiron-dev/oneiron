@@ -140,7 +140,7 @@ const ROWS: &[Row] = &[
     },
     always!(
         "vault.legal_holds.lift_and_erase",
-        [pin(&["records"], records)],
+        [pin(&["records"], records), pin(&["confirm"], digest)],
     ),
     always!(
         "vault.legal_holds.withdraw_erase",
@@ -150,7 +150,7 @@ const ROWS: &[Row] = &[
         "vault.records.erase_confirm",
         [
             pin(&["record"], typed),
-            pin(&["preview_digest"], digest),
+            pin(&["confirm"], digest),
             pin(&["also_same_bytes"], typed),
         ],
     ),
@@ -169,11 +169,11 @@ const ROWS: &[Row] = &[
     always!("vault.claims.retract", [pin(&["claim_ref"], entity_ref)]),
     always!(
         "vault.notes.history_purge",
-        [pin(&["note_ref"], entity_ref)]
+        [pin(&["note_ref"], entity_ref), pin(&["confirm"], digest)]
     ),
     always!(
         "vault.notes.history_purge_execute",
-        [pin(&["act_id"], entity)],
+        [pin(&["act_id"], entity), pin(&["confirm"], digest)],
     ),
     // A hook's reason code or review date that breaks the answer's shape
     // (one on a delete choice, or a bad one on any other) is ignored, not a
@@ -352,7 +352,8 @@ fn hex16(value: &Value) -> bool {
     hex_digits(value, 32)
 }
 
-/// A preview digest as the erase preview answers it: lowercase BLAKE3 hex.
+/// A shared owner confirm as the owner preview answers it: lowercase BLAKE3
+/// hex (the record erase's preview digest before it).
 fn digest(value: &Value) -> bool {
     hex32(value)
         && value

@@ -84,6 +84,7 @@ def committed_artifacts():
         "INVENTED_REFERENCE": "Name only records this writer can read, by the ref the engine issued. The write was refused and receipted.",
         "HOST_ACTION_REQUIRES_SUPPORT_GRANT": "A hosted operator's root acts as nobody inside a customer's vault. Ask the customer for a support grant; the operator's admin commands need none.",
         "IDENTITY_UNSETTLED": "The effect named a person through a mention that is not settled yet. Settle it with `self.identity.settle`, then act.",
+        "OWNER_CONFIRM_REQUIRED": "A one-way act runs only on the owner's confirm of its preview. Call `vault.owner_confirm.preview` with the verb and its input, show the owner what it takes, and pass its `confirm` back in the call. A state that changed since needs a new preview.",
         "BUDGET_SPENT": "The line a paid call spends on is spent, or the vault's budget policy refuses it. Use light or medium recall, or ask the owner to raise the line.",
         "MODEL_UNAVAILABLE": "The model the request needs did not answer usably; nothing stands in for it. Use light or medium recall, or ask the owner to check the model route.",
         "MODEL_PIN_UNAVAILABLE": "The owner pinned a model that no offered seat serves; nothing stands in for it. Offer a seat for that model, or ask the owner to change or clear the pin.",

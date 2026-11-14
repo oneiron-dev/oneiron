@@ -169,10 +169,11 @@ pub(crate) async fn vault_legal_holds_log(
 
 /// `vault.legal_holds.lift_and_erase`: the owner's one "Lift the hold and
 /// erase?" confirm. It erases; the engine takes the owner's proof, the
-/// targets and the state the confirm showed, and checks that state itself
-/// (FIX 1462). Nothing here adds a token or prepares a state of its own. It
-/// lists the records its receipt names, and, on a stale confirm, the shown
-/// state it answers with (FIX 10399).
+/// targets and the shared confirm of the state the preview showed, and
+/// checks that state itself (FIX 1462). Nothing here prepares a state of its
+/// own. It lists the records its receipt names, and, on a state that changed
+/// after the confirm was admitted, the shown state it answers with (FIX
+/// 10399).
 pub(crate) async fn vault_legal_holds_lift_and_erase(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

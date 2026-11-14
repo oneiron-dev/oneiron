@@ -169,6 +169,7 @@ mod outbound_call_erase_doors;
 pub(crate) mod outbox_diverged_doors;
 mod output;
 pub(super) mod owner_binding;
+mod owner_confirm_doors;
 mod pack_preview_doors;
 mod persona_doors;
 mod plan_doc_doors;

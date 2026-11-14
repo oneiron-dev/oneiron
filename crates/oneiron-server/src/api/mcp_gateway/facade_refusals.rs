@@ -40,6 +40,7 @@ fn mcp_facade_refusal(mut error: oneiron::MemoryError) -> McpGatewayError {
         | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
         | oneiron::memory::MEMORY_CODE_BUDGET_SPENT
         | oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED
+        | oneiron::memory::MEMORY_CODE_OWNER_CONFIRM_REQUIRED
         | oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED
         | oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT
         | oneiron::workspace_roster::MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN
@@ -62,6 +63,9 @@ fn mcp_facade_refusal(mut error: oneiron::MemoryError) -> McpGatewayError {
         // OF-123: an effect whose person is not settled yet keeps its name
         // too, so an agent reads it as `error.data.error_code`, not prose.
         oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED => Some("identity_unsettled"),
+        // A one-way act's call carried no confirm, or not the caller's live
+        // preview of this call: a typed refusal, never an argument error.
+        oneiron::memory::MEMORY_CODE_OWNER_CONFIRM_REQUIRED => Some("owner_confirm_required"),
         // FIX 2222: one stable kind for the typed host refusal, whichever
         // door reported it.
         oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED => Some(MCP_HOST_ACTION_REFUSED),

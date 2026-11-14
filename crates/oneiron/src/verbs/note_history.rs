@@ -1,6 +1,7 @@
 //! Typed owner actions over NOTE history. No grant or caller-supplied purge
 //! floor reaches these doors; the engine chooses the retained pin boundary.
 
+use super::owner_confirm;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_doc::{PurgeReceipt, TextHistoryErase};
 use crate::memory::{MemoryError, MemoryResult};
@@ -11,6 +12,10 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub struct NoteHistoryPurgeRequest {
     pub note_ref: String,
+    /// The confirm `vault.owner_confirm.preview` returned for this call.
+    /// It is needed only where the purge erases at once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<String>,
 }
 
 /// The shared-vault act returned by an owner's explicit history purge.
@@ -18,6 +23,9 @@ pub struct NoteHistoryPurgeRequest {
 #[serde(deny_unknown_fields)]
 pub struct NoteHistoryPurgeExecuteRequest {
     pub act_id: String,
+    /// The confirm `vault.owner_confirm.preview` returned for this call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<String>,
 }
 
 /// The engine's durable receipt, with encoded causal frontiers rather than
@@ -70,6 +78,10 @@ fn note_id(vault: &Vault, note_ref: &str) -> MemoryResult<EntityId> {
 }
 
 /// Start the engine's owner-only erase without inventing a caller's floor.
+/// Where the purge erases at once (no veto vault, so one Owner) it takes
+/// the shared confirm; a purge that opens a veto window is not yet one-way,
+/// so its start takes none and its `_execute` keeps erase and its confirm
+/// (PURGE-START, Engine 11:34).
 pub fn purge_note_history_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -77,7 +89,11 @@ pub fn purge_note_history_as_owner(
 ) -> MemoryResult<NoteHistoryPurgeOutcome> {
     owner.revalidate(vault)?;
     let note = note_id(vault, &input.note_ref)?;
-    Ok(match vault.start_text_history_erase(owner, &note, None)? {
+    let outcome = vault.start_text_history_erase_with(owner, &note, None, || {
+        let ask = owner_confirm::asked("vault.notes.history_purge", &input)?;
+        owner_confirm::admit(vault, owner, ask, &())
+    })?;
+    Ok(match outcome {
         TextHistoryErase::Erased(receipt) => NoteHistoryPurgeOutcome::Erased {
             receipt: receipt.into(),
         },
@@ -89,12 +105,15 @@ pub fn purge_note_history_as_owner(
 }
 
 /// The engine checks the act's starter, target, veto window and execution
-/// receipt in its own transaction; a retry returns that same receipt.
+/// receipt in its own transaction; a retry returns that same receipt. The
+/// call takes the shared confirm of its act first.
 pub fn execute_note_history_purge_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: NoteHistoryPurgeExecuteRequest,
 ) -> MemoryResult<NoteHistoryPurgeReceipt> {
+    let ask = owner_confirm::asked("vault.notes.history_purge_execute", &input)?;
+    owner_confirm::admit(vault, owner, ask, &())?;
     Ok(vault
         .execute_completed_text_history_erase(owner, &input.act_id)?
         .into())

@@ -7,6 +7,7 @@
 //! owner, with no issuer.
 use serde::{Deserialize, Serialize};
 
+use super::owner_confirm;
 use crate::authority::{AuthorityHandoffAlarm, HostSlipIssuer};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -25,6 +26,21 @@ pub struct SharedVaultRequest {
     #[serde(with = "crate::federation::vault_id_decimal")]
     #[schemars(with = "String")]
     pub vault_id: u64,
+}
+
+/// `vault.shared.propose_delete`'s input: the shared vault, by the id its
+/// creation named, and the confirm the shared preview returned for this
+/// call. It is its own type because [`SharedVaultRequest`] also serves rows
+/// that take no confirm.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SharedDeleteProposeRequest {
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
+    pub vault_id: u64,
+    /// The confirm `vault.owner_confirm.preview` returned for this call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<String>,
 }
 
 /// `vault.shared.propose_transfer`'s input: the starter, a live Owner, hands
@@ -274,12 +290,15 @@ fn person_id(field: &str, hex: &str) -> MemoryResult<EntityId> {
         .map_err(|_| MemoryError::bad_request(format!("{field} is not an entity id")))
 }
 
-/// `vault.shared.propose_delete`: start the vault's `delete_vault` act.
+/// `vault.shared.propose_delete`: start the vault's `delete_vault` act,
+/// once the shared confirm of this proposal is admitted.
 pub fn propose_shared_delete(
     vault: &Vault,
     starter: &AuthenticatedOwner,
-    input: SharedVaultRequest,
+    input: SharedDeleteProposeRequest,
 ) -> MemoryResult<PendingAuthorityAct> {
+    let ask = owner_confirm::asked("vault.shared.propose_delete", &input)?;
+    owner_confirm::admit(vault, starter, ask, &())?;
     Ok(vault.propose_delete_vault(starter, input.vault_id)?)
 }
 

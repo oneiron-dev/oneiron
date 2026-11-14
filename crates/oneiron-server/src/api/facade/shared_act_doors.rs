@@ -38,9 +38,9 @@ use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::{
     self, ActAnswer, EmptyRequest, HandoffAlarmRequest, SharedActExecuted, SharedActRequest,
-    SharedAddOwnerRequest, SharedMemberAddRequest, SharedMemberRequest, SharedMemberRoleRequest,
-    SharedOwnerChangeWaitSetRequest, SharedReceiptRequest, SharedRemoveOwnerRequest,
-    SharedTransferRequest, SharedVaultRequest,
+    SharedAddOwnerRequest, SharedDeleteProposeRequest, SharedMemberAddRequest, SharedMemberRequest,
+    SharedMemberRoleRequest, SharedOwnerChangeWaitSetRequest, SharedReceiptRequest,
+    SharedRemoveOwnerRequest, SharedTransferRequest, SharedVaultRequest,
 };
 
 use super::clock_ingress;
@@ -192,11 +192,12 @@ pub(super) fn receipt_rows(
     vault.shared_act_export_records(&receipt.id).ok().flatten()
 }
 
-/// `vault.shared.propose_delete`: start the vault's `delete_vault` act.
+/// `vault.shared.propose_delete`: start the vault's `delete_vault` act,
+/// once the shared confirm of this proposal is admitted.
 pub(crate) async fn vault_shared_propose_delete(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
-    input: SharedVaultRequest,
+    input: SharedDeleteProposeRequest,
 ) -> MaybeListed<PendingAuthorityAct> {
     const VERB: &str = "vault.shared.propose_delete";
     as_person_naming(
