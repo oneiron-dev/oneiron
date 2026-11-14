@@ -1023,4 +1023,26 @@ impl Vault {
             None => (!attached).then(f),
         }
     }
+
+    /// [`Self::while_window_closed`] for the erasure sweep's compaction: a
+    /// registered window is first taken from its holders, who have until
+    /// `bound` to let it go, then persisted, deregistered and kept closed
+    /// through `f` (census L9-41; `WindowManager::while_window_drained_closed`).
+    /// `None` as the probe answers, and while a handle is held past `bound`.
+    #[cfg(feature = "sync")]
+    pub(crate) fn while_window_drained_closed<T>(
+        &self,
+        key: &crate::window_key::WindowKey,
+        bound: std::time::Duration,
+        f: impl FnOnce() -> T,
+    ) -> Option<T> {
+        let attached = self
+            .live_window_manager_attached
+            .load(std::sync::atomic::Ordering::Acquire);
+        let manager = self.live_window_manager.lock().ok()?.upgrade();
+        match manager {
+            Some(manager) => manager.while_window_drained_closed(key, bound, f),
+            None => (!attached).then(f),
+        }
+    }
 }

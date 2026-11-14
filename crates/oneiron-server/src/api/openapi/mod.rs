@@ -10,6 +10,7 @@ mod off_record_room_paths;
 mod openai_proxy_paths;
 mod owner_paths;
 mod pairing_paths;
+mod qr_page_paths;
 mod security;
 mod signing_paths;
 mod voice_bank_paths;

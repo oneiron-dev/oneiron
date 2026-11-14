@@ -52,10 +52,10 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::federation::{
     AGENT_GRANT_REVOKE_COMMAND, AgentGrantFromSlipUnchangedReason, AgentGrantStanding,
-    EngineControlChange, GrantlessAgentConversion, RepoAccessBounds, Scope,
-    SystemAgentGrantNarrowing, SystemFunction, WalletRef, WorkingViewEditBounds,
+    EngineControlChange, EngineControlClass, GrantlessAgentConversion, RepoAccessBounds, Scope,
+    SystemAgent, SystemAgentGrantNarrowing, SystemFunction, WalletRef, WorkingViewEditBounds,
 };
-use crate::memory::MemoryResult;
+use crate::memory::{MemoryError, MemoryResult};
 
 /// `vault.agents.grants.mint`'s input: the agent, the owner's exact scope
 /// and an optional expiry. The host chooses the grant's vault scope, its
@@ -407,6 +407,77 @@ pub fn narrow_system_agent_grant_as(
     )
 }
 
+/// `vault.agents.grants.restore`'s input: the base agent (the Dreamer or the
+/// Coach) whose default grant the owner gives back.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SystemAgentGrantRestoreRequest {
+    /// The base agent's principal (32 hex), as `vault.agents.base` names it.
+    pub agent: EntityId,
+}
+
+/// What a grant back did (FABLE-6917-1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SystemAgentGrantRestored {
+    /// True when the door gave the default grant back; false when it
+    /// already stood whole, and nothing changed.
+    pub restored: bool,
+    /// The Dreamer's live reach, read after the grant (Engine RULING
+    /// ROW4-WEAVE-GRANT-REACH = A): the default grant can stand whole while
+    /// the owner's policy rows still keep the Dreamer from landing what it
+    /// derives. Absent for the Coach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reach: Option<DreamerGrantReach>,
+}
+
+/// What the live policy lets the Dreamer do, as
+/// [`Vault::dreamer_weave_reach`] reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DreamerGrantReach {
+    /// A receipt-free read grant covering every record names the Dreamer.
+    pub reads: bool,
+    /// An Auto actor ceiling and the Dreamer-bound `Generated` permit: what
+    /// it derives lands.
+    pub lands_auto: bool,
+}
+
+/// `vault.agents.grants.restore`: the owner gives a base agent its default
+/// grant back after a narrowing or a revoke, the inverse of
+/// `vault.agents.grants.narrow` (Engine RULING ROW3-GRANT-VERBS = A). The
+/// Dreamer's runs through [`Vault::grant_dreamer_weave`], as `oneiron
+/// dreamer grant` does, and the Coach's through [`Vault::grant_coach_steward`].
+/// The Dreamer's answer carries its reach, read after the grant, as `oneiron
+/// dreamer grant` reads it before it reports success. A second call changes
+/// nothing. Any other principal is refused: its grants are minted and
+/// revoked by their ids.
+pub fn restore_system_agent_grant_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: SystemAgentGrantRestoreRequest,
+) -> MemoryResult<SystemAgentGrantRestored> {
+    let (restored, reach) = match SystemAgent::of(input.agent) {
+        Some(SystemAgent::Dreamer) => {
+            let restored = vault.grant_dreamer_weave(owner, vault.now_recorded_at())?;
+            let reach = vault.dreamer_weave_reach()?;
+            let reach = DreamerGrantReach {
+                reads: reach.reads,
+                lands_auto: reach.lands_auto,
+            };
+            (restored, Some(reach))
+        }
+        Some(SystemAgent::Coach) => (vault.grant_coach_steward(owner)?, None),
+        None => {
+            return Err(MemoryError::bad_request(
+                "vault.agents.grants.restore gives back a base agent's default grant: \
+                 name the Dreamer or the Coach as vault.agents.base lists them",
+            ));
+        }
+    };
+    Ok(SystemAgentGrantRestored { restored, reach })
+}
+
 /// 32 bytes from 64 ASCII hex digits of either case.
 fn hex32(text: &str) -> Option<[u8; 32]> {
     if text.len() != 64 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -468,4 +539,69 @@ pub fn engine_control_changes_as(
         .into_iter()
         .map(|(id, change)| EngineControlChangeEntry { id, change })
         .collect())
+}
+
+/// `vault.engine.controls.grant`'s input: an agent principal that is no
+/// base agent, and the classes of the engine's knobs it may tune.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EngineControlsGrantRequest {
+    /// The agent's principal (32 hex).
+    pub agent: EntityId,
+    /// At least one class.
+    pub classes: BTreeSet<EngineControlClass>,
+}
+
+/// `vault.engine.controls.grant`'s answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngineControlsGranted {
+    /// The grant the owner minted (32 hex).
+    pub grant: EntityId,
+}
+
+/// `vault.engine.controls.grant`: the owner lets an agent tune the engine's
+/// knobs of the named classes (S66-1; Engine RULING ROW3-GRANT-VERBS = A),
+/// through [`Vault::grant_engine_controls`]: a grant naming those classes'
+/// verbs alone, as the owner's signed act. A base agent's grant is its
+/// default grant, given back at `vault.agents.grants.restore`.
+pub fn grant_engine_controls_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: EngineControlsGrantRequest,
+) -> MemoryResult<EngineControlsGranted> {
+    Ok(EngineControlsGranted {
+        grant: vault.grant_engine_controls(owner, input.agent, &input.classes)?,
+    })
+}
+
+/// `vault.engine.controls.revoke`'s input: the agent whose engine.controls
+/// grants the owner takes back.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EngineControlsRevokeRequest {
+    /// The agent's principal (32 hex).
+    pub agent: EntityId,
+}
+
+/// `vault.engine.controls.revoke`'s answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngineControlsRevoked {
+    /// The grants revoked (32 hex each); empty when none stood.
+    pub revoked: Vec<EntityId>,
+}
+
+/// `vault.engine.controls.revoke`: the owner takes back every
+/// engine.controls grant given to an agent that is no base agent, through
+/// [`Vault::revoke_engine_controls`], by a signed revoke of each. A base
+/// agent's grant is narrowed at `vault.agents.grants.narrow`.
+pub fn revoke_engine_controls_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: EngineControlsRevokeRequest,
+) -> MemoryResult<EngineControlsRevoked> {
+    Ok(EngineControlsRevoked {
+        revoked: vault.revoke_engine_controls(owner, input.agent)?,
+    })
 }
