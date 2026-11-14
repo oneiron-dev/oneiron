@@ -114,6 +114,10 @@ const fn shape(endpoint: WorkspaceEndpoint) -> Shape {
         WorkspaceEndpoint::SheetsValuesBatchGet => Shape::SheetsValuesBatchGet,
         WorkspaceEndpoint::SheetsValuesBatchUpdate => Shape::SheetsValuesBatchUpdate,
         WorkspaceEndpoint::SheetsBatchUpdate => Shape::SheetsBatchUpdate,
+        WorkspaceEndpoint::DocsDocumentGet => Shape::DocsDocumentGet,
+        WorkspaceEndpoint::DocsBatchUpdate => Shape::DocsBatchUpdate,
+        WorkspaceEndpoint::SlidesPresentationGet => Shape::SlidesPresentationGet,
+        WorkspaceEndpoint::SlidesBatchUpdate => Shape::SlidesBatchUpdate,
     }
 }
 

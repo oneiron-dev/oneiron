@@ -24,6 +24,10 @@ the pack stays a Candidate until its own qualification passes.
      by the agent.
    - Sheets writing: the agent may write cell values and change sheets. Allow
      it only when the agent must change spreadsheets.
+   - Docs reading and Docs writing: the same for documents; writing edits a
+     document in place.
+   - Slides reading and Slides writing: the same for presentations; writing
+     edits a deck in place.
    Show the permission card and ask the owner to allow each permission they
    want. Each one they allow gets its own Gate receipt.
 2. Sign in with Google through the host's sign-in, on the host's agentic
@@ -48,9 +52,13 @@ again.
 ## How the agent uses it
 
 - Each app is one connector the agent calls with `connector.call`:
-  `google.sheets` with the tools `spreadsheets.get`, `values.batchGet`,
-  `values.batchUpdate` and `spreadsheets.batchUpdate`. In code mode,
-  `connector["google.sheets"]["values.batchGet"](args)` sends the same call.
+  - `google.sheets`: `spreadsheets.get`, `values.batchGet`,
+    `values.batchUpdate` and `spreadsheets.batchUpdate`;
+  - `google.docs`: `documents.get` and `documents.batchUpdate`;
+  - `google.slides`: `presentations.get` and `presentations.batchUpdate`.
+  In code mode, `connector["google.sheets"]["values.batchGet"](args)` sends
+  the same call. The file stays in Google and is edited in place: read it,
+  work out the change, send one batch, and read the result back.
   `connector.schema` gives each tool's input, and `connector.list` shows the
   apps whose permissions the owner allowed.
 - Any bound caller may call it: a code-mode run, an agent run, an agent's

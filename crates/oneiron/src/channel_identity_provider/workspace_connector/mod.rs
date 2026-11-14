@@ -1,6 +1,7 @@
 //! The built-in workspace connectors (FIX 4862; MAIL-GOOGLE = A, rows 1 and
 //! 3; L3-17): typed code-mode modules over the user's own files in Google,
-//! each a catalog name `connector.call` routes, such as `google.sheets`.
+//! each a catalog name `connector.call` routes: `google.sheets`,
+//! `google.docs` and `google.slides`.
 //! Code mode spells a call
 //! `connector["google.sheets"]["values.batchGet"](args)`; the guest's proxy
 //! sends it as the same `connector.call`.
@@ -40,10 +41,13 @@
 //! A refusal that concerns the connection names it first, such as
 //! `google_connection_not_checked`.
 
+pub mod docs;
 mod invocation;
 mod receipt;
+mod requests;
 mod run;
 pub mod sheets;
+pub mod slides;
 mod token;
 mod wire;
 
@@ -222,7 +226,7 @@ pub trait WorkspaceApi: Sync {
 }
 
 /// Every built-in workspace module, in catalog order.
-static MODULES: [&dyn WorkspaceApi; 1] = [&sheets::SheetsApi];
+static MODULES: [&dyn WorkspaceApi; 3] = [&docs::DocsApi, &sheets::SheetsApi, &slides::SlidesApi];
 
 /// The built-in module whose catalog name is exactly `name`.
 #[must_use]
