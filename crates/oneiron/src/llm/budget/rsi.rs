@@ -154,6 +154,60 @@ fn save(vault: &Vault, txn: &mut heed::RwTxn<'_>, line: &Line) -> RsiResult<()> 
     Ok(())
 }
 
+/// Refuses a top-up that raises by nothing, before any read.
+fn refuse_zero_raise(top_up: &RsiTopUp) -> RsiResult<()> {
+    let units = match top_up {
+        RsiTopUp::Tokens { units, .. }
+        | RsiTopUp::Exploration { units, .. }
+        | RsiTopUp::Share { units, .. } => *units,
+    };
+    if units == 0 {
+        return Err(RsiBudgetError::InvalidConfig);
+    }
+    Ok(())
+}
+
+/// Raises the one limiting line `top_up` names on `line`, in memory: an
+/// overflow, an unknown share, or shares past the token limit refuse.
+fn raise_line(line: &mut Line, top_up: &RsiTopUp) -> RsiResult<()> {
+    match top_up {
+        RsiTopUp::Tokens { units, .. } => {
+            line.config.limit = line
+                .config
+                .limit
+                .checked_add(*units)
+                .ok_or(RsiBudgetError::InvalidConfig)?;
+        }
+        RsiTopUp::Exploration { units, .. } => {
+            line.config.exploration_exposure_limit = line
+                .config
+                .exploration_exposure_limit
+                .checked_add(*units)
+                .ok_or(RsiBudgetError::InvalidConfig)?;
+        }
+        RsiTopUp::Share { share, units, .. } => {
+            let row = line
+                .config
+                .shares
+                .get_mut(share)
+                .ok_or(RsiBudgetError::InvalidConfig)?;
+            row.units = row
+                .units
+                .checked_add(*units)
+                .ok_or(RsiBudgetError::InvalidConfig)?;
+            let allocated = line
+                .config
+                .shares
+                .values()
+                .try_fold(0u64, |total, share| total.checked_add(share.units));
+            if allocated.is_none_or(|allocated| allocated > line.config.limit) {
+                return Err(RsiBudgetError::InvalidConfig);
+            }
+        }
+    }
+    Ok(())
+}
+
 impl Vault {
     /// Creates the line once. Reconfiguration cannot erase receipts or spend.
     pub fn configure_rsi_budget(&self, config: RsiBudgetConfig) -> RsiResult<()> {
@@ -196,55 +250,48 @@ impl Vault {
     /// Receipts, spend and the suspension hold are untouched: resuming held
     /// work is a separate owner act.
     pub fn top_up_rsi_budget(&self, top_up: RsiTopUp) -> RsiResult<RsiBudgetConfig> {
-        let units = match &top_up {
-            RsiTopUp::Tokens { units }
-            | RsiTopUp::Exploration { units }
-            | RsiTopUp::Share { units, .. } => *units,
-        };
-        if units == 0 {
-            return Err(RsiBudgetError::InvalidConfig);
-        }
+        refuse_zero_raise(&top_up)?;
         let mut txn = self.store.env.write_txn()?;
         let mut line = load(self, &txn)?;
-        match &top_up {
-            RsiTopUp::Tokens { units } => {
-                line.config.limit = line
-                    .config
-                    .limit
-                    .checked_add(*units)
-                    .ok_or(RsiBudgetError::InvalidConfig)?;
-            }
-            RsiTopUp::Exploration { units } => {
-                line.config.exploration_exposure_limit = line
-                    .config
-                    .exploration_exposure_limit
-                    .checked_add(*units)
-                    .ok_or(RsiBudgetError::InvalidConfig)?;
-            }
-            RsiTopUp::Share { share, units } => {
-                let row = line
-                    .config
-                    .shares
-                    .get_mut(share)
-                    .ok_or(RsiBudgetError::InvalidConfig)?;
-                row.units = row
-                    .units
-                    .checked_add(*units)
-                    .ok_or(RsiBudgetError::InvalidConfig)?;
-                let allocated = line
-                    .config
-                    .shares
-                    .values()
-                    .try_fold(0u64, |total, share| total.checked_add(share.units));
-                if allocated.is_none_or(|allocated| allocated > line.config.limit) {
-                    return Err(RsiBudgetError::InvalidConfig);
-                }
-            }
-        }
+        raise_line(&mut line, &top_up)?;
         let config = line.config.clone();
         save(self, &mut txn, &line)?;
         txn.commit().map_err(crate::Error::from)?;
         Ok(config)
+    }
+
+    /// [`Self::top_up_rsi_budget`] as the owner door's act: raising a
+    /// limiting line is the act that checks in (act class `spend_over_cap`,
+    /// named at the door; P25-SHAPE Q4 = A). The owner's proof is rechecked
+    /// in the writer; the owner's own raise goes on that proof, and with
+    /// `applied` the owner applies an asker's approved check-in for exactly
+    /// this raise, spent in this writer after every refusal, so a refused
+    /// raise leaves it unspent (2k10b). Returns the decision.
+    ///
+    /// # Errors
+    ///
+    /// A proof that no longer holds; the top-up's refusals; a check-in that
+    /// does not apply.
+    pub(crate) fn top_up_rsi_budget_with_check_in(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        top_up: &RsiTopUp,
+        applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> RsiResult<crate::check_in::CheckInDecision> {
+        refuse_zero_raise(top_up)?;
+        let mut txn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        let mut line = load(self, &txn)?;
+        raise_line(&mut line, top_up)?;
+        let decision = crate::check_in::owner_act_decision_in_txn(
+            self,
+            &mut txn,
+            crate::check_in::ActClass::SpendOverCap,
+            applied,
+        )?;
+        save(self, &mut txn, &line)?;
+        txn.commit().map_err(crate::Error::from)?;
+        Ok(decision)
     }
 
     /// Reserve token-denominated loop spend; this cannot debit exploration exposure.

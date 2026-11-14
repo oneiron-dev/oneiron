@@ -567,6 +567,7 @@ fn pinned_share_hold_resumes_the_same_measure() {
         RsiTopUp::Share {
             share: "pinned".to_owned(),
             units: UNITS,
+            check_in_ref: None,
         },
     );
     let still = advance(&owner, &root).expect("a pass after the top-up alone");
@@ -662,7 +663,13 @@ fn confirmation_holds_on_the_exposure_line_then_serves_once() {
         "the refusal holds the RSI line"
     );
 
-    top_up(&fixture, RsiTopUp::Exploration { units: 1 });
+    top_up(
+        &fixture,
+        RsiTopUp::Exploration {
+            units: 1,
+            check_in_ref: None,
+        },
+    );
     resume(&fixture);
     let served = advance(&owner, root).expect("a pass after the top-up and resume");
     let row = only_continuation(&served);

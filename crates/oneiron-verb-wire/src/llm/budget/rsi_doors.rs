@@ -44,4 +44,9 @@ pub struct RsiLineView {
     pub shares: Vec<RsiShareView>,
     pub exposure_line: RsiExposureLineView,
     pub suspended: bool,
+    /// The decision a top-up ran on: the owner's own proof, naming the
+    /// asker's approved check-in it applied (2k10b). Absent on every other
+    /// door's answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }

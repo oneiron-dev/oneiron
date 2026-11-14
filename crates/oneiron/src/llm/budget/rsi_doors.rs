@@ -46,6 +46,7 @@ fn line_view(vault: &Vault) -> Result<RsiLineView> {
             reserved: exploration.reserved_exposure,
         },
         suspended: work.suspended,
+        check_in: None,
     })
 }
 
@@ -74,14 +75,40 @@ pub fn rsi_line_as_owner(
 
 /// Raises one exact limiting line: the token limit, the exposure limit, or
 /// one named share. Held work stays held until the owner resumes it.
+///
+/// The raise checks in (act class `spend_over_cap`, named at this door;
+/// P25-SHAPE Q4 = A): the owner's own raise goes on their own proof, and
+/// with the line's `check_in_ref` the owner applies an asker's approved
+/// check-in for exactly this raise
+/// ([`crate::check_in::rsi_top_up_effect_digest`]), spent in the top-up's
+/// writer (2k10b). The answer names the decision.
+///
+/// # Errors
+///
+/// A `check_in_ref` that is no 32-hex id; a proof that no longer holds; the
+/// top-up's refusals; a check-in that is not an approved ask for this raise.
 pub fn top_up_rsi_budget_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: &RsiTopUp,
 ) -> Result<RsiLineView> {
-    owner.revalidate(vault)?;
-    vault.top_up_rsi_budget(input.clone()).map_err(rsi_error)?;
-    line_view(vault)
+    let applied = match input.check_in_ref() {
+        Some(hex) => Some(crate::check_in::AppliedCheckIn {
+            id: crate::EntityId::from_hex(hex).map_err(|_| {
+                crate::Error::InvalidConfig("check_in_ref is not a check-in id".into())
+            })?,
+            verb: "vault.budgets.rsi.top_up",
+            effect_digest: crate::check_in::rsi_top_up_effect_digest(input),
+        }),
+        None => None,
+    };
+    let decision = vault
+        .top_up_rsi_budget_with_check_in(owner, input, applied.as_ref())
+        .map_err(rsi_error)?;
+    Ok(RsiLineView {
+        check_in: Some(decision),
+        ..line_view(vault)?
+    })
 }
 
 /// Holds new loop work; admitted reservations can still settle honestly.

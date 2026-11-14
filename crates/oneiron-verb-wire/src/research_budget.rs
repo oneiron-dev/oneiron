@@ -31,15 +31,43 @@ pub struct RsiBudgetConfig {
 
 /// One exact limiting line, raised by `units`. A top-up never lowers a line,
 /// never touches receipts or spend, and never resumes held work by itself.
+/// Each line may name `check_in_ref`: another asker's approved check-in for
+/// exactly this raise, 32 hex, which the owner applies on their own proof
+/// and the top-up's writer spends (2k10b). Omitted: the owner's own top-up.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case", tag = "line")]
 pub enum RsiTopUp {
     /// The token-denominated loop line's limit.
-    Tokens { units: u64 },
+    Tokens {
+        units: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        check_in_ref: Option<String>,
+    },
     /// The exposure-denominated exploration line's limit.
-    Exploration { units: u64 },
+    Exploration {
+        units: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        check_in_ref: Option<String>,
+    },
     /// One named share's allocation, soft or pinned.
-    Share { share: String, units: u64 },
+    Share {
+        share: String,
+        units: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        check_in_ref: Option<String>,
+    },
+}
+
+impl RsiTopUp {
+    /// The approved check-in this top-up applies, when it names one.
+    #[must_use]
+    pub fn check_in_ref(&self) -> Option<&str> {
+        match self {
+            Self::Tokens { check_in_ref, .. }
+            | Self::Exploration { check_in_ref, .. }
+            | Self::Share { check_in_ref, .. } => check_in_ref.as_deref(),
+        }
+    }
 }
 
 /// Token-denominated loop accounting, including reservations that survive reopen.

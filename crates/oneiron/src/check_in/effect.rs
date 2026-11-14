@@ -992,3 +992,29 @@ pub fn spend_lease_top_up_effect_digest(
     hasher.update(&cap_units.to_be_bytes());
     *hasher.finalize().as_bytes()
 }
+
+/// The digest of raising the vault RSI line `top_up` names by its units: the
+/// effect `vault.budgets.rsi.top_up` spends an asker's approved check-in over
+/// (2k10b; P25-SHAPE Q4 = A, the door names `spend_over_cap`). A top-up adds
+/// to the line as it stands when the owner applies it, so the digest binds
+/// the line, its share and the units added; the check-in ref stays out.
+/// BLAKE3, key derived from `oneiron check_in rsi top up v1`, over the line's
+/// name (`tokens`, `exploration` or `share`) and the share's name (empty for
+/// the other lines), each as its length in eight big-endian bytes and its
+/// bytes, then the units as eight big-endian bytes.
+#[must_use]
+pub fn rsi_top_up_effect_digest(top_up: &crate::llm::RsiTopUp) -> [u8; 32] {
+    use crate::llm::RsiTopUp;
+    let (line, share, units) = match top_up {
+        RsiTopUp::Tokens { units, .. } => ("tokens", "", *units),
+        RsiTopUp::Exploration { units, .. } => ("exploration", "", *units),
+        RsiTopUp::Share { share, units, .. } => ("share", share.as_str(), *units),
+    };
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in rsi top up v1");
+    for part in [line, share] {
+        hasher.update(&(part.len() as u64).to_be_bytes());
+        hasher.update(part.as_bytes());
+    }
+    hasher.update(&units.to_be_bytes());
+    *hasher.finalize().as_bytes()
+}
