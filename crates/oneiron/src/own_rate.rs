@@ -123,33 +123,75 @@ pub fn health_check_subject(kind: OwnRateKind, actor: &str) -> String {
     format!("{HEALTH_CHECK_SUBJECT}{}:{actor}", kind.token())
 }
 
+/// What the host's health check asks an own-rate crossing with (ARCH-0044
+/// C5): the window, its count and threshold, and the actor, named apart from
+/// the grant rule's `actors`, as a spend check names its caller. An actor's
+/// erase finds the asks that carry its crossings by this shape.
+#[must_use]
+pub fn health_check_summary(check: &OwnRateCheck) -> serde_json::Value {
+    serde_json::json!({
+        "kind": OwnRateCheck::KIND,
+        "rate": check.kind,
+        "actor": check.actor,
+        "window_started_at": check.window_started_at,
+        "window_seconds": check.window_seconds,
+        "count": check.count,
+        "threshold": check.threshold,
+    })
+}
+
+/// Whether `state` holds the summary of one of `actor`'s own-rate crossings
+/// ([`health_check_summary`]) at any depth.
+fn names_crossing_of(state: &serde_json::Value, actor: &str) -> bool {
+    use serde_json::Value;
+    match state {
+        Value::Object(fields) => {
+            (fields.get("kind").and_then(Value::as_str) == Some(OwnRateCheck::KIND)
+                && fields.get("actor").and_then(Value::as_str) == Some(actor))
+                || fields.values().any(|field| names_crossing_of(field, actor))
+        }
+        Value::Array(items) => items.iter().any(|item| names_crossing_of(item, actor)),
+        _ => false,
+    }
+}
+
 /// Erasing `actor` (FIX 3520): the host's health checks of its own-rate
 /// crossings go too, every kind, in the erase's own transaction. The host
 /// keeps each check in `WIRE_HEALTH_CHECK` under `check:` and its subject,
 /// which ends in the actor; the body is the host's, so the scrub reads keys
-/// only.
+/// only. Each ask such a check raised holds its crossing as the state it was
+/// asked over, which names the actor and its burst: the ask drops that state
+/// and, while open, leaves the owner's queue. An ask a pass raises after this
+/// erase took its check is the host's to withdraw, when the pass finds the
+/// check gone.
 ///
 /// # Errors
 ///
-/// Storage errors.
+/// Storage errors, or an ask row that cannot be read.
 pub(crate) fn erase_health_check_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
     let rows = format!("wire:health:v1:check:{HEALTH_CHECK_SUBJECT}");
-    let actor = format!(":{}", actor.to_hex());
+    let actor = actor.to_hex();
+    let subject_end = format!(":{actor}");
     let mut keys = Vec::new();
     vault.sync_state_visit_prefix_in_write_txn(&*wtxn, &rows, |key, _| {
-        if key.ends_with(&actor) {
+        if key.ends_with(&subject_end) {
             keys.push(key.to_owned());
         }
         Ok::<(), crate::Error>(())
     })?;
+    if keys.is_empty() {
+        return Ok(());
+    }
     for key in &keys {
         vault.sync_state_delete_in_write_txn(wtxn, key)?;
     }
-    Ok(())
+    crate::llm::decision::forget_ask_states_in_txn(vault, wtxn, |state| {
+        names_crossing_of(state, &actor)
+    })
 }
 
 impl Vault {

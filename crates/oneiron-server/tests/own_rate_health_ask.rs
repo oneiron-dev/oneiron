@@ -4,8 +4,10 @@
 //! crossing past its cursor, in the order crossings were kept, and asks it
 //! once on the host's ladder, to wire rate's recipients, the vault owner
 //! role (ARCH-0076 #roles-everywhere). A later crossing by the same actor of
-//! the same kind counts on the open check. The actor's erase takes its check
-//! (FIX 3520). The owner's answer settling a check is main's poll path, which
+//! the same kind counts on the open check. The actor's erase takes its check,
+//! and the ask the check raised drops the burst it was asked over and leaves
+//! the owner's queue, also when the erase lands between a pass's read of the
+//! check and its ask (FIX 3520). The owner's answer settling a check is main's poll path, which
 //! this slice does not change; its test is ignored until FIX
 //! [WIRE-HEALTH-OWNER-ANSWER-FLOOR] lands: the poll's outcome write is an
 //! Approved claim with no owner proof, which keeps the criticality floor on a
@@ -27,7 +29,7 @@ use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_server::ENGINE_THREAD_STACK_BYTES;
 use oneiron_server::server::SyncServer;
 use oneiron_server::test_doors::build_server::build_served_server;
-use oneiron_server::test_doors::wire_health_sweep::sweep_once;
+use oneiron_server::test_doors::wire_health_sweep::{ask_read_check, fold_once, sweep_once};
 use oneiron_server::wire_health::{self, AnsweredBy, CheckState, HealthCheck};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -131,6 +133,25 @@ fn asks_on(vault: &Vault, question: &str) -> TestResult<Vec<DecisionAsk>> {
         .into_iter()
         .filter(|ask| ask.question.id.to_hex() == question)
         .collect())
+}
+
+/// No ask, open or answered, holds `actor`'s id in the state it was asked
+/// over.
+fn assert_no_ask_state_names(vault: &Vault, actor: EntityId) -> TestResult {
+    let actor = actor.to_hex();
+    for ask in vault.decision_asks(None, 10_000, false)? {
+        let state = ask
+            .pack_state
+            .as_ref()
+            .map(serde_json::Value::to_string)
+            .unwrap_or_default();
+        assert!(
+            !state.contains(&actor),
+            "ask {} still holds the erased actor's burst",
+            ask.seq
+        );
+    }
+    Ok(())
 }
 
 /// The question an asked check waits on.
@@ -310,9 +331,10 @@ async fn owner_answer_settles_an_own_rate_check() -> TestResult {
 }
 
 /// An actor's erase takes its own-rate health check (FIX 3520): the check's
-/// subject names the actor. Another actor's check stays, and the next pass
-/// does not bring the erased one back. The red pin has no own-rate source,
-/// so it keeps no check to take.
+/// subject names the actor. The ask the check raised drops the burst it was
+/// asked over and leaves the owner's queue. Another actor's check and ask
+/// stay, and the next pass does not bring the erased check back. The red pin
+/// has no own-rate source, so it keeps no check to take.
 #[test]
 fn an_actor_erase_takes_its_own_rate_check() -> TestResult {
     on_engine_stack(actor_erase_takes_its_own_rate_check)
@@ -336,8 +358,10 @@ async fn actor_erase_takes_its_own_rate_check() -> TestResult {
     sweep_once(&served.server)?;
     let erased = own_rate_subject(OwnRateKind::AutoWrite, actor);
     let kept = own_rate_subject(OwnRateKind::AutoWrite, other);
-    check_for(vault, &erased)?.ok_or("the actor's crossing is kept")?;
-    check_for(vault, &kept)?.ok_or("the other actor's crossing is kept")?;
+    let erased_question =
+        asked_question(&check_for(vault, &erased)?.ok_or("the actor's crossing is kept")?)?;
+    let kept_question =
+        asked_question(&check_for(vault, &kept)?.ok_or("the other actor's crossing is kept")?)?;
 
     let scrubbed = erase_actor_in_tables_in_order(vault, &actor, &OWN_RATE_TABLES)?;
     assert_eq!(
@@ -349,6 +373,23 @@ async fn actor_erase_takes_its_own_rate_check() -> TestResult {
         check_for(vault, &erased)?.is_none(),
         "the erase takes the actor's health check"
     );
+    let asks = asks_on(vault, &erased_question)?;
+    assert_eq!(asks.len(), 1, "the ask's question stays");
+    assert!(
+        asks[0].withdrawn_at.is_some(),
+        "the ask the erased check raised leaves the owner's queue"
+    );
+    assert!(
+        asks[0].pack_state.is_none(),
+        "the ask drops the burst it was asked over"
+    );
+    assert_no_ask_state_names(vault, actor)?;
+    let other_asks = asks_on(vault, &kept_question)?;
+    assert_eq!(other_asks.len(), 1);
+    assert!(
+        other_asks[0].is_open() && other_asks[0].pack_state.is_some(),
+        "another actor's ask stays open with its burst"
+    );
     sweep_once(&served.server)?;
     assert!(
         check_for(vault, &erased)?.is_none(),
@@ -358,6 +399,59 @@ async fn actor_erase_takes_its_own_rate_check() -> TestResult {
         check_for(vault, &kept)?.is_some(),
         "another actor's check stays"
     );
+    Ok(())
+}
+
+/// An erase that lands between a pass's read of a held check and its ask
+/// (FIX 3520): the pass does not write the erased check back, and the ask it
+/// queued drops the burst and leaves the owner's queue.
+#[test]
+fn an_ask_raised_after_the_erase_took_its_check_is_withdrawn() -> TestResult {
+    on_engine_stack(ask_raised_after_the_erase_is_withdrawn)
+}
+
+async fn ask_raised_after_the_erase_is_withdrawn() -> TestResult {
+    let served = served().await?;
+    let vault = &served.vault;
+    let actor = vault.new_entity_id()?;
+    count_own_acts(
+        vault,
+        OwnRateKind::TaskCreate,
+        actor,
+        THRESHOLD + 1,
+        THRESHOLD,
+        WINDOW_SECONDS,
+    )?;
+    fold_once(&served.server)?;
+    let subject = own_rate_subject(OwnRateKind::TaskCreate, actor);
+    let read = check_for(vault, &subject)?.ok_or("the fold keeps the crossing's check")?;
+    assert!(
+        matches!(read.state, CheckState::Held),
+        "the fold asks nothing"
+    );
+
+    erase_actor_in_tables_in_order(vault, &actor, &OWN_RATE_TABLES)?;
+    let last = vault
+        .decision_asks(None, 10_000, false)?
+        .last()
+        .map(|ask| ask.seq);
+    ask_read_check(&served.server, read)?;
+
+    assert!(
+        check_for(vault, &subject)?.is_none(),
+        "the pass does not write the erased check back"
+    );
+    let raised = vault.decision_asks(last, 10_000, false)?;
+    assert_eq!(raised.len(), 1, "the pass queued its ask");
+    assert!(
+        raised[0].withdrawn_at.is_some(),
+        "the ask raised after the erase leaves the owner's queue"
+    );
+    assert!(
+        raised[0].pack_state.is_none(),
+        "the ask drops the burst it was asked over"
+    );
+    assert_no_ask_state_names(vault, actor)?;
     Ok(())
 }
 

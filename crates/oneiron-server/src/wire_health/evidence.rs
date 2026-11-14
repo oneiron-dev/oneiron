@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use oneiron::blob_artifact::esign::EsignRateCheck;
-use oneiron::own_rate::{KeptOwnRateCheck, OwnRateCheck};
+use oneiron::own_rate::KeptOwnRateCheck;
 use oneiron::scan_check::ScanCheck;
 use oneiron::{EntityId, Error, Result, Vault};
 use serde_json::{Value, json};
@@ -259,24 +259,18 @@ fn esign_limit_crossing(key: String, check: &EsignRateCheck, row: &str) -> Cross
 /// An own actor's acts of one kind past their advisory rate (ARCH-0044 C5):
 /// one subject per actor and kind, so an answer covers that actor's next
 /// crossings of the kind for its cover time, and an open check counts them.
-/// It names its actor apart from the grant rule's `actors`, as a spend check
-/// names its caller: every own actor is known under a grant, and a grant
-/// alone does not clear a burst. It is asked with wire rate's recipients.
+/// Its summary is the engine's ([`oneiron::own_rate::health_check_summary`]),
+/// so the actor's erase finds the asks that hold it. It names its actor apart
+/// from the grant rule's `actors`, as a spend check names its caller: every
+/// own actor is known under a grant, and a grant alone does not clear a
+/// burst. It is asked with wire rate's recipients.
 fn own_rate_crossing(kept: KeptOwnRateCheck) -> Crossing {
     let check = &kept.check;
     Crossing {
         subject: oneiron::own_rate::health_check_subject(check.kind, &check.actor),
         source: CrossingSource::OwnRate,
         raised_at: kept.kept_at,
-        summary: json!({
-            "kind": OwnRateCheck::KIND,
-            "rate": check.kind,
-            "actor": check.actor,
-            "window_started_at": check.window_started_at,
-            "window_seconds": check.window_seconds,
-            "count": check.count,
-            "threshold": check.threshold,
-        }),
+        summary: oneiron::own_rate::health_check_summary(check),
         read: Some((CURSOR_OWN_RATE.to_owned(), kept.cursor)),
         revises: None,
     }
