@@ -26,7 +26,10 @@ use std::time::Duration;
 
 use oneiron::{Vault, VaultConfig};
 use oneiron_server::config::{LimitsConfig, SyncServerConfig};
-use oneiron_server::test_doors::booking_turn_line::{Pass, TurnEnd, authenticated_hold};
+use oneiron_server::test_doors::booking_turn_line::{
+    DroppedWaiter, Pass, TurnEnd, authenticated_hold, lines_held,
+    waiter_dropped_after_the_head_leaves,
+};
 use oneiron_server::{ENGINE_THREAD_STACK_BYTES, server::SyncServer};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -222,6 +225,36 @@ async fn two_sessions_two_lines() -> TestResult {
         full.log(),
         open.log()
     );
+    Ok(())
+}
+
+#[test]
+fn a_hold_dropped_while_it_waits_leaves_no_line_behind() -> TestResult {
+    on_engine_stack(dropped_waiter_leaves_no_line)
+}
+
+/// Round 1 of #7658: A holds the head of the session's line and B waits
+/// behind it. A is answered, so its head passes to B, and B's request is
+/// dropped before it is polled again. Nobody is in the line any more, so
+/// the server holds no line for the session. A line kept here would be
+/// kept for good, one per page session that played this order.
+async fn dropped_waiter_leaves_no_line() -> TestResult {
+    let (_dir, server) = server()?;
+    let seen = waiter_dropped_after_the_head_leaves(&server, SESSION).await?;
+    assert_eq!(
+        seen,
+        DroppedWaiter {
+            waited: true,
+            lines_held: 0,
+        },
+        "B waited behind A, and once both are gone no line is left"
+    );
+    // The session's next hold finds an empty line and is admitted at once.
+    let window = Window::default();
+    window.free_one();
+    let next = hold(&server, &window, "E", SESSION, Duration::ZERO).await;
+    assert_eq!(next, TurnEnd::Admitted, "{:?}", window.log());
+    assert_eq!(lines_held(&server), 0, "an answered hold leaves no line");
     Ok(())
 }
 

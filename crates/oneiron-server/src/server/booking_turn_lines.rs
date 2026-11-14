@@ -69,6 +69,15 @@ impl BookingTurnLines {
         }
     }
 
+    /// How many windows have a line: the test door's view of what is held.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn held(&self) -> usize {
+        self.lines
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
+    }
+
     /// Forgets `window`'s line once nobody holds or waits on it: the map's
     /// own handle is then the only one. A request joining takes its handle
     /// under the same lock, so a line it joins is never forgotten under it.
