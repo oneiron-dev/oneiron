@@ -30,7 +30,7 @@ impl FederationBurstScope {
 #[doc(hidden)]
 pub use oneiron_verb_wire::sync::federation_burst::types::{
     FederationBurstBaseline, FederationBurstBaselineState, FederationBurstDisposition,
-    FederationBurstOutcome, FederationBurstPolicy, FederationBurstReceipt,
+    FederationBurstOutcome, FederationBurstPeerRef, FederationBurstPolicy, FederationBurstReceipt,
     FederationBurstReviewReceipt, FederationBurstReviewRequest, FederationBurstWorkState,
     FederationBurstWorld,
 };

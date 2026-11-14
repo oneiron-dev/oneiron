@@ -1,8 +1,7 @@
 //! Payload-free batch receipts, kept after durable work completes.
 use super::{
-    DeferredWork, FederationBurstBaselineState, FederationBurstDecision,
-    FederationBurstDisposition, FederationBurstReceipt, FederationBurstWorkState, FederationPeer,
-    corrupt,
+    BurstPeer, DeferredWork, FederationBurstBaselineState, FederationBurstDecision,
+    FederationBurstDisposition, FederationBurstReceipt, FederationBurstWorkState, corrupt,
 };
 use crate::store::Store;
 use crate::{Result, Vault};
@@ -16,7 +15,7 @@ fn key(id: &[u8; 32]) -> Vec<u8> {
 pub(super) fn load(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    peer: &FederationPeer,
+    peer: BurstPeer<'_>,
     id: &[u8; 32],
 ) -> Result<Option<FederationBurstReceipt>> {
     let Some(bytes) = vault.store.sync_queue.get(txn, &key(id))? else {
@@ -24,8 +23,7 @@ pub(super) fn load(
     };
     let row: FederationBurstReceipt = rmp_serde::from_slice(&bytes).map_err(|_| corrupt())?;
     if row.batch_ref != blake3::Hash::from(*id).to_hex().to_string()
-        || row.principal != peer.principal()
-        || row.grant != peer.grant()
+        || row.peer != peer.receipt_peer()
     {
         return Err(corrupt());
     }
@@ -42,7 +40,7 @@ fn put(store: &Store, txn: &mut heed::RwTxn<'_>, row: &FederationBurstReceipt) -
 pub(super) fn record(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    peer: &FederationPeer,
+    peer: BurstPeer<'_>,
     work: &DeferredWork,
     decision: FederationBurstDecision,
     baseline: FederationBurstBaselineState,
@@ -68,8 +66,7 @@ pub(super) fn record(
         txn,
         &FederationBurstReceipt {
             batch_ref,
-            principal: peer.principal(),
-            grant: peer.grant(),
+            peer: peer.receipt_peer(),
             window_key: work.window.clone(),
             disposition,
             state: FederationBurstWorkState::Pending,
@@ -81,7 +78,7 @@ pub(super) fn record(
 pub(super) fn settle(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    peer: &FederationPeer,
+    peer: BurstPeer<'_>,
     work: &DeferredWork,
     state: FederationBurstWorkState,
 ) -> Result<()> {
@@ -122,7 +119,7 @@ impl Vault {
     pub fn federation_burst_disposition_as_owner(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
-        peer: &FederationPeer,
+        peer: BurstPeer<'_>,
         batch_ref: &str,
     ) -> Result<FederationBurstReceipt> {
         let id = crate::deletion::parse_hex::<32>(batch_ref)
@@ -136,7 +133,7 @@ impl Vault {
     /// Only this peer's own batch can be read through a peer door.
     pub fn federation_burst_disposition(
         &self,
-        peer: &FederationPeer,
+        peer: BurstPeer<'_>,
         batch_ref: &str,
     ) -> Result<FederationBurstReceipt> {
         let id = crate::deletion::parse_hex::<32>(batch_ref)

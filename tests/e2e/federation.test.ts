@@ -1552,8 +1552,11 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
     expect(allowDelivery.body.update.length).toBeGreaterThan(0);
     const allowReceipt = await receiver.client.call("vault.federation.burst.ingress", allowDelivery);
     expect(allowReceipt.batch_ref).toMatch(/^[a-f0-9]{64}$/);
-    expect(allowReceipt.principal).toBe(pact.receiverGrant.guest_actor);
-    expect(allowReceipt.grant).toBe(pact.receiverGrant.grant);
+    expect(allowReceipt.peer).toEqual({
+      kind: "federated",
+      principal: pact.receiverGrant.guest_actor,
+      grant: pact.receiverGrant.grant,
+    });
     expect(allowReceipt.window_key).toBe(allowWindow);
     expect(allowReceipt.disposition).toEqual({ outcome: "allow" });
     expect(allowReceipt.state).toBe("imported");

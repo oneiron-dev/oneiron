@@ -1,12 +1,12 @@
 //! Owner policy changes and the peer's own observed baseline.
 use super::{
-    FederationBurstBaseline, FederationBurstBaselineState, FederationBurstPolicy, FederationPeer,
+    BurstPeer, FederationBurstBaseline, FederationBurstBaselineState, FederationBurstPolicy,
     corrupt, observations,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::{Result, Vault};
 
-fn key(peer: &FederationPeer) -> Vec<u8> {
+fn key(peer: BurstPeer<'_>) -> Vec<u8> {
     let mut key = b"m:federation-policy:v1:".to_vec();
     key.extend_from_slice(&peer.digest());
     key
@@ -15,7 +15,7 @@ fn key(peer: &FederationPeer) -> Vec<u8> {
 pub(super) fn load_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    peer: &FederationPeer,
+    peer: BurstPeer<'_>,
 ) -> Result<FederationBurstPolicy> {
     vault.store.sync_queue.get(txn, &key(peer))?.map_or_else(
         || Ok(FederationBurstPolicy::default()),
@@ -27,7 +27,7 @@ impl Vault {
     pub fn federation_burst_policy(
         &self,
         owner: &AuthenticatedOwner,
-        peer: &FederationPeer,
+        peer: BurstPeer<'_>,
     ) -> Result<FederationBurstPolicy> {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
@@ -38,7 +38,7 @@ impl Vault {
     pub fn set_federation_burst_policy(
         &self,
         owner: &AuthenticatedOwner,
-        peer: &FederationPeer,
+        peer: BurstPeer<'_>,
         policy: FederationBurstPolicy,
     ) -> Result<FederationBurstPolicy> {
         self.with_write_txn_grouped(|txn| {
@@ -54,7 +54,7 @@ impl Vault {
     pub fn federation_burst_baseline(
         &self,
         owner: &AuthenticatedOwner,
-        peer: &FederationPeer,
+        peer: BurstPeer<'_>,
     ) -> Result<FederationBurstBaselineState> {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_in_txn(self, &txn)?;

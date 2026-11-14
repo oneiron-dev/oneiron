@@ -3,7 +3,7 @@
 use super::base::SyncClient;
 use super::federated::map_federated_admission_err;
 use crate::sync::WindowKey;
-use crate::sync::federation_burst::{DeferredWork, FederationPeer, WorkKind};
+use crate::sync::federation_burst::{BurstPeer, DeferredWork, FederationPeer, WorkKind};
 use crate::sync::selector::{FederationAdmissionRole, admit_peer_window_update_as};
 use crate::sync::transport::TransportError;
 
@@ -27,8 +27,8 @@ impl SyncClient {
         let Some(peer) = self.config.federation_peer.clone() else {
             return Ok(false);
         };
-        let Some(work) =
-            DeferredWork::next_update(&self.vault, &peer).map_err(map_federated_admission_err)?
+        let Some(work) = DeferredWork::next_update(&self.vault, BurstPeer::Federated(&peer))
+            .map_err(map_federated_admission_err)?
         else {
             return Ok(false);
         };
@@ -50,17 +50,18 @@ impl SyncClient {
             .ok_or(TransportError::InvalidPayload("invalid batch_ref"))?;
         let receipt = self
             .vault
-            .federation_burst_disposition(&peer, batch_ref)
+            .federation_burst_disposition(BurstPeer::Federated(&peer), batch_ref)
             .map_err(map_federated_admission_err)?;
         if receipt.state == crate::sync::federation_burst::FederationBurstWorkState::Pending {
-            if let Some(work) = DeferredWork::update_by_id(&self.vault, &peer, &id)
-                .map_err(map_federated_admission_err)?
+            if let Some(work) =
+                DeferredWork::update_by_id(&self.vault, BurstPeer::Federated(&peer), &id)
+                    .map_err(map_federated_admission_err)?
             {
                 self.replay_federation_work(&peer, work)?;
             }
         }
         self.vault
-            .federation_burst_disposition(&peer, batch_ref)
+            .federation_burst_disposition(BurstPeer::Federated(&peer), batch_ref)
             .map_err(map_federated_admission_err)
     }
 
@@ -75,6 +76,11 @@ impl SyncClient {
             WorkKind::Selector => {
                 return Err(TransportError::InvalidPayload(
                     "selector is not an inbound update",
+                ));
+            }
+            WorkKind::DeviceUpdate => {
+                return Err(TransportError::InvalidPayload(
+                    "an own device's update is not a federation update",
                 ));
             }
         };
@@ -104,7 +110,7 @@ impl SyncClient {
                 // the row settles, so the work behind it drains.
                 let error = map_federated_admission_err(error);
                 if matches!(error, TransportError::InvalidPayload(_)) {
-                    work.reject(&self.vault, peer)
+                    work.reject(&self.vault, BurstPeer::Federated(peer))
                         .map_err(map_federated_admission_err)?;
                 }
                 return Err(error);
@@ -118,7 +124,7 @@ impl SyncClient {
             &work.authority_digest,
             || self.import_peer_update(&admitted, peer.grant(), delivery),
         )?;
-        work.complete(&self.vault, peer)
+        work.complete(&self.vault, BurstPeer::Federated(peer))
             .map_err(map_federated_admission_err)?;
         Ok(true)
     }

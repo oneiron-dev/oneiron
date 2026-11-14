@@ -4,6 +4,7 @@
 //! markers. A defer retains the actual request/update, its grant and principal.
 //! Transport payload, fabricated-window, and malformed-record bounds still apply.
 
+mod device;
 mod documents;
 pub(crate) mod erase;
 mod import_guard;
@@ -31,6 +32,10 @@ pub use schedule::{
 };
 mod selector;
 
+pub use device::{
+    DeviceBurstAdmission, DeviceBurstWork, DevicePeer, admit_device_window_update,
+    ready_device_work,
+};
 pub use selector::{PreparedSelectorFetch, prepare_selector_fetch, replay_selector_fetch};
 
 use crate::error::{SyncProtocolValidation, SyncSelectorValidation};
@@ -193,6 +198,81 @@ impl FederationPeer {
     }
 }
 
+/// Whose writes a burst decision counts: a federated peer under its grant,
+/// or one of this vault's own devices at its home. Both get the same
+/// response against their own baseline (arch-0023b
+/// `#decision-federation-26`; L7-41).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BurstPeer<'a> {
+    Federated(&'a FederationPeer),
+    Device(&'a DevicePeer),
+}
+
+impl BurstPeer<'_> {
+    /// A federated peer's grant and acting proof still stand. A device peer
+    /// grants and refuses nothing here: its write's authority is the
+    /// credential its home rechecks where the write lands.
+    pub(in crate::sync) fn revalidate(self, vault: &Vault) -> Result<()> {
+        match self {
+            Self::Federated(peer) => peer.revalidate(vault),
+            Self::Device(_) => Ok(()),
+        }
+    }
+
+    pub(in crate::sync) fn revalidate_in_txn(
+        self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<()> {
+        match self {
+            Self::Federated(peer) => peer.revalidate_in_txn(vault, txn),
+            Self::Device(_) => Ok(()),
+        }
+    }
+
+    /// What retained work is held under: a federated peer's live grant and
+    /// pact scopes, a device's standing here. A change ends the work
+    /// `StaleAuthority` (FIX 7999).
+    pub(in crate::sync) fn authority_digest_in_txn(
+        self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<[u8; 32]> {
+        match self {
+            Self::Federated(peer) => peer.authority_digest_in_txn(vault, txn),
+            Self::Device(peer) => peer.authority_digest_in_txn(vault, txn),
+        }
+    }
+
+    /// The baseline this peer's writes count against.
+    fn digest(self) -> [u8; 32] {
+        match self {
+            Self::Federated(peer) => peer.digest(),
+            Self::Device(peer) => peer.digest(),
+        }
+    }
+
+    /// The bytes that bind retained work to this peer's lane: a federated
+    /// peer's exact selector, a device as its connection proved it.
+    fn lane_bytes(self) -> Result<Vec<u8>> {
+        match self {
+            Self::Federated(peer) => crate::sync::encode_sync_selector(&peer.selector),
+            Self::Device(peer) => Ok(peer.encode()),
+        }
+    }
+
+    /// The peer as its receipts name it.
+    fn receipt_peer(self) -> FederationBurstPeerRef {
+        match self {
+            Self::Federated(peer) => FederationBurstPeerRef::Federated {
+                principal: peer.principal,
+                grant: peer.selector.grant_id,
+            },
+            Self::Device(peer) => peer.receipt_peer(),
+        }
+    }
+}
+
 /// Federation policy has no rate Block or human Pause outcome.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FederationBurstDecision {
@@ -219,7 +299,7 @@ pub enum FederationBurstDecision {
 /// rows whose bytes the work carries, which an erase of any scrubs.
 pub(in crate::sync) fn admit_work(
     vault: &Vault,
-    peer: &FederationPeer,
+    peer: BurstPeer<'_>,
     key: &WindowKey,
     kind: WorkKind,
     payload: &[u8],
@@ -239,7 +319,7 @@ pub(in crate::sync) fn admit_work(
 
 fn admit_work_at(
     vault: &Vault,
-    peer: &FederationPeer,
+    peer: BurstPeer<'_>,
     key: &WindowKey,
     kind: WorkKind,
     payload: &[u8],
@@ -336,7 +416,7 @@ fn admit_work_at(
 
 pub(in crate::sync) fn record_outcome(
     vault: &Vault,
-    peer: &FederationPeer,
+    peer: BurstPeer<'_>,
     structural_failure: bool,
 ) -> Result<()> {
     observations::record_outcome(vault, peer, structural_failure)

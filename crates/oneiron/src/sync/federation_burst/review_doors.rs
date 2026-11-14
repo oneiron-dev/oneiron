@@ -1,7 +1,8 @@
 //! Retained coalesced review evidence and owner release/reject acts.
 use super::{
-    DeferredWork, FederationBurstReceipt, FederationBurstReviewBundle,
-    FederationBurstReviewReceipt, FederationIsolatedUpdate, FederationPeer, corrupt, ledger,
+    BurstPeer, DeferredWork, DevicePeer, FederationBurstReceipt, FederationBurstReviewBundle,
+    FederationBurstReviewReceipt, FederationIsolatedUpdate, FederationPeer, WorkKind, corrupt,
+    ledger,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::store::Store;
@@ -158,27 +159,37 @@ impl Vault {
             let mut batches = Vec::<FederationBurstReceipt>::new();
             for mut work in work {
                 // A released bundle may still have pending replay work; reject
-                // retires those original isolated batches as well.
-                let selector = crate::sync::decode_sync_selector(&work.selector)?;
-                let raw = if reject {
-                    self.get_raw_in(txn, &selector.grant_id)?
-                        .ok_or(crate::Error::EntityNotFound)?
+                // retires those original isolated batches as well. An own
+                // device's work names the device as its connection proved
+                // it (L7-41).
+                let device;
+                let federated;
+                let peer = if work.kind == WorkKind::DeviceUpdate {
+                    device = DevicePeer::decode(&work.selector)?;
+                    BurstPeer::Device(&device)
                 } else {
-                    crate::federation::live_federation_grant_in(self, txn, &selector.grant_id)?
-                };
-                let grant = crate::federation::decode_federation_grant_body(
-                    &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-                )?;
-                let peer = FederationPeer {
-                    principal: selector.member_ref,
-                    scope: grant.scope,
-                    selector,
-                    owner: None,
+                    let selector = crate::sync::decode_sync_selector(&work.selector)?;
+                    let raw = if reject {
+                        self.get_raw_in(txn, &selector.grant_id)?
+                            .ok_or(crate::Error::EntityNotFound)?
+                    } else {
+                        crate::federation::live_federation_grant_in(self, txn, &selector.grant_id)?
+                    };
+                    let grant = crate::federation::decode_federation_grant_body(
+                        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                    )?;
+                    federated = FederationPeer {
+                        principal: selector.member_ref,
+                        scope: grant.scope,
+                        selector,
+                        owner: None,
+                    };
+                    BurstPeer::Federated(&federated)
                 };
                 if peer.digest() != digest {
                     return Err(corrupt());
                 }
-                let Some(receipt) = ledger::load(self, txn, &peer, &work.id)? else {
+                let Some(receipt) = ledger::load(self, txn, peer, &work.id)? else {
                     continue;
                 };
                 if !matches!(
@@ -192,12 +203,12 @@ impl Vault {
                     ledger::settle(
                         self,
                         txn,
-                        &peer,
+                        peer,
                         &work,
                         super::FederationBurstWorkState::Rejected,
                     )?;
                 } else if let Some(state) =
-                    work.ended_in_txn(self, txn, &peer, self.now_recorded_at())?
+                    work.ended_in_txn(self, txn, peer, self.now_recorded_at())?
                 {
                     // A batch held under an older grant or pact scope, or
                     // past its wait, ends alone; the rest are released
@@ -207,7 +218,7 @@ impl Vault {
                     work.isolated_update = None;
                     work.put_in_txn(self, txn)?;
                 }
-                if let Some(receipt) = ledger::load(self, txn, &peer, &work.id)? {
+                if let Some(receipt) = ledger::load(self, txn, peer, &work.id)? {
                     batches.push(receipt)
                 }
             }

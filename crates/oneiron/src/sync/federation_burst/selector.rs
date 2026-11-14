@@ -1,8 +1,8 @@
 //! Decode and authorize before deferral; retry only with current authentication.
 
 use super::{
-    DeferredWork, FederationBurstDecision, FederationBurstWorkState, FederationPeer, WorkKind,
-    admit_work, record_outcome,
+    BurstPeer, DeferredWork, FederationBurstDecision, FederationBurstWorkState, FederationPeer,
+    WorkKind, admit_work, record_outcome,
 };
 use crate::error::{FederationReplayEnd, SyncProtocolValidation};
 use crate::sync::{SyncSelector, WindowKey, decode_selector_vv_request};
@@ -29,8 +29,8 @@ impl PreparedSelectorFetch {
             ));
         }
         match self.work {
-            Some(work) => work.complete(vault, &self.peer),
-            None => record_outcome(vault, &self.peer, false),
+            Some(work) => work.complete(vault, BurstPeer::Federated(&self.peer)),
+            None => record_outcome(vault, BurstPeer::Federated(&self.peer), false),
         }
     }
 }
@@ -69,7 +69,7 @@ pub fn prepare_selector_fetch(
     let peer = peer_for_request(vault, principal, scope, payload)?;
     let (decision, work) = admit_work(
         vault,
-        &peer,
+        BurstPeer::Federated(&peer),
         key,
         WorkKind::Selector,
         payload,
@@ -95,7 +95,12 @@ pub fn replay_selector_fetch(
     payload: &[u8],
 ) -> Result<PreparedSelectorFetch> {
     let peer = peer_for_request(vault, principal, scope, payload)?;
-    let mut expected = DeferredWork::new(&peer, key, WorkKind::Selector, payload)?;
+    let mut expected = DeferredWork::new(
+        BurstPeer::Federated(&peer),
+        key,
+        WorkKind::Selector,
+        payload,
+    )?;
     if expected.id != *id {
         return Err(Error::sync_protocol(
             SyncProtocolValidation::FederationReplayMismatch,
@@ -115,10 +120,15 @@ pub fn replay_selector_fetch(
     // A read held under an older grant or pact scope, or past its wait, ends
     // with its typed receipt, and the peer sends a new request (FIX 7997,
     // 7999).
-    let ended = work.ended_in_txn(vault, &txn, &peer, vault.now_recorded_at())?;
+    let ended = work.ended_in_txn(
+        vault,
+        &txn,
+        BurstPeer::Federated(&peer),
+        vault.now_recorded_at(),
+    )?;
     if let Some(state) = ended {
         drop(txn);
-        work.retire(vault, &peer, state)?;
+        work.retire(vault, BurstPeer::Federated(&peer), state)?;
         let end = match state {
             FederationBurstWorkState::Expired => FederationReplayEnd::Expired,
             FederationBurstWorkState::StaleAuthority => FederationReplayEnd::StaleAuthority,

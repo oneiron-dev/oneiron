@@ -10,7 +10,7 @@ pub fn federation_burst_baseline_as_owner(
     owner: &AuthenticatedOwner,
     input: FederationBurstPeerRequest,
 ) -> MemoryResult<FederationBurstBaselineState> {
-    Ok(vault.federation_burst_baseline(owner, &input.authorize(vault)?)?)
+    Ok(vault.federation_burst_baseline(owner, BurstPeer::Federated(&input.authorize(vault)?))?)
 }
 
 pub fn federation_burst_policy_as_owner(
@@ -18,7 +18,7 @@ pub fn federation_burst_policy_as_owner(
     owner: &AuthenticatedOwner,
     input: FederationBurstPeerRequest,
 ) -> MemoryResult<FederationBurstPolicy> {
-    Ok(vault.federation_burst_policy(owner, &input.authorize(vault)?)?)
+    Ok(vault.federation_burst_policy(owner, BurstPeer::Federated(&input.authorize(vault)?))?)
 }
 
 pub fn set_federation_burst_policy_as_owner(
@@ -26,7 +26,11 @@ pub fn set_federation_burst_policy_as_owner(
     owner: &AuthenticatedOwner,
     input: FederationBurstPolicySetRequest,
 ) -> MemoryResult<FederationBurstPolicy> {
-    Ok(vault.set_federation_burst_policy(owner, &input.peer.authorize(vault)?, input.policy)?)
+    Ok(vault.set_federation_burst_policy(
+        owner,
+        BurstPeer::Federated(&input.peer.authorize(vault)?),
+        input.policy,
+    )?)
 }
 
 pub fn federation_burst_reviews_as_owner(

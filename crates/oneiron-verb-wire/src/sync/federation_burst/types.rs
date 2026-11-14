@@ -123,13 +123,32 @@ pub enum FederationBurstDisposition {
     Defer { replay_ref: String },
 }
 
+/// Whose batch a receipt names: a federated peer under its grant, or one of
+/// the vault's own devices writing at its home, as its connection proved it
+/// (L7-41).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FederationBurstPeerRef {
+    /// A federated peer: its authenticated principal and the grant it writes under.
+    Federated {
+        principal: EntityId,
+        grant: EntityId,
+    },
+    /// An own device, by the machine its connection proved.
+    Machine { machine: EntityId },
+    /// An own device, by the hex id of the paired app's slip that bound its
+    /// Write credential.
+    Slip { slip: String },
+    /// Own-device connections that proved neither.
+    Unproven,
+}
+
 /// A stable batch identity, its original routed outcome, and its current
 /// completion state. Replay does not erase the original disposition.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FederationBurstReceipt {
     pub batch_ref: String,
-    pub principal: EntityId,
-    pub grant: EntityId,
+    pub peer: FederationBurstPeerRef,
     pub window_key: String,
     pub disposition: FederationBurstDisposition,
     pub state: FederationBurstWorkState,
