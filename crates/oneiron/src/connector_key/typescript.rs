@@ -39,6 +39,14 @@ pub fn output_typescript(schema: &Value) -> String {
     bounded(schema, "unknown")
 }
 
+/// Whether `schema` renders within [`MAX_TYPESCRIPT_BYTES`], so its type is
+/// served rather than its fallback. A translator that may type a schema
+/// less deeply asks this to keep the deepest typing that is still served.
+#[must_use]
+pub fn renders_within_bound(schema: &Value) -> bool {
+    render(schema, 0).len() <= MAX_TYPESCRIPT_BYTES
+}
+
 fn bounded(schema: &Value, fallback: &str) -> String {
     let rendered = render(schema, 0);
     if rendered.len() > MAX_TYPESCRIPT_BYTES {

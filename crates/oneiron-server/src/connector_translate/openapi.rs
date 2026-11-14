@@ -16,7 +16,10 @@ use oneiron::connector_key::{HttpMethod, HttpOperation};
 use reqwest::Url;
 use serde_json::{Map, Value, json};
 
-use super::{TranslatedTool, Translation, refused};
+use super::{
+    BODY_ARGUMENT, InputSchema, MAX_SCHEMA_BYTES, TranslatedTool, Translation, check_origin,
+    check_path_template, is_tool_name, refused,
+};
 
 /// The methods a tool may use, in the order OpenAPI lists them.
 const METHODS: [(&str, HttpMethod); 6] = [
@@ -42,12 +45,6 @@ const HOST_HEADERS: [&str; 7] = [
     "transfer-encoding",
     "connection",
 ];
-
-/// The name of the argument that holds the request body.
-pub(crate) const BODY_ARGUMENT: &str = "body";
-
-/// The literal schema bound the resolver applies (manifest_drift.rs).
-const MAX_SCHEMA_BYTES: usize = 65_536;
 
 /// How deep a schema or a chain of `$ref`s may go.
 const MAX_DEPTH: usize = 24;
@@ -164,11 +161,7 @@ impl Operation<'_> {
                 "operation {label} has no operationId: a tool needs a name the document keeps"
             )));
         }
-        if name.len() > 128
-            || !name
-                .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c))
-        {
+        if !is_tool_name(name) {
             return Err(refused(format!(
                 "operation {label}: operationId {name:?} is not a tool name (letters, digits, \
                  `_`, `.` and `-`, at most 128)"
@@ -234,7 +227,7 @@ impl Operation<'_> {
                 }
             }
         }
-        check_path_template(self.path, &path_names).map_err(fail)?;
+        check_path_template(self.path, &path_names, false).map_err(fail)?;
         let json_body = match operation.get("requestBody") {
             None => false,
             Some(body) => {
@@ -388,36 +381,6 @@ impl Parameter {
     }
 }
 
-#[derive(Default)]
-struct InputSchema {
-    properties: Map<String, Value>,
-    required: Vec<Value>,
-}
-
-impl InputSchema {
-    fn add(&mut self, name: &str, schema: Value, required: bool) -> Result<(), String> {
-        if self.properties.contains_key(name) {
-            return Err(format!("two of its arguments are named {name}"));
-        }
-        self.properties.insert(name.to_owned(), schema);
-        if required {
-            self.required.push(Value::String(name.to_owned()));
-        }
-        Ok(())
-    }
-
-    fn into_schema(self) -> Value {
-        let mut schema = Map::new();
-        schema.insert("type".to_owned(), json!("object"));
-        schema.insert("properties".to_owned(), Value::Object(self.properties));
-        if !self.required.is_empty() {
-            schema.insert("required".to_owned(), Value::Array(self.required));
-        }
-        schema.insert("additionalProperties".to_owned(), Value::Bool(false));
-        Value::Object(schema)
-    }
-}
-
 /// The operation's summary, then its description.
 fn description(operation: &Map<String, Value>) -> String {
     let text = |key: &str| {
@@ -454,49 +417,6 @@ fn json_content(content: &Map<String, Value>) -> Option<&Value> {
         .map(|(_, value)| value)
 }
 
-/// Every `{name}` in the path is a path parameter, and every path parameter
-/// has its place in the path.
-fn check_path_template(path: &str, parameters: &BTreeSet<String>) -> Result<(), String> {
-    if !path.starts_with('/') {
-        return Err(format!("its path {path:?} does not start with `/`"));
-    }
-    // A dot segment would move the call out from under the endpoint's path
-    // once the URL is normalized; `?` and `#` would end the path.
-    if path
-        .split('/')
-        .any(|segment| segment == "." || segment == "..")
-        || path.contains(['?', '#', '%', '\\'])
-    {
-        return Err(format!(
-            "its path {path:?} has a dot segment, `?`, `#`, `%` or `\\`"
-        ));
-    }
-    let mut named = BTreeSet::new();
-    let mut rest = path;
-    while let Some(open) = rest.find('{') {
-        let after = &rest[open + 1..];
-        let close = after
-            .find('}')
-            .ok_or_else(|| format!("its path {path:?} has an unclosed `{{`"))?;
-        named.insert(after[..close].to_owned());
-        rest = &after[close + 1..];
-    }
-    if rest.contains('}') {
-        return Err(format!("its path {path:?} has a stray `}}`"));
-    }
-    if let Some(missing) = named.difference(parameters).next() {
-        return Err(format!(
-            "its path names {{{missing}}}, which no parameter fills"
-        ));
-    }
-    if let Some(unplaced) = parameters.difference(&named).next() {
-        return Err(format!(
-            "path parameter {unplaced} has no place in its path"
-        ));
-    }
-    Ok(())
-}
-
 /// A `servers` entry may only name the installed endpoint's own origin: a
 /// call goes to the endpoint the host installed, never where the document
 /// points. A relative server URL is a path the endpoint already carries.
@@ -510,16 +430,7 @@ fn check_servers(servers: Option<&Value>, endpoint: &Url, at: &str) -> oneiron::
                 "{at}: server URL {url} has variables; install the endpoint it resolves to"
             )));
         }
-        let Ok(parsed) = Url::parse(url) else {
-            continue;
-        };
-        if parsed.origin() != endpoint.origin() {
-            return Err(refused(format!(
-                "{at} sends to {}, not the installed endpoint's origin {}",
-                parsed.origin().ascii_serialization(),
-                endpoint.origin().ascii_serialization()
-            )));
-        }
+        check_origin(url, endpoint, at)?;
     }
     Ok(())
 }
