@@ -304,20 +304,40 @@ impl Lift<oneiron::code_run::ConnectorCallReply> for crate::ConnectorCallReply {
                 result,
                 reasons,
                 budget_steering,
-                ..
-            } => Ok(Self::Delivered {
-                result: result.map(crate::ConnectorToolResult::lift).transpose()?,
-                reasons: if reasons.is_empty() {
-                    None
-                } else {
-                    Some(reasons)
-                },
-                budget_steering: if budget_steering.is_empty() {
-                    None
-                } else {
-                    Some(budget_steering)
-                },
-            }),
+                mut session_manifest,
+            } => {
+                // The manifest's image-release evidence is opaque JSON, lifted
+                // apart as a browser answer's is.
+                let image_release = super::browser_answers::lift_image_release(
+                    session_manifest
+                        .as_mut()
+                        .and_then(|manifest| manifest.image_release.take()),
+                )?;
+                let mut reply = Self::Delivered {
+                    result: result.map(crate::ConnectorToolResult::lift).transpose()?,
+                    reasons: if reasons.is_empty() {
+                        None
+                    } else {
+                        Some(reasons)
+                    },
+                    budget_steering: if budget_steering.is_empty() {
+                        None
+                    } else {
+                        Some(budget_steering)
+                    },
+                    session_manifest: session_manifest
+                        .map(|manifest| lift_record("connector.call", &manifest))
+                        .transpose()?,
+                };
+                if let Self::Delivered {
+                    session_manifest: Some(manifest),
+                    ..
+                } = &mut reply
+                {
+                    manifest.image_release = image_release;
+                }
+                Ok(reply)
+            }
             oneiron::code_run::ConnectorCallReply::Held {
                 call_ref,
                 decision_ref,
