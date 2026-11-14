@@ -35,6 +35,7 @@ use oneiron::test_support::{
     bind_host_owner, provision_engine_machines, put_policy_manifest_bytes,
 };
 use oneiron::{ClaimSource, EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
+use oneiron_authority::federation::scope_codec::{effect_preset, encode_scope_value};
 use rmpv::Value;
 use serde_json::json;
 
@@ -187,7 +188,11 @@ impl AgentVerbDoor for OwnerVerbDoor {
 }
 
 /// Defaults that land the owner's Generated claims, as the code-run gate
-/// pins install them (tests/gate_pins_claim_producers.rs).
+/// pins install them (tests/gate_pins_claim_producers.rs), and one scoped
+/// grant that lets the owner's TASK cancel run. Without a grant for it the
+/// cancel's external-effect gate asks (an irreversible effect, and no
+/// authority for the `tasks` channel), under the shipped manifest too: the
+/// crate's own cancel tests mint a standing grant for it first.
 fn run_policy(actor: EntityId) -> TestResult<Vec<u8>> {
     let axes = || {
         Value::Map(vec![
@@ -195,6 +200,19 @@ fn run_policy(actor: EntityId) -> TestResult<Vec<u8>> {
             (Value::from("sensitivity"), Value::from("normal")),
         ])
     };
+    let cancel_grant = Value::Map(vec![
+        (Value::from("actor_class"), Value::from("human")),
+        (Value::from("actor_ref"), Value::from(actor.to_hex())),
+        (Value::from("effector"), Value::from("external:cancel")),
+        (
+            Value::from("scope"),
+            encode_scope_value(&effect_preset()).map_err(at("the effect scope"))?,
+        ),
+        (
+            Value::from("selectors"),
+            Value::Map(vec![(Value::from("channel"), Value::from("tasks"))]),
+        ),
+    ]);
     let manifest = Value::Map(vec![
         (
             Value::from("schema_version"),
@@ -226,6 +244,10 @@ fn run_policy(actor: EntityId) -> TestResult<Vec<u8>> {
                     (Value::from("warned"), Value::Boolean(true)),
                 ]),
             )]),
+        ),
+        (
+            Value::from("scoped_grants"),
+            Value::Array(vec![cancel_grant]),
         ),
     ]);
     let mut data = Vec::new();
