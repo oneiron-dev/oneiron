@@ -1,8 +1,12 @@
-//! Door for `tests/serve_usage_metering.rs`: the server plain and embedded
-//! serve build over a vault (`commands::build_server`).
+//! Doors for `tests/serve_usage_metering.rs` and
+//! `tests/managed_serve_usage_metering.rs`: the server plain and embedded
+//! serve build over a vault (`commands::build_server`), and the usage meter
+//! bind a managed start runs on its built server (census L8-12).
 
 use std::path::Path;
 use std::sync::Arc;
+
+use oneiron_vault_contract::tenancy::VaultTenancy;
 
 use crate::server::SyncServer;
 
@@ -34,4 +38,11 @@ pub async fn build_served_server(
     )
     .await?;
     Ok(server)
+}
+
+/// Binds `server`'s usage meter as a managed start under `tenancy` binds it.
+/// On this base a managed start binds none: `managed/state_serve/coordinator.rs`
+/// builds its server with no meter.
+pub fn bind_managed_usage_metering(server: &SyncServer, tenancy: VaultTenancy) {
+    let _ = (server, tenancy);
 }
