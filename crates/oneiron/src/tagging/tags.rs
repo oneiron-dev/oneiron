@@ -20,6 +20,7 @@ use std::ops::Bound;
 use serde::{Deserialize, Serialize};
 
 use super::input::{TurnInput, turn_input_in_txn, turn_text_in_txn};
+use super::marker::TaggingMarkerConfig;
 use super::provisional;
 use crate::edge::EdgeKind;
 use crate::error::Result;
@@ -61,6 +62,24 @@ pub struct DerivationEnvelope {
     pub version: String,
     /// Digest of the decode parameters: the label table and the live window.
     pub params_hash: String,
+}
+
+impl DerivationEnvelope {
+    /// Whether the tagger `config` arms made the set: its checkpoint is the
+    /// part of `model_id` after the last `@` (a model id may hold `@`
+    /// itself), and a stack `config` pins is the set's stack. An unpinned
+    /// tagger accepts the stack any answer names, so every saved stack is its.
+    pub(crate) fn made_by_tagger(&self, config: &TaggingMarkerConfig) -> bool {
+        let checkpoint = self
+            .model_id
+            .rsplit_once('@')
+            .map(|(_, checkpoint)| checkpoint);
+        checkpoint == Some(config.checkpoint.as_str())
+            && config
+                .stack
+                .as_ref()
+                .is_none_or(|stack| self.stack.as_ref() == Some(stack))
+    }
 }
 
 /// Where an unconfirmed mention points. None of these is an edge.
@@ -412,14 +431,20 @@ pub(super) fn readable_in_txn(
     let Some(tags) = TAG_SET.get(store, txn, turn)? else {
         return Ok(None);
     };
+    Ok(sources_read_in_txn(store, txn, &tags)?.then_some(tags))
+}
+
+/// Whether the text `tags` was read from reads: its turn and every message
+/// it was read from are stored and none reads deleted.
+fn sources_read_in_txn(store: &Store, txn: &heed::RoTxn<'_>, tags: &TurnTags) -> Result<bool> {
     for source in std::iter::once(&tags.turn).chain(&tags.messages) {
         if !crate::ports::EntityStoreRead::port_entity_present(store, txn, source)?
             || store.port_deletion_state(txn, source)?.deleted
         {
-            return Ok(None);
+            return Ok(false);
         }
     }
-    Ok(Some(tags))
+    Ok(true)
 }
 
 /// [`readable_in_txn`] as the read doors show it: a link to an entity whose
@@ -753,6 +778,36 @@ pub(crate) fn readable_page_in_txn(
         }
     }
     Ok((found, last))
+}
+
+/// The next `scan` tag sets in turn order after `after`, read for the
+/// older-tagger sweep: the turns whose readable set the tagger `config`
+/// arms did not make ([`DerivationEnvelope::made_by_tagger`]), and the turn
+/// the next read starts after: the last one this read passed, or `None`
+/// once it reached the end of the sets.
+pub(crate) fn made_by_other_tagger_page_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    after: Option<&EntityId>,
+    scan: usize,
+    config: &TaggingMarkerConfig,
+) -> Result<(Vec<EntityId>, Option<EntityId>)> {
+    let start = after.map_or(Bound::Unbounded, Bound::Excluded);
+    let mut older = Vec::new();
+    let mut examined = 0;
+    let mut last = None;
+    for row in TAG_SET.iter_range(store, txn, start, Bound::Unbounded)? {
+        if examined == scan {
+            return Ok((older, last));
+        }
+        let (turn, tags) = row?;
+        examined += 1;
+        last = Some(turn);
+        if !tags.envelope.made_by_tagger(config) && sources_read_in_txn(store, txn, &tags)? {
+            older.push(turn);
+        }
+    }
+    Ok((older, None))
 }
 
 /// Settles the saved span of `turn` at `message`, `start`..`end` as
