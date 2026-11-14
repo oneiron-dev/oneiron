@@ -354,9 +354,9 @@ pub(super) fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
         // A run repo row is rewritten only into its own row's input; the
         // binding is rebuilt at dispatch (FIX 6867).
         SelfCall::Repo(call) => SelfCall::Repo(Box::new(call.rewrite(args)?)),
-        // A reader's source and finding, and a summary's members, are
-        // resolved by the host before the hooks run: a rewrite would name a
-        // result nothing resolved.
+        // A reader's source and finding, a summary's members and a
+        // `say(result)`'s result are resolved by the host before the hooks
+        // run: a rewrite would name a result nothing resolved.
         // An answer is frozen once and checked as given (ONE-2510).
         // A world-settings request is judged as the agent gave it (FIX 4480).
         // A consult's answer or abstention lands as the peer gave it
@@ -371,6 +371,7 @@ pub(super) fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
         | SelfCall::ReaderSpawn(_)
         | SelfCall::ReaderReport(_)
         | SelfCall::Summarize(_)
+        | SelfCall::SayResult(_)
         | SelfCall::Leader(_)
         | SelfCall::Team(_)
         | SelfCall::TeamSubmit(_) => {

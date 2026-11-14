@@ -19,6 +19,11 @@
 //! Red on main: `say` is no global and `self.think.aloud` is undefined, so
 //! every program throws before its `finish` and no test gets its answer.
 //!
+//! PR2 (`say(r7)`): a plain `say(result)` speaks one of the run's results
+//! where the run speaks, as its typed-result bubble (FIX 365). Red on PR1's
+//! head: `say` refuses a result with `say_needs_a_destination`, so the
+//! program throws before its `finish`.
+//!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron --all-features --features oneiron-agent-runtime/code-sandbox-wasmtime
 //! --test code_mode_say`.
@@ -504,5 +509,152 @@ finish(receipt.room);"#,
         Some("text")
     );
     assert_eq!(say_kind(&landed[0]).as_deref(), Some("ask"));
+    Ok(())
+}
+
+/// Every stored MESSAGE that says a result: no words, and a result
+/// attachment in its metadata.
+fn result_bubbles(vault: &Vault) -> TestResult<Vec<Vec<(rmpv::Value, rmpv::Value)>>> {
+    Ok(messages_saying(vault, "")?
+        .into_iter()
+        .filter(|fields| said_result_handle(fields).is_some())
+        .collect())
+}
+
+/// The handle of the result a MESSAGE's metadata attaches.
+fn said_result_handle(fields: &[(rmpv::Value, rmpv::Value)]) -> Option<String> {
+    let rmpv::Value::Map(metadata) = field(fields, "metadata")? else {
+        return None;
+    };
+    let rmpv::Value::Map(result) = field(metadata, "result")? else {
+        return None;
+    };
+    field(result, "handle")
+        .and_then(rmpv::Value::as_str)
+        .map(str::to_owned)
+}
+
+/// `say(r)` of a result the run stored speaks it where the run speaks: one
+/// visible `executor.speak` MESSAGE with no words, its attachment naming
+/// that result, and the guest hears the bubble's place.
+#[test]
+fn say_of_a_stored_result_speaks_one_result_bubble_where_the_run_speaks() -> TestResult {
+    let fixture = fixture()?;
+    let outcome = run_program(
+        &fixture,
+        r#"const r = await store({a: 1});
+const said = await say(r);
+finish(JSON.stringify({handle: r.handle, visible: said.isVisible}));"#,
+    );
+    let answered: serde_json::Value = serde_json::from_str(answer(&outcome))?;
+    assert_eq!(
+        answered["visible"],
+        serde_json::json!(true),
+        "the guest hears a visible bubble"
+    );
+    let handle = answered["handle"]
+        .as_str()
+        .expect("the stored result's card names its handle");
+    let bubbles = result_bubbles(&fixture.vault)?;
+    assert_eq!(bubbles.len(), 1, "one result bubble");
+    let bubble = &bubbles[0];
+    assert_eq!(said_result_handle(bubble).as_deref(), Some(handle));
+    assert_eq!(
+        field(bubble, "type").and_then(rmpv::Value::as_str),
+        Some("executor.speak")
+    );
+    assert_eq!(
+        field(bubble, "is_visible").and_then(rmpv::Value::as_bool),
+        Some(true)
+    );
+    Ok(())
+}
+
+/// A ref that names no result of the run is refused with nothing said.
+#[test]
+fn say_of_a_result_the_run_does_not_hold_is_refused_with_nothing_said() -> TestResult {
+    let fixture = fixture()?;
+    let outcome = run_program(&fixture, &refused_program(r#"say({ref: "r99"})"#));
+    assert_eq!(answer(&outcome), "refused:unknown_handle");
+    assert!(result_bubbles(&fixture.vault)?.is_empty());
+    Ok(())
+}
+
+/// A bubble says a whole result: a range of one is refused.
+#[test]
+fn say_of_a_range_of_a_result_is_refused_with_nothing_said() -> TestResult {
+    let fixture = fixture()?;
+    let outcome = run_program(
+        &fixture,
+        &refused_program(r##"say({ref: (await store({a: 1})).handle + "#0-2"})"##),
+    );
+    assert_eq!(answer(&outcome), "refused:say_result_range");
+    assert!(result_bubbles(&fixture.vault)?.is_empty());
+    Ok(())
+}
+
+/// A run that said its answer's bytes as a result has said its answer: no
+/// trailing bubble repeats it.
+#[test]
+fn a_run_that_said_its_answer_as_a_result_does_not_say_it_again() -> TestResult {
+    let fixture = fixture()?;
+    let outcome = run_program(
+        &fixture,
+        r#"const r = await store("the answer");
+await say(r);
+finish("the answer");"#,
+    );
+    assert_eq!(answer(&outcome), "the answer");
+    assert_eq!(
+        result_bubbles(&fixture.vault)?.len(),
+        1,
+        "one result bubble"
+    );
+    assert!(
+        messages_saying(&fixture.vault, "the answer")?.is_empty(),
+        "no trailing bubble says the answer again"
+    );
+    Ok(())
+}
+
+/// A name said and then rebound names another result at the end of the
+/// run: the answer stored under the new binding was never said, so the
+/// trailing bubble still says it.
+#[test]
+fn a_said_name_rebound_to_the_answer_does_not_hide_the_answer() -> TestResult {
+    let fixture = fixture()?;
+    let outcome = run_program(
+        &fixture,
+        r#"await store("first words", "r1");
+await say({ref: "r1"});
+await store("the answer", "r1");
+finish("the answer");"#,
+    );
+    assert_eq!(answer(&outcome), "the answer");
+    assert_eq!(
+        result_bubbles(&fixture.vault)?.len(),
+        1,
+        "one result bubble, for the first words"
+    );
+    assert_eq!(
+        messages_saying(&fixture.vault, "the answer")?.len(),
+        1,
+        "the trailing bubble says the answer the run never said"
+    );
+    Ok(())
+}
+
+/// A result with a destination stays the `say` row's refusal: a result is
+/// said only where the run speaks.
+#[test]
+fn a_say_of_a_result_to_a_room_stays_refused() -> TestResult {
+    let fixture = fixture()?;
+    let call = format!(
+        r#"say({{ref: "r1"}}, {{to: "{room}"}})"#,
+        room = fixture.room.to_hex(),
+    );
+    let outcome = run_program(&fixture, &refused_program(&call));
+    assert_eq!(answer(&outcome), "refused:say_needs_a_destination");
+    assert!(result_bubbles(&fixture.vault)?.is_empty());
     Ok(())
 }

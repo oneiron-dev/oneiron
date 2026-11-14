@@ -633,30 +633,25 @@ impl ImplicitSpeechIntent {
     }
 }
 
-/// The attachment of run `record`'s `output` as its result MESSAGE carries
+/// The attachment of run `run_id`'s `output` as its result MESSAGE carries
 /// it: the preview its card shows now, withheld while the body is not
-/// clean, and the facets that read the rest.
+/// clean, and the facets that read the rest. A large trailing answer and a
+/// plain `say(result)` (L8-25) carry the same.
 pub(super) fn message_result_attachment(
     storage: &ExecutorStorage<'_>,
-    record: &CodeRunReplayRecord,
+    run_id: EntityId,
     output: &CodeRunRawOutput,
 ) -> Result<crate::memory::MessageResultAttachment> {
-    let read = crate::code_run::ResultRead::new(
-        storage,
-        record.run_id,
-        output.clone(),
-        None,
-        None,
-        false,
-    )?
-    .map_err(|_| Error::InvariantViolation("a whole result read is refused"))?;
+    let read =
+        crate::code_run::ResultRead::new(storage, run_id, output.clone(), None, None, false)?
+            .map_err(|_| Error::InvariantViolation("a whole result read is refused"))?;
     let card = read.card(storage)?;
     let preview = card["preview"]
         .as_str()
         .unwrap_or(CODE_RUN_OUTPUT_PREVIEW_WITHHELD)
         .to_owned();
     let truncated = output.preview.truncated || preview != output.preview.text;
-    crate::memory::MessageResultAttachment::of(record.run_id, output, preview, truncated)
+    crate::memory::MessageResultAttachment::of(run_id, output, preview, truncated)
 }
 
 /// The durable "this step already spoke its last word" marker (ONE-1686).

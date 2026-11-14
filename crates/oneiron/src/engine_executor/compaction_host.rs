@@ -656,8 +656,9 @@ impl EngineNativeExecutor<'_> {
 
 /// Each speech call step `seq` made, in order, by its bridge call: read from
 /// the step's own bridge calls, as its checkpoint records them. No text is
-/// kept; the stub reads it, masked, when it renders. A step whose checkpoint
-/// keeps no range, or a call that did not emit, gives none.
+/// kept; the stub reads it, masked, when it renders. A `say(result)` bubble
+/// has no words, so its stub line names its verb and call (L8-25). A step
+/// whose checkpoint keeps no range, or a call that did not emit, gives none.
 fn step_speech(record: &CodeRunReplayRecord, seq: u64) -> Vec<crate::compaction::FoldedSpeech> {
     let Some(range) = record
         .step_checkpoints
@@ -672,7 +673,11 @@ fn step_speech(record: &CodeRunReplayRecord, seq: u64) -> Vec<crate::compaction:
         .get(range)
         .unwrap_or_default()
         .iter()
-        .filter(|call| call.emitted_speech() && super::compaction::speech_call_text(call).is_some())
+        .filter(|call| {
+            call.emitted_speech()
+                && (super::compaction::speech_call_text(call).is_some()
+                    || call.emitted_said_result_ref().is_some())
+        })
         .map(|call| crate::compaction::FoldedSpeech {
             verb: call.effect.as_str().to_owned(),
             call: call.seq,

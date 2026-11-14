@@ -59,6 +59,9 @@ pub enum SelfCall {
     ThinkAloud(SelfSpeechCall),
     /// Public first-party `self.express(text)` (ONE-1686, RT-04).
     Express(SelfSpeechCall),
+    /// A plain `say(result)` (L8-25): the run's own `self.speak`, its words
+    /// one of its results, said as its typed-result bubble.
+    SayResult(SelfSayResultCall),
     ReportBlocked(super::blocked::SelfReportBlockedCall),
     /// Reusable definition authoring, independent of launching a child.
     AgentsPut(Box<SelfAgentDefinitionPutCall>),
@@ -142,6 +145,7 @@ impl SelfCall {
             Self::Think(_) => SelfEffect::Think,
             Self::ThinkAloud(_) => SelfEffect::ThinkAloud,
             Self::Express(_) => SelfEffect::Express,
+            Self::SayResult(_) => SelfEffect::Speak,
             Self::ReportBlocked(_) => SelfEffect::ReportBlocked,
             Self::InferenceDefaultsRead => SelfEffect::InferenceDefaultsRead,
             Self::InferenceDefaultsReplace(_) => SelfEffect::InferenceDefaultsReplace,
@@ -201,6 +205,7 @@ impl SelfCall {
             Self::Think(call) => Self::Think(call.with_bridge_stamp(order, occurred_at)),
             Self::ThinkAloud(call) => Self::ThinkAloud(call.with_bridge_stamp(order, occurred_at)),
             Self::Express(call) => Self::Express(call.with_bridge_stamp(order, occurred_at)),
+            Self::SayResult(call) => Self::SayResult(call.with_bridge_stamp(order, occurred_at)),
             Self::ReportBlocked(call) => Self::ReportBlocked(call.stamped(order, occurred_at)),
             other => other,
         }

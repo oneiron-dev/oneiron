@@ -9,7 +9,7 @@ use super::super::payload::{
 };
 use super::super::support::{expect_map, invalid_code_run_replay, map_get, str_value, u64_value};
 use super::super::types::{
-    SelfCall, SelfDispatchOutcome, SelfEffect, SelfSpeechCall, SelfSpeechResult,
+    SelfCall, SelfDispatchOutcome, SelfEffect, SelfSayResultCall, SelfSpeechCall, SelfSpeechResult,
 };
 use super::request_identity::is_erased_request;
 use crate::Result;
@@ -260,14 +260,27 @@ impl CodeRunBridgeCall {
         }
     }
 
-    /// A speech row's request is the call its host stamped: its text under
-    /// the row's own seq and start clock. An erased request keeps no words
-    /// to hold to the stamp (FIX 6534); its outcome still names its order.
+    /// A speech row's request is the call its host stamped: its text, or a
+    /// `say(result)`'s ref, under the row's own seq and start clock. An
+    /// erased request keeps no words to hold to the stamp (FIX 6534); its
+    /// outcome still names its order.
     fn validate_speech_stamp(&self) -> Result<()> {
         if self.request_erased() {
             return Ok(());
         }
         let entries = expect_map(&self.request, "speech request must be a map")?;
+        if self.effect == SelfEffect::Speak
+            && let Some(result) = said_result_ref(entries)
+        {
+            let expected_call = SelfCall::SayResult(SelfSayResultCall::new(str_value(result)?))
+                .with_bridge_stamp(self.seq, self.started_at_ms);
+            if self.request != self_call_request_value(&expected_call)? {
+                return Err(invalid_code_run_replay(
+                    "speech request contradicts its host bridge stamp",
+                ));
+            }
+            return Ok(());
+        }
         let text = str_value(map_get(entries, "text")?)?;
         let unstamped = match self.effect {
             SelfEffect::Speak => SelfCall::Speak(SelfSpeechCall::new(text)),
@@ -412,6 +425,29 @@ impl CodeRunBridgeCall {
             .find(|(key, _)| key.as_str() == Some("text"))
             .and_then(|(_, value)| value.as_str())
     }
+
+    /// The ref of the result this row said, when it emitted a plain
+    /// `say(result)` bubble (L8-25): the guest's ref as its row keeps it
+    /// (a `say(result)` takes no rewrite). An erased call keeps none (FIX
+    /// 6534).
+    #[must_use]
+    pub fn emitted_said_result_ref(&self) -> Option<&str> {
+        if self.effect != SelfEffect::Speak || !self.emitted_speech() {
+            return None;
+        }
+        let Some(Value::Map(entries)) = self.dispatched_request() else {
+            return None;
+        };
+        said_result_ref(entries).and_then(Value::as_str)
+    }
+}
+
+/// The ref a `say(result)` row's request names: the key only that call's
+/// request carries.
+fn said_result_ref(entries: &[(Value, Value)]) -> Option<&Value> {
+    entries
+        .iter()
+        .find_map(|(key, value)| (key.as_str() == Some("result")).then_some(value))
 }
 
 fn validate_speech_result(

@@ -130,7 +130,7 @@ impl Memory<'_> {
         ) else {
             return Err(MemoryError::new(
                 SAY_NEEDS_A_DESTINATION,
-                "say names its `to`: only a code run's plain say(text) speaks where the run speaks",
+                "say names its `to`: only a code run's plain say(text) or say(result) speaks where the run speaks",
                 &["Name `to`: a room, a person's handle (pr<n>) or a task."],
             ));
         };
