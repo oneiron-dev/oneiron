@@ -34,7 +34,9 @@ Per crate (ranked by deleted tests; --crates overrides), until --crate-count cra
   4. pinned cargo-mutants runs the same mutants in each tree (whole crate suite, nextest);
      a pair with a Timeout on either side runs once more with twice the timeout.
 Lost = caught by the old suite and missed by the pruned suite. Undecided = still a Timeout, or
-no outcome on one side. Verdict `loses_nothing` only when both lists are empty.
+no outcome on one side. Verdict `loses_nothing` only when both lists are empty, and only over mutants
+that ran: an outcomes file without a Success baseline, an outcomes set with no mutant, or a report
+with no screened crate is exit 2, never a pass.
 
 Usage:
   mutant_screen.py --plan-only [--old REV] [--pruned REV] [--crates a,b]   (git only, no cargo)
@@ -64,6 +66,13 @@ import test_count as tc  # noqa: E402  the census's own test rule (TEST_ATTRS, k
 OLD_SUITE_REF = "65a9a904107f"  # TEST-PASS-PLAN census base, rewritten 14 Nov (was 391509654610)
 RUNNER = "cargo-mutants " + json.loads((ROOT / "scripts/audit/tools.json").read_text())["cargo-mutants"]
 DEFAULT_RUSTFLAGS = "--cfg oneiron_test_support"
+# test_count.py's own prefilter: every name in TEST_ATTRS contains one of these words.
+_TEST_WORDS = {"test"} | {a for a in tc.TEST_ATTRS if "test" not in a}
+
+
+def may_hold_tests(text):
+    """False only when no test attribute of TEST_ATTRS can be in the text (a #[quickcheck] file has no `test`)."""
+    return any(w in text for w in _TEST_WORDS)
 SCHEMA = 1
 
 
@@ -468,7 +477,7 @@ class Tree:
         if path not in self._names:
             text = self.text(path) if path in self.blobs else ""
             self._names[path] = collections.Counter(
-                n for _, n, _ in (self.source(path).tests() if "test" in text else ()))
+                n for _, n, _ in (self.source(path).tests() if may_hold_tests(text) else ()))
         return self._names[path]
 
     def crate_dir(self, path):
@@ -568,7 +577,7 @@ def find_deletions(old, pruned):
     followed, unmatched = collections.Counter(), []
     for path in changed:
         text = old.text(path)
-        if "test" not in text:
+        if not may_hold_tests(text):
             continue
         tests = old.source(path).tests()
         here = pruned.test_names(path)
@@ -588,7 +597,7 @@ def find_deletions(old, pruned):
         index = collections.defaultdict(list)
         for q in files:
             text = pruned.text(q)
-            if "test" in text and names.intersection(_FN_NAME.findall(text)):
+            if may_hold_tests(text) and names.intersection(_FN_NAME.findall(text)):
                 for _, name, code in pruned.source(q).tests():
                     if name in names:
                         index[(name, code)].append(q)
@@ -757,12 +766,20 @@ def judge(pairs):
 
 
 def compare_outcomes(old_paths, pruned_paths):
-    """Pair two outcomes sets by mutant key; a later file of a set overrides an earlier one."""
+    """Pair two outcomes sets by mutant key; a later file of a set overrides an earlier one.
+
+    Fails closed: every file must hold a Success baseline (an unmutated suite that passed), and each set must hold
+    at least one mutant outcome; otherwise no suite ran on a mutant, and nothing can be judged."""
     sides = []
-    for paths in (old_paths, pruned_paths):
+    for side, paths in (("old", old_paths), ("pruned", pruned_paths)):
         merged = {}
         for p in paths:
-            merged.update(read_outcomes(p)[0])
+            outcomes, baseline = read_outcomes(p)
+            if baseline != "Success":
+                raise ScreenError(f"{p}: the {side} suite's baseline is {baseline or 'missing'}, not Success")
+            merged.update(outcomes)
+        if not merged:
+            raise ScreenError(f"the {side} outcomes hold no mutant outcome")
         sides.append(merged)
     old_k = keyed([v["mutant"] for v in sides[0].values()])
     new_k = keyed([v["mutant"] for v in sides[1].values()])
@@ -1139,7 +1156,10 @@ def main(argv=None):
         doc = json.loads(args.report.read_text())
         if doc.get("schema") != SCHEMA:
             raise ScreenError(f"{args.report}: schema {doc.get('schema')} is not {SCHEMA}")
-        pairs = [m for c in doc.get("crates", []) for m in c.get("mutants", [])]
+        screened = [c for c in doc.get("crates", []) if not c.get("skipped")]
+        pairs = [m for c in screened for m in c.get("mutants", [])]
+        if not pairs:
+            raise ScreenError(f"{args.report}: no screened crate holds a mutant pair; nothing to judge")
         doc = verdict_doc(doc, pairs)
         print(json.dumps({"verdict": doc["verdict"], "lost": doc["lost"], "undecided": doc["undecided"]}, indent=1))
         return 0 if doc["verdict"] == "loses_nothing" else 1

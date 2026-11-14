@@ -101,6 +101,35 @@ def delete_one_test(repo):
     write(repo, LIB, PRUNED_LIB)
 
 
+PROPERTIES = CRATE + "/src/properties.rs"
+QUICKCHECK_FILE = """\
+use quickcheck_macros::quickcheck;
+
+#[quickcheck]
+fn reflexive(x: u32) -> bool {
+    x == x
+}
+"""
+SYMMETRIC = """
+#[quickcheck]
+fn symmetric(a: u32, b: u32) -> bool {
+    (a == b) == (b == a)
+}
+"""
+
+
+def quickcheck_fixture(tmp):
+    """Commit 1 adds a quickcheck-only test file (no `test` in it) with two tests; commit 2 deletes one."""
+    def add_properties(repo):
+        write(repo, LIB, OLD_LIB + "\n#[cfg(test)]\nmod properties;\n")
+        write(repo, PROPERTIES, QUICKCHECK_FILE + SYMMETRIC)
+
+    repo, _, old = fixture(tmp, add_properties)
+    write(repo, PROPERTIES, QUICKCHECK_FILE)
+    run_git(repo, "commit", "-q", "-am", "delete one quickcheck test")
+    return repo, old, run_git(repo, "rev-parse", "HEAD")
+
+
 def move_crate(repo):
     run_git(repo, "mv", CRATE, "crates/screen_fixture_core")
     write(repo, "Cargo.toml", '[workspace]\nmembers = ["crates/screen_fixture_core"]\nresolver = "2"\n')
@@ -120,12 +149,12 @@ def mutant(name_line, function, genre, replacement, change):
             "replacement": replacement, "genre": genre}
 
 
-def outcomes_file(folder, results, fail_lines=None):
+def outcomes_file(folder, results, fail_lines=None, baseline="Success"):
     """A cargo-mutants 27.1.0 outcomes.json (as mutation.py's score() reads it) with one log per mutant."""
     folder = Path(folder)
     (folder / "log").mkdir(parents=True, exist_ok=True)
-    outs = [{"scenario": "Baseline", "summary": "Success", "log_path": "log/baseline.log", "diff_path": None,
-             "phase_results": [{"phase": "Test", "duration": 0.4, "process_status": "Success", "argv": ["cargo"]}]}]
+    outs = [{"scenario": "Baseline", "summary": baseline, "log_path": "log/baseline.log", "diff_path": None,
+             "phase_results": [{"phase": "Test", "duration": 0.4, "process_status": baseline, "argv": ["cargo"]}]}]
     for n, (m, summary) in enumerate(results):
         log = f"log/mutant-{n}.log"
         (folder / log).write_text("\n".join((fail_lines or {}).get(m["name"], [])) + "\n")
@@ -194,6 +223,16 @@ class MutantScreenTests(unittest.TestCase):
                          [{"old": LIB, "pruned": "crates/screen_fixture_core/src/lib.rs", "tests": 3}])
         self.assertFalse(mark.exists())
 
+    def test_a_quickcheck_only_file_is_scanned_like_test_count_counts_it(self):
+        repo, old, pruned = quickcheck_fixture(self.tmp)
+        env, mark = self.no_cargo_env()
+        rc, out, err = run_cli("--repo", str(repo), "--old", old, "--pruned", pruned, "--plan-only", env=env)
+        self.assertEqual(rc, 0, err)
+        plan = json.loads(out)
+        self.assertEqual(plan["deleted_total"], 1, "the deleted #[quickcheck] test is found; the kept one is not")
+        self.assertEqual(plan["crates"][0]["deleted"], [PROPERTIES + "::symmetric"])
+        self.assertFalse(mark.exists())
+
     def test_restore_puts_a_deleted_test_back_into_its_module(self):
         text, pieces = ms.restore_file(OLD_LIB, PRUNED_LIB, {(("tests",), "adult_at_eighteen"): DELETED_ID})
         tests = ms.Source(text).levels()[("tests",)][0]
@@ -260,6 +299,29 @@ class MutantScreenTests(unittest.TestCase):
         settled, _, _ = self.compare([([(t_old, "Timeout")],), ([(t_old, "CaughtMutant")],)],
                                      [([(t_new, "Timeout")],), ([(t_new, "CaughtMutant")],)])
         self.assertEqual(settled, 0, "a rerun that settles both sides decides the pair")
+
+    def test_outcomes_without_a_good_baseline_or_any_mutant_fail_closed(self):
+        a_old, a_new = pair(FALSE, 20, 2)
+        cases = {
+            "failed baselines, no mutants": ([([], None, "Failure")], [([], None, "Failure")]),
+            "failed old baseline": ([([(a_old, "CaughtMutant")], None, "Failure")], [([(a_new, "CaughtMutant")],)]),
+            "good baselines, no mutants": ([([],)], [([],)]),
+        }
+        for case, (old_sets, pruned_sets) in cases.items():
+            with self.subTest(case):
+                rc, doc, err = self.compare(old_sets, pruned_sets)
+                self.assertEqual(rc, 2, f"{case}: {doc}")
+                self.assertIn("MUTANT-SCREEN-FAILED", err)
+                shutil.rmtree(self.tmp)
+                os.mkdir(self.tmp)
+
+    def test_report_with_no_screened_crate_fails_closed(self):
+        report = Path(self.tmp) / "report.json"
+        report.write_text(json.dumps({"schema": 1, "crates": [{"crate": "screen_fixture", "mutants": [],
+                                                               "skipped": "cargo-mutants baseline failed in the old suite"}]}))
+        rc, out, err = run_cli("--report", str(report))
+        self.assertEqual(rc, 2, out)
+        self.assertIn("MUTANT-SCREEN-FAILED", err)
 
     def test_report_rejudges_a_saved_report(self):
         report = Path(self.tmp) / "report.json"
