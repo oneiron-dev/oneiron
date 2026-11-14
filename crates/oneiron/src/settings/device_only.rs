@@ -244,7 +244,7 @@ fn sources_worlds(
 /// SUMMARY where `record_world_in` places it (unknown for an epoch it cannot
 /// place, never base) and in every world its withdrawal recorded. An epoch
 /// SUMMARY's `DerivedFrom` sources, and a CLAIM's prompt inputs, go to
-/// `sources`.
+/// `sources`, as do a composed TASK's.
 fn row_worlds(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -331,6 +331,14 @@ fn row_worlds(
             match crate::federation::record_scope::record_world_in(store, txn, *id, kind, body)? {
                 Some(world) => carried.worlds.extend(world),
                 None => carried.unknown = true,
+            }
+            // A TASK whose brief a model composed from rows its prompt
+            // carried (census L8-07) carries their words, so their worlds
+            // too, as a CLAIM does (FIX 8192).
+            if kind == crate::registry::ENTITY_TYPE_TASK {
+                sources.extend(crate::store::birth_record::prompted::prompt_sources_in_txn(
+                    store, txn, id,
+                )?);
             }
         }
     }

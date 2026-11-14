@@ -75,7 +75,7 @@ mod step;
 mod step_failure;
 mod stewardship;
 mod sync_wake;
-mod task_brief;
+pub(crate) mod task_brief;
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]

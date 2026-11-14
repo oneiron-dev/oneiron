@@ -71,8 +71,8 @@ mod settlement;
 use self::key::{PostKey, observe_key_in};
 #[cfg(oneiron_test_support)]
 pub(crate) use self::parking::parked_post_brief;
-pub(crate) use self::settlement::settle_task_proposal_in_txn;
 pub(super) use self::settlement::{envelope_actor_class, proposer_of};
+pub(crate) use self::settlement::{owner_settles_own_composed_post, settle_task_proposal_in_txn};
 
 /// Domain of a post's request digest.
 const POST_REQUEST_DOMAIN: &[u8] = b"oneiron.tasks.post.request.v1";
