@@ -12,6 +12,48 @@ pub use oneiron_verb_wire::memory::code_doors::types::{
     CodeSymbolsDeclareRequest, CodeSymbolsTaskRequest,
 };
 
+/// One file of a staged native bundle: its path, its new bytes (`None`
+/// removes it) and its Git mode once present (`None` keeps the base's
+/// mode, or a regular file's for a new path).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CodeProposalBundleFile {
+    /// Repository-relative path of the file.
+    pub path: String,
+    /// The new file bytes; `None` deletes the file.
+    pub content: Option<Vec<u8>>,
+    /// The Git mode once present; `None` keeps the base's mode, or a
+    /// regular file's for a new path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<u32>,
+}
+
+/// Stages one native file bundle of a repository as a proposal: many
+/// files, each with its exact change, as ONE proposal. Nothing lands;
+/// review and the existing landing gate decide that later. The engine
+/// binds the proposal's session (the owner's sitting on this install)
+/// and its `repo.provenance` claim (the `owner_request` form, on that
+/// sitting); the caller names neither.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CodeProposalBundleSubmitRequest {
+    /// An existing CODE_ARTIFACT, whose stored repo_ref pins the base commit.
+    pub repo: EntityId,
+    /// Every file of the bundle, each with its exact change, each path
+    /// once. At least one file; an empty bundle is refused.
+    pub files: Vec<CodeProposalBundleFile>,
+    pub message: String,
+    /// The turn, activity, intent and model behind the change, each a
+    /// readable record when present. Absent fields stay unrecorded.
+    pub op_provenance: crate::code_document::CodeOpProvenance,
+    /// The owner's own review catalog for this proposal: the lenses it must
+    /// pass, a policy and not a verdict. Omitted, it is held to the vault's
+    /// review policy, and with none set the same checked queue lands it on
+    /// green (FIX 8268).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog: Option<crate::critic::LensCatalog>,
+}
+
 /// A stored symbol declaration, as the engine holds it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodeSymbolLeaseView {
