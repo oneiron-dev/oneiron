@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
 

@@ -2,7 +2,6 @@
 
 use super::opc::{self, OpcPackage, PartClass};
 use super::{EditWarning, MutationMode, OfficeFormat, WarningCode};
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 
 #[doc(hidden)]

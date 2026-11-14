@@ -22,7 +22,7 @@ const SCHEDULE: SideTable<String, SweepState, Named> =
     SideTable::new(&side_table::HOUSEKEEPING_SCHEDULE);
 
 #[doc(hidden)]
-use oneiron_records::housekeeping::schedule::{RETRY_AFTER_SECS, RETRY_CAP_SECS, retry_after};
+use oneiron_records::housekeeping::schedule::retry_after;
 
 /// While an erasure obligation waits, the erasure sweep runs at least this
 /// often, whatever its idle cadence.

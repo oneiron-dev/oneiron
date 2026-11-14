@@ -19,15 +19,9 @@ use oneiron_crypto::backup::CheckpointSigner;
 use serde::{Deserialize, Serialize};
 
 use super::checkpoint_policy::policy_refused;
-use super::{
-    AuthorityKey, AuthoritySignature, CHECKPOINT_MULTI_ROOT_QUORUM,
-    CHECKPOINT_SINGLE_ROOT_QUORUM_MAX_ROOTS, CheckpointRootPolicy, invalid_authority,
-    verify_authority_signature,
-};
+use super::{AuthorityKey, AuthoritySignature, invalid_authority, verify_authority_signature};
 use crate::error::Result;
 
-#[doc(hidden)]
-use oneiron_records::authority::backup_signer_delegation::POLICY_SHAPE;
 #[doc(hidden)]
 pub use oneiron_records::authority::backup_signer_delegation::{
     BACKUP_SIGNER_DELEGATION_DOMAIN, BackupModeRootPolicy, BackupSignerStatement,

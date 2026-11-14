@@ -6,12 +6,11 @@
 use std::collections::BTreeSet;
 
 use reqwest::Url;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use super::rows::{CLIENTS, FAMILIES, REQUESTS, client_key};
 use super::{
-    OAUTH_CIMD_TTL_SECS, OAUTH_CLIENT_NAME_MAX_CHARS, OAUTH_CLIENTS_MAX, OAUTH_REDIRECT_URIS_MAX,
-    OAUTH_URI_MAX_BYTES,
+    OAUTH_CLIENT_NAME_MAX_CHARS, OAUTH_CLIENTS_MAX, OAUTH_REDIRECT_URIS_MAX, OAUTH_URI_MAX_BYTES,
 };
 use crate::error::Result;
 use crate::{EntityId, Vault};
@@ -20,9 +19,9 @@ use crate::{EntityId, Vault};
 const GRANT_TYPES: [&str; 2] = ["authorization_code", "refresh_token"];
 
 #[doc(hidden)]
-pub use oneiron_records::authority::oauth_server::clients::{OAuthClientRecord, OAuthClientSource};
+use oneiron_records::authority::oauth_server::clients::is_loopback_http;
 #[doc(hidden)]
-use oneiron_records::authority::oauth_server::clients::{is_loopback_http, redirect_uri_matches};
+pub use oneiron_records::authority::oauth_server::clients::{OAuthClientRecord, OAuthClientSource};
 
 /// What an app asks to register with (RFC 7591 §2): the fields this vault reads. Every other
 /// field of its request is ignored.

@@ -16,7 +16,6 @@
 //! requests the listing returns are kept, as their own kind. What a source
 //! answers in place of a page is recorded on its row with any retry time it
 //! named; its continuation stays, and a later sweep resumes there.
-use serde::{Deserialize, Serialize};
 
 use super::source::{FeedbackTriageSourceError, FeedbackTriageSourceFault, source_row_in_txn};
 use super::{

@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::entity_id::EntityId;
 use crate::error::Result;

@@ -2,7 +2,7 @@
 //! time the owner attaches a folder to it, and each attached folder's
 //! identity in it.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::authority::{ActSurface, ModelOrder, ReadLocation, SealedCopies, WorldPrivacy};
 use crate::consent::AuthenticatedOwner;
@@ -65,8 +65,6 @@ pub const DEFAULT_FILES_EXCLUDE: &[&str] = &[
     "id_ed25519*",
 ];
 
-#[doc(hidden)]
-use oneiron_records::note::files::source::FILES_NAMESPACE;
 #[doc(hidden)]
 pub(in crate::note) use oneiron_records::note::files::source::namespace;
 #[doc(hidden)]

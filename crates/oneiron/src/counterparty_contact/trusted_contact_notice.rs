@@ -16,8 +16,6 @@
 
 use std::sync::{PoisonError, RwLockReadGuard, RwLockWriteGuard};
 
-use serde::{Deserialize, Serialize};
-
 use super::trusted_contact::{
     RELATIONS, TrustedContact, TrustedContactDial, TrustedContactTier, invalid,
     naming_answered_yes_in_txn,

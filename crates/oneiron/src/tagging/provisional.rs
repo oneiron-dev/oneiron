@@ -13,8 +13,6 @@
 use std::collections::BTreeSet;
 use std::ops::Bound;
 
-use serde::{Deserialize, Serialize};
-
 use super::tags;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};

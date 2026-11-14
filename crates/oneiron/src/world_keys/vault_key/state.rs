@@ -5,10 +5,9 @@
 //! change. The root re-exports every name so existing `super::X` paths keep
 //! resolving.
 use super::{
-    Argon2Cost, Deserialize, DeviceKeystore, Envelope, EscrowAddWarning, EscrowRetirement,
-    HybridPublicKey, HybridSecretKey, Kek, Named, OpenKey, OpenPolicy, Passphrase, Purpose, Result,
-    SealKey, SealParams, Serialize, SideTable, StoredWrap, SuiteId, SysRng, VaultDataKey,
-    VaultKeyWrapInfo, VaultKeyWrapKind, WrapDigest, Zeroizing, refused, seal, side_table,
+    Argon2Cost, Deserialize, EscrowAddWarning, EscrowRetirement, HybridPublicKey, Kek, Named,
+    Passphrase, Purpose, Result, SealKey, SealParams, Serialize, SideTable, StoredWrap, SysRng,
+    VaultDataKey, VaultKeyWrapKind, Zeroizing, refused, seal, side_table,
 };
 #[doc(hidden)]
 pub(super) use oneiron_records::world_keys::vault_key::state::{

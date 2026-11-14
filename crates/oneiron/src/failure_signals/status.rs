@@ -1,8 +1,6 @@
 //! Content-free delivery diagnostics from the existing durable queues and
 //! direct-dispatch receipts. Reading status never sends, settles or purges.
 
-use serde::Serialize;
-
 use super::{COUNTS, FAILURE_SIGNALS_CHANNEL, code_fix, decode_count};
 use crate::outbound::connector_actor_id;
 use crate::receipt::latest_direct_dispatch_receipt_in_txn;

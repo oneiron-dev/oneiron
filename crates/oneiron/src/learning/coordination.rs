@@ -15,8 +15,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::attempt_queue::{
     AttemptId, AttemptInterventionKind, AttemptRecord, AttemptState, attempt_record_order,

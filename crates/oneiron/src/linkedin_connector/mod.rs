@@ -23,7 +23,6 @@ mod verified_send;
 
 use std::collections::HashSet;
 
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::Vault;
@@ -44,10 +43,9 @@ use self::inbox_sync::{
     validate_inbox_sync_config_matches_adapter,
 };
 use self::normalize_keys::{
-    bounded_identifier, bounded_ref, counterparty_key, event_hash, first_conversation_thread_id,
+    bounded_identifier, counterparty_key, event_hash, first_conversation_thread_id,
     linkedin_inbox_sync_dedupe_key, normalize_non_blank, normalize_verb_key, optional_section_text,
     reference_kind_is, section_references, thread_id_from_payload_url, thread_id_from_reference,
-    vault_scoped_secret_ref,
 };
 pub use self::sandbox_host::{
     LinkedInContainerSandboxHost, LinkedInSeatHostServices, LinkedInSeatSandbox,
@@ -93,8 +91,6 @@ pub use crate::outbound::linkedin_policy::LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SE
 
 /// Plain-words first-connect disclosure copy reviewed against OF-373 D5.
 pub const LINKEDIN_CONNECT_CONSENT_BODY: &str = "LinkedIn does not officially support this kind of automated sending. Oneiron will use your own logged-in browser session in a private sandbox; it does not need or store your password. Automated patterns can still get your LinkedIn account limited. The default cap is 15 DMs per day, sends are paced like a person, sweeps are not allowed, and you can turn LinkedIn off at any time. Turning it off deletes the sandbox and removes LinkedIn send/connect verbs for this seat.";
-
-use crate::outbound::linkedin_policy::LINKEDIN_SEAT_VERB_CATALOG;
 
 /// Durable attempt kind used by the scheduled LinkedIn inbox poller.
 pub const LINKEDIN_INBOX_SYNC_ATTEMPT_KIND: &str = "linkedin_inbox_sync";

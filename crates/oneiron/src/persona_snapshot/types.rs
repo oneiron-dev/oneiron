@@ -1,7 +1,5 @@
 //! Snapshot/export row, consent, and artifact domain types with pinned key and schema consts.
 
-use std::collections::BTreeSet;
-
 use crate::claim::ScopedReadActorKey;
 use crate::entity_id::EntityId;
 
@@ -44,19 +42,10 @@ pub(super) const ROW_ID_PREFIX: &str = "row:";
 
 pub(super) const ROW_ID_HASH_CHARS: usize = 16;
 
-pub(super) use crate::store::persona_snapshot_record::FINGERPRINT_HEX_LEN;
-
 /// Identity line persisted on the export record when the owner struck the
 /// identity row: the export record is a queryable row, so struck name/role
 /// text must not survive in it either.
 pub const STRUCK_IDENTITY_LINE_PLACEHOLDER: &str = "(identity struck)";
-
-pub(super) use crate::store::persona_snapshot_record::{
-    KEY_ARTIFACT_FINGERPRINT, KEY_AUDIENCE_REF, KEY_COMPILED_AT_SECS, KEY_COMPILED_FINGERPRINT,
-    KEY_EXPORTED_AT_SECS, KEY_GRANTED_AT_SECS, KEY_GRANTED_BY, KEY_IDENTITY_LINE,
-    KEY_INCLUDED_ROW_IDS, KEY_OMITTED_REFS, KEY_SCHEMA_VERSION, KEY_STALE_AFTER_SECS,
-    KEY_STRUCK_ROW_IDS, KEY_SUBJECT_REF, KEY_TAKES_INCLUDED,
-};
 
 #[doc(hidden)]
 pub use oneiron_records::persona_snapshot::types::{

@@ -2,11 +2,10 @@
 
 use super::SkillRole;
 use crate::attempt_queue::{AttemptId, AttemptRecord, ReadSetProducer};
-use crate::error::{ArtifactError, Error, Result};
+use crate::error::{Error, Result};
 use crate::llm::decision::questions::{
     AnswerRecord, GraphAnswerer, run_graph_question_with_current,
 };
-use crate::model_decision::questions::{GraphQuestionInput, GraphQuestionRef};
 use crate::{EntityId, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;

@@ -1,7 +1,5 @@
 //! Payload-aware scope axes, consent decisions, and batch evaluation.
 
-use serde::{Deserialize, Serialize};
-
 #[doc(hidden)]
 pub use oneiron_consent_state::consent::tool_scope::DataClass;
 

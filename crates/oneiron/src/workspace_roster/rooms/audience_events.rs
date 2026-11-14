@@ -76,10 +76,6 @@ use std::collections::BTreeMap;
 pub(crate) use crate::store::conversation_body::ROOM_THREAD_AUDIENCE_KEY;
 
 #[doc(hidden)]
-use oneiron_records::workspace_roster::rooms::audience_events::{
-    AUDIENCE_PERSON_ERASED_DOMAIN, ERASED_PERSON_PREFIX,
-};
-#[doc(hidden)]
 pub(crate) use oneiron_records::workspace_roster::rooms::audience_events::{
     AudiencePerson, JoinSettlement,
 };

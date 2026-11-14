@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, ExportSecretWork, OwnerAct, OwnerWorkBody,
 };
-use crate::world_keys::{OwnerWorkReceipt, OwnerWorkStatus, OwnerWorkUnassigned};
+use crate::world_keys::{OwnerWorkReceipt, OwnerWorkUnassigned};
 use crate::{EntityId, Vault};
 
 pub(crate) use crate::batch::export::secret_supplement_record::HolderExportNeed;

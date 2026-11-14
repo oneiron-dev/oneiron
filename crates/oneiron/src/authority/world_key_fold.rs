@@ -48,8 +48,8 @@
 //! map, for reading and for the kit, and the next ensure on a machine of the
 //! owner's mints afresh.
 
+use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
-use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::entity_id::EntityId;
@@ -87,7 +87,7 @@ pub(super) struct WorldKeyState {
 #[doc(hidden)]
 pub use oneiron_records::authority::world_key_fold::{FoldedWorldKey, WrappedKey};
 #[doc(hidden)]
-use oneiron_records::authority::world_key_fold::{KeyBytes, SlotRank, Slots};
+use oneiron_records::authority::world_key_fold::{KeyBytes, Slots};
 
 impl AuthorityFold {
     /// Every key of `world` this fold holds, in `(generation, mint)` order.

@@ -17,12 +17,12 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 use super::actor_erase::ProposalActor;
 use super::settlement::RepoProposalDecision;
 use super::{PROPOSAL, RepoProposal, RepoProposalStatus, invalid, store};
-use crate::critic::{CriticLens, CritiqueArtifact, CritiqueVerdict, LensCatalog, triage_critiques};
+use crate::critic::{CriticLens, CritiqueArtifact, CritiqueVerdict, triage_critiques};
 use crate::error::{Error, Result};
 use crate::merge_queue::{
     ActiveQueueReviewPolicy, QueueReviewRequirement, StoredQueueReviewPolicy,

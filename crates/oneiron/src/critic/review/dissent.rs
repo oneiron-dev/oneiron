@@ -3,8 +3,7 @@
 use super::*;
 use crate::learning::{Anchor, LearningEvidence, Observation};
 use crate::llm::decision::questions::{
-    self, OutcomeBinding, QuestionActivation, QuestionDefinitionInput, RefreshPolicy,
-    StandingAnswer,
+    self, QuestionActivation, QuestionDefinitionInput, RefreshPolicy, StandingAnswer,
 };
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestionInput, ProviderPin,

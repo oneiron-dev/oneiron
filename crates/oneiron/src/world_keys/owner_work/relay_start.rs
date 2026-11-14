@@ -1,7 +1,5 @@
 //! The host's last observed device-sync start outcome, never current health.
 
-use serde::Serialize;
-
 use crate::Vault;
 
 #[doc(hidden)]

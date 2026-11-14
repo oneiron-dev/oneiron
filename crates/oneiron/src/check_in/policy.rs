@@ -18,7 +18,6 @@
 //! manifest key does.
 
 use rmpv::Value;
-use serde::{Deserialize, Serialize};
 
 use super::act_class::ActClass;
 

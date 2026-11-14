@@ -19,7 +19,6 @@ use crate::store::{ManifestDbs, Store};
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use mark::{Mark, WalkRow};
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 

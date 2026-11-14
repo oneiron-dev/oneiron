@@ -2,8 +2,6 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use crate::claim::ScopedRead;
 use crate::error::{Error, Result};
 use crate::lens::atom::{

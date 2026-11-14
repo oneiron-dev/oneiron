@@ -3,13 +3,12 @@
 use crate::connector_key::manifest_drift::{ConnectorManifestDrift, ResolvedConnectorManifest};
 use crate::connector_key::qualification::ConnectorQualificationReceipt;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 
 use super::{
     EffectorBudget, normalize_connector_key, validate_budget_row, validate_never_list_entry,
     validate_suggested_budget_row,
 };
-use crate::error::RecordError;
 
 pub use crate::connector_key_status::ConnectorKeyStatus;
 

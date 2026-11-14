@@ -1,7 +1,6 @@
 //! Public value types of the context pack: the pack itself, its entities, its
 //! stats, and its budget/allocation knobs.
 
-use crate::pipeline::Signal;
 use crate::retrieval_quality::RetrievalQualityReport;
 
 use super::empty_pack::EmptyContext;

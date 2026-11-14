@@ -4,13 +4,12 @@ use crate::ports::EntityStoreRead;
 use std::collections::BTreeSet;
 
 use heed::RoTxn;
-use serde::{Deserialize, Serialize};
 
 use crate::batch::secret_scan;
-use crate::error::{CodeError, Error, GateError, Result};
+use crate::error::{Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::secret_lease::decode_local_registration_body;
-use crate::side_table::{self, CodecError, HexId, Raw, RawValue, SideTable};
+use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::code_snapshot::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
 use crate::vault::Vault;
 
@@ -190,8 +189,6 @@ pub use oneiron_verb_wire::secret_snapshot::SnapshotSecretLiftProposal;
 
 #[doc(hidden)]
 pub use oneiron_records::secret_snapshot::SnapshotCustodyReport;
-#[doc(hidden)]
-pub(crate) use oneiron_records::secret_snapshot::encode_report;
 
 impl Vault {
     /// Filters declared files, quarantines unreadable or detected files, and

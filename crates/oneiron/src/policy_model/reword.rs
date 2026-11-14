@@ -1,15 +1,13 @@
 //! An overt owner-policy retry request, not an engine-authored replacement.
 
-use serde::{Deserialize, Serialize};
-
 use crate::error::{Error, RelayError};
 use crate::gate::{self, OwnerRowAction};
 use crate::store::GATE_SYSTEM_NOTICE_BODY_MAX_LEN;
 use crate::{Result, Vault};
 
 use super::{
-    PolicyClassifyDecision, PolicyClassifyRequest, PolicyClassifyVerdict, PolicyContentBinding,
-    PolicyModelConfig, PolicyVerdictCategory,
+    PolicyClassifyDecision, PolicyClassifyRequest, PolicyClassifyVerdict, PolicyModelConfig,
+    PolicyVerdictCategory,
 };
 
 #[doc(hidden)]

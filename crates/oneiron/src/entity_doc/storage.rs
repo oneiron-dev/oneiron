@@ -12,7 +12,7 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::{WriteActor, provenance::made_by::MadeByClass};
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 
 mod body;
 mod body_admission;

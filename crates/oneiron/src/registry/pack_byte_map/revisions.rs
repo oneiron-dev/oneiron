@@ -8,16 +8,13 @@
 //! identity, or a changed schema, still collides, and import and remap never
 //! add a revision: only the local install door does.
 
-use super::types::{
-    PackByteMapSnapshot, PackInstanceEnvelope, PackKindIdentity, PackKindRegistration, invalid,
-};
+use super::types::{PackByteMapSnapshot, PackInstanceEnvelope};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::{TypeByteZone, zone_of};
 use crate::store::Store;
 use heed::RoTxn;
-use std::collections::BTreeSet;
 
 impl PackByteMapSnapshot {
     /// The envelope a write to `id` stores: an instance already written under

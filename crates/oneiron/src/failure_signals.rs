@@ -28,7 +28,7 @@ pub use code_fix::{
 };
 pub(crate) use code_fix::{
     CodeFixSourceSnapshot, ExactReplay, SealedCodeFix, Sealing, code_fix_source_snapshot,
-    code_fix_subject_in, dispatch_worlds_in, exact_replay, failed_case_in, queue_sealed_in_txn,
+    code_fix_subject_in, dispatch_worlds_in, failed_case_in, queue_sealed_in_txn,
 };
 pub use delivery::{
     FAILURE_SIGNAL_BATCH_VERSION, FAILURE_SIGNALS_CHANNEL, FAILURE_SIGNALS_SEND_VERB,

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::MergeQueuePointersView;
 use crate::EntityId;
-use crate::merge_queue::{CheckPhase, Quarantine, QueueCheckHoldReason};
+use crate::merge_queue::{Quarantine, QueueCheckHoldReason};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::merge_queue_doors::checker_types::{

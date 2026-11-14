@@ -81,7 +81,6 @@ impl SideKey for CritiqueArtifactKey {
 use crate::store::critic_lens::MAX_CONTRACT_BYTES;
 use crate::store::critic_lens::MAX_DOMAIN_BYTES;
 use crate::store::critic_lens::MAX_ID_BYTES;
-use crate::store::critic_lens::MAX_OUTPUT_SCHEMA_BYTES;
 const MAX_ARTIFACT_ID_BYTES: usize = 128;
 const MAX_RUN_ID_BYTES: usize = 128;
 const MAX_CANDIDATE_REF_BYTES: usize = 256;
@@ -502,6 +501,5 @@ pub(crate) mod tables;
 mod validation;
 use self::validation::{
     invalid_critic_config, validate_catalog, validate_critique_artifact, validate_flaw,
-    validate_identifier, validate_lens, validate_provenance, validate_reliability,
-    validate_reliability_table,
+    validate_identifier, validate_provenance, validate_reliability, validate_reliability_table,
 };

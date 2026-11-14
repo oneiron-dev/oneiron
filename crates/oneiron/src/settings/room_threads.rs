@@ -4,8 +4,6 @@
 //! by the Owner alone, and absent reads ON: a vault that never wrote either
 //! lets its Admins do both. The Owner never depends on either switch.
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;

@@ -9,7 +9,6 @@ use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON, ENTITY_TYPE_
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
-use serde::{Deserialize, Serialize};
 
 /// Content-free topology pin of an erased DAG record, by record id.
 const PINS: SideTable<EntityId, RecordPin, Named> =

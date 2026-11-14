@@ -15,7 +15,7 @@ pub(crate) use stored_read::StoredReadProof;
 pub(crate) use oneiron_records::authority::slip::REMOVAL_ARCHIVE_TRANSFER_VERB;
 #[doc(hidden)]
 use oneiron_records::authority::slip::{
-    CAVEAT_CONTEXT, MAX_CAVEATS, MINT_CONTEXT, PactBound, meet_caveat, mint_transcript,
+    CAVEAT_CONTEXT, MAX_CAVEATS, PactBound, meet_caveat, mint_transcript,
 };
 #[doc(hidden)]
 pub(super) use oneiron_records::authority::slip::{hex, unhex};

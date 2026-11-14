@@ -1,7 +1,6 @@
 //! Proposal settlement kinds, outcomes and producer-stamped facts.
 
 use crate::entity_id::EntityId;
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_records::consent::settlement_fact::{SettledOutcome, SettlementKind};

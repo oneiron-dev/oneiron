@@ -39,8 +39,8 @@ use super::prompt::{
 };
 use super::request::{PolicyClassifyRequest, PolicyModelConfig};
 use super::verdict::{
-    PolicyClassifyVerdict, PolicyConfidence, PolicyHedgeBucket, PolicyPassAudit, PolicyReadError,
-    PolicySkipReason, PolicyVerdictCategory,
+    PolicyClassifyVerdict, PolicyPassAudit, PolicyReadError, PolicySkipReason,
+    PolicyVerdictCategory,
 };
 
 #[doc(hidden)]

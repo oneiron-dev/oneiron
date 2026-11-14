@@ -9,7 +9,6 @@ use super::constants::{
     POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY, POLICY_CONSULT_FANOUT_CONTROLS_KEY,
     POLICY_CONSULT_FANOUT_PRECEDENCE_KEY,
 };
-use crate::EntityId;
 use crate::check_in::CheckInMode;
 use crate::error::{Error, Result};
 use crate::gate::consult_fanout_values::ConsultFanOutPolicy;

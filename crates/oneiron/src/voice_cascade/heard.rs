@@ -17,8 +17,6 @@
 //! [`SpeechAlignment`] its TTS adapter supplied. Without one its text is
 //! unknown: it is never cut by a guessed ratio of samples.
 
-use serde::{Deserialize, Serialize};
-
 use super::GenerationEpoch;
 
 #[doc(hidden)]

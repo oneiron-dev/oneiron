@@ -19,7 +19,6 @@ use crate::{EntityId, Vault};
 use oneiron_docedit::live::{
     AttributionIndex, DeckFork, LiveDeck, LiveError, NodeId, PreflightReport, StampedOp, preflight,
 };
-use serde::{Deserialize, Serialize};
 
 fn live_error(error: LiveError) -> Error {
     crate::office_body::live_refused(error)

@@ -4,7 +4,6 @@
 use serde::{Deserialize, Serialize};
 
 use super::act_class::ActClass;
-use super::mode::CheckInMode;
 use crate::federation::{FederationGrantPreset, FederationGrantRole};
 
 /// A role is a preset, never a rank: a set of powers plus a default mode per
@@ -79,12 +78,9 @@ impl RolePreset {
 }
 
 #[doc(hidden)]
-pub use oneiron_records::check_in::role_preset::RoleDefault;
+use oneiron_records::check_in::role_preset::ROLE_DEFAULTS;
 #[doc(hidden)]
-use oneiron_records::check_in::role_preset::{
-    ASK, GO, NA, NAMED_ASK, NAMED_GO, NAMED_UNSURE, NO_VERB, OWN, OWN_VETO, PROPOSE, ROLE_DEFAULTS,
-    UNSURE,
-};
+pub use oneiron_records::check_in::role_preset::RoleDefault;
 
 /// One row of [`ROLE_PRESET`]: the role and the grant preset that carries
 /// its powers.

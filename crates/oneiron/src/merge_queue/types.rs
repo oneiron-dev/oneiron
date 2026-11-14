@@ -3,14 +3,11 @@
 
 pub use oneiron_store::merge_queue::types::*;
 
-use crate::store::repo_fork::RepoForkHash;
 use crate::{
     error::Result,
     store::contract_oracle::{AffectedTests, CommandOutput, WorkspaceGraph},
     store::repo_mutation_record::RepoMutationOutcome,
 };
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[doc(hidden)]

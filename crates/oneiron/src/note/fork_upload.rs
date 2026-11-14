@@ -24,8 +24,6 @@
 //! for a stable reason, either of which settles the device's queue. An error
 //! leaves the upload queued for the next send.
 
-use serde::{Deserialize, Serialize};
-
 use super::documents::{
     NOTE_HEAD_DOC, NOTE_PROPOSAL_DOC, NoteDocument, head_in, invalid, live_doc, load_head,
     load_retained_head, store_doc,

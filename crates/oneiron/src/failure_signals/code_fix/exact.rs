@@ -17,8 +17,6 @@
 //! prompt that does not read leaves the call with no replay at all, never
 //! one under no prompt or today's.
 
-use serde::{Deserialize, Serialize};
-
 use super::{CodeFixSource, failed_case_in};
 use crate::attempt_queue::AttemptId;
 use crate::code_run::{capsule_request, capsule_route_prompt, step_replay_capsules};

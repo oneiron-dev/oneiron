@@ -1,10 +1,5 @@
 //! Typed consultancy-preset shape: identity consts plus every pub struct and enum.
 
-use serde::{Deserialize, Serialize};
-
-use crate::campaign::claims::StageEvidenceClass;
-use crate::campaign::stage::StageLadderDefinition;
-
 // ---------------------------------------------------------------------------
 // Ratified identity
 // ---------------------------------------------------------------------------

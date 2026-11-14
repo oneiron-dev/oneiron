@@ -15,7 +15,6 @@ use crate::blob_artifact::{BlobVersionProvenance, CalcEngineStamp};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use oneiron_docedit::retained_opc::Limits;
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_records::edit_roundtrip::pipeline::RecalcStatus;

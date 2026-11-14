@@ -5,11 +5,8 @@
 use std::io::{self, BufRead, Write};
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
-
 use super::Shutdown;
 use crate::Vault;
-use crate::voice_cascade::RetrievalContext;
 use crate::voice_cascade::spilled_audio::{AudioSpool, SpilledFrame};
 
 const FRAME_TIMEOUT: Duration = Duration::from_secs(5);

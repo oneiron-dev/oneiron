@@ -1,20 +1,16 @@
 //! Mechanical candidate selection. Numeric policy is a reloadable row, not a judge instruction.
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, Error, Result, Vault};
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 /// Operator-set candidate-selection policy row. Key: ().
 const SELECTION: SideTable<(), SelectionConfig, LegacyJson> =
     SideTable::new(&side_table::DREAMER_CONSOLIDATION_SELECTION);
 
 #[doc(hidden)]
+use oneiron_records::dreamer_consolidation::selection::unit;
+#[doc(hidden)]
 pub use oneiron_records::dreamer_consolidation::selection::{
     SelectionConfig, StrengthSignals, StrengthWeights,
-};
-#[doc(hidden)]
-use oneiron_records::dreamer_consolidation::selection::{
-    default_partition_extraction_parallelism, unit,
 };
 
 /// The consolidation scopes whose plain partitions share a wake pass's

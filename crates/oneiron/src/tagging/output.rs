@@ -3,8 +3,6 @@
 //! that holds every rule settles, held import and worker answer alike
 //! (FIX 9944, 10166).
 
-use serde::{Deserialize, Serialize};
-
 use crate::memory::extraction::{EncoderInput, EncoderOutput, NerSpan};
 
 const MAX_LABEL_BYTES: usize = 64;

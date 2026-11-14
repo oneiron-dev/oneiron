@@ -27,9 +27,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::files::{
-    FileFacts, FileMeta, FileReadiness, FilesPlacement, NameOnlyFile, NameOnlyReason,
-};
+use super::files::{FileFacts, FilesPlacement, NameOnlyFile};
 use super::import::{ImportedNote, ImportedNoteLink, NOTES_IMPORT_SOURCE};
 use super::proposals::{NoteActor, names_no_actor};
 use crate::claim::ClaimSource;

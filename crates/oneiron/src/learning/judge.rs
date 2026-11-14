@@ -9,8 +9,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};

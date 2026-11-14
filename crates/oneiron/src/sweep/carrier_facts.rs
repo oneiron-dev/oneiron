@@ -35,7 +35,7 @@ const FACTS: SideTable<(EntityId, [u8; 32]), CarrierScrubFacts, Named> =
     SideTable::new(&side_table::ASSET_CARRIER_SCRUB_FACTS);
 
 #[doc(hidden)]
-use oneiron_records::sweep::carrier_facts::{COPIED_ID_CONTEXT, copied_id_fingerprint};
+use oneiron_records::sweep::carrier_facts::copied_id_fingerprint;
 
 /// What the scrub reads in one carrier's bytes.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

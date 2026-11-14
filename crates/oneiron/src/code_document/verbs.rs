@@ -8,8 +8,6 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
-
 use super::{CodeDocumentFrontier, CodeOpAttribution};
 use crate::blob_artifact::hash_hex;
 use crate::code_symbol::{

@@ -6,11 +6,6 @@ use crate::Vault;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 
-use super::score::{
-    PREFILTER_FEATURE_ENTITY_DENSITY, PREFILTER_FEATURE_LEN, PREFILTER_FEATURE_NOVELTY,
-    PREFILTER_FEATURE_ROLE, PREFILTER_FEATURE_TTR,
-};
-
 // ---------------------------------------------------------------------------
 // Keyspace (module-local, on `vault_meta` — the `dreamer_consolidation`
 // support.rs prefix precedent; `dreamer:prefilter:` was a free namespace)

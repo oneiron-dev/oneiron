@@ -11,7 +11,6 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::CheckPhase;
 use crate::EntityId;
 use crate::build_cache::command_spec::CodeBuildSpec;
 use crate::error::Result;

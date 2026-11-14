@@ -22,7 +22,6 @@ use crate::{
 };
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
-use serde_json::Value as Json;
 
 const PREDICATE: &str = "agent.connector_subscription";
 /// Hash domain separator for a wake decision's identity, matching the

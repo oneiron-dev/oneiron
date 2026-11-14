@@ -19,8 +19,6 @@
 //! current owner reads one only by asking for it by id through
 //! [`Vault::read_imported_note`], an explicit owner act.
 
-use serde::Serialize;
-
 use super::{
     NoteActor, NoteBody, NoteKind, decode_note_body_using, decode_note_core_using, encode_note_core,
 };

@@ -1,10 +1,8 @@
 //! Proxy receipts use the existing owner-local gate ledger.
 
-use crate::policy_model::{PolicyClassifyDecision, PolicyVerdictCategory};
 use crate::store::{GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord};
 use crate::{EntityId, Result, Vault};
 use oneiron_container::SessionManifest;
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_records::code_sandbox::egress::receipt::EgressReceipt;

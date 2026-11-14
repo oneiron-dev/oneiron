@@ -1,7 +1,7 @@
 //! The `conversation.reaction` value and its provider-echo binding value.
 use crate::EntityId;
 use crate::edge::EdgeActorClass;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY;
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use rmpv::Value;

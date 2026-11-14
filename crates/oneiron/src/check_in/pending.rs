@@ -17,11 +17,9 @@
 //! resolver over the verified records (2c). The host that wakes a due row is
 //! 2e; the agent verbs are 2f and 2l.
 
-use serde::{Deserialize, Serialize};
-
 use super::act_class::{ActClass, ProofKind};
 use super::mode::CheckInMode;
-use super::policy::{CheckInScope, ClassWait};
+use super::policy::CheckInScope;
 use super::receipt::{CheckInOutcome, ReceiptFields, write_check_in_receipt_in_txn};
 use super::resolve::WaitReason;
 use super::waits::{enter_next_rung, refuse};

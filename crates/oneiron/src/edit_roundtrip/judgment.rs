@@ -17,7 +17,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::llm::decision::questions::keep_artifact_unit_ask;
-use crate::llm::decision::{DecisionQuestion, EvidenceVersion, TypedDecision};
+use crate::llm::decision::{DecisionQuestion, EvidenceVersion};
 use oneiron_docedit::resource::ResourceRefusal;
 use oneiron_docedit::retained_opc::Limits;
 use oneiron_docedit::xlsx_body::{XlsxChange, XlsxValue, project_xlsx, read_xlsx_cells};

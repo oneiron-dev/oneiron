@@ -21,12 +21,11 @@
 //!   already running in this vault (FIX 600); the evidence stays.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
 
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ScopedRead};
 use crate::entity_id::EntityId;
-use crate::error::{ArtifactError, Error, Result};
+use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::HubFile;

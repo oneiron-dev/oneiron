@@ -16,8 +16,6 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::lifecycle::{catalog_key_in_txn, derived_key_catalog_in_txn};
 use super::record::{
     ConnectorKeyRecord, ScopedCapabilityProvenance, invalid_body, normalize_connector_key,

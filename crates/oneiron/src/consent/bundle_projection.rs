@@ -1,9 +1,6 @@
 //! Gate consent-bundle projection: naming, receipt view, and hex serde helpers.
 
-use serde::{Deserialize, Serialize};
-
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::store::GateDecisionId;
+use crate::entity_id::bytes_to_hex_lower;
 
 /// Schema version of the [`GateConsentBundle`] projection and its receipt.
 pub const GATE_CONSENT_BUNDLE_SCHEMA_VERSION: u8 = 1;

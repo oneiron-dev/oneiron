@@ -9,9 +9,7 @@
 //! reader's cached roster does not hold carries its name inline.
 
 mod prepared;
-pub(crate) use prepared::{
-    PreparedAgentPerson, prepare_agent_person_after_puts_in_txn, prepare_agent_person_in_txn,
-};
+pub(crate) use prepared::{PreparedAgentPerson, prepare_agent_person_after_puts_in_txn};
 
 use std::collections::{BTreeMap, BTreeSet};
 

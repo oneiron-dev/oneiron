@@ -3,10 +3,7 @@
 //! Borrows the live registry tables and derives zone ranges from `zone_of`;
 //! no allocation table is duplicated here.
 
-use oneiron_contracts::registry::{
-    ENTITY_TYPE_REGISTRY, EntityTypeRegistryEntry, TYPE_BYTE_FAMILIES, TypeByteFamilyEntry,
-    TypeByteZone, zone_of,
-};
+use oneiron_contracts::registry::{ENTITY_TYPE_REGISTRY, TYPE_BYTE_FAMILIES, zone_of};
 
 #[doc(hidden)]
 pub use oneiron_records::registry::export::{RegistrySnapshot, ZoneRow};

@@ -31,8 +31,8 @@ use serde::{Deserialize, Serialize};
 
 use super::settlement::{RemoteTaskHandle, RemoteTaskObservation, intent_settlement_in_txn};
 use super::types::{FrozenOutboundCall, IntentLedgerError, IntentLedgerResult, IntentState};
+use crate::Vault;
 use crate::side_table::{self, Named, SideTable};
-use crate::{EntityId, Vault};
 
 /// Each pollable Deferred row's next poll, by its intent id.
 const POLLS: SideTable<[u8; 32], RemoteTaskPollState, Named> =

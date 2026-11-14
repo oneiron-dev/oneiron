@@ -18,8 +18,6 @@
 //! refused (C4). The provider's actor is evidence on the row, never a vault
 //! actor, writer or owner (C3).
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
@@ -29,9 +27,8 @@ use super::mirror_event::{
     event_in, put_event_in,
 };
 use super::model::{
-    LinearChangePage, LinearChangeSource, LinearEgress, LinearFieldConflict, LinearIssueChange,
-    LinearIssueRef, LinearMirrorStatus, LinearSyncError, LinearSyncResult, LinearTaskStore,
-    MirroredTaskFields,
+    LinearChangePage, LinearChangeSource, LinearEgress, LinearIssueChange, LinearMirrorStatus,
+    LinearSyncError, LinearSyncResult, LinearTaskStore, MirroredTaskFields,
 };
 use super::{LinearSyncAdapter, VaultLinearTaskStore};
 

@@ -27,7 +27,6 @@
 //! the carrier machine.
 
 use ed25519_dalek::{Signature, Signer, VerifyingKey};
-use serde::{Deserialize, Serialize};
 
 use super::*;
 use crate::claim::ScopedReadActorKey;

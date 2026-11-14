@@ -14,7 +14,6 @@ use super::forks::{ENTITY_DOC_FORK_SNAPSHOT, read_bundle};
 use super::{EntityDoc, ForkRecord, invalid, storage};
 use crate::error::Result;
 use crate::{EntityId, Vault};
-use oneiron_model::llm::{LlmUsage, ModelId, ReasoningEffort};
 
 #[doc(hidden)]
 use oneiron_records::entity_doc::review_explainer::one_line;

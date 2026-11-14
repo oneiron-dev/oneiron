@@ -2,15 +2,11 @@
 //! The entry point is `Vault::seal_vault_bundle`.
 //! `super` owns the private frame codec and shared carrier storage.
 
-use serde::Serialize;
-use serde::ser::SerializeStruct as _;
-
 #[cfg(feature = "sync")]
 use super::frame_seal::WrittenPayload;
 use super::frame_seal::{BodySource, bundle_body};
 use super::sections::FreshSection;
 use super::*;
-use crate::error::ErrorKind;
 
 impl SealedVaultBundle {
     /// Strict parse of a frame: a positive multiple of the size step, the bundle

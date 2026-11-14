@@ -5,7 +5,6 @@ use super::{EditOp, EditWarning, OfficeFormat};
 use crate::blob_artifact::CalcEngineStamp;
 use crate::error::Result;
 use oneiron_xlsx_formula::{DocumentLocation, RecalcClock};
-use serde::Serialize;
 use std::collections::BTreeSet;
 
 /// The office file passed across the [`EditSession`] seam: the raw bytes plus

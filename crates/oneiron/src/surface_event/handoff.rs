@@ -5,9 +5,9 @@ use sha2::{Digest, Sha256};
 
 use crate::Vault;
 use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
-    CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome, FailAttempt, FailOutcome,
-    RetryAttempt, RetryOutcome,
+    AttemptId, AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt,
+    CompleteOutcome, EnqueueAttempt, EnqueueOutcome, FailAttempt, FailOutcome, RetryAttempt,
+    RetryOutcome,
 };
 use crate::batch::secret_scan::{
     SidePart, admit_side_parts, admitted_from, from_named_tree, named_tree,

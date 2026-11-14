@@ -8,7 +8,6 @@ use crate::attempt_queue::{AttemptQueue, EnqueueAttempt};
 use crate::error::{Error, Result};
 use crate::outbound::{OutboundDeliverySemanticsKind, outbound_capability_manifest};
 use crate::{EntityId, Vault};
-use serde::{Deserialize, Serialize};
 
 pub const REACTION_OUTBOUND_ATTEMPT_KIND: &str = "reaction.outbound.v1";
 

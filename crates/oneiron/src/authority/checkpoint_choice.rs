@@ -17,8 +17,7 @@
 
 use super::machine_standing::InstallCounted;
 use super::owner_choice::{
-    FoldedOwnerChoice, OwnerChoiceHead, OwnerChoiceOp, OwnerChoiceState, folded_owner_choice,
-    owner_choice_landing,
+    FoldedOwnerChoice, OwnerChoiceOp, OwnerChoiceState, folded_owner_choice, owner_choice_landing,
 };
 use super::*;
 

@@ -9,12 +9,9 @@ use super::artifact_question::{ArtifactAsk, ArtifactAskRun, UnitAbstention, Unit
 use super::slides_review::SlideReviewLabels;
 use super::{EditOp, EditOutcome, EditProposal, OfficeFormat};
 use crate::llm::decision::questions::keep_artifact_unit_ask;
-use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionRung, EvidenceVersion, PairedReading, TypedDecision,
-};
+use crate::llm::decision::{DecisionAnswer, DecisionRung, EvidenceVersion, PairedReading};
 use crate::{EntityId, Error, Result, Vault};
 use oneiron_docedit::docx_body::{DocxBlockKind, DocxStoryScope, read_docx_scoped_blocks};
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 

@@ -34,8 +34,6 @@ mod settle;
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::doors::world_recovery_state_in;
 use super::kit_piece::keep_this_machine_piece;
 use super::page_seal::WrapTransition;

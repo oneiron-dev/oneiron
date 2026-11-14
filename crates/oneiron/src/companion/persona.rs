@@ -27,11 +27,6 @@ const SCENARIO_KEY: &str = "persona_scenario";
 
 #[doc(hidden)]
 pub use oneiron_records::companion::persona::{PersonaInputBasis, PersonaMadeBy};
-#[doc(hidden)]
-use oneiron_records::companion::persona::{
-    deserialize_input, deserialize_inputs, deserialize_revision, serialize_input, serialize_inputs,
-    serialize_revision,
-};
 
 /// A replayed change whose recorded basis for one input is not the basis this
 /// replay applied it over. Advisory only: the change still applied.

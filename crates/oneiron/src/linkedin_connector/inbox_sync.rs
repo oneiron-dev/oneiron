@@ -139,7 +139,7 @@ pub struct LinkedInConversationMessageEvent {
 }
 
 #[doc(hidden)]
-pub use oneiron_records::linkedin_connector::inbox_sync::LinkedInInboxSyncProvenanceRow;
+pub(crate) use oneiron_records::linkedin_connector::inbox_sync::LinkedInInboxSyncProvenanceRow;
 
 /// Result of one LinkedIn inbox sync execution.
 #[derive(Debug, Clone, PartialEq, Eq)]

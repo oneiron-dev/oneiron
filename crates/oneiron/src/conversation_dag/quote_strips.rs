@@ -25,7 +25,6 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 use heed::RoTxn;
 use rmpv::Value;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 const PAGE_LIMIT: usize = 256;

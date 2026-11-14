@@ -30,14 +30,13 @@
 //! retired it (FIX 812's rule, as call receipts keep it).
 
 use oneiron_browser::{
-    BatchStopCause, LibraryCard, LibraryRunMode, RecentCounts, RetiredCard, RunOutcome,
-    SupersedeOutcome, SupersedeRefusal, WorkflowProgram, WorkflowProof,
+    BatchStopCause, LibraryCard, LibraryRunMode, RetiredCard, RunOutcome, SupersedeOutcome,
+    SupersedeRefusal, WorkflowProgram, WorkflowProof,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
 use crate::learning::TypeRef;
-use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, Named, SideTable};
 use crate::task_type::TaskTypeRef;
 

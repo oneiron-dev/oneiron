@@ -1,8 +1,6 @@
 //! One check-in: power, mode and rung 0, then the unsure test (ARCH-0082
 //! #composing and #ladder).
 
-use serde::{Deserialize, Serialize};
-
 use super::act_class::{ActClass, ModelCheck};
 use super::mode::CheckInMode;
 use super::role_preset::{RoleDefault, RolePreset};

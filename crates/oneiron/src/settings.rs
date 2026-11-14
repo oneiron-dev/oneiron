@@ -60,9 +60,7 @@ pub use oneiron_records::settings::{
     CUSTOMIZATION_SETTINGS_SCHEMA_VERSION, CustomizationLayer,
 };
 #[doc(hidden)]
-use oneiron_records::settings::{
-    TOKEN_MAX_BYTES, WORLD_LABEL_MAX_BYTES, validate_label, validate_token,
-};
+use oneiron_records::settings::{validate_label, validate_token};
 
 /// ONE-1707: the one additive knob over Dreamer plugin suggestions.
 ///

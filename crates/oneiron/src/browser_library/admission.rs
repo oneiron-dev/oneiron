@@ -18,7 +18,7 @@
 //! binding each of its sources kept is dropped: a later job for the group
 //! acts on a fresh capture's binding, or ends unavailable.
 
-use oneiron_browser::{ProposeInput, SubgoalStatus, SupersedeOutcome, WorkflowCheck};
+use oneiron_browser::ProposeInput;
 use serde::{Deserialize, Serialize};
 
 use super::evidence::{SavedBrowserCaller, SolvedRunEvidence, SolvedRunScope};

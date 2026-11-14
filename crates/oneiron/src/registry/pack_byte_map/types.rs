@@ -1,7 +1,5 @@
 //! Name-bearing portable kinds, local registrations, and instance envelopes.
 
-use crate::error::{Error, RegistryError, Result};
-use crate::registry::{TypeByteZone, zone_of};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

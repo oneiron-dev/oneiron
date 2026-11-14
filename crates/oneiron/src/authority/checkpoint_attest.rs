@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 use super::*;
 use crate::Vault;
-use crate::error::{Error, RecordError, Result, SideTableRowProblem, StoreError};
+use crate::error::{Error, Result, SideTableRowProblem, StoreError};
 use crate::side_table::{self, Named, SideTable};
 
 mod policy_match;

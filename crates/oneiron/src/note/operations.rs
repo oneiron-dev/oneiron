@@ -7,7 +7,7 @@ use super::document_store::{
 use super::pin_index::NOTE_PIN_SOURCE;
 use super::side_keys::HexPair;
 use super::sync_rows::{NOTE_RECEIPT_BY_REQUEST, SYNC_DS_E};
-use super::{NoteActor, NotePin, NoteScalarEdit, NoteScalarEditOutcome};
+use super::{NoteActor, NotePin, NoteScalarEditOutcome};
 use crate::memory::{CommitReceipt, Memory, MemoryResult};
 use crate::provenance::ActorStamp;
 use crate::provenance::birth::RowBirth;

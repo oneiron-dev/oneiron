@@ -1,6 +1,6 @@
 //! Closed verb vocabulary and the single shared dispatch door.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Map as JsonMap, Value};
 
 use super::codec_json::membership_page_to_json;

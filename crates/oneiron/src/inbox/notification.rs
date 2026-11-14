@@ -16,8 +16,6 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::attempt_queue::{AttemptQueue, AttemptRecord};
 use crate::deletion::ActorErasureWriter;
@@ -30,7 +28,6 @@ use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::attempt_hold::BUDGET_HOLD_ACTOR;
 use crate::store::attempt_id::AttemptId;
 use crate::store::attempt_inputs::AttemptInterventionKind;
-use crate::store::attempt_state::AttemptState;
 use crate::temporal::TimeRange;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 

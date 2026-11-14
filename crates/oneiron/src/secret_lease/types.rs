@@ -7,7 +7,6 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::secret_record::CustodyTier;
 use crate::vault::Vault;
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use zeroize::Zeroizing;
 // ---------------------------------------------------------------------------

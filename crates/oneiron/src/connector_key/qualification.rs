@@ -1,6 +1,5 @@
 //! Connector qualification probes. The host supplies independent transport
 //! connections and a store-backed grounding oracle, never a connector self-grade.
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;

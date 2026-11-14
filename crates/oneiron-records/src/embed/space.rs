@@ -11,7 +11,6 @@ pub use oneiron_store::embedding::EMBEDDING_SPACE_MAX_DIMENSIONS;
 pub use oneiron_store::embedding::EmbeddingSpace;
 pub use oneiron_store::embedding::KindSlotBindings;
 pub use oneiron_store::embedding_vocabulary::InputKind;
-use serde::Deserialize;
 use serde::Serialize;
 
 /// The id of declared space `id`'s EMBEDDING_SETUP row: the entity that names the space, as the

@@ -22,7 +22,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 
 #[doc(hidden)]
 pub(super) use oneiron_records::inquiry::record::refuse;

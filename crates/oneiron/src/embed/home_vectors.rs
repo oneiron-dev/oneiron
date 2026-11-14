@@ -4,11 +4,8 @@
 mod pending;
 
 use heed::RoTxn;
-use serde::{Deserialize, Serialize};
 
-use super::{
-    EmbedderLocality, EmbeddingProvenance, PendingEmbeddingInput, PendingEmbeddingPayload,
-};
+use super::{EmbedderLocality, PendingEmbeddingInput, PendingEmbeddingPayload};
 use crate::authority::PeerMachine;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::ports::{IndexMetaKey, RetrievalIndexInventory};

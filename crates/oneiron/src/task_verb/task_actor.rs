@@ -9,7 +9,6 @@ use crate::attempt_queue::{AttemptInterventionKind, AttemptQueue, InterveneAttem
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::receipt::ERASED_CALL_IDENTITY;
-use serde::{Deserialize, Serialize};
 
 /// The intervention actor an erase cancels a held planning attempt as.
 const ACTOR_ERASE_INTERVENTION: &str = "engine:actor_erase";

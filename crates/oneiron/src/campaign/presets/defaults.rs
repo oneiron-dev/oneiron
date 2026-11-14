@@ -1,7 +1,5 @@
 //! Shipped preset defaults (`defaults.json`) and the campaign's reply-snooze resolver.
 
-use serde::{Deserialize, Serialize};
-
 use super::shape::SnoozePolicyData;
 use super::validate::validate_snooze_policy;
 use crate::campaign::surface::load_registered_campaign;

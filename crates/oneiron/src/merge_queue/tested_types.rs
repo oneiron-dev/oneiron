@@ -3,11 +3,8 @@
 
 pub use oneiron_store::merge_queue::tested_types::*;
 
-use super::CheckPhase;
 use crate::EntityId;
 use crate::store::code_revision_record::CodeRevision;
-use crate::store::repo_fork::RepoForkHash;
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_records::merge_queue::tested_types::{QueueReceiptLink, QueueTestedRevision};

@@ -1,10 +1,8 @@
 //! Hashes that tie a verdict to the exact content and policy state it was
 //! decided against, so a stale verdict can be recognized rather than trusted.
 
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 use crate::gate::PolicyManifestResolution;
 

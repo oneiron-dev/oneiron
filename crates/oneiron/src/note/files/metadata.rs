@@ -2,8 +2,6 @@
 //! formats it takes text from, why a file is held by its name only, and the
 //! facts of the revision the ledger took.
 
-use serde::{Deserialize, Serialize};
-
 use super::super::folder_source::OriginalBytes;
 
 /// The extensions, any case, whose files are UTF-8 text a Files source

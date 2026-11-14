@@ -30,7 +30,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 
 pub use placement::{
     HEURISTIC_PLACEMENT_EXECUTOR, HEURISTIC_PLACEMENT_VERSION, PLACEMENT_QUESTION,

@@ -18,12 +18,9 @@
 //! requirement: eligibility, the multi-root quorum, the configured floor,
 //! canonical order and hardware-when-eligible stay. Each refusal names its
 //! rule ([`RecordError::CheckpointPolicyRefused`]).
-use std::collections::{BTreeMap, BTreeSet};
-
-use serde::{Deserialize, Serialize};
 
 use super::*;
-use crate::error::{Error, RecordError, Result};
+use crate::error::Result;
 use crate::{HostingPrivacyPosture, Vault};
 
 #[doc(hidden)]
@@ -31,11 +28,6 @@ pub use oneiron_records::authority::checkpoint_policy::{
     CHECKPOINT_CONFIGURED_QUORUM, CHECKPOINT_HARDWARE_WHEN_ELIGIBLE, CHECKPOINT_MULTI_ROOT_QUORUM,
     CHECKPOINT_SINGLE_ROOT_QUORUM_MAX_ROOTS, CheckpointPosture, CheckpointRoot,
     CheckpointRootPolicy,
-};
-#[doc(hidden)]
-use oneiron_records::authority::checkpoint_policy::{
-    HARDWARE_UNNAMED, NO_ELIGIBLE_ROOTS, NOT_CANONICAL, QUORUM_BELOW_FLOOR, QUORUM_EXCEEDS_ROOTS,
-    ROOT_NOT_ELIGIBLE, host_root, owner_root,
 };
 #[doc(hidden)]
 pub(super) use oneiron_records::authority::checkpoint_policy::{policy_refused, selectable_root};

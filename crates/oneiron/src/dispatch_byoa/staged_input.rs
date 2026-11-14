@@ -17,8 +17,6 @@
 mod dispatch;
 mod erase;
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState,

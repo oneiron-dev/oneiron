@@ -3,14 +3,10 @@
 //! event or an exhaustion names, and the key that owns it.
 //! Entry: `EffectorBudgetRowId`. Defines its own items.
 
-use serde::{Deserialize, Serialize};
-
 use super::*;
 
 #[doc(hidden)]
-pub(crate) use oneiron_records::connector_key::meter::row::{
-    EFFECTOR_BUDGET_ROW_KEY_LEN, EFFECTOR_BUDGET_ROW_TAG_CHARTER, EFFECTOR_BUDGET_ROW_TAG_KEY,
-};
+pub(crate) use oneiron_records::connector_key::meter::row::EFFECTOR_BUDGET_ROW_KEY_LEN;
 #[doc(hidden)]
 pub use oneiron_records::connector_key::meter::row::{
     EffectorBudgetLocation, EffectorBudgetRowId, EffectorBudgetRowSource,

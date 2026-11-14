@@ -34,11 +34,10 @@
 use serde::Serialize;
 
 use crate::authority::{
-    AuthorityEntryHash, AuthorityFold, OwnerWorkBody, OwnerWorkKind, WorldKeyId, WorldKeyMode,
+    AuthorityEntryHash, AuthorityFold, OwnerWorkBody, OwnerWorkKind, WorldKeyMode,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
-use crate::world_keys::UnmergedSection;
 use crate::{EntityId, Vault};
 
 use super::DeviceSyncStart;

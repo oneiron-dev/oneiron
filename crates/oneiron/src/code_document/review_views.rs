@@ -10,9 +10,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
-
-use super::verbs::{CodeChangeView, CodeOperationView, CodeStateView, OpRefs, state_view};
+use super::verbs::{OpRefs, state_view};
 use super::{CodeDocumentFrontier, CodeOpAttribution};
 use crate::batch::secret_scan::LiftedKeys;
 use crate::code_symbol::{CodeAttributedChange, semantic_code_diff, whole_file_code_diff};
@@ -22,7 +20,6 @@ use crate::error::{ArtifactError, Error};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::repo_mutation::mount::RepoMountRef;
 use crate::scan_check::{EngineScan, ScanCount};
-use crate::store::repo_proposal_record::RepoProposalStatus;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::code_document::review_views::{

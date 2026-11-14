@@ -42,7 +42,7 @@ use serde::{Deserialize, Serialize};
 
 use super::revoke_proof::RevokeFacts;
 use super::*;
-use crate::error::{Error, RecordError, Result};
+use crate::error::Result;
 use crate::{EntityId, HostingPrivacyPosture, Vault};
 
 #[doc(hidden)]

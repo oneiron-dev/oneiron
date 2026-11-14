@@ -3,7 +3,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::OAUTH_ACCESS_TTL_SECS;
 use super::clients::OAuthClientRecord;
 use crate::EntityId;
 use crate::authority::AgentTier;

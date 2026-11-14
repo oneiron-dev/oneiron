@@ -18,7 +18,6 @@ use oneiron_browser::{DraftOutput, ExpectInput, SecretParam};
 use serde::{Deserialize, Serialize};
 
 use crate::authority::InvocationSlipBinding;
-use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::learning::TypeRef;

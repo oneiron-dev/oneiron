@@ -2,7 +2,6 @@
 //! flaw it names and where in the reviewed target that flaw sits. Critiques
 //! of one target that name one identity are one finding; nothing else merges
 //! them.
-use serde::{Deserialize, Serialize};
 
 /// The most bytes of a flaw kind.
 pub const MAX_FLAW_KIND_BYTES: usize = 64;

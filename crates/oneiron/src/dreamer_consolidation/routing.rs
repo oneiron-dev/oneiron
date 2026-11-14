@@ -5,7 +5,6 @@ use super::{ConflictIdentity, ConflictSet, PromotionCandidate};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 use rmpv::Value;
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[doc(hidden)]

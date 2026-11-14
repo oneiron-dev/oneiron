@@ -15,8 +15,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Serialize};
-
 use super::lifecycle::{
     ConnectorConsentTarget, ConnectorToolConsent, ConnectorToolConsentRow, ConnectorToolGrant,
     derived_key_catalog_in_txn,

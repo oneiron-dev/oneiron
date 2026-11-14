@@ -5,11 +5,11 @@ use std::collections::BTreeMap;
 use crate::EntityId;
 use crate::config::bm25::NoteTextField;
 use crate::entity_doc::{decode_metadata_value, encode_metadata_value};
-use crate::error::{Error, RecordError, Result};
+use crate::error::Result;
 use crate::memory::CommitReceipt;
 use crate::ports::{is_metadata_field, validate_metadata_shape};
 use crate::provenance::ActorStamp;
-use loro::cursor::{Cursor, Side};
+use loro::cursor::Side;
 use loro::{
     CommitOptions, Container, ExportMode, Frontiers, LoroDoc, LoroMap, LoroValue, ValueOrContainer,
 };

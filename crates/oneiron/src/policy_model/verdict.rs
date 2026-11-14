@@ -3,12 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::binding::PolicyContentBinding;
-use super::pattern::PolicyPatternRole;
 use super::planes::PolicyPlane;
 use super::request::{PolicyModelConfig, RelayClassifierMode};
 
-#[doc(hidden)]
-use oneiron_records::policy_model::verdict::is_zero;
 #[doc(hidden)]
 pub use oneiron_records::policy_model::verdict::{
     PolicyClassifyDecision, PolicyConfidence, PolicyHedgeBucket, PolicyPassAudit, PolicyReadError,

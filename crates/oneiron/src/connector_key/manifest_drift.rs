@@ -2,17 +2,14 @@
 //! A changed resolved schema is never treated as an unchanged grant, even when
 //! the literal document differs only in its reference target.
 use super::slate::ELICITATION_ROW_KEY;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[doc(hidden)]
 pub use oneiron_records::connector_key::manifest_drift::{ConnectorDriftKind, ConnectorToolSchema};
 #[doc(hidden)]
-use oneiron_records::connector_key::manifest_drift::{
-    defaults, intersect_enums, intersect_types, invalid, merge_all_of, resolve_schema, tightest,
-};
+use oneiron_records::connector_key::manifest_drift::{defaults, invalid, resolve_schema};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

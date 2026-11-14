@@ -29,7 +29,6 @@ use super::device::{
 };
 use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, apply_ops};
-use crate::config::VectorEvidenceFloors;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};

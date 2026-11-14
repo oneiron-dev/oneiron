@@ -4,13 +4,11 @@
 //! sequence stays, and blame, ops and range changes read it as no one's.
 
 use heed::RwTxn;
-use serde::{Deserialize, Serialize};
 
 use super::{CODE_DOCUMENT_HEAD, CODE_DOCUMENT_INGRESS};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::receipt::ERASED_CALL_IDENTITY;
 
 #[doc(hidden)]
 pub(crate) use oneiron_records::code_document::storage::receipt_actor::ReceiptActor;

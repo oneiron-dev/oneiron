@@ -1,14 +1,8 @@
 //! The two policy planes, the documents they enforce, and the rows they
 //! contribute.
 
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-
-use crate::entity_id::bytes_to_hex_lower;
 use crate::gate::{OwnerRowAction, PolicyManifestResolution};
 
-use super::contract::PolicyOutputContract;
-use super::pattern::PolicyPatternRule;
 use super::request::PolicyClassifyRequest;
 use super::verdict::PolicyClassifyDecision;
 
@@ -17,11 +11,9 @@ use super::verdict::PolicyClassifyDecision;
 /// is also the vocabulary the owner plane's policy document answers in.
 const OWNER_POLICY_CATEGORY: &str = "owner_policy";
 #[doc(hidden)]
-pub(super) use oneiron_records::policy_model::planes::parse_hosted_category_label;
+use oneiron_records::policy_model::planes::HOSTED_LEGAL_CATEGORY_PREFIX;
 #[doc(hidden)]
-use oneiron_records::policy_model::planes::{
-    HOSTED_LEGAL_CATEGORY_PREFIX, hash_field, hash_len, hash_len_bytes, strictest,
-};
+pub(super) use oneiron_records::policy_model::planes::parse_hosted_category_label;
 #[doc(hidden)]
 pub use oneiron_records::policy_model::planes::{
     HostedLegalAction, HostedLegalBasis, HostedLegalBasisKind, HostedLegalPolicy, HostedLegalRow,

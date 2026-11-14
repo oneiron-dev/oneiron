@@ -1,7 +1,5 @@
 //! Principal identity and validated-action outcome types.
 
-use serde::{Deserialize, Serialize};
-
 use crate::claim::ScopedReadActorKey;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};

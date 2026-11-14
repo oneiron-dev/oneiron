@@ -6,7 +6,6 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
-use super::output::OutputRefusal;
 use crate::EntityId;
 use crate::attempt_queue::AttemptId;
 use crate::error::Result;

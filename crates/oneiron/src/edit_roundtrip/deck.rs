@@ -21,13 +21,10 @@ use crate::error::{ArtifactError, Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use oneiron_docedit::design_plan::MediaType;
 use oneiron_docedit::edit::transaction::{
-    AssetRef, Assets, DeckTransaction, DeckTransactionReport, IdMarks, TransactionError,
-    run_transaction,
+    AssetRef, Assets, DeckTransaction, IdMarks, TransactionError, run_transaction,
 };
-use oneiron_docedit::edit::wire::{DeckInspection, inspect_deck};
 use oneiron_docedit::graphic::{AssetRecord, Origin};
-use oneiron_docedit::retained_opc::{Limits, Package};
-use serde::{Deserialize, Serialize};
+use oneiron_docedit::retained_opc::Limits;
 
 /// Managed native-id history per deck artifact, raised at each settle.
 const DECK_ID_MARKS: SideTable<EntityId, IdMarks, Named> =
@@ -54,8 +51,6 @@ pub use crate::blob_artifact::deck_context::{DeckEditContext, DeckRender, DeckRe
 
 #[doc(hidden)]
 pub use oneiron_records::edit_roundtrip::deck::DeckSettleEvidence;
-#[doc(hidden)]
-pub(super) use oneiron_records::edit_roundtrip::deck::render_report;
 
 fn invalid(message: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidEditManifest(message))

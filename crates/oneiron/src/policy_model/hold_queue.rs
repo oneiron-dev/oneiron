@@ -6,7 +6,6 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, RelayError};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{Result, Vault};
-use serde::{Deserialize, Serialize};
 const PREFIX: &str = "policy-hold:v1:";
 
 /// The device-local moderation queue, keyed by the hex digest after `PREFIX`

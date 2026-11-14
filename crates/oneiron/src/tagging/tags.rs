@@ -24,7 +24,7 @@ use super::marker::TaggingMarkerConfig;
 use super::provisional;
 use crate::edge::EdgeKind;
 use crate::error::Result;
-use crate::memory::extraction::{ExtractionWork, MoodPart, SpeakerTarget};
+use crate::memory::extraction::{ExtractionWork, MoodPart};
 use crate::ports::{EdgeDirection, EdgeStoreRead, TombstoneStoreRead};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;

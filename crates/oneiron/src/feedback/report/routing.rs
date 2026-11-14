@@ -3,10 +3,7 @@
 //! stored flag (FIX 8747, the `disclosure` child).
 use serde::{Deserialize, Serialize};
 
-use super::{
-    IssueCategory, ReportDisclosure, ReportIssue, ReportKind, ReportRequest, ReportStatus, invalid,
-    validate_ref,
-};
+use super::{ReportDisclosure, ReportIssue, ReportRequest, ReportStatus, invalid, validate_ref};
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, LegacyJson, Named, SideTable};
 use crate::skill_hub::HubImportReceipt;

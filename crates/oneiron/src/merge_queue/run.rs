@@ -11,10 +11,6 @@
 //! submitted it still runs, and every existing check, review and recovery
 //! still applies.
 
-use std::collections::BTreeSet;
-
-use serde::{Deserialize, Serialize};
-
 use super::batch_index::BatchIndexKind;
 use super::{BatchState, MergeBatch, MergeProposal, MergeQueue};
 use crate::EntityId;
