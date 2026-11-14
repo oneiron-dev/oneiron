@@ -86,6 +86,9 @@ pub struct HostedRelayDecision {
     pub outbound_halted: bool,
     pub system_notice: Option<String>,
     pub system_notices: Vec<crate::store::GateSystemNoticeRecord>,
+    /// Red-pin compile shim: the fields the tests read, at their absent values.
+    pub works_self_hosted: bool,
+    pub self_hosted_note: String,
 }
 
 /// Enforce the relay's own pass, including its fail-closed outage and notice.
@@ -200,6 +203,8 @@ pub async fn enforce_hosted_relay(
         outbound_halted: halted,
         system_notice: super::notice::default_system_notice(&system_notices),
         system_notices,
+        works_self_hosted: false,
+        self_hosted_note: String::new(),
     })
 }
 
