@@ -43,9 +43,9 @@ pub mod free_time_cycle_writer;
 pub mod free_time_handoff;
 pub mod grant_roles;
 pub mod graph_ask_centre;
-pub mod history_import_rows;
 #[cfg(feature = "sync")]
 pub mod guest_turn_counterparty;
+pub mod history_import_rows;
 #[cfg(feature = "sync")]
 pub mod home_handoff_retire;
 #[cfg(feature = "sync")]
