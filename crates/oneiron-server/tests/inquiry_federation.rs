@@ -357,6 +357,10 @@ struct Thursday {
     seat: EntityId,
     agent: Agent,
     task: EntityId,
+    /// The expiry every inquiry of the agent carries, read once: a re-send
+    /// of an inquiry id is the same inquiry only with the same fields, and
+    /// the vault clock may pass a second between two sends.
+    expires_at: u64,
 }
 
 async fn thursday() -> Thursday {
@@ -472,6 +476,7 @@ async fn thursday() -> Thursday {
         .task_ref
         .expect("the TASK is minted");
     let edge_slip = slip["slip"].as_str().expect("edge slip").to_owned();
+    let expires_at = company.vault.now_recorded_at() + 600;
     Thursday {
         member,
         company,
@@ -481,6 +486,7 @@ async fn thursday() -> Thursday {
         seat,
         agent,
         task,
+        expires_at,
     }
 }
 
@@ -514,7 +520,7 @@ impl Thursday {
             "question": QUESTION,
             "task": self.task,
             "purpose": PURPOSE,
-            "expires_at": self.company.vault.now_recorded_at() + 600,
+            "expires_at": self.expires_at,
         });
         if let Some(id) = inquiry_id {
             input["inquiry_id"] = id.clone();
