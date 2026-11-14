@@ -5,10 +5,14 @@ use serde::{Deserialize, Serialize};
 
 use super::observations::{observations, repair_links, validate_mappings};
 use super::{AgUiAppObservation, AgUiCustomMapping, AgUiRepairLink, AgUiSource};
-use crate::claim::{ClaimReadStatus, ClaimSource, ClaimSubject, ScopedReadReceipt};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimReadStatus, ClaimSource,
+    ClaimSubject, ScopedReadReceipt,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::core_write::CoreWriteLaneRef;
 use crate::edge::EdgeActorClass;
+use crate::error::ErrorKind;
 use crate::ingest::admission::imported_candidate;
 use crate::ingest::{
     ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, json_to_msgpack_value,
@@ -77,7 +81,7 @@ fn bound_file_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
-    claim: &crate::claim::ClaimBody,
+    claim: &ClaimBody,
 ) -> Result<StoredFile> {
     if claim.predicate != AG_UI_FILE_PREDICATE || claim.source != Some(ClaimSource::Imported) {
         return Err(Error::InvalidClaimBody("not an imported AG-UI source"));
@@ -110,6 +114,123 @@ fn bound_file_in_txn(
         ));
     }
     Ok(file)
+}
+
+/// Whether a stored capture claim still stands: Active, not Rejected, and
+/// not deleted.
+fn capture_stands_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    claim: &ClaimBody,
+) -> Result<bool> {
+    Ok(claim.lifecycle == ClaimLifecycleStatus::Active
+        && claim.approval != ClaimApprovalStatus::Rejected
+        && !crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, id)?.deleted)
+}
+
+/// A stored capture that fails its binding or its decoding: the engine's own
+/// passes leave it unread and count it; a storage error still stops them.
+fn is_unbound_capture(error: &Error) -> bool {
+    matches!(
+        error.kind(),
+        ErrorKind::InvalidClaimBody | ErrorKind::InvalidKey
+    )
+}
+
+/// One stored capture as the engine's own passes read it (CLIF-STEALS 2,
+/// ARCH-0053 #outside-app-evidence): the claim and where it stands, its
+/// exact fingerprint, and the registered observations and repair links
+/// recomputed from its snapshot, as [`Memory::read_ag_ui_file`] recomputes
+/// them. Every id and payload in it stays the app's report.
+#[derive(Debug, Clone)]
+pub(crate) struct StoredAgUiCapture {
+    /// The capture claim.
+    pub(crate) claim: EntityId,
+    /// Its body, for where it stands (project, facet, scope, world, relationships).
+    pub(crate) body: ClaimBody,
+    /// The capture's exact fingerprint, as [`AgUiFileView::source_hash`].
+    pub(crate) source_hash: String,
+    /// The project the capture names.
+    pub(crate) project: EntityId,
+    /// The app the owner named at capture.
+    pub(crate) app_id: String,
+    /// The registered CUSTOM observations.
+    pub(crate) observations: Vec<AgUiAppObservation>,
+    /// One repair link per Outcome observation.
+    pub(crate) repair_links: Vec<AgUiRepairLink>,
+}
+
+/// One standing capture claim read under the capture binding, its links
+/// recomputed from its own snapshot.
+fn stored_capture_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    claim: ClaimBody,
+) -> Result<StoredAgUiCapture> {
+    let file = bound_file_in_txn(vault, txn, &id, &claim)?;
+    let source_hash = fingerprint(&file)?;
+    let project = EntityId::from_hex(&file.project_ref)?;
+    validate_mappings(&file.custom_mappings)?;
+    let events = decode_events(&file.jsonl)?;
+    let observations = observations(&events, &file.custom_mappings);
+    let repair_links = repair_links(&observations);
+    Ok(StoredAgUiCapture {
+        claim: id,
+        body: claim,
+        source_hash,
+        project,
+        app_id: file.app_id,
+        observations,
+        repair_links,
+    })
+}
+
+/// Every standing capture, in claim id order, under the binding
+/// [`Memory::read_ag_ui_file`] holds a capture to, with how many standing
+/// captures failed it and were left unread. A retracted, superseded,
+/// rejected or deleted capture is skipped and not counted.
+pub(crate) fn standing_ag_ui_captures_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(Vec<StoredAgUiCapture>, usize)> {
+    let mut claims = vault.claims_with_predicate_in_txn(txn, AG_UI_FILE_PREDICATE)?;
+    claims.sort_by_key(|(id, _)| *id);
+    let mut captures = Vec::new();
+    let mut unbound = 0;
+    for (id, claim) in claims {
+        if !capture_stands_in_txn(vault, txn, &id, &claim)? {
+            continue;
+        }
+        match stored_capture_in_txn(vault, txn, id, claim) {
+            Ok(capture) => captures.push(capture),
+            Err(error) if is_unbound_capture(&error) => unbound += 1,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok((captures, unbound))
+}
+
+/// Whether the capture `id` still stands and holds its binding at exactly
+/// `source_hash` in this snapshot: a write that cites a capture re-checks it.
+pub(crate) fn ag_ui_capture_holds_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    source_hash: &str,
+) -> Result<bool> {
+    let Some(claim) = vault.get_claim_in_txn(txn, id)? else {
+        return Ok(false);
+    };
+    if !capture_stands_in_txn(vault, txn, id, &claim)? {
+        return Ok(false);
+    }
+    match bound_file_in_txn(vault, txn, id, &claim) {
+        Ok(file) => Ok(fingerprint(&file)? == source_hash),
+        Err(error) if is_unbound_capture(&error) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 impl Vault {
