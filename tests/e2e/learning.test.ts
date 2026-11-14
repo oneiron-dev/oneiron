@@ -1,6 +1,12 @@
 import { afterAll, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { resolve } from "node:path";
 import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
-import { defineFile } from "./support/run.ts";
+import { EngineFixture, awaitPublic } from "./support/engine.ts";
+import { PublicHttpClient, PublicHttpError } from "./support/clients.ts";
+import { loadFixtures } from "./support/fixtures.ts";
+import { ScriptedProviders, openaiStream } from "./support/providers.ts";
+import { defineFile, expect } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -8,8 +14,9 @@ const suite = defineFile(import.meta, { profile, slots: 1 });
 afterAll(suite.flush);
 
 /**
- * Skills and improvement, in plan order. These are COMPLETE-flow TODOs, not
- * passing tests of a subset. suite.todo creates Bun test.todo and BLOCKED rows.
+ * Skills and improvement, in plan order. Each case is a COMPLETE-flow TODO, not
+ * a passing test of a subset, until its arming PR writes the whole flow (armed:
+ * LEARNING-09). suite.todo creates Bun test.todo and BLOCKED rows.
  *
  * Binding read: main f8e2f8397685bc63405bc1a303b65f94aa26c33d (this worktree's
  * HEAD and origin/main). See fixtures/learning/bindings.json for source hashes.
@@ -326,36 +333,440 @@ type Learning08 = {
 suite.todo(test, "LEARNING-08", "waits on typed Coach offer-pass trigger/completion and per-seat candidate/pilot evidence setup/readback");
 
 // LEARNING-09 — RSI budget holds rather than kills should work. OF-496.
-// Existing research.reserve_work {root,purpose,units,attempt?} -> reservation ID,
-// settle_work {root,reservation,actual} -> reservation and refund_work are typed.
-// CampaignConfig's budget is {budget_id,max_units,exploration_units}; it does NOT
-// create the owner/host's vault RSI line or set a soft/pinned share.
-// Waiting: typed owner RSI line/share configure/read/top-up and separately
-// unit-labelled exposure reserve/settle, plus observable campaign hold/resume.
-// Owner /runs/hold and /runs/hold/resume are real general TASK budget-hold routes,
-// not an RSI share/exposure setter. Do not replace RSI with an unrelated cap.
-// Reserve before spending. Soft overdraw uses only the free pool and has an
-// overdraft receipt. Pinned-share cap holds without silently taking that pool.
-// Exposure units do not consume token units; its cap independently holds.
-// Keep a pending experiment's attempt, candidate refs and partial outputs across
-// both holds. Top up the exact limiting line, resume, and observe the SAME try
-// continue without duplicate terminal receipts or another candidate/goal rewrite.
-// Resource depletion is not failure, cancellation, pruning or a new experiment.
-type Learning09Current = {
-  reserve: PublicCall<"vault.research.reserve_work">;
-  settle: PublicCall<"vault.research.settle_work">;
-  refund: PublicCall<"vault.research.refund_work">;
-};
-type Learning09 = {
-  work_line: { unit: "tokens"; limit: number; spent: number; reserved: number };
-  shares: { goal: Ref; units: number; pinned: boolean }[];
-  exposure_line: { unit: "exposures"; limit: number; spent: number; reserved: number };
-  hold: { attempt: Ref; limiting_line: Ref; pending_candidate: Ref; partial_outputs: Ref[] };
-  top_up: { line: Ref; units: number };
-  resume: { attempt: Ref; same_candidate: Ref; preserved_outputs: Ref[] };
-};
-// Root: vault.research.create_root enqueues the run-bearing root vault.research.bind accepts.
-// Pass: vault.research.advance {root} runs the host pass for a campaign bound with an
-// execution spec and answers each continuation's pending/running/state/held_line; a
-// confirmation reserves one exposure per sealed serving on the exploration line first.
-suite.todo(test, "LEARNING-09", "waits on its arming PR: one same-attempt/candidate/partial-output journey through both holds, driven by vault.research.advance over a vault.research.create_root root");
+/*
+ * Proves: a host-driven research campaign on a pinned RSI share runs from its bootstrap
+ *   measure to one child candidate's confirmation and holds there twice without failing:
+ *   first on the exposure line (no exposure left), then, after the owner tops up that line
+ *   and resumes, on the pinned share (the confirmation's token work does not fit it, while
+ *   the token line itself has room). Across both holds the SAME confirmation of the SAME
+ *   child attempt waits at the front of the same continuation, and the child's candidate pin
+ *   and recorded search and held-out evidence are unchanged. After the owner tops up the
+ *   share and resumes, that candidate is confirmed and promoted once: one serving, one
+ *   exposure spent on the exposure line (never on the token line), no second experiment, no
+ *   second promotion, and a later pass adds nothing. A soft share's overdraw takes only the
+ *   free pool, with an overdraft receipt signed by the install, and its refund returns it.
+ * Doors: HTTP facade vault.agents.create, vault.budgets.rsi.configure, vault.budgets.rsi,
+ *   vault.budgets.rsi.top_up, vault.budgets.rsi.hold.resume, vault.evals.families.assign,
+ *   vault.evals.cases.record, vault.evals.inventory, vault.evals.cohorts.setup,
+ *   vault.research.create_root, vault.research.bind, vault.research.advance,
+ *   vault.research.select, vault.research.archive, vault.research.budget,
+ *   vault.research.reserve_work, vault.research.refund_work, vault.agents.spawn.get. Every
+ *   agent run (each root's own run, the scorer's four, the experimenter's and the referee's)
+ *   is a real code-mode run whose one scripted reply is `finish(<answer>)`; the host pass
+ *   records the answer it reads from the run (continuation.rs run_answer_text).
+ * Mechanism (the owner, 13 Nov 22:44: "in general pick the more elegant version, updating
+ *   canon is ok"): the engine holds a task at its reservation, before any run exists, so no
+ *   live run is paused and nothing is lost. The kept "partial outputs" are the candidate's
+ *   recorded search and held-out evidence and the continuation's run trail; "the same try"
+ *   is the same child attempt's confirmation at the front of the same continuation. The
+ *   Docs lane rewords canon's pause-a-pending-attempt wording to this.
+ * Sizing: a run's token ceiling is its reservation, so the fixture's 30-unit shares (sized
+ *   for an owner-only reservation script) would cap a real run's call. The constants below
+ *   keep the order of refusals: every run before the confirmation fits the pinned share
+ *   whatever it settles at (spent <= reserved; an Unknown settlement stays committed), the
+ *   confirmation's work alone is larger than the share, and the token line and the
+ *   campaign lease hold all of it, so only the pinned share refuses. The fixture gives the
+ *   share labels and the expected facts.
+ * Polling: vault.research.advance writes nothing while a run goes (the pass stops at the
+ *   unfinished run), so the case polls it. The server's Coach host advances the same
+ *   campaign on its own 60 s tick; when two passes meet one row the later is refused
+ *   INVALID_STATE having written nothing, and the poll reads again.
+ * Unproved: a hold of a run already going (no door pauses a live research run; every hold
+ *   is at a reservation); the Coach host's own pass reaching these states unprompted.
+ */
+interface Learning09Scenario {
+  id: "LEARNING-09";
+  shares: { label: string; units: number; pinned: boolean }[];
+  expected: {
+    pending_attempt_preserved: boolean;
+    pending_candidate_preserved: boolean;
+    partial_outputs_preserved: boolean;
+    resume_same_attempt: boolean;
+    resource_hold_is_terminal_failure: boolean;
+    loop_may_widen_budget: boolean;
+    different_units_mixed: boolean;
+  };
+}
+type Learning09View = FacadeResult<"vault.research.advance">;
+type Learning09Row = Learning09View["continuations"][number];
+type Learning09Archive = FacadeResult<"vault.research.archive">;
+const L09_MODEL = "learning09-agent";
+const L09_USAGE = { inputTokens: 256, outputTokens: 96 } as const;
+const L09_DAY = 86_400;
+/** Token units each scorer and experimenter run reserves, and so its run's token ceiling. */
+const L09_RUN_UNITS = 100_000;
+/** Runs that reserve on the pinned share before the confirmation: the bootstrap search
+ * measure, the experiment, the child's search measure and the two held-out measures. */
+const L09_RUNS_BEFORE_CONFIRM = 5;
+/** The pinned share holds every run before the confirmation, whatever each one settles at. */
+const L09_PINNED_UNITS = L09_RUN_UNITS * L09_RUNS_BEFORE_CONFIRM;
+/** The confirmation's token work: alone more than the whole pinned share. */
+const L09_CONFIRM_UNITS = L09_PINNED_UNITS + L09_RUN_UNITS;
+const L09_SOFT_UNITS = 1_000;
+/** One soft-share reservation past its share: the excess comes from the free pool. */
+const L09_SOFT_RESERVE = 5_000;
+/** The token line: both shares, the pinned top-up and the soft overdraw fit under it. */
+const L09_TOKEN_LIMIT = 2_000_000;
+/** Each campaign's own lease: never the limit that refuses here. */
+const L09_LEASE_UNITS = 2_000_000;
+const L09_CONCURRENT_PASS = "another pass advanced this research continuation";
+const L09_HELD = { held: { reason: "budget" } } as const;
+
+function learning09Id(label: string): string {
+  return createHash("sha256").update(`learning-e2e:LEARNING-09:${label}`).digest("hex").slice(0, 32);
+}
+function learning09Sha(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+const L09_INCUMBENT = {
+  config_ref: "learning09-config:baseline", config_sha256: learning09Sha(`{"parameter":"baseline"}`),
+} as const;
+const L09_CANDIDATE = {
+  config_ref: "learning09-config:alternative", config_sha256: learning09Sha(`{"parameter":"alternative"}`),
+} as const;
+async function learning09Scenario(): Promise<Learning09Scenario> {
+  const data = await (await loadFixtures()).readJson<{ scenarios: { id: string }[] }>("learning-scenarios");
+  const row = data.scenarios.find(item => item.id === "LEARNING-09");
+  if (!row) throw new Error("Missing LEARNING-09 fixture scenario");
+  return row as Learning09Scenario; // Fixture discriminant, not an invented wire DTO.
+}
+/** An attempt id as the archive carries it (its 16 bytes), in hex as the advance view names it. */
+function learning09Hex(id: { readonly bytes: readonly number[] }): string {
+  return Array.from(id.bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+}
+async function learning09Agent(owner: PublicHttpClient, label: string): Promise<string> {
+  const agent_def_ref = learning09Id(label);
+  const created = await owner.call("vault.agents.create", {
+    agent_def_ref, definition: { agent_id: label, display_name: label, desc: `LEARNING-09 ${label}`, version: "1" },
+  });
+  expect(created.agent_def_ref).toBe(agent_def_ref);
+  return agent_def_ref;
+}
+/** The one reply to the next agent run's model call: a program that finishes with `answer`
+ * (text, or the JSON the run's briefing asks for). The runs reach the provider one at a
+ * time, in the order the single-flight pass dispatches them. */
+function learning09Reply(providers: ScriptedProviders, id: string, purpose: string, answer: unknown): void {
+  const text = typeof answer === "string" ? answer : JSON.stringify(answer);
+  providers.enqueue({
+    id, origin: "chat", role: "generative_reasoner", purpose,
+    // The engine-native executor streams on a local-openai-compat provider (wire.rs:146-149).
+    request: { method: "POST", path: "/v1/chat/completions", model: L09_MODEL,
+      fields: { stream: true, stream_options: { include_usage: true } } },
+    response: openaiStream(id, L09_MODEL, [`finish(${JSON.stringify(text)});`], L09_USAGE),
+  });
+}
+/** The run's queue state once it has ended. */
+async function learning09RunEnded(owner: PublicHttpClient, run: string, label: string): Promise<string> {
+  const seen = await awaitPublic(() => owner.call("vault.agents.spawn.get", { spawn_ref: run }),
+    view => ["completed", "failed", "cancelled", "abandoned"].includes(view.launched[0]?.state ?? ""),
+    { label, timeoutMs: 30_000 });
+  return seen.launched[0]?.state ?? "";
+}
+/** One sealed Companion family of one receipt case, cut by the owner into a cohort of its own. */
+async function learning09SealedCohort(owner: PublicHttpClient): Promise<string> {
+  const source = `learning09-source:${learning09Id("sealed-source")}`;
+  const family = await owner.call("vault.evals.families.assign", {
+    seat: "companion", roots: [source], purpose: "sealed_confirmation",
+  });
+  expect(family.purpose).toBe("sealed_confirmation");
+  const sourceAt = Math.floor(Date.now() / 1000) - L09_DAY;
+  await owner.call("vault.evals.cases.record", {
+    seat: "companion", kind: "receipt", receipts: [source], parents: [], stratum: null,
+    draw_probability: null, source_at: sourceAt,
+  });
+  const inventory = await owner.call("vault.evals.inventory", {});
+  const setup = await owner.call("vault.evals.cohorts.setup", {
+    inventory_at: inventory.built_at, inventory_digest: inventory.inventory_digest, families: [], cases: [],
+    cuts: [{ seat: "companion", from: sourceAt - L09_DAY, until: inventory.built_at,
+      rubric_revision: "learning09-rubric", reference: false }],
+  });
+  expect(setup.skipped).toEqual([]);
+  expect(setup.cohorts_cut).toHaveLength(1);
+  const cohort = setup.cohorts_cut[0];
+  if (!cohort) throw new Error("The owner's setup cut no cohort");
+  return cohort;
+}
+/** A config campaign: one primary metric, three distinct dataset revisions, its own lease. */
+function learning09Config(campaign_id: string): FacadeInput<"vault.research.bind">["config"] {
+  return {
+    campaign_id,
+    search_axes: [{ name: "parameter", values: ["baseline", "alternative"] }],
+    metric_set: { set_id: "learning09-quality", revision: "r1",
+      axes: [{ name: "quality", direction: "higher", role: "primary" }] },
+    splits: {
+      search: { dataset_id: "learning09-search", revision: "r1" },
+      held_out: { dataset_id: "learning09-held-out", revision: "r1" },
+      sealed: { dataset_id: "learning09-sealed", revision: "r1" },
+    },
+    budget: { budget_id: `${campaign_id}-lease`, max_units: L09_LEASE_UNITS, exploration_units: 10 },
+    decide: { kind: "dominance" },
+  };
+}
+/** One host pass; `null` when it met the Coach host's own pass on a row and wrote nothing. */
+async function learning09Pass(owner: PublicHttpClient, root: string): Promise<Learning09View | null> {
+  try {
+    return await owner.call("vault.research.advance", { root });
+  } catch (error) {
+    if (error instanceof PublicHttpError && error.reply.status === 409 && error.error?.code === "INVALID_STATE"
+      && error.error.message.includes(L09_CONCURRENT_PASS)) return null;
+    throw error;
+  }
+}
+/** Pass until `ready`; a failed continuation ends the case at once with its reason. */
+async function learning09AdvanceUntil(owner: PublicHttpClient, root: string, label: string,
+  ready: (view: Learning09View) => boolean, timeoutMs: number): Promise<Learning09View> {
+  const view = await awaitPublic(() => learning09Pass(owner, root), seen => {
+    if (seen === null) return false;
+    for (const row of seen.continuations) {
+      const state: unknown = row.state;
+      if (state !== null && typeof state === "object" && "failed" in state) {
+        throw new Error(`${label}: continuation ${JSON.stringify(row.work)} failed: ${JSON.stringify(state)}`);
+      }
+    }
+    return ready(seen);
+  }, { label, timeoutMs });
+  if (view === null) throw new Error(`${label}: no pass answered`);
+  return view;
+}
+function learning09Row(view: Learning09View, work: "bootstrap" | "round-0"): Learning09Row | undefined {
+  return view.continuations.find(row => JSON.stringify(row.work) === (work === "bootstrap" ? `"bootstrap"` : `{"round":0}`));
+}
+function learning09Ended(row: Learning09Row | undefined): boolean {
+  const state: unknown = row?.state;
+  return state !== null && typeof state === "object" && "done" in state;
+}
+function learning09IsHeld(row: Learning09Row | undefined): boolean {
+  return JSON.stringify(row?.state) === JSON.stringify(L09_HELD);
+}
+function learning09Node(archive: Learning09Archive, attempt: string): Learning09Archive["experiments"][number] {
+  const node = archive.experiments.find(row => learning09Hex(row.attempt) === attempt);
+  if (!node) throw new Error(`The campaign records no node ${attempt}`);
+  return node;
+}
+
+suite.test(test, "LEARNING-09", "A host-driven research campaign holds on its exposure line and then on its pinned share without failing, keeps the same candidate and its recorded evidence, resumes after the owner tops up the exact line, and promotes that candidate once; a soft share overdraws the free pool with a signed receipt", async () => {
+  const c = await learning09Scenario();
+  const pinned = c.shares.find(share => share.pinned)?.label;
+  const soft = c.shares.find(share => !share.pinned)?.label;
+  if (!pinned || !soft) throw new Error("The LEARNING-09 fixture names no pinned and soft share");
+  const providers = await ScriptedProviders.start({ id: "learning09-research", origins: ["chat"], steps: [] });
+  const engine = await EngineFixture.start({ id: "LEARNING-09", profile, serverLog: "oneiron=info", serverConfig: `
+[models.providers.learning09chat]
+kind = "local-openai-compat"
+base_url = "${providers.urls.chat}"
+revision = "learning-v1"
+[models.roles.generative_reasoner]
+model = "learning09chat:${L09_MODEL}"
+[models.dreamer]
+enabled = false
+[models.workflows]
+enabled = false
+[models.code_mode]
+prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/prompts"))}
+` });
+  try {
+    const owner = engine.client;
+
+    // ---- Setup by the owner over HTTP: the agents, both RSI lines with a pinned and a soft share, the sealed cohort. ----
+    const rootAgent = await learning09Agent(owner, "learning09-root");
+    const experimenter = await learning09Agent(owner, "learning09-experimenter");
+    const scorer = await learning09Agent(owner, "learning09-scorer");
+    const referee = await learning09Agent(owner, "learning09-referee");
+    const configured = await owner.call("vault.budgets.rsi.configure", {
+      limit: L09_TOKEN_LIMIT, exploration_exposure_limit: 0,
+      shares: { [pinned]: { units: L09_PINNED_UNITS, pinned: true }, [soft]: { units: L09_SOFT_UNITS, pinned: false } },
+    });
+    expect(configured.suspended).toBe(false);
+    expect(configured.work_line).toEqual({ unit: "tokens", limit: L09_TOKEN_LIMIT, spent: 0, reserved: 0 });
+    expect(configured.exposure_line).toEqual({ unit: "exposures", limit: 0, spent: 0, reserved: 0 });
+    const cohort = await learning09SealedCohort(owner);
+
+    // ---- The campaign root: its own run is a real code-mode run, ended before the bind. ----
+    learning09Reply(providers, "learning09-root-run", "the campaign root's own run reads its brief and finishes", "Campaign brief read.");
+    const created = await owner.call("vault.research.create_root", {
+      agent: rootAgent, intent_key: "learning-09/campaign", briefing: "Search the parameter axis for a better quality score.",
+    });
+    const root = created.root;
+    expect(await learning09RunEnded(owner, root, "LEARNING-09 campaign root's run ends")).toBe("completed");
+    // Each later run's answer, in the one order the single-flight pass dispatches the runs.
+    learning09Reply(providers, "learning09-bootstrap-search", "the scorer measures the incumbent root on the search split",
+      { scores: { quality: 0.2 }, confirmed_hits: 0.2, attribution: 1, hop_cost: 0 });
+    learning09Reply(providers, "learning09-experiment", "the experimenter writes one child candidate", L09_CANDIDATE);
+    learning09Reply(providers, "learning09-child-search", "the scorer measures the child on the search split: it beats the root",
+      { scores: { quality: 0.8 }, confirmed_hits: 0.8, attribution: 1, hop_cost: 0 });
+    learning09Reply(providers, "learning09-incumbent-held-out", "the scorer measures the incumbent on the held-out split",
+      { scores: { quality: 0.2 } });
+    learning09Reply(providers, "learning09-child-held-out", "the scorer measures the child on the held-out split",
+      { scores: { quality: 0.8 } });
+    learning09Reply(providers, "learning09-referee", "the referee scores the child against the incumbent on the sealed cases", {
+      candidate: 0.8, incumbent: 0.2, referee_pin: `learning09-referee@sha256:${learning09Sha("learning09-referee")}`,
+      sufficiency: { families: 2, floor_slices: {}, min_families_per_slice: 1, retest_noise: 0.1, owner_margin: null,
+        paired_interval: [0, 0.2], detectable_effect: null, set_changed: false, rubric_changed: false, canary_diverged: false },
+    });
+    const bound = await owner.call("vault.research.bind", {
+      root, config: learning09Config("learning09-campaign"), target: { config: { subject: "learning-09" } }, holder: null,
+      confirmation: { seat: "companion", cohort }, share: pinned, incumbent: L09_INCUMBENT, prior_ladder: [],
+      execution: { experimenter, scorer, referee, experiment_units: L09_RUN_UNITS, measure_units: L09_RUN_UNITS,
+        confirm_units: L09_CONFIRM_UNITS },
+    });
+    expect(bound.share).toBe(pinned);
+
+    // ---- Bootstrap: one scorer run measures the root; the owner's selection forks round 0. ----
+    const boot = await learning09AdvanceUntil(owner, root, "LEARNING-09 bootstrap measure ends",
+      view => learning09Ended(learning09Row(view, "bootstrap")), 30_000);
+    const bootRow = learning09Row(boot, "bootstrap");
+    expect(bootRow?.state).toEqual({ done: { note: "every task ran" } });
+    expect(bootRow?.runs).toHaveLength(1);
+    const selected = await owner.call("vault.research.select", { root, goal_met: false });
+    expect(selected.round).toBe(0);
+    const step: unknown = selected.step;
+    if (step === null || typeof step !== "object" || !("fork" in step)) throw new Error(`Round 0 did not fork: ${JSON.stringify(step)}`);
+    expect(learning09Hex((step as { fork: { parent: { bytes: number[] } } }).fork.parent)).toBe(root);
+
+    // ---- Hold 1: the round runs to the confirmation, which holds on the exposure line. ----
+    const exposureHold = await learning09AdvanceUntil(owner, root, "LEARNING-09 confirmation holds on the exposure line",
+      view => learning09IsHeld(learning09Row(view, "round-0")), 60_000);
+    const exposureRow = learning09Row(exposureHold, "round-0");
+    if (!exposureRow) throw new Error("No round 0 continuation");
+    expect(exposureRow.held_line).toBe("exploration");
+    expect(exposureRow.running ?? null).toBeNull();
+    // The experimenter's run is the child attempt; its confirmation waits at the front.
+    expect(exposureRow.runs).toHaveLength(4);
+    const child = exposureRow.runs[0];
+    if (!child) throw new Error("Round 0 dispatched no experiment");
+    expect(exposureRow.pending).toEqual([{ confirm: { candidate: child } }]);
+    expect(exposureHold.budget.exploration_reserved).toBe(0);
+    expect(exposureHold.budget.exploration_spent).toBe(0);
+    const lineAtExposureHold = await owner.call("vault.budgets.rsi", {});
+    expect(lineAtExposureHold.suspended).toBe(true);
+    expect(lineAtExposureHold.exposure_line).toEqual({ unit: "exposures", limit: 0, spent: 0, reserved: 0 });
+    const archiveAtExposureHold = await owner.call("vault.research.archive", { root });
+    expect(archiveAtExposureHold.experiments).toHaveLength(2);
+    const childAtExposureHold = learning09Node(archiveAtExposureHold, child);
+    expect(childAtExposureHold.candidate).toEqual(L09_CANDIDATE);
+    expect(childAtExposureHold.search ?? null).not.toBeNull();
+    expect(childAtExposureHold.held_out ?? null).not.toBeNull();
+    expect(archiveAtExposureHold.promotions).toHaveLength(1);
+    const basis = archiveAtExposureHold.promotions[0];
+    expect(basis && learning09Hex(basis.candidate)).toBe(child);
+    expect(basis?.call).toBe("promote");
+    expect(basis?.confirmation ?? null).toBeNull(); // the sealed shot is unspent
+    // A top-up alone raises only that line and resumes nothing.
+    const exposureTopUp = await owner.call("vault.budgets.rsi.top_up", { line: "exploration", units: 1 });
+    expect(exposureTopUp.exposure_line.limit).toBe(1);
+    expect(exposureTopUp.work_line.limit).toBe(L09_TOKEN_LIMIT);
+    expect(c.expected.different_units_mixed).toBe(false);
+    expect(exposureTopUp.suspended).toBe(true);
+    const stillHeld = learning09Row(await learning09AdvanceUntil(owner, root, "LEARNING-09 pass after a top-up alone",
+      () => true, 10_000), "round-0");
+    expect(stillHeld?.state).toEqual(L09_HELD);
+    expect(stillHeld?.held_line).toBe("exploration");
+    expect(stillHeld?.runs).toEqual(exposureRow.runs);
+
+    // ---- Hold 2: after the resume the exposure reserves, and the pinned share refuses the token work. ----
+    expect((await owner.call("vault.budgets.rsi.hold.resume", {})).suspended).toBe(false);
+    const shareHold = await learning09AdvanceUntil(owner, root, "LEARNING-09 confirmation holds on the pinned share",
+      view => { const row = learning09Row(view, "round-0"); return learning09IsHeld(row) && row?.held_line !== "exploration"; }, 10_000);
+    const shareRow = learning09Row(shareHold, "round-0");
+    expect(shareRow?.held_line).toEqual({ work: { purpose: "HeldOut" } });
+    expect(c.expected.pending_attempt_preserved).toBe(true);
+    expect(c.expected.pending_candidate_preserved).toBe(true);
+    expect(shareRow?.pending).toEqual(exposureRow.pending); // the same confirmation of the same child
+    expect(shareRow?.running ?? null).toBeNull();
+    expect(shareRow?.runs).toEqual(exposureRow.runs);
+    const lineAtShareHold = await owner.call("vault.budgets.rsi", {});
+    expect(lineAtShareHold.suspended).toBe(true);
+    // The exposure it reserved first went back in the same write.
+    expect(lineAtShareHold.exposure_line).toEqual({ unit: "exposures", limit: 1, spent: 0, reserved: 0 });
+    // The token line itself had room: the pinned share refused without taking the free pool.
+    const { work_line: workLine } = lineAtShareHold;
+    expect(workLine.limit - workLine.spent - workLine.reserved).toBeGreaterThanOrEqual(L09_CONFIRM_UNITS);
+    expect(lineAtShareHold.shares).toContainEqual({ label: pinned, units: L09_PINNED_UNITS, pinned: true });
+    const budgetAtShareHold = await owner.call("vault.research.budget", { root });
+    const exposuresAtShareHold = budgetAtShareHold.reservations.filter(row => row.line === "exploration");
+    expect(exposuresAtShareHold).toHaveLength(1);
+    expect(exposuresAtShareHold[0]?.settlement).toBe("Refunded");
+    // Reserve before spending: one settled token reservation per run, none for the refused work.
+    const workAtShareHold = budgetAtShareHold.reservations.filter(row => row.line !== "exploration");
+    expect(workAtShareHold).toHaveLength(L09_RUNS_BEFORE_CONFIRM);
+    expect(workAtShareHold.every(row => (row.settlement ?? null) !== null)).toBe(true);
+    const archiveAtShareHold = await owner.call("vault.research.archive", { root });
+    expect(c.expected.partial_outputs_preserved).toBe(true);
+    expect(archiveAtShareHold.experiments).toEqual(archiveAtExposureHold.experiments);
+    expect(archiveAtShareHold.promotions).toEqual(archiveAtExposureHold.promotions);
+
+    // ---- Resume: the owner tops up the exact share and resumes; the SAME confirmation serves once and promotes. ----
+    const shareTopUp = await owner.call("vault.budgets.rsi.top_up", { line: "share", share: pinned, units: L09_CONFIRM_UNITS });
+    expect(shareTopUp.shares).toContainEqual({ label: pinned, units: L09_PINNED_UNITS + L09_CONFIRM_UNITS, pinned: true });
+    expect(shareTopUp.suspended).toBe(true);
+    expect((await owner.call("vault.budgets.rsi.hold.resume", {})).suspended).toBe(false);
+    const done = await learning09AdvanceUntil(owner, root, "LEARNING-09 confirmation promotes the child",
+      view => learning09Ended(learning09Row(view, "round-0")), 30_000);
+    const doneRow = learning09Row(done, "round-0");
+    expect(doneRow?.state).toEqual({ done: { note: "confirmed: promoted" } });
+    expect(c.expected.resource_hold_is_terminal_failure).toBe(false);
+    expect(doneRow?.pending).toEqual([]);
+    expect(doneRow?.running ?? null).toBeNull();
+    expect(doneRow?.runs).toHaveLength(5);
+    expect(doneRow?.runs.slice(0, 4)).toEqual(exposureRow.runs);
+    const refereeRun = doneRow?.runs[4];
+    if (!refereeRun) throw new Error("No referee run");
+    expect(await learning09RunEnded(owner, refereeRun, "LEARNING-09 referee run ends")).toBe("completed");
+    const archiveDone = await owner.call("vault.research.archive", { root });
+    expect(c.expected.resume_same_attempt).toBe(true);
+    expect(archiveDone.experiments).toEqual(archiveAtExposureHold.experiments); // no second experiment
+    expect(archiveDone.promotions).toHaveLength(1);
+    const promoted = archiveDone.promotions[0];
+    expect(promoted && learning09Hex(promoted.candidate)).toBe(child);
+    expect(promoted?.candidate_pin).toEqual(L09_CANDIDATE);
+    expect(promoted?.confirmation ?? null).not.toBeNull();
+    expect(promoted?.promotion ?? null).not.toBeNull();
+    const lineDone = await owner.call("vault.budgets.rsi", {});
+    expect(lineDone.suspended).toBe(false);
+    expect(lineDone.exposure_line).toEqual({ unit: "exposures", limit: 1, spent: 1, reserved: 0 });
+    expect(done.budget.exploration_spent).toBe(1);
+    expect(done.budget.exploration_reserved).toBe(0);
+    const budgetDone = await owner.call("vault.research.budget", { root });
+    expect(budgetDone.reservations.filter(row => row.line === "exploration").map(row => row.settlement))
+      .toEqual(["Refunded", { Exposure: 1 }]);
+    const workDone = budgetDone.reservations.filter(row => row.line !== "exploration");
+    expect(workDone).toHaveLength(L09_RUNS_BEFORE_CONFIRM + 1);
+    expect(workDone.every(row => (row.settlement ?? null) !== null)).toBe(true);
+    // A pass after the end adds nothing: no run, no reservation, no serving.
+    const after = await learning09AdvanceUntil(owner, root, "LEARNING-09 pass after the end", () => true, 10_000);
+    expect(learning09Row(after, "round-0")).toEqual(doneRow);
+    expect(after.budget).toEqual(done.budget);
+
+    // ---- A soft share overdraws only the free pool, with a signed receipt; its refund returns the units. ----
+    learning09Reply(providers, "learning09-soft-root-run", "the soft campaign root's own run reads its brief and finishes", "Soft brief read.");
+    const softRoot = (await owner.call("vault.research.create_root", {
+      agent: rootAgent, intent_key: "learning-09/soft", briefing: "Reserve loop work on the soft share.",
+    })).root;
+    expect(await learning09RunEnded(owner, softRoot, "LEARNING-09 soft root's run ends")).toBe("completed");
+    const softBound = await owner.call("vault.research.bind", {
+      root: softRoot, config: learning09Config("learning09-soft"), target: { config: { subject: "learning-09-soft" } },
+      holder: null, confirmation: null, share: soft, incumbent: L09_INCUMBENT, prior_ladder: [], execution: null,
+    });
+    expect(softBound.share).toBe(soft);
+    const overdraw = await owner.call("vault.research.reserve_work", {
+      root: softRoot, purpose: "Experiment", units: L09_SOFT_RESERVE, attempt: null,
+    });
+    const softBudget = await owner.call("vault.research.budget", { root: softRoot });
+    const softRow = softBudget.reservations.find(row => row.id === overdraw);
+    expect(softRow?.settlement ?? null).toBeNull();
+    expect(softRow?.overdraft).toMatchObject({ share: soft, units: L09_SOFT_RESERVE - L09_SOFT_UNITS, reservation: overdraw });
+    expect(softRow?.overdraft?.public_key).toMatch(/^[0-9a-f]{64}$/);
+    expect(softRow?.overdraft?.signature).toMatch(/^[0-9a-f]{128}$/);
+    const lineAtOverdraw = await owner.call("vault.budgets.rsi", {});
+    expect(c.expected.loop_may_widen_budget).toBe(false);
+    expect(lineAtOverdraw.shares).toContainEqual({ label: soft, units: L09_SOFT_UNITS, pinned: false });
+    expect(lineAtOverdraw.suspended).toBe(false);
+    const refunded = await owner.call("vault.research.refund_work", { root: softRoot, reservation: overdraw });
+    expect(refunded.settlement).toBe("Refunded");
+  } finally {
+    const errors: string[] = [];
+    try { await engine.close(); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+    try { await providers.close(); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+    if (errors.length) throw new Error(`close: ${errors.join("; ")}`);
+  }
+}, 120_000);
