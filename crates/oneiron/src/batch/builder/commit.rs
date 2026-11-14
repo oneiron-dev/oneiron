@@ -661,6 +661,10 @@ fn apply_admitted(
         })
         .collect();
     let mut derived = crate::embed::repo_derived_batch(&batch.ops);
+    // An edge that binds a TURN's words, read before the apply, re-dirties
+    // that TURN after it (ARCH-0026 #sieve-open).
+    let rewired =
+        crate::dreamer_consolidation::redirty::RewiredTurnEdges::before(vault, wtxn, &batch.ops)?;
     apply_ops_with_origin(
         &vault.store,
         &vault.config,
@@ -671,6 +675,7 @@ fn apply_admitted(
         batch.gate_mode,
         batch.origin,
     )?;
+    rewired.redirty_in_txn(vault, wtxn)?;
     // Each NOTE's document is born with its core row (FIX 7783).
     for (id, markdown) in &batch.note_births {
         crate::note::birth_document_in_txn(vault, wtxn, *id, markdown)?;
