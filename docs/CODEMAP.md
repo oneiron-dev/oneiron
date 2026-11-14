@@ -64,7 +64,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-sdk-build](codemap/oneiron-sdk-build.md) | The SDK's generated outputs, produced at build time (untangle slice 4.3, SLICE4-RULED S4-2 G1) | 1 | 0 | 0 |
 | [oneiron-sdk-generator](codemap/oneiron-sdk-generator.md) | The SDK generator: writes every generated SDK output of the verb table (`scripts/sdk/verbs/`), the Rust… | 38 | 0 | 15 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 63 | 12 | 5 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1883 | 255 | 62 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1883 | 256 | 63 |
 | [oneiron-skill-attribution](codemap/oneiron-skill-attribution.md) | The skill attribution vocabulary (ARCH-0035, ARCH-0053 §4): an attempt's outcome evidence, the judge's… | 3 | 0 | 0 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 652 | 9 | 1 |
@@ -992,7 +992,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `web_client` | file | 1 | s | Endpoint discovery and browser access for an external shared web client |
 | `web_connector` | dir | 10 | m | The served half of the built-in `web` connector (FIX 11598, CONN-1 A): every `connector.call` that selects… |
 | `wire_health` | file+dir | 2 | m | The health check past a threshold (OF-520, ARCH-0044 C5) |
-| `wire_telemetry` | file+dir | 6 | m | RC42 observation-only wire counters |
+| `wire_telemetry` | file+dir | 6 | L | RC42 observation-only wire counters |
 | `xlsx_recalc` | file | 1 | m | The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless… |
 
 ## oneiron-skill-attribution
