@@ -275,6 +275,16 @@ impl<'a> ScopedRead<'a> {
         {
             return Ok(false);
         }
+        // A key rebuilt from a saved lane carries that lane's credential with
+        // no proof (OF-506): it reads only while the credential still holds
+        // in this snapshot, as its rebuild judged it, so a key rebuilt while
+        // a grant stood and kept past the grant's withdrawal reads nothing
+        // (FIX OWN-DEVICE-GRANT-NOT-RECHECKED, review R1 of #8029).
+        for credential in &self.actor_key.saved_credentials {
+            if !credential.holds_in(self.vault, txn)? {
+                return Ok(false);
+            }
+        }
         let Some(proof) = &self.actor_key.proof else {
             return Ok(true);
         };

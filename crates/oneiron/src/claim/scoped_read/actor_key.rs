@@ -83,6 +83,10 @@ pub struct ScopedReadActorKey {
     /// Set on every key that names a base agent (untangle 6.3, X04); see
     /// [`Self::for_engine_actor`].
     system_agent: Option<EntityId>,
+    /// The credentials saved lanes froze, carried with no proof (OF-506):
+    /// each serving txn reads nothing unless every one still holds there;
+    /// see [`Self::bound_by_saved_credential`].
+    pub(super) saved_credentials: Vec<super::frozen::SavedCredential>,
 }
 
 pub use crate::settings::CallerLocality;
@@ -405,6 +409,7 @@ impl ScopedReadActorKey {
             owner_by_census: false,
             record_bound: None,
             system_agent,
+            saved_credentials: Vec::new(),
         })
     }
 
@@ -449,6 +454,7 @@ impl ScopedReadActorKey {
             owner_by_census: false,
             record_bound: None,
             system_agent: None,
+            saved_credentials: Vec::new(),
         }
     }
 
@@ -941,6 +947,23 @@ impl ScopedReadActorKey {
     /// binds it.
     pub(crate) fn agent_grant_holder(&self) -> Option<EntityId> {
         self.agent_grant_holder
+    }
+
+    /// This key's rows also held, in each serving txn, to `credential`, the
+    /// credential a saved lane froze (OF-506): the key reads nothing in a
+    /// snapshot where it no longer holds, as the key's rebuild judged it, so
+    /// a key rebuilt while it held and kept past its withdrawal reads no
+    /// more (FIX OWN-DEVICE-GRANT-NOT-RECHECKED). It only narrows: each
+    /// credential bound before still binds beside it.
+    #[must_use]
+    pub(super) fn bound_by_saved_credential(
+        mut self,
+        credential: super::frozen::SavedCredential,
+    ) -> Self {
+        if !self.saved_credentials.contains(&credential) {
+            self.saved_credentials.push(credential);
+        }
+        self
     }
 
     /// The worlds this read asked for, as a world-only ceiling; `None` when

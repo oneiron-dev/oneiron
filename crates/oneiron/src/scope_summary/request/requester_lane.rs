@@ -181,13 +181,17 @@ pub(super) fn declared_lane(input: &Value) -> Result<FrozenReadLane> {
 }
 
 /// The actual native base a NOTE declaration's frozen narrowing is met with.
-/// Non-principal declarations require both producer-captured facts; an owner
-/// id alone never restores an exemption a transferred credential did not hold.
+/// A lane that reads as its requester's own, held at most to a credential
+/// whose grant must stand, keeps the principal's base (FIX
+/// OWN-DEVICE-GRANT-NOT-RECHECKED, review R2 of #8029); the rebuild still
+/// judges that credential. Other declarations require both
+/// producer-captured facts; an owner id alone never restores an exemption a
+/// transferred credential did not hold.
 pub(super) fn declared_read_basis(
     input: &Value,
     lane: &FrozenReadLane,
 ) -> Result<RequesterReadBasis> {
-    if lane.is_principal() {
+    if lane.reads_as_principal() {
         return Ok(RequesterReadBasis::Principal);
     }
     let Value::Map(fields) = input else {

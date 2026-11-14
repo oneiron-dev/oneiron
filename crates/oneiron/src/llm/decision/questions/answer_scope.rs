@@ -244,9 +244,22 @@ pub fn project_bound_outcomes_in_lane(
 }
 
 /// Whether `lane` freezes as its principal's own: a full lane, whose replies
-/// are judged on no row.
+/// are judged on no row. A full lane held to a credential whose grant must
+/// stand ([`crate::claim::FrozenReadLane::reads_as_principal`]) is one only
+/// while that credential holds now (FIX OWN-DEVICE-GRANT-NOT-RECHECKED);
+/// otherwise each reply is judged on its rows, and a lapsed credential reads
+/// none of them.
 fn reads_as_principal(lane: &ScopedRead<'_>) -> bool {
-    lane.freeze().is_ok_and(|frozen| frozen.is_principal())
+    match lane.freeze() {
+        Ok(frozen) if frozen.is_principal() => true,
+        Ok(frozen) if frozen.reads_as_principal() => lane
+            .vault()
+            .store
+            .env
+            .read_txn()
+            .is_ok_and(|txn| lane.credential_live_in(&txn).unwrap_or(false)),
+        _ => false,
+    }
 }
 
 /// The items `lane` reads every row of, as `rows` names each, in one

@@ -217,6 +217,35 @@ impl Vault {
         }
     }
 
+    /// Whether the credential `id` minted still stands, whatever its own
+    /// lifetime: its mint unrevoked in this snapshot's fold, and its grant,
+    /// invitation and delegation still standing as they bound it (FIX 5952).
+    /// A saved lane that reads as its principal's own judges this at each
+    /// rebuild and each read (FIX OWN-DEVICE-GRANT-NOT-RECHECKED): a paired
+    /// device's renewal lets the old credential run out (FIX 3377), so its
+    /// expiry ends no saved work, while the grant's withdrawal does.
+    ///
+    /// # Errors
+    /// A store, fold or clock failure judging it.
+    pub(crate) fn capability_slip_id_stands_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &[u8; 32],
+    ) -> Result<bool> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        if !fold.slip_is_live(id) {
+            return Ok(false);
+        }
+        match fold.slips.mints.get(id) {
+            Some(mint) => {
+                let now = self.instant_in_txn(txn)?.secs();
+                Ok(self.slip_refs_stand_in_txn(txn, &mint.action.claims, now)?
+                    && self.member_slip_scope_is_current_in_txn(txn, &mint.action.claims)?)
+            }
+            None => Ok(false),
+        }
+    }
+
     /// Read-only holder verification for repeatable credential checks. One-shot
     /// redemption uses authenticate_capability_slip or the secret door instead.
     pub fn verify_capability_slip(

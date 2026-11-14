@@ -147,8 +147,10 @@ impl<'v> ScopedRead<'v> {
 
     /// This lane read by `owner`, its own reader, under the owner's key: the
     /// key keeps this key's destination, worlds, room turn, channel,
-    /// relationship principal and owner exemption, and the lane keeps this
-    /// lane's audience, peers, session view, room ceiling and claim status.
+    /// relationship principal, owner exemption and saved credentials (a
+    /// rebuilt saved lane's, FIX OWN-DEVICE-GRANT-NOT-RECHECKED), and the
+    /// lane keeps this lane's audience, peers, session view, room ceiling
+    /// and claim status.
     fn as_owner(&self, owner: EntityId) -> Result<ScopedRead<'v>> {
         let key = &self.actor_key;
         let mut owner_key =
@@ -161,6 +163,9 @@ impl<'v> ScopedRead<'v> {
         owner_key.room_turn.clone_from(&key.room_turn);
         owner_key.phone_lines.clone_from(&key.phone_lines);
         owner_key.worlds.clone_from(&key.worlds);
+        owner_key
+            .saved_credentials
+            .clone_from(&key.saved_credentials);
         let room_ceiling = self
             .room_ceiling
             .lock()

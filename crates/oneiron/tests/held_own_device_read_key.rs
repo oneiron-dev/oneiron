@@ -12,13 +12,17 @@
 //! Saved work (a saved question's or a queued summary's lane, OF-506) froze
 //! the device's unrestricted lane as its holder's principal lane, which
 //! keeps no credential: its rebuild over the owner's own key read on after
-//! the delete. The frozen lane now keeps the credential's id, and each
-//! rebuild judges its grant (FrozenReadLane::freeze).
+//! the delete. The frozen lane now keeps the credential's id, each rebuild
+//! judges its grant (FrozenReadLane::freeze), and the rebuilt key carries
+//! the credential, so a key rebuilt before the delete and held past it, or
+//! frozen again, reads nothing after it.
 //!
-//! Red on main: a held lane, a key rebuilt from the same verified slip and
-//! a saved lane rebuilt after the delete all still read the owner's claim.
-//! Guard (green on main too): a held lane whose grant stands reads on after
-//! another grant's delete, and a saved lane rebuilt before the delete reads.
+//! Red on main: a held lane, a key rebuilt from the same verified slip, a
+//! saved lane rebuilt after the delete, a saved lane's key rebuilt before
+//! the delete and a lane frozen again from that key all still read the
+//! owner's claim. Guard (green on main too): a held lane whose grant stands
+//! reads on after another grant's delete, and each saved lane rebuilt
+//! before the delete reads.
 //! The owner's own key reads the claim throughout, so a refused read is the
 //! credential's, not a missing row.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -228,6 +232,19 @@ fn owner_reads(fixture: &Fixture) -> (bool, String) {
     claim_reads(fixture, &held_lane(fixture, owner_key(fixture)))
 }
 
+/// The device's read lane frozen as saved work keeps it, and read back
+/// from its stored MessagePack form, as a saved question's and a queued
+/// summary's lane is.
+fn saved_device_lane(fixture: &Fixture) -> FrozenReadLane {
+    let frozen = fixture
+        .vault
+        .scoped_read(device_key(fixture))
+        .freeze()
+        .expect("the paired device's read lane freezes");
+    let stored = rmp_serde::to_vec_named(&frozen).expect("frozen lane encodes");
+    rmp_serde::from_slice(&stored).expect("frozen lane decodes")
+}
+
 /// What `frozen`, rebuilt now over the owner's own key as saved work's
 /// reader is, reads of the fixture's claim. A rebuild that errs reads
 /// nothing.
@@ -318,13 +335,7 @@ fn a_read_key_rebuilt_after_its_own_device_grant_is_deleted_reads_nothing() {
 #[test]
 fn a_saved_lane_rebuilt_after_its_own_device_grant_is_deleted_reads_nothing() {
     let fixture = fixture();
-    let frozen = fixture
-        .vault
-        .scoped_read(device_key(&fixture))
-        .freeze()
-        .expect("the paired device's read lane freezes");
-    let stored = rmp_serde::to_vec_named(&frozen).expect("frozen lane encodes");
-    let frozen: FrozenReadLane = rmp_serde::from_slice(&stored).expect("frozen lane decodes");
+    let frozen = saved_device_lane(&fixture);
     let (before, seen) = saved_lane_reads(&fixture, &frozen);
     assert!(
         before,
@@ -342,6 +353,79 @@ fn a_saved_lane_rebuilt_after_its_own_device_grant_is_deleted_reads_nothing() {
     assert!(
         owner,
         "control: the owner's own key still reads the claim; seen {seen}"
+    );
+}
+
+/// Sol review R1 of #8029 (15 Nov 06:55): saved work holds the key it
+/// rebuilt across its own later snapshots (a saved question's reader, a
+/// summary's reply lane), so the key itself must judge the grant at each
+/// read, not only its rebuild.
+#[test]
+fn a_saved_lane_key_rebuilt_before_its_own_device_grant_is_deleted_reads_nothing_after_it() {
+    let fixture = fixture();
+    let frozen = saved_device_lane(&fixture);
+    let rebuilt = held_lane(
+        &fixture,
+        frozen
+            .narrow(&fixture.vault, owner_key(&fixture))
+            .expect("the saved lane rebuilds while its own-device grant stands"),
+    );
+    let (before, seen) = claim_reads(&fixture, &rebuilt);
+    assert!(
+        before,
+        "actor=owner's paired device; expected its saved lane's key, rebuilt while its own-device grant stands, to read the owner's claim; seen {seen}"
+    );
+
+    delete_grant(&fixture, fixture.device_grant);
+    let (after, seen) = claim_reads(&fixture, &rebuilt);
+    assert!(
+        !after,
+        "actor=owner's paired device; expected its saved lane's key, rebuilt before its own-device grant {:?} was deleted, to read nothing after the delete; seen {seen}",
+        fixture.device_grant
+    );
+    let (owner, seen) = owner_reads(&fixture);
+    assert!(
+        owner,
+        "control: the owner's own key still reads the claim; seen {seen}"
+    );
+}
+
+/// Sol review R1 of #8029 (15 Nov 06:55): a rebuilt key holds no proof, so
+/// freezing it again kept no credential and became the owner's principal
+/// lane; the key now carries the credential, and the second freeze keeps it.
+#[test]
+fn a_saved_lane_frozen_again_from_its_rebuilt_key_reads_nothing_once_its_own_device_grant_is_deleted()
+ {
+    let fixture = fixture();
+    let rebuilt = saved_device_lane(&fixture)
+        .narrow(&fixture.vault, owner_key(&fixture))
+        .expect("the saved lane rebuilds while its own-device grant stands");
+    let refrozen = fixture
+        .vault
+        .scoped_read(rebuilt)
+        .freeze()
+        .expect("the rebuilt lane freezes again");
+    let (before, seen) = saved_lane_reads(&fixture, &refrozen);
+    assert!(
+        before,
+        "actor=owner's paired device; expected its lane frozen again from the rebuilt key to read the owner's claim while its own-device grant stands; seen {seen}"
+    );
+
+    delete_grant(&fixture, fixture.device_grant);
+    let (after, seen) = saved_lane_reads(&fixture, &refrozen);
+    assert!(
+        !after,
+        "actor=owner's paired device; expected its lane frozen again from the rebuilt key, rebuilt after its own-device grant {:?} is deleted, to read nothing; seen {seen}",
+        fixture.device_grant
+    );
+    let (owner, seen) = owner_reads(&fixture);
+    assert!(
+        owner,
+        "control: the owner's own key still reads the claim; seen {seen}"
+    );
+    assert!(
+        !refrozen.is_principal(),
+        "actor=owner's paired device; expected the lane frozen again from the rebuilt key to keep the device's credential, not become the owner's principal lane"
     );
 }
 

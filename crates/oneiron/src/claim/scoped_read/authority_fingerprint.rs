@@ -23,6 +23,7 @@ use std::collections::BTreeSet;
 
 use sha2::{Digest, Sha256};
 
+use super::frozen::SavedCredential;
 use super::{RoomTurnCeiling, ScopedReadActorKey};
 use crate::authority::{HostActionGuard, VerifiedSlip};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -54,6 +55,16 @@ impl ScopedReadActorKey {
         hasher.update(b"oneiron.scoped_read.authority_fingerprint.v1");
         fold_scope(&mut hasher, &self.world_ceiling())?;
         fold_record_bound(&mut hasher, self.record_bound.as_ref());
+        // Only when set, so a key no saved lane bound keeps its fingerprint:
+        // each credential a saved lane froze, and whether it holds now (FIX
+        // OWN-DEVICE-GRANT-NOT-RECHECKED).
+        if !self.saved_credentials.is_empty() {
+            fold_len(&mut hasher, self.saved_credentials.len());
+            for credential in &self.saved_credentials {
+                hasher.update(credential.slip_id());
+                hasher.update([u8::from(credential.holds_in(vault, &txn)?)]);
+            }
+        }
         if let Some(owner) = self.vault_owner_ref() {
             hasher.update([0u8]);
             hasher.update(owner.as_bytes());
@@ -337,6 +348,19 @@ impl ScopedReadActorKey {
         // the key in each snapshot (REVIEW-7051 P1).
         if let Some(holder) = self.agent_grant_holder() {
             key_fold_id(&mut hasher, Some(holder));
+        }
+        // Last, and only when set: the credentials saved lanes froze, each
+        // judged in every serving txn (FIX OWN-DEVICE-GRANT-NOT-RECHECKED).
+        if !self.saved_credentials.is_empty() {
+            key_fold_len(&mut hasher, self.saved_credentials.len());
+            for credential in &self.saved_credentials {
+                let judged = match credential {
+                    SavedCredential::Live(_) => 0u8,
+                    SavedCredential::Standing(_) => 1u8,
+                };
+                hasher.update(&[judged]);
+                hasher.update(&credential.slip_id());
+            }
         }
         *hasher.finalize().as_bytes()
     }

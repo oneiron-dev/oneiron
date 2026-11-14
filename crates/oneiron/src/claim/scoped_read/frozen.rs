@@ -17,11 +17,18 @@
 //! read, and the principal's relationship grants are read live. A revocation
 //! after the save therefore never widens what the work reads. A lane that
 //! read under no narrowing freezes as its principal's own
-//! ([`FrozenReadLane::principal`]), unless its credential names a grant or
-//! a non-guest credential's native key lacks the owner's full floor. Even
-//! with a top read Scope, that lane keeps its credential rather than
-//! becoming its holder's principal lane, so a rebuild after the grant is
-//! withdrawn reads nothing (FIX OWN-DEVICE-GRANT-NOT-RECHECKED).
+//! ([`FrozenReadLane::principal`]), unless a non-guest credential's native
+//! key lacks the owner's full floor (that lane keeps its credential and a
+//! top read Scope), or its credential names a grant: that lane still reads
+//! as its principal's own, with no Scope, but stays held to the credential
+//! while the grant stands ([`FrozenReadLane::reads_as_principal`]), so a
+//! rebuild after the grant is withdrawn reads nothing (FIX
+//! OWN-DEVICE-GRANT-NOT-RECHECKED).
+//!
+//! A rebuilt key carries the lane's credential ([`SavedCredential`]), and
+//! every read under it judges that credential again in its own snapshot: a
+//! key rebuilt while the credential held and kept past its withdrawal reads
+//! nothing, and freezing that key again keeps the credential.
 //!
 //! Sight is never frozen: a door that serves a secret derives it again from
 //! the rebuilt lane.
@@ -36,6 +43,45 @@ use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
 
 /// [`FrozenReadLane::freeze`]'s refusal of a narrowed guest credential's lane.
 const GUEST_LANE_NOT_SAVED: &str = "a narrowed guest credential's read lane is not saved";
+
+/// The credential a saved lane froze, as a key rebuilt from that lane
+/// carries it with no proof (OF-506): every read under the key judges it
+/// again in its own snapshot (`ScopedRead::proof_live_in`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SavedCredential {
+    /// A narrowed lane's credential: it holds while it is live, that is
+    /// unexpired, unrevoked and its grant, invitation and delegation
+    /// standing (`Vault::capability_slip_id_is_live_in_txn`).
+    Live([u8; 32]),
+    /// The credential of a lane that reads as its principal's own
+    /// ([`FrozenReadLane::reads_as_principal`]): it holds while it is
+    /// unrevoked and its grant, invitation and delegation stand, past its
+    /// own expiry (`Vault::capability_slip_id_stands_in_txn`). A paired
+    /// device's renewal lets the old credential run out (FIX 3377), so its
+    /// expiry ends no saved work; the grant's withdrawal does.
+    Standing([u8; 32]),
+}
+
+impl SavedCredential {
+    /// The credential's slip id.
+    #[must_use]
+    pub(crate) fn slip_id(self) -> [u8; 32] {
+        match self {
+            Self::Live(id) | Self::Standing(id) => id,
+        }
+    }
+
+    /// Whether this credential still holds in `txn`.
+    ///
+    /// # Errors
+    /// A store, fold or clock failure judging it.
+    pub(crate) fn holds_in(self, vault: &crate::Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        match self {
+            Self::Live(id) => vault.capability_slip_id_is_live_in_txn(txn, &id),
+            Self::Standing(id) => vault.capability_slip_id_stands_in_txn(txn, &id),
+        }
+    }
+}
 
 /// The scope a read lane read under when its work was saved (OF-506). The
 /// engine mints it from the saver's live lane ([`Self::freeze`]) or as the
@@ -100,22 +146,53 @@ impl FrozenReadLane {
         *self == Self::default()
     }
 
+    /// Whether this lane reads as its principal's own: [`Self::principal`],
+    /// or that lane held only to a credential that must still stand (FIX
+    /// OWN-DEVICE-GRANT-NOT-RECHECKED). An unrestricted lane whose
+    /// credential names a grant freezes so: it keeps no Scope, so a rebuild
+    /// keeps its principal's own floor and owner authority while the grant
+    /// stands, and reads nothing once it does not.
+    #[must_use]
+    pub fn reads_as_principal(&self) -> bool {
+        Self {
+            credential: None,
+            ..self.clone()
+        }
+        .is_principal()
+    }
+
+    /// The credential each rebuild of this lane, and each read under the
+    /// rebuilt key, judges: whole on a narrowed lane, by its standing on one
+    /// that reads as its principal's own.
+    fn saved_credential(&self) -> Option<SavedCredential> {
+        self.credential.map(|id| {
+            if self.reads_as_principal() {
+                SavedCredential::Standing(id)
+            } else {
+                SavedCredential::Live(id)
+            }
+        })
+    }
+
     /// `lane`, frozen. A lane under no narrowing freezes as the principal's
-    /// own, except under a credential that names a grant, or a non-guest
-    /// credential whose native key lacks the owner's full floor: its
-    /// credential's id stays even with a top read Scope, so each rebuild
-    /// judges that grant live (FIX OWN-DEVICE-GRANT-NOT-RECHECKED).
-    /// Otherwise the credential's id, read Scope and records caveat, each
-    /// agent Grant alternative alone, the asked worlds and the room facets
-    /// are kept. A channel caveat the lane
+    /// own, except under a non-guest credential whose native key lacks the
+    /// owner's full floor, whose credential's id stays with a top read
+    /// Scope, or under a credential that names a grant, whose id stays with
+    /// no Scope ([`Self::reads_as_principal`]): each rebuild judges that
+    /// grant (FIX OWN-DEVICE-GRANT-NOT-RECHECKED). Otherwise the
+    /// credential's id, read Scope and records caveat, each agent Grant
+    /// alternative alone, the asked worlds and the room facets are kept. A
+    /// key rebuilt from a frozen lane keeps the credential it carries
+    /// ([`SavedCredential`]). A channel caveat the lane
     /// did not meet freezes as a Scope that reads nothing, as the live lane
     /// read nothing under it.
     ///
     /// # Errors
     /// [`Error::InvalidConfig`] for a lane whose bound has no frozen form,
     /// so dropping it would widen the saved read: a room turn, an audience
-    /// or peer reads, or a narrowed guest credential, whose grant's current
-    /// Scope binds only through its proof.
+    /// or peer reads, a narrowed guest credential, whose grant's current
+    /// Scope binds only through its proof, or a key bound by two
+    /// credentials, as a frozen lane keeps one.
     pub fn freeze(lane: &ScopedRead<'_>) -> Result<Self> {
         let key = &lane.actor_key;
         if key.room_turn.is_some() || lane.audience.is_some() || !lane.peer_reads.is_empty() {
@@ -152,19 +229,53 @@ impl FrozenReadLane {
         });
         let worlds = key.worlds.as_ref().map(WorldAuthoritySet::scope_axis);
         let names_grant = claims.is_some_and(|claims| claims.grant_ref.is_some());
-        // A credential that names a grant stands only while the grant does:
-        // its lane keeps the credential's id, so each rebuild judges the
-        // grant live. Frozen as its holder's principal lane, saved work read
-        // on after the grant was withdrawn (FIX OWN-DEVICE-GRANT-NOT-RECHECKED).
-        let keep_credential = names_grant || (claims.is_some() && !key.reads_as_vault_owner());
+        // A non-guest credential whose native key lacks the owner's full
+        // floor keeps its read Scope even at top; so does a rebuilt key that
+        // carries a saved credential and a frozen Scope.
+        let keeps_scope = match claims {
+            Some(claims) => claims.grant_ref.is_none() && !key.reads_as_vault_owner(),
+            None => !key.saved_credentials.is_empty() && key.authority_scope().is_some(),
+        };
         let narrows = scope_narrows
             || !records.is_empty()
             || channel_refused
             || worlds.is_some()
             || key.room_facets.is_some()
             || key.grant_alternatives().is_some();
-        if !keep_credential && !narrows {
-            return Ok(Self::principal());
+        // The lane stays bound to each credential a rebuilt key carries, and
+        // to the proof's own unless the lane freezes as its principal's own
+        // with no grant to judge. A credential that names a grant stands
+        // only while the grant does: frozen as its holder's principal lane,
+        // saved work read on after the grant was withdrawn (FIX
+        // OWN-DEVICE-GRANT-NOT-RECHECKED).
+        let mut credentials: Vec<[u8; 32]> = key
+            .saved_credentials
+            .iter()
+            .copied()
+            .map(SavedCredential::slip_id)
+            .collect();
+        if let Some(claims) = claims
+            && (names_grant || keeps_scope || narrows)
+            && !credentials.contains(&claims.slip_id)
+        {
+            credentials.push(claims.slip_id);
+        }
+        let credential = match credentials.as_slice() {
+            [] => None,
+            [credential] => Some(*credential),
+            _ => {
+                return Err(Error::InvalidConfig(
+                    "a saved read lane is bound by one credential".into(),
+                ));
+            }
+        };
+        if !keeps_scope && !narrows {
+            // No Scope: a rebuild keeps the principal's own floor and owner
+            // authority while the credential stands.
+            return Ok(Self {
+                credential,
+                ..Self::principal()
+            });
         }
         if names_grant && narrows {
             return Err(Error::InvalidConfig(GUEST_LANE_NOT_SAVED.into()));
@@ -181,7 +292,7 @@ impl FrozenReadLane {
             )
         };
         Ok(Self {
-            credential: claims.map(|claims| claims.slip_id),
+            credential,
             authority: Some(authority),
             grant_alternatives,
             records,
@@ -289,9 +400,13 @@ impl FrozenReadLane {
 
     /// `key`, the principal's own live key, narrowed by this frozen lane in
     /// `txn`: held to the frozen Scope, records caveat, worlds and room
-    /// facets, each only narrowing. A narrowed lane whose credential is no
-    /// longer live in `txn` reads nothing. The principal's own lane returns
-    /// `key` unchanged.
+    /// facets, each only narrowing. A lane whose credential no longer holds
+    /// in `txn` ([`SavedCredential`]) reads nothing, and the rebuilt key
+    /// carries that credential, so each later read judges it again in its
+    /// own snapshot. The principal's own lane returns `key` unchanged; a
+    /// lane that reads as its principal's own
+    /// ([`Self::reads_as_principal`]) returns it held to its credential
+    /// alone.
     ///
     /// # Errors
     /// A store, fold or clock failure judging the credential.
@@ -304,8 +419,9 @@ impl FrozenReadLane {
         if self.is_principal() {
             return Ok(key);
         }
-        if let Some(credential) = &self.credential
-            && !vault.capability_slip_id_is_live_in_txn(txn, credential)?
+        let saved = self.saved_credential();
+        if let Some(credential) = saved
+            && !credential.holds_in(vault, txn)?
         {
             return ScopedReadActorKey::read_nothing(
                 key.actor_ref(),
@@ -313,7 +429,21 @@ impl FrozenReadLane {
             )
             .ok_or(Error::InvariantViolation("frozen read lane actor"));
         }
-        let mut key = key.within_authority(self.authority.clone().unwrap_or_else(Scope::top));
+        // A key held past this snapshot judges the credential at each read
+        // (review R1 of #8029): rebuilt while it held, it reads nothing once
+        // it no longer does. A key whose own proof is that credential
+        // already judges it at each use.
+        let proof_id = key.proof.as_ref().map(|proof| proof.claims().slip_id);
+        let mut key = match saved {
+            Some(credential) if proof_id != Some(credential.slip_id()) => {
+                key.bound_by_saved_credential(credential)
+            }
+            _ => key,
+        };
+        if self.reads_as_principal() {
+            return Ok(key);
+        }
+        key = key.within_authority(self.authority.clone().unwrap_or_else(Scope::top));
         if let Some(alternatives) = &self.grant_alternatives {
             key = key.within_grant_alternatives(alternatives);
         }
