@@ -224,9 +224,17 @@ pub fn case_candidate(
         Outcome::Ask(decisions) => {
             let pages = decisions
                 .iter()
-                .map(|decision| decision.page.as_str())
+                .map(|decision| {
+                    let shortfalls = decision
+                        .shortfalls
+                        .iter()
+                        .map(|shortfall| format!("{} {:?}", shortfall.block, shortfall.reason))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("{} ({shortfalls})", decision.page)
+                })
                 .collect::<Vec<_>>()
-                .join(", ");
+                .join("; ");
             return Err(format!(
                 "{id}: the brief asks for decisions on pages {pages}"
             ));

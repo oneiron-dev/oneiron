@@ -26,21 +26,6 @@
           "carriers": [
             "table"
           ]
-        },
-        {
-          "id": "s-claim",
-          "kind": "claim",
-          "text": "Two sites run above plan.",
-          "evidence": [
-            {
-              "document": "doc:annual-report",
-              "version": "v3",
-              "start": "cursor:10",
-              "end": "cursor:47",
-              "quote": "above plan",
-              "quote_hash": "319a6976eafb5b4346cec35f40e566072acac784462a0c3484732abb0f1c6803"
-            }
-          ]
         }
       ]
     }
