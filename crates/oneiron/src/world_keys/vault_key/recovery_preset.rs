@@ -65,6 +65,8 @@ const ANY_TWO_NEEDS_KIT: &str =
 const KIT_POINT_ADDED: &str =
     "a passkey's kit piece wrap is written by issuing its kit, not added as a wrap";
 const PRESET_DELIVERED: &str = "recovery preset \"Nobody but me\" refuses a delivered data key: nobody but the owner holds the key";
+const PRESET_ESCROW_OPENED: &str = "recovery preset \"Nobody but me\" refuses a key an escrow recipient opened from an earlier backup: nobody but the owner holds a piece";
+const PRESET_ANSWER_DEVICE: &str = "recovery preset \"Nobody but me\" is entered over the owner API only while this install's device wrap stays, as the answer alone carries the sheet: add it, or set the preset with the CLI, which keeps the sheet in a file first";
 const PRESET_CUSTODY: &str = "recovery preset \"Nobody but me\" needs an owner-held data key, not a \
      host-managed or supervisor-delivered one";
 const SHEET_ADDED: &str = "the printed sheet is issued by the recovery preset, not added as a wrap";
@@ -116,6 +118,30 @@ pub(super) fn admit_presented_capsule(preset: RecoveryPreset) -> Result<()> {
         return Err(refused(PRESET_CAPSULE));
     }
     Ok(())
+}
+
+/// Refuses, under "Nobody but me", a key an escrow recipient opened (a
+/// carried escrow wrap but the world kit's, or a presented capsule) from an
+/// earlier artifact: the preset retired every such recipient, and the data
+/// key does not rotate (review of #7766, round 2).
+pub(super) fn admit_escrow_opened_key(preset: RecoveryPreset) -> Result<()> {
+    if preset.is_nobody_but_me() {
+        return Err(refused(PRESET_ESCROW_OPENED));
+    }
+    Ok(())
+}
+
+impl VaultKeyUnlock<'_> {
+    /// Whether this unlock reaches the key through an escrow recipient that
+    /// "Nobody but me" retires: an escrow wrap but the world kit's, or a
+    /// presented capsule.
+    pub(crate) fn is_escrow_recipient_unlock(&self) -> bool {
+        match self {
+            Self::EscrowCapsule { .. } => true,
+            Self::Escrow { label, .. } => *label != WORLD_KIT_ESCROW,
+            _ => false,
+        }
+    }
 }
 
 /// Refuses a delivered data key under "Nobody but me".
@@ -244,6 +270,16 @@ fn finish_or_pending(transition: WrapTransition<'_>) -> bool {
     }
 }
 
+/// How the printed sheet reaches the owner when a preset change draws one.
+enum SheetHandover {
+    /// `keep_sheet` kept it durably before the write (the CLI's file).
+    Kept,
+    /// Only the answer carries it: entering "Nobody but me" needs this
+    /// install's device wrap, `device_wrap`, to stay; `None` when this
+    /// install's keystore holds no slot for one.
+    Answer { device_wrap: Option<String> },
+}
+
 /// What setting the recovery preset did.
 #[derive(Debug)]
 pub struct RecoveryPresetChange {
@@ -288,21 +324,73 @@ impl Vault {
     /// owner-held key custody: a host-managed or supervisor-delivered key is
     /// the host's to recover, which the preset rules out. It draws the
     /// printed sheet and hands it to `keep_sheet` before any write: the
-    /// caller keeps it durably (a synced file, an answer), and a failed keep
-    /// changes nothing. Then, in one write, it adds the sheet's wrap, removes
-    /// the password and passkey wraps, and retires every escrow recipient but
-    /// the world kit's, each with its receipt; the answer carries the sheet
-    /// too. Coming from "any 2 pieces", the kit stays usable beside the fresh
-    /// sheet (FLIP = A). Leaving it changes no wrap; any other wrap is added
-    /// through the ordinary doors after. The preset already in force changes
-    /// nothing and draws no sheet. A mirror rewrite that fails after the
-    /// commit is answered as `mirror_pending`. "Any 2 pieces" is turned on
-    /// with its kit: [`Self::set_recovery_preset_any_two_as`].
+    /// caller keeps it durably (a synced file), and a failed keep changes
+    /// nothing; a caller whose answer alone carries the sheet uses
+    /// [`Vault::set_recovery_preset_answered_as`]. Then, in one write, it
+    /// adds the sheet's wrap, removes the password and passkey wraps, and
+    /// retires every escrow recipient but the world kit's, each with its
+    /// receipt; the answer carries the sheet too. Coming from "any 2 pieces",
+    /// the kit stays usable beside the fresh sheet (FLIP = A). Leaving it
+    /// changes no wrap; any other wrap is added through the ordinary doors
+    /// after. The preset already in force changes nothing and draws no sheet.
+    /// A mirror rewrite that fails after the commit is answered as
+    /// `mirror_pending`. "Any 2 pieces" is turned on with its kit:
+    /// [`Self::set_recovery_preset_any_two_as`].
     pub fn set_recovery_preset_as(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         preset: RecoveryPreset,
         keep_sheet: impl FnOnce(&RecoverySheet) -> Result<()>,
+    ) -> Result<RecoveryPresetChange> {
+        self.set_recovery_preset_handed_over(owner, preset, keep_sheet, SheetHandover::Kept)
+    }
+
+    /// [`Vault::set_recovery_preset_as`] for a caller whose answer is the
+    /// sheet's only hand-over, as the owner API's is: nothing is kept before
+    /// the write. Entering "Nobody but me" then needs this install's device
+    /// wrap, its keystore slot held, and the preset's own write refuses the
+    /// change when the wrap is gone. After a lost answer and a restart the
+    /// device reopens the key, and leaving and entering the preset again
+    /// issues a new sheet (review of #7766, round 2).
+    pub fn set_recovery_preset_answered_as(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        preset: RecoveryPreset,
+    ) -> Result<RecoveryPresetChange> {
+        let device_wrap = self.device_wrap_held_here()?;
+        self.set_recovery_preset_handed_over(
+            owner,
+            preset,
+            |_| Ok(()),
+            SheetHandover::Answer { device_wrap },
+        )
+    }
+
+    /// The id of this install's device wrap when this install's keystore
+    /// holds its slot, read without creating one; `None` with no keystore.
+    fn device_wrap_held_here(&self) -> Result<Option<String>> {
+        let Ok(keystore) = self.device_keystore() else {
+            return Ok(None);
+        };
+        let install = self.prepare_install_signing()?;
+        let held = keystore
+            .get(&self.vault_key_slot(install))
+            .map_err(crate::world_keys::machine::keystore_error)?
+            .is_some();
+        Ok(held.then(|| {
+            VaultKeyWrapKind::Device {
+                install: install.to_hex(),
+            }
+            .id()
+        }))
+    }
+
+    fn set_recovery_preset_handed_over(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        preset: RecoveryPreset,
+        keep_sheet: impl FnOnce(&RecoverySheet) -> Result<()>,
+        handover: SheetHandover,
     ) -> Result<RecoveryPresetChange> {
         let issue = match preset {
             RecoveryPreset::NobodyButMeAnyTwo => return Err(refused(ANY_TWO_NEEDS_KIT)),
@@ -334,6 +422,15 @@ impl Vault {
                 };
                 if state.commitment != *commitment {
                     return Err(refused("this handle holds another vault key"));
+                }
+                if let SheetHandover::Answer { device_wrap } = &handover {
+                    let stays = match device_wrap {
+                        Some(id) => WRAPS.get(&self.store, txn, id)?.is_some(),
+                        None => false,
+                    };
+                    if !stays {
+                        return Err(refused(PRESET_ANSWER_DEVICE));
+                    }
                 }
                 (change.removed, change.retired) = self.enter_nobody_but_me_in_txn(
                     txn,

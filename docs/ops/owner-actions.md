@@ -2091,9 +2091,11 @@ written under the preset, and no delivered key is admitted. This device's wrap s
 recovery kits, which need two pieces. Setting the preset already in force changes nothing;
 `--set standard` changes no wrap, and the ordinary commands add any after. A running server takes
 the same steps at `GET` and `PUT /v1/owner/vault-key/recovery-preset` with
-`{"preset": "nobody_but_me"}`; the answer carries the sheet's code once. On a maximum-tier vault,
-`mirror_pending: true` says the change stands but the page-seal mirror was not rewritten; the next
-sealed open repairs it.
+`{"preset": "nobody_but_me"}`; the answer carries the sheet's code once, so the server enters the
+preset only while its own device wrap stays (add it with `POST /device` first): if the answer is
+lost, that wrap reopens the key, and `standard` then `nobody_but_me` again issues a new sheet. On a
+maximum-tier vault, `mirror_pending: true` says the change stands but the page-seal mirror was not
+rewritten; the next sealed open repairs it.
 
 On a new host, the sheet restores the vault:
 
@@ -2133,8 +2135,8 @@ oneiron restore BACKUP --unlock kit --vault-id HEX --piece /Volumes/KEY/kit/piec
 the kit stays usable. The old sheet opens nothing written after either change.
 
 A sheet, passkey or capsule handed out before the change still opens the backups written before it:
-the data key does not rotate. A backup names the preset it was written under, so a capsule opens
-nothing written after the change.
+the data key does not rotate. A backup names the preset it was written under, so a capsule, or a key
+an escrow recipient opened from an earlier backup, opens nothing written after the change.
 
 ### Maximum tier
 

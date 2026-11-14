@@ -71,7 +71,9 @@ pub use self::escrow::{
 };
 pub(super) use self::recovery_preset::EscrowOrigin;
 pub use self::recovery_preset::{RecoveryPresetAnyTwoChange, RecoveryPresetChange, RecoverySheet};
-use self::recovery_preset::{admit_delivered_key, admit_presented_capsule, admit_wrap};
+use self::recovery_preset::{
+    admit_delivered_key, admit_escrow_opened_key, admit_presented_capsule, admit_wrap,
+};
 pub use self::vocabulary::{
     KitPasskey, NewVaultKeyWrap, VaultKeyStatus, VaultKeyUnlock, escrow_recipient,
     passkey_prf_input,
@@ -119,14 +121,15 @@ impl CarriedVaultKey {
         &self.0.commitment
     }
 
-    /// Refuses a key an escrow capsule opened when this header, the signed
+    /// Refuses a key an escrow recipient opened (a carried escrow wrap but
+    /// the world kit's, or a presented capsule) when this header, the signed
     /// one of the artifact being opened, carries "Nobody but me" (review of
-    /// #7766): the capsule's refusal binds to every artifact the key opens,
-    /// not only to the one it was unlocked from. The data key itself does
-    /// not change at the switch; this is the engine's refusal, not a
-    /// cryptographic revocation of what a capsule holder already has.
-    pub(crate) fn admit_capsule_opened_key(&self) -> Result<()> {
-        admit_presented_capsule(self.0.recovery)
+    /// #7766, rounds 1 and 2): the refusal binds to every artifact the key
+    /// opens, not only to the one it was unlocked from. The data key itself
+    /// does not change at the switch; this is the engine's refusal, not a
+    /// cryptographic revocation of what a recipient already has.
+    pub(crate) fn admit_escrow_opened_key(&self) -> Result<()> {
+        admit_escrow_opened_key(self.0.recovery)
     }
 
     /// Each carried wrap's public facts: what a host may unlock with.

@@ -576,8 +576,8 @@ struct RecoveryPresetRequest {
 
 /// `PUT /v1/owner/vault-key/recovery-preset`: sets the owner's recovery
 /// preset, the owner rechecked in the write. Entering `nobody_but_me` needs
-/// the vault key held and an owner-held key custody; its answer carries the
-/// printed sheet's code, once.
+/// the vault key held, an owner-held key custody and this install's device
+/// wrap, which stays; its answer carries the printed sheet's code, once.
 async fn set_recovery_preset(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -592,8 +592,10 @@ async fn set_recovery_preset(
             }
             RecoveryPreset::Standard => server.vault().as_ref(),
         };
-        // The answer is the sheet's hand-over: nothing to keep before the write.
-        let change = vault.set_recovery_preset_as(&owner, request.preset, |_| Ok(()))?;
+        // The answer is the sheet's only hand-over: the engine enters the
+        // preset only while this install's device wrap stays, so a lost
+        // answer locks no one out (review of #7766, round 2).
+        let change = vault.set_recovery_preset_answered_as(&owner, request.preset)?;
         let (mut set, sheet) = RecoveryPresetSet::of(&vault.vault_key_vault_id(), change);
         set.sheet_code = sheet.map(|sheet| sheet.code().as_str().to_owned());
         Ok(set)
