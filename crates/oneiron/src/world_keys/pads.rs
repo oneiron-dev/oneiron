@@ -31,9 +31,9 @@
 //! It also purges the world's sealing mirrors here
 //! (`content`), and each machine of the owner's strips the world's pads from
 //! every pad object the sealed cloud bundle keeps. Old offline backups and a key
-//! a caller already holds are outside what the erasure reaches. A legal hold
-//! on the world, or on a claim its key seals, refuses the erase before any pad
-//! goes (ARCH-0038 #legal-hold).
+//! a caller already holds are outside what the erasure reaches. A cooperative
+//! restriction on the world, or on a claim its key seals, refuses the erase
+//! before any pad goes (ARCH-0038 #legal-hold).
 //!
 //! Deleting a world destroys nothing: its keys, pads and sealed copies stay, so
 //! the world restores from old bundles until they age out (DEC-0006). Its
@@ -59,7 +59,6 @@ use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD, ENTITY_TYPE_WORLD_KEY_PAD};
 use crate::side_table::HexId;
 use crate::store::Store;
-use crate::store::legal_hold::HoldActor;
 use crate::store::world_pad_rows::{DELETED, DESTROYED};
 use crate::temporal::TimeRange;
 
@@ -254,15 +253,10 @@ pub(crate) fn world_pad_windows_in_txn(
 /// Refuses destroying `world`'s keys while a cooperative restriction stands
 /// on the world or on a claim its key seals: destroying the key destroys
 /// every such claim's sealed bytes.
-fn reject_held_world_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    world: EntityId,
-    actor: &HoldActor,
-) -> Result<()> {
+fn reject_held_world_in_txn(store: &Store, txn: &heed::RoTxn<'_>, world: EntityId) -> Result<()> {
     let mut sealed = vec![world];
     sealed.extend(sealed_claims_in_txn(store, txn, world)?);
-    store.reject_legal_holds_in_txn(txn, &sealed, actor)
+    store.reject_restricted_records_in_txn(txn, &sealed)
 }
 
 fn claim_body_world(raw: &[u8]) -> Result<Option<EntityId>> {
@@ -342,16 +336,6 @@ pub(crate) fn reject_held_pad_world_in_txn(
     txn: &heed::RoTxn<'_>,
     ids: &[EntityId],
 ) -> Result<()> {
-    reject_held_pad_world_as_in_txn(store, txn, ids, &HoldActor::UNATTRIBUTED)
-}
-
-/// [`reject_held_pad_world_in_txn`] for a delete whose actor is known.
-pub(crate) fn reject_held_pad_world_as_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    ids: &[EntityId],
-    actor: &HoldActor,
-) -> Result<()> {
     let mut worlds = std::collections::BTreeSet::<EntityId>::new();
     for id in ids {
         let world = store
@@ -367,7 +351,7 @@ pub(crate) fn reject_held_pad_world_as_in_txn(
     }
     for world in worlds {
         if !world_keys_destroyed_fact_in_txn(store, txn, world)? {
-            reject_held_world_in_txn(store, txn, world, actor)?;
+            reject_held_world_in_txn(store, txn, world)?;
         }
     }
     Ok(())
@@ -421,7 +405,6 @@ pub(crate) fn reject_held_pad_carrier_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     raw: &[u8],
-    actor: &crate::store::legal_hold::HoldActor,
 ) -> Result<()> {
     if !held_pad_world_in_txn(store, txn, raw)? {
         return Ok(());
@@ -431,7 +414,7 @@ pub(crate) fn reject_held_pad_carrier_in_txn(
     };
     let mut sealed = vec![world];
     sealed.extend(sealed_claims_in_txn(store, txn, world)?);
-    store.reject_legal_holds_in_txn(txn, &sealed, actor)
+    store.reject_restricted_records_in_txn(txn, &sealed)
 }
 
 /// Destroys `world`'s keys on this replica, in the caller's write transaction:
@@ -471,7 +454,7 @@ pub(crate) fn destroy_world_keys_in_txn(
     }
     // Destroyed once already, only a late pad is left to purge.
     if existing.is_none() {
-        reject_held_world_in_txn(store, wtxn, target, &HoldActor::UNATTRIBUTED)?;
+        reject_held_world_in_txn(store, wtxn, target)?;
     }
     let tombstone = TombstoneValueV2 {
         reason: TombstoneReason::UserHardDelete,

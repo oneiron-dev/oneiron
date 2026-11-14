@@ -10,7 +10,6 @@ use super::canonical::{capture_canonical_window_within, invalid};
 use super::{CanonicalSnapshot, RecoveryBudget, RecoveryBudgetOverrun, RecoveryTier};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result};
-use crate::store::legal_hold::HoldActor;
 use crate::sync::types::WindowKey;
 use crate::{Vault, VaultWriterLease};
 
@@ -86,11 +85,11 @@ impl Vault {
     /// replacement and writes its unseen writes back on top
     /// ([`crate::sync::window::prepare_replacement`]).
     ///
-    /// The cut drops every row's history, as an erase does: a legal hold on
-    /// any row the window carries refuses it before the recovery runs, and
-    /// again in the install transaction. The installed window must capture
-    /// to the very canonical artifact the act recovered from, or nothing is
-    /// installed.
+    /// The cut drops every row's history, as an erase does: a cooperative
+    /// restriction on any row the window carries refuses it before the
+    /// recovery runs, and again in the install transaction. The installed
+    /// window must capture to the very canonical artifact the act recovered
+    /// from, or nothing is installed.
     pub fn rebootstrap_window_from_canonical_snapshot(
         &self,
         owner: &AuthenticatedOwner,
@@ -139,7 +138,7 @@ impl Vault {
                 "window recovery needs the window's writers stopped",
             ));
         }
-        let (actor, principal) = {
+        let principal = {
             let txn = self.store.env.read_txn()?;
             let actor = owner.revalidate_in_txn(self, &txn)?;
             // An authenticated human is not by that alone this vault's owner.
@@ -148,11 +147,11 @@ impl Vault {
                     "window recovery is an owner act, and the actor is no owner of this vault",
                 )));
             }
-            (HoldActor::owner(actor), actor)
+            actor
         };
         let doc = durable_window_doc(self, &key)?;
         if rebootstrap {
-            crate::sync::window::reject_held_rebootstrap(self, &doc, &actor)?;
+            crate::sync::window::reject_held_rebootstrap(self, &doc)?;
         }
         // The artifact envelope round trip, in memory: what recovers is what
         // a written snapshot would have held, byte for byte, its pads
@@ -187,7 +186,7 @@ impl Vault {
                 return Err(invalid("re-bootstrapped window is not equivalent"));
             }
             let rewritten = cut.rewritten;
-            let installed = cut.install(self, &actor)?;
+            let installed = cut.install(self)?;
             Some((
                 rewritten,
                 crate::sync::loro_support::doc_version_vector(&installed),

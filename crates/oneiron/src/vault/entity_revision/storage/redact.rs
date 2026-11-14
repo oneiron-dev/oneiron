@@ -295,7 +295,6 @@ pub(crate) fn redact_claim_value_fields_in_txn(
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
     keys: &[String],
-    actor: EntityId,
 ) -> Result<LocalClaimValueRedaction> {
     use crate::ports::EntityStoreRead;
     let selection = ClaimValueFieldRedaction::new(keys.iter().cloned())?;
@@ -316,11 +315,7 @@ pub(crate) fn redact_claim_value_fields_in_txn(
     check_family(&body)?;
     let live_changed = rewritten != raw;
     if live_changed {
-        vault.store.reject_legal_holds_in_txn(
-            txn,
-            &[id],
-            &crate::store::legal_hold::HoldActor::owner(actor),
-        )?;
+        vault.store.reject_restricted_records_in_txn(txn, &[id])?;
         vault.put_claim_value_redaction_in_txn(txn, &id, &ClaimValueRedactionRow(rewritten))?;
         drop_room_copies(vault, txn, &id);
     }
@@ -349,11 +344,7 @@ pub(crate) fn redact_claim_value_fields_in_txn(
         return Ok(receipt);
     }
     if !live_changed {
-        vault.store.reject_legal_holds_in_txn(
-            txn,
-            &[id],
-            &crate::store::legal_hold::HoldActor::owner(actor),
-        )?;
+        vault.store.reject_restricted_records_in_txn(txn, &[id])?;
         drop_room_copies(vault, txn, &id);
     }
     // Every rewritten historical row keeps its ordinary family/source-trust

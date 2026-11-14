@@ -16,7 +16,6 @@ use crate::deletion::{DeleteEntityPreview, DeleteReason};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::federation::{ActExecution, PendingAuthorityAct, SharedVaultPreset};
-use crate::store::legal_hold::HoldActor;
 use crate::write_envelope::WriteActor;
 
 /// The shared vault's act a held record waits on.
@@ -365,15 +364,13 @@ impl Memory<'_> {
             {
                 return Err(Error::ConcurrentWrite("erase target changed").into());
             }
-            let actor = HoldActor::owner(self.actor);
             self.vault
                 .store
-                .reject_legal_holds_in_txn(txn, &[held.holder], &actor)?;
-            crate::world_keys::reject_held_pad_world_as_in_txn(
+                .reject_restricted_records_in_txn(txn, &[held.holder])?;
+            crate::world_keys::reject_held_pad_world_in_txn(
                 &self.vault.store,
                 txn,
                 &[held.holder],
-                &actor,
             )?;
             let request = self.vault.store.clock.ulid()?;
             let requested_at = self.vault.store.clock.now_recorded_at();

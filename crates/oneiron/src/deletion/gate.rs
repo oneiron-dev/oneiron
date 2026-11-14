@@ -126,9 +126,10 @@ impl<'a> GatedDeletion<'a> {
         Some((self.context.room?, self.context.room_role?))
     }
 
-    /// Who a legal-hold refusal of this delete names. An admitted delete is
-    /// its admitted role's; a room delete is a member's; a human's delete
-    /// with no room passed the owner binding this gate carries.
+    /// Who this delete's audience-edit erase names on its receipt. An
+    /// admitted delete is its admitted role's; a room delete is a member's;
+    /// a human's delete with no room passed the owner binding this gate
+    /// carries.
     pub(super) fn hold_actor(&self) -> crate::store::legal_hold::HoldActor {
         use crate::deletion::LegalHoldActorKind as Kind;
         use crate::deletion::archive_role::ArchiveDeleteRole as Role;

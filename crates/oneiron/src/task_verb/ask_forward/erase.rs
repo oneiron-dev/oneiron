@@ -15,8 +15,8 @@
 //!
 //! A held intent or result keeps both rows (FIX 20468). The erase then
 //! records, in its writer, that it owes the pair their retirement, and it is
-//! not complete while it does. Each due legal-hold pass retires every owed
-//! pair that no hold keeps any more, as the erase retires an unheld pair.
+//! not complete while it does. Each settle pass retires every owed pair
+//! that no restriction keeps any more, as the erase retires an unheld pair.
 //!
 //! A replica can take an intent before it learns of the erase, so the
 //! intent, or its result, can land here after it (FIX 7494). The erase never
@@ -30,7 +30,7 @@ use crate::ports::EntityStoreRead;
 use crate::scan_check::{EngineScan, ScanCount};
 
 /// Retires, in `erase`'s writer, every relayed intent whose holder it
-/// erases, and the result of each (FIX 7494). A pair a legal hold keeps
+/// erases, and the result of each (FIX 7494). A pair a restriction keeps
 /// stays, and the erase owes it its retirement (FIX 20468). Only this erase
 /// context reaches it; it grants no ordinary delete.
 ///
@@ -49,8 +49,8 @@ pub(crate) fn retire_holder_ask_forward_rows_in_txn(
         for (intent, intent_at) in holder_intents_in_txn(vault, wtxn, holder)? {
             // The result's id derives from the intent, read before it goes.
             let result = result_id(intent)?;
-            // A hold keeps the word and its result together, and the erase
-            // owes both their retirement until it lifts (FIX 20468).
+            // A restriction keeps the word and its result together, and the
+            // erase owes both their retirement until it lifts (FIX 20468).
             if pair_held_in_txn(vault, wtxn, intent, result)? {
                 held.insert(intent);
                 continue;
@@ -66,11 +66,12 @@ pub(crate) fn retire_holder_ask_forward_rows_in_txn(
     erase.owe_held_ask_forward_intents(&held)
 }
 
-/// Retires, in a due legal-hold pass's writer, each relayed intent a hold
-/// kept from its holder's erase, and its result, once no hold keeps either
-/// (FIX 20468). Each row retires as the erase retires an unheld pair: its
-/// stored copy and indexes go, it takes its `dt:` fence and its tombstone,
-/// and the intent leaves the arrivals. The erase's receipt never changes.
+/// Retires, in a settle pass's writer, each relayed intent a restriction
+/// kept from its holder's erase, and its result, once no restriction keeps
+/// either (FIX 20468). Each row retires as the erase retires an unheld
+/// pair: its stored copy and indexes go, it takes its `dt:` fence and its
+/// tombstone, and the intent leaves the arrivals. The erase's receipt never
+/// changes.
 /// So the pass does here what that receipt's scope does for its ids: the
 /// archives kept for removed Owners lose both rows, and the sweep is owed
 /// the compaction of each row's window. A pair whose rows are both gone
@@ -98,9 +99,9 @@ pub(crate) fn settle_held_ask_forward_rows_in_txn(
 
 /// Retires, in the writer that puts it, a relayed intent or its result that
 /// lands after the hard erase of `holder` here, and the other row of the pair
-/// (FIX 7494). `intent` names the pair. The pair retires as a due legal-hold
-/// pass retires an owed pair, and the intent leaves the arrivals: it is
-/// never consumed, and its result is never delivered. A pair a legal hold
+/// (FIX 7494). `intent` names the pair. The pair retires as a settle pass
+/// retires an owed pair, and the intent leaves the arrivals: it is
+/// never consumed, and its result is never delivered. A pair a restriction
 /// keeps stays, and the erase of `holder` owes it its retirement, with the
 /// record its erase makes for a held pair (FIX 20468). A repeated arrival
 /// meets its row's `dt:` fence, or finds that record already made.
@@ -190,8 +191,8 @@ fn holder_intents_in_txn(
     Ok(intents)
 }
 
-/// Whether a legal hold keeps the intent or its result: a hold on either
-/// keeps both.
+/// Whether a restriction keeps the intent or its result: a restriction on
+/// either keeps both.
 fn pair_held_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -204,7 +205,7 @@ fn pair_held_in_txn(
     )
 }
 
-/// The time an owed pair is fenced in once no hold keeps it: its intent's,
+/// The time an owed pair is fenced in once no restriction keeps it: its intent's,
 /// as the erase reads it, else the stored intent's or result's own. `None`
 /// when neither row is here any more.
 fn held_pair_time_in_txn(

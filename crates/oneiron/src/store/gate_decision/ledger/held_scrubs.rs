@@ -135,7 +135,7 @@ impl Store {
         redacted_at: u64,
         erase: bool,
     ) -> Result<bool> {
-        self.reject_legal_hold_in_txn(&*wtxn, claim_id)?;
+        self.reject_restricted_record_in_txn(&*wtxn, claim_id)?;
         let id = EntityId::from_bytes(*claim_id)
             .map_err(|_| Error::CorruptedIndex("gate decision claim id"))?;
         let pending = self.pending_gate_consent_in_txn(&*wtxn, &id)?.is_some();

@@ -3,8 +3,9 @@
 //! so it destroys each value its rows ever held: the rows it carries now,
 //! every insert its retained history holds, overwritten or deleted since,
 //! and the winners of its shallow root. A pad among those values may live
-//! nowhere else, so its world's holds are read from its own bytes, never
-//! from the canonical row ([`crate::world_keys::reject_held_pad_carrier_in_txn`]).
+//! nowhere else, so its world's restrictions are read from its own bytes,
+//! never from the canonical row
+//! ([`crate::world_keys::reject_held_pad_carrier_in_txn`]).
 //! The inventory is read before anything rewrites the window and checked in
 //! the transaction that destroys; it is never persisted.
 
@@ -19,7 +20,6 @@ use zeroize::Zeroizing;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::Store;
-use crate::store::legal_hold::HoldActor;
 
 /// The root maps whose keys are row ids, live or tombstoned.
 const ID_ROOTS: [&str; 2] = ["entities", "tombstones"];
@@ -141,21 +141,15 @@ impl CarrierInventory {
         }
     }
 
-    /// Refuses the tear while a legal hold names a row id it holds, or the
-    /// world of a pad it holds or a claim that pad's key seals (OF-470). The
-    /// refusal is queued with `actor` on the held id, world or claim. A pad
-    /// that does not decode reads unheld, warned, as
+    /// Refuses the tear while a cooperative restriction names a row id it
+    /// holds, or the world of a pad it holds or a claim that pad's key seals
+    /// (OF-470). A pad that does not decode reads unheld, warned, as
     /// [`crate::world_keys::held_pad_world_in_txn`] reads it.
-    pub(crate) fn reject_held_in_txn(
-        &self,
-        store: &Store,
-        txn: &RoTxn<'_>,
-        actor: &HoldActor,
-    ) -> Result<()> {
+    pub(crate) fn reject_held_in_txn(&self, store: &Store, txn: &RoTxn<'_>) -> Result<()> {
         let ids: Vec<EntityId> = self.ids.iter().copied().collect();
-        store.reject_legal_holds_in_txn(txn, &ids, actor)?;
+        store.reject_restricted_records_in_txn(txn, &ids)?;
         for raw in &self.pads {
-            crate::world_keys::reject_held_pad_carrier_in_txn(store, txn, raw, actor)?;
+            crate::world_keys::reject_held_pad_carrier_in_txn(store, txn, raw)?;
         }
         Ok(())
     }

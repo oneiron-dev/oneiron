@@ -182,9 +182,10 @@ pub(super) fn compact_all_windows(
                     (id, true)
                 }
             };
-            // A held document keeps its bytes and its history, erased or not
-            // (OF-470, FIX 10160): it waits, as a live one does. Its writer
-            // checks the hold again, and a hold placed since defers it too.
+            // A restricted document keeps its bytes and its history, erased
+            // or not (OF-470, FIX 10160): it waits, as a live one does. Its
+            // writer checks the restriction again, and a restriction placed
+            // since defers it too.
             if super::holds::document_held(vault, id, erase)? {
                 super::holds::defer_held(run, &mut state);
                 continue;
@@ -526,11 +527,7 @@ pub(super) fn compact_window_with(
 
         // A cooperative restriction keeps every row it names: one this
         // compaction would destroy keeps the window as it is.
-        if let Err(refused) = destroyed.reject_held_in_txn(
-            &vault.store,
-            wtxn,
-            &crate::store::legal_hold::HoldActor::TIMER,
-        ) {
+        if let Err(refused) = destroyed.reject_held_in_txn(&vault.store, wtxn) {
             let missing_hold = matches!(&refused, Error::CorruptedIndex("legal hold target"));
             if missing_hold {
                 tracing::warn!(

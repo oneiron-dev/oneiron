@@ -85,12 +85,8 @@ fn compact_in_txn(
     {
         return Ok(());
     }
-    // A held document keeps its bytes and its history (FIX 10160).
-    store.reject_legal_holds_in_txn(
-        txn,
-        &[*entity],
-        &crate::store::legal_hold::HoldActor::TIMER,
-    )?;
+    // A restricted document keeps its bytes and its history (FIX 10160).
+    store.reject_restricted_records_in_txn(txn, &[*entity])?;
     if erased {
         return storage::erase_in_txn(store, txn, entity);
     }

@@ -113,7 +113,7 @@ pub(super) fn sweep_extras(capture: &ProvenanceCapture) -> HardEraseSweepExtras 
 /// The refs a hard delete captured before its SoftErase emptied the Claim body, by erased id, until
 /// a purge queues its sweep (F25 H10): a purge refused or cut off after that commit captures
 /// nothing on retry. Each record is a kind byte and the 16-byte ref. A held relayed ask intent's
-/// record outlives the sweep, until a due legal-hold pass retires it (FIX 20468).
+/// record outlives the sweep, until a settle pass retires it (FIX 20468).
 const PENDING_SWEEP_REFS: crate::side_table::SideTable<HexId, Vec<u8>, crate::side_table::Raw> =
     crate::side_table::SideTable::new(&crate::side_table::DELETION_PENDING_SWEEP_REFS);
 const SWEEP_REF_REVISION: u8 = 1;
@@ -121,8 +121,8 @@ const SWEEP_REF_BODY_SNAPSHOT: u8 = 2;
 /// A row an erase of the id retired with it: its id joins the scope of the receipt and sweep the
 /// erase's writer queues (FIX 7494).
 const SWEEP_REF_RETIRED_ROW: u8 = 3;
-/// A relayed ask intent of the id that a legal hold on it or on its result kept from the id's
-/// erase: the due legal-hold pass that finds neither held retires both (FIX 20468). It stays
+/// A relayed ask intent of the id that a restriction on it or on its result kept from the id's
+/// erase: the settle pass that finds neither held retires both (FIX 20468). It stays
 /// when the receipt takes the other records, and the erase is not complete while it does.
 const SWEEP_REF_HELD_ASK_FORWARD_INTENT: u8 = 4;
 const SWEEP_REF_RECORD_LEN: usize = 17;
@@ -138,9 +138,10 @@ pub(super) fn stage_retired_rows_in_txn(
     stage_records_in_txn(vault, wtxn, id, SWEEP_REF_RETIRED_ROW, rows)
 }
 
-/// Records, in the erase's writer, that `intents`, relayed ask intents of `holder` that a legal
-/// hold kept from its erase, are owed their retirement and their results' (FIX 20468). The writer
-/// that puts a held intent or result after that erase records it the same way (FIX 7494).
+/// Records, in the erase's writer, that `intents`, relayed ask intents of
+/// `holder` that a restriction kept from its erase, are owed their
+/// retirement and their results' (FIX 20468). The writer that puts a held
+/// intent or result after that erase records it the same way (FIX 7494).
 pub(crate) fn owe_held_ask_forward_intents_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -292,7 +293,7 @@ pub(super) fn stage_sweep_refs_in_txn(
 
 /// Adds the refs staged for `id` to the sweep being queued, and drops them in the same commit.
 /// Returns the rows its erase retired with it, whose ids join the receipt's scope (FIX 7494).
-/// A held relayed intent's record stays for the due legal-hold pass (FIX 20468).
+/// A held relayed intent's record stays for the settle pass (FIX 20468).
 pub(super) fn take_staged_sweep_refs_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,

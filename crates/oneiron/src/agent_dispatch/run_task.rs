@@ -1598,7 +1598,7 @@ fn pending_try_above_in(
 /// erasure sweep takes out of every window it compacts, so the sweep the
 /// erase queues cuts the TASK's history with the erased actor's. A run whose
 /// TASK went has none: it stays on this machine and runs as before. A TASK a
-/// legal hold keeps stays whole, with a warning.
+/// restriction keeps stays whole, with a warning.
 ///
 /// # Errors
 ///
@@ -1644,7 +1644,7 @@ fn hard_erase_agent_run_task_in_txn(
     else {
         return Ok(());
     };
-    if let Err(error) = store.reject_legal_hold_in_txn(&*wtxn, task_ref.as_bytes()) {
+    if let Err(error) = store.reject_restricted_record_in_txn(&*wtxn, task_ref.as_bytes()) {
         if !crate::store::legal_hold::held_in_txn(store, &*wtxn, task_ref.as_bytes())? {
             return Err(error);
         }

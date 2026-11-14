@@ -333,8 +333,8 @@ impl Vault {
     /// erase committed refuses a hold until its key is destroyed. A
     /// host-facing door: the partition's own row in the one legal-hold store
     /// (OF-470), logged; releasing it lifts that hold alone, never another
-    /// hold naming the same claim. Once a release commits, the due legal-hold
-    /// pass settles what the hold kept from an erase (FIX 7993, 7994).
+    /// hold naming the same claim. Once a release commits, the settle pass
+    /// settles what the restriction kept from an erase (FIX 7993, 7994).
     pub fn set_gate_decision_partition_hold(
         &self,
         claim_partition: Option<[u8; 16]>,

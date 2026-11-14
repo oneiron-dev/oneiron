@@ -36,7 +36,6 @@ use super::{persist_window_doc_in_txn, write_window_svf_in_txn};
 use crate::Vault;
 use crate::error::{ArtifactError, Error, Result, SyncEngineContext};
 use crate::ports::{WindowAddress, WindowDeletionRows};
-use crate::store::legal_hold::HoldActor;
 use crate::sync::carrier_holds::CarrierInventory;
 
 /// A rebuilt window cut and ready to install; nothing is persisted yet.
@@ -123,11 +122,11 @@ impl PreparedRebootstrap {
     /// snapshot and version, every pending update it folded in retired, the
     /// state vector fresh and the full-resync marker a shallow cut sets.
     /// Refused with nothing written when the window's carriers changed since
-    /// the cut read them, or a legal hold names a row whose history it drops,
-    /// or the world of a pad it drops (OF-470, as the compaction refuses). A
-    /// cut that failed its proof owes the erasure sweep the window, in the
-    /// same transaction.
-    pub(crate) fn install(self, vault: &Vault, actor: &HoldActor) -> Result<LoroDoc> {
+    /// the cut read them, or a cooperative restriction names a row whose
+    /// history it drops, or the world of a pad it drops (OF-470, as the
+    /// compaction refuses). A cut that failed its proof owes the erasure
+    /// sweep the window, in the same transaction.
+    pub(crate) fn install(self, vault: &Vault) -> Result<LoroDoc> {
         let window = self.key.as_str().to_owned();
         let prefix = format!("{window}:");
         vault.with_write_txn_grouped(|wtxn| {
@@ -153,7 +152,7 @@ impl PreparedRebootstrap {
                     "window updates changed during re-bootstrap",
                 ));
             }
-            self.holds.reject_held_in_txn(&vault.store, wtxn, actor)?;
+            self.holds.reject_held_in_txn(&vault.store, wtxn)?;
             persist_window_doc_in_txn(vault, wtxn, &self.key, &self.state, &self.version)?;
             WINDOW_UPDATE.delete_from(&vault.store, wtxn, prefix.as_bytes())?;
             WINDOW_FULL_RESYNC_MARKER.put(&vault.store, wtxn, &window, &[1u8])?;
@@ -170,18 +169,14 @@ impl PreparedRebootstrap {
 /// restriction would stop: one naming any row `doc` carries or carried, or
 /// the world of a pad it holds or held (FIX 3061). No materializer lock is
 /// held here.
-pub(crate) fn reject_held_rebootstrap(
-    vault: &Vault,
-    doc: &LoroDoc,
-    actor: &HoldActor,
-) -> Result<()> {
+pub(crate) fn reject_held_rebootstrap(vault: &Vault, doc: &LoroDoc) -> Result<()> {
     let holds = CarrierInventory::of_window(doc);
     vault
         .store
         .env
         .read_txn()
         .map_err(Error::from)
-        .and_then(|rtxn| holds.reject_held_in_txn(&vault.store, &rtxn, actor))
+        .and_then(|rtxn| holds.reject_held_in_txn(&vault.store, &rtxn))
 }
 
 /// Writes into `doc` the rebuilt value of every root-map key it differs on,

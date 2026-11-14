@@ -90,14 +90,10 @@ impl Vault {
         // never downgraded.
         {
             let txn = self.store.env.read_txn()?;
-            let actor = gate
-                .as_ref()
-                .map_or(HoldActor::UNATTRIBUTED, GatedDeletion::hold_actor)
-                .privacy(reason == DeleteReason::GdprDelete);
-            self.store.reject_legal_holds_in_txn(&txn, &[*id], &actor)?;
-            // A pad is held by its world's holds too (OF-470), refused as
-            // this actor (FIX 3059).
-            crate::world_keys::reject_held_pad_world_as_in_txn(&self.store, &txn, &[*id], &actor)?;
+            self.store.reject_restricted_records_in_txn(&txn, &[*id])?;
+            // A pad is held by its world's restrictions too (OF-470,
+            // FIX 3059).
+            crate::world_keys::reject_held_pad_world_in_txn(&self.store, &txn, &[*id])?;
             if reason.active_store_hard_purge_v1() {
                 self.guard_active_merge_hard_delete_in_txn(&txn, id)?;
             }

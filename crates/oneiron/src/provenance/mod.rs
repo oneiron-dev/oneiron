@@ -261,9 +261,9 @@ pub(crate) fn erase_row_provenance_without_attempt_payloads_in_txn(
 ) -> Result<()> {
     let store = write.store;
     // A held row keeps its bodies whichever door erases it, as does a pad
-    // whose world or sealed claim is held (OF-470); the refusal is queued for
-    // the hold log like every other door's.
-    store.reject_legal_hold_in_txn(txn, row.as_bytes())?;
+    // whose world or sealed claim is held (OF-470); the refusal is the
+    // restriction's own, like every other door's.
+    store.reject_restricted_record_in_txn(txn, row.as_bytes())?;
     crate::world_keys::reject_held_pad_world_in_txn(store, txn, &[*row])?;
     if erase {
         crate::channel_identity_provider::erase_line_chat_source_observations_in_txn(

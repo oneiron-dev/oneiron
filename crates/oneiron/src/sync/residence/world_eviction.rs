@@ -26,7 +26,8 @@
 //! ([`discard_world_copy_as`]). A window open with no handle but the
 //! manager's is unloaded first; one a handle holds waits for the next pass. The thin read caches of the world's items
 //! (`ri:b:`, `ri:d:`, `ro:e:`, their touch and index rows) go at once: each is
-//! a copy of an item the home holds. A cache a legal hold names stays.
+//! a copy of an item the home holds. A cache a cooperative restriction
+//! names stays.
 //!
 //! The eviction is local and writes nothing that travels: for each window,
 //! with the window closed, the demotion tear
@@ -50,7 +51,6 @@ use crate::Vault;
 use crate::authority::{AuthorityFold, EffectiveRead};
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
-use crate::store::legal_hold::HoldActor;
 use crate::store::local_replica::{
     KeepControls, KeepReason, discard_bundle_payload_in_txn, remove_local_members_in_txn,
     remove_local_replica_window_in_txn,
@@ -137,7 +137,7 @@ pub struct WorldEviction {
     pub windows_with_local_members: usize,
     /// Thin read caches of the worlds' items removed.
     pub cached_items_removed: usize,
-    /// Thin read caches a legal hold keeps.
+    /// Thin read caches a cooperative restriction keeps.
     pub cached_items_held: usize,
     /// Sealed updates this install made of the worlds and the home had not
     /// stored, which the owner's discard took.
@@ -512,12 +512,10 @@ fn evict_cached_items(vault: &Vault, worlds: &BTreeSet<EntityId>) -> Result<(usi
 }
 
 /// Whether a legal hold keeps `item`'s cache: none does any more
-/// (LEGAL-HOLD-USE = B). The hold check still answers a cooperative
+/// (LEGAL-HOLD-USE = B). The restriction check still answers a cooperative
 /// restriction on `item` with absence, which fails the eviction.
 fn cache_held(vault: &Vault, txn: &heed::RoTxn<'_>, item: EntityId) -> Result<bool> {
-    vault
-        .store
-        .reject_legal_holds_in_txn(txn, &[item], &HoldActor::UNATTRIBUTED)?;
+    vault.store.reject_restricted_records_in_txn(txn, &[item])?;
     Ok(false)
 }
 

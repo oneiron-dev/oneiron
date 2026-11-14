@@ -33,10 +33,10 @@ use crate::registry::ENTITY_TYPE_TURN;
 use crate::store::legal_hold::HoldActor;
 
 /// Erases the audience edit `id` its live root keeps, for a privacy erase
-/// by `actor` that `reverify` re-proves: in one write, a legal hold naming
-/// the edit refuses it, and the edit's body becomes its erased form, a
-/// person this vault erased named as no one too. `None` when `id` is no
-/// such edit, for the erase to run as any other does.
+/// by `actor` that `reverify` re-proves: in one write, a cooperative
+/// restriction naming the edit refuses it, and the edit's body becomes its
+/// erased form, a person this vault erased named as no one too. `None` when
+/// `id` is no such edit, for the erase to run as any other does.
 pub(crate) fn erase_audience_edit(
     vault: &Vault,
     id: &EntityId,
@@ -59,7 +59,7 @@ pub(crate) fn erase_audience_edit(
     }
 }
 
-/// [`erase_audience_edit`] with the actor a hold's refusal names read in
+/// [`erase_audience_edit`] with the actor its receipt names read in
 /// the write itself, by `reverify` as it re-proves the erase there. `None`
 /// from it cancels the erase, the edit left as it is (FIX 6337); `None`
 /// from this, when `id` is no such edit, is never a cancelled one. The
@@ -88,9 +88,7 @@ fn erase_edit_as(
             .id
             .as_deref()
             .and_then(|id| EntityId::from_hex(id).ok());
-        vault
-            .store
-            .reject_legal_holds_in_txn(txn, &[*id], &actor.privacy(true))?;
+        vault.store.reject_restricted_records_in_txn(txn, &[*id])?;
         let (binding, held) = live_edit_in(vault, txn, id)?
             .ok_or(Error::CorruptedIndex("thread audience edit body"))?;
         let erased = erased_here_in(vault, txn, binding.room, held.erased())?;
@@ -221,9 +219,9 @@ pub(crate) fn erase_audience_actor_in_txn(
 /// room's erase of them runs (FIX 5640): each edit the room carries that
 /// names them is rewritten naming them as no one, anyone else it names
 /// kept. `reauthorize` re-proves the erase in its read and its write;
-/// `unheld` is the erase's own legal-hold split, so a held edit stays as it
-/// is and is counted once, and one a hold names since stays too. Every
-/// edit is read, however many (rule 5).
+/// `unheld` is the erase's own restriction split, so a held edit stays as
+/// it is and is counted once, and one a restriction names since stays
+/// too. Every edit is read, however many (rule 5).
 pub(crate) fn scrub_room_audience(
     vault: &Vault,
     room: EntityId,

@@ -63,7 +63,8 @@ impl Vault {
     ) -> Result<(bool, Vec<EntityId>, crate::deletion::ErasureEffects)> {
         // A held record keeps its bytes on every door that purges it, and a
         // held world keeps its pads (OF-470).
-        self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
+        self.store
+            .reject_restricted_record_in_txn(wtxn, id.as_bytes())?;
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
         crate::store::base_agent::guard_actor_delete(id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
@@ -292,8 +293,9 @@ impl Vault {
         erase: bool,
         act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
     ) -> Result<(bool, bool, bool)> {
-        // A soft erase scrubs the body, so a hold refuses it too.
-        self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
+        // A soft erase scrubs the body, so a restriction refuses it too.
+        self.store
+            .reject_restricted_record_in_txn(wtxn, id.as_bytes())?;
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
         crate::store::base_agent::guard_actor_delete(id)?;
         self.store

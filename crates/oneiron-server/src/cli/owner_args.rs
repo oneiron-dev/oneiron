@@ -403,8 +403,8 @@ pub struct RecoverWindowArgs {
 
     /// Also re-bootstrap the window (a pathological history): its CRDT state
     /// becomes the rebuilt state with no history behind it, and every device
-    /// behind it resyncs from a replacement. Refused while a legal hold names
-    /// any row the window carries.
+    /// behind it resyncs from a replacement. Refused while a cooperative
+    /// restriction names any row the window carries.
     #[arg(long)]
     pub rebootstrap: bool,
 

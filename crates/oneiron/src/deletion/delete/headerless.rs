@@ -89,7 +89,8 @@ impl Vault {
         let window_label = window_label_from_timestamp(requested_at);
         if reason.active_store_hard_purge_v1() {
             let txn = self.store.env.read_txn()?;
-            self.store.reject_legal_hold_in_txn(&txn, id.as_bytes())?;
+            self.store
+                .reject_restricted_record_in_txn(&txn, id.as_bytes())?;
             // A row may have landed since the header read (OF-470).
             crate::world_keys::reject_held_pad_world_in_txn(&self.store, &txn, &[*id])?;
         }
@@ -124,7 +125,8 @@ impl Vault {
         // `pt:` propagation intent, the gate record and the receipt.
         reverify_deletion_authority_when_unpublished(gate, crdt_persisted, &wtxn)?;
         if reason.active_store_hard_purge_v1() {
-            self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
+            self.store
+                .reject_restricted_record_in_txn(&wtxn, id.as_bytes())?;
             crate::world_keys::reject_held_pad_world_in_txn(&self.store, &wtxn, &[*id])?;
         }
         if !crdt_persisted && reason.active_store_hard_purge_v1() {

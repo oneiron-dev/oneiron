@@ -116,11 +116,11 @@ pub(crate) fn topology_delete_reservation_in_txn(
 /// when the existing reservation already fences topology and the hard
 /// tombstone leaves it nothing to add: a soft deletion, which the hard
 /// tombstone dominates on every replica, or a hard deletion that published or
-/// committed but never completed its local purge. A partition hold can defer
-/// that purge after publication (ARCH-0038 legal hold, an Art. 17(3)(b)
-/// deferral), and the released erasure must still complete. A Prepared hard
-/// request has published nothing yet, and a completed one keeps its own
-/// reservation.
+/// committed but never completed its local purge. A cooperative restriction
+/// on the partition's claim can defer that purge after publication
+/// (ARCH-0038: every destructive path checks), and the released erasure
+/// must still complete. A Prepared hard request has published nothing yet,
+/// and a completed one keeps its own reservation.
 fn hard_request_subsumes(
     store: &Store,
     txn: &heed::RoTxn<'_>,

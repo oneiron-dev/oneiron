@@ -422,7 +422,7 @@ fn purge_guards_allow_in_txn(vault: &Vault, txn: &heed::RwTxn<'_>, artifact: &En
     let check = || -> Result<()> {
         vault
             .store
-            .reject_legal_hold_in_txn(txn, artifact.as_bytes())?;
+            .reject_restricted_record_in_txn(txn, artifact.as_bytes())?;
         crate::world_keys::reject_held_pad_world_in_txn(&vault.store, txn, &[*artifact])?;
         crate::store::base_agent::guard_actor_delete(artifact)?;
         crate::blob_artifact::esign::reject_event_delete(&vault.store, txn, artifact)?;

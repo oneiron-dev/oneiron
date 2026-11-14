@@ -552,12 +552,13 @@ pub(crate) fn erase_connector_reply_results_in_txn(
 /// the head still decodes to a result naming one (FIX 10902) and
 /// follow_body_ref holds (true only for an actual job result; the body's own
 /// erase passes false, REVIEW-4385 P1). The body goes
-/// through this same erasure, so its own hold keeps it, logged, like the
-/// result's. A version the body read cannot parse names no body. A hold on
-/// any version's ASSET keeps the whole artifact instead (FIX 12532), and a
-/// torn body stages its hard-delete marker and propagation tombstone in the
-/// same transaction (REVIEW-4385 P1), so replicas cannot restore it. Returns
-/// whether the tear ran; a hold-kept body stages nothing (REVIEW-4385 P1).
+/// through this same erasure, so its own restriction keeps it, logged, like
+/// the result's. A version the body read cannot parse names no body. A
+/// restriction on any version's ASSET keeps the whole artifact instead
+/// (FIX 12532), and a torn body stages its hard-delete marker and
+/// propagation tombstone in the same transaction (REVIEW-4385 P1), so
+/// replicas cannot restore it. Returns whether the tear ran; a
+/// restriction-kept body stages nothing (REVIEW-4385 P1).
 fn erase_connector_reply_result_artifact_in_txn(
     write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
@@ -574,7 +575,7 @@ fn erase_connector_reply_result_artifact_in_txn(
     {
         return Ok(false);
     }
-    if let Err(error) = store.reject_legal_hold_in_txn(txn, artifact.as_bytes()) {
+    if let Err(error) = store.reject_restricted_record_in_txn(txn, artifact.as_bytes()) {
         if !crate::store::legal_hold::held_in_txn(store, txn, artifact.as_bytes())? {
             return Err(error);
         }
@@ -584,7 +585,7 @@ fn erase_connector_reply_result_artifact_in_txn(
         );
         return Ok(false);
     }
-    // A hold on any version's ASSET keeps the whole artifact (FIX 12532):
+    // A restriction on any version's ASSET keeps the whole artifact (FIX 12532):
     // the tear below would otherwise refuse on the held ASSET and fail the
     // erase, rolling back the source hard erase with it (REVIEW-4385 P1).
     // Every hash the chain and the replicated claims hold is checked before

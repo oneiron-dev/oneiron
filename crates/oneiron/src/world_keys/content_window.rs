@@ -28,7 +28,6 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 use crate::ports::{WindowAddress, WindowDeletionRows};
-use crate::store::legal_hold::HoldActor;
 use crate::store::loro_document::{
     export_snapshot, import_doc, map_for_each_tombstone_value, map_get_bytes,
 };
@@ -69,18 +68,20 @@ fn mirror_key(world: EntityId, window: &WindowKey) -> String {
 struct MirrorRead {
     held: Option<Vec<u8>>,
     erases: u64,
-    /// What a replacement of the mirror read would destroy: a legal hold
-    /// over any of it, placed since or before, refuses the write (OF-470).
+    /// What a replacement of the mirror read would destroy: a cooperative
+    /// restriction over any of it, placed since or before, refuses the write
+    /// (OF-470).
     destroys: Option<CarrierInventory>,
 }
 
 impl MirrorRead {
     /// Whether the mirror `key` and the erase count stand as read, in `txn`.
-    /// A replacement meets every legal hold over what it destroys here, in
-    /// the writer that would destroy it, and is refused under one.
+    /// A replacement meets every cooperative restriction over what it
+    /// destroys here, in the writer that would destroy it, and is refused
+    /// under one.
     fn stands_in(&self, vault: &Vault, txn: &heed::RoTxn<'_>, key: &str) -> Result<bool> {
         if let Some(destroys) = &self.destroys {
-            destroys.reject_held_in_txn(&vault.store, txn, &HoldActor::TIMER)?;
+            destroys.reject_held_in_txn(&vault.store, txn)?;
         }
         Ok(MIRROR.get(&vault.store, txn, &key.to_owned())? == self.held
             && mirror_erases_in(&vault.store, txn)? == self.erases)
@@ -297,13 +298,11 @@ impl WindowManager {
             if !read.stands_in(vault, wtxn, &key)? {
                 return Err(refused("the sealed mirror changed while it was sealed"));
             }
-            // A legal hold keeps every row it names (OF-470): while one
-            // stands over what the cut drops, the mirror is kept whole and
-            // only the checked snapshot ships.
+            // A cooperative restriction keeps every row it names (OF-470):
+            // while one stands over what the cut drops, the mirror is kept
+            // whole and only the checked snapshot ships.
             let held_rows = match &destroyed {
-                Some(destroyed) => destroyed
-                    .reject_held_in_txn(&vault.store, wtxn, &HoldActor::TIMER)
-                    .is_err(),
+                Some(destroyed) => destroyed.reject_held_in_txn(&vault.store, wtxn).is_err(),
                 None => false,
             };
             if held_rows {
@@ -365,16 +364,18 @@ impl WindowManager {
             // A mirror cut history-free (FIX 17210) does not merge into one
             // that lacks its root: it takes this mirror's place, with what
             // this one holds that it does not written back on top. The
-            // mirror the failed import touched is read again first. A legal
-            // hold over what this mirror holds keeps it as it is (OF-470).
+            // mirror the failed import touched is read again first. A
+            // cooperative restriction over what this mirror holds keeps it as
+            // it is (OF-470).
             let (old, reread) = load_mirror_read(vault, world, window)?;
             read = reread;
-            // Refused early under a hold that stands now, and again in the
-            // writer that would store the replacement, under one placed since.
+            // Refused early under a restriction that stands now, and again in
+            // the writer that would store the replacement, under one placed
+            // since.
             let destroys = CarrierInventory::of_window(&old);
             {
                 let rtxn = vault.store.env.read_txn()?;
-                destroys.reject_held_in_txn(&vault.store, &rtxn, &HoldActor::TIMER)?;
+                destroys.reject_held_in_txn(&vault.store, &rtxn)?;
             }
             read.destroys = Some(destroys);
             let (candidate, lost) = replace_detached_mirror(vault, window, &old, snapshot)?;
@@ -463,11 +464,12 @@ pub(crate) fn rewrite_mirrors_in_txn(
         if !rewrite(&mut *wtxn, &doc)? {
             continue;
         }
-        // A legal hold keeps every row it names (OF-470): while one stands
-        // over what the cut drops, the mirror keeps its history and its
-        // window is pinned history-free, so its seals check what they ship.
+        // A cooperative restriction keeps every row it names (OF-470): while
+        // one stands over what the cut drops, the mirror keeps its history
+        // and its window is pinned history-free, so its seals check what they
+        // ship.
         let held = CarrierInventory::of_window(&doc)
-            .reject_held_in_txn(&vault.store, wtxn, &HoldActor::UNATTRIBUTED.privacy(true))
+            .reject_held_in_txn(&vault.store, wtxn)
             .is_err();
         let bytes = if held {
             if let Some((_, label)) = key.split_once(':') {

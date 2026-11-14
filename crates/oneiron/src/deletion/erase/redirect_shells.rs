@@ -2,7 +2,8 @@ use super::*;
 
 impl Vault {
     /// Refuse the entire head erase when ANY redirect shell in its atomic
-    /// cascade has an accepted hold. Called before local scrub and publication.
+    /// cascade has an accepted restriction. Called before local scrub and
+    /// publication.
     pub(in crate::deletion) fn reject_held_redirect_shells_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -14,7 +15,8 @@ impl Vault {
             &BTreeSet::from([*head]),
         )?;
         for shell in shells {
-            self.store.reject_legal_hold_in_txn(txn, shell.as_bytes())?;
+            self.store
+                .reject_restricted_record_in_txn(txn, shell.as_bytes())?;
             crate::world_keys::reject_held_pad_world_in_txn(&self.store, txn, &[shell])?;
         }
         Ok(())
@@ -67,7 +69,7 @@ impl Vault {
         }
         for shell in &shells {
             self.store
-                .reject_legal_hold_in_txn(&*wtxn, shell.as_bytes())?;
+                .reject_restricted_record_in_txn(&*wtxn, shell.as_bytes())?;
             crate::world_keys::reject_held_pad_world_in_txn(&self.store, &*wtxn, &[*shell])?;
         }
         let mut changed = Vec::new();

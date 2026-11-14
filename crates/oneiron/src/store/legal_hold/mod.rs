@@ -8,7 +8,7 @@
 //! backup expiry and key retirement run as they would without it. A hold is
 //! not an in-place retention pin or an erase-completion gate.
 //!
-//! Every byte-destroying path still calls [`Store::reject_legal_holds_in_txn`]
+//! Every byte-destroying path still calls [`Store::reject_restricted_records_in_txn`]
 //! inside the transaction that destroys; only a cooperative restriction
 //! refuses there now. Several holds may name one record; each lifts on its
 //! own.
@@ -83,8 +83,6 @@ fn held_key(target: &LegalHoldTarget) -> HeldKey {
 pub(crate) struct HoldActor {
     pub(crate) kind: LegalHoldActorKind,
     pub(crate) id: Option<String>,
-    /// The delete was a privacy erasure request (C5).
-    pub(crate) privacy_erase: bool,
 }
 
 impl HoldActor {
@@ -92,11 +90,7 @@ impl HoldActor {
     pub(crate) const TIMER: Self = Self::new(LegalHoldActorKind::Timer, None);
 
     pub(crate) const fn new(kind: LegalHoldActorKind, id: Option<String>) -> Self {
-        Self {
-            kind,
-            id,
-            privacy_erase: false,
-        }
+        Self { kind, id }
     }
 
     pub(crate) fn owner(actor: EntityId) -> Self {
@@ -105,12 +99,6 @@ impl HoldActor {
 
     pub(crate) fn host(operator: &str) -> Self {
         Self::new(LegalHoldActorKind::Host, Some(operator.to_owned()))
-    }
-
-    #[must_use]
-    pub(crate) fn privacy(mut self, privacy_erase: bool) -> Self {
-        self.privacy_erase = privacy_erase;
-        self
     }
 }
 
@@ -191,19 +179,16 @@ pub(crate) fn put_hold_in_txn(
 }
 
 impl Store {
-    /// THE legal-hold check (C7). Every byte-destroying path calls it inside
-    /// the transaction that destroys, for every id it destroys, whoever acts:
-    /// agent, timer, member or owner. No legal hold refuses any more
-    /// (LEGAL-HOLD-USE = B, ARCH-0038 #legal-hold-clone-ruling): every hold
-    /// keeps its sealed copy outside the vault, and erases, deletes and
-    /// backup expiry run as they would without it. Only a cooperative
-    /// restriction refuses now, with absence (`EntityNotFound`), and no
-    /// refusal is logged, so `_actor` names no one in any log.
-    pub(crate) fn reject_legal_holds_in_txn(
+    /// THE restriction check. Every byte-destroying path calls it inside
+    /// the transaction that destroys, for every id it destroys. A
+    /// cooperative restriction on an id refuses with absence
+    /// (`EntityNotFound`); no legal hold refuses (LEGAL-HOLD-USE = B,
+    /// ARCH-0038 #legal-hold-clone-ruling: a hold keeps its sealed copy
+    /// outside the vault).
+    pub(crate) fn reject_restricted_records_in_txn(
         &self,
         txn: &RoTxn<'_>,
         ids: &[EntityId],
-        _actor: &HoldActor,
     ) -> Result<()> {
         for id in ids {
             self.reject_held_key_in_txn(txn, Some(LegalHoldTarget::Record(*id)))?;
@@ -211,9 +196,12 @@ impl Store {
         Ok(())
     }
 
-    /// [`Self::reject_legal_holds_in_txn`] for one id, from a seam that knows
-    /// no actor.
-    pub(crate) fn reject_legal_hold_in_txn(&self, txn: &RoTxn<'_>, id: &[u8; 16]) -> Result<()> {
+    /// [`Self::reject_restricted_records_in_txn`] for one raw id.
+    pub(crate) fn reject_restricted_record_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        id: &[u8; 16],
+    ) -> Result<()> {
         let target = EntityId::from_bytes(*id).ok().map(LegalHoldTarget::Record);
         self.reject_held_key_in_txn(txn, target)
     }

@@ -41,8 +41,8 @@ pub(super) fn reject_engine_authored_delete(
     id: &EntityId,
 ) -> Result<()> {
     // Before a batch delete destroys world keys or custody (OF-470). A pad is
-    // also held by its world's holds.
-    store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
+    // also held by its world's restrictions.
+    store.reject_restricted_record_in_txn(wtxn, id.as_bytes())?;
     crate::world_keys::reject_held_pad_world_in_txn(store, wtxn, &[*id])?;
     crate::store::base_agent::guard_actor_delete(id)?;
     crate::conversation_dag::guard_room_turn_delete(store, wtxn, id)?;
@@ -143,7 +143,7 @@ pub(crate) fn deindex_entity(
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
     let store = write.store;
     // Every physical tear (batch, port, purge, cascade) keeps a held record.
-    store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
+    store.reject_restricted_record_in_txn(wtxn, id.as_bytes())?;
     crate::world_keys::reject_held_pad_world_in_txn(store, wtxn, &[*id])?;
     crate::store::base_agent::guard_actor_delete(id)?;
     // The port's direct delete reaches here without the batch guard.
@@ -224,7 +224,7 @@ fn capture_entity_deindex(
 ) -> Result<CapturedEntityDeindex> {
     let store = write.store;
     // The lexical-hint cascade tears dependent ids through here.
-    store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
+    store.reject_restricted_record_in_txn(wtxn, id.as_bytes())?;
     crate::world_keys::reject_held_pad_world_in_txn(store, wtxn, &[*id])?;
     crate::store::base_agent::guard_actor_delete(id)?;
     store.delete_guards.guard_goal_delete(store, wtxn, *id)?;

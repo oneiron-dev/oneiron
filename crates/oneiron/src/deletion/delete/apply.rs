@@ -63,9 +63,10 @@ impl Vault {
         // A user delete of an actor releases its code runs' replies before
         // the body is truncated, each owner row and membership kept Deleted
         // for a later erase (FIX 15532, FIX 6591); an archive keeps them. A
-        // hold refuses first, as the scrub below would.
+        // restriction refuses first, as the scrub below would.
         if reason == DeleteReason::UserDelete {
-            self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
+            self.store
+                .reject_restricted_record_in_txn(&wtxn, id.as_bytes())?;
             #[cfg(unix)]
             crate::code_run::soft_delete_actor_responses_in_txn(self, &mut wtxn, id)?;
         }
@@ -262,7 +263,8 @@ impl Vault {
             // OWN view — the refusal is actionable (nothing is on the wire) and
             // true (nothing replays back).
             reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
-            self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
+            self.store
+                .reject_restricted_record_in_txn(&wtxn, id.as_bytes())?;
             crate::world_keys::reject_held_pad_world_in_txn(&self.store, &wtxn, &[*id])?;
             self.reject_held_redirect_shells_in_txn(&wtxn, id)?;
             if !authority_settled {

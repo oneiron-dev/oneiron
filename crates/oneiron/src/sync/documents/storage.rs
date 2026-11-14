@@ -49,14 +49,10 @@ pub(crate) fn compact(vault: &Vault, id: EntityId, erased: bool) -> Result<()> {
             // The NOTE-specific purge door owns cited-frontier retention.
             return Ok(());
         }
-        // A held document keeps its bytes and its history (OF-470, FIX
+        // A restricted document keeps its bytes and its history (OF-470, FIX
         // 10160): the state-only snapshot drops its history as the delete
         // drops it all.
-        vault.store.reject_legal_holds_in_txn(
-            txn,
-            &[id],
-            &crate::store::legal_hold::HoldActor::TIMER,
-        )?;
+        vault.store.reject_restricted_records_in_txn(txn, &[id])?;
         if erased {
             return crate::note::delete_document_in_txn(&vault.store, txn, &id);
         }

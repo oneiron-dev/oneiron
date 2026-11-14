@@ -19,7 +19,7 @@ struct OwedStagedErase {
     owners: BTreeSet<EntityId>,
 }
 
-/// Staged-job digests whose artifact erase a legal hold still owes. Key: hash32 (job).
+/// Staged-job digests whose artifact erase a restriction still owes. Key: hash32 (job).
 const OWED_STAGED_ERASES: SideTable<[u8; 32], OwedStagedErase, Named> =
     SideTable::new(&side_table::BYOA_STAGED_INPUT_ERASE);
 
@@ -31,8 +31,8 @@ const OWED_STAGED_ERASES: SideTable<[u8; 32], OwedStagedErase, Named> =
 /// and its row, whose name holds the job's digest, with them. Its graph,
 /// vector and neighbor indexes are invalidated. No hard-delete marker is
 /// written for the content-addressed id, so the same job staged again later
-/// stages afresh. A legal hold on the artifact keeps it whole and owes its
-/// erase to the next due legal-hold pass that finds no hold on it (FIX 7612).
+/// stages afresh. A restriction on the artifact keeps it whole and owes its
+/// erase to the next settle pass that finds no restriction on it (FIX 7612).
 /// Re-staging never drops that owe. An id that holds no artifact here clears
 /// any stale owe and is left alone. The attempt payload pass erases the pins.
 ///
@@ -59,7 +59,7 @@ pub(crate) fn erase_staged_input_in_txn(
             OWED_STAGED_ERASES.delete(store, txn, digest)?;
             continue;
         }
-        if let Err(error) = store.reject_legal_hold_in_txn(txn, artifact.as_bytes()) {
+        if let Err(error) = store.reject_restricted_record_in_txn(txn, artifact.as_bytes()) {
             if !crate::store::legal_hold::held_in_txn(store, txn, artifact.as_bytes())? {
                 return Err(error);
             }
