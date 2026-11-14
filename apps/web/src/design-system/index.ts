@@ -155,6 +155,7 @@ export { RunFoot, type RunFootProps, type RunFootCallProps, type RunSubState } f
 export { formatElapsed } from './patterns/run-elapsed'
 export {
   CrewStack,
+  crewCountName,
   type CrewStackProps,
   type CrewStackMemberProps,
   type CrewStackListProps,

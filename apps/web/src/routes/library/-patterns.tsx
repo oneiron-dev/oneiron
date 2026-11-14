@@ -628,6 +628,39 @@ function SplitDemo() {
   )
 }
 
+/* The crew as one button with a tooltip and a caption; the readout says
+   whether the people of the room are open. */
+function CrewButtonDemo() {
+  const [open, setOpen] = React.useState(false)
+  return (
+    <div className="lib-stack" data-specimen="crew-button">
+      <CrewStack onOpen={() => setOpen((o) => !o)} aria-expanded={open} caption="see and manage" data-specimen="crew-button-stack">
+        <CrewStack.Member name="Owen, you">
+          <Glyph initial="o" label="Owen" />
+        </CrewStack.Member>
+        <CrewStack.Member name="Yuki, a guest">
+          <Glyph initial="y" label="Yuki" guest />
+        </CrewStack.Member>
+        <CrewStack.Member name="Metryon">
+          <Glyph glyph="ruler" label="Metryon" size={18} />
+        </CrewStack.Member>
+        <CrewStack.Member name="Tory">
+          <Glyph glyph="owl" label="Tory" size={18} />
+        </CrewStack.Member>
+        <CrewStack.Member name="Antevon">
+          <Glyph glyph="laurel" label="Antevon" size={18} />
+        </CrewStack.Member>
+        <CrewStack.Member name="Eiri">
+          <Glyph glyph="wing" label="Eiri" size={18} />
+        </CrewStack.Member>
+      </CrewStack>
+      <span className="lib-readout" data-specimen="crew-button-log">
+        the people of the room {open ? 'open' : 'closed'}
+      </span>
+    </div>
+  )
+}
+
 /* ── the write box ────────────────────────────────────────────────────── */
 
 const PERSONAS: ComposerPersonaKind[] = ['all', 'work', 'personal', 'dream']
@@ -1010,6 +1043,9 @@ export function PatternSections() {
           <div className="lib-crew-right">
             <CrewDemo open />
           </div>
+        </Specimen>
+        <Specimen name="the whole stack as one button: it opens the people of the room; its faces are plain marks" wide={1}>
+          <CrewButtonDemo />
         </Specimen>
       </Section>
 
