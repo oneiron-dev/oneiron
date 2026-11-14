@@ -221,24 +221,23 @@ async fn core_context_pack_owner_absent_happy_path_clamps_to_scope() {
         .iter()
         .filter_map(|entity| entity["id"].as_str())
         .collect();
-    // The runner cuts a failure line at 400 characters: what decides this
-    // row (the count, and whether the other-world claim was read) goes first.
-    assert!(
-        body["disclosure"]["clamped_out"].as_u64().unwrap_or(0) > 0,
-        "candidate sweep counted removals: clamped_out {}; diary in results {}; \
-         party {}; base claim {}; {} results; disclosure {}",
-        body["disclosure"]["clamped_out"],
-        result_ids.contains(&diary.to_hex().as_str()),
-        result_ids.contains(&party.to_hex().as_str()),
-        result_ids.contains(&base_claim.to_hex().as_str()),
+    // The other-world claim is absent from the assembled context, and the
+    // clamp count does not name it: `clamped_out` counts only clamped rows
+    // the caller would itself retrieve on its own floor (ARCH-0067 H146,
+    // `UnfinalizedContextPack::clamped_out_under`), and this caller's
+    // clearance holds only the base world (the 6bb2488ab0ec run: 0). The
+    // widened leg below retrieves the same claim.
+    assert_eq!(
+        (
+            body["disclosure"]["clamped_out"].clone(),
+            result_ids.contains(&diary.to_hex().as_str()),
+            result_ids.contains(&party.to_hex().as_str()),
+            result_ids.contains(&base_claim.to_hex().as_str()),
+        ),
+        (json!(0), false, true, true),
+        "clamp count, diary, party, base claim; {} results; disclosure {}",
         result_ids.len(),
         body["disclosure"]
-    );
-    assert!(result_ids.contains(&party.to_hex().as_str()));
-    assert!(result_ids.contains(&base_claim.to_hex().as_str()));
-    assert!(
-        !result_ids.contains(&diary.to_hex().as_str()),
-        "out-of-world Tier-B claim absent from the assembled context"
     );
     let neighbors = body["neighbors"].as_array().expect("neighbors");
     assert!(neighbors.is_empty());
