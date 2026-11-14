@@ -5,6 +5,9 @@ run` (with and without --no-run) from a fixture workspace, logs each call with
 its CARGO_BUILD_JOBS, and writes the JUnit nextest would write. It fails to
 compile the test targets named in STUB_FAIL_TESTS, and cannot list the tests of
 a run that selects a target named in STUB_LIST_ERROR_TESTS (exit 104, no JUnit).
+A budget verdict run (its filter starts with the budget set's first row) gives
+the timed cases of STUB_BUDGET_CASES, or cannot list its tests when
+STUB_LIST_ERROR_BUDGET is set.
 
 Run: python3 -m unittest discover -s scripts/nightly -p 'test_*.py' -v
 """
@@ -78,13 +81,20 @@ STUB_CARGO = textwrap.dedent(
     cases = []
     if profile == "nightly" and expression.startswith("(kind(lib)"):
         if "--lib" in args:
-            cases.append(("oneiron", "tests::a_row_is_kept"))
+            cases.append(("oneiron", "tests::a_row_is_kept", 0.5))
+    elif profile == "nightly" and expression.startswith("((package("):
+        if os.environ.get("STUB_LIST_ERROR_BUDGET"):
+            print("error: creating test list failed (stub)", file=sys.stderr)
+            sys.exit(104)
+        budget = json.loads(os.environ.get("STUB_BUDGET_CASES", "{}"))
+        cases += [(f"oneiron::{t}", name, seconds) for t in tests for name, seconds in budget.get(t, [])]
     elif profile == "nightly":
-        cases += [(f"oneiron::{t}", "a_case_runs") for t in tests]
+        cases += [(f"oneiron::{t}", "a_case_runs", 0.5) for t in tests]
     junit = target / "nextest" / profile / "junit.xml"
     junit.parent.mkdir(parents=True, exist_ok=True)
     body = "".join(
-        f'<testsuite name="{binary}"><testcase name="{name}" classname="{binary}"/></testsuite>' for binary, name in cases
+        f'<testsuite name="{binary}"><testcase name="{name}" classname="{binary}" time="{seconds}"/></testsuite>'
+        for binary, name, seconds in cases
     )
     junit.write_text(f'<?xml version="1.0"?><testsuites name="nextest-run">{body}</testsuites>')
     """
@@ -188,6 +198,78 @@ class RunNightlyTest(unittest.TestCase):
 
     def builds(self) -> list[str]:
         return [line for line in self.calls.read_text().splitlines() if " --no-run " in line]
+
+    def runs(self, profile: str) -> list[str]:
+        """The -E filter of each `cargo nextest run` under the profile, in order."""
+        lines = [line for line in self.calls.read_text().splitlines() if f" --profile {profile} " in line]
+        return [line.split(" -E ", 1)[1] for line in lines]
+
+    def write_budget_set(self) -> str:
+        row = ("alpha-props", "oneiron", "test", "alpha", "^", "props::", "crates/core/tests/alpha.rs", "30 min")
+        header = ("id", "package", "kind", "binary", "match", "test", "source", "bound")
+        (self.repo / "scripts/nightly/budget-set.tsv").write_text("\t".join(header) + "\n" + "\t".join(row) + "\n")
+        return "(package(oneiron) & kind(test) & binary(=alpha) & test(/^props::/))"
+
+    def test_the_budget_tests_run_every_night_before_the_shards_and_no_other_verdict_runs_them(self) -> None:
+        budget = self.write_budget_set()
+        cursor = self.out.parent / "cursor.json"
+        result = self.run_nightly(
+            "--shard-files", "2", "--max-shards", "1", "--cursor", str(cursor),
+            STUB_BUDGET_CASES=json.dumps({"alpha": [["props::a_merge_converges", 3.5]]}),
+        )  # fmt: skip
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(
+            [line.split(" --all-features ")[1] for line in self.builds()],
+            [
+                "--workspace --exclude oneiron-bench --lib --bins --test pending_door",
+                "--workspace --exclude oneiron-bench --test alpha",
+                "--workspace --exclude oneiron-bench --test alpha --test beta",
+            ],
+        )
+        verdicts = self.runs("nightly")
+        self.assertEqual(len(verdicts), 4, "libs, libtest, budget, tests-01")
+        self.assertTrue(verdicts[0].endswith(f"& not ({budget})"), verdicts[0])
+        self.assertEqual(verdicts[2], f"({budget}) & not (none() | none())")
+        self.assertTrue(verdicts[3].endswith(f"& not ({budget})"), verdicts[3])
+        self.assertEqual(len(self.runs("quarantine")), 2, "the budget binaries' quarantine runs in their shards")
+        self.assertIn("## NIGHTLY stop reason=max-shards next=tests-02", result.stdout)
+        self.assertIn("## NIGHTLY measure after=budget minutes=0 ", result.stdout)
+        line = self.summary_line(result)
+        self.assertIn(" cycle=1 shards_run=1/2 next=kit passed=4 failed=0 ", line)
+        self.assertIn(" budget_in=0 budget_out=0 budget_pending=1 budget_not_run=0", line)
+        samples = json.loads((self.out / "budget-samples.json").read_text())
+        (host_samples,) = samples.values()
+        self.assertEqual(
+            [s["seconds"] for s in host_samples["oneiron::alpha props::a_merge_converges"]], [3.5], "one sample a night"
+        )
+        left = sorted(path.name for path in (self.target / "debug/deps").iterdir())
+        self.assertEqual(left, ["pending_door-0123456789abcdef"], "the budget and shard binaries are deleted")
+
+    def test_a_deadline_already_passed_still_runs_the_budget_tests(self) -> None:
+        self.write_budget_set()
+        result = self.run_nightly(
+            "--shard-files", "2", "--deadline-epoch", "1",
+            STUB_BUDGET_CASES=json.dumps({"alpha": [["props::a_merge_converges", 3.5]]}),
+        )  # fmt: skip
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("## NIGHTLY verdict-budget rc=0 ", result.stdout)
+        self.assertIn("## NIGHTLY stop reason=deadline next=tests-01", result.stdout)
+        self.assertIn(" shards_run=0/2 next=alpha passed=2 ", self.summary_line(result))
+
+    def test_budget_tests_that_could_not_be_listed_make_the_night_red_and_the_shards_still_run(self) -> None:
+        self.write_budget_set()
+        result = self.run_nightly("--shard-files", "2", STUB_LIST_ERROR_BUDGET="1")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("## NIGHTLY verdict-budget rc=104 ", result.stdout)
+        self.assertNotIn("stop reason=", result.stdout)
+        line = self.summary_line(result)
+        self.assertIn(
+            " RED build=ok cycle=1 shards_run=2/2 next=alpha passed=5 failed=0 skipped=0 verdict_not_run=1 ", line
+        )
+        self.assertIn(
+            "the verdict stage of budget did not run (exit 104, no JUnit)",
+            json.loads((self.out / "summary.json").read_text())["reasons"],
+        )
 
     def test_a_sharded_green_night_runs_every_shard_and_deletes_its_test_binaries(self) -> None:
         result = self.run_nightly("--shard-files", "2")
