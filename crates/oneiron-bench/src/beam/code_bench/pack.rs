@@ -524,7 +524,8 @@ impl Pack<'_> {
     }
 
     /// The world: a fresh repository of the base's tree, one commit, the
-    /// sealed paths removed. With writers, each gets a worktree of it on
+    /// sealed paths removed. `add -f` keeps tracked files that match an
+    /// ignore rule. With writers, each gets a worktree of it on
     /// its own branch, beside a shared `integration` branch.
     fn world_script(&self, id: &str, task: &Task, writers: &[&str]) -> String {
         let repo = sh_quote(&self.repo.display().to_string());
@@ -552,7 +553,7 @@ impl Pack<'_> {
         }
         let _ = write!(
             script,
-            "git -C \"$root\" init -q\ngit -C \"$root\" add -A\ngit -C \"$root\" -c user.name=code-bench \
+            "git -C \"$root\" init -q\ngit -C \"$root\" add -A -f\ngit -C \"$root\" -c user.name=code-bench \
              -c user.email=code-bench@example.invalid -c commit.gpgsign=false commit -q -m {}\n",
             sh_quote(&format!("code-bench world: {} at {}", task.id, task.base)),
         );
