@@ -1,0 +1,191 @@
+{
+  "contract": "oneiron.retrieval_pack.v1",
+  "pack_id": "tiny",
+  "revision": "1",
+  "slice": "search",
+  "source": {
+    "dataset": "synthetic-tiny",
+    "dataset_sha256": "4cb3ea4e1606c36e5b5d2802f0bda78ef91dcf5f89b828fd63fda885534b48dc",
+    "license": "Apache-2.0",
+    "split_sha256": "63a56a09956e11862ea46b9d66c3e4e8ebde8bccedf7c41638e3d03d60139b67"
+  },
+  "embedding": {
+    "model_id": "synthetic/tiny-4d@1",
+    "dims": 4,
+    "transform": "l2_f16",
+    "vectors_sha256": "96f98f775d28439a54c49cb0fba47a738917a004afcf16653814cd7eca9019df"
+  },
+  "records": [
+    {
+      "record_id": "tiny-r01",
+      "kind": "turn",
+      "speaker": "user",
+      "text": "Owen said he plans to move to a new apartment in March.",
+      "source_ref": "tiny-s1#0"
+    },
+    {
+      "record_id": "tiny-r02",
+      "kind": "turn",
+      "speaker": "assistant",
+      "text": "Yuki asked which neighborhood Owen prefers for the move.",
+      "source_ref": "tiny-s1#1"
+    },
+    {
+      "record_id": "tiny-r03",
+      "kind": "turn",
+      "speaker": "user",
+      "text": "Owen prefers the quiet street near the park.",
+      "source_ref": "tiny-s1#2"
+    },
+    {
+      "record_id": "tiny-r04",
+      "kind": "turn",
+      "speaker": "assistant",
+      "text": "Yuki started a new job at the city library.",
+      "source_ref": "tiny-s2#0"
+    },
+    {
+      "record_id": "tiny-r05",
+      "kind": "turn",
+      "speaker": "user",
+      "text": "Owen asked Yuki what time her first shift begins.",
+      "source_ref": "tiny-s2#1"
+    },
+    {
+      "record_id": "tiny-r06",
+      "kind": "turn",
+      "speaker": "assistant",
+      "text": "Yuki said her shift begins at nine in the morning.",
+      "source_ref": "tiny-s2#2"
+    },
+    {
+      "record_id": "tiny-r07",
+      "kind": "turn",
+      "speaker": "user",
+      "text": "Owen adopted a grey cat from the shelter.",
+      "source_ref": "tiny-s3#0"
+    },
+    {
+      "record_id": "tiny-r08",
+      "kind": "turn",
+      "speaker": "assistant",
+      "text": "Yuki suggested the name Miso for the cat.",
+      "source_ref": "tiny-s3#1"
+    },
+    {
+      "record_id": "tiny-r09",
+      "kind": "turn",
+      "speaker": "user",
+      "text": "Owen agreed and bought food and a small bed.",
+      "source_ref": "tiny-s3#2"
+    },
+    {
+      "record_id": "tiny-r10",
+      "kind": "turn",
+      "speaker": "assistant",
+      "text": "Yuki planned a weekend trip to the lake.",
+      "source_ref": "tiny-s4#0"
+    },
+    {
+      "record_id": "tiny-r11",
+      "kind": "turn",
+      "speaker": "user",
+      "text": "Owen booked two train tickets for Saturday morning.",
+      "source_ref": "tiny-s4#1"
+    },
+    {
+      "record_id": "tiny-r12",
+      "kind": "turn",
+      "speaker": "assistant",
+      "text": "Yuki packed lunch and a map for the trip.",
+      "source_ref": "tiny-s4#2"
+    }
+  ],
+  "corpora": [
+    {
+      "corpus_id": "tiny-c1",
+      "sessions": [
+        {
+          "session_id": "tiny-s1",
+          "time": "2024-01-10T09:00:00Z",
+          "record_ids": [
+            "tiny-r01",
+            "tiny-r02",
+            "tiny-r03"
+          ]
+        },
+        {
+          "session_id": "tiny-s2",
+          "time": "2024-02-14T18:30:00Z",
+          "record_ids": [
+            "tiny-r04",
+            "tiny-r05",
+            "tiny-r06"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus_id": "tiny-c2",
+      "sessions": [
+        {
+          "session_id": "tiny-s3",
+          "time": "2024-03-01T08:00:00Z",
+          "record_ids": [
+            "tiny-r07",
+            "tiny-r08",
+            "tiny-r09"
+          ]
+        },
+        {
+          "session_id": "tiny-s4",
+          "time": "2024-04-20T20:15:00Z",
+          "record_ids": [
+            "tiny-r10",
+            "tiny-r11",
+            "tiny-r12"
+          ]
+        }
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "query_id": "tiny-q1",
+      "slice": "search",
+      "corpus_id": "tiny-c1",
+      "category": "single-session-user",
+      "text": "Which neighborhood does Owen prefer for the move?",
+      "now": "2024-03-01T00:00:00Z",
+      "qrels": {
+        "tiny-r01": 1,
+        "tiny-r02": 2
+      },
+      "expect_empty": false
+    },
+    {
+      "query_id": "tiny-q2",
+      "slice": "search",
+      "corpus_id": "tiny-c2",
+      "category": "knowledge-update",
+      "text": "What did Owen book for the Saturday trip?",
+      "now": "2024-05-01T00:00:00Z",
+      "qrels": {
+        "tiny-r08": 1,
+        "tiny-r10": 1,
+        "tiny-r11": 2
+      },
+      "expect_empty": false
+    },
+    {
+      "query_id": "tiny-q3",
+      "slice": "search",
+      "corpus_id": "tiny-c1",
+      "category": "abstention",
+      "text": "What is the name of Owen's dog?",
+      "now": "2024-03-01T00:00:00Z",
+      "qrels": {},
+      "expect_empty": true
+    }
+  ]
+}

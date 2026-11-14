@@ -24,6 +24,7 @@ mod search_client;
 mod windows;
 pub(crate) use self::search_client::search_resident;
 use self::windows::PromotionReply;
+pub(in crate::sync::client) use self::windows::drop_thin_rows_in;
 pub(crate) use self::windows::retry_refused_retains;
 pub(crate) use authority::{catch_up_authority, pinned_checkpoint_pending};
 pub use bundle::{

@@ -568,7 +568,7 @@ impl Memory<'_> {
                 JournalRole::AttributionEdge,
                 edge(&planned.id, EdgeKind::BelongsTo, &plan.conversation_id),
             ));
-            if planned.message.author != WitnessAuthor::System {
+            if planned.message.author.names_writer() {
                 entries.push(entry(
                     JournalRole::AttributionEdge,
                     edge(&planned.id, EdgeKind::AuthoredBy, &self.actor),

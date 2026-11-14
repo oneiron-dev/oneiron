@@ -172,6 +172,28 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        [sub, rest @ ..] if sub == "measure" && rest.iter().any(|arg| arg == "--picks-for") => {
+            let Some(picks_for) = super::model_scaffold::PicksFor::parse(rest) else {
+                eprintln!(
+                    "usage: oneiron-bench beam measure --picks-for <definition hex> \
+                     --expected-version <version> [--regime fixed_answer_cap|fixed_total_tokens] \
+                     <report.json>"
+                );
+                return ExitCode::FAILURE;
+            };
+            match picks_for.run().and_then(|argument| {
+                serde_json::to_string_pretty(&argument).map_err(BeamError::from)
+            }) {
+                Ok(argument_json) => {
+                    println!("{argument_json}");
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("BEAM picks-for failed: {err}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         [sub, rest @ ..]
             if (sub == "rung-fixture" && rest.is_empty())
                 || (rest.len() == 1
