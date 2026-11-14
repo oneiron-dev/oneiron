@@ -18,6 +18,7 @@
 //!   erases the covered copies except one a hold keeps, `decline` erases
 //!   nothing, no row leaves the ask for the owner, and the owner's own
 //!   answer is never rewritten. Filing erases nothing under any setting.
+//!   The owner's own delete choice runs through the same delete run.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test inquiry_leaving_holdings`.
 
@@ -1065,4 +1066,46 @@ fn the_owners_answer_is_never_rewritten() {
         .expect("the company's filed asks");
     assert_eq!(after, vec![owners], "the owner's answer stands");
     assert_eq!(fx.held_copies(), copies, "nothing is erased");
+}
+
+#[test]
+fn the_owners_delete_choice_erases_what_it_names() {
+    let fx = leaving();
+    let copies = fx.land_copy();
+    let filed = fx.file_leave_ask();
+    let now = fx.company.vault.now_recorded_at();
+    let answered = fx
+        .company
+        .vault
+        .answer_cooperative_deletion_as(
+            &fx.company.proof,
+            &fx.pact(),
+            &request_nonce(&filed.request_id),
+            &CooperativeDeletionAnswer {
+                kind: CooperativeDeletionDispositionKind::Delete,
+                reason_code: None,
+                review_at: None,
+                delete: vec![copies[1]],
+                hold: Vec::new(),
+                retention: None,
+                restrict: Vec::new(),
+                restriction_notice_given: Vec::new(),
+                redact: Vec::new(),
+            },
+            now,
+        )
+        .expect("the company Owner deletes one copy");
+    let answer = answered.disposition.as_ref().expect("an answer");
+    assert_eq!(answer.kind, CooperativeDeletionDispositionKind::Delete);
+    assert_eq!(answer.deleted, vec![copies[1].to_hex()]);
+    assert!(
+        answer
+            .delete_operation
+            .as_ref()
+            .expect("the operation")
+            .pending()
+            .is_empty(),
+        "nothing stays pending"
+    );
+    assert_eq!(fx.held_copies(), vec![copies[0]]);
 }
