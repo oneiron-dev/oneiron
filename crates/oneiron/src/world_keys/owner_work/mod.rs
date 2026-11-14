@@ -326,7 +326,8 @@ impl OwnerWorkReceipt {
             OwnerWorkBody::WorldKey { .. }
             | OwnerWorkBody::Root { .. }
             | OwnerWorkBody::Custody { .. }
-            | OwnerWorkBody::ExportSecret(_) => None,
+            | OwnerWorkBody::ExportSecret(_)
+            | OwnerWorkBody::FileRuling(_) => None,
         };
         Some(Self {
             request: Some(entry_hex(&request)),

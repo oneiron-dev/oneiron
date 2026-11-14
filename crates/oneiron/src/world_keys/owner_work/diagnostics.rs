@@ -532,7 +532,8 @@ impl Vault {
                 ),
                 OwnerWorkBody::Root { .. }
                 | OwnerWorkBody::Custody { .. }
-                | OwnerWorkBody::ExportSecret(_) => ExecutorObservation::NotReported,
+                | OwnerWorkBody::ExportSecret(_)
+                | OwnerWorkBody::FileRuling(_) => ExecutorObservation::NotReported,
             }
         };
         Ok(Some(OwnerWorkDiagnostics {
