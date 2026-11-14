@@ -7,14 +7,16 @@
 //! grant: it manages this user's own process on this user's own machine.
 //!
 //! - `install` writes the unit and starts it: on Linux the systemd user unit
-//!   `oneiron.service`, rendered from the shipped `deploy/systemd/oneiron.service`;
+//!   `oneiron.service`, rendered from the shipped `deploy/systemd/oneiron.service`
+//!   as a `Type=exec` service;
 //!   on macOS the launchd agent `com.oneiron.server`, with the shipped
 //!   agent's label, `RunAtLoad`, `KeepAlive` and log files, and no
 //!   `Sockets`: the server binds its configured address itself. Either runs
 //!   the `serve` the hook's step 4 runs ([`local_servers::local_serve_args`]).
 //!   Every unit it writes carries [`MARKER`]; it never overwrites a file
 //!   without it, and it refuses a first install while a server it did not
-//!   start already runs the vault, so the vault keeps one writer.
+//!   start already runs the vault, so the vault keeps one writer. The unit
+//!   names the vault folder it checked, so it runs that vault from any folder.
 //! - `remove` stops the service and deletes the unit `install` wrote.
 //! - `status` prints whether it is installed.
 //!
@@ -44,6 +46,11 @@ const SYSTEMD_UNIT: &str = "oneiron.service";
 /// The launchd agent's label, as the shipped agent names it.
 const LAUNCHD_LABEL: &str = "com.oneiron.server";
 const SYSTEMD_TEMPLATE: &str = include_str!("../../../../deploy/systemd/oneiron.service");
+/// The unit's `Type=` line, with the comment it carries ([`systemd_unit`]).
+const SYSTEMD_SERVICE_TYPE: &str = "# `serve` sends READY=1 only on a socket systemd passed it, and this\n\
+                                    # service binds its address itself: systemd counts it started once\n\
+                                    # it runs.\n\
+                                    Type=exec";
 /// A unit is a few kilobytes; a larger file is not read.
 const MAX_UNIT_BYTES: u64 = 64 * 1024;
 const NO_VAULT: &str = "no initialized vault for the service to run; set one up with `oneiron \
@@ -171,7 +178,7 @@ fn install(args: &UserServiceInstallArgs) -> anyhow::Result<()> {
         Some(oneiron) => std::path::absolute(oneiron)?,
         None => std::env::current_exe().context("this binary's path, for the service to run")?,
     };
-    let body = SUPERVISOR.render(&oneiron, &config, settings_file.as_deref())?;
+    let body = SUPERVISOR.render(&oneiron, &config, settings_file.as_deref(), &vault)?;
     write_unit(&path, body.as_bytes())?;
     SUPERVISOR.load(&path)
 }
@@ -235,13 +242,14 @@ impl Supervisor {
         oneiron: &Path,
         config: &Path,
         settings_file: Option<&Path>,
+        vault: &Path,
     ) -> anyhow::Result<String> {
         match self {
-            Self::Systemd => systemd_unit(oneiron, config, settings_file),
+            Self::Systemd => systemd_unit(oneiron, config, settings_file, vault),
             Self::Launchd => {
                 let home = dirs::home_dir()
                     .ok_or_else(|| anyhow::anyhow!("no home folder for the agent's logs"))?;
-                launchd_agent(oneiron, config, settings_file, &home)
+                launchd_agent(oneiron, config, settings_file, vault, &home)
             }
         }
     }
@@ -290,33 +298,56 @@ impl Supervisor {
 
 /// The systemd user unit: the shipped `deploy/systemd/oneiron.service`, with
 /// [`MARKER`] first and `ExecStart=` running `oneiron` with
-/// [`local_servers::local_serve_args`]. It drops the template's
-/// `PrivateTmp=`: a user manager makes a private `/tmp` only inside a user
-/// namespace, which some distributions refuse to unprivileged users, and the
-/// `serve` the hook starts runs without one too.
+/// [`local_servers::local_serve_args`]. Two lines of the template, and the
+/// comment lines above each, change:
+/// - `Type=notify` becomes [`SYSTEMD_SERVICE_TYPE`]. `serve` sends `READY=1`
+///   only through a socket systemd activated it on (`oneiron.socket`), and
+///   this service binds its address itself, so a notify unit would wait out
+///   its start timeout, be killed and restart without end. `exec`, not
+///   `simple`: `install`'s `restart` fails when the binary does not run.
+/// - `PrivateTmp=` goes: a user manager makes a private `/tmp` only inside
+///   a user namespace, which some distributions refuse to unprivileged
+///   users, and the `serve` the hook starts runs without one too.
 fn systemd_unit(
     oneiron: &Path,
     config: &Path,
     settings_file: Option<&Path>,
+    vault: &Path,
 ) -> anyhow::Result<String> {
-    let exec_start = service_argv(oneiron, config, settings_file)?
+    let exec_start = service_argv(oneiron, config, settings_file, vault)?
         .iter()
         .map(|word| systemd_word(word))
         .collect::<Vec<_>>()
         .join(" ");
     let mut unit = format!("# {MARKER}\n");
+    // Comment lines wait here for the line they describe.
+    let mut comments = String::new();
     for line in SYSTEMD_TEMPLATE.lines() {
-        if line.starts_with("PrivateTmp=") {
+        if line.starts_with('#') {
+            comments.push_str(line);
+            comments.push('\n');
             continue;
         }
-        if line.starts_with("ExecStart=") {
-            unit.push_str("ExecStart=");
-            unit.push_str(&exec_start);
+        if line.starts_with("PrivateTmp=") {
+            comments.clear();
+            continue;
+        }
+        if line.starts_with("Type=") {
+            comments.clear();
+            unit.push_str(SYSTEMD_SERVICE_TYPE);
         } else {
-            unit.push_str(line);
+            unit.push_str(&comments);
+            comments.clear();
+            if line.starts_with("ExecStart=") {
+                unit.push_str("ExecStart=");
+                unit.push_str(&exec_start);
+            } else {
+                unit.push_str(line);
+            }
         }
         unit.push('\n');
     }
+    unit.push_str(&comments);
     Ok(unit)
 }
 
@@ -326,9 +357,10 @@ fn launchd_agent(
     oneiron: &Path,
     config: &Path,
     settings_file: Option<&Path>,
+    vault: &Path,
     home: &Path,
 ) -> anyhow::Result<String> {
-    let arguments: String = service_argv(oneiron, config, settings_file)?
+    let arguments: String = service_argv(oneiron, config, settings_file, vault)?
         .iter()
         .map(|word| format!("    <string>{}</string>\n", xml_text(word)))
         .collect();
@@ -372,9 +404,14 @@ fn service_argv(
     oneiron: &Path,
     config: &Path,
     settings_file: Option<&Path>,
+    vault: &Path,
 ) -> anyhow::Result<Vec<String>> {
     std::iter::once(oneiron.as_os_str().to_owned())
-        .chain(local_servers::local_serve_args(config, settings_file))
+        .chain(local_servers::local_serve_args(
+            config,
+            settings_file,
+            vault,
+        ))
         .map(utf8)
         .collect()
 }
@@ -558,6 +595,7 @@ mod tests {
             Path::new("/opt/oneiron/bin/oneiron"),
             Path::new("/home/owen/.config/oneiron/oneiron.toml"),
             Some(Path::new("/home/owen/settings&co.toml")),
+            Path::new("/home/owen/vault"),
             Path::new("/home/owen"),
         )
         .expect("the agent renders");
@@ -583,6 +621,8 @@ mod tests {
                 "/home/owen/.config/oneiron/oneiron.toml",
                 "--settings-file",
                 "/home/owen/settings&amp;co.toml",
+                "--vault-path",
+                "/home/owen/vault",
                 "--host",
                 "127.0.0.1",
             ]

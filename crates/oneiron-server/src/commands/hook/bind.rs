@@ -435,7 +435,11 @@ fn start_child(
         None => (Stdio::null(), Stdio::null()),
     };
     let spawned = oneiron_spawn::command(oneiron)
-        .args(local_servers::local_serve_args(config, settings_file))
+        .args(local_servers::local_serve_args(
+            config,
+            settings_file,
+            vault,
+        ))
         .stdin(Stdio::null())
         .stdout(stdout)
         .stderr(stderr)

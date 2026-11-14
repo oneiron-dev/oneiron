@@ -313,10 +313,14 @@ fn binary() -> PathBuf {
     std::fs::canonicalize(env!("CARGO_BIN_EXE_oneiron")).expect("the built binary")
 }
 
+/// The unit runs the hook's `serve` on the vault `install` checked, as a
+/// `Type=exec` service: a `serve` that binds its own address sends no
+/// `READY=1`, which a `Type=notify` unit would wait for until it is killed.
 #[test]
 fn user_service_install_writes_the_user_unit_for_the_hook_config() {
     let home = Home::new();
-    let config = home.init(&home.path("vault"));
+    let vault = home.path("vault");
+    let config = home.init(&vault);
 
     let output = home.user_service(&["install"]);
 
@@ -324,13 +328,14 @@ fn user_service_install_writes_the_user_unit_for_the_hook_config() {
     let unit = std::fs::read_to_string(home.unit()).expect("the unit is written");
     assert_eq!(unit.lines().next(), Some(MARKER), "{unit}");
     let exec_start = format!(
-        "ExecStart={} serve --config {} --host 127.0.0.1",
+        "ExecStart={} serve --config {} --vault-path {} --host 127.0.0.1",
         binary().display(),
-        config.display()
+        config.display(),
+        vault.display()
     );
     for line in [
         exec_start.as_str(),
-        "Type=notify",
+        "Type=exec",
         "Environment=MALLOC_ARENA_MAX=2",
         "Restart=on-failure",
         "WantedBy=default.target",
@@ -340,12 +345,16 @@ fn user_service_install_writes_the_user_unit_for_the_hook_config() {
             "the unit holds {line:?}: {unit}"
         );
     }
-    assert_eq!(
-        unit.lines()
-            .filter(|line| line.starts_with("ExecStart="))
-            .count(),
-        1,
-        "{unit}"
+    for key in ["ExecStart=", "Type="] {
+        assert_eq!(
+            unit.lines().filter(|line| line.starts_with(key)).count(),
+            1,
+            "one {key} line: {unit}"
+        );
+    }
+    assert!(
+        !unit.contains("reports READY=1"),
+        "the template's notes on Type=notify are gone: {unit}"
     );
     assert!(
         !unit.lines().any(|line| line.starts_with("PrivateTmp=")),
@@ -366,6 +375,60 @@ fn user_service_install_writes_the_user_unit_for_the_hook_config() {
             "path": home.unit(),
             "supervisor": "systemd",
         })
+    );
+}
+
+/// A relative `vault_path` names a folder from where `install` runs. The
+/// user manager starts the service in another folder, and the service runs
+/// the vault `install` checked there, not a new vault where it starts.
+#[test]
+fn user_service_runs_the_checked_vault_from_another_folder() {
+    let home = Home::new();
+    let vault = home.path("vault");
+    let config = home.init(&vault);
+    let body = std::fs::read_to_string(&config).expect("test fixture");
+    let absolute = format!("vault_path = \"{}\"", vault.display());
+    assert!(body.contains(&absolute), "init names the vault: {body}");
+    std::fs::write(&config, body.replace(&absolute, "vault_path = \"vault\""))
+        .expect("test fixture");
+
+    let output = home
+        .oneiron(&["user-service", "install"])
+        .current_dir(home.dir.path())
+        .stdin(Stdio::null())
+        .output()
+        .expect("run oneiron user-service install");
+
+    assert!(output.status.success(), "install: {}", stderr(&output));
+    let unit = std::fs::read_to_string(home.unit()).expect("the unit is written");
+    let exec_start = unit
+        .lines()
+        .find_map(|line| line.strip_prefix("ExecStart="))
+        .expect("an ExecStart= line");
+    let words: Vec<&str> = exec_start.split_whitespace().collect();
+    assert_eq!(words.first().copied(), binary().to_str(), "{unit}");
+    // The user manager starts it in the home folder.
+    let log = std::fs::File::create(home.path("serve.log")).expect("test fixture");
+    let server = Server(
+        home.oneiron(&words[1..])
+            .current_dir(home.path("home"))
+            .stdin(Stdio::null())
+            .stdout(log.try_clone().expect("test fixture"))
+            .stderr(log)
+            .spawn()
+            .expect("spawn the unit's serve"),
+    );
+    let started = home.wait_for_runtime_file(server.0.id());
+    let served = std::fs::canonicalize(started["state_dir"].as_str().expect("state_dir"))
+        .expect("the served vault folder");
+    assert_eq!(
+        served,
+        std::fs::canonicalize(&vault).expect("the vault folder"),
+        "the service runs the vault install checked: {unit}"
+    );
+    assert!(
+        !home.path("home").join("vault").exists(),
+        "no vault is made where the service starts"
     );
 }
 

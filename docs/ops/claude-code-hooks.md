@@ -148,16 +148,21 @@ oneiron user-service status
   `~/.config/systemd/user/`), made from the shipped
   `deploy/systemd/oneiron.service` without its `PrivateTmp=` line (a user
   manager makes a private `/tmp` only inside a user namespace, which some
-  distributions refuse); then `systemctl --user daemon-reload`, `enable` and
-  `restart`. On macOS it is the launchd agent `com.oneiron.server` in
+  distributions refuse) and with `Type=exec` for its `Type=notify` (the
+  server reports ready only on a socket systemd passed it, and this service
+  binds its address itself); then `systemctl --user daemon-reload`, `enable`
+  and `restart`. On macOS it is the launchd agent `com.oneiron.server` in
   `~/Library/LaunchAgents/`, with the shipped agent's label, `RunAtLoad`,
   `KeepAlive` and logs in `~/Library/Logs/`, but no `Sockets`: the server
   binds its configured address itself; then `launchctl bootout` and
   `bootstrap` in your `gui/<uid>` domain. The service runs the `serve` step 4
   runs: this binary (or `--oneiron <file>`), `serve --config <config>
-  [--settings-file <file>] --host 127.0.0.1`, with the config every command
-  reads when none is named unless you give `--config`. Run again, it writes
-  the unit anew and restarts the service.
+  [--settings-file <file>] --vault-path <vault> --host 127.0.0.1`, with the
+  config every command reads when none is named unless you give `--config`,
+  and the vault folder `install` found initialized, made absolute: a relative
+  `vault_path` is read from the folder you run `install` in, and the service
+  starts in another. Run again, it writes the unit anew and restarts the
+  service.
 - `install` refuses when there is no initialized vault to run; when a unit
   it did not write is at that path (it never overwrites one: each unit it
   writes carries the line `Written by oneiron user-service install.`); and,
