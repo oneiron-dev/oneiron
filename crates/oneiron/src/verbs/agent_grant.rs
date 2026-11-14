@@ -534,6 +534,24 @@ pub struct SystemAgentGrantRestored {
     /// when nothing changed, and no check-in was spent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check_in: Option<CheckInDecision>,
+    /// The Dreamer's live reach, read after the grant (Engine RULING
+    /// ROW4-WEAVE-GRANT-REACH = A): the default grant can stand whole while
+    /// the owner's policy rows still keep the Dreamer from landing what it
+    /// derives. Absent for the Coach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reach: Option<DreamerGrantReach>,
+}
+
+/// What the live policy lets the Dreamer do, as
+/// [`Vault::dreamer_weave_reach`] reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DreamerGrantReach {
+    /// A receipt-free read grant covering every record names the Dreamer.
+    pub reads: bool,
+    /// An Auto actor ceiling and the Dreamer-bound `Generated` permit: what
+    /// it derives lands.
+    pub lands_auto: bool,
 }
 
 /// `vault.agents.grants.restore`: the owner gives a base agent its default
@@ -541,11 +559,13 @@ pub struct SystemAgentGrantRestored {
 /// `vault.agents.grants.narrow` (Engine RULING ROW3-GRANT-VERBS = A). The
 /// Dreamer's runs through [`Vault::grant_dreamer_weave`], as `oneiron
 /// dreamer grant` does, and the Coach's through [`Vault::grant_coach_steward`].
-/// A second call changes nothing. Any other principal is refused: its
-/// grants are minted and revoked by their ids. With `check_in_ref` the
-/// owner applies another asker's approved check-in for giving this agent
-/// its grant back (2k7; P25-SHAPE Q1 = A), spent in the writer that gives
-/// it back; the answer records the decision.
+/// The Dreamer's answer carries its reach, read after the grant, as `oneiron
+/// dreamer grant` reads it before it reports success. A second call changes
+/// nothing. Any other principal is refused: its grants are minted and
+/// revoked by their ids. With `check_in_ref` the owner applies another
+/// asker's approved check-in for giving this agent its grant back (2k7;
+/// P25-SHAPE Q1 = A), spent in the writer that gives it back; the answer
+/// records the decision.
 pub fn restore_system_agent_grant_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -557,15 +577,24 @@ pub fn restore_system_agent_grant_as(
             verb: "vault.agents.grants.restore",
             effect_digest: crate::check_in::agent_grant_restore_effect_digest(&input.agent),
         });
-    let decision = match SystemAgent::of(input.agent) {
-        Some(SystemAgent::Dreamer) => vault.grant_dreamer_weave_with_check_in(
-            owner,
-            vault.now_recorded_at(),
-            applied.as_ref(),
-        )?,
-        Some(SystemAgent::Coach) => {
-            vault.grant_coach_steward_with_check_in(owner, applied.as_ref())?
+    let (decision, reach) = match SystemAgent::of(input.agent) {
+        Some(SystemAgent::Dreamer) => {
+            let decision = vault.grant_dreamer_weave_with_check_in(
+                owner,
+                vault.now_recorded_at(),
+                applied.as_ref(),
+            )?;
+            let reach = vault.dreamer_weave_reach()?;
+            let reach = DreamerGrantReach {
+                reads: reach.reads,
+                lands_auto: reach.lands_auto,
+            };
+            (decision, Some(reach))
         }
+        Some(SystemAgent::Coach) => (
+            vault.grant_coach_steward_with_check_in(owner, applied.as_ref())?,
+            None,
+        ),
         None => {
             return Err(MemoryError::bad_request(
                 "vault.agents.grants.restore gives back a base agent's default grant: \
@@ -576,6 +605,7 @@ pub fn restore_system_agent_grant_as(
     Ok(SystemAgentGrantRestored {
         restored: decision.is_some(),
         check_in: decision,
+        reach,
     })
 }
 

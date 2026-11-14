@@ -50,3 +50,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/strip/tests.rs` | test | m | — | — | The strip forms of ARCH-0069 `#model-adapter-strip-forms`, each written the way a provider could echo it… |
 | `src/strip/watch.rs` | src | m | 4 crate-vis | — | The strip rule read as a reply streams (FIX 6103), moved out of the strip module whole: [`KeyWatch`] |
 | `src/testing.rs` | src | s | 3 struct · 8 fn | FakeProvider, FakeReply, SeenRequest | A local fake model provider over TLS, for the broker's own tests and the server's paid-leg fixture |
+| `tests/graph_workbook_shapes.rs` | test | s | — | — | The Microsoft Graph workbook rows (L3-17 PR 4): each accepts only its own workbook path, a worksheet name… |
+| `tests/workspace_shapes.rs` | test | s | — | — | The Google Workspace REST rows for Docs and Slides (L3-17): each accepts only its own endpoint and query… |

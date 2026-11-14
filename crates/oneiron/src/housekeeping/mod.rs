@@ -35,6 +35,7 @@
 //! pack's notice mark or retirement-day move included (FIX 22059).
 
 mod claim_vad_payment;
+mod lapse_writer;
 mod report;
 mod schedule;
 mod sweeps;
@@ -46,6 +47,9 @@ mod wake;
 
 pub(crate) use self::claim_vad_payment::ClaimVadPayment;
 pub use self::claim_vad_payment::ClaimVadPaymentWorker;
+pub(crate) use self::lapse_writer::{
+    commitment_lapse_writer_id, ensure_commitment_lapse_writer_machine,
+};
 pub use self::report::{
     HardEraseWork, HousekeepingReport, SecretLiftWork, SweepOutcome, SweepReport, SweepWork,
 };
