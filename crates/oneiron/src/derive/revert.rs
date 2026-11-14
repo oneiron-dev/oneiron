@@ -8,7 +8,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::record::{AppliedEdge, ItemRecord, batch_record_in_txn};
+use crate::claim::PREDICATE_CONFLICT_RESOLVED;
 use crate::consent::AuthenticatedOwner;
+use crate::dreamer_promotion::KeptConflictLink;
 use crate::edge::EdgeKind;
 use crate::error::{Error, GateError, Result};
 use crate::gate::{DeriveCapability, derive_verdict_in_txn};
@@ -245,14 +247,27 @@ impl Vault {
                     return Err(Error::InvalidClaimBody("the superseded claim stays closed"));
                 }
             }
+            // A settlement's first row is its answer or its staged Keep.
+            // Only a staged Keep linked to this item's marker is retracted.
             "settle" => {
-                crate::dreamer_consolidation::revert_settlement_in_txn(
-                    self,
-                    txn,
-                    first()?,
-                    reverter,
-                    now_ms,
-                )?;
+                let staged = first()?;
+                let claim = self
+                    .get_claim_in_txn(txn, &staged)?
+                    .ok_or(Error::EntityNotFound)?;
+                if claim.predicate == PREDICATE_CONFLICT_RESOLVED {
+                    crate::dreamer_consolidation::revert_settlement_in_txn(
+                        self, txn, staged, reverter, now_ms,
+                    )?;
+                } else {
+                    if !KeptConflictLink::of_claim(&claim)
+                        .is_some_and(|link| item.rows.get(1) == Some(&link.marker))
+                    {
+                        return Err(Error::InvalidClaimBody(
+                            "the staged Keep does not name this item's marker",
+                        ));
+                    }
+                    self.retract_claim_in_txn_as(txn, &staged, now_ms / 1_000, Some(reverter))?;
+                }
             }
             "archive" => {
                 self.restore_archived_in_txn(txn, &first()?)?;
