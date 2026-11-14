@@ -27,7 +27,7 @@ use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 use serde_json::Value;
 
 use super::credential::WireReads;
-use super::quota::{GMAIL_MAIL_QUOTA, MailQuota};
+use super::quota::{GMAIL_MAIL_QUOTA, MailCall, MailQuota};
 use super::rest::{
     self, FreshGoogleTokens, RestAnswer, VerifiedCredentials, array, header_value, html_text,
     refused, text_of,
@@ -281,6 +281,15 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
     }
 
     fn full(&self, source: &MailSyncSource, provider_id: &str) -> Result<Option<MailFull>> {
+        self.full_charging(source, provider_id, &|_| Ok(()))
+    }
+
+    fn full_charging(
+        &self,
+        source: &MailSyncSource,
+        provider_id: &str,
+        charge: &dyn Fn(MailCall) -> Result<()>,
+    ) -> Result<Option<MailFull>> {
         let params = [("format", "full".to_owned())];
         let url = Self::message_url(provider_id)?;
         let Some(message) = self.get(source, &url, &params)? else {
@@ -292,10 +301,12 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
             collect_parts(payload, 0, &mut parts);
         }
         // A text part Gmail keeps apart is read by its attachment id, under
-        // the same door; a user's attachments are never read here.
+        // the same door, each read charged before it is made; a user's
+        // attachments are never read here.
         for external in std::mem::take(&mut parts.external) {
             require_attachment_id(&external.attachment_id)?;
             let attachment = format!("{url}/attachments/{}", external.attachment_id);
+            charge(MailCall::Attachment)?;
             let Some(body) = self.get(source, &attachment, &[])? else {
                 continue;
             };
@@ -390,7 +401,8 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         };
         let mut changes = Vec::new();
         // A label record names the labels it changed, not where the message
-        // stands now: each such message is read again below.
+        // stands now: each such message is named once, after the page's
+        // additions and deletions, for the importer to read again.
         let mut relabeled = BTreeSet::new();
         for record in array(&listed, "history") {
             for added in array(record, "messagesAdded") {
@@ -420,31 +432,11 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
                 relabeled.insert(plain_id(message.get("id"))?);
             }
         }
-        let minimal = [("format", "minimal".to_owned())];
-        for provider_id in relabeled {
-            match self.get(source, &Self::message_url(&provider_id)?, &minimal)? {
-                Some(message) => {
-                    let labels = labels_of(&message);
-                    let trash_or_spam = trash_or_spam(&labels);
-                    changes.push(MailHistoryChange::Labels {
-                        provider_id: provider_id.clone(),
-                        trash_or_spam,
-                        labels,
-                    });
-                    // A message out of trash and spam may never have been
-                    // copied (Gmail reports no addition for it): it is filed
-                    // as added, under the copy setting's rules.
-                    if !trash_or_spam {
-                        changes.push(MailHistoryChange::Added(MailMessageRef {
-                            provider_id,
-                            thread_id: text_of(message.get("threadId")),
-                        }));
-                    }
-                }
-                // Gone since: deleted at the provider.
-                None => changes.push(MailHistoryChange::Deleted { provider_id }),
-            }
-        }
+        changes.extend(
+            relabeled
+                .into_iter()
+                .map(|provider_id| MailHistoryChange::Relabeled { provider_id }),
+        );
         let reached = listed
             .get("historyId")
             .and_then(id_text)

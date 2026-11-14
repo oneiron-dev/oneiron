@@ -4,10 +4,12 @@
 //! at 2,500 MB a day, so a big copy can be byte-bound before it is
 //! quota-bound.
 //!
-//! One step reads its provider through a [`MeteredMailWire`]: each call is
-//! charged before it is made, and each answer's bytes are counted after,
-//! against windows kept on the source, so the host's steps and the owner's
-//! own `vault.mail.sources.sync` share them across restarts. The change feed
+//! One step reads its provider through a [`MeteredMailWire`]: each provider
+//! request is charged before it is made (a further request inside one call
+//! as well, and the credential check a wire makes before its first), and
+//! each answer's bytes are counted after, against windows kept on the
+//! source, so the host's steps and the owner's own `vault.mail.sources.sync`
+//! share them across restarts; one source's steps run one at a time. The change feed
 //! may spend the whole minute; the copy (the listing, bodies, attachments)
 //! spends at most three quarters of it, so new mail still reads while a big
 //! mailbox copies. A call that does not fit ends the step cleanly: what
@@ -109,6 +111,11 @@ pub struct MailQuota {
     /// has room for it, so a step never crosses the day's cap.
     pub largest_answer_bytes: u64,
     pub costs: MailCallCosts,
+    /// The request a wire makes once, before its first call, to check that
+    /// the credential it presents reads the mailbox the source names (Gmail
+    /// reads the profile): charged with a step's first call, unless that
+    /// call is the same request.
+    pub first_call_check: Option<MailCall>,
 }
 
 /// Gmail's limits for one user of a new project and its calls' costs, as
@@ -116,7 +123,8 @@ pub struct MailQuota {
 /// units a minute; a listing page 5, a metadata read 20, a full or raw read
 /// 60, a history page 2, an attachment 20, a push channel's watch 100 and
 /// its stop 50; 2,500 MB of downloads a day. The profile and the send-as
-/// list are Google's 1.
+/// list are Google's 1. A text part Gmail keeps apart is read as an
+/// attachment, and the credential check reads the profile.
 pub const GMAIL_MAIL_QUOTA: MailQuota = MailQuota {
     units_per_minute: 6_000,
     bytes_per_day: 2_500 * 1_000_000,
@@ -134,6 +142,7 @@ pub const GMAIL_MAIL_QUOTA: MailQuota = MailQuota {
         watch: 100,
         stop_watch: 50,
     },
+    first_call_check: Some(MailCall::Anchor),
 };
 
 /// The refusal a metered call answers once its source rests.
@@ -155,11 +164,11 @@ pub(super) fn pause_is_no_failure(outcome: MemoryResult<()>) -> MemoryResult<()>
     }
 }
 
-/// One step's wire, charged within its provider's quota: every call is
-/// charged before it is made and its answer's bytes counted after, against
-/// the source's windows. Once a call does not fit, or the provider answered
-/// that it is rate-limited, the source rests and every later call is
-/// refused with no provider call.
+/// One step's wire, charged within its provider's quota: every provider
+/// request is charged before it is made and each call's answer bytes counted
+/// after, against the source's windows. Once a request does not fit, or the
+/// provider answered that it is rate-limited, the source rests and every
+/// later call is refused with no provider call.
 pub(super) struct MeteredMailWire<'w> {
     inner: &'w dyn MailProviderWire,
     quota: Option<MailQuota>,
@@ -167,6 +176,12 @@ pub(super) struct MeteredMailWire<'w> {
     /// Whether the change feed reads now: it may spend the whole minute,
     /// the copy only its share of it.
     live: Cell<bool>,
+    /// Whether a call was charged yet, and with it the wire's credential
+    /// check ([`MailQuota::first_call_check`]).
+    charged: Cell<bool>,
+    /// The wire's [`MailProviderWire::bytes_read`] when the day's bytes
+    /// were last counted.
+    counted: Cell<u64>,
 }
 
 impl<'w> MeteredMailWire<'w> {
@@ -176,6 +191,8 @@ impl<'w> MeteredMailWire<'w> {
             inner,
             window: Cell::new(window),
             live: Cell::new(true),
+            charged: Cell::new(false),
+            counted: Cell::new(inner.bytes_read()),
         }
     }
 
@@ -201,35 +218,57 @@ impl<'w> MeteredMailWire<'w> {
         resting()
     }
 
+    /// Adds the bytes the wire read since they were last counted to the
+    /// day's.
+    fn count_bytes(&self, window: &mut ProviderQuotaWindow) {
+        let read = self.inner.bytes_read();
+        window.count_bytes(read.saturating_sub(self.counted.get()));
+        self.counted.set(read);
+    }
+
+    /// Charges one provider request of kind `call` before it is made: once
+    /// it does not fit, the source rests and the request is refused. The
+    /// step's first charge carries the wire's credential check, and the
+    /// day counts the bytes of any request the call in flight made before.
+    fn charge(&self, call: MailCall) -> Result<()> {
+        let now = crate::unix_seconds_now();
+        let mut window = self.window.get();
+        if window.resting_at(now).is_some() {
+            return Err(resting());
+        }
+        self.count_bytes(&mut window);
+        window.roll(now);
+        if let Some(quota) = &self.quota {
+            let check = quota
+                .first_call_check
+                .filter(|check| !self.charged.get() && *check != call)
+                .map_or(0, |check| u64::from(quota.costs.of(check)));
+            if let Err(until) = window.charge(
+                u64::from(quota.costs.of(call)).saturating_add(check),
+                minute_ceiling(quota.units_per_minute, self.live.get()),
+                Some(DayBytes {
+                    cap: quota.bytes_per_day,
+                    largest_answer: quota.largest_answer_bytes,
+                }),
+            ) {
+                return Err(self.rest(window, until));
+            }
+        }
+        self.charged.set(true);
+        self.window.set(window);
+        Ok(())
+    }
+
     /// Charges `call`, then makes it through `read` and counts its bytes.
     fn metered<A>(
         &self,
         call: MailCall,
         read: impl FnOnce(&dyn MailProviderWire) -> Result<A>,
     ) -> Result<A> {
-        let now = crate::unix_seconds_now();
-        let mut window = self.window.get();
-        if window.resting_at(now).is_some() {
-            return Err(resting());
-        }
-        window.roll(now);
-        if let Some(quota) = &self.quota
-            && let Err(until) = window.charge(
-                u64::from(quota.costs.of(call)),
-                minute_ceiling(quota.units_per_minute, self.live.get()),
-                Some(DayBytes {
-                    cap: quota.bytes_per_day,
-                    largest_answer: quota.largest_answer_bytes,
-                }),
-            )
-        {
-            return Err(self.rest(window, until));
-        }
-        self.window.set(window);
-        let before = self.inner.bytes_read();
+        self.charge(call)?;
         let answer = read(self.inner);
         let mut window = self.window.get();
-        window.count_bytes(self.inner.bytes_read().saturating_sub(before));
+        self.count_bytes(&mut window);
         if matches!(&answer, Err(Error::InvalidConfig(code)) if code == MAIL_WIRE_RATE_LIMITED) {
             let until = crate::unix_seconds_now() + RATE_LIMIT_REST_SECS;
             return Err(self.rest(window, until));
@@ -260,7 +299,10 @@ impl MailProviderWire for MeteredMailWire<'_> {
     }
 
     fn full(&self, source: &MailSyncSource, provider_id: &str) -> Result<Option<MailFull>> {
-        self.metered(MailCall::Full, |wire| wire.full(source, provider_id))
+        // A further request the read makes is charged before it is made.
+        self.metered(MailCall::Full, |wire| {
+            wire.full_charging(source, provider_id, &|call| self.charge(call))
+        })
     }
 
     fn history(

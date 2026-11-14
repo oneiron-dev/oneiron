@@ -14,12 +14,18 @@
 //!
 //! Each step spends within its provider's per-user quota (`quota.rs`):
 //! the change feed may take the whole minute, the copy three quarters of it,
-//! and a step out of quota ends as a pause, with what landed kept.
+//! and a step out of quota ends as a pause, with what landed kept, a
+//! change-feed page part-applied included. One source's steps run one at a
+//! time, the host's and the owner's alike, so each reads the windows and
+//! the state the last one left.
 //!
 //! Trash, spam and drafts never land. Every provider call runs outside any
 //! vault transaction; each message lands in its own commit with its source
 //! audience binding ([`super::landing`]). Imported mail wakes no agent: it is
 //! evidence, not a message to anyone.
+
+use std::collections::BTreeSet;
+use std::sync::{Condvar, Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
@@ -35,8 +41,8 @@ use super::source::{
     proven_own_address_set,
 };
 use super::state::{
-    MailOccurrence, MailPresence, MailRelist, MailSyncState, OCCURRENCES, SYNC, bodies_waiting_in,
-    occurrence_key,
+    MailHistoryApplied, MailOccurrence, MailPresence, MailRelist, MailSyncState, OCCURRENCES, SYNC,
+    bodies_waiting_in, occurrence_key,
 };
 use super::wire::{
     MailHeaders, MailHistoryChange, MailHistoryRead, MailListQuery, MailMessageRef,
@@ -139,6 +145,88 @@ pub(super) fn copies(headers: &MailHeaders, newer_than: Option<u64>) -> bool {
         && newer_than.is_none_or(|cutoff| headers.received_at >= cutoff)
 }
 
+/// The mailbox sources with a step under way in this process.
+static STEPPING_SOURCES: Mutex<BTreeSet<EntityId>> = Mutex::new(BTreeSet::new());
+/// Woken each time a step ends.
+static STEP_ENDED: Condvar = Condvar::new();
+
+/// One source's step under way: the source's next step, from the host or
+/// the owner's `vault.mail.sources.sync`, waits for it to end, so no step
+/// writes over the quota windows (a rest included) or the progress another
+/// step left.
+pub(super) struct SourceStepGuard {
+    source: EntityId,
+}
+
+impl SourceStepGuard {
+    /// Waits until no step of `source` is under way, then holds it.
+    pub(super) fn wait_for(source: EntityId) -> Self {
+        let mut stepping = STEPPING_SOURCES
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        while stepping.contains(&source) {
+            stepping = STEP_ENDED
+                .wait(stepping)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        stepping.insert(source);
+        Self { source }
+    }
+}
+
+impl Drop for SourceStepGuard {
+    fn drop(&mut self) {
+        STEPPING_SOURCES
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&self.source);
+        STEP_ENDED.notify_all();
+    }
+}
+
+/// The digest of a change-feed page's first changes
+/// ([`MailHistoryApplied::digest`]).
+fn changes_digest(changes: &[MailHistoryChange]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    let word = |hasher: &mut blake3::Hasher, text: &str| {
+        hasher.update(&(text.len() as u64).to_le_bytes());
+        hasher.update(text.as_bytes());
+    };
+    for change in changes {
+        match change {
+            MailHistoryChange::Added(message) => {
+                hasher.update(&[0]);
+                word(&mut hasher, &message.provider_id);
+            }
+            MailHistoryChange::Deleted { provider_id } => {
+                hasher.update(&[1]);
+                word(&mut hasher, provider_id);
+            }
+            MailHistoryChange::Labels {
+                provider_id,
+                labels,
+                trash_or_spam,
+            } => {
+                hasher.update(&[2, u8::from(*trash_or_spam)]);
+                word(&mut hasher, provider_id);
+                hasher.update(&(labels.len() as u64).to_le_bytes());
+                for label in labels {
+                    word(&mut hasher, label);
+                }
+            }
+            MailHistoryChange::LabelGone { label } => {
+                hasher.update(&[3]);
+                word(&mut hasher, label);
+            }
+            MailHistoryChange::Relabeled { provider_id } => {
+                hasher.update(&[4]);
+                word(&mut hasher, provider_id);
+            }
+        }
+    }
+    *hasher.finalize().as_bytes()
+}
+
 /// One step of one source's import.
 struct Step<'a> {
     vault: &'a Vault,
@@ -213,10 +301,16 @@ impl Step<'_> {
         let Some(headers) = self.wire.headers(&self.wire_source, provider_id)? else {
             return Ok(());
         };
-        if !copies(&headers, self.newer_than) {
+        self.land_read(&headers)
+    }
+
+    /// Lands a message never landed from the headers just read, under the
+    /// copy setting.
+    fn land_read(&mut self, headers: &MailHeaders) -> MemoryResult<()> {
+        if !copies(headers, self.newer_than) {
             return Ok(());
         }
-        let outcome = self.landing.land(&self.row, &headers, None, false)?;
+        let outcome = self.landing.land(&self.row, headers, None, false)?;
         self.report.count(outcome);
         Ok(())
     }
@@ -271,6 +365,68 @@ impl Step<'_> {
         Ok(())
     }
 
+    /// A message whose labels changed, out of trash and spam: it carries
+    /// `labels`, a kept copy is live again, and a listing under way counts
+    /// the feed's word as a naming.
+    fn relabel(
+        &mut self,
+        provider_id: &str,
+        labels: &[String],
+        relist: Option<u64>,
+    ) -> MemoryResult<()> {
+        update_labels(self.vault, self.source, provider_id, labels, self.at)?;
+        self.restore(provider_id)?;
+        // The feed's word on where a copy is now counts as a naming in a
+        // listing under way: the listing adds to its labels and never sets
+        // them back.
+        if let Some(generation) = relist {
+            self.mark_listed_one(provider_id, generation)?;
+        }
+        Ok(())
+    }
+
+    /// Applies one change of the feed; `relist` is the generation of the
+    /// listing after an expired anchor under way, if one is.
+    fn apply(&mut self, change: &MailHistoryChange, relist: Option<u64>) -> MemoryResult<()> {
+        match change {
+            MailHistoryChange::Added(message) => self.added(&message.provider_id),
+            MailHistoryChange::Deleted { provider_id } => self.delete(provider_id),
+            MailHistoryChange::Labels {
+                provider_id,
+                trash_or_spam: true,
+                ..
+            } => self.delete(provider_id),
+            MailHistoryChange::Labels {
+                provider_id,
+                labels,
+                trash_or_spam: false,
+            } => self.relabel(provider_id, labels, relist),
+            MailHistoryChange::LabelGone { label } => self.label_gone(label),
+            MailHistoryChange::Relabeled { provider_id } => {
+                // Where the message stands now, read as its headers.
+                match self.wire.headers(&self.wire_source, provider_id)? {
+                    Some(headers) if !headers.trash_or_spam => {
+                        self.relabel(provider_id, &headers.labels, relist)?;
+                        // One out of trash and spam may never have been
+                        // copied (Gmail reports no addition for it): it lands
+                        // under the copy setting.
+                        if self.row.copy != MailCopySetting::SearchOnly {
+                            if self.known(provider_id)? {
+                                self.report.same += 1;
+                            } else {
+                                self.land_read(&headers)?;
+                            }
+                        }
+                        Ok(())
+                    }
+                    // Gone since, or in trash or spam: deleted at the
+                    // provider.
+                    _ => self.delete(provider_id),
+                }
+            }
+        }
+    }
+
     fn delete(&mut self, provider_id: &str) -> MemoryResult<()> {
         let outcome =
             apply_provider_delete(self.vault, self.source, &self.row, provider_id, self.at)?;
@@ -321,7 +477,10 @@ impl Step<'_> {
 
     /// The change feed since the anchor, `pages` pages at most. A read the
     /// budget cut short keeps its anchor: the next step reads it again, and
-    /// what landed already lands as the same.
+    /// what landed already lands as the same. A step stopped part-way
+    /// through a page keeps how far it got, and the next goes on after it
+    /// (each change is applied once, a message the copy setting skips
+    /// included).
     fn history(&mut self, pages: u32) -> MemoryResult<()> {
         let state = self.state()?;
         // The listing after an expired anchor under way, if one is.
@@ -336,6 +495,7 @@ impl Step<'_> {
         let mut page = state
             .history_page
             .filter(|_| state.history_page_anchor.as_deref() == Some(anchor.as_str()));
+        let mut applied = state.history_applied;
         for _ in 0..pages {
             let read = self
                 .wire
@@ -347,6 +507,7 @@ impl Step<'_> {
                     state.anchor = Some(fresh);
                     state.history_page = None;
                     state.history_page_anchor = None;
+                    state.history_applied = None;
                     state.backfill_copy = None;
                     state.backfill_page = None;
                     state.backfill_done = false;
@@ -360,29 +521,30 @@ impl Step<'_> {
                 self.report.anchor_expired = true;
                 return Ok(());
             };
-            for change in read.changes {
-                match change {
-                    MailHistoryChange::Added(message) => self.added(&message.provider_id)?,
-                    MailHistoryChange::Deleted { provider_id } => self.delete(&provider_id)?,
-                    MailHistoryChange::Labels {
-                        provider_id,
-                        labels,
-                        trash_or_spam,
-                    } => {
-                        if trash_or_spam {
-                            self.delete(&provider_id)?;
-                        } else {
-                            update_labels(self.vault, self.source, &provider_id, &labels, self.at)?;
-                            self.restore(&provider_id)?;
-                            // The feed's word on where a copy is now counts as
-                            // a naming in a listing under way: the listing adds
-                            // to its labels and never sets them back.
-                            if let Some(generation) = relist {
-                                self.mark_listed_one(&provider_id, generation)?;
-                            }
-                        }
-                    }
-                    MailHistoryChange::LabelGone { label } => self.label_gone(&label)?,
+            // A page read again after a step stopped part-way through it
+            // goes on after the changes applied, while it begins with them.
+            let skip = applied
+                .take()
+                .filter(|kept| kept.anchor == anchor && kept.page == page)
+                .and_then(|kept| {
+                    let changes = usize::try_from(kept.changes).ok()?;
+                    let prefix = read.changes.get(..changes)?;
+                    (changes_digest(prefix) == kept.digest).then_some(changes)
+                })
+                .unwrap_or(0);
+            for (index, change) in read.changes.iter().enumerate().skip(skip) {
+                if let Err(error) = self.apply(change, relist) {
+                    // What the page applied stays applied: the next step
+                    // reads the page again and goes on after it. Unkept, it
+                    // applies the page from its start again.
+                    let stopped = MailHistoryApplied {
+                        anchor: anchor.clone(),
+                        page: page.clone(),
+                        changes: index as u64,
+                        digest: changes_digest(&read.changes[..index]),
+                    };
+                    let _kept = self.write_state(|state| state.history_applied = Some(stopped));
+                    return Err(error);
                 }
             }
             match read.next_page {
@@ -394,6 +556,7 @@ impl Step<'_> {
                             state.history_page = Some(kept);
                             state.history_page_anchor = Some(from);
                         }
+                        state.history_applied = None;
                     })?;
                     page = Some(next);
                 }
@@ -403,6 +566,7 @@ impl Step<'_> {
                         state.anchor = Some(reached);
                         state.history_page = None;
                         state.history_page_anchor = None;
+                        state.history_applied = None;
                     })?;
                     return Ok(());
                 }
@@ -705,6 +869,8 @@ impl Vault {
         wire: &dyn MailProviderWire,
         budget: MailSyncBudget,
     ) -> MemoryResult<MailSyncReport> {
+        // Each step reads the windows and the progress the last one left.
+        let _stepping = SourceStepGuard::wait_for(source_ref);
         let (row, window) = {
             let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
             require_pack_active_in(self, &txn)?;

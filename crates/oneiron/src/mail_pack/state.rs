@@ -71,6 +71,10 @@ pub(super) struct MailSyncState {
     pub(super) history_page: Option<String>,
     #[serde(default)]
     pub(super) history_page_anchor: Option<String>,
+    /// How far into a change-feed page a step that stopped part-way got:
+    /// the next step reads the page again and goes on after it.
+    #[serde(default)]
+    pub(super) history_applied: Option<MailHistoryApplied>,
     pub(super) landed: u64,
     pub(super) bodies: u64,
     pub(super) deleted_at_provider: u64,
@@ -100,6 +104,19 @@ pub(super) struct MailSyncState {
 /// a sync step reads them again: an alias changes rarely, and a step runs
 /// often.
 pub(super) const OWN_ADDRESSES_REFRESH_SECS: u64 = 6 * 60 * 60;
+
+/// The changes of one change-feed page a step applied before it stopped
+/// part-way through the page (a quota pause, a failure): the page read from
+/// `anchor` at `page`, whose first `changes` changes are applied.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct MailHistoryApplied {
+    pub(super) anchor: String,
+    pub(super) page: Option<String>,
+    pub(super) changes: u64,
+    /// The digest of those changes: the page read again goes on after
+    /// them only while it begins with the same changes.
+    pub(super) digest: [u8; 32],
+}
 
 /// A listing that settles the copies an expired anchor lost track of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
