@@ -3,8 +3,8 @@
 
 use super::support::{verify_actor_binding_in_txn, verify_deletion_authority_in_txn};
 use super::{
-    DeleteReceipt, DeleteRequestState, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_OWNER_BINDING_REQUIRED,
-    Memory, MemoryError, MemoryResult, SafeDeleteReason,
+    DELETE_RECEIPT_VERSION_RELEASE, DeleteReceipt, DeleteRequestState, MEMORY_CODE_FORBIDDEN,
+    MEMORY_CODE_OWNER_BINDING_REQUIRED, Memory, MemoryError, MemoryResult, SafeDeleteReason,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{
@@ -330,7 +330,13 @@ impl Memory<'_> {
             outcome.map_err(|err| refusal.take().unwrap_or_else(|| MemoryError::from(err)))?;
         Ok(DeleteReceipt {
             existed: outcome.existed,
-            reason: reason.as_str().to_owned(),
+            // A live artifact's lone version claim went as its version's release (ASTRA-R2-002).
+            reason: if outcome.version_release {
+                DELETE_RECEIPT_VERSION_RELEASE
+            } else {
+                reason.as_str()
+            }
+            .to_owned(),
             receipt_ref: outcome
                 .receipt_id
                 .map(|receipt| format!("redaction:{}", receipt.to_hex())),

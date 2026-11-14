@@ -178,10 +178,11 @@ fn the_version_claim_projection_rebuilds_from_the_claim_rows() -> Result<()> {
     Ok(())
 }
 
-/// Bug repro (SOL-R1-001, H125): a replica that deletes a version claim before its artifact
-/// still takes that version's bytes off when the artifact goes. The claim's rows stand in for the
-/// origin's `asset_ref` row, which a claim's delete does not touch either, and they go with the
-/// artifact.
+/// Bug repro (SOL-R1-001, H125): a replica that applies a peer's delete of a version claim before
+/// its artifact still takes that version's bytes off when the artifact goes. The claim's rows
+/// stand in for the origin's `asset_ref` row, which a claim's delete does not touch either, and
+/// they go with the artifact. The replica's own delete of that claim would run as its version's
+/// release (ASTRA-R2-002), so a peer's tombstone takes it alone here.
 #[test]
 fn a_version_claim_deleted_first_still_takes_its_bytes_with_the_artifact() -> Result<()> {
     let origin = Origin::open()?;
@@ -193,7 +194,11 @@ fn a_version_claim_deleted_first_still_takes_its_bytes_with_the_artifact() -> Re
     replicate(&origin.vault, &replica, &claims)?;
     let rows = projection(&replica)?;
 
-    replica.delete_entity_with_reason(&claims[0], DeleteReason::UserHardDelete)?;
+    replica.with_write_txn_grouped(|txn| {
+        replica
+            .apply_replayed_tombstone_in_txn(txn, &claims[0], &hard_tombstone())
+            .map(|_| ())
+    })?;
     assert_eq!(
         projection(&replica)?,
         rows,

@@ -488,8 +488,17 @@ fn a_holder_whose_version_claim_was_deleted_is_held_and_keeps_its_bytes() {
     let a = artifact(&mine, &[SHARED]);
     let b = artifact(&facade_for(&vault, member), &[SHARED]);
     let claim = vault.blob_artifact_versions(&b).expect("versions")[0].claim_id;
+    // The owner's delete of a live artifact's version claim runs as its version's release
+    // (ASTRA-R2-002); a peer's tombstone takes the claim alone.
+    let mut soft_tombstone = vec![crate::deletion::TombstoneReason::UserDelete.wire_byte()];
+    soft_tombstone.extend_from_slice(&60_u64.to_le_bytes());
+    soft_tombstone.extend_from_slice(&[0xAE; 16]);
     vault
-        .delete_entity(&claim)
+        .with_write_txn_grouped(|txn| {
+            vault
+                .apply_replayed_tombstone_in_txn(txn, &claim, &soft_tombstone)
+                .map(|_| ())
+        })
         .expect("soft-delete the version claim");
     let preview = mine.preview_entity_delete(&a).expect("preview");
     assert_eq!(preview.same_bytes_matches(), vec![b]);

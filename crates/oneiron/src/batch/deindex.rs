@@ -48,6 +48,7 @@ pub(super) fn reject_engine_authored_delete(
     crate::conversation_dag::guard_room_turn_delete(store, wtxn, id)?;
     crate::conversation::guard_room_message_delete(store, wtxn, *id)?;
     crate::blob_artifact::esign::reject_event_delete(store, wtxn, id)?;
+    crate::blob_artifact::reject_lone_version_claim_delete(store, wtxn, id)?;
     crate::store::task_authority_guard::reject_fact_delete(store, wtxn, id)?;
     store
         .delete_guards
