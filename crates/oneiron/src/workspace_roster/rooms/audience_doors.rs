@@ -26,8 +26,12 @@
 //! Owner ruling 2026-10-20 (FIX 6381, 6383, 6384). The Owner or an Admin,
 //! as a person, adding themselves walks in: from now on, whatever history
 //! the call asked for. An Admin walks in only while the Owner's
-//! `rooms.private_threads.admin_walk_in` is on. Every member is told, and
-//! the walker shows in the thread's member list
+//! `rooms.private_threads.admin_walk_in` is on. A walk-in is a self-add, so
+//! into a closed room it asks the room's owners as any add does
+//! (P26B-WALKIN = A): the Owner and an Admin who owns the room walk in at
+//! once, any other Admin's walk-in waits on them, and the Admin's call
+//! naming the approved ask walks in. Every member is told, and the walker
+//! shows in the thread's member list
 //! ([`super::audience_notices`]). An agent never walks in, a pen of the
 //! Owner or an Admin included: it asks to join ([`super::thread_join`]).
 //! Anyone adding themselves when already in, a member or an agent alike,
@@ -466,10 +470,10 @@ impl Memory<'_> {
 
     /// The write both doors make, in one transaction: the thread, the
     /// caller's standing, the target, an add's check-in and the edit's
-    /// TURN. `history` is an add's; `None` removes. An add of someone else
-    /// that waits writes nothing but its pending check-in. A walk-in that
-    /// entered, and the Owner's add with full history, tell the thread's
-    /// members once it committed.
+    /// TURN. `history` is an add's; `None` removes. An add of someone else,
+    /// or a walk-in into a closed room, that waits writes nothing but its
+    /// pending check-in. A walk-in that entered, and the Owner's add with
+    /// full history, tell the thread's members once it committed.
     fn edit_thread_audience(
         &self,
         thread_ref: &str,
@@ -501,8 +505,11 @@ impl Memory<'_> {
                     request: None,
                 },
             };
-            // An add of someone else; a walk-in or a self re-add is none.
-            let check_in = if matches!(event.op, AudienceOp::Add | AudienceOp::OpenFullHistory) {
+            let entering = !thread.folded.current().contains(&person);
+            // An add of someone else, and a walk-in that enters, which into a
+            // closed room asks its owners as any add does (P26B-WALKIN = A);
+            // a self re-add is none.
+            let judged = if matches!(event.op, AudienceOp::Add | AudienceOp::OpenFullHistory) {
                 crate::check_in::agent_add_is_from_now(
                     self,
                     event.history == Some(ThreadAudienceHistory::Full),
@@ -514,26 +521,35 @@ impl Memory<'_> {
                     event.op == AudienceOp::OpenFullHistory
                         || event.history == Some(ThreadAudienceHistory::Full),
                 );
-                match crate::check_in::room_add_check_in_in_txn(
+                crate::check_in::room_add_check_in_in_txn(
                     self,
                     txn,
                     THREAD_AUDIENCE_ADD_VERB,
                     thread.binding.room,
                     digest,
                     check_in_ref,
-                )? {
-                    Some(DoorCheckIn::Go(decision)) => Some(decision),
-                    Some(DoorCheckIn::Wait(id)) => return Ok(AudienceEdit::Waits(id)),
-                    None => None,
-                }
+                )?
+            } else if event.op == AudienceOp::WalkIn && entering {
+                crate::check_in::walk_in_check_in_in_txn(
+                    self,
+                    txn,
+                    THREAD_AUDIENCE_ADD_VERB,
+                    thread.binding.room,
+                    root,
+                    person,
+                    check_in_ref,
+                )?
             } else {
                 None
             };
+            let check_in = match judged {
+                Some(DoorCheckIn::Go(decision)) => Some(decision),
+                Some(DoorCheckIn::Wait(id)) => return Ok(AudienceEdit::Waits(id)),
+                None => None,
+            };
             let id = put_audience_event_in(vault, txn, &thread.binding, &event)?;
             let notice = match event.op {
-                AudienceOp::WalkIn if !thread.folded.current().contains(&person) => {
-                    Some(ThreadNotice::WalkIn { event: id })
-                }
+                AudienceOp::WalkIn if entering => Some(ThreadNotice::WalkIn { event: id }),
                 AudienceOp::OpenFullHistory => {
                     Some(ThreadNotice::OwnerAddedFullHistory { event: id, person })
                 }

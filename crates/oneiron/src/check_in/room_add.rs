@@ -30,6 +30,14 @@
 //! call naming the approved ask spends it; an ordinary ask of the same add
 //! is never spent there.
 //!
+//! A walk-in is a self-add (P26B-WALKIN = A, the lead 15 Nov 04:2x, from
+//! ARCH-0082:155): the vault's Owner or an Admin walking into a private
+//! thread of a closed room asks the room's owners as any add does
+//! ([`walk_in_check_in_in_txn`]). The Owner, and an Admin who owns the
+//! room, walk in at once; any other Admin's walk-in waits on them. An open
+//! room's walk-in is not judged: the Owner's
+//! `rooms.private_threads.admin_walk_in` alone governs it.
+//!
 //! An agent's add is from now on (canon #agent-room-add): the door refuses
 //! an agent's add that asks for the earlier history ([`agent_add_is_from_now`])
 //! before it judges, so nothing opens. Full history for the newcomer needs
@@ -239,6 +247,35 @@ pub(crate) fn room_add_check_in_in_txn(
         now,
     )?;
     Ok(Some(DoorCheckIn::Wait(row.id)))
+}
+
+/// Judges `memory`'s caller's walk-in as `walker` to the private thread
+/// rooted at `thread` of `room`, at the door `verb`, in the door's writer
+/// `txn` (P26B-WALKIN = A): a self-add from now on, judged only in a closed
+/// room ([`closed_room_check_in_in_txn`]), over the add's effect digest
+/// ([`room_add_effect_digest`]); with `check_in_ref`, spends the walker's
+/// approved ask. `None` in an open room: the walk-in is not judged.
+///
+/// # Errors
+///
+/// A `check_in_ref` that is not the walker's ask of this room's owners for
+/// this walk-in, or that is not eligible or already spent; storage errors.
+pub(crate) fn walk_in_check_in_in_txn(
+    memory: &Memory<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    verb: &str,
+    room: EntityId,
+    thread: EntityId,
+    walker: EntityId,
+    check_in_ref: Option<&EntityId>,
+) -> MemoryResult<Option<DoorCheckIn>> {
+    let vault = memory.vault();
+    if !crate::workspace_roster::room_is_closed_in(vault, txn, room)? {
+        return Ok(None);
+    }
+    let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    let effect_digest = room_add_effect_digest(&room, Some(&thread), &walker, false);
+    closed_room_check_in_in_txn(memory, txn, verb, room, effect_digest, check_in_ref, now).map(Some)
 }
 
 /// The receipt role of an adder with no role on the vault: a person a room

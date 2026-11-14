@@ -84,6 +84,7 @@ pub(crate) use pending::{
 pub use room_add::{ROOM_ADD_FROM_NOW_REASON, ROOM_ADD_NOT_GRANTED_REASON, room_add_effect_digest};
 pub(crate) use room_add::{
     agent_add_is_from_now, owner_room_add_decision, room_add_check_in_in_txn,
+    walk_in_check_in_in_txn,
 };
 // The doors 2c and 2e-2l call; until then only `test_doors::check_in` does.
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
