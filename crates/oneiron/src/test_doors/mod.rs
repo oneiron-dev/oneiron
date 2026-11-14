@@ -59,6 +59,7 @@ pub mod lifted_text;
 pub mod live_run_claim_put;
 pub mod mail_counterparty;
 pub mod mail_landing;
+pub mod managed_person;
 pub mod membership;
 pub mod meso_extraction_width;
 pub mod model_binding_proposer;
