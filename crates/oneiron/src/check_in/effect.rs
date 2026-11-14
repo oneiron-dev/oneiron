@@ -30,7 +30,7 @@ use super::chain::{NoAgentVerdict, VerifiedChain};
 use super::mode::CheckInMode;
 use super::pending::{
     OpenPendingCheckIn, consume_pending_check_in_in_txn, open_keyed_pending_check_in_in_txn,
-    pending_check_in_in_txn,
+    pending_check_in_in_txn, spendable_basis,
 };
 use super::policy::CheckInScope;
 use super::resolve::{CheckInRequest, ResolvedMode, WaitReason, resolve_mode};
@@ -344,6 +344,32 @@ pub(crate) fn spend_applied_check_in_in_txn(
     }
     consume_pending_check_in_in_txn(vault, txn, id, effect_digest, now)?;
     Ok(row.asker)
+}
+
+/// Refuses `applied` in a read of its own, as the act's writer would refuse
+/// to spend it: no such row, another act's ask, another effect, an ask that
+/// is not eligible or already spent. It writes nothing. A door that writes
+/// before the act's own writer checks the check-in first: a hub import
+/// admits its publisher in a writer of its own, so a refused check-in
+/// leaves no publisher admitted (2k8d review). The act's writer spends it
+/// under the same checks.
+///
+/// # Errors
+///
+/// As [`spend_applied_check_in_in_txn`].
+pub(crate) fn require_spendable_check_in(
+    vault: &Vault,
+    act: ActClass,
+    applied: &AppliedCheckIn<'_>,
+) -> Result<()> {
+    let txn = vault.store.env.read_txn()?;
+    let row =
+        pending_check_in_in_txn(&vault.store, &txn, &applied.id)?.ok_or(Error::EntityNotFound)?;
+    if row.verb != applied.verb || row.act != act {
+        return Err(refuse("the check-in is another act's ask"));
+    }
+    spendable_basis(&row, &applied.effect_digest)?;
+    Ok(())
 }
 
 /// Another asker's approved check-in an Owner applies to their own act on a

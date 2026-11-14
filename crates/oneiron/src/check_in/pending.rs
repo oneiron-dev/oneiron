@@ -894,15 +894,7 @@ pub(crate) fn consume_pending_check_in_in_txn(
     let mut row = PENDING
         .get(&vault.store, txn, id)?
         .ok_or(Error::EntityNotFound)?;
-    if row.effect_digest != *effect_digest {
-        return Err(refuse("the act is another effect than the one asked"));
-    }
-    let basis = row
-        .eligible_basis()
-        .ok_or_else(|| refuse("the check-in did not make the act eligible"))?;
-    if row.consumed_at.is_some() {
-        return Err(refuse("the act this check-in held already ran"));
-    }
+    let basis = spendable_basis(&row, effect_digest)?;
     row.consumed_at = Some(now);
     let fields = ReceiptFields::new(&row).with("basis", basis.as_str().to_owned());
     let asker = row.asker;
@@ -916,6 +908,29 @@ pub(crate) fn consume_pending_check_in_in_txn(
         now,
     )?;
     store_pending_in_txn(&vault.store, txn, &row)?;
+    Ok(basis)
+}
+
+/// The basis on which `row` makes the act over `effect_digest` eligible,
+/// while it is not yet spent: the checks [`consume_pending_check_in_in_txn`]
+/// makes before it spends the row.
+///
+/// # Errors
+///
+/// Another effect; a state that makes nothing eligible; a row already used.
+pub(super) fn spendable_basis(
+    row: &PendingCheckIn,
+    effect_digest: &[u8; 32],
+) -> Result<EligibleBasis> {
+    if row.effect_digest != *effect_digest {
+        return Err(refuse("the act is another effect than the one asked"));
+    }
+    let basis = row
+        .eligible_basis()
+        .ok_or_else(|| refuse("the check-in did not make the act eligible"))?;
+    if row.consumed_at.is_some() {
+        return Err(refuse("the act this check-in held already ran"));
+    }
     Ok(basis)
 }
 

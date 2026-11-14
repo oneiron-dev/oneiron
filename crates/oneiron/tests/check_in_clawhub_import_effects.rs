@@ -12,6 +12,9 @@
 //! - An import that applies a check-in carries `expected_content_hash`, so
 //!   the ask names the exact bytes (ruling P25-2K8-SCOPE Q1). Without it the
 //!   import is refused before any fetch, and the check-in stays unspent.
+//! - The import admits its publisher in a writer of its own, before the
+//!   import's: a check-in for another import is refused before any fetch,
+//!   so it admits no one (2k8d review).
 //!
 //! On its base, 2k8d's head, this file does not build: the ClawHub request
 //! has no `check_in_ref`.
@@ -32,7 +35,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use hub_fixture::{configured_hub, skill_md};
+use hub_fixture::{configured_hub, publisher_grant_ref, skill_md};
 use oneiron::EntityId;
 use oneiron::check_in::ActClass;
 use oneiron::skill::canonical_skill_tree_hash;
@@ -237,6 +240,13 @@ fn the_owner_applies_an_approved_ask_for_that_clawhub_import_only() {
     assert!(
         !spent(&vault, &check_in),
         "a refused call leaves it unspent"
+    );
+    assert!(
+        vault
+            .consent_grant(&publisher_grant_ref("publisher:other", hub))
+            .expect("read the Grant")
+            .is_none(),
+        "the refused import admitted no publisher"
     );
 
     let imported = skill_hub_clawhub_import_as_owner(

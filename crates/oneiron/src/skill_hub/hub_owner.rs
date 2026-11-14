@@ -107,6 +107,16 @@ impl Vault {
         applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
     ) -> Result<ClawHubImportReply> {
         owner.revalidate(self)?;
+        // The publisher is admitted in a writer of its own, before the
+        // import's: a refused check-in is refused before any fetch, and
+        // admits no one.
+        if let Some(applied) = applied {
+            crate::check_in::require_spendable_check_in(
+                self,
+                crate::check_in::ActClass::GrantWiden,
+                applied,
+            )?;
+        }
         let configured = self.skill_hub_record(&input.hub)?;
         if configured.kind != super::SkillHubKind::HttpIndex {
             return Err(invalid("ClawHub import requires a configured HTTP hub"));
@@ -214,6 +224,16 @@ impl Vault {
         publisher: &str,
         applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
     ) -> Result<(EntityId, crate::check_in::CheckInDecision)> {
+        // The publisher is admitted in a writer of its own, before the
+        // import's: a refused check-in is refused first, and admits no one.
+        if let Some(applied) = applied {
+            owner.revalidate(self)?;
+            crate::check_in::require_spendable_check_in(
+                self,
+                crate::check_in::ActClass::GrantWiden,
+                applied,
+            )?;
+        }
         let publisher = self.admit_skill_publisher(owner, publisher, hub)?;
         let source = HubRef::new(hub, folder, pin)?;
         let at = self.now_recorded_at();

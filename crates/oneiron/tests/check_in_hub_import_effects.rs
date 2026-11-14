@@ -12,6 +12,9 @@
 //! - An import that applies a check-in names its exact bytes: its source is
 //!   pinned to a commit or a content hash. A tag is refused before any
 //!   fetch, and the check-in stays unspent.
+//! - The import admits its publisher in a writer of its own, before the
+//!   import's: a check-in for another import is refused before that, so it
+//!   admits no one (2k8d review, fixed in 2k8d2).
 //!
 //! On its base, 2k8c's head, this file does not build: neither door has a
 //! request with a `check_in_ref`.
@@ -20,16 +23,19 @@
 //! --all-features --test check_in_hub_import_effects`.
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+)]
 
 #[path = "check_in/hub_fixture.rs"]
 mod hub_fixture;
 #[path = "check_in/owner_apply_fixture.rs"]
 mod owner_apply_fixture;
 
-use hub_fixture::{configured_hub, skill_md};
+use hub_fixture::{configured_hub, publisher_grant_ref, skill_md};
 use oneiron::EntityId;
 use oneiron::check_in::ActClass;
-use oneiron::consent::{ActionClass, ActionEnvelope, ActorBound, GrantBound};
 use oneiron::skill_hub::{HubPin, HubRef, HubSyncPolicy, SkillHubKind};
 use oneiron::verbs::{
     HubSkillImportRequest, SkillPublisherAdmitRequest, hub_skill_import_as_owner,
@@ -48,21 +54,6 @@ fn admit_request(
         identity: identity.to_owned(),
         check_in_ref: check_in_ref.map(|id| id.to_hex()),
     }
-}
-
-/// The ref of the one Grant that admits `identity` to offer from `hub`.
-fn publisher_grant_ref(identity: &str, hub: EntityId) -> String {
-    GrantBound::action(
-        ActorBound::new(identity)
-            .expect("an actor")
-            .with_actor_class("foreign-publisher")
-            .expect("its class"),
-        ActionClass::new("skill.offer").expect("the offer class"),
-        ActionEnvelope::new([format!("hub:{}", hub.to_hex())]).expect("the hub envelope"),
-    )
-    .expect("the publisher's Grant")
-    .digest()
-    .to_hex()
 }
 
 #[test]
@@ -280,6 +271,13 @@ fn the_owner_applies_an_approved_ask_for_that_pinned_skill_import_only() {
     assert!(
         !spent(&vault, &check_in),
         "a refused call leaves it unspent"
+    );
+    assert!(
+        vault
+            .consent_grant(&publisher_grant_ref("publisher:other", hub))
+            .expect("read the Grant")
+            .is_none(),
+        "the refused import admitted no publisher"
     );
 
     let imported = hub_skill_import_as_owner(

@@ -107,6 +107,8 @@ pub(crate) use wake::next_check_in_due_at;
 
 // The erase doors' apply shape (2k2; P25-SHAPE Q1 = A).
 pub(crate) use effect::{AppliedCheckIn, owner_act_decision_in_txn};
+// The hub imports' check before they admit the publisher (2k8d).
+pub(crate) use effect::require_spendable_check_in;
 pub use effect::{
     legal_hold_erase_effect_digest, outbound_call_request_erase_effect_digest,
     text_history_erase_effect_digest,
