@@ -48,11 +48,11 @@ pub(super) fn merge_signing_paths(spec: &mut Value) {
                 "tags": ["signing"],
                 "operationId": "signing_action",
                 "summary": "One recipient ceremony act: load, save a field, complete with consent, or reject.",
-                "description": "The capability in the x-oneiron-esign-capability header is the authority. A call that also presents a vault credential is classed by it: an agent Complete is an automated sign act, held or refused where the signing dial or a natural-person recipient requires a person. Complete answers awaiting_seal; sealing runs as its own task and is observed through vault.esign.seal.get and vault.esign.get.",
+                "description": "The capability in the x-oneiron-esign-capability header is the authority. A call that also presents a vault credential is classed by it: an agent Complete is an automated sign act, held or refused where the signing dial or a natural-person recipient requires a person. Complete answers awaiting_seal; sealing runs as its own task and is observed through vault.esign.seal.get and vault.esign.get. A credentialed vault member completing a recipient whose principal is the vault's gets check_in_pending naming a check-in: once a holder approves it, the Complete that names it as check_in_ref signs.",
                 "security": capability_security(),
                 "requestBody": {"required": true, "content": {"application/json": {"schema": headerless(request)}}},
                 "responses": ceremony_responses(json!({
-                    "description": "The ceremony outcome: the page, not_your_turn, terminal, awaiting_seal, held_for_owner, or consent_required.",
+                    "description": "The ceremony outcome: the page, not_your_turn, terminal, awaiting_seal, held_for_owner, consent_required, or check_in_pending.",
                     "content": {"application/json": {"schema": answer}}
                 }))
             }}),

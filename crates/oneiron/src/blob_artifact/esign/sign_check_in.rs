@@ -18,9 +18,10 @@
 //!   names it as `check_in_ref` spends it and signs.
 //! * A person completing a recipient whose principal is their own person
 //!   signs in their own name and is not judged. Nor is a person no
-//!   membership role judges, a recipient with no principal or another's, a
-//!   bearer's call or an agent's, which keep the natural-person refusal and
-//!   the D6 dial.
+//!   membership role judges (a Delegate grant is no membership grant: FIX
+//!   CHECK-IN-PERSON-DELEGATE-UNJUDGED), a recipient with no principal or
+//!   another's, a bearer's call or an agent's, which keep the natural-person
+//!   refusal and the D6 dial.
 //!
 //! The signature's evidence records the decision.
 //!
