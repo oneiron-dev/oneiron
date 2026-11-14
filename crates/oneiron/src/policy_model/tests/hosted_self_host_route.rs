@@ -6,7 +6,8 @@
 use super::*;
 
 const UNAVAILABLE_NOTICE: &str = "The hosted relay cannot check this message right now.";
-const SELF_HOSTED_NOTE: &str = "A self-hosted vault relays through no hosted policy.";
+const SELF_HOSTED_NOTE: &str =
+    "A self-hosted vault that sends through its own connector relays through no hosted policy.";
 
 /// A hosted door's config: the local-model offer every kept halt names.
 fn door_config() -> PolicyModelConfig {
@@ -61,7 +62,7 @@ fn a_hosted_block_names_the_self_host_route() -> Result<()> {
     assert!(
         block
             .body
-            .ends_with(" legal policy. A self-hosted vault relays through no hosted policy."),
+            .ends_with(" legal policy. A self-hosted vault that sends through its own connector relays through no hosted policy."),
         "{}",
         block.body
     );

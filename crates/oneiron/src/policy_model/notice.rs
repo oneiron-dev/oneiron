@@ -58,10 +58,13 @@ const TRUSTED_CONTACT_ASK_NOTICE: &str = "This person has a trusted contact who 
 /// The self-host route of a hosted relay's own pass (DEC-0005 #will-sweep;
 /// RULING L9-61-POLICY-SELFHOST = A): one sentence, the decision's
 /// `self_hosted_note` and the engine-written Block body's last sentence. A
-/// macro, so the Block suffix stays one literal the template bound measures.
+/// self-hosted vault's send through an Oneiron-hosted connector still meets
+/// the hosted plane; through its own connector nothing of ours evaluates it
+/// (`RelayTrustDomain::LocalViaByoConnector`). A macro, so the Block suffix
+/// stays one literal the template bound measures.
 macro_rules! hosted_relay_self_hosted_note {
     () => {
-        "A self-hosted vault relays through no hosted policy."
+        "A self-hosted vault that sends through its own connector relays through no hosted policy."
     };
 }
 
