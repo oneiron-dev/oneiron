@@ -2131,6 +2131,9 @@ oneiron restore BACKUP --unlock kit --vault-id HEX --piece /Volumes/KEY/kit/piec
   --credential phone --kit-passkey-prf-file prf.bin --trust signer.json
 ```
 
+With a kit issued with a `passphrase` home, the passkey and the kit passphrase restore with no piece
+file: leave out `--piece` and give the passphrase with `--secret-file` (or on stdin).
+
 `vault-key recovery-preset --set nobody-but-me` turns the switch off: it prints a fresh sheet, and
 the kit stays usable. The old sheet opens nothing written after either change.
 

@@ -14,8 +14,9 @@
 //! turning it on issues a data-key kit over three homes in the same write,
 //! the synced passkey's piece sealed into a `kit_point` wrap, and removes the
 //! sheet's wrap too. Then one piece opens nothing, and two do: the paper
-//! piece and the passkey, or the paper piece and the trusted person's.
-//! Turning it off prints a fresh sheet, and the kit stays usable.
+//! piece and the passkey, or the paper piece and the trusted person's, or
+//! the passkey and the kit passphrase with no piece file. Turning it off
+//! prints a fresh sheet, and the kit stays usable.
 //!
 //! A fresh device is a host with no vault: it opens a sealed checkpoint's
 //! carried key header ([`CheckpointKey::unlock`]), or reopens the vault with
@@ -29,7 +30,9 @@
 use std::path::Path;
 
 use oneiron::recovery::checkpoint::{CheckpointKey, RestoreReason};
-use oneiron::recovery::{CodeKeeping, KitIssue, KitPiece, PassphraseCost, PieceHome};
+use oneiron::recovery::{
+    CodeKeeping, KitIssue, KitPassphrase, KitPiece, PassphraseCost, PieceHome,
+};
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
 use oneiron::world_keys::{
     KitPasskey, RecoveryPreset, RecoverySheet, VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapKind,
@@ -1002,4 +1005,64 @@ fn a_passkey_piece_joins_a_data_key_kit_and_never_a_world_kit() {
             passkey,
         )
         .expect("the paper piece and the passkey open the vault key");
+}
+
+/// The synced passkey and the kit passphrase are two of the three: with no
+/// piece file they open a checkpoint sealed under "any 2 pieces", the path
+/// `restore --unlock kit` takes with no `--piece` (review of #7781, round 2).
+#[test]
+fn the_passkey_and_the_kit_passphrase_open_with_no_piece_file() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let vault = keyed_vault(&directory.path().join("vault"));
+    let owner_proof = owner(&vault).expect("owner proof");
+    vault
+        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe, |_| Ok(()))
+        .expect("the owner enters \"Nobody but me\"");
+    let prf = Zeroizing::new([5u8; 32]);
+    let passkey = KitPasskey {
+        credential: "phone",
+        prf: &prf,
+    };
+    let phrase = KitPassphrase::new("correct horse battery staple").expect("a kit passphrase");
+    let switched = vault
+        .set_recovery_preset_any_two_as(
+            &owner_proof,
+            &KitIssue {
+                vault_id: vault.vault_key_vault_id(),
+                homes: [PAPER, PieceHome::Passkey, PieceHome::Passphrase],
+                passphrase: Some(&phrase),
+                cost: PassphraseCost::FLOOR,
+                only_machine: false,
+            },
+            Some(passkey),
+            |_| Ok(()),
+        )
+        .expect("the owner turns on \"any 2 pieces\" with a passphrase home");
+    let vault_id = switched.kit.vault_id;
+    let image = directory.path().join("image");
+    vault
+        .snapshot_checkpoint(&image, 100)
+        .expect("seal a checkpoint under the switch");
+
+    let no_piece: &[KitPiece] = &[];
+    let unlock = |passphrase: Option<&KitPassphrase>| {
+        CheckpointKey::unlock(
+            &image,
+            &VaultKeyUnlock::Kit {
+                vault_id,
+                pieces: no_piece,
+                passphrase,
+                passkey: Some(passkey),
+                keystore: None,
+            },
+        )
+    };
+    unlock(Some(&phrase))
+        .expect("on a host with no vault, the passkey and the kit passphrase open the checkpoint");
+    assert!(unlock(None).is_err(), "the passkey alone opens nothing");
+    let wrong = KitPassphrase::new("a passphrase never set").expect("another passphrase");
+    assert!(
+        unlock(Some(&wrong)).is_err(),
+        "a wrong kit passphrase opens nothing"
+    );
 }

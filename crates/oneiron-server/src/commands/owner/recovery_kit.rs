@@ -645,8 +645,9 @@ pub(super) fn kit_unlock(args: &RestoreArgs) -> anyhow::Result<HostUnlock> {
 /// A data-key kit's pieces go to the engine whole to rebuild the data key,
 /// checked against its commitment with no wrap (FIX 5614), and with the
 /// synced `passkey`, the piece the backup carries under it joins them, so it
-/// counts as one of the two (census L10-18). Existing vaults use
-/// [`kit_unlock_existing`] instead.
+/// counts as one of the two (census L10-18): the passkey and the kit
+/// passphrase restore with no piece file (review of #7781, round 2).
+/// Existing vaults use [`kit_unlock_existing`] instead.
 pub(super) fn kit_unlock_with(
     vault_id: Option<&str>,
     files: &[PathBuf],
@@ -658,17 +659,21 @@ pub(super) fn kit_unlock_with(
     })?;
     let vault_id = secret32(vault_id.as_bytes(), "a vault id")?;
     anyhow::ensure!(
-        !files.is_empty(),
-        "--unlock kit reads the kit's pieces: --piece"
+        !files.is_empty() || passkey.is_some(),
+        "--unlock kit reads the kit's pieces: --piece, or the kit passkey's \
+         --kit-passkey-prf-file with the kit passphrase"
     );
     // A fresh restore rebuilds from the pieces given alone (FIX 11973).
     // Existing plain and sealed vaults use kit_unlock_existing so this
-    // install's exact kept piece can join. A passkey's piece counts as one.
+    // install's exact kept piece can join. A passkey's piece counts as one,
+    // and it is a data-key kit's alone.
     let (pieces, passphrase) = read_kit(files, secret_file, passkey.is_some())?;
-    if pieces
-        .first()
-        .is_some_and(|piece| piece.kind() == KitSecretKind::VaultKey)
-    {
+    let data_key_kit = match pieces.first() {
+        Some(piece) => piece.kind() == KitSecretKind::VaultKey,
+        // No piece file: the passkey's piece alone, a data-key kit's.
+        None => passkey.is_some(),
+    };
+    if data_key_kit {
         return Ok(HostUnlock::VaultKeyKit {
             vault_id: *vault_id,
             pieces,
