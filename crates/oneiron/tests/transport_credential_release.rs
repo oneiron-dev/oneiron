@@ -885,3 +885,438 @@ fn member_peer_window_withholds_machine_signed_claim_with_credential() -> Result
     assert_unchanged(&fixture.vault, &[&machine, &claim])?;
     Ok(())
 }
+
+fn witness_message_with_signature(
+    vault: &Vault,
+    conversation: EntityId,
+    signature: &str,
+) -> Result<StoredRow> {
+    let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let receipt = vault
+        .memory(actor, EdgeActorClass::Human)
+        .witness(&oneiron::WitnessTurn {
+            conversation_ref: conversation.to_hex(),
+            turn_ref: None,
+            thread_audience: None,
+            messages: vec![oneiron::WitnessMessage {
+                id: None,
+                author: oneiron::WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: "hello".to_owned(),
+                parts: Some(vec![oneiron::ContentPart::Text {
+                    text: "hello".to_owned(),
+                    signature: Some(signature.to_owned()),
+                }]),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+                quote: None,
+            }],
+            occurred_at: LEARNED_AT,
+            assertions: oneiron::memory::WitnessAssertions::default(),
+        })
+        .expect("the public witness door accepts the canonical signed text part");
+    let id = EntityId::from_hex(&receipt.messages[0].id)?;
+    let row = read_stored_row(vault, id)?;
+    let body: serde_json::Value =
+        rmp_serde::from_slice(&row.body).expect("canonical witness MESSAGE map");
+    assert_eq!(body["parts"][0]["kind"], "text");
+    assert_eq!(body["parts"][0]["signature"], signature);
+    Ok(row)
+}
+
+#[test]
+fn member_peer_window_withholds_message_with_credential_signature() -> Result<()> {
+    let fixture = member_fixture()?;
+    let credential = format!("ghp_{}", "a".repeat(36));
+    let conversation = EntityId::now();
+    let control_message = witness_message_with_signature(
+        &fixture.vault,
+        conversation,
+        "provider-signature-reference",
+    )?;
+    let credential_message =
+        witness_message_with_signature(&fixture.vault, conversation, &credential)?;
+    assert!(
+        credential_message
+            .body
+            .windows(credential.len())
+            .any(|part| part == credential.as_bytes()),
+        "scan-Off stores the original signature credential before export"
+    );
+    let mut control_body: serde_json::Value =
+        rmp_serde::from_slice(&control_message.body).expect("control MESSAGE");
+    control_body["parts"][0]["signature"] = serde_json::Value::String(credential.clone());
+    let credential_body: serde_json::Value =
+        rmp_serde::from_slice(&credential_message.body).expect("credential MESSAGE");
+    assert_eq!(control_body, credential_body, "only the signature differs");
+    let key = WindowKey::new(WINDOW);
+    let window = fixture.manager.open_window(&key)?;
+    assert_exact(&window.doc, &control_message);
+    assert_exact(&window.doc, &credential_message);
+    let member = filtered_window_doc_for_peer(
+        &fixture.vault,
+        &window.doc,
+        &key,
+        FederationGrantScope::vault(SHARED),
+        &fixture.selector,
+        PeerMachine::Unknown,
+    )?;
+    // CONTROL: a signed MESSAGE crosses byte-exact, including its signature.
+    assert_exact(&member, &control_message);
+    let entities = member.get_map("entities");
+    assert!(
+        entities.get(&credential_message.id.to_hex()).is_none(),
+        "a MESSAGE with a credential signature stays home whole"
+    );
+    entities.for_each(|_, value| {
+        let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value else {
+            panic!("entity values must be binary metadata plus body");
+        };
+        assert!(
+            !bytes
+                .windows(credential.len())
+                .any(|part| part == credential.as_bytes()),
+            "no member entity may carry the original credential bytes"
+        );
+    });
+    assert_unchanged(&fixture.vault, &[&control_message, &credential_message])?;
+    Ok(())
+}
+
+#[test]
+fn member_peer_window_withholds_note_with_credential_proposal() -> Result<()> {
+    let fixture = member_fixture()?;
+    let vault = &fixture.vault;
+    let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let actor = WriteActor::new(owner_id, EdgeActorClass::Human);
+    let credential = format!("ghp_{}", "a".repeat(36));
+    let control_text = "Move the standup to Tuesday.";
+    let credential_text = format!("Rotate the token {credential} before Tuesday.");
+    let control_note = vault
+        .create_note("research", "The weekly review covers the schedule.", actor)
+        .expect("control NOTE");
+    let credential_note = vault
+        .create_note("research", "The weekly review covers the agenda.", actor)
+        .expect("credential NOTE");
+    let control_fork = vault
+        .fork_note(
+            control_note,
+            &oneiron::note::NoteProgramEdit::Rewrite {
+                text: control_text.to_owned(),
+            },
+            actor,
+        )
+        .expect("undecided control fork");
+    let credential_fork = vault
+        .fork_note(
+            credential_note,
+            &oneiron::note::NoteProgramEdit::Rewrite {
+                text: credential_text.clone(),
+            },
+            actor,
+        )
+        .expect("undecided credential fork");
+    let carrier_key = |note: EntityId, fork: EntityId| {
+        format!("note_proposal_doc:v1:{}:{}", note.to_hex(), fork.to_hex())
+    };
+    let control_carrier = carrier_key(control_note, control_fork);
+    let credential_carrier = carrier_key(credential_note, credential_fork);
+    let control_stored = read_stored_row(vault, control_note)?;
+    let credential_stored = read_stored_row(vault, credential_note)?;
+    let control_month = WindowKey::from_timestamp(vault.get_learned_at(&control_note)?);
+    let credential_month = WindowKey::from_timestamp(vault.get_learned_at(&credential_note)?);
+    let months = std::collections::BTreeSet::from([
+        control_month.as_str().to_owned(),
+        credential_month.as_str().to_owned(),
+    ]);
+    let mut member_docs = Vec::new();
+    for month in months {
+        let key = WindowKey::new(month);
+        let window = fixture.manager.open_window(&key)?;
+        if key == credential_month {
+            let bytes = map_get_bytes(&window.doc.get_map("documents"), &credential_carrier)
+                .expect("the opened window mirrors the stored credential proposal");
+            let stored: String = rmp_serde::from_slice(&bytes).expect("stored proposal text");
+            assert_eq!(stored, credential_text);
+            assert!(
+                bytes
+                    .windows(credential.len())
+                    .any(|part| part == credential.as_bytes()),
+                "scan-Off stores the original proposal credential before export"
+            );
+        }
+        let member = filtered_window_doc_for_peer(
+            vault,
+            &window.doc,
+            &key,
+            FederationGrantScope::vault(SHARED),
+            &fixture.selector,
+            PeerMachine::Unknown,
+        )?;
+        member_docs.push((key, member));
+    }
+    let member_of = |month: &WindowKey| {
+        member_docs
+            .iter()
+            .find(|(key, _)| key == month)
+            .map(|(_, doc)| doc)
+            .expect("member export of the NOTE month")
+    };
+    // CONTROL: the clean NOTE and its undecided proposal carrier cross.
+    let control_doc = member_of(&control_month);
+    assert_exact(control_doc, &control_stored);
+    let control_bytes = map_get_bytes(&control_doc.get_map("documents"), &control_carrier)
+        .expect("the clean proposal carrier crosses to the member peer");
+    let control_carried: String =
+        rmp_serde::from_slice(&control_bytes).expect("decode clean proposal text");
+    assert_eq!(control_carried, control_text);
+
+    let credential_doc = member_of(&credential_month);
+    assert!(
+        credential_doc
+            .get_map("entities")
+            .get(&credential_note.to_hex())
+            .is_none(),
+        "a NOTE with a credential proposal stays home whole"
+    );
+    assert!(
+        credential_doc
+            .get_map("documents")
+            .get(&credential_carrier)
+            .is_none(),
+        "the credential proposal document stays home"
+    );
+    assert!(
+        credential_doc
+            .get_map("note_forks")
+            .get(&credential_fork.to_hex())
+            .is_none(),
+        "the credential NOTE fork stays home"
+    );
+    let credential_documents = format!("note_proposal_doc:v1:{}:", credential_note.to_hex());
+    for (_, doc) in &member_docs {
+        doc.get_map("documents").for_each(|key, _| {
+            assert!(
+                !key.starts_with(&credential_documents),
+                "no document carrier of the withheld NOTE may cross"
+            );
+        });
+        doc.get_map("note_proposals").for_each(|_, _| {
+            panic!("bare undecided forks have no proposal bundles");
+        });
+        for map in ["entities", "documents", "note_forks", "note_proposals"] {
+            doc.get_map(map).for_each(|_, value| {
+                let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value else {
+                    panic!("{map} values must be binary carriers");
+                };
+                assert!(
+                    !bytes
+                        .windows(credential.len())
+                        .any(|part| part == credential.as_bytes()),
+                    "no member {map} carrier may hold the credential bytes"
+                );
+            });
+        }
+    }
+    assert_unchanged(vault, &[&control_stored, &credential_stored])?;
+    Ok(())
+}
+
+fn witness_prompt_message(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    conversation: EntityId,
+    text: &str,
+) -> Result<EntityId> {
+    let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let receipt = vault
+        .memory(actor, EdgeActorClass::Human)
+        .witness(&oneiron::WitnessTurn {
+            conversation_ref: conversation.to_hex(),
+            turn_ref: None,
+            thread_audience: None,
+            messages: vec![oneiron::WitnessMessage {
+                id: None,
+                author: oneiron::WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: text.to_owned(),
+                parts: None,
+                metadata: None,
+                is_visible: true,
+                order: 0,
+                quote: None,
+            }],
+            occurred_at: LEARNED_AT,
+            assertions: oneiron::memory::WitnessAssertions::default(),
+        })
+        .expect("the public witness door accepts a plain text prompt");
+    let id = EntityId::from_hex(&receipt.messages[0].id)?;
+    // Born-with reads entity_text, so the witnessed content needs its document.
+    vault.migrate_entity_text(
+        &id,
+        &oneiron::entity_doc::TextField::MapField("content".to_owned()),
+        WriteActor::new(actor, EdgeActorClass::Human),
+        &oneiron::entity_doc::DocAuthorization::Owner(owner),
+    )?;
+    assert_eq!(vault.entity_text(&id)?, text, "scan-Off keeps prompt text");
+    Ok(id)
+}
+
+#[test]
+fn member_peer_window_keeps_credential_born_with_prompt_home() -> Result<()> {
+    use oneiron::authority::{ActSurface, MachineRole};
+    use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
+    use oneiron::provenance::made_by::{
+        MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
+    };
+    use oneiron::share_travel::{BornWith, BornWithField, TravelChoice};
+
+    let fixture = member_fixture()?;
+    let vault = &fixture.vault;
+    let owner = scan_off(vault)?;
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault.provision_engine_machine_identities(&fixture.issuer)?;
+    vault.ensure_serving_install_profile(&fixture.issuer, MachineRole::Unanswered)?;
+    let mut choice = TravelChoice::default();
+    choice.born_with.insert(BornWithField::Prompt);
+    let travel = vault.set_federation_grant_travel_as(
+        &owner,
+        ActSurface::ThisInstall,
+        &fixture.selector.grant_id,
+        Some(choice.clone()),
+        None,
+        vault.now_recorded_at(),
+    )?;
+    assert_eq!(travel.map(|bound| bound.travel), Some(choice.clone()));
+    assert_eq!(
+        vault
+            .federation_grant_travel(&fixture.selector.grant_id)?
+            .expect("the grant has a signed travel choice")
+            .travel,
+        choice
+    );
+
+    let credential = format!("ghp_{}", "a".repeat(36));
+    let control_text = "Count the weekly review items.";
+    let credential_text = format!("Rotate the token {credential} before Tuesday.");
+    let conversation = EntityId::now();
+    let control_prompt = witness_prompt_message(vault, &owner, conversation, control_text)?;
+    let credential_prompt = witness_prompt_message(vault, &owner, conversation, &credential_text)?;
+    let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let actor = WriteActor::new(owner_id, EdgeActorClass::Human);
+    let mut artifacts = Vec::new();
+    for (name, prompt) in [("owen", control_prompt), ("yuki", credential_prompt)] {
+        let id = EntityId::now();
+        vault.put_blob_artifact(
+            &id,
+            &BlobArtifactBody::new(name, "text/plain"),
+            TimeRange {
+                start: LEARNED_AT,
+                end: LEARNED_AT,
+            },
+            LEARNED_AT,
+        )?;
+        let made_by = MadeBy {
+            inputs: vec![MadeByInput {
+                row: prompt,
+                role: MadeByInputRole::Prompt,
+            }],
+            process: MadeByProcess {
+                actor: owner_id,
+                class: MadeByClass::Stated,
+                identity: "prompt-artifact".to_owned(),
+                version: "1".to_owned(),
+                params_hash: "weekly-review".to_owned(),
+            },
+            at: LEARNED_AT,
+            trigger: None,
+        };
+        // The first version stamps the supplied envelope as the artifact's row birth.
+        vault.append_blob_artifact_version_made_by(
+            &id,
+            None,
+            b"Weekly review reference.\n",
+            &BlobVersionProvenance::UserUpload,
+            &made_by,
+            actor,
+            TimeRange {
+                start: LEARNED_AT,
+                end: LEARNED_AT,
+            },
+            LEARNED_AT,
+        )?;
+        assert_eq!(
+            vault
+                .row_birth(&id)?
+                .expect("the artifact has a row birth")
+                .made_by,
+            made_by
+        );
+        artifacts.push(read_stored_row(vault, id)?);
+    }
+    let control_row = &artifacts[0];
+    let credential_row = &artifacts[1];
+    let stored = vault.born_with_text(&credential_row.id, None)?;
+    assert_eq!(
+        stored.get(&BornWithField::Prompt).map(String::as_str),
+        Some(credential_text.as_str()),
+        "the public born-with read reaches the credential prompt before export"
+    );
+
+    let key = WindowKey::new(WINDOW);
+    let window = fixture.manager.open_window(&key)?;
+    for id in [
+        control_prompt,
+        credential_prompt,
+        control_row.id,
+        credential_row.id,
+    ] {
+        assert!(
+            map_get_bytes(&window.doc.get_map("entities"), &id.to_hex()).is_some(),
+            "the shared window contains the prompt and selected row: {}",
+            id.to_hex()
+        );
+    }
+    let member = filtered_window_doc_for_peer(
+        vault,
+        &window.doc,
+        &key,
+        FederationGrantScope::vault(SHARED),
+        &fixture.selector,
+        PeerMachine::Unknown,
+    )?;
+    assert_exact(&member, control_row);
+    assert_exact(&member, credential_row);
+    // CONTROL: the same grant and birth path carry the clean Prompt field.
+    let carried = member.get_map("row_born_with");
+    let control_bytes = map_get_bytes(&carried, &control_row.id.to_hex())
+        .expect("the clean row carries born-with text");
+    let control: BornWith = rmp_serde::from_slice(&control_bytes).expect("canonical born-with map");
+    assert_eq!(
+        control.get(&BornWithField::Prompt).map(String::as_str),
+        Some(control_text)
+    );
+
+    if let Some(bytes) = map_get_bytes(&carried, &credential_row.id.to_hex()) {
+        let text: BornWith = rmp_serde::from_slice(&bytes).expect("canonical born-with map");
+        assert!(
+            !text.contains_key(&BornWithField::Prompt),
+            "only the credential-bearing Prompt field must stay home"
+        );
+    }
+    carried.for_each(|_, value| {
+        let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value else {
+            panic!("born-with values must be binary encoded maps");
+        };
+        assert!(
+            !bytes
+                .windows(credential.len())
+                .any(|part| part == credential.as_bytes()),
+            "no row_born_with value may carry the credential bytes"
+        );
+    });
+    assert_unchanged(vault, &[control_row, credential_row])?;
+    assert_eq!(vault.entity_text(&credential_prompt)?, credential_text);
+    Ok(())
+}

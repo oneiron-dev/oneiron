@@ -146,6 +146,10 @@ enum Attached {
 pub(crate) struct NoteSelection {
     dropped: BTreeSet<EntityId>,
     attached: Attached,
+    /// For a copy bound for another vault, the NOTEs whose review carriers
+    /// hold a credential ([`Self::withholding_credential_carriers`]):
+    /// neither their core nor their attachments ride.
+    withheld: BTreeSet<EntityId>,
 }
 
 impl NoteSelection {
@@ -155,6 +159,7 @@ impl NoteSelection {
         Self {
             dropped: BTreeSet::new(),
             attached: Attached::AsCarried,
+            withheld: BTreeSet::new(),
         }
     }
 
@@ -196,15 +201,44 @@ impl NoteSelection {
         Ok(Self {
             dropped,
             attached: Attached::Judged(attached),
+            withheld: BTreeSet::new(),
         })
+    }
+
+    /// This selection for a copy bound for another vault, where no grant
+    /// admits a credential (SCOPED-EXPORT-RULE = A, ARCH-0027 :382): it also
+    /// keeps home each NOTE, core or attachment, whose review carriers in
+    /// `source` hold text the release check reads a credential in: an
+    /// undecided fork's proposal value, or the explainer of a bundle that
+    /// holds one of its members. A carrier is never rewritten, so that NOTE
+    /// and its workflow stay home whole.
+    pub(crate) fn withholding_credential_carriers(mut self, source: &LoroDoc) -> Result<Self> {
+        if !is_native(source) {
+            return Ok(self);
+        }
+        let state = codec::read(source)?;
+        for ((note, _), text) in &state.docs {
+            if crate::batch::secret_scan::scan_text_content(text).is_some() {
+                self.withheld.insert(*note);
+            }
+        }
+        for carrier in state.bundles.values() {
+            if crate::batch::secret_scan::scan_text_content(&carrier.bundle.explainer).is_some() {
+                self.withheld.extend(bundle_notes(&carrier.bundle));
+            }
+        }
+        Ok(self)
     }
 
     /// Whether the export drops `note`'s core.
     pub(crate) fn drops(&self, note: &EntityId) -> bool {
-        self.dropped.contains(note)
+        self.dropped.contains(note) || self.withheld.contains(note)
     }
 
     fn attaches(&self, note: &EntityId) -> bool {
+        if self.withheld.contains(note) {
+            return false;
+        }
         match &self.attached {
             Attached::AsCarried => true,
             Attached::Judged(notes) => notes.contains(note),

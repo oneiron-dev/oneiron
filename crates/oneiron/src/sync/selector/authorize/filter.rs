@@ -413,6 +413,15 @@ pub(in crate::sync::selector) fn filter_window_doc(
     // authority-mode NOTE drop).
     let grant_selector = Some((grant.scope, selector));
     let notes = NoteSelection::judged_in(vault, &rtxn, &flagged, source, &kept, grant_selector)?;
+    // SCOPED-EXPORT-RULE = A: a copy bound for another vault also keeps
+    // home each NOTE whose review carriers (proposal values, a bundle's
+    // explainer) hold a credential; copy_selected below writes no carrier
+    // of it.
+    let notes = if other_vault {
+        notes.withholding_credential_carriers(source)?
+    } else {
+        notes
+    };
     // An epoch summary leaves only beside every record it was written from:
     // the pass reads what this export ships, in its snapshot, so it runs
     // after every other withholding and before anything is written.
