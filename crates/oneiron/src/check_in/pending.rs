@@ -41,6 +41,11 @@ pub(super) const PENDING: SideTable<EntityId, PendingCheckIn, Named> =
 pub(super) const DUE: SideTable<(u64, EntityId), (), Named> =
     SideTable::new(&side_table::CHECK_IN_DUE);
 
+/// A natural key ([`PendingCheckIn::open_key`]) → the pending check-in a
+/// keyed open opened for it (2f): a repeat open reads it.
+const OPEN_KEY: SideTable<[u8; 32], EntityId, Named> =
+    SideTable::new(&side_table::CHECK_IN_OPEN_KEY);
+
 /// Writes `row` and moves its `DUE` entry to the row's next due time, or
 /// drops it once the row is final. Every write of a pending row comes here,
 /// so the index holds each open row once, at its due time; a row written
@@ -67,16 +72,53 @@ pub(super) fn store_pending_in_txn(
     PENDING.put(store, txn, &row.id, row)
 }
 
-/// Deletes the row `id` and its `DUE` entry.
+/// Deletes the row `id`, its `DUE` entry and the `OPEN_KEY` entry that
+/// names it.
 fn delete_pending_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
-    if let Some(at) = PENDING
-        .get(store, txn, id)?
-        .and_then(|stored| stored.next_due_at())
-    {
-        DUE.delete(store, txn, &(at, *id))?;
+    if let Some(stored) = PENDING.get(store, txn, id)? {
+        if let Some(at) = stored.next_due_at() {
+            DUE.delete(store, txn, &(at, *id))?;
+        }
+        let key = stored.open_key();
+        if OPEN_KEY.get(store, txn, &key)? == Some(*id) {
+            OPEN_KEY.delete(store, txn, &key)?;
+        }
     }
     PENDING.delete(store, txn, id)?;
     Ok(())
+}
+
+/// The BLAKE3 natural key of an ask: the asker, the verb, the act class,
+/// where the effect sits and the effect's digest (P23-SHAPE Q2 = A). Two
+/// opens with one key are the same saved call.
+fn open_key_of(
+    asker: EntityId,
+    verb: &str,
+    act: ActClass,
+    scope: &CheckInScope,
+    effect_digest: &[u8; 32],
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron.check_in.open_key.v1");
+    hasher.update(asker.as_bytes());
+    for part in [
+        Some(verb),
+        Some(act.as_str()),
+        scope.world_ref.as_deref(),
+        scope.project_ref.as_deref(),
+    ] {
+        match part {
+            Some(text) => {
+                hasher.update(&[1]);
+                hasher.update(&(text.len() as u64).to_be_bytes());
+                hasher.update(text.as_bytes());
+            }
+            None => {
+                hasher.update(&[0]);
+            }
+        }
+    }
+    hasher.update(effect_digest);
+    *hasher.finalize().as_bytes()
 }
 
 /// A rung of the ladder above rung 1 (ARCH-0082 #ladder).
@@ -370,6 +412,11 @@ pub struct PendingCheckIn {
     /// When the act this row held ran, on its eligible basis: it runs once.
     #[serde(default)]
     pub consumed_at: Option<u64>,
+    /// The logical call that opened the row through `vault.check_in.open`,
+    /// when its host bound one (2f; P23-SHAPE Q2 = A). The act's own gate
+    /// that resends under it is PR 3's.
+    #[serde(default)]
+    pub invocation: Option<[u8; 16]>,
 }
 
 impl PendingCheckIn {
@@ -401,6 +448,29 @@ impl PendingCheckIn {
             | PendingState::Held { .. }
             | PendingState::ObjectionHeld { .. } => None,
         }
+    }
+
+    /// The row's natural key: its asker, verb, act class, scope and effect
+    /// digest.
+    #[must_use]
+    pub(crate) fn open_key(&self) -> [u8; 32] {
+        open_key_of(
+            self.asker,
+            &self.verb,
+            self.act,
+            &self.scope,
+            &self.effect_digest,
+        )
+    }
+
+    /// Whether a repeat open of the same saved call returns this row: while
+    /// it is open, and once settled until its act ran. A let-go ask (the
+    /// asker stopped waiting) and a spent one are asked afresh; a denial, a
+    /// hold or a standing objection stays the answer, so a repeat never asks
+    /// the ladder again.
+    #[must_use]
+    pub fn answers_a_repeat(&self) -> bool {
+        !matches!(self.state, PendingState::LetGo { .. }) && self.consumed_at.is_none()
     }
 
     /// The next instant a transition is due, for the host that wakes it:
@@ -487,13 +557,6 @@ pub(crate) fn pending_check_in_in_txn(
 /// `now`, an asker wait below the class's floor, an undo plan for an act
 /// that is not undoable, or a delay window for an act that does not accept
 /// one or that is not open at `now`; storage errors.
-#[cfg_attr(
-    not(oneiron_test_support),
-    allow(
-        dead_code,
-        reason = "2e and 2f open it; until then only the test door does"
-    )
-)]
 pub(crate) fn open_pending_check_in_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -535,6 +598,7 @@ pub(crate) fn open_pending_check_in_in_txn(
         state: PendingState::Open,
         transitions: 0,
         consumed_at: None,
+        invocation: None,
     };
     let fields = ReceiptFields::new(&row)
         .with("verb", row.verb.clone())
@@ -557,6 +621,68 @@ pub(crate) fn open_pending_check_in_in_txn(
     enter_next_rung(vault, txn, &mut row, chain, now)?;
     store_pending_in_txn(&vault.store, txn, &row)?;
     Ok(row)
+}
+
+/// The row a repeat open of the ask with this natural key returns, in
+/// `txn`: the row the key names while it [answers a
+/// repeat](PendingCheckIn::answers_a_repeat).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn keyed_pending_check_in_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    asker: EntityId,
+    verb: &str,
+    act: ActClass,
+    scope: &CheckInScope,
+    effect_digest: &[u8; 32],
+) -> Result<Option<PendingCheckIn>> {
+    let key = open_key_of(asker, verb, act, scope, effect_digest);
+    let Some(id) = OPEN_KEY.get(store, txn, &key)? else {
+        return Ok(None);
+    };
+    Ok(PENDING
+        .get(store, txn, &id)?
+        .filter(PendingCheckIn::answers_a_repeat))
+}
+
+/// [`open_pending_check_in_in_txn`] under the ask's natural key (2f;
+/// P23-SHAPE Q2 = A): a repeat of the same saved call returns the row it
+/// opened (`true`: opened now; `false`: a repeat), with no new receipt; a
+/// let-go or spent row gives way to a new one, which the key then names.
+/// The new row records `invocation`, the logical call that opened it.
+///
+/// # Errors
+///
+/// As [`open_pending_check_in_in_txn`].
+pub(crate) fn open_keyed_pending_check_in_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    request: OpenPendingCheckIn,
+    invocation: Option<[u8; 16]>,
+    chain: &dyn RungResolver,
+    now: u64,
+) -> Result<(PendingCheckIn, bool)> {
+    if let Some(row) = keyed_pending_check_in_in_txn(
+        &vault.store,
+        txn,
+        request.asker,
+        &request.verb,
+        request.act,
+        &request.scope,
+        &request.effect_digest,
+    )? {
+        return Ok((row, false));
+    }
+    let mut row = open_pending_check_in_in_txn(vault, txn, request, chain, now)?;
+    if invocation.is_some() {
+        row.invocation = invocation;
+        store_pending_in_txn(&vault.store, txn, &row)?;
+    }
+    OPEN_KEY.put(&vault.store, txn, &row.open_key(), &row.id)?;
+    Ok((row, true))
 }
 
 fn validate_open(request: &OpenPendingCheckIn, now: u64) -> Result<()> {
