@@ -537,6 +537,7 @@ impl Vault {
             {
                 return Ok(None);
             }
+            super::actor_erase::refuse_an_erased_member_act(&act)?;
             let plan: RemoveOwnerPlan = decode(&act.payload)?;
             if !plan.export_first {
                 return Ok(None);
