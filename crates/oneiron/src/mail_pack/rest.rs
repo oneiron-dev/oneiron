@@ -3,7 +3,7 @@
 //! of its header block, the Bearer header for an injected credential, and
 //! the text helpers a message body needs.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Read};
 use std::time::Duration;
@@ -13,6 +13,7 @@ use dom_query::Document;
 use reqwest::header::HeaderValue;
 use serde_json::Value;
 
+use super::quota::MAIL_WIRE_RATE_LIMITED;
 use crate::EntityId;
 use crate::Vault;
 use crate::connector_key::{GrantAccess, ProviderConnectionChecks};
@@ -20,7 +21,7 @@ use crate::error::{Error, Result};
 use crate::secret_lease::DoorInjectionReceipt;
 
 /// The largest provider answer read: a whole message with its inline parts.
-const MAX_REST_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
+pub(super) const MAX_REST_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
 /// The longest header block a raw message read keeps, its ending empty line
 /// included: a longer one refuses the read, never reads as cut.
 const MAX_RAW_HEADER_BLOCK_BYTES: usize = 8 * 1024 * 1024;
@@ -70,7 +71,28 @@ pub(super) enum RestAnswer<T = Value> {
     Failed { status: u16, code: Option<String> },
 }
 
+/// Google's reasons for a 403 that is a usage limit, not a refusal: a
+/// user's or the project's rate.
+const USAGE_LIMIT_REASONS: [&str; 2] = ["rateLimitExceeded", "userRateLimitExceeded"];
+
 impl<T> RestAnswer<T> {
+    /// The answer, unless the provider answered that its rate is spent (a
+    /// 429, or Google's 403 for a usage limit): that one is
+    /// [`MAIL_WIRE_RATE_LIMITED`], which rests the source rather than
+    /// failing its step.
+    pub(super) fn unless_rate_limited(self) -> Result<Self> {
+        match &self {
+            Self::Failed { status: 429, .. } => Err(refused(MAIL_WIRE_RATE_LIMITED)),
+            Self::Failed {
+                status: 403,
+                code: Some(code),
+            } if USAGE_LIMIT_REASONS.contains(&code.as_str()) => {
+                Err(refused(MAIL_WIRE_RATE_LIMITED))
+            }
+            _ => Ok(self),
+        }
+    }
+
     /// The answer, `None` for the provider's "not found", else an error
     /// named `{wire}_status_{status}`.
     pub(super) fn found_or_gone(self, wire: &str) -> Result<Option<T>> {
@@ -97,11 +119,20 @@ pub(super) fn https_client() -> Result<reqwest::blocking::Client> {
 
 /// Sends `request` and reads its answer, bounded.
 pub(super) fn send(request: reqwest::blocking::RequestBuilder) -> Result<RestAnswer> {
+    send_counted(request, &Cell::new(0))
+}
+
+/// Sends `request` and reads its answer, bounded, adding each byte of it
+/// read to `read`.
+pub(super) fn send_counted(
+    request: reqwest::blocking::RequestBuilder,
+    read: &Cell<u64>,
+) -> Result<RestAnswer> {
     let response = request
         .send()
         .map_err(|_| refused("mail_wire_transport_failed"))?;
     let status = response.status();
-    let body = read_bounded_json(response);
+    let body = read_bounded_json(CountedRead::new(response, read));
     if status.is_success() {
         return body
             .map(RestAnswer::Found)
@@ -118,7 +149,7 @@ pub(super) fn send(request: reqwest::blocking::RequestBuilder) -> Result<RestAns
 /// raw message only the header block (fix list row 20738): the body is
 /// decoded as it arrives and the answer dropped unread past the block's end,
 /// so a message of any size names its headers. A failure status is read as
-/// [`send`] reads it.
+/// [`send`] reads it. Each byte of the answer read is added to `read`.
 ///
 /// # Errors
 ///
@@ -127,11 +158,13 @@ pub(super) fn send(request: reqwest::blocking::RequestBuilder) -> Result<RestAns
 /// [`MAX_RAW_HEADER_BLOCK_BYTES`].
 pub(super) fn send_raw_header_block(
     request: reqwest::blocking::RequestBuilder,
+    read: &Cell<u64>,
 ) -> Result<RestAnswer<Vec<u8>>> {
     let response = request
         .send()
         .map_err(|_| refused("mail_wire_transport_failed"))?;
     let status = response.status();
+    let response = CountedRead::new(response, read);
     if !status.is_success() {
         return Ok(RestAnswer::Failed {
             status: status.as_u16(),
@@ -141,12 +174,37 @@ pub(super) fn send_raw_header_block(
     raw_header_block(response).map(RestAnswer::Found)
 }
 
-/// The provider's error code a failure answer's body names (`error.code`).
+/// The provider's error code a failure answer's body names: Graph's
+/// `error.code`, or Google's first `error.errors[].reason`, as Google's
+/// `error.code` is the HTTP status again.
 fn error_code(body: Option<&Value>) -> Option<String> {
-    body?
-        .pointer("/error/code")
+    let error = body?.get("error")?;
+    error
+        .get("code")
         .and_then(Value::as_str)
+        .or_else(|| error.pointer("/errors/0/reason").and_then(Value::as_str))
         .map(str::to_owned)
+}
+
+/// An answer's body, each byte read from it added to a count.
+struct CountedRead<'c, R> {
+    body: R,
+    count: &'c Cell<u64>,
+}
+
+impl<'c, R: Read> CountedRead<'c, R> {
+    fn new(body: R, count: &'c Cell<u64>) -> Self {
+        Self { body, count }
+    }
+}
+
+impl<R: Read> Read for CountedRead<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let taken = self.body.read(buf)?;
+        self.count
+            .set(self.count.get().saturating_add(taken as u64));
+        Ok(taken)
+    }
 }
 
 /// The header block of the raw message in `body`, a JSON object whose only
@@ -296,7 +354,7 @@ impl HeaderBlock {
     }
 }
 
-fn read_bounded_json(response: reqwest::blocking::Response) -> Option<Value> {
+fn read_bounded_json(response: impl Read) -> Option<Value> {
     let mut bytes = Vec::new();
     response
         .take(MAX_REST_RESPONSE_BYTES + 1)

@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::quota::MailQuotaWindow;
 use super::source::MailCopySetting;
 use super::wire::MailAttachmentRef;
 use crate::side_table::{self, Named, SideTable};
@@ -69,6 +70,10 @@ pub(super) struct MailSyncState {
     pub(super) history_page: Option<String>,
     #[serde(default)]
     pub(super) history_page_anchor: Option<String>,
+    /// How far into a change-feed page a step that stopped part-way got:
+    /// the next step reads the page again and goes on after it.
+    #[serde(default)]
+    pub(super) history_applied: Option<MailHistoryApplied>,
     pub(super) landed: u64,
     pub(super) bodies: u64,
     pub(super) deleted_at_provider: u64,
@@ -85,12 +90,29 @@ pub(super) struct MailSyncState {
     /// [`OWN_ADDRESSES_REFRESH_SECS`] after it.
     #[serde(default)]
     pub(super) own_addresses_read_at: Option<u64>,
+    /// Where the source's provider quota windows stand, and until when it
+    /// rests ([`super::quota`]).
+    #[serde(default)]
+    pub(super) quota: MailQuotaWindow,
 }
 
 /// How long a provider's answer for a mailbox's own addresses stands before
 /// a sync step reads them again: an alias changes rarely, and a step runs
 /// often.
 pub(super) const OWN_ADDRESSES_REFRESH_SECS: u64 = 6 * 60 * 60;
+
+/// The changes of one change-feed page a step applied before it stopped
+/// part-way through the page (a quota pause, a failure): the page read from
+/// `anchor` at `page`, whose first `changes` changes are applied.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct MailHistoryApplied {
+    pub(super) anchor: String,
+    pub(super) page: Option<String>,
+    pub(super) changes: u64,
+    /// The digest of those changes: the page read again goes on after
+    /// them only while it begins with the same changes.
+    pub(super) digest: [u8; 32],
+}
 
 /// A listing that settles the copies an expired anchor lost track of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -375,5 +397,6 @@ pub(super) fn status_view_in(
         claim_rechecks_obsolete: rechecks.obsolete,
         last_step_at: state.last_step_at,
         last_error: state.last_error,
+        quota_paused_until: state.quota.resting_at(crate::unix_seconds_now()),
     })
 }
