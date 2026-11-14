@@ -4,8 +4,16 @@
 //! queue (FIX 7778): the timer only enqueues one rescan per attached folder,
 //! and the worker claims, runs and settles each, so a rescan still queued
 //! when the host stopped runs after it starts again.
+//!
+//! A Drive source is stepped again when its last step says
+//! (`DriveStepReport::next_step_at`, L3-16-COPY-PACE = A, as the mail
+//! worker paces a Gmail copy): once its quota window opens after a step
+//! that ran out of it, at once after one that read on to its budget's end.
+//! So a whole Drive copies at its share of the provider's quota, not one
+//! step per pass. `vault.files.drive.attach` wakes it at once.
 
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use oneiron::attempt_queue::{
@@ -15,8 +23,10 @@ use oneiron::attempt_queue::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::note::FolderSource;
 use serde::{Deserialize, Serialize};
+use tokio::sync::Notify;
 
 use super::ImportWarning;
+use crate::mail_host::{sleep_until_unix, unix_seconds_now};
 use crate::server::SyncServer;
 
 /// How often `oneiron serve` enqueues a rescan of each attached folder.
@@ -34,6 +44,76 @@ struct FolderRescanJob {
     folder: String,
 }
 
+/// The Drive sources the worker steps before its next pass, by folder, and
+/// when (Unix seconds): one just attached at once, and one whose last step
+/// named its next step then.
+#[derive(Default)]
+pub(crate) struct DriveSourceWakes {
+    scheduled: Mutex<BTreeMap<String, u64>>,
+    notify: Notify,
+}
+
+impl DriveSourceWakes {
+    /// Steps the Drive source attached as `folder` at once.
+    pub(crate) fn wake(&self, folder: &str) {
+        self.schedule(folder, Some(unix_seconds_now()));
+        self.notify.notify_one();
+    }
+
+    /// Keeps the next step of `folder` at `next`, as its last step named
+    /// it; none once it named none.
+    fn schedule(&self, folder: &str, next: Option<u64>) {
+        let mut scheduled = self
+            .scheduled
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        match next {
+            Some(at) => {
+                scheduled.insert(folder.to_owned(), at);
+            }
+            None => {
+                scheduled.remove(folder);
+            }
+        }
+    }
+
+    /// The earliest next step kept.
+    fn next_scheduled(&self) -> Option<u64> {
+        self.scheduled
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .min()
+            .copied()
+    }
+
+    /// Takes each folder whose next step has come by `now`.
+    fn take_due(&self, now: u64) -> Vec<String> {
+        let mut scheduled = self
+            .scheduled
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let due: Vec<String> = scheduled
+            .iter()
+            .filter(|(_, at)| **at <= now)
+            .map(|(folder, _)| folder.clone())
+            .collect();
+        for folder in &due {
+            scheduled.remove(folder);
+        }
+        due
+    }
+}
+
+/// What a worker pass enqueues.
+#[derive(Clone, Copy)]
+enum Pass {
+    /// A rescan of every attached folder.
+    Every,
+    /// A step of each Drive source whose next step has come.
+    Due,
+}
+
 /// Enqueues a rescan of every attached folder from `oneiron serve` at start
 /// and every [`RESCAN_TICK`], then runs what the queue holds, one rescan at
 /// a time, off the async runtime, on every posture: attaching a folder is
@@ -42,23 +122,37 @@ struct FolderRescanJob {
 /// owner; a managed vault starts none, since it keeps no standing import
 /// authority yet. A folder that is not there now is said each pass and
 /// retracts nothing. At start, a rescan the last host claimed and never
-/// settled goes back to the queue first.
+/// settled goes back to the queue first. Between passes, a Drive source is
+/// stepped when its last step or its attach named.
 pub(crate) fn spawn_rescans(server: Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(RESCAN_TICK);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut recovered = false;
         loop {
-            interval.tick().await;
+            let next_step = server.drive_source_wakes.next_scheduled();
+            let kind = tokio::select! {
+                _ = interval.tick() => Pass::Every,
+                () = sleep_until_unix(next_step) => Pass::Due,
+                () = server.drive_source_wakes.notify.notified() => Pass::Due,
+            };
             let server = Arc::clone(&server);
             let recover = !std::mem::replace(&mut recovered, true);
             let pass = tokio::task::spawn_blocking(move || {
                 let vault = server.vault();
+                let wakes = &server.drive_source_wakes;
                 if recover {
                     recover_rescans(vault)?;
                 }
-                enqueue_rescans(vault)?;
-                run_queued_rescans(vault)
+                match kind {
+                    Pass::Every => enqueue_rescans(vault)?,
+                    Pass::Due => {
+                        for folder in wakes.take_due(unix_seconds_now()) {
+                            enqueue_rescan(vault, &folder)?;
+                        }
+                    }
+                }
+                run_queued_rescans(vault, wakes)
             })
             .await;
             let error = match pass {
@@ -89,18 +183,23 @@ fn recover_rescans(vault: &oneiron::Vault) -> anyhow::Result<()> {
 /// queued or running gets no second one: the queue's dedupe key names the
 /// folder, and it holds only while that rescan is pending.
 fn enqueue_rescans(vault: &oneiron::Vault) -> anyhow::Result<()> {
-    let queue = AttemptQueue::new(vault);
     for source in vault.folder_sources()? {
-        queue.enqueue(EnqueueAttempt {
-            kind: FOLDER_RESCAN_ATTEMPT_KIND.to_owned(),
-            payload: serde_json::to_vec(&FolderRescanJob {
-                folder: source.folder.clone(),
-            })?,
-            dedupe_key: Some(rescan_dedupe_key(&source.folder)),
-            run_id: None,
-            now: vault.now_recorded_at(),
-        })?;
+        enqueue_rescan(vault, &source.folder)?;
     }
+    Ok(())
+}
+
+/// One queued rescan of `folder`, unless one is queued or running already.
+fn enqueue_rescan(vault: &oneiron::Vault, folder: &str) -> anyhow::Result<()> {
+    AttemptQueue::new(vault).enqueue(EnqueueAttempt {
+        kind: FOLDER_RESCAN_ATTEMPT_KIND.to_owned(),
+        payload: serde_json::to_vec(&FolderRescanJob {
+            folder: folder.to_owned(),
+        })?,
+        dedupe_key: Some(rescan_dedupe_key(folder)),
+        run_id: None,
+        now: vault.now_recorded_at(),
+    })?;
     Ok(())
 }
 
@@ -111,8 +210,8 @@ fn rescan_dedupe_key(folder: &str) -> String {
 }
 
 /// Claims, runs and settles every queued rescan, one at a time, until the
-/// queue holds none.
-fn run_queued_rescans(vault: &oneiron::Vault) -> anyhow::Result<()> {
+/// queue holds none; each Drive step keeps its next step in `wakes`.
+fn run_queued_rescans(vault: &oneiron::Vault, wakes: &DriveSourceWakes) -> anyhow::Result<()> {
     let queue = AttemptQueue::new(vault);
     let Some(mut attempt) = claim_rescan(&queue, vault)? else {
         return Ok(());
@@ -120,7 +219,7 @@ fn run_queued_rescans(vault: &oneiron::Vault) -> anyhow::Result<()> {
     let owner = crate::owner::local_owner(vault);
     loop {
         let ran = match &owner {
-            Ok(owner) => run_rescan(vault, owner, &attempt),
+            Ok(owner) => run_rescan(vault, owner, wakes, &attempt),
             Err(error) => Err(anyhow::anyhow!("no local owner to rescan as: {error:#}")),
         };
         match ran {
@@ -172,25 +271,38 @@ fn claim_rescan(
 
 /// One claimed rescan. The folder must still be attached when it runs: one
 /// detached after it was queued is not read, and the job settles as done.
+/// A Drive source's step keeps its next step in `wakes`; a failed one
+/// waits for the next pass.
 fn run_rescan(
     vault: &oneiron::Vault,
     owner: &AuthenticatedOwner,
+    wakes: &DriveSourceWakes,
     attempt: &AttemptRecord,
 ) -> anyhow::Result<()> {
     let job: FolderRescanJob = serde_json::from_slice(&attempt.payload)?;
     let Some(source) = vault.folder_source(&job.folder)? else {
+        wakes.schedule(&job.folder, None);
         return Ok(());
     };
-    rescan_one(vault, owner, &source)
+    let next_step = rescan_one(vault, owner, &source);
+    wakes.schedule(&job.folder, next_step.as_ref().ok().copied().flatten());
+    next_step.map(|_| ())
 }
 
-/// One rescan of `source`, its outcome said in the host's log.
+/// One rescan of `source`, its outcome said in the host's log; for a Drive
+/// source, when its next step is.
 fn rescan_one(
     vault: &oneiron::Vault,
     owner: &AuthenticatedOwner,
     source: &FolderSource,
-) -> anyhow::Result<()> {
-    let (report, warnings) = super::source::rescan(vault, owner, source)?;
+) -> anyhow::Result<Option<u64>> {
+    let (report, warnings, next_step) = if source.drive.is_some() {
+        let step = super::source::drive_step(vault, owner, source)?;
+        (step.rescan, Vec::new(), step.next_step_at)
+    } else {
+        let (report, warnings) = super::source::rescan(vault, owner, source)?;
+        (report, warnings, None)
+    };
     for warning in &warnings {
         match warning {
             ImportWarning::LimitCrossed {
@@ -233,5 +345,5 @@ fn rescan_one(
             "folder source rescanned"
         );
     }
-    Ok(())
+    Ok(next_step)
 }

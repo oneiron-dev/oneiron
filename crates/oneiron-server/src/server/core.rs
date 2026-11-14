@@ -267,6 +267,12 @@ pub struct SyncServer {
     /// notices (census L2-17; the push hook adds them) and by a mailbox's
     /// connect (L3-16). The mail worker steps them.
     pub(crate) mail_source_wakes: crate::mail_host::MailSourceWakes,
+    /// The Drive sources to step before the rescan worker's next pass: one
+    /// just attached (`vault.files.drive.attach`), and one whose last step
+    /// named its next step (L3-16-COPY-PACE = A). The rescan worker steps
+    /// them.
+    #[cfg(unix)]
+    pub(crate) drive_source_wakes: crate::files_intake::DriveSourceWakes,
     /// This server's one organ host: the seal worker and the mesh
     /// listener's `oneiron/organ/1` share its budget and warm processes.
     #[cfg(unix)]
@@ -366,6 +372,7 @@ const _: fn(&SyncServer) = |server| {
         decision_reads, decisions, hook_runtime,
         #[cfg(feature = "mesh")] mesh_transport,
         builtin_handles, mail_source_wakes,
+        #[cfg(unix)] drive_source_wakes,
         #[cfg(unix)] organs,
         #[cfg(unix)] organ_dir,
         run_receipts, ai, pattern_launch_runner, rerank_runtime, hyde_host, extraction_egress,

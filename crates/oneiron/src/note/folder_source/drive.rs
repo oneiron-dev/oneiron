@@ -98,8 +98,10 @@ pub const DRIVE_PICKED_OAUTH_SCOPE: &str = "https://www.googleapis.com/auth/driv
 pub const DRIVE_WHOLE_OAUTH_SCOPE: &str = "https://www.googleapis.com/auth/drive.readonly";
 
 /// What of the Drive the owner chose to attach (DRIVE-ACCESS = B: the whole
-/// Drive is a first-class choice at connect time).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Drive is a first-class choice at connect time). `vault.files.drive.attach`
+/// takes it as `{"kind": "picked", "files": [..]}` or `{"kind": "whole"}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DriveAccess {
     /// The files the owner picked through the Google Picker, by Drive id.
     Picked { files: Vec<String> },
@@ -393,6 +395,14 @@ pub struct DriveStepReport {
     /// Until when the source rests: its quota is spent, or the provider
     /// asked it to wait.
     pub quota_paused_until: Option<u64>,
+    /// When the host steps the source again, Unix seconds, as a Gmail copy
+    /// is paced (L3-16-COPY-PACE = A): once its quota window opens after a
+    /// step that ran out of it; at once after one that read on to its
+    /// budget's end (listing pages, change pages, or texts with more
+    /// owed). `None` once nothing is owed, after a step whose every text
+    /// read failed, or from a wire that declares no quota: the host's
+    /// periodic pass steps those.
+    pub next_step_at: Option<u64>,
 }
 
 /// What reading one file's text gave.
@@ -605,6 +615,9 @@ struct FeedRead {
     listing: Option<DriveListing>,
     /// The ids a whole Drive's listing named, when it ended in this read.
     listed: Option<HashSet<String>>,
+    /// The change feed's drain stopped at the budget's pages with a next
+    /// page still to read.
+    changes_cut_short: bool,
 }
 
 impl FeedRead {
@@ -616,6 +629,7 @@ impl FeedRead {
             token,
             listing: None,
             listed: None,
+            changes_cut_short: false,
         }
     }
 }
@@ -806,6 +820,7 @@ impl Vault {
             listing: feed.listing.is_some(),
             ..DriveStepReport::default()
         };
+        let feed_cut_short = report.listing || feed.changes_cut_short;
         sync.page_token = feed.token;
         sync.listing = feed.listing;
         let mut gone = feed.gone;
@@ -923,14 +938,25 @@ impl Vault {
             .cloned()
             .collect();
         report.rescan = self.rescan_folder_source(owner, rescan)?;
-        report.rescan.failed += failed.len();
+        let failed_reads = failed.len();
+        report.rescan.failed += failed_reads;
         if let Some(error) = failed.into_iter().next() {
             report.rescan.first_error.get_or_insert(error);
         }
+        // Each failed read kept one file owed; the rest were not tried.
+        let untried = kept.len().saturating_sub(failed_reads);
         report.owed = kept.len();
         sync.owed = kept;
         sync.quota = metered.window.get();
-        report.quota_paused_until = sync.quota.resting_at(crate::unix_seconds_now());
+        let now = crate::unix_seconds_now();
+        report.quota_paused_until = sync.quota.resting_at(now);
+        report.next_step_at = next_step_at(
+            metered.quota.is_some(),
+            feed_cut_short || untried > 0,
+            feed_cut_short || report.texts > 0,
+            report.quota_paused_until,
+            now,
+        );
         self.store_drive_sync(folder, |state| *state = sync)?;
         Ok(report)
     }
@@ -987,6 +1013,7 @@ impl Vault {
                     _ => feed.gone.push(change.file_id),
                 }
             }
+            feed.changes_cut_short = page.next_page.is_some();
             // A page names its drain's next page, or on the last page the
             // token the next drain starts from.
             match (page.next_page, page.new_start) {
@@ -1094,6 +1121,28 @@ fn owed_after(
     let mut owed: Vec<DriveFileMeta> = owed.into_values().collect();
     owed.sort_by(|a, b| b.modified_at.cmp(&a.modified_at).then(a.id.cmp(&b.id)));
     owed
+}
+
+/// When the host steps a source again after a step (L3-16-COPY-PACE = A,
+/// as for a Gmail copy): a wire that declares no quota, or a source that
+/// owes nothing, names none, so the host's periodic pass steps it. One that
+/// owes more steps once its window opens when it rests, else at `now` when
+/// the step read on to its budget's end; a step that read nothing but
+/// failures names none, so a file that fails each time never spins it.
+fn next_step_at(
+    paced: bool,
+    owes_more: bool,
+    read_to_budget: bool,
+    paused_until: Option<u64>,
+    now: u64,
+) -> Option<u64> {
+    if !paced || !owes_more {
+        return None;
+    }
+    match paused_until {
+        Some(until) => Some(until),
+        None => read_to_budget.then_some(now),
+    }
 }
 
 /// `file` held by its name only, for `why`.

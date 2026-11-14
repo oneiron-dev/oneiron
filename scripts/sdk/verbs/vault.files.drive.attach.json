@@ -1,0 +1,16 @@
+{
+  "name": "vault.files.drive.attach",
+  "description": "The owner attaches their Google Drive as a source of notes: the files they picked (drive.file) or the whole Drive (drive.readonly). The host steps it at once, then at the pace its quota allows.",
+  "input": "crate::task_verb::sdk::DriveSourceAttachRequest",
+  "output": "crate::task_verb::sdk::DriveSourceAttachAnswer",
+  "call": "crate::task_verb::sdk::attach_drive_source_embedded(memory, input)?",
+  "host_door": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

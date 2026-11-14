@@ -4,6 +4,13 @@
 //! Attach, conversion and rescan read folders on the server's host, so an embedded handle,
 //! which has no host walk, answers them with a typed refusal; its owner may
 //! list, read a source's ledger and detach.
+//!
+//! `vault.files.drive.attach` is the owner's act of attaching their Google
+//! Drive, the files they picked or the whole Drive (DRIVE-ACCESS = B), as a
+//! standing source of notes. It makes no Google call: the host that serves
+//! the vault steps the source, at once and then at the pace its quota
+//! allows. An embedded owner may attach one too; `oneiron import folder
+//! rescan` steps it.
 
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
@@ -12,8 +19,10 @@ use crate::memory::{
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
 };
 use crate::note::{
-    FileHandle, FileReadiness, FolderFileState, FolderRescanReport, FolderSource, FolderSourceFile,
+    DriveAccess, DriveOrigin, FileHandle, FileReadiness, FolderFileState, FolderRescanReport,
+    FolderSource, FolderSourceFile,
 };
+use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::files::{
@@ -259,6 +268,84 @@ pub fn detach_files_source_as(
         folder: Some(source.folder),
         detached,
     })
+}
+
+/// `vault.files.drive.attach`'s input: the owner's Google account, the
+/// custody record holding their Google grant for Drive, and what of the
+/// Drive the source reads.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DriveSourceAttachRequest {
+    /// The custody record the owner's Google grant for Drive is stored
+    /// under; its grant holds the scope `access` asks for.
+    pub custody_ref: String,
+    /// The Google account's address: one account is one Drive source.
+    pub account: String,
+    /// The files the owner picked through the Google Picker, or the whole
+    /// Drive.
+    pub access: DriveAccess,
+    /// The note kind a file lands as; `observation` when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+}
+
+/// `vault.files.drive.attach`'s answer: the source as attached.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DriveSourceAttachAnswer {
+    /// The name the source is attached under, `drive://` and its account:
+    /// `oneiron import folder detach` takes it.
+    pub folder: String,
+    /// What of the Drive it reads, each picked file named once.
+    pub access: DriveAccess,
+    /// The Google OAuth scope its custody record's grant holds: `drive.file`
+    /// for picked files, `drive.readonly` for a whole Drive.
+    pub oauth_scope: String,
+    /// The note kind its files land as.
+    pub kind: String,
+}
+
+/// `vault.files.drive.attach` under the owner's proof: their Google Drive,
+/// the files they picked or the whole Drive, attached as a standing source
+/// of notes. It makes no Google call; the host steps the source.
+///
+/// # Errors
+/// A proof that no longer holds, a blank or oversize field, picked access
+/// with no file or a file id that is not plain, an unknown `kind`, the
+/// account attached already, or a storage error.
+pub fn attach_drive_source_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: DriveSourceAttachRequest,
+) -> MemoryResult<DriveSourceAttachAnswer> {
+    let source = vault.attach_drive_source(
+        owner,
+        DriveOrigin {
+            custody_ref: input.custody_ref,
+            account: input.account,
+            access: input.access,
+        },
+        input.kind.as_deref(),
+    )?;
+    let drive = source.drive.ok_or(crate::Error::InvariantViolation(
+        "a Drive source was attached with no Drive origin",
+    ))?;
+    Ok(DriveSourceAttachAnswer {
+        folder: source.folder,
+        oauth_scope: drive.origin.access.oauth_scope().to_owned(),
+        access: drive.origin.access,
+        kind: source.kind,
+    })
+}
+
+/// `vault.files.drive.attach` on an embedded handle: the embedded owner's
+/// own act.
+pub fn attach_drive_source_embedded(
+    memory: &Memory<'_>,
+    input: DriveSourceAttachRequest,
+) -> MemoryResult<DriveSourceAttachAnswer> {
+    let owner = memory.embedded_owner("vault.files.drive.attach")?;
+    attach_drive_source_as(memory.vault(), &owner, input)
 }
 
 /// `vault.files.sources.attach` on an embedded handle: it has no host walk.

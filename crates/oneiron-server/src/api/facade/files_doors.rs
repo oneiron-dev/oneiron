@@ -12,6 +12,12 @@
 //! Each lists its rows (`host_door_lists`): the Files world its answer names,
 //! and the notes, forks and kept-original artifacts a ledger read names. The sources and their ledger
 //! are side tables, which hold no row.
+//!
+//! `vault.files.drive.attach` attaches the owner's Google Drive, the files
+//! they picked or the whole Drive, under the same proof. It makes no Google
+//! call: it wakes the rescan worker, which steps the source at once and
+//! then at the pace its quota allows. It answers the source alone, which is
+//! a side table, so it lists nothing.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -20,10 +26,11 @@ use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
-    self, FilesRescanAnswer, FilesSourceAttachAnswer, FilesSourceAttachRequest,
-    FilesSourceConvertRequest, FilesSourceDetachAnswer, FilesSourceDetachRequest,
-    FilesSourceExcludeAnswer, FilesSourceExcludeRequest, FilesSourceFiles, FilesSourceFilesRequest,
-    FilesSourceList, FilesSourceListRequest, FilesSourceRescanRequest,
+    self, DriveSourceAttachAnswer, DriveSourceAttachRequest, FilesRescanAnswer,
+    FilesSourceAttachAnswer, FilesSourceAttachRequest, FilesSourceConvertRequest,
+    FilesSourceDetachAnswer, FilesSourceDetachRequest, FilesSourceExcludeAnswer,
+    FilesSourceExcludeRequest, FilesSourceFiles, FilesSourceFilesRequest, FilesSourceList,
+    FilesSourceListRequest, FilesSourceRescanRequest,
 };
 
 use super::host_doors::support::{Listed, internal, owner_proof};
@@ -87,6 +94,26 @@ pub(crate) async fn vault_files_sources_attach(
         },
     )
     .await
+}
+
+/// `vault.files.drive.attach`: the owner attaches their Google Drive, the
+/// files they picked or the whole Drive, and the rescan worker steps it at
+/// once.
+pub(crate) async fn vault_files_drive_attach(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: DriveSourceAttachRequest,
+) -> MemoryResult<DriveSourceAttachAnswer> {
+    let owner = owner_proof(auth, server, "vault.files.drive.attach")?;
+    let server = Arc::clone(server);
+    super::clock_ingress::run_blocking(move || -> MemoryResult<DriveSourceAttachAnswer> {
+        let attached = sdk::attach_drive_source_as(server.vault(), &owner, input)?;
+        #[cfg(unix)]
+        server.drive_source_wakes.wake(&attached.folder);
+        Ok(attached)
+    })
+    .await
+    .map_err(|_| internal("vault.files.drive.attach"))?
 }
 
 /// Converts an attached notes source to Files, preserving its existing notes.
