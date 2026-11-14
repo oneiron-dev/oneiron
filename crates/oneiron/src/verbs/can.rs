@@ -1,18 +1,50 @@
-//! `can`'s typed input: the read-only preflight of an ask, or the dated
-//! preflight of one effect (C2:207, FIX 22102).
+//! `can`'s typed input: the read-only preflight of an ask, the dated
+//! preflight of one effect (C2:207, FIX 22102), or one verb's gate for an
+//! actor (FIX [UI-GATE-PREVIEW]).
 use serde::{Deserialize, Serialize};
 
 use super::{OutboundScheduleRequest, TaskCanAskRequest};
+use crate::EntityId;
 
 /// `can`'s input: `{ask: ...}`, one read-only preflight of a typed ask
-/// spec, or `{effect: ...}`, the dated preflight of one effect (C2:207, FIX
-/// 22102). Untagged, so an ask's input keeps its wire shape; each shape
-/// refuses the other's field, so an input that names both matches neither.
+/// spec, `{effect: ...}`, the dated preflight of one effect (C2:207, FIX
+/// 22102), or `{verb: ...}`, one verb's gate for an actor (FIX
+/// [UI-GATE-PREVIEW]). Untagged, so an ask's input keeps its wire shape;
+/// each shape refuses the others' fields, so an input that names two matches
+/// none.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum CanRequest {
     Ask(Box<TaskCanAskRequest>),
     Effect(Box<CanEffectRequest>),
+    Verb(Box<CanVerbRequest>),
+}
+
+/// `can({verb: ...})`: what one call of a catalog verb would meet at its
+/// gate now, for one actor (FIX [UI-GATE-PREVIEW]; GENUI-WIRE-GAPS section 4
+/// item 1). ARCH-0082: "`can(effect)` is the same call with no side effects".
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CanVerbRequest {
+    pub verb: CanVerb,
+}
+
+/// The call a `can({verb})` judges: the verb's catalog name, the input the
+/// call would carry, and whose call it would be.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CanVerb {
+    /// The verb's catalog name, for example `vault.rooms.pins.pin`.
+    pub name: String,
+    /// The input the call would carry, as the verb takes it. A verb whose
+    /// gate reads its input refuses a missing or malformed one.
+    #[serde(default)]
+    pub params: serde_json::Value,
+    /// The actor whose call it would be. Omitted: the caller. Only the
+    /// vault's owner names another actor, and only one of the vault's own
+    /// agents.
+    #[serde(default)]
+    pub actor: Option<EntityId>,
 }
 
 /// `can({effect: ...})`: the dated preflight of one effect (C2:207, FIX

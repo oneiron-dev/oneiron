@@ -114,6 +114,11 @@ pub(in crate::api::facade) fn door_admits(
         Proof::SubstrateReader => {
             crate::api::facade::substrate_read_doors::substrate_reader(server, auth, verb).map(drop)
         }
+        // `vault.imports.cancel` (ARCH-0027 #hosted-import): the owner under its proof, or a person
+        // or agent on its own slip, whose Steward `delete` grant the cancel's writer checks.
+        Proof::ImportCanceller => {
+            crate::api::facade::hosted_import_doors::import_canceller(server, auth, verb).map(drop)
+        }
         // An engine-control knob (untangle 6.6d): the owner under its proof, or a person or agent on
         // its own slip, whose engine.controls grant the knob's writer checks in the write.
         Proof::EngineController => {
@@ -197,6 +202,11 @@ pub(in crate::api::facade) fn door_admits(
         Proof::CredentialHolder => crate::api::facade::credential_doors::holder(auth).map(drop),
         Proof::SlideReviewer => slide_reviewer(server, auth).map(drop),
         Proof::ArtifactAsker => artifact_asker(server, auth).map(drop),
+        // An image edit (L4-15): the owner, or a person or agent on its own slip, whose lane the
+        // engine reads the artifact through.
+        Proof::ImageEditor => {
+            crate::api::facade::image_edit_doors::image_editor(server, auth).map(drop)
+        }
         Proof::DiaryReader => diary_reader(server, auth, verb).map(drop),
         Proof::DecisionHolder => {
             crate::api::facade::decision_ask_doors::holder(auth, verb).map(drop)
