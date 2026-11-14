@@ -82,20 +82,8 @@ fn send_guard(vault: &Vault) -> RwLockReadGuard<'_, ()> {
         .unwrap_or_else(PoisonError::into_inner)
 }
 
-/// What authorized one notice, written with it in the transaction that
-/// staged it: the person's yes to their ask, or, for a just-call contact, the
-/// owner's imminent-tier policy row the gate settled. Never a caller's word.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "origin", rename_all = "snake_case", deny_unknown_fields)]
-pub enum TrustedContactNoticeAuthorization {
-    /// The person answered this ask yes, about the naming the notice is for.
-    Ask { ask_ref: String },
-    /// The policy row whose `RouteToHelp` fired the notice, and its tier.
-    Policy {
-        row_ref: String,
-        tier: TrustedContactTier,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::counterparty_contact::trusted_contact_notice::TrustedContactNoticeAuthorization;
 
 /// Everything the host needs to send one notice, and what authorized it,
 /// and nothing from the turn or the verdict.

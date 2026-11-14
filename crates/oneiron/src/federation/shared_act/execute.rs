@@ -74,6 +74,11 @@ impl Vault {
             // A held erase runs through its own door, which binds the record.
             return Err(invalid());
         }
+        // A hard erase scrubbed a person this act names (Engine RULING
+        // ROW4-SHARED-ACT-ERASE = B): it cannot run, and says why.
+        if act.execution.is_none() {
+            super::actor_erase::refuse_an_erased_member_act(&act)?;
+        }
         if let Some(execution) = &act.execution {
             let receipt = execution
                 .receipt
