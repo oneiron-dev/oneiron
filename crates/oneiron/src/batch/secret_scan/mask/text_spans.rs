@@ -28,7 +28,10 @@ pub(super) fn secret_spans(text: &str) -> Vec<(Range<usize>, &'static str)> {
 /// written (`password=<kept>/[secret sc12]`). A value that is only part of a
 /// span, such as the head of a longer token, is no rule's span alone: it is
 /// not filled, and the span is masked whole. Nor is a rule's span inside a
-/// longer token, such as a blocklist entry ([`at_token_boundaries`]).
+/// longer token, such as a blocklist entry ([`at_token_boundaries`]). A
+/// private-key block is a secret as a whole: one that holds a kept value,
+/// which no longer reads as a block once that value is filled, stays placed
+/// whole, the kept value with it (fail closed).
 pub(super) fn secret_spans_kept(
     text: &str,
     kept: impl Fn(&[u8]) -> bool,
@@ -46,13 +49,23 @@ pub(super) fn secret_spans_kept(
         return merged(placed);
     }
     let mut filled = Zeroizing::new(text.as_bytes().to_vec());
-    for span in kept_spans {
-        if let Some(bytes) = filled.get_mut(span) {
+    for span in &kept_spans {
+        if let Some(bytes) = filled.get_mut(span.clone()) {
             bytes.fill(FILLER);
         }
     }
     match std::str::from_utf8(&filled) {
-        Ok(filled) => merged(rule_placed_spans(filled)),
+        Ok(filled) => {
+            let mut spans = rule_placed_spans(filled);
+            spans.extend(placed.into_iter().filter(|(span, reason)| {
+                *reason == REASON_PRIVATE_KEY
+                    && !kept_spans.contains(span)
+                    && kept_spans
+                        .iter()
+                        .any(|kept| kept.start < span.end && span.start < kept.end)
+            }));
+            merged(spans)
+        }
         // A span that cuts a char: the text is read as written, and the
         // kept value is masked with its neighbour (fail closed).
         Err(_) => merged(placed),

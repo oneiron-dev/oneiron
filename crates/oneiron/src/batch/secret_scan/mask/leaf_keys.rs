@@ -93,8 +93,9 @@ impl Masker {
                 continue;
             }
             // A value the owner ruled no secret or kept as text in the record is left
-            // as written, whatever rule placed its span (FIX 8646).
-            if self.is_kept(&leaf[span.clone()]) {
+            // as written, whatever rule placed its span (FIX 8646), where it stands
+            // as its own token (L6-03-RULED-SCREEN-MERGED-SPAN).
+            if at_token_boundaries(leaf, &span) && self.is_kept(&leaf[span.clone()]) {
                 continue;
             }
             let value = Zeroizing::new(

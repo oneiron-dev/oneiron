@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
+use super::super::at_token_boundaries;
 use super::text_log::TextSpans;
 use super::{HANDLE_OPEN, Masker, secret_spans_kept};
 use crate::error::Result;
@@ -72,7 +73,13 @@ impl Masker {
                     handle
                 }
                 TextHit::Shape(reason) => {
-                    if self.is_kept(text[span.clone()].as_bytes()) {
+                    // A kept value is left as written where it stands as its
+                    // own token; inside a longer one, such as a blocklist
+                    // entry the rules place alone there, it is masked
+                    // (L6-03-RULED-SCREEN-MERGED-SPAN).
+                    if at_token_boundaries(text.as_bytes(), &span)
+                        && self.is_kept(text[span.clone()].as_bytes())
+                    {
                         continue;
                     }
                     self.handle(text[span.clone()].as_bytes(), reason)?

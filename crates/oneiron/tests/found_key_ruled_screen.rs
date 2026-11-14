@@ -232,10 +232,22 @@ fn ruled_record(
     owner: &AuthenticatedOwner,
     screen_only: bool,
 ) -> Result<EntityId, Box<dyn std::error::Error>> {
-    let (id, handle) = masked_record(vault, owner)?;
+    ruled_record_of(vault, owner, &body(), TOKEN.as_bytes(), screen_only)
+}
+
+/// A record of `body` whose `value` the owner ruled no secret, on this
+/// install or, with `screen_only`, as the owner's other machine holds it.
+fn ruled_record_of(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    body: &[u8],
+    value: &[u8],
+    screen_only: bool,
+) -> Result<EntityId, Box<dyn std::error::Error>> {
+    let (id, handle) = masked_record_of(vault, owner, body, value)?;
     vault.rule_found_key_not_a_secret(owner, ActSurface::ThisInstall, &handle)?;
     assert!(
-        holds_token(&stored(vault, &id)?),
+        holds(&stored(vault, &id)?, value),
         "FIXTURE: the ruling put the value back"
     );
     if screen_only {
@@ -312,5 +324,82 @@ fn a_ruled_value_inside_a_longer_token_stays_masked_on_every_install() -> TestRe
              {screen_only}): {notes}"
         );
     }
+    Ok(())
+}
+
+/// An entry of the door's blocklist: its rule places the entry alone, even
+/// inside a longer token.
+const BLOCKLIST_ENTRY: &str = "oneiron-secret-blocklist-fixture";
+
+#[test]
+fn a_ruled_blocklist_entry_inside_a_longer_token_is_masked_on_every_install() -> TestResult {
+    for screen_only in [false, true] {
+        let (_dir, vault, owner) = open_vault()?;
+        let ruled = notes_body(&format!("deploy {BLOCKLIST_ENTRY}"));
+        let id = ruled_record_of(
+            &vault,
+            &owner,
+            &ruled,
+            BLOCKLIST_ENTRY.as_bytes(),
+            screen_only,
+        )?;
+        let body = notes_body(&format!("deploy {BLOCKLIST_ENTRY}xyz"));
+        put(&vault, &id, 2, &body)
+            .unwrap_or_else(|error| panic!("the record, written again, lands: {error:?}"));
+        let notes = stored_notes(&vault, &id)?;
+        assert!(
+            notes.starts_with("deploy [secret sc") && !notes.contains(BLOCKLIST_ENTRY),
+            "a ruled value the rules place alone inside a longer token is masked there \
+             (screen only: {screen_only}): {notes}"
+        );
+    }
+    Ok(())
+}
+
+/// The base64 line of a private key block that holds no ruled value.
+const KEY_BODY_LINE: &str = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=";
+
+#[test]
+fn a_private_key_block_that_holds_a_ruled_value_is_masked_whole_on_every_install() -> TestResult {
+    for screen_only in [false, true] {
+        let (_dir, vault, owner) = open_vault()?;
+        let ruled = notes_body(&format!("aws key {OTHER_KEY}"));
+        let id = ruled_record_of(&vault, &owner, &ruled, OTHER_KEY.as_bytes(), screen_only)?;
+        // The ruled key stands as its own line of the block, so the provider
+        // rule places it alone; the block rule reads both lines as its body.
+        let body = notes_body(&format!(
+            "-----BEGIN PRIVATE KEY-----\n{OTHER_KEY}\n{KEY_BODY_LINE}\n-----END PRIVATE KEY-----"
+        ));
+        put(&vault, &id, 2, &body)
+            .unwrap_or_else(|error| panic!("the record, written again, lands: {error:?}"));
+        let notes = stored_notes(&vault, &id)?;
+        assert!(
+            !notes.contains(KEY_BODY_LINE) && !notes.contains("BEGIN PRIVATE KEY"),
+            "a private key block that holds a ruled value is masked whole (screen only: \
+             {screen_only}): {notes}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_ruled_value_after_an_escaped_line_break_stays_text_on_the_ruling_install() -> TestResult {
+    let (_dir, vault, owner) = open_vault()?;
+    let id = ruled_record(&vault, &owner, false)?;
+    // The body's JSON writes the line break as `\n`: in its bytes the token
+    // follows an `n`, in its notes a line break.
+    let notes = format!("line one\n{TOKEN}");
+    let body = notes_body(&notes);
+    assert!(
+        holds(&body, format!("one\\n{TOKEN}").as_bytes()),
+        "FIXTURE: the body's bytes escape the line break"
+    );
+    put(&vault, &id, 2, &body)
+        .unwrap_or_else(|error| panic!("the record, written again, lands: {error:?}"));
+    assert_eq!(
+        stored_notes(&vault, &id)?,
+        notes,
+        "a ruled value after a line break stays as written"
+    );
     Ok(())
 }

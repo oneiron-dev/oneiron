@@ -305,8 +305,9 @@ pub(crate) fn ruled_screen_candidates(bytes: &[u8]) -> Vec<Zeroizing<Vec<u8>>> {
 /// byte (an ASCII letter or digit, `_` or `-`) runs on past an end of it
 /// that is one. A value the owner ruled, written inside a longer token
 /// (`<ruled>xyz`), is part of that token, which the door's rules read whole:
-/// it is no place of the ruled value there, so neither the door's scan nor
-/// the mask leaves it as written (L6-03-RULED-SCREEN-MERGED-SPAN).
+/// it is no place of the ruled value there, so the mask does not leave it as
+/// written (L6-03-RULED-SCREEN-MERGED-SPAN). The mask asks this of the
+/// decoded text it reads; a body's serialized bytes are no token view.
 pub(crate) fn at_token_boundaries(bytes: &[u8], span: &std::ops::Range<usize>) -> bool {
     let token = |at: Option<usize>| {
         at.and_then(|at| bytes.get(at))
