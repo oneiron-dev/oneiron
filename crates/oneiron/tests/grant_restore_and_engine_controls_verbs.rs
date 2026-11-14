@@ -4,7 +4,10 @@
 //! as the vault's embedded owner, as a client calls them:
 //! - `vault.agents.grants.restore` gives a narrowed base agent its default
 //!   grant back: the Coach reads the project goal again, the Dreamer lands
-//!   again, and a second call changes nothing;
+//!   again, and a second call changes nothing. For the Dreamer the answer
+//!   also carries its live reach, read after the grant (Engine RULING
+//!   ROW4-WEAVE-GRANT-REACH = A), so a grant the owner's policy rows still
+//!   hold back says so;
 //! - `vault.engine.controls.grant` and `vault.engine.controls.revoke` give
 //!   an agent that is no base agent a class of the engine's knobs and take
 //!   it back.
@@ -31,6 +34,7 @@ use oneiron::temporal::TimeRange;
 use oneiron::test_doors::coach::{ENGINE_CONTROLS_VERBS, coach, write_root_goal};
 use oneiron::test_doors::steward::{
     STEWARD_READ_VERB, WeaveReach, dreamer, owner, steward_grant_rows, weave_reach,
+    write_generated_false_without_ceilings,
 };
 use oneiron::test_support::provision_engine_machines;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
@@ -47,6 +51,13 @@ const CONTROLS_REVOKE_VERB: &str = "vault.engine.controls.revoke";
 /// device keystore and this install's machine profile. The host's first
 /// mint gives the Dreamer and the Coach their default grants.
 fn open_owned_carrier_vault(dir: &tempfile::TempDir) -> Vault {
+    let vault = open_owned_carrier_vault_before_first_mint(dir);
+    vault.provision_system_agent_grants().expect("first mint");
+    vault
+}
+
+/// [`open_owned_carrier_vault`] before the host's first mint.
+fn open_owned_carrier_vault_before_first_mint(dir: &tempfile::TempDir) -> Vault {
     let vault = Vault::open_owned(dir.path(), VaultConfig::device()).expect("owned vault");
     let issuer = provision_engine_machines(&vault);
     vault.ensure_embedded_owner_actor().expect("embedded owner");
@@ -54,7 +65,6 @@ fn open_owned_carrier_vault(dir: &tempfile::TempDir) -> Vault {
     vault
         .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
         .expect("this install's machine profile");
-    vault.provision_system_agent_grants().expect("first mint");
     vault
 }
 
@@ -80,6 +90,27 @@ fn assert_restored(answer: Value) {
                 "check_in": null,
             },
         })
+    );
+}
+
+/// A Dreamer grant back's answer: [`assert_restored`]'s, plus the
+/// Dreamer's live reach read after the grant (Engine RULING
+/// ROW4-WEAVE-GRANT-REACH = A).
+fn assert_dreamer_restored(answer: Value, lands_auto: bool, message: &str) {
+    assert_eq!(
+        answer,
+        json!({
+            "restored": true,
+            "check_in": {
+                "act_class": "grant_widen",
+                "role": "owner",
+                "mode": null,
+                "basis": "own_proof",
+                "check_in": null,
+            },
+            "reach": { "reads": true, "lands_auto": lands_auto },
+        }),
+        "{message}"
     );
 }
 
@@ -185,11 +216,11 @@ fn the_restore_verb_gives_a_narrowed_dreamer_its_landing_back() {
         "a Dreamer narrowed to read lands nothing Auto"
     );
 
-    assert_restored(call_as_owner(
-        &vault,
-        RESTORE_VERB,
-        json!({ "agent": dreamer.to_hex() }),
-    ));
+    assert_dreamer_restored(
+        call_as_owner(&vault, RESTORE_VERB, json!({ "agent": dreamer.to_hex() })),
+        true,
+        "the answer carries the Dreamer's live reach",
+    );
     assert_eq!(
         weave_reach(&vault).expect("reach"),
         WeaveReach {
@@ -197,6 +228,35 @@ fn the_restore_verb_gives_a_narrowed_dreamer_its_landing_back() {
             lands_auto: true,
         },
         "the grant back lets the Dreamer land again"
+    );
+}
+
+/// GENERATED-SHORTHAND-UNDER-STEWARD-DERIVE (Engine RULING
+/// ROW4-WEAVE-GRANT-REACH = A): the owner's grant back can stand whole
+/// while the owner's own policy rows keep the Dreamer from landing
+/// (`generated: false` and no actor ceiling). The first mint over that pack
+/// copies `read` alone; the grant back mints the whole Steward default, and
+/// its answer says the Dreamer still lands nothing.
+#[test]
+fn the_restore_verb_answers_a_dreamer_reach_the_policy_still_holds_back() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_owned_carrier_vault_before_first_mint(&dir);
+    write_generated_false_without_ceilings(&vault).expect("Generated: false, no ceiling");
+    vault.provision_system_agent_grants().expect("first mint");
+    let dreamer = dreamer(&vault).expect("the Dreamer");
+
+    assert_dreamer_restored(
+        call_as_owner(&vault, RESTORE_VERB, json!({ "agent": dreamer.to_hex() })),
+        false,
+        "the whole default stands, and the answer says the Dreamer still lands nothing",
+    );
+    assert_eq!(
+        weave_reach(&vault).expect("reach"),
+        WeaveReach {
+            reads: true,
+            lands_auto: false,
+        },
+        "the answer's reach is the live one"
     );
 }
 
