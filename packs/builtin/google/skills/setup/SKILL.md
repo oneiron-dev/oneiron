@@ -28,10 +28,12 @@ the pack stays a Candidate until its own qualification passes.
      document in place.
    - Slides reading and Slides writing: the same for presentations; writing
      edits a deck in place.
-   - Drive reading: the agent may find any file in the whole Drive, shared
-     drives included, and see what changed: each file's name, type, folder,
-     owners, dates and link. It never reads a file's content through Drive;
-     content goes through the Sheets, Docs and Slides permissions.
+   - Drive reading: the agent may find and read any file in the whole Drive,
+     shared drives included, and see what changed: each file's name, type,
+     folder, owners, dates and link, and its content (Google's read-only
+     Drive access). The Drive tools read that metadata; a document's,
+     spreadsheet's or presentation's content goes through the Docs, Sheets
+     or Slides permission.
    Show the permission card and ask the owner to allow each permission they
    want. Each one they allow gets its own Gate receipt.
 2. Sign in with Google through the host's sign-in, on the host's agentic
