@@ -162,10 +162,11 @@ const NA: RoleDefault = RoleDefault::NotApplicable;
 /// when unsure) for every role but Guest; `RoomAdd` is ask when unsure for
 /// every role that adds to rooms, as canon says of an agent's add (a Delegate
 /// only when its Grant names it; a closed room's own ask is a room rule, not
-/// a default); the four floor rows outside the main table follow the C rule
-/// (`AlwaysAsk` for every role but Owner).
+/// a default); the four floor rows outside the main table, and the protected
+/// ref's rewrite or delete (L8-51), follow the C rule (`AlwaysAsk` for every
+/// role but Owner).
 #[rustfmt::skip]
-static ROLE_DEFAULTS: [[RoleDefault; 7]; 20] = [
+static ROLE_DEFAULTS: [[RoleDefault; 7]; 21] = [
     // Columns: Owner, Deputy, Admin, Steward, Member, Delegate, Guest.
     [GO, GO, GO, GO, GO, GO, PROPOSE],                    // ReversibleWork
     [UNSURE, UNSURE, UNSURE, UNSURE, UNSURE, UNSURE, NO_VERB], // Spawn
@@ -187,4 +188,5 @@ static ROLE_DEFAULTS: [[RoleDefault; 7]; 20] = [
     [OWN, ASK, ASK, ASK, ASK, ASK, ASK],                  // WorldWiden
     [GO, UNSURE, GO, PROPOSE, PROPOSE, NO_VERB, NO_VERB], // GrantWiden
     [NA, ASK, ASK, ASK, ASK, NO_VERB, NO_VERB],           // GrantWidenOwn
+    [OWN, ASK, ASK, ASK, ASK, ASK, ASK],                  // ProtectedRefRewriteOrDelete
 ];
