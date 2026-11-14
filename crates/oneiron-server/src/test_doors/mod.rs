@@ -4,6 +4,7 @@
 //! cargo test ... --test <stem>`); never behind a cargo feature, so no
 //! `--all-features` build reaches them. Hidden; never API.
 
+pub mod background_embedding;
 pub mod big_rung;
 pub mod build_server;
 pub mod coach_round;

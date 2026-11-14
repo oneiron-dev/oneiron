@@ -505,6 +505,11 @@ pub(crate) fn build_embedder_on_thread(
     // The server's sink before a host chooses one: the log.
     let receipts = Arc::new(crate::models::ServerReceipts::default());
     let slot = crate::embedder::build_slot_with_broker(config.embedder.as_ref(), receipts, broker)?;
+    // Every paid embedding request then spends on the vault's background
+    // line (ARCH-0053 `#embedding-admission-built`).
+    if let Some(slot) = &slot {
+        slot.bind_background_line(vault)?;
+    }
     if let (Some(slot), Some((pool, scope, release))) = (&slot, gpu_route) {
         crate::embedder::route_batches_through(slot, pool, scope, release)?;
     }
