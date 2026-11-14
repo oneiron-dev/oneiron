@@ -212,6 +212,7 @@ fn gate_decision_get_fixture() -> GateDecisionGetFixture {
             writer_class: AutoWeaveWriterClass::Agent,
             scope: "project".to_owned(),
             scope_id: default_project_id().to_hex(),
+            check_in_ref: None,
         },
     )
     .expect("owner mints auto-weave grant for other writer");

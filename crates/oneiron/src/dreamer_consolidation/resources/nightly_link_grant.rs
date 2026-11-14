@@ -31,20 +31,56 @@ fn nightly_link_bound(actor: WriteActor) -> Result<GrantBound> {
 /// The writer is resolved by the vault, never supplied by the caller.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct NightlyLinkGrantRequest {}
+pub struct NightlyLinkGrantRequest {
+    /// Another asker's approved check-in for this grant, 32 hex: the owner
+    /// applies it on their own proof, and the mint's writer spends it
+    /// (ROLES-CHECKIN 2k8). Omitted: the owner's own mint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
+}
 
 /// Mint the same bound the nightly landing door checks, with the normal
 /// standing-grant receipt and revocation lifecycle. Nothing is minted by default.
+/// It widens the Dreamer's grant: the owner's own mint goes on their own
+/// proof, never gated, and the receipt records that decision (`check_in`).
+/// With `check_in_ref` the owner applies another asker's approved check-in
+/// for this grant, spent in the mint's writer (ROLES-CHECKIN 2k8; Engine
+/// RULING P25-SHAPE Q1 = A, P25-2K8-SCOPE Q1 = A).
 pub fn mint_nightly_link_grant(
     vault: &Vault,
     owner: &crate::consent::AuthenticatedOwner,
-    _input: NightlyLinkGrantRequest,
+    input: NightlyLinkGrantRequest,
 ) -> oneiron_contracts::memory::MemoryResult<crate::consent::lifecycle::ConsentActReceipt> {
-    let receipt = vault.with_write_txn_grouped(|txn| {
+    let applied = crate::verbs::check_in_ref(input.check_in_ref.as_deref())?.map(|id| {
+        crate::check_in::AppliedCheckIn {
+            id,
+            verb: "vault.consent.create_nightly_link_grant",
+            effect_digest: nightly_link_grant_effect_digest(),
+        }
+    });
+    Ok(vault.with_write_txn_grouped(|txn| {
         let actor = vault.dreamer_authority_in_txn(txn, vault.now_recorded_at())?;
-        vault.create_standing_grant_in_txn(txn, owner, nightly_link_bound(actor)?)
-    })?;
-    Ok(receipt.into())
+        crate::consent::lifecycle::create_standing_grant_with_decision_in_txn(
+            vault,
+            txn,
+            owner,
+            nightly_link_bound(actor)?,
+            applied.as_ref(),
+        )
+    })?)
+}
+
+/// The digest of the owner's nightly-link grant: the effect an asker's
+/// `vault.check_in.open` names for `vault.consent.create_nightly_link_grant`,
+/// and the one the owner's mint spends (2k8). The request names nothing: the
+/// vault resolves its own Dreamer, so the effect is one constant, BLAKE3
+/// with its key derived from `oneiron check_in nightly link grant v1` over
+/// no input.
+#[must_use]
+pub fn nightly_link_grant_effect_digest() -> [u8; 32] {
+    *blake3::Hasher::new_derive_key("oneiron check_in nightly link grant v1")
+        .finalize()
+        .as_bytes()
 }
 
 /// The ref of the owner's live standing grant letting `actor` apply its

@@ -130,7 +130,10 @@ pub use resident_dream::{
 };
 pub(crate) use resident_dream::{resident_dream_input, resident_dream_progress_in_txn};
 pub use resident_for_human::run_free_time_for_human;
-pub use resources::{NightlyLinkGrantRequest, ScopedConsolidationWrite, mint_nightly_link_grant};
+pub use resources::{
+    NightlyLinkGrantRequest, ScopedConsolidationWrite, mint_nightly_link_grant,
+    nightly_link_grant_effect_digest,
+};
 pub use retained_conflict::RetainedAlternative;
 pub(crate) use retained_keep::SettlementApplied;
 pub use retained_keep::{ConflictSettleOutcome, StagedKeep};

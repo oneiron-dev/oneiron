@@ -253,6 +253,11 @@ pub struct AutoWeaveGrantRequest {
     pub scope: String,
     /// The scope's id, as 32 hex.
     pub scope_id: String,
+    /// Another asker's approved check-in for this exact grant, 32 hex: the
+    /// owner applies it on their own proof, and the mint's writer spends it
+    /// (ROLES-CHECKIN 2k8). Omitted: the owner's own mint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// Mints the owner's auto-weave Grant for `request`'s writer in its one
@@ -261,11 +266,52 @@ pub struct AutoWeaveGrantRequest {
 /// [`Error::InvalidConfig`](crate::error::Error::InvalidConfig); the mint
 /// itself is the consent door's standing-grant path, so the receipt is the
 /// same [`ConsentActReceipt`](crate::consent::lifecycle::ConsentActReceipt).
+/// It widens the writer's grant: the owner's own mint goes on their own
+/// proof, never gated, and the receipt records that decision (`check_in`).
+/// With `check_in_ref` the owner applies another asker's approved check-in
+/// for this exact grant, spent in the mint's writer (ROLES-CHECKIN 2k8;
+/// Engine RULING P25-SHAPE Q1 = A, P25-2K8-SCOPE Q1 = A).
 pub fn mint_auto_weave_grant(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     request: AutoWeaveGrantRequest,
 ) -> MemoryResult<crate::consent::lifecycle::ConsentActReceipt> {
+    let bound = auto_weave_bound(&request)?;
+    let applied = crate::verbs::check_in_ref(request.check_in_ref.as_deref())?.map(|id| {
+        crate::check_in::AppliedCheckIn {
+            id,
+            verb: "vault.consent.create_auto_weave_grant",
+            effect_digest: crate::check_in::standing_grant_effect_digest(&bound),
+        }
+    });
+    Ok(vault.with_write_txn_grouped(|wtxn| {
+        crate::consent::lifecycle::create_standing_grant_with_decision_in_txn(
+            vault,
+            wtxn,
+            owner,
+            bound,
+            applied.as_ref(),
+        )
+    })?)
+}
+
+/// The digest of the owner's auto-weave grant `request`: the effect an
+/// asker's `vault.check_in.open` names for
+/// `vault.consent.create_auto_weave_grant`, and the one the owner's mint
+/// spends (2k8). It is [`crate::check_in::standing_grant_effect_digest`]
+/// over the bound the grant stores.
+///
+/// # Errors
+///
+/// As [`mint_auto_weave_grant`]'s refusals of a malformed request.
+pub fn auto_weave_grant_effect_digest(request: &AutoWeaveGrantRequest) -> MemoryResult<[u8; 32]> {
+    Ok(crate::check_in::standing_grant_effect_digest(
+        &auto_weave_bound(request)?,
+    ))
+}
+
+/// The standing grant bound `request` names: its writer in its one scope.
+fn auto_weave_bound(request: &AutoWeaveGrantRequest) -> MemoryResult<crate::consent::GrantBound> {
     let writer_id = EntityId::from_hex(&request.writer).map_err(|_| {
         crate::error::Error::InvalidConfig("auto-weave writer is not an entity id".to_owned())
     })?;
@@ -301,7 +347,5 @@ pub fn mint_auto_weave_grant(
             );
         }
     };
-    Ok(vault
-        .create_standing_grant(owner, scope.bound(writer)?)?
-        .into())
+    Ok(scope.bound(writer)?)
 }

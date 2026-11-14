@@ -15,7 +15,8 @@ use super::{
 /// The owner's auto-weave Grant door (FIX 3433), at this public path for the
 /// generated SDK and server callers; it lives with the gate's weave Grant.
 pub use crate::gate::weave_grant::{
-    AutoWeaveGrantRequest, AutoWeaveWriterClass, mint_auto_weave_grant,
+    AutoWeaveGrantRequest, AutoWeaveWriterClass, auto_weave_grant_effect_digest,
+    mint_auto_weave_grant,
 };
 
 /// Approve the exact engine-emitted effect digest, never a caller's description.
