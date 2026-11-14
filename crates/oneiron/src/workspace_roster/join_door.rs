@@ -182,6 +182,22 @@ impl Memory<'_> {
     /// only, and decides again. Membership is never answered here. An
     /// Admission yes is judged by check-in ([`admission_check_in_in_txn`]).
     pub fn rooms_consent(&self, answer: &ConsentAnswer) -> MemoryResult<JoinOutcome> {
+        // Read before every other refusal, the Membership one included:
+        // only an Admission yes takes a check-in.
+        let admits = answer.part == ConsentPart::Admission && answer.grant;
+        let check_in_ref = answer
+            .check_in_ref
+            .as_deref()
+            .map(|hex| {
+                EntityId::from_hex(hex)
+                    .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))
+            })
+            .transpose()?;
+        if check_in_ref.is_some() && !admits {
+            return Err(MemoryError::bad_request(
+                "only an Admission yes adds someone, so only it spends a check-in: drop check_in_ref",
+            ));
+        }
         if answer.part == ConsentPart::Membership {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
@@ -195,20 +211,6 @@ impl Memory<'_> {
         if !is_join_ref(&answer.join_ref) {
             return Err(MemoryError::bad_request(
                 "join_ref is the 64-hex reference rooms.join returned",
-            ));
-        }
-        let admits = answer.part == ConsentPart::Admission && answer.grant;
-        let check_in_ref = answer
-            .check_in_ref
-            .as_deref()
-            .map(|hex| {
-                EntityId::from_hex(hex)
-                    .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))
-            })
-            .transpose()?;
-        if check_in_ref.is_some() && !admits {
-            return Err(MemoryError::bad_request(
-                "only an Admission yes adds someone, so only it spends a check-in: drop check_in_ref",
             ));
         }
         let vault = self.vault();
@@ -421,6 +423,10 @@ fn owner_invite_in_txn(
     ) {
         return Ok(invited);
     }
+    // Only a held join records her yes below. A settled filing (her
+    // replay, a join decided at once on live standing, or a refused one)
+    // replays as stored, so it carries no decision.
+    let records_yes = matches!(invited.decision.state, JoinDecision::Hold { .. });
     let mut outcome = rooms_consent_in_txn(
         vault,
         txn,
@@ -436,7 +442,9 @@ fn owner_invite_in_txn(
     )?;
     // Her admission yes adds the person she invites: her own judgment
     // (ROLES-CHECKIN P2.6a; P26-SHAPE Q2 (iv) = A).
-    outcome.check_in = Some(crate::check_in::owner_room_add_decision());
+    if records_yes {
+        outcome.check_in = Some(crate::check_in::owner_room_add_decision());
+    }
     Ok(outcome)
 }
 

@@ -9,9 +9,10 @@
 //!   Once a Grant lists it, its yes waits: the door opens the agent's own
 //!   pending check-in and the join still holds. Once the Owner approves,
 //!   the yes naming it lands the join and records the decision.
-//! - Only an Admission yes spends a check-in: any other answer naming one
-//!   is refused before anything is read.
-//! - The owner's invitation goes at once, with her own decision.
+//! - Only an Admission yes spends a check-in: any other answer naming one,
+//!   Membership included, is refused before anything is read.
+//! - The owner's invitation goes at once, with her own decision. A filing
+//!   already settled (here refused) records no yes and carries none.
 //!
 //! Fixture: `check_in/room_add_fixture.rs` (P2.6a).
 //!
@@ -106,6 +107,7 @@ fn only_an_admission_yes_takes_a_check_in_ref() {
     let owner = org.vault.memory(org.owner, EdgeActorClass::Human);
     for (part, grant) in [
         (ConsentPart::Subject, true),
+        (ConsentPart::Membership, true),
         (ConsentPart::Spend, true),
         (ConsentPart::Admission, false),
     ] {
@@ -149,17 +151,17 @@ fn the_owners_invitation_records_her_own_decision() {
             org.vault.now_recorded_at(),
         )
         .expect("the owner's room");
-    let invited = org
-        .vault
-        .memory(org.owner, EdgeActorClass::Human)
-        .rooms_invite(&JoinRequest {
-            room,
-            branch: None,
-            subject: JoinSubject::Person(org.member),
-            paid: false,
-            spend_scope: None,
-            intent_key: "invite-member".to_owned(),
-        })
+    let owner = org.vault.memory(org.owner, EdgeActorClass::Human);
+    let invitation = |person: EntityId, intent_key: &str| JoinRequest {
+        room,
+        branch: None,
+        subject: JoinSubject::Person(person),
+        paid: false,
+        spend_scope: None,
+        intent_key: intent_key.to_owned(),
+    };
+    let invited = owner
+        .rooms_invite(&invitation(org.member, "invite-member"))
         .expect("the owner invites the person");
     assert_eq!(
         invited.check_in,
@@ -173,6 +175,22 @@ fn the_owners_invitation_records_her_own_decision() {
         }),
         "her admission yes is her own add: {invited:?}"
     );
+    // No PERSON has this id: the filing is refused at once, so no yes of
+    // hers is recorded, on the first call or its replay.
+    let nobody = invitation(EntityId::now(), "invite-nobody");
+    for call in ["first", "replay"] {
+        let refused = owner
+            .rooms_invite(&nobody)
+            .expect("a refused invitation answers its outcome");
+        assert!(
+            matches!(refused.decision.state, JoinDecision::Refuse(_)),
+            "{call}: {refused:?}"
+        );
+        assert_eq!(
+            refused.check_in, None,
+            "{call}: a settled filing records no yes, so no decision: {refused:?}"
+        );
+    }
     assert!(
         org.check_in_receipts().is_empty(),
         "the owner's own add opens no check-in"
