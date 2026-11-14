@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::side_table::{self, Raw, SideTable};
-use crate::{Vault, VaultConfig};
+use crate::{OpenOptions, Vault, VaultConfig, VaultStorageId};
 
 const SECRET: &[u8] = b"overlay rows host root placeholder words";
 
@@ -257,4 +257,105 @@ fn a_sealed_row_whose_key_is_not_here_takes_its_sequence_receipt() {
         receipted.contains(&mint_row),
         "a row that does not open here still takes its sequence receipt",
     );
+}
+
+/// T-CKPT (census L5-22 1a-iii): the T-LAND sealed mint, carried in an
+/// image the home builds, attests and pins, reaches another install of the
+/// vault that holds no key for it. Every covered row lands in the adoption,
+/// the mint folds as structure only, and the slip it minted grants nothing
+/// while the root slip counts, after a reopen too.
+#[test]
+fn an_adopted_image_over_a_sealed_row_lands_every_row_and_grants_nothing() {
+    let home_dir = tempfile::tempdir().unwrap();
+    let home = Vault::open(home_dir.path(), VaultConfig::default()).unwrap();
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let root = home.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims.clone();
+    claims.slip_id = [93; 32];
+    claims.records = BTreeSet::from(["record:c".to_owned()]);
+    let slip = home.mint_capability_slip(&issuer, claims).unwrap();
+    let mint_row = home.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
+
+    let image = home.build_authority_checkpoint_v2().unwrap();
+    assert!(
+        image.rows[&mint_row].body.is_some(),
+        "an image over a sealed row carries the sealed row's body",
+    );
+    assert!(image.rows.values().all(|row| row.body.is_some()));
+
+    home.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    let id = home.write_authority_checkpoint_v2(&issuer).unwrap();
+    let pin = home
+        .authority_checkpoint_pin([7; 32])
+        .unwrap()
+        .expect("the home's attested checkpoint reaches quorum");
+    assert_eq!(pin.checkpoint, id);
+    let bundle = home
+        .authority_checkpoint_bundle(&id)
+        .unwrap()
+        .expect("the home keeps its attested checkpoint bundle");
+
+    let other_dir = tempfile::tempdir().unwrap();
+    let storage_id = VaultStorageId::from_verified_pin(&pin);
+    let other = Vault::open_owned_with(
+        other_dir.path(),
+        VaultConfig::default(),
+        OpenOptions::default().adopt_storage_id(storage_id),
+    )
+    .unwrap();
+    let adopted = match AuthorityCheckpointV2::decode(&bundle.image)
+        .unwrap()
+        .building_pin
+    {
+        Some(root) => other.adopt_recovered_authority_checkpoint(
+            &pin,
+            &bundle.image,
+            &bundle.attestations,
+            pin.digest().unwrap(),
+            root,
+        ),
+        None => other.adopt_authority_checkpoint(&pin, &bundle.image, &bundle.attestations),
+    }
+    .unwrap();
+    assert_eq!(adopted, id);
+
+    for hash in &image.covered {
+        assert!(
+            other
+                .get_raw(&authority_log_entity_id_from_hash(hash).unwrap())
+                .unwrap()
+                .is_some(),
+            "every covered authority row lands in the adoption",
+        );
+    }
+    let fold = other.authority_fold().unwrap();
+    assert!(fold.pass_through_entries.contains(&mint_row));
+    assert!(!fold.valid_entries.contains(&mint_row));
+    assert!(fold.slips.mints.contains_key(&root.claims.slip_id));
+    assert!(
+        !fold.slips.mints.contains_key(&slip.claims.slip_id),
+        "a row that does not open here makes nothing",
+    );
+    assert_eq!(fold.vault_id, home.authority_fold().unwrap().vault_id);
+    assert_eq!(
+        other.export_signed_authority_history().unwrap(),
+        home.export_signed_authority_history().unwrap()
+    );
+
+    drop(other);
+    let other = Vault::open_owned_with(
+        other_dir.path(),
+        VaultConfig::default(),
+        OpenOptions::default().adopt_storage_id(storage_id),
+    )
+    .unwrap();
+    let fold = other.authority_fold().unwrap();
+    assert!(fold.pass_through_entries.contains(&mint_row));
+    assert!(!fold.valid_entries.contains(&mint_row));
+    assert!(fold.slips.mints.contains_key(&root.claims.slip_id));
+    assert!(
+        !fold.slips.mints.contains_key(&slip.claims.slip_id),
+        "a row that does not open here makes nothing",
+    );
+    assert_eq!(fold.vault_id, home.authority_fold().unwrap().vault_id);
 }
