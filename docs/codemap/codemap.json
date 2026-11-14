@@ -49735,7 +49735,7 @@
      "path": "src/llm/decision/questions/mod.rs",
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "re-export": 17
      }
     },
@@ -49901,7 +49901,7 @@
      "path": "src/llm/decision/questions/route_calibration.rs",
      "purpose": "Route-conditioned calibration (Engine row 22229, after StartLux-Decision's policy-aware fit): a question's…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "re-export": 2
      }
@@ -49934,7 +49934,7 @@
      "path": "src/llm/decision/questions/route_calibration/receipt_route.rs",
      "purpose": "A calibration pair's route, routing policy revision and answering pins, read from the answer's receipt alone",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -140791,6 +140791,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/managed/state_serve/route_selection_tests.rs",
+     "purpose": "Every route the API listener registers either verifies a console owner's attestation or is listed here with…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/managed/state_serve/usage_export.rs",
@@ -147046,6 +147054,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/decision_read_think_start.rs",
+     "purpose": "L2-33 (FIX 22360; lead ruling THINK-START = C, 13 Nov 2026): a served host's ThinkThreshold row starts at…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -148142,7 +148158,7 @@
      "purpose": "The host's Mail & Calendar source sync (FIX 12559): every pass, as the vault's local owner, one bounded…"
     },
     "managed": {
-     "files": 112,
+     "files": 113,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -148348,7 +148364,7 @@
    "over_bar": 62,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1878,
-   "test_files": 251
+   "test_files": 253
   },
   "oneiron-skill-attribution": {
    "files": [
@@ -152746,7 +152762,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BandMode",
@@ -152757,15 +152773,16 @@
       "LearnedBand",
       "PersonThreshold",
       "Reversibility",
+      "ThinkRouteCounts",
       "ThinkThreshold"
      ],
      "path": "src/model_decision/policy.rs",
      "purpose": "Question- and reversibility-scoped escalation bands; learning starts in shadow",
      "surface": {
       "enum": 2,
-      "fn": 11,
+      "fn": 15,
       "re-export": 1,
-      "struct": 7
+      "struct": 8
      }
     },
     {
