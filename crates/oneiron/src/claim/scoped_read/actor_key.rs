@@ -47,6 +47,10 @@ pub struct ScopedReadActorKey {
     /// standing Grants again, so a lane held past a revoke or a lapse narrows
     /// with it (REVIEW-7051 P1). See [`Self::bound_by_live_agent_grants`].
     agent_grant_holder: Option<EntityId>,
+    /// The credentials saved lanes froze, carried with no proof (OF-506):
+    /// each serving txn reads nothing unless every one still holds there;
+    /// see [`Self::bound_by_saved_credential`].
+    pub(super) saved_credentials: Vec<super::frozen::SavedCredential>,
     /// A host-bound channel on a channel-aware read door, never a grant.
     pub(super) channel: Option<String>,
     /// Set only on the vault owner's own key; see [`Self::vault_owner`].
@@ -83,10 +87,6 @@ pub struct ScopedReadActorKey {
     /// Set on every key that names a base agent (untangle 6.3, X04); see
     /// [`Self::for_engine_actor`].
     system_agent: Option<EntityId>,
-    /// The credentials saved lanes froze, carried with no proof (OF-506):
-    /// each serving txn reads nothing unless every one still holds there;
-    /// see [`Self::bound_by_saved_credential`].
-    pub(super) saved_credentials: Vec<super::frozen::SavedCredential>,
 }
 
 pub use crate::settings::CallerLocality;
@@ -396,6 +396,7 @@ impl ScopedReadActorKey {
             authority: None,
             grant_alternatives: None,
             agent_grant_holder: None,
+            saved_credentials: Vec::new(),
             channel: None,
             owner: None,
             owner_exemption: None,
@@ -409,7 +410,6 @@ impl ScopedReadActorKey {
             owner_by_census: false,
             record_bound: None,
             system_agent,
-            saved_credentials: Vec::new(),
         })
     }
 
@@ -441,6 +441,7 @@ impl ScopedReadActorKey {
             authority: None,
             grant_alternatives: None,
             agent_grant_holder: None,
+            saved_credentials: Vec::new(),
             channel: None,
             owner: Some(owner),
             owner_exemption: None,
@@ -454,7 +455,6 @@ impl ScopedReadActorKey {
             owner_by_census: false,
             record_bound: None,
             system_agent: None,
-            saved_credentials: Vec::new(),
         }
     }
 
