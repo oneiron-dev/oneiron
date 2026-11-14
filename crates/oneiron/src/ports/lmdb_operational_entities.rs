@@ -54,15 +54,6 @@ impl EntityStoreMaintenance for Store {
                 scrubbed.extend_from_slice(&keyframe.encode()?);
             }
         }
-        // A scrubbed grant names no principal or PERSON: its entry leaves the
-        // companion index in this write, since an erase's later purge reads
-        // only the shell.
-        crate::access_grant::reindex_companion_grant(
-            self,
-            txn,
-            id,
-            Some((entity_type, &scrubbed[ENTITY_METADATA_HEADER_LEN..])),
-        )?;
         if scrubbed == stored {
             return Ok(false);
         }
