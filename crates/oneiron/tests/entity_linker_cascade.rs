@@ -1498,23 +1498,25 @@ fn a_fresh_link_after_an_antecedent_of_another_kind_takes_the_saved_hint() {
         BTreeSet::from([owen, yuki]),
         "FIXTURE: the first mention names both managers"
     );
+    // The nightly re-check opens the ask: a role mention has no identity
+    // key and no provisional, so the act-now door does not find it by name.
+    let asks = run_identity_recheck(&vault, now_seconds()).expect("recheck");
+    assert_eq!(
+        asks.len(),
+        1,
+        "FIXTURE: one ask for the first mention: {asks:?}"
+    );
     let memory = vault.memory(owner, EdgeActorClass::Human);
-    let opened = memory
-        .identity_act_now(&IdentityActNowRequest {
-            name: "my manager".to_owned(),
-            conversation: None,
-            effect: IdentityEffect::Send,
-            prompt: "Which manager?".to_owned(),
-            someone_new: "Someone new".to_owned(),
-            provisional: None,
-        })
-        .expect("the act-now ask");
-    let IdentityActNow::Deciding { ask } = opened else {
-        panic!("FIXTURE: two managers open an ask, got {opened:?}");
+    let read_key = memory.read_key().expect("owner read key");
+    let open = vault
+        .identity_asks(&vault.scoped_read(read_key))
+        .expect("open asks");
+    let [view] = open.as_slice() else {
+        panic!("FIXTURE: the owner reads the one open ask, found {open:?}");
     };
     let settled = memory
         .identity_answer(&IdentityAnswerRequest {
-            ask,
+            ask: view.ask.clone(),
             choice: format!("is:{}", yuki.to_hex()),
         })
         .expect("the owner answers Mori Yuki");
