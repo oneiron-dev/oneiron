@@ -238,17 +238,19 @@ impl BoundBranchRead {
                 if !relationship_slice_admits(&self.scope, pinned) {
                     return Ok(false);
                 }
-                let peers = vault.filtered_edge_peers(
-                    txn,
-                    crate::ports::EdgeDirection::Out,
-                    id,
-                    EdgeKind::ChildOf,
-                    None,
-                )?;
-                if peers.len() != 1 || !self.parents.contains(&peers[0]) {
+                // The native scoped ChildOf projection (signals.rs): the TURN
+                // counts only as a retrievable graph center, every MESSAGE readable.
+                let edges = read.edges_out_of_in_txn(txn, id, Some(EdgeKind::ChildOf))?;
+                if edges.receipt.suppressed_count != 0 {
                     return Ok(false);
                 }
-                let parent = peers[0];
+                let Some(parents) = edges.value else {
+                    return Ok(false);
+                };
+                if parents.len() != 1 || !self.parents.contains(&parents[0].target) {
+                    return Ok(false);
+                }
+                let parent = parents[0].target;
                 let pin = self
                     .sources
                     .get(&parent)

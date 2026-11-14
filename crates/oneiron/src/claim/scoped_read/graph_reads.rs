@@ -110,9 +110,20 @@ impl ScopedRead<'_> {
         kind: Option<EdgeKind>,
     ) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
         let txn = self.grant_read_txn()?;
-        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
+        self.edges_out_of_in_txn(&txn, id, kind)
+    }
+
+    /// The scoped outbound edge projection in the caller's snapshot: the
+    /// center must be retrievable (a TURN only with every MESSAGE readable).
+    pub(crate) fn edges_out_of_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        kind: Option<EdgeKind>,
+    ) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
         let admitted = self.admitted_edges_in(
-            &txn,
+            txn,
             &policy,
             &filter,
             id,
