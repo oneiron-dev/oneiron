@@ -108,3 +108,5 @@ pub use effect::{
     legal_hold_erase_effect_digest, outbound_call_request_erase_effect_digest,
     text_history_erase_effect_digest,
 };
+// The key-recovery doors' effects (2k3; P25-SHAPE Q1 = A).
+pub use effect::{root_request_effect_digest, step_up_reset_effect_digest};

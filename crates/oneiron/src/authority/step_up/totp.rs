@@ -68,12 +68,22 @@ pub struct EnrolledTotp {
 #[serde(deny_unknown_fields)]
 pub struct StepUpTotpResetRequest {
     pub person: String,
+    /// An asker's approved check-in for this reset, 32 hex
+    /// (`step_up_reset_effect_digest`): the Owner applies it on their own
+    /// proof, and the answer names its asker.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StepUpTotpReset {
     pub person: String,
     pub removed: usize,
+    /// The check-in decision the reset ran on (2k3): the Owner on their own
+    /// proof, and the approved check-in of another asker it applied, with
+    /// its requester.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -390,13 +400,31 @@ impl Vault {
 
     /// Explicit owner recovery for lost authenticator apps. Passkey
     /// enrollment and passkey-derived step-ups are not reset by this call.
+    /// With `check_in_ref` the Owner applies an asker's approved check-in
+    /// for this reset on their own proof, spent in the same writer (2k3;
+    /// P25-SHAPE Q1 = A).
     pub fn reset_step_up_totp_as_owner(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         person: EntityId,
+        check_in_ref: Option<EntityId>,
     ) -> Result<StepUpTotpReset> {
+        let applied = check_in_ref.map(|id| crate::check_in::AppliedCheckIn {
+            id,
+            verb: "vault.step_up.totp.reset",
+            effect_digest: crate::check_in::step_up_reset_effect_digest(
+                &person,
+                StepUpFactor::Totp,
+            ),
+        });
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        let decision = crate::check_in::owner_act_decision_in_txn(
+            self,
+            &mut txn,
+            crate::check_in::ActClass::KeyRecovery,
+            applied.as_ref(),
+        )?;
         let removed = ENROLLED
             .scan_from(&self.store, &txn, person.as_bytes())?
             .iter()
@@ -407,6 +435,7 @@ impl Vault {
         Ok(StepUpTotpReset {
             person: person.to_hex(),
             removed,
+            check_in: Some(decision),
         })
     }
 }
