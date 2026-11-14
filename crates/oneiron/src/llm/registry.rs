@@ -80,35 +80,15 @@ pub struct CatalogSeed {
     pub version: u8,
     pub rows: Vec<ModelRegistryRow>,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ScoreObservation {
-    pub model: ModelId,
-    pub benchmark: String,
-    pub score: f64,
-}
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ScoreSnapshot {
-    pub source: String,
-    pub fetched_at: u64,
-    pub observations: Vec<ScoreObservation>,
-    /// The rows the observations were read from (FIX 5760): none for a
-    /// public benchmark fetch. `None`, unknown, for a snapshot whose
-    /// producer named none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_rows: Option<Vec<EntityId>>,
-}
-pub(super) fn invalid(message: impl Into<String>) -> Error {
-    Error::InvalidConfig(message.into())
-}
+#[doc(hidden)]
+pub(super) use oneiron_verb_wire::llm::registry::invalid;
+#[doc(hidden)]
+use oneiron_verb_wire::llm::registry::price;
+#[doc(hidden)]
+pub use oneiron_verb_wire::llm::registry::{ScoreObservation, ScoreSnapshot};
+
 fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     serde_json::to_vec(value).map_err(|e| invalid(e.to_string()))
-}
-fn price(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 64
-        && value.bytes().all(|c| c.is_ascii_digit() || c == b'.')
-        && value.bytes().filter(|c| *c == b'.').count() <= 1
-        && value.bytes().any(|c| c.is_ascii_digit())
 }
 impl ModelRegistryRow {
     /// Whether the model's provider retired it ([`Self::stale_since`]).

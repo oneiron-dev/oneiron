@@ -19,29 +19,11 @@ use crate::store::{GateDecisionId, PendingGateConsentRecord};
 
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CriticalWriteConfirmPendingRequest {
-    /// The candidate's gate decision ref (gate:<32-hex>).
-    pub pending_operation: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CriticalWriteConfirmRequest {
-    pub pending_operation: String,
-    /// The 32-hex nonce the pending read returned.
-    pub nonce: String,
-    /// The 64-hex policy frontier the pending read returned.
-    pub read_frontier_hash: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CriticalWriteConfirmReceiptRequest {
-    /// The 64-hex confirmation id the pending read or settlement returned.
-    pub confirm_id: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::critical_confirm::{
+    CriticalWriteConfirmAnswer, CriticalWriteConfirmPendingRequest,
+    CriticalWriteConfirmReceiptRequest, CriticalWriteConfirmRequest,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CriticalWriteConfirmPending {
@@ -54,13 +36,6 @@ pub struct CriticalWriteConfirmPending {
     pub expires_at: u64,
     /// Replicated and reopened owner-answer obligations have no deadline.
     pub has_deadline: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum CriticalWriteConfirmAnswer {
-    Clear,
-    Decline,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
