@@ -1,6 +1,6 @@
 //! The host doors of the Files world's source rows (FIX 6942):
 //! `vault.files.sources.attach`, `.convert`, `.rescan`, `.detach`, `.list`, `.files`,
-//! `.exclude` and `.search`.
+//! `.exclude`, `.search` and `.ask` (in `ask`).
 //! `host_doors` re-exports them, so the generated HTTP facade handler and the
 //! MCP dispatcher call them by the name every host door has. Each runs under
 //! the vault owner's proof, as `/v1/owner` takes it, off the async runtime:
@@ -32,6 +32,9 @@ use super::host_doors::support::{Listed, internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::files_intake::{canonical_folder, files_attached, files_rescan};
 use crate::server::SyncServer;
+
+mod ask;
+pub(crate) use ask::vault_files_sources_ask;
 
 /// `act` off the runtime under the owner's proof from the request, beside
 /// the rows its answer derives from; a refusal lists none.

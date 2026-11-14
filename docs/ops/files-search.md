@@ -20,3 +20,34 @@ second (ARCH-0027 #files-world).
 
 The answer names each file by its source and path, with its install, ledger state, readiness,
 note, revision, size and the time it was last written.
+
+# Asking about files
+
+The vault owner asks a question of the Files world with `vault.files.sources.ask`
+(`{ "query": "What is the quarter's budget?" }`, or `{ "query": ..., "file": { "source": <source
+id>, "path": "budget.md" } }` for one file; `sources` narrows the search as above and is not taken
+beside `file`). The owner can ask about a file and get an answer with citations (ARCH-0027
+#files-world).
+
+- **The files read.** With no `file`, the door runs `vault.files.sources.search` for the question
+  and reads the first 5 files with text it found, in its order; a file held by its name only has no
+  text and is passed over. Each file's note is read from its start, up to 12,000 characters, at the
+  revision its ledger holds. `read` in the answer lists them, numbered from 1; `hits` is the
+  search's answer.
+- **One model call.** The question and the files go in one call of this server's house chat role,
+  metered on the owner's budget line. The model is asked for JSON: an answer with `[n]` after each
+  claim, and citations, each a file number and a quote copied from that file.
+- **Where the text may go.** Each rung of the call is sent the files only when the release verdict
+  admits their notes at that rung's destination, judged before the rung is admitted and again just
+  before it is sent. The Files world is read on this install only, so a model off this install is
+  sent nothing; with no rung on this install the door refuses with `MODEL_UNAVAILABLE`. A model
+  server reached over HTTP, even on this machine, is the owner's own server and not this install
+  (on-device is derived, never configured: an in-process runtime, or a native worker this server
+  supervises). Under the shipped read location only such a model reads the Files world; the owner
+  widens the world's read location to let another one read it.
+- **The check, in fixed code.** A citation holds when its number names a file the model was given,
+  that file still reads as it was read, and its quote is an exact run of the file's text. Any other
+  citation is dropped. The answer stands (`outcome.kind` = `cited`) only when one citation holds
+  and every `[n]` it carries names a file a citation that holds cites; otherwise the outcome is
+  `no_cited_answer` with `why` = `no_citation_held`, and the owner opens the files. With no file
+  to read, no model is asked and `why` is `no_text_file`.
