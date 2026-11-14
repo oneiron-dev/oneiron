@@ -579,3 +579,16 @@ pub fn embedding_space_probe_delete_effect_digest(probe: &[u8; 16]) -> [u8; 32] 
     hasher.update(probe);
     *hasher.finalize().as_bytes()
 }
+
+/// The digest of deleting the cleanup-archived completed attempt `attempt`:
+/// the effect an Admin's or a Deputy's `vault.archive.attempt.delete.confirm`
+/// is judged over (2k5e; P25-SHAPE Q1 = A). The confirm's own expectation
+/// binds the exact queue bytes in the same writer. BLAKE3, key derived from
+/// `oneiron check_in attempt archive delete v1`, over the attempt's 16 id
+/// bytes.
+#[must_use]
+pub fn attempt_archive_delete_effect_digest(attempt: &[u8; 16]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in attempt archive delete v1");
+    hasher.update(attempt);
+    *hasher.finalize().as_bytes()
+}

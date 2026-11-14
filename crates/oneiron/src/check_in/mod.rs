@@ -120,3 +120,5 @@ pub use effect::{
 };
 // The delete doors' effects (2k5; P25-SHAPE Q1 = A).
 pub use effect::{embedding_space_probe_delete_effect_digest, record_delete_effect_digest};
+// The archive attempt delete door's effect (2k5e).
+pub use effect::attempt_archive_delete_effect_digest;
