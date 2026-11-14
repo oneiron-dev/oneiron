@@ -3,7 +3,6 @@
 
 pub use crate::federation::pending_act::policy_change::SharedActPolicyChangeState;
 use oneiron_base::error::Error;
-use std::collections::HashSet;
 
 /// The row an act without its own row resolves to.
 pub const DEFAULT_ROW: &str = "_default";

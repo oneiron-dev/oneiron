@@ -9107,7 +9107,6 @@ dependencies = [
  "oneiron-wake-contract",
  "oneiron-web-fetch",
  "rmp-serde",
- "rmpv",
  "schemars 0.8.22",
  "serde",
  "serde_json",

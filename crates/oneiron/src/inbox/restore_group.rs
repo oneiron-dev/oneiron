@@ -10,8 +10,6 @@
 //! `vault.claims.settle` path. `Vault::inbox_restore_groups` lists the groups for
 //! the owner's one inbox page.
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
