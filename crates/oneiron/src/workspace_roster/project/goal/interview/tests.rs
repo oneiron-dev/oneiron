@@ -834,23 +834,40 @@ fn confirmation_is_refused_after_its_goal_is_deleted() -> Result<()> {
         .vault
         .write_project_goal_from_intake(&s.owner, s.project, &revised(), 5)?;
     let (a, _) = confirmed(&s, s.thread, &transcript_record(), 10)?;
-    s.vault
-        .memory(s.human, HUMAN)
-        .safe_delete(
-            &current.to_hex(),
-            crate::memory::SafeDeleteReason::UserDelete,
-        )
-        .map_err(|_| invalid())?;
-    assert!(s.vault.project_intake_goal(s.project)?.is_none());
+    // A delete signs its receipt with this install's key, so it loads the
+    // key from a keystore before its first txn.
+    s.vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    if let Err(error) = s.vault.memory(s.human, HUMAN).safe_delete(
+        &current.to_hex(),
+        crate::memory::SafeDeleteReason::UserDelete,
+    ) {
+        panic!("the owner deletes the goal in force: {error:?}");
+    }
+    let intake_goal = |step: &str| {
+        s.vault
+            .project_intake_goal(s.project)
+            .unwrap_or_else(|error| panic!("the intake goal reads {step}: {error:?}"))
+    };
+    assert!(intake_goal("after the delete").is_none());
     assert!(
         s.vault
             .write_project_goal_from_room_intake(&s.owner, s.project, s.attempt, a, 20)
             .is_err()
     );
-    assert!(s.vault.project_intake_goal(s.project)?.is_none());
-    assert!(s.vault.project(s.project)?.unwrap().goal.is_none());
+    assert!(intake_goal("after the refused confirmation").is_none());
+    let project = s
+        .vault
+        .project(s.project)
+        .unwrap_or_else(|error| panic!("the project reads after the delete: {error:?}"))
+        .expect("the project survives its goal's delete");
+    assert!(project.goal.is_none());
     // A refused confirmation leaves the interview open.
-    assert_eq!(s.context()?.thread, Some(s.thread));
+    let context = s
+        .context()
+        .unwrap_or_else(|error| panic!("the context reads after the delete: {error:?}"));
+    assert_eq!(context.thread, Some(s.thread));
     Ok(())
 }
 
