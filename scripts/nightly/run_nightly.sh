@@ -136,13 +136,18 @@ build_selection() {  # name -> 0 once its units build (failed units left out), 1
 
 run_stage() {  # stage profile filter selection-name -- selection args
   local stage=$1 profile=$2 filter=$3 name=$4; shift 5
-  local junit=$target/nextest/$profile/junit.xml start=$SECONDS
-  rm -f "$junit"
+  # nextest's store dir is target/nextest under the workspace root unless the config moves it; look under the
+  # target dir too
+  local candidate junit='' start=$SECONDS
+  for candidate in "$root/target/nextest/$profile/junit.xml" "$target/nextest/$profile/junit.xml"; do rm -f "$candidate"; done
   cargo nextest run --locked --all-features "$@" --profile "$profile" --no-tests=pass -E "$filter" \
     > "$out/$stage-$name.log" 2>&1
   local rc=$?
-  [ -f "$junit" ] && cp "$junit" "$out/junit-$stage-$name.xml"
-  step "$stage-$name" $rc "seconds=$((SECONDS - start))$([ -f "$junit" ] || echo ' (no JUnit)')"
+  for candidate in "$root/target/nextest/$profile/junit.xml" "$target/nextest/$profile/junit.xml"; do
+    [ -f "$candidate" ] && { junit=$candidate; break; }
+  done
+  [ -n "$junit" ] && cp "$junit" "$out/junit-$stage-$name.xml"
+  step "$stage-$name" $rc "seconds=$((SECONDS - start))${junit:+ junit=$junit}$([ -n "$junit" ] || echo ' (no JUnit)')"
 }
 
 delete_test_binaries() {  # selection name: its integration test binaries in the target's deps dir
