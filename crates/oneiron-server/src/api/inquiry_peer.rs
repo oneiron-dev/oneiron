@@ -20,19 +20,16 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use oneiron::federation::INQUIRE_VERB_CLASS;
-use oneiron::inquiry::{INQUIRY_PEER_PATH, Inquiry, UnsureInquiryJudgment};
+use oneiron::inquiry::{INQUIRY_PEER_PATH, Inquiry, MAX_INQUIRY_WIRE_BYTES, UnsureInquiryJudgment};
 use oneiron::{EntityId, ErrorKind};
 
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
-/// One inquiry's wire bytes: a question and a purpose of one line each.
-const MAX_BODY_BYTES: usize = 32 * 1024;
-
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route(INQUIRY_PEER_PATH, post(take_inquiry))
-        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+        .layer(DefaultBodyLimit::max(MAX_INQUIRY_WIRE_BYTES))
 }
 
 /// `POST /v1/federation/inquiry`: one inquiry from a company host over an

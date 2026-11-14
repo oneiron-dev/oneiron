@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::ops::Bound;
 
 use super::edge::{InquiryEdge, InquiryTermsChangeOutcome};
-use super::record::{Inquiry, InquiryOutcome};
+use super::record::{Inquiry, InquiryKeep, InquiryOutcome};
 use super::terms::InquiryTerms;
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -62,7 +62,7 @@ pub(crate) fn write_inquiry_receipt_in_txn(
 ) -> Result<ReceiptRecord> {
     inquiry.validate()?;
     let inquiry_hex = inquiry.id.to_hex();
-    let sequence = next_sequence(store, wtxn, &format!("inquiry:{inquiry_hex}"))?;
+    let sequence = next_sequence(store, wtxn, &inquiry_receipt_head(&inquiry.id))?;
     let fields = BTreeMap::from([
         (FIELD_MEMBER.to_owned(), member.to_hex()),
         (FIELD_QUESTION.to_owned(), inquiry.question.clone()),
@@ -71,7 +71,7 @@ pub(crate) fn write_inquiry_receipt_in_txn(
         (FIELD_EXPIRES_AT.to_owned(), inquiry.expires_at.to_string()),
     ]);
     let receipt = ReceiptRecord {
-        receipt_id: format!("inquiry:{inquiry_hex}:{sequence:06}"),
+        receipt_id: inquiry_receipt_id(&inquiry.id, sequence),
         receipt_kind: ReceiptKind::Inquiry,
         occurred_at: now,
         actor: Some(inquiry.from.actor.to_hex()),
@@ -83,6 +83,67 @@ pub(crate) fn write_inquiry_receipt_in_txn(
         fields,
     };
     put_receipt_in_txn(store, wtxn, receipt)
+}
+
+/// The head every `inquiry` receipt id of inquiry `id` starts with.
+fn inquiry_receipt_head(id: &EntityId) -> String {
+    format!("inquiry:{}", id.to_hex())
+}
+
+/// The id of the `sequence`th `inquiry` receipt of inquiry `id`, from zero.
+fn inquiry_receipt_id(id: &EntityId, sequence: u32) -> String {
+    format!("{}:{sequence:06}", inquiry_receipt_head(id))
+}
+
+/// The first send of an inquiry from this vault, as its first `inquiry`
+/// receipt records it: what a re-send of the inquiry is bound to (Engine
+/// ruling INQUIRE-RESEND = A). An actor's erase scrubs the member and the
+/// asker from the receipt, which leaves them `None`.
+pub(crate) struct InquiryFirstSend {
+    /// The member asked about: the asking vault's row for the member.
+    pub(crate) member: Option<EntityId>,
+    pub(crate) asker: Option<EntityId>,
+    pub(crate) task: EntityId,
+    pub(crate) question: String,
+    pub(crate) purpose: String,
+    pub(crate) keep: InquiryKeep,
+    pub(crate) expires_at: u64,
+}
+
+/// The first send of inquiry `id` from this store's vault, or `None` when
+/// the vault never sent it.
+///
+/// # Errors
+///
+/// A first receipt whose fields do not read back; storage errors.
+pub(crate) fn first_inquiry_send_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<InquiryFirstSend>> {
+    let Some(receipt) = RECEIPTS.get(store, txn, &inquiry_receipt_id(id, 0))? else {
+        return Ok(None);
+    };
+    let field = |name: &str| receipt.fields.get(name).map(String::as_str);
+    let entity = |hex: Option<&str>| {
+        hex.map(EntityId::from_hex)
+            .transpose()
+            .map_err(|_| Error::CorruptedIndex("inquiry receipt entity id"))
+    };
+    let corrupted = || Error::CorruptedIndex("inquiry receipt field");
+    Ok(Some(InquiryFirstSend {
+        member: entity(field(FIELD_MEMBER))?,
+        asker: entity(receipt.actor.as_deref())?,
+        task: entity(receipt.trigger_ref.as_deref())?.ok_or_else(corrupted)?,
+        question: field(FIELD_QUESTION).ok_or_else(corrupted)?.to_owned(),
+        purpose: field(FIELD_PURPOSE).ok_or_else(corrupted)?.to_owned(),
+        keep: field(FIELD_KEEP)
+            .and_then(InquiryKeep::from_token)
+            .ok_or_else(corrupted)?,
+        expires_at: field(FIELD_EXPIRES_AT)
+            .and_then(|at| at.parse().ok())
+            .ok_or_else(corrupted)?,
+    }))
 }
 
 /// Writes the receipt of `member`'s change of `edge`'s terms from

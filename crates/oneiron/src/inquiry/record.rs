@@ -24,6 +24,25 @@ use serde::{Deserialize, Serialize};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
+/// The most bytes an inquiry's question holds.
+pub const MAX_INQUIRY_QUESTION_BYTES: usize = 4 * 1024;
+/// The most bytes an inquiry's one-line purpose holds.
+pub const MAX_INQUIRY_PURPOSE_BYTES: usize = 512;
+/// The most bytes the asker's one-line role holds.
+pub const MAX_INQUIRY_ROLE_BYTES: usize = 128;
+/// The most bytes an inquiry's wire body holds: the member host's route
+/// takes no larger body.
+pub const MAX_INQUIRY_WIRE_BYTES: usize = 32 * 1024;
+
+// The field caps keep every valid inquiry's wire body under the route's
+// limit: JSON writes a control byte as `\u00XX`, six bytes, and the other
+// fields (ids, the asking vault, the keep, the expiry, the keys) take well
+// under 1 KiB.
+const _: () = assert!(
+    6 * (MAX_INQUIRY_QUESTION_BYTES + MAX_INQUIRY_PURPOSE_BYTES + MAX_INQUIRY_ROLE_BYTES) + 1024
+        <= MAX_INQUIRY_WIRE_BYTES
+);
+
 /// What the company keeps of an answer: the company setting `inquiry_keep`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -201,8 +220,10 @@ pub struct Inquiry {
 }
 
 impl Inquiry {
-    /// Checks the inquiry's fields: a 64-hex asking vault, a role, a
-    /// one-line purpose, a question and an expiry.
+    /// Checks the inquiry's fields: a 64-hex asking vault, a one-line role,
+    /// a one-line purpose, a question and an expiry. The role, the purpose
+    /// and the question each stay within a byte cap, so the wire body stays
+    /// within [`MAX_INQUIRY_WIRE_BYTES`].
     ///
     /// # Errors
     ///
@@ -219,11 +240,26 @@ impl Inquiry {
         if self.from.role.trim().is_empty() || self.from.role.contains('\n') {
             return Err(refuse("the asker's role is not one line"));
         }
+        if self.from.role.len() > MAX_INQUIRY_ROLE_BYTES {
+            return Err(refuse(&format!(
+                "the asker's role is over {MAX_INQUIRY_ROLE_BYTES} bytes"
+            )));
+        }
         if self.task.purpose.trim().is_empty() || self.task.purpose.contains('\n') {
             return Err(refuse("the task's purpose is not one line"));
         }
+        if self.task.purpose.len() > MAX_INQUIRY_PURPOSE_BYTES {
+            return Err(refuse(&format!(
+                "the task's purpose is over {MAX_INQUIRY_PURPOSE_BYTES} bytes"
+            )));
+        }
         if self.question.trim().is_empty() {
             return Err(refuse("the inquiry has no question"));
+        }
+        if self.question.len() > MAX_INQUIRY_QUESTION_BYTES {
+            return Err(refuse(&format!(
+                "the question is over {MAX_INQUIRY_QUESTION_BYTES} bytes"
+            )));
         }
         if self.expires_at == 0 {
             return Err(refuse("the inquiry has no expiry"));

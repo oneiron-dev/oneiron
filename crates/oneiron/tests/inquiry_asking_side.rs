@@ -24,9 +24,10 @@
 //!   (pact, epoch, member vault, the member's edge grant) and not held with
 //!   the task; its world is not registered to the pact, so the copy does not
 //!   read stale when the member leaves; a re-send lands on the same CLAIMs;
-//! - a caller re-using one inquiry id for a second member lands that
-//!   member's copy on CLAIMs of its own: the first member's copies keep
-//!   their subject, world, text and attribution;
+//! - a caller re-using one inquiry id for a second member is refused (Engine
+//!   ruling INQUIRE-RESEND = A): nothing lands about the second member, and
+//!   the first member's copies keep their subject, world, text and
+//!   attribution;
 //! - a `task` answer and an unanswered `copy` inquiry land nothing;
 //! - once the member ends the pact and asks for the copies' deletion, a
 //!   retain-under-basis answer keeps them out of shared reads, as it does a
@@ -968,7 +969,7 @@ fn a_copy_answer_lands_foreign_attributed_and_is_not_held() {
 }
 
 #[test]
-fn a_re_used_id_for_another_member_lands_on_that_members_own_claims() {
+fn a_re_used_id_for_another_member_is_refused_and_the_first_members_copies_stand() {
     let fixture = asking();
     fixture.install_keep("copy");
     let valid_until = fixture.company.vault.now_recorded_at() + 3_600;
@@ -979,21 +980,31 @@ fn a_re_used_id_for_another_member_lands_on_that_members_own_claims() {
     assert_eq!(first_ids.len(), 2, "the first member's two statements land");
 
     // A second member: its own vault, seat, inquiry edge, Connect pact and
-    // route.
+    // route. The first inquiry's id stays bound to the first member (Engine
+    // ruling INQUIRE-RESEND = A).
     let (_other, other_seat) = fixture.open_other_member(0x44, OTHER_MEMBER);
 
     host.set(Reply::Answered { valid_until });
     let mut request = fixture.request(fixture.task, Some(first.inquiry.id));
     request.member = other_seat;
-    let second = fixture
+    let refused = fixture
         .company
         .vault
         .send_inquiry(&request, &host)
-        .expect("the send to the second member");
-    assert_eq!(second.outcome, InquiryOutcome::Answered);
+        .expect_err("the caller re-used the first inquiry's id for another member");
+    assert!(
+        format!("{refused:?}").contains("differs from its first send in its member"),
+        "{refused:?}"
+    );
+    assert_eq!(host.call_count(), 1, "nothing goes to the second member");
     assert_eq!(
-        second.inquiry.id, first.inquiry.id,
-        "the caller re-used the first inquiry's id"
+        fixture.receipts(&first.inquiry).len(),
+        1,
+        "a refused re-send writes no receipt"
+    );
+    assert!(
+        fixture.copies_about(other_seat).is_empty(),
+        "nothing lands about the second member"
     );
 
     let world = fixture.copy_world();
@@ -1015,22 +1026,6 @@ fn a_re_used_id_for_another_member_lands_on_that_members_own_claims() {
     }
     texts_landed.sort();
     assert_eq!(texts_landed, [BUSY_THURSDAY, OUT_THURSDAY]);
-
-    let second_copies = fixture.copies_about(other_seat);
-    assert_eq!(
-        second_copies.len(),
-        1,
-        "the second member's statement lands once: {second_copies:?}"
-    );
-    let (second_id, second_body) = &second_copies[0];
-    assert!(
-        !first_ids.contains(second_id),
-        "the second member's copy lands on a CLAIM of its own"
-    );
-    assert!(
-        second_body.world.is_some() && second_body.world != Some(world),
-        "the second member's copy sits in its own foreign world"
-    );
 
     let history = fixture
         .company

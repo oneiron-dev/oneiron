@@ -6,7 +6,11 @@
 //! that does not answer this inquiry all give `unavailable`.
 //!
 //! A pending inquiry is re-sent by the agent with the same id; the member's
-//! vault returns its current answer. No housekeeping pass re-sends it.
+//! vault returns its current answer. No housekeeping pass re-sends it. A
+//! re-send is bound to the inquiry's first send from this vault (Engine
+//! ruling INQUIRE-RESEND = A): it names the same member, asker and task and
+//! carries the same question and purpose, and it goes out, until the first
+//! send's expiry, as the inquiry that send stored, with its expiry and keep.
 
 use super::landing::inquiry_landing;
 use super::record::{
@@ -120,7 +124,11 @@ impl Vault {
                 "the inquiry's task is not an open TASK of this vault",
             ));
         }
-        let keep = self.inquiry_keep()?.keep;
+        let first = self.bind_inquiry_resend(request)?;
+        let keep = match &first {
+            Some(first) => first.keep,
+            None => self.inquiry_keep()?.keep,
+        };
         let (inquiry, route, landing) = {
             let txn = self.store.env.read_txn()?;
             let fold = self.authority_fold_readonly_in_txn(&txn)?;
@@ -142,7 +150,9 @@ impl Vault {
                 },
                 question: request.question.clone(),
                 keep,
-                expires_at: request.expires_at,
+                expires_at: first
+                    .as_ref()
+                    .map_or(request.expires_at, |first| first.expires_at),
             };
             inquiry.validate()?;
             let route =
@@ -242,5 +252,57 @@ impl Vault {
             }
             _ => InquiryAnswer::unavailable(inquiry),
         })
+    }
+
+    /// The first send a re-send of `request.inquiry_id` is bound to (Engine
+    /// ruling INQUIRE-RESEND = A), or `None` for a new inquiry. The re-send
+    /// goes out with that send's `expires_at` and keep, whatever the
+    /// request's `expires_at` and the vault's `inquiry_keep` say now.
+    ///
+    /// # Errors
+    ///
+    /// This vault never sent the inquiry; the request names another member,
+    /// asker or task, or another question or purpose, than the first send
+    /// (the refusal names the field); the first send's expiry has come;
+    /// storage errors.
+    fn bind_inquiry_resend(
+        &self,
+        request: &InquirySendRequest,
+    ) -> Result<Option<super::receipt::InquiryFirstSend>> {
+        let Some(id) = request.inquiry_id else {
+            return Ok(None);
+        };
+        let first = {
+            let txn = self.store.env.read_txn()?;
+            super::receipt::first_inquiry_send_in_txn(&self.store, &txn, &id)?
+        };
+        let Some(first) = first else {
+            return Err(refuse(&format!(
+                "inquiry_id {} names no inquiry this vault sent",
+                id.to_hex()
+            )));
+        };
+        let fields = [
+            ("member", first.member == Some(request.member)),
+            ("asker", first.asker == Some(request.asker)),
+            ("task", first.task == request.task),
+            ("question", first.question == request.question),
+            ("purpose", first.purpose == request.purpose),
+        ];
+        if let Some((field, _)) = fields.into_iter().find(|(_, same)| !same) {
+            return Err(refuse(&format!(
+                "a re-send of inquiry {} differs from its first send in its {field}; \
+                 send a new inquiry instead",
+                id.to_hex()
+            )));
+        }
+        if first.expires_at <= self.now_recorded_at() {
+            return Err(refuse(&format!(
+                "inquiry {} expired at {}; send a new inquiry instead",
+                id.to_hex(),
+                first.expires_at
+            )));
+        }
+        Ok(Some(first))
     }
 }
