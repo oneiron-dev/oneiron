@@ -5,7 +5,7 @@
 //! or above the claim's band. Unstamped and `public` claims stay visible; the
 //! audience clamp still applies on top.
 //!
-//! Five cases drive the real route with real credentials (on a profiled
+//! Six cases drive the real route with real credentials (on a profiled
 //! install, as a serving start enrols it). Deterministic: in-process vault
 //! and router (`oneshot`, no TCP ports, no sleeps, no models, no embedder).
 //!
@@ -570,6 +570,49 @@ fn an_outside_reader_unnamed_is_homed_elsewhere() -> TestResult {
         assert!(
             !ids.contains(&host.sensitive_stamped.to_hex()),
             "an outside reader homed in the unnamed vault does not read the sensitive stamped claim: {pack}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn an_outside_reader_cannot_name_a_cleared_home() -> TestResult {
+    on_engine_stack(|| async {
+        let host = Host::new()?;
+        let home = hex(&OTHER);
+        host.home_set(json!({"home_vault_id": home, "band": "sensitive"}))
+            .await?;
+        let (status, body) = host
+            .post_as_outside(
+                CONTEXT_PACK,
+                json!({"query": SHARED_WORD, "limit": 10, "conversation_home": home}),
+            )
+            .await?;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "an outside reader naming a cleared home is refused: {body}"
+        );
+        assert!(
+            body.to_string().contains("conversation_home"),
+            "the refusal names the conversation_home control, got: {body}"
+        );
+        let (status, pack) = host
+            .post_as_outside(CONTEXT_PACK, json!({"query": SHARED_WORD, "limit": 10}))
+            .await?;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the outside reader unnamed still answers 200: {pack}"
+        );
+        let ids = result_ids(&pack);
+        assert!(
+            !ids.contains(&host.private_stamped.to_hex()),
+            "another home's clearance does not reach the unnamed outside reader (private): {pack}"
+        );
+        assert!(
+            !ids.contains(&host.sensitive_stamped.to_hex()),
+            "another home's clearance does not reach the unnamed outside reader (sensitive): {pack}"
         );
         Ok(())
     })

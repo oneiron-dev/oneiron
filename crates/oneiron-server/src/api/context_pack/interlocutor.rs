@@ -320,8 +320,12 @@ fn own_agent_reader(
 ///
 /// `named` is the request's `conversation_home`, 64 hex. Another vault's id
 /// homes the assembly there, and a room of this vault takes no such home.
-/// This vault's own id reads as this vault only for a reader already homed
-/// here: naming it is no way around the room for any other reader.
+/// Only the owner and the vault's own agents name another vault: for any
+/// other reader the name is the caller's word alone, and taking it would
+/// lift that home's clearance for a reader the ruling keeps unnamed, so it
+/// is refused. This vault's own id reads as this vault only for a reader
+/// already homed here: naming it is no way around the room for any other
+/// reader.
 pub(crate) fn core_conversation_home(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
@@ -359,13 +363,22 @@ pub(crate) fn core_conversation_home(
             Some("conversation_home"),
         ));
     }
+    if !homed_here {
+        return Err(ApiError::forbidden_scope("conversation_home"));
+    }
     Ok(home)
 }
 
 /// Whether `auth` is the credential of one of the vault's own agents,
-/// reading on its own.
+/// reading on its own. A transferred slip is another holder's, acting on the
+/// agent's word, so it is not the agent reading on its own (as the inquiry
+/// and guest-document doors hold it).
 fn own_agent_credential(vault: &oneiron::Vault, auth: &CoreAuth) -> Result<bool, ApiError> {
-    if auth.actor_class() != Some("agent") {
+    if auth.actor_class() != Some("agent")
+        || auth
+            .verified_slip()
+            .is_some_and(|proof| proof.is_transferred())
+    {
         return Ok(false);
     }
     let Some(id) = auth
