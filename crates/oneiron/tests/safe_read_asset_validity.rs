@@ -134,3 +134,34 @@ fn asset_text_read_reports_validity_flags() {
     );
     assert_eq!(strict, None, "unknown id: strict reads nothing");
 }
+
+/// A row whose own stored body carries `stale: true`: the store's get
+/// withholds it, and the record still names that flag as the reason.
+#[test]
+fn asset_text_read_reports_stale_body() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![
+            (rmpv::Value::from("text"), rmpv::Value::from("stale text")),
+            (rmpv::Value::from("stale"), rmpv::Value::from(true)),
+        ]),
+    )
+    .expect("encode the body");
+    let flagged = EntityId::now();
+    put(&vault, &flagged, ENTITY_TYPE_ASSET_TEXT, &body);
+    let (record, strict) = read(&vault, &flagged, &SOURCE, &SOURCE);
+    assert_eq!(record.body, None, "stale body serves no body");
+    assert_eq!(
+        record.validity,
+        AssetTextValidity {
+            stale: true,
+            absent: true,
+            ..Default::default()
+        },
+        "stale body sets stale and absent"
+    );
+    assert_eq!(strict, None, "stale body: strict reads nothing");
+}
