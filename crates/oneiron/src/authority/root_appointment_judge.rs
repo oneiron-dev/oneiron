@@ -351,6 +351,22 @@ pub(super) fn verdict_of_row(
     }
 }
 
+/// The verdict of the appointment `entry`, which `rows` need not hold, over
+/// its ancestry in `rows`, as [`verdict_of_row`] gives it once `entry` is
+/// signed: no verdict reads the signature, which the fold checks before it
+/// judges. The appointment door judges each candidate this way before its
+/// anchor signs one, so the anchor signs no void appointment. Pending while
+/// `rows` lack an ancestor; the unsigned row's verdict is not remembered.
+pub(super) fn verdict_of_candidate(
+    rows: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    entry: &AuthorityLogEntry,
+) -> AppointmentVerdict {
+    match ancestry_of(rows, entry) {
+        Some(ancestry) => judge_one(rows, entry, &ancestry),
+        None => AppointmentVerdict::Pending,
+    }
+}
+
 /// The verdicts already reached, by appointment hash. A verdict is a function
 /// of the hash alone (the row names its ancestry by content), so one map
 /// serves every fold of the process. It keeps only completed verdicts, never

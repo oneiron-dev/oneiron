@@ -6,12 +6,12 @@
 //! names the appointment's parents from the recovery evidence: the rows of a
 //! closed conflict (the witnesses, which the append frontier never holds),
 //! this install's heads, and the root's own record. It judges each candidate
-//! appointment over its ancestry, as every install's fold will, before it
-//! appends one, so an honest door never writes a void row: a void row burns
-//! the anchor. Then the successor binds the owner as `human`, and the fold
-//! runs again. The transaction commits only when the fold counts the
-//! appointment, the successor is a live root key, the owner's binding is
-//! active, and the roster holds a root key again.
+//! appointment over its ancestry, as every install's fold will, before the
+//! anchor signs one, so an honest door never signs, let alone writes, a void
+//! row: a void row burns the anchor. Then the successor binds the owner as
+//! `human`, and the fold runs again. The transaction commits only when the
+//! fold counts the appointment, the successor is a live root key, the
+//! owner's binding is active, and the roster holds a root key again.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -22,7 +22,7 @@ use crate::key_material::refused;
 use crate::world_keys::OwnerRootSigner;
 use crate::{EntityId, TimeRange, Vault};
 
-use super::root_appointment_judge::{proof_fold, verdict_of_row};
+use super::root_appointment_judge::{proof_fold, verdict_of_candidate};
 use super::*;
 
 /// The roster still holds a live root key: no appointment is needed, and
@@ -196,8 +196,9 @@ fn candidate_parents(
 }
 
 /// The appointment of `successor` that `anchor`, the anchor of `pin`'s root,
-/// signs at `seq` on `parents`.
-fn signed_appointment(
+/// would sign at `seq` on `parents`, with the successor's proof and no
+/// anchor signature yet.
+fn unsigned_appointment(
     vault_id: AuthorityVaultId,
     pin: &PinnedRoot,
     anchor: &SigningKey,
@@ -235,16 +236,14 @@ fn signed_appointment(
         ts: now,
     };
     entry.validate_shape().map_err(|_| invalid_authority())?;
-    entry.signer.signature = anchor
-        .sign(&authority_transcript(&entry)?)
-        .to_bytes()
-        .to_vec();
     Ok(entry)
 }
 
 /// The first candidate appointment whose verdict over its own ancestry in
-/// `rows`, this install's stored history, is valid; else the refusal for the
-/// last candidate's verdict.
+/// `rows`, this install's stored history, is valid, signed by `anchor`; else
+/// the refusal for the last candidate's verdict. Each candidate is judged
+/// before the anchor signs it, so the anchor signs no void appointment, not
+/// even one the door discards.
 fn valid_appointment(
     fold: &AuthorityFold,
     rows: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
@@ -288,22 +287,13 @@ fn valid_appointment(
         if parents.is_empty() {
             continue;
         }
-        let entry = signed_appointment(vault_id, pin, anchor, successor, seq, parents, now)?;
-        let hash = authority_entry_hash(&entry)?;
-        let mut scoped: BTreeMap<AuthorityEntryHash, AuthorityLogEntry> = BTreeMap::new();
-        let mut stack = entry.parent_hashes.clone();
-        while let Some(parent) = stack.pop() {
-            if scoped.contains_key(&parent) {
-                continue;
-            }
-            if let Some(row) = rows.get(&parent) {
-                stack.extend(row.parent_hashes.iter().copied());
-                scoped.insert(parent, row.clone());
-            }
-        }
-        scoped.insert(hash, entry.clone());
-        last = verdict_of_row(&scoped, &hash);
+        let mut entry = unsigned_appointment(vault_id, pin, anchor, successor, seq, parents, now)?;
+        last = verdict_of_candidate(rows, &entry);
         if last == AppointmentVerdict::Valid {
+            entry.signer.signature = anchor
+                .sign(&authority_transcript(&entry)?)
+                .to_bytes()
+                .to_vec();
             return Ok(entry);
         }
     }
