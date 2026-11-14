@@ -271,6 +271,10 @@ async fn serve_with_handles(
     {
         sync_server = sync_server.with_organ_dir(super::owner_storage::organ_dir(&managed));
     }
+    // The image organ the supervisor names by its program (L4-15).
+    if let Some(program) = &managed.image_organ {
+        sync_server.install_image_organ(program);
+    }
     // Model seats, the Dreamer and the decision ladder from `[models]`, as
     // plain serve attaches them: a vault that dials a home, by the owner's
     // `[device_sync]` or its enrolment, is a device of that home and never
