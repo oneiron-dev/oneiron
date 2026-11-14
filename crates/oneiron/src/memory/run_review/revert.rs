@@ -239,7 +239,7 @@ fn compensate(
         Some(RunInverse::Restored {
             fingerprint: expected,
         }) => {
-            let id = EntityId::from_hex(row.member.change())?;
+            let id = EntityId::from_hex(&row.member.change())?;
             let Some(body) = vault.get_claim_in_txn(txn, &id)? else {
                 return Ok(None);
             };

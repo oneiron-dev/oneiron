@@ -423,6 +423,9 @@ pub enum ErrorKind {
     ArchivedVault,
     HostActionRequiresSupportGrant,
     StorageIdMismatch,
+    /// A custody door for one purpose of erasable key was handed another
+    /// purpose's key (FIX 23943).
+    ErasableKeyPurposeMismatch,
     /// A nonce spend met the writer lease another process holds on the vault
     /// (FIX 12023 W0).
     VaultServedElsewhere,
