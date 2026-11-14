@@ -10,6 +10,14 @@
  * reads throw, so a refusal is kept, every later take throws it again, and it
  * is thrown once the read returns.
  *
+ * A real package has SheetJS take each part once per read. A crafted one can
+ * make it take a part again and again, and parse it each time: a workbook
+ * listing one sheet name thousands of times, all pointing at one sheet part,
+ * has SheetJS read that part once per listed sheet (its `sheets` option
+ * matches names without case), and relationships whose targets differ only
+ * in case have it read one comments part once per relationship. So a second
+ * take of a part is refused.
+ *
  * Each take (`ReadTally.take`) checks, in order:
  * - a part SheetJS would read with its binary reader is refused. SheetJS picks
  *   a part's reader by the name it looks the part up by, not by the kind of
@@ -163,6 +171,8 @@ export function readPackage(bytes: Uint8Array, budget: PreviewBudget, options: X
   // SheetJS keeps formula text unless it is told not to.
   const tally = new ReadTally(budget, zip.FullPaths.length, options.cellFormula !== false);
   let refusal: WorkbookBudgetError | undefined;
+  /** The part of the last access, while the second access of its take may follow. */
+  let takeOpen: ContainerEntry | undefined;
   for (const entry of zip.FileIndex) {
     const content = entry.content;
     if (entry.type !== CFB_FILE || content === undefined) {
@@ -176,17 +186,25 @@ export function readPackage(bytes: Uint8Array, budget: PreviewBudget, options: X
         if (refusal !== undefined) {
           throw refusal;
         }
-        if (!taken) {
-          try {
-            tally.take(entry.name, content instanceof Uint8Array ? content : Uint8Array.from(content));
-          } catch (err) {
-            if (err instanceof WorkbookBudgetError) {
-              refusal = err;
-            }
-            throw err;
-          }
-          taken = true;
+        // SheetJS reads `content` twice per take (`data.content && data.type`,
+        // then the bytes), one access straight after the other.
+        if (takeOpen === entry) {
+          takeOpen = undefined;
+          return content;
         }
+        try {
+          if (taken) {
+            throw new WorkbookBudgetError("structure", "a part SheetJS would read more than once");
+          }
+          tally.take(entry.name, content instanceof Uint8Array ? content : Uint8Array.from(content));
+        } catch (err) {
+          if (err instanceof WorkbookBudgetError) {
+            refusal = err;
+          }
+          throw err;
+        }
+        taken = true;
+        takeOpen = entry;
         return content;
       },
     });

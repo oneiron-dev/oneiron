@@ -30,6 +30,8 @@ export interface PackageLayout {
   readonly contentTypes?: string;
   /** Workbook relationships after the sheets'. */
   readonly workbookRelationships?: string;
+  /** The name the workbook lists sheet `n` under. */
+  readonly sheetName?: (n: number) => string;
   /** Where the workbook relationship of sheet `n` points, from `xl/`. */
   readonly sheetTarget?: (n: number) => string;
   /** Parts after the sheet parts. */
@@ -49,6 +51,7 @@ export function sheetsPackage(sheets: readonly Part["body"][], layout: PackageLa
     workbookType = WORKBOOK_TYPE,
     contentTypes = "",
     workbookRelationships = "",
+    sheetName = (n: number) => `S${n}`,
     sheetTarget = (n: number) => `worksheets/sheet${n}.xml`,
     parts = [],
     fillers = 0,
@@ -71,7 +74,7 @@ export function sheetsPackage(sheets: readonly Part["body"][], layout: PackageLa
     {
       name: "xl/workbook.xml",
       body: text(
-        `<workbook xmlns="${MAIN}" xmlns:r="${DOC_REL}"><sheets>${each(listed, (n) => `<sheet name="S${n}" sheetId="${n}" r:id="rId${n}"/>`)}</sheets></workbook>`,
+        `<workbook xmlns="${MAIN}" xmlns:r="${DOC_REL}"><sheets>${each(listed, (n) => `<sheet name="${sheetName(n)}" sheetId="${n}" r:id="rId${n}"/>`)}</sheets></workbook>`,
       ),
     },
     {
@@ -246,7 +249,8 @@ export type CraftedKind =
   | "binary-sheet"
   | "many-listed-sheets"
   | "listed-sheet-lookups"
-  | "external-link-lookups";
+  | "external-link-lookups"
+  | "repeated-sheet-name";
 
 /** The crafted package of `kind`; its sheet is S1. */
 export function craftedPackage(kind: CraftedKind): Uint8Array {
@@ -298,7 +302,45 @@ export function craftedPackage(kind: CraftedKind): Uint8Array {
         contentTypes: externalLinkOverrides(400_000),
         fillers: LOOKUP_FILLERS,
       });
+    case "repeated-sheet-name": {
+      // 5,000 listed sheets, all named S1 and all pointing at one sheet part
+      // of 100,000 cells: SheetJS reads S1 by name, without case, and so
+      // parses the part 5,000 times.
+      const rows = Array.from({ length: 100_000 }, (_, i) => `<row r="${i + 1}"><c r="A${i + 1}"><v>1</v></c></row>`);
+      return sheetsPackage([text(worksheet(rows.join("")))], {
+        listed: 5_000,
+        sheetName: () => "S1",
+        sheetTarget: () => "worksheets/sheet1.xml",
+      });
+    }
   }
+}
+
+/**
+ * One comments part that sheet S1 names twice, through two relationships
+ * whose targets differ only in case: SheetJS finds parts without case, and so
+ * reads the part once per relationship.
+ */
+export function twiceNamedCommentsPackage(): Uint8Array {
+  const comments = (target: string, n: number) =>
+    `<Relationship Id="rId${n}" Type="${DOC_REL}/comments" Target="${target}"/>`;
+  return sheetsPackage([text(PLAIN_SHEET)], {
+    contentTypes: `<Override PartName="/xl/comments1.xml" ContentType="${COMMENTS_TYPE}"/>`,
+    parts: [
+      {
+        name: "xl/worksheets/_rels/sheet1.xml.rels",
+        body: text(
+          `<Relationships xmlns="${REL}">${comments("../comments1.xml", 1)}${comments("../COMMENTS1.xml", 2)}</Relationships>`,
+        ),
+      },
+      {
+        name: "xl/comments1.xml",
+        body: text(
+          `<comments xmlns="${MAIN}"><authors><author>owen</author></authors><commentList><comment ref="A1" authorId="0"><text><r><t>once</t></r></text></comment></commentList></comments>`,
+        ),
+      },
+    ],
+  });
 }
 
 /**

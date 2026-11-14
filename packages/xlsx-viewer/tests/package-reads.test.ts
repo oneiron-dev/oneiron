@@ -1,8 +1,16 @@
 import { describe, expect, it } from "bun:test";
 import type { ICellData, IWorksheetData } from "@univerjs/core";
+import { WorkbookBudgetError } from "../src/bridge/budget";
 import { readSheet, readSheetMetas, readWorkbookOutline } from "../src/bridge/parse";
 import { readInChild, TEST_LIMIT_MS } from "./child-read";
-import { macroWorkbookPackage, realShapedPackage } from "./crafted-packages";
+import {
+  macroWorkbookPackage,
+  realShapedPackage,
+  sheetsPackage,
+  twiceNamedCommentsPackage,
+  worksheet,
+} from "./crafted-packages";
+import { text } from "./package-writer";
 
 function cell(sheet: Partial<IWorksheetData>, row: number, column: number): ICellData | undefined {
   return (sheet.cellData as Record<number, Record<number, ICellData>> | undefined)?.[row]?.[column];
@@ -61,6 +69,31 @@ describe("xlsx preview: every door reads the package through one guarded read", 
     },
     2 * TEST_LIMIT_MS,
   );
+
+  it(
+    "refuses a sheet part SheetJS would parse once per repeated sheet name",
+    () => {
+      expect(readInChild("repeated-sheet-name").answer).toEqual({ refused: "structure" });
+    },
+    TEST_LIMIT_MS,
+  );
+
+  it("refuses a comments part two relationships name; sheet names that differ in case still preview", () => {
+    let caught: unknown;
+    try {
+      readSheet(twiceNamedCommentsPackage(), "S1");
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(WorkbookBudgetError);
+    expect((caught as WorkbookBudgetError).line).toBe("structure");
+    // S1 and s1, each with its own part: SheetJS reads both for either name,
+    // each part once, and the bridge shows the one asked for.
+    const one = (value: number) => text(worksheet(`<row r="1"><c r="A1"><v>${value}</v></c></row>`));
+    const twins = sheetsPackage([one(1), one(2)], { sheetName: (n) => (n === 1 ? "S1" : "s1") });
+    expect(cell(readSheet(twins, "s1"), 0, 0)?.v).toBe(2);
+    expect(cell(readSheet(twins, "S1"), 0, 0)?.v).toBe(1);
+  });
 
   it("reads a real-shaped workbook with links, comments and many sheets as before", () => {
     const bytes = realShapedPackage();
