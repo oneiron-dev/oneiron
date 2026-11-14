@@ -31,16 +31,19 @@ pub use conflicts_page::{
 pub(crate) use conflicts_page::{
     conflict_reader_in_txn, conflict_served_in_txn, conflicts_page_bound,
 };
-pub(crate) use evidence_spans::evidence_spans_bound;
 pub use evidence_spans::{
     EVIDENCE_SPANS_MASKED_KEY_CROSSES_MESSAGES, EVIDENCE_SPANS_MAX_RANGES, EvidenceMessageSlice,
     EvidenceRange, EvidenceSourceStatus, EvidenceSpan, EvidenceSpans, EvidenceSpansRequest,
     evidence_spans, validate_evidence_spans,
 };
-pub(crate) use extraction_inputs::extraction_inputs_page_bound;
+pub(crate) use evidence_spans::{evidence_spans_bound, evidence_spans_in_txn};
 pub use extraction_inputs::{
     ExtractionInputsPage, ExtractionInputsPageRequest, ExtractionPolicy, ExtractionTurn,
     extraction_inputs_page,
+};
+pub(crate) use extraction_inputs::{
+    extraction_inputs_page_bound, extraction_reader_scope_in_txn, extraction_turn_in_txn,
+    queued_extraction_branch_in_txn,
 };
 pub use policy_preflight::{
     POLICY_PREFLIGHT_MAX_REFS, PolicyPreflight, PolicyPreflightAct, PolicyPreflightRef,
@@ -63,6 +66,7 @@ pub use snapshot::{
     SNAPSHOT_MAX_KINDS, SnapshotHandle, SnapshotKind, SnapshotOpenRequest, SnapshotPage,
     SnapshotPageRequest, SnapshotRow, snapshot_open, snapshot_page, validate_snapshot_open,
 };
+pub(crate) use source_version::source_version_in_txn;
 pub use source_version::{SourceVersion, SourceVersionCheck};
 pub use strength_observations::{
     ObservedClaim, ObservedClaimStatus, ObservedSignals, ObservedSource, StrengthObservationsPage,
@@ -70,9 +74,5 @@ pub use strength_observations::{
 };
 pub(crate) use strength_observations::{
     classify_observation_sources_in_txn, observation_reader_scope_for_actor_in_txn,
-    strength_observations_page_bound,
+    observed_claim_reads_in_txn, strength_observations_page_bound,
 };
-// The integration tests' doors name a cited source's version as a caller's
-// read serves it (untangle 6.7a).
-#[cfg(oneiron_test_support)]
-pub(crate) use source_version::source_version_in_txn;
