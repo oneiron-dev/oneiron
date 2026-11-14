@@ -89,7 +89,9 @@ pub(crate) use self::types::{executor_panic_error, is_executor_panic_error};
 /// cascade), the soft erase beside its other derived-state hooks, and the
 /// shared staleness writer (a tombstone, a stale mark). An
 /// erased TURN leaves the sieve and the projection; a TURN whose MESSAGE is
-/// erased leaves them too and is owed a new read of the words it keeps.
+/// erased leaves them too and is owed a new read of the words it keeps, and
+/// a consolidation round that may have read its old words reads it again
+/// ([`crate::dreamer_consolidation::redirty::redirty_read_turn_in_txn`]).
 /// An erased fact about a person takes that person's PEOPLE `about` lines.
 pub(crate) fn erase_in_txn(
     write: &crate::secret_custody::CustodyWrite<'_>,
@@ -105,6 +107,7 @@ pub(crate) fn erase_in_txn(
         projector::erase_turn_in_txn(store, txn, turn, turn == id)?;
         if turn != id {
             sieve::owe_read_in_txn(store, txn, turn)?;
+            crate::dreamer_consolidation::redirty::redirty_read_turn_in_txn(store, txn, turn)?;
         }
     }
     // The follower's frames and keyframes of these words go too (FIX 7510).

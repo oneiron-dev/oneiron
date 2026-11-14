@@ -257,13 +257,10 @@ fn admit_rewired_turn_in_txn(
 
 /// A TURN whose words changed with no new temporal key of its own (an edge
 /// rewire, a document edit or revision of its text, a lost source), in the
-/// change's own transaction. When a round may have read it (a scope's
-/// watermark passed it, or a carrier keys it) it takes a fresh carrier,
-/// pending for every scope, as a TURN put behind a watermark does
-/// ([`admit_turn_position_in_txn`](super::watermark::admit_turn_position_in_txn));
-/// a TURN no round has passed is read at its new words on its own key. In
-/// any case the sieve and the projector owe it a read and the redirty feed
-/// hears of it ([`crate::dreamer_wake::words_changed_in_txn`]).
+/// change's own transaction: re-dirtied when a round may have read it
+/// ([`redirty_read_turn_in_txn`]). In any case the sieve and the projector
+/// owe it a read and the redirty feed hears of it
+/// ([`crate::dreamer_wake::words_changed_in_txn`]).
 ///
 /// # Errors
 ///
@@ -273,12 +270,35 @@ pub(crate) fn admit_changed_words_in_txn(
     txn: &mut heed::RwTxn<'_>,
     turn: &EntityId,
 ) -> Result<()> {
+    redirty_read_turn_in_txn(store, txn, turn)?;
+    crate::dreamer_wake::words_changed_in_txn(store, txn, turn)
+}
+
+/// The consolidation half of [`admit_changed_words_in_txn`]. A TURN whose
+/// words changed that a round may have read (a scope's watermark passed it,
+/// or a carrier keys it) takes a fresh carrier, pending for every scope, as
+/// a TURN put behind a watermark does
+/// ([`admit_turn_position_in_txn`](super::watermark::admit_turn_position_in_txn));
+/// a TURN no round has passed is read at its new words on its own key. The
+/// erase hook calls it alone for a TURN that keeps its row while one of its
+/// MESSAGEs is erased: that hook settles the sieve and the projector itself
+/// ([`crate::dreamer_wake::erase_in_txn`]).
+///
+/// # Errors
+///
+/// [`Error::EntityNotFound`] when no row exists; the reads and the carrier
+/// write.
+pub(crate) fn redirty_read_turn_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    turn: &EntityId,
+) -> Result<()> {
     if REDIRTY.get(store, txn, turn)?.is_some()
         || super::watermark::turn_passed_in_txn(store, txn, turn)?
     {
         put_carrier_in_txn(store, txn, turn)?;
     }
-    crate::dreamer_wake::words_changed_in_txn(store, txn, turn)
+    Ok(())
 }
 
 fn edge_stored_in_txn(
