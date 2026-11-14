@@ -1,13 +1,15 @@
 //! The owner's rotation door and the one transaction body every rotation shares.
 //!
 //! Rotation is owner-initiated (ARCH-0069 S6): nothing in the engine rotates a
-//! secret on its own. The owner door rechecks the proof inside the transaction
-//! that replaces the value, so a request queued behind a revoked slip or a
-//! removed owner rotates nothing.
+//! secret on its own, except a provider refresh of an owner-made device-local
+//! grant (`provider_refresh`; RULING MICROSOFT365-REFRESH-WRITEBACK). The owner
+//! door rechecks the proof inside the transaction that replaces the value, so
+//! a request queued behind a revoked slip or a removed owner rotates nothing.
 
-use super::{RECEIPTS, RotationKind, RotationReceipt, encode_rotation_receipt_body};
+use super::{RECEIPTS, RotationCause, RotationKind, RotationReceipt, encode_rotation_receipt_body};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
+use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result, SecretError};
 use crate::secret_custody::ActiveChange;
 use crate::secret_custody::Material;
@@ -250,7 +252,23 @@ impl Vault {
         // record's exposure, not a grandfather clause for the posture it
         // registered under.
         refuse_bindings_wider_than_live_floor(&self.store, wtxn, rec)?;
+        self.replace_value_in_txn(wtxn, &id, rec, new_value, at, RotationCause::Owner)
+    }
 
+    /// The value replace every rotation ends in, for the live record `rec`
+    /// of id `id` its caller read and checked in `wtxn`: the next
+    /// generation, the new value (the old one wiped), the record put back
+    /// under its own name, bindings and policy, and a receipt naming
+    /// `cause`.
+    pub(super) fn replace_value_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        rec: &mut SecretCustodyRecord,
+        new_value: &[u8],
+        at: u64,
+        cause: RotationCause,
+    ) -> Result<RotationReceipt> {
         let from_generation = rec.rotation_generation;
         let to_generation = from_generation
             .checked_add(1)
@@ -271,8 +289,9 @@ impl Vault {
             to_generation,
             rotated_at: at,
             kind: RotationKind::Rotated,
+            cause,
         };
-        put_secret_custody_in_txn(self, wtxn, &id, rec, at)?;
+        put_secret_custody_in_txn(self, wtxn, id, rec, at)?;
         RECEIPTS.put(
             &self.store,
             wtxn,
@@ -283,7 +302,7 @@ impl Vault {
         crate::secret_custody::settle_found_key_in_txn(
             &self.store,
             wtxn,
-            &id,
+            id,
             crate::secret_record::FoundKeySettled {
                 action: crate::secret_record::FoundKeyAction::Rotate,
                 by: None,
@@ -298,7 +317,7 @@ impl Vault {
 
 /// The record a rotation reads. It holds the old value and then the new one,
 /// and its value is wiped when the rotation is done with it, on every path.
-struct Held(SecretCustodyRecord);
+pub(super) struct Held(pub(super) SecretCustodyRecord);
 
 impl Drop for Held {
     fn drop(&mut self) {

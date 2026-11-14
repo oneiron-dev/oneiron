@@ -31,7 +31,7 @@ use super::calendar::{MailCalendarPull, MailCalendarRead, MailCalendarWire, land
 use super::credential::WireReads;
 use super::gmail::reads_google_mail;
 use super::rest::{
-    self, FreshGoogleTokens, RestAnswer, VerifiedCredentials, array, refused, text_of,
+    self, FreshAccessTokens, GrantIssuer, RestAnswer, VerifiedCredentials, array, refused, text_of,
 };
 use super::wire::MailSyncSource;
 use crate::Vault;
@@ -82,7 +82,7 @@ pub struct HttpGoogleCalendarWire<'v> {
     verified: VerifiedCredentials,
     /// The fresh access tokens its sources' stored grants were exchanged
     /// for (fix list row 16311).
-    tokens: FreshGoogleTokens,
+    tokens: FreshAccessTokens,
 }
 
 impl<'v> HttpGoogleCalendarWire<'v> {
@@ -96,7 +96,7 @@ impl<'v> HttpGoogleCalendarWire<'v> {
             vault,
             client: rest::https_client()?,
             verified: VerifiedCredentials::new(),
-            tokens: FreshGoogleTokens::new(),
+            tokens: FreshAccessTokens::new(GrantIssuer::Google),
         })
     }
 

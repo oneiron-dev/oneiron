@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use heed::RoTxn;
 
+use crate::Vault;
 use crate::disclosure::DisclosureContext;
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
@@ -34,6 +35,7 @@ pub(super) struct EdgeWalkResult {
 }
 
 pub(super) fn load_entity_edges(
+    vault: &Vault,
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
@@ -56,7 +58,7 @@ pub(super) fn load_entity_edges(
             deadline.answer_checkpoint(Error::IndexOverflow("context pack edge scan"))?;
         }
         if !crate::note::ordinary_entity_visible(store, rtxn, &edge.target)?
-            || !disclosure_admits_target(store, rtxn, clamp, &edge.target)?
+            || !disclosure_admits_target(vault, store, rtxn, clamp, &edge.target)?
         {
             continue;
         }
@@ -137,6 +139,7 @@ pub(super) struct EdgeWalkOptions<'a> {
 
 /// Expands the seed set along its edges under `options`.
 pub(super) fn walk_edges(
+    vault: &Vault,
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     seed_ids: &[EntityId],
@@ -218,7 +221,7 @@ pub(super) fn walk_edges(
                 // OF-365 clamp (enforcement point 2): a non-admitted entity
                 // is never admitted as a neighbor NOR traversed through.
                 if !crate::note::ordinary_entity_visible(store, rtxn, &edge.target)?
-                    || !disclosure_admits_target(store, rtxn, clamp, &edge.target)?
+                    || !disclosure_admits_target(vault, store, rtxn, clamp, &edge.target)?
                 {
                     continue;
                 }

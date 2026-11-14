@@ -9,8 +9,8 @@ pub use oneiron_store::model_decision::{
     MAX_SCORE_LEVEL_BYTES, PairedAnswer, PairedReading, PersonChangedAnswer, PersonThreshold,
     ProviderCapability, ProviderDecision, ProviderPin, Reasoning, ReasoningCause, Reversibility,
     RoleRank, SCORE_LEVELS_FIELD, SlideReviewLimits, SlideReviewPolicy, SlideReviewPolicyRow,
-    SlideReviewPrecedence, SlideReviewRoute, StateCut, StopCause, ThinkThreshold, catalogue,
-    cut_text, fit_reserve_state, fit_state, fit_state_with_budget, level_score, questions,
-    score_levels_in,
+    SlideReviewPrecedence, SlideReviewRoute, StateCut, StopCause, ThinkRouteCounts, ThinkThreshold,
+    catalogue, cut_text, fit_reserve_state, fit_state, fit_state_with_budget, level_score,
+    questions, score_levels_in,
 };
 pub(crate) use oneiron_store::model_decision::{codec, invalid, paired_valid, validate_pin};

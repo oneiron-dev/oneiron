@@ -12,32 +12,10 @@ use crate::origin::{CodePushCandidateView, ReceivedFileOperation};
 use crate::store::code_import_manifest::CodeImportAnchor;
 use crate::store::code_tree_blob::CodeTreeBlob;
 
-/// One served code repository to read.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeRepoGetRequest {
-    /// The served repository's CODE_ARTIFACT anchor.
-    pub repo: EntityId,
-}
-
-/// One durable revision fork of a served repository to read.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeForkGetRequest {
-    pub repo: EntityId,
-    pub fork_session: EntityId,
-}
-
-/// One received ref of one push to read.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodePushIngressGetRequest {
-    pub repo: EntityId,
-    /// The push's receive-pack provenance claim.
-    pub provenance: EntityId,
-    /// The full ref name.
-    pub ref_name: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::origin_doors::workbench_types::{
+    CodeForkGetRequest, CodePushIngressGetRequest, CodeRepoGetRequest,
+};
 
 /// A received ref's link: its push and full ref.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

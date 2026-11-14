@@ -77,15 +77,11 @@ macro_rules! mirror {
     };
 }
 
-/// The run scope, with a world named rather than referenced. The destination
-/// binds a local world by that name or refuses.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub enum AgentPackScope {
-    All,
-    Base,
-    World { name: String },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::share_travel::agent_pack::{
+    AgentPackBudgetSplit, AgentPackKnowledge, AgentPackMcp, AgentPackOutputDecay, AgentPackScope,
+    AgentPackWakeCadence,
+};
 
 /// The agent's own approval ceiling: a self-limit, never a grant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -96,14 +92,6 @@ pub enum AgentPackCeiling {
 }
 
 mirror!(AgentPackCeiling <=> AgentCeiling { Auto, Proposed });
-
-/// A code-mode MCP the agent asks for, by key.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackMcp {
-    pub key: String,
-    pub min_version: Option<String>,
-}
 
 impl From<&McpRef> for AgentPackMcp {
     fn from(value: &McpRef) -> Self {
@@ -132,15 +120,6 @@ pub enum AgentPackCompaction {
 
 mirror!(AgentPackCompaction <=> CompactionOwnership { Engine, Byoa });
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackBudgetSplit {
-    pub claims: f32,
-    pub turns: f32,
-    pub summaries: f32,
-    pub other: f32,
-}
-
 impl From<ContextBudgetSplit> for AgentPackBudgetSplit {
     fn from(value: ContextBudgetSplit) -> Self {
         Self {
@@ -156,13 +135,6 @@ impl From<AgentPackBudgetSplit> for ContextBudgetSplit {
     fn from(value: AgentPackBudgetSplit) -> Self {
         Self::new(value.claims, value.turns, value.summaries, value.other)
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackOutputDecay {
-    pub overview_after_turns: u64,
-    pub stub_after_turns: u64,
 }
 
 impl From<OutputDecayPolicy> for AgentPackOutputDecay {
@@ -273,6 +245,9 @@ pub struct AgentPackMemoryProfile {
     pub hot_steps: Option<u64>,
     pub output_decay: Option<AgentPackOutputDecay>,
     pub verbatim_pins: Vec<String>,
+    /// Where a pack made before the lift carried the reader's optional
+    /// recall. Import lifts it to the definition's own field; export writes
+    /// [`AgentPackPolicy::optional_memory`] and leaves this empty.
     pub optional_memory: Option<AgentPackOptionalMemoryProfile>,
 }
 
@@ -286,7 +261,7 @@ impl From<&MemoryProfile> for AgentPackMemoryProfile {
             hot_steps: value.hot_steps,
             output_decay: value.output_decay.map(Into::into),
             verbatim_pins: value.verbatim_pins.clone(),
-            optional_memory: value.optional_memory.as_ref().map(Into::into),
+            optional_memory: None,
         }
     }
 }
@@ -301,7 +276,6 @@ impl From<AgentPackMemoryProfile> for MemoryProfile {
             hot_steps: value.hot_steps,
             output_decay: value.output_decay.map(Into::into),
             verbatim_pins: value.verbatim_pins,
-            optional_memory: value.optional_memory.map(Into::into),
         }
     }
 }
@@ -315,14 +289,6 @@ pub enum AgentPackDreaming {
 }
 
 mirror!(AgentPackDreaming <=> DreamingMode { Own, Inherit, Off });
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub enum AgentPackWakeCadence {
-    Companion { every_turns: Option<u64> },
-    Leader { every_turns: Option<u64> },
-    Worker,
-}
 
 impl From<AgentWakeCadence> for AgentPackWakeCadence {
     fn from(value: AgentWakeCadence) -> Self {
@@ -400,6 +366,25 @@ pub struct AgentPackPolicy {
     /// destination seats only those its own catalog serves.
     pub models: Vec<AgentModel>,
     pub compaction_model: Option<ModelId>,
+    /// The reader's optional recall per task family (ZERO-RETRIEVAL = A).
+    /// A pack made before the lift carries it in
+    /// [`AgentPackMemoryProfile::optional_memory`] instead; a pack carries
+    /// it in one place only.
+    pub optional_memory: Option<AgentPackOptionalMemoryProfile>,
+}
+
+impl AgentPackPolicy {
+    /// The optional recall the pack asks for, wherever it carries it.
+    fn requested_optional_memory(&self) -> Option<OptionalMemoryProfile> {
+        self.optional_memory
+            .clone()
+            .or_else(|| {
+                self.memory_profile
+                    .as_ref()
+                    .and_then(|profile| profile.optional_memory.clone())
+            })
+            .map(Into::into)
+    }
 }
 
 /// How a travelling skill's source fields relate to its native metadata.
@@ -691,15 +676,6 @@ impl AgentPackSkill {
     }
 }
 
-/// One selected piece of knowledge about the agent, as text. The destination
-/// mints it as a local claim with this agent as the subject.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackKnowledge {
-    pub predicate: String,
-    pub text: String,
-}
-
 /// `policy.md`.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -777,6 +753,7 @@ impl AgentPackTravelProjection {
                 refusal: def.refusal.map(Into::into),
                 models: def.models.clone(),
                 compaction_model: def.compaction_model.clone(),
+                optional_memory: def.optional_memory.as_ref().map(Into::into),
             },
             skills,
             knowledge,
@@ -808,6 +785,17 @@ impl AgentPackTravelProjection {
             .any(|row| row.predicate.trim().is_empty() || row.text.trim().is_empty())
         {
             return Err(invalid("knowledge needs a predicate and text"));
+        }
+        if self.policy.optional_memory.is_some()
+            && self
+                .policy
+                .memory_profile
+                .as_ref()
+                .is_some_and(|profile| profile.optional_memory.is_some())
+        {
+            return Err(invalid(
+                "optional memory travels once: in policy, not also in its memory profile",
+            ));
         }
         encode_agent_definition(&self.native(AgentScope::Base))?;
         Ok(())
@@ -891,7 +879,8 @@ impl AgentPackTravelProjection {
         )
         .with_refusal(policy.refusal.map(Into::into))
         .with_models(policy.models.clone())
-        .with_compaction_model(policy.compaction_model.clone());
+        .with_compaction_model(policy.compaction_model.clone())
+        .with_optional_memory(policy.requested_optional_memory());
         def.wake_cadence = policy.wake_cadence.map(Into::into);
         def
     }

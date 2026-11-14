@@ -81,9 +81,8 @@ impl NoteKind {
     }
 }
 
-/// The stored spelling's prefix for [`NoteActor::Imported`]: `imported:`
-/// and the source id in hex.
-const IMPORTED_ACTOR_PREFIX: &str = "imported:";
+#[doc(hidden)]
+use oneiron_verb_wire::store::note_body::IMPORTED_ACTOR_PREFIX;
 
 /// Whose act a NOTE row records: an actor, no one once that actor was
 /// erased (FIX 3520), or the author a source vault recorded, which an

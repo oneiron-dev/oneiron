@@ -63,16 +63,18 @@ fn holds_reply(verb: AgentVerb) -> bool {
 /// whose TASK is gone, or that the lane no longer reads, is dropped, and a
 /// delta left with no line rides nothing. The session's changed line rides
 /// the frame. The observation keeps the rows the frame was derived from:
-/// its TASK lines' and the changed line's.
+/// its TASK lines', its child lines' (where each child works) and the
+/// changed line's.
 async fn take_run_frame(
     server: &Arc<SyncServer>,
     actor: WriteActor,
     board: &StreamConnectionId,
 ) -> Option<RunObservation> {
     let queued = server.mcp_registry.lock().await.next_carrier_frame(board)?;
-    let live = live_task_lines(server, actor, queued)?;
+    let (live, child_rows) = live_task_lines(server, actor, queued)?;
     let (frame, mut rows) = crate::api::ride_run_carrier(server, actor, board, live).await;
     rows.extend(task_rows(&frame));
+    rows.extend(child_rows);
     Some(RunObservation {
         connection: board.0.clone(),
         frame,
@@ -82,22 +84,54 @@ async fn take_run_frame(
 
 /// `frame` less every TASK line the agent may not be told about now: its
 /// TASK no longer stands on the board, or the agent's lane does not read
-/// it. Any failure to decide is a no. `None` when a delta keeps no line.
+/// it; and less every child line whose child the agent did not spawn, or
+/// whose child's placement does not read (census L2-38), with the rows the
+/// kept child lines are derived from. Any failure to decide is a no. `None`
+/// when a delta keeps no line.
 fn live_task_lines(
     server: &SyncServer,
     actor: WriteActor,
     mut frame: BoardStreamFrame,
-) -> Option<BoardStreamFrame> {
+) -> Option<(BoardStreamFrame, Vec<EntityId>)> {
+    let mut child_rows = Vec::new();
     let FrameKind::Delta(rows) = &mut frame.kind else {
-        return Some(frame);
+        return Some((frame, child_rows));
     };
     let lane = agent_lane(server, actor).ok()?;
+    let spawner = actor.entity_ref();
     rows.retain(|row| {
-        row.key.strip_prefix("tasks:").is_none_or(|task| {
-            EntityId::from_hex(task).is_ok_and(|task| tells_task(server, &lane, task))
-        })
+        if let Some(task) = row.key.strip_prefix("tasks:") {
+            return EntityId::from_hex(task).is_ok_and(|task| tells_task(server, &lane, task));
+        }
+        row.key
+            .strip_prefix(oneiron::context_board::CHILD_DONE_KEY_PREFIX)
+            .is_none_or(|child| tells_child(server, spawner, child, &mut child_rows))
     });
-    (!rows.is_empty()).then_some(frame)
+    (!rows.is_empty()).then_some((frame, child_rows))
+}
+
+/// Whether `spawner` spawned `child` and where the child works reads: the
+/// TASK its try realizes and the worlds its dispatch names, which join
+/// `child_rows`, so the run's answer that carries the line is released by
+/// them too.
+fn tells_child(
+    server: &SyncServer,
+    spawner: EntityId,
+    child: &str,
+    child_rows: &mut Vec<EntityId>,
+) -> bool {
+    let spawned = oneiron::context_board::child_spawner(server.vault(), child)
+        .is_ok_and(|child_spawner| child_spawner == Some(spawner));
+    if !spawned {
+        return false;
+    }
+    match oneiron::context_board::child_release_rows(server.vault(), child) {
+        Ok(Some(rows)) => {
+            child_rows.extend(rows);
+            true
+        }
+        Ok(None) | Err(_) => false,
+    }
 }
 
 /// Whether `task` still stands on the board and `lane` reads it.

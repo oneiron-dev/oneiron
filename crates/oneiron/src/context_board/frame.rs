@@ -11,7 +11,6 @@
 use super::one_line_token;
 use super::tasks::{TasksSection, fits_row};
 use crate::tokenizer::count_context_pack_tokens;
-use serde::{Deserialize, Serialize};
 
 /// Canonical Phase-A legend copy (ARCH-0067 §1). Hardcoded protocol text: no
 /// configuration seam may omit or rewrite it, and localization is out of scope.
@@ -79,11 +78,8 @@ impl BoardLegend {
     }
 }
 
-/// A plugin-facing budget policy name resolved through the frame-owned closed
-/// mapping [`section_policy_for_budget_ref`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(transparent)]
-pub struct BudgetPolicyRef(pub String);
+#[doc(hidden)]
+pub use oneiron_verb_wire::context_board::frame::BudgetPolicyRef;
 
 /// Trusted harness/owner budget inputs. Never derived from claim content,
 /// board rows, or agent-written state.

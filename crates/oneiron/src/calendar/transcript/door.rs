@@ -1,5 +1,4 @@
 //! Caller-bound file-drop ingestion over the calendar transcript landing.
-use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::claim::ClaimReadStatus;
@@ -36,18 +35,8 @@ impl LandingError {
     }
 }
 
-/// One uploaded UTF-8 transcript. `decoded_text` must match the stored head's
-/// bytes exactly; it is not caller-asserted evidence for a different blob.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TranscriptFileDropInput {
-    pub source_blob_ref: String,
-    pub decoded_text: String,
-    pub arrived_at_ms: u64,
-    /// Optional meeting to link only after this upload earns a closed SESSION.
-    #[serde(default)]
-    pub event_ref: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::calendar::transcript::door::TranscriptFileDropInput;
 
 impl Memory<'_> {
     /// Ingests the uploaded text as the bound caller, retaining source labels

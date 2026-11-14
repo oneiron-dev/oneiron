@@ -6,10 +6,12 @@
 //! prior claims as a one-project branch always has. A part whose project is
 //! not known (one of
 //! its TURNs has no exposure) is a child of its own, as before. Inside a
-//! child each part is sliced on a line: a bound thing puts the parts whose
-//! exposure agrees (`exposure`) on one line, a private audience's thing only
-//! the parts its whole audience reads, turn by turn (FIX 7730), and every
-//! other part, as each part of a structural topic, is a line of its own.
+//! child each part is sliced on a line: a bound thing and a topic's thing
+//! put the parts whose exposure agrees (`exposure`) on one line, a private
+//! audience's thing only the parts its whole audience reads, turn by turn
+//! (FIX 7730), and every other part, as each part of the structural topic,
+//! is a line of its own. So the TURNs of several conversations about one
+//! entity or one topic are read in one slice where their exposure agrees.
 //! The child's extraction never puts TURNs of two lines in one slice, and
 //! cuts each line into slices of its configured TURN size, so what were
 //! sibling children of one project before are slices inside one child: a
@@ -39,7 +41,7 @@ pub(super) fn cut(
     draft: Draft,
     exposures: &BTreeMap<EntityId, Option<Exposure>>,
 ) -> NightlyThingPlan {
-    let combines = draft.key.entity.is_some();
+    let combines = draft.key.entity.is_some() || draft.key.topic.is_some();
     // Private parts combine only where the same audience reads every TURN
     // of each: never beside words fewer or other people read.
     let private = draft.key.audience.is_some();

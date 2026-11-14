@@ -43,13 +43,8 @@ impl NightStepRequestId {
     }
 }
 
-const fn lower_hex_nibble(digit: u8) -> Option<u8> {
-    match digit {
-        b'0'..=b'9' => Some(digit - b'0'),
-        b'a'..=b'f' => Some(digit - b'a' + 10),
-        _ => None,
-    }
-}
+#[doc(hidden)]
+use oneiron_verb_wire::dreamer_wake::night_step::lower_hex_nibble;
 
 impl serde::Serialize for NightStepRequestId {
     fn serialize<S: serde::Serializer>(

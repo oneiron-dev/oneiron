@@ -42,8 +42,9 @@ pub(super) use repo_projection::{
 
 /// Probes the authoring pass keeps per kind.
 pub const SPACE_PROBES_PER_KIND: usize = 20;
-/// Longest probe query, in bytes.
-pub const SPACE_PROBE_QUERY_MAX_LEN: usize = 2048;
+#[doc(hidden)]
+pub use oneiron_verb_wire::embed::space_probe::SPACE_PROBE_QUERY_MAX_LEN;
+
 /// Width of a probe cohort's date cut, in vault seconds: the authoring pass groups a kind's
 /// documents by the window the vault learned each in, and draws its probes' families across
 /// those windows, the window holding fewest probes first and the newest on a tie.

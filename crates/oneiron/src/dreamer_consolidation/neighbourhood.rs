@@ -13,8 +13,10 @@
 //! only the heads it already grants are listed. A candidate that names a
 //! listed claim binds to it through the conflict and grant doors.
 //!
-//! Extraction children group the queued turns by the known entities they name.
-//! JointIE and typed supersede or merge questions are separate jobs.
+//! Extraction children group the queued turns by the known entities they name,
+//! and the nightly plan groups the rest by the unknown names they share
+//! (`dreamer_wake::nightly`'s topics). JointIE and typed supersede or merge
+//! questions are separate jobs.
 //!
 //! The listing is whole (Rule 5, FIX 7580): every entity the passage names,
 //! a nightly child's thing first, and every head about each that the branch

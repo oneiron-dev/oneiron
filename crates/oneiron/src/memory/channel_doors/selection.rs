@@ -8,52 +8,18 @@ use super::*;
 use crate::channel_identity::ChannelIdentityState;
 use crate::channel_identity_selection::ThreadMaskSelectionExt;
 use crate::channel_identity_selection::{
-    ChannelIdentityCandidate, ChannelIdentityFace, ChannelIdentitySelectionDecision,
-    ChannelIdentitySelectionError, ChannelIdentitySelectionPatch, ChannelIdentitySelectionQuery,
-    ChannelIdentitySelectionRule, ChannelIdentitySelectionRuleSet, ChannelIdentitySelectionWriter,
-    RelationshipContext, SelectionRuleScope, SelectionRuleWriterKind,
-    resolve_channel_identity_selection,
+    ChannelIdentityCandidate, ChannelIdentitySelectionError, ChannelIdentitySelectionPatch,
+    ChannelIdentitySelectionQuery, ChannelIdentitySelectionRule, ChannelIdentitySelectionRuleSet,
+    ChannelIdentitySelectionWriter, RelationshipContext, SelectionRuleScope,
+    SelectionRuleWriterKind, resolve_channel_identity_selection,
 };
 use crate::write_envelope::thread_claim::ThreadMask;
 
-/// Authorship fields are deliberately absent. The authenticated writer and
-/// engine clock stamp the persisted row.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ChannelSelectionRuleInput {
-    pub rule_id: String,
-    pub relationship: RelationshipContext,
-    pub scope: SelectionRuleScope,
-    pub face: ChannelIdentityFace,
-    #[serde(default)]
-    pub pinned_identity_ref: Option<EntityId>,
-    pub priority: i32,
-    pub enabled: bool,
-    pub agent_amendable: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ChannelSelectionPatchInput {
-    Upsert { rule: ChannelSelectionRuleInput },
-    Remove { rule_id: String },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ChannelSelectionUpdateRequest {
-    pub expected_revision: u64,
-    pub patch: ChannelSelectionPatchInput,
-}
-
-/// Semantic face classification for a selection question, never send
-/// authority. Shape and active state are read from live engine records.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ChannelSelectionCandidateInput {
-    pub identity_ref: EntityId,
-    pub face: ChannelIdentityFace,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::channel_doors::selection::{
+    ChannelSelectionCandidateInput, ChannelSelectionPatchInput, ChannelSelectionRuleInput,
+    ChannelSelectionUpdateRequest, ChannelSelectionView,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -90,13 +56,6 @@ impl ChannelSelectionRequest {
                 .collect(),
         )
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ChannelSelectionView {
-    pub revision: u64,
-    pub decision: ChannelIdentitySelectionDecision,
-    pub mask: ThreadMaskView,
 }
 
 fn selection_error(error: ChannelIdentitySelectionError) -> MemoryError {

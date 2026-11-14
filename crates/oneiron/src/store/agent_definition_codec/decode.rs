@@ -3,9 +3,8 @@
 use super::keys::{
     KEY_DEP_MIN_VERSION, KEY_DEP_SKILL_ID, KEY_MCP_KEY, KEY_MCP_MIN_VERSION,
     KEY_PROFILE_BUDGET_SPLIT, KEY_PROFILE_COMPACTION, KEY_PROFILE_COMPACTION_BACKEND,
-    KEY_PROFILE_HOT_STEPS, KEY_PROFILE_OPTIONAL_MEMORY, KEY_PROFILE_OUTPUT_DECAY,
-    KEY_PROFILE_VERBATIM_PINS, KEY_PROFILE_WINDOW_TOKEN_BUDGET,
-    MAX_MEMORY_PROFILE_VERBATIM_PIN_BYTES, OUTPUT_DECAY_KEYS,
+    KEY_PROFILE_HOT_STEPS, KEY_PROFILE_OUTPUT_DECAY, KEY_PROFILE_VERBATIM_PINS,
+    KEY_PROFILE_WINDOW_TOKEN_BUDGET, MAX_MEMORY_PROFILE_VERBATIM_PIN_BYTES, OUTPUT_DECAY_KEYS,
 };
 use crate::error::{ArtifactError, Error, Result};
 use crate::store::agent_definition::AgentDefinition;
@@ -42,7 +41,6 @@ pub(crate) fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
     let mut hot_steps = None;
     let mut output_decay = None;
     let mut verbatim_pins = Vec::new();
-    let mut optional_memory = None;
     let mut seen = [false; MEMORY_PROFILE_KEYS.len()];
 
     for (entry_key, value) in entries {
@@ -62,13 +60,6 @@ pub(crate) fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
         if seen[index] {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "duplicate memory_profile key",
-            )));
-        }
-        // The added key is encoded last, so a body that carries it re-encodes
-        // to its own bytes only when nothing follows it.
-        if optional_memory.is_some() {
-            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-                "memory_profile optional_memory must be the last key",
             )));
         }
         seen[index] = true;
@@ -126,11 +117,6 @@ pub(crate) fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
                     );
                 }
             }
-            KEY_PROFILE_OPTIONAL_MEMORY => {
-                optional_memory = Some(super::optional_memory::decode_optional_memory_profile(
-                    value,
-                )?);
-            }
             _ => unreachable!("index resolved from MEMORY_PROFILE_KEYS"),
         }
     }
@@ -153,7 +139,6 @@ pub(crate) fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
         hot_steps,
         output_decay,
         verbatim_pins,
-        optional_memory,
     })
 }
 
@@ -488,6 +473,9 @@ pub(crate) fn validate_agent_definition(def: &AgentDefinition) -> Result<()> {
     validate_mcp_refs(&def.code_mode_mcps)?;
     if let Some(profile) = &def.memory_profile {
         validate_memory_profile(profile)?;
+    }
+    if let Some(optional_memory) = &def.optional_memory {
+        super::optional_memory::validate_optional_memory_profile(optional_memory)?;
     }
     if let Some(dial) = def.refusal {
         super::refusal::validate_refusal_dial(dial)?;

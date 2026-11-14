@@ -33,8 +33,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::{GateDecisionId, Store};
 
-/// The connector the OpenAI proxy registers as.
-pub const PROXY_CONNECTOR: &str = "openai_proxy";
+#[doc(hidden)]
+pub use oneiron_verb_wire::connector_key::lifecycle::proxy::PROXY_CONNECTOR;
 
 /// The revision the proxy's key pins: the engine's own proxy, not a
 /// negotiated MCP one.

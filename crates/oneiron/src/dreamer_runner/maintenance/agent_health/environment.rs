@@ -43,9 +43,8 @@ use crate::skill_attribution::{
 };
 use crate::{EntityId, Result, Vault};
 
-/// Domain of an amendment label's source id: one id per settled cause row
-/// and label.
-const AMENDMENT_SOURCE_DOMAIN: &[u8] = b"oneiron:agent-health-amendment-cause:v1";
+#[doc(hidden)]
+use oneiron_verb_wire::dreamer_runner::maintenance::agent_health::environment::AMENDMENT_SOURCE_DOMAIN;
 
 /// One attribution label a card carries (OF-568 L10): a typed reference to
 /// the judge's retained label, never prose.

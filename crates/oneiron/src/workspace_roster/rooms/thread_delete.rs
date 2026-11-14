@@ -18,26 +18,10 @@ use super::*;
 use crate::deletion::DeleteReason;
 use crate::error::RecordError;
 
-/// `vault.rooms.thread_delete`'s input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PrivateThreadDeleteRequest {
-    /// The private thread's root TURN, 32-hex.
-    pub thread_ref: String,
-}
-
-/// What a private thread's delete did.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PrivateThreadDeleteReceipt {
-    /// The thread's root TURN, 32-hex.
-    pub thread_ref: String,
-    /// Whether the root was there to delete.
-    pub existed: bool,
-    /// The delete's receipt, 32-hex, when it wrote one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub receipt_ref: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::rooms::thread_delete::{
+    PrivateThreadDeleteReceipt, PrivateThreadDeleteRequest,
+};
 
 /// Whether `root` is a private thread's root of `room` in `txn`, read
 /// strictly on base: a live TURN whose own binding names it and an

@@ -33,6 +33,7 @@ pub(super) enum CheckInOutcome {
     ProceedWithUndo,
     WindowPassed,
     ObjectionHeld,
+    Consumed,
 }
 
 impl CheckInOutcome {
@@ -48,6 +49,7 @@ impl CheckInOutcome {
             Self::ProceedWithUndo => "proceed_with_undo",
             Self::WindowPassed => "window_passed",
             Self::ObjectionHeld => "objection_held",
+            Self::Consumed => "consumed",
         }
     }
 }

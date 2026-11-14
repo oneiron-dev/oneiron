@@ -17,6 +17,7 @@ fn serve_args(
         host: std::net::Ipv4Addr::LOCALHOST.into(),
         port: 7399,
         api_key_env: None,
+        accounts_file: None,
         model_aliases: Vec::new(),
         log_level: "info".to_owned(),
     }

@@ -145,6 +145,18 @@ impl Memory<'_> {
         Ok(Some(origin.envelope.clone().with_approval(approval)))
     }
 
+    /// The code run the bound origin's writes belong to (ARCH-0040
+    /// #revert-run), from the run's own dispatcher binding: `None` with no
+    /// origin, with an origin no code run built, or with an origin bound for
+    /// another actor, so reading it never refuses a write.
+    pub(crate) fn host_run_ref(&self) -> Option<String> {
+        let origin = self.host_origin.as_ref()?;
+        if origin.envelope.actor() != crate::WriteActor::new(self.actor, self.actor_class) {
+            return None;
+        }
+        crate::code_run::envelope_run_ref(&origin.envelope).map(str::to_owned)
+    }
+
     /// The room turn this handle is bound to, if any.
     pub(crate) fn room_turn(&self) -> Option<&crate::claim::RoomTurnCeiling> {
         self.room_turn.as_ref()

@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use super::{Memory, MemoryError, MemoryResult, caps};
 use crate::batch::EntityMetadataHeader;
 use crate::claim::{ClaimReadStatus, PointRead, ScopedReadResult};
-use crate::pipeline::TemporalSearchReport;
 use crate::ports::EntityStoreRead;
 use crate::temporal::TemporalAnchorMode;
 
@@ -102,23 +101,8 @@ impl TemporalSearchRequest {
     }
 }
 
-/// One admitted result, with dates from the same source revision the run pinned.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct TemporalSearchHit {
-    pub entity_ref: String,
-    pub source_revision_ref: Option<String>,
-    pub score: f32,
-    pub occurred_start: u64,
-    pub occurred_end: u64,
-    pub learned_at: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct TemporalSearchResult {
-    pub hits: Vec<TemporalSearchHit>,
-    /// None when authority prevented the temporal channel from running.
-    pub widening: Option<TemporalSearchReport>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::search_temporal::{TemporalSearchHit, TemporalSearchResult};
 
 impl Memory<'_> {
     pub fn query_temporal(

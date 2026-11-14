@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "The mail_pack half of the oneiron engine, lifted above the core crate"
 repository.workspace = true
-homepage.workspace = true
 
 [lib]
 doctest = false

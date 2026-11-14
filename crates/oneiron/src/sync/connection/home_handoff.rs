@@ -183,7 +183,7 @@ impl SyncConnection {
         events: mpsc::UnboundedSender<SyncEvent>,
     ) -> Infallible {
         if !HOME_HANDOFF_DELIVERY || self.config.client_config.federation_peer.is_some() {
-            return std::future::pending().await;
+            match std::future::pending::<Infallible>().await {}
         }
         let vault = Arc::clone(self.manager.vault());
         let mut elections = vault.subscribe_proactivity_changes();

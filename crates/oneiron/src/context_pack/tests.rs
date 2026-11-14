@@ -2153,7 +2153,7 @@ fn n12_validate_pack_disclosure_fails_a_tampered_pack() -> Result<()> {
         vector: None,
     };
     let rtxn = vault.store.env.read_txn()?;
-    let err = validate_pack_disclosure(&vault.store.read(), &rtxn, &ctx, &[smuggled], &[])
+    let err = validate_pack_disclosure(&vault, &vault.store.read(), &rtxn, &ctx, &[smuggled], &[])
         .expect_err("THE PACK BUILD FAILS RATHER THAN LEAKS");
     assert_eq!(
         err.kind(),

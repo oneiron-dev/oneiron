@@ -188,6 +188,9 @@ pub(super) async fn claimed(
     match crate::api::claim_door_invocation(server, invocation, body, auth.principal_entity()).await
     {
         DoorClaim::Run(claim) => {
+            // A verb whose answer is never kept releases the claim when it
+            // ends (review round 2 of #7603).
+            let claim = claim.for_verb(method);
             let answer = run(server, auth, context, method, params).await;
             let failed = answer.is_err();
             if let Some(outcome) = saved(&answer) {

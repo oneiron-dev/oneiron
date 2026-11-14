@@ -18,22 +18,8 @@ pub(super) const SCOPE: SideTable<String, SpendScope, LegacyJson> =
 
 pub use crate::workspace_roster::spend_scope::{SpendScopeId, SpendState};
 
-/// The payer's consent a root scope carries (OF-531): this PERSON was shown
-/// the root's cap and accepted it for this scope. Children inherit it by
-/// walking to their root; it is never copied. A cap, a scope id or an attempt
-/// id is never this evidence by itself.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SpendPayer {
-    /// The PERSON whose funds the tree spends.
-    pub party: EntityId,
-    /// The actor that took the payer's yes: the payer's own PERSON, or an
-    /// actor anchored to it. Checked against the stored binding, never a label;
-    /// `None` once the actor that took the yes was erased.
-    pub granted_by: Option<EntityId>,
-    /// When the payer accepted the cap, in host milliseconds.
-    pub at_ms: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::agent_dispatch::spend_record::{SpendPayer, SpendSignal};
 
 /// The owner's agent Grant a root's work is funded by (FIX 7766, Engine
 /// 19:59 W-B/W-E): chosen once when the root opens, validated in that
@@ -216,20 +202,6 @@ impl From<SpendRefused> for Error {
             refused => Self::InvalidConfig(refused.to_string()),
         }
     }
-}
-
-/// What a spend crossed. The lease's own Suspend is the stop; these steer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "signal", rename_all = "snake_case")]
-pub enum SpendSignal {
-    /// At most 5 percent of the binding hard cap is left: start no new work,
-    /// save partial results. Returned at every spend from here on.
-    WrapUp {
-        available_units: u64,
-        cap_units: u64,
-    },
-    /// Nothing is left under the binding hard cap.
-    AtCap { cap_units: u64 },
 }
 
 /// One scope after a spend.

@@ -17,40 +17,11 @@ use crate::wave_orchestration::{
     PlannedTask, WAVE_PLAN_SCHEMA_VERSION, WaveOrchestrator, WavePlan,
 };
 
-/// One child. No child maximum is copied from the parent: the route reserves
-/// its calibrated hold from the one existing parent spend tree.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FanoutChildInput {
-    pub agent_ref: EntityId,
-    pub label: String,
-    pub prompt: String,
-}
-
-/// The caller supplies work and a retry key, never an actor, attempt or lease.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FanoutBatchInput {
-    pub intent_key: String,
-    pub children: Vec<FanoutChildInput>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum FanoutSlotState {
-    Held,
-    Pending,
-    Completed,
-    Error,
-}
-
-/// The TASK's real terminal result, not an ask answer or an inferred success.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct FanoutSlotTerminal {
-    pub disposition: TaskTerminalDisposition,
-    pub result_ref: Option<EntityId>,
-    pub finished_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::task_verb::fanout_batch::{
+    FanoutBatchInput, FanoutChildInput, FanoutLaunchHold, FanoutLaunchRequest, FanoutSlotState,
+    FanoutSlotTerminal,
+};
 
 /// One recorded spend scope. A closed scope's unused balance is the hold the
 /// existing settlement released, not a synthetic provider-cost receipt.
@@ -374,20 +345,6 @@ pub fn fanout_batch_rows(view: &FanoutBatchView) -> Vec<EntityId> {
     rows.sort_unstable();
     rows.dedup();
     rows
-}
-
-/// `vault.fanout.launch`'s input: the launch to read.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FanoutLaunchRequest {
-    pub launch_ref: EntityId,
-}
-
-/// The durable hold of a launch that waits.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct FanoutLaunchHold {
-    pub surface_ref: String,
-    pub denied: bool,
 }
 
 /// What the launch doors answer: the launch as it stands, with the

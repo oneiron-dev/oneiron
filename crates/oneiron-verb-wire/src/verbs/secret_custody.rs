@@ -1,0 +1,171 @@
+//! Moved from `crates/oneiron/src/verbs/secret_custody.rs` (lib split W3: wire types below the lib).
+//! `oneiron` re-exports each item at its old path.
+
+use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::memory::MemoryError;
+use oneiron_contracts::memory::MemoryResult;
+use serde::Deserialize;
+use serde::Serialize;
+use zeroize::Zeroize;
+
+/// `vault.secrets.register`'s input: the body `POST
+/// /v1/owner/secrets/register` takes. `Debug` never prints the value.
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SecretRegisterRequest {
+    /// The secret's custody name: 1 to 488 bytes (what its name-index key
+    /// holds), unique among live records.
+    pub name: String,
+    /// `custody-portable`, `custody-device-bound` or `cross-vault`.
+    pub class: String,
+    /// The custody ladder's rung: 0 doored, 1 leased, 2 local-registered.
+    pub rung: u8,
+    /// The portable record's "this device only" dial.
+    #[serde(default)]
+    pub device_only: bool,
+    #[serde(default)]
+    pub bindings: Vec<SecretRegisterBinding>,
+    /// The served repository whose manifest declares the name, if one does.
+    #[serde(default)]
+    pub manifest: Option<SecretManifestSource>,
+    /// The value, as standard base64.
+    pub value_base64: String,
+    /// A portable secret's holder, as 32 hex; this install when absent.
+    #[serde(default)]
+    pub holder: Option<String>,
+    /// The installs permitted to hold a portable secret, as 32 hex each;
+    /// its holder alone when empty.
+    #[serde(default)]
+    pub recipients: Vec<String>,
+}
+
+/// One binding a register asks for.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SecretRegisterBinding {
+    /// The effector that may use the secret, such as `connector:gmail`.
+    pub effector: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    /// The binding's rung, at or below the secret's; the secret's when
+    /// absent.
+    #[serde(default)]
+    pub tier_ceiling: Option<u8>,
+}
+
+/// Where a register reads the manifest that declares its name.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SecretManifestSource {
+    /// The served repository's name.
+    pub repo: String,
+    /// The branch, such as `refs/heads/main`, which it is when absent.
+    #[serde(default, rename = "ref")]
+    pub git_ref: Option<String>,
+}
+
+/// `vault.secrets.rotate`'s input: the body `POST /v1/owner/secrets/rotate`
+/// takes. `Debug` never prints the value.
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SecretRotateRequest {
+    /// The secret's custody name.
+    pub name: String,
+    /// The new value, as standard base64.
+    pub value_base64: String,
+    /// The install that holds the secret and rotates it, as 32 hex; this
+    /// install when absent.
+    #[serde(default)]
+    pub holder: Option<String>,
+    /// The installs permitted to hold the new value, as 32 hex each; the
+    /// secret's live permits when empty.
+    #[serde(default)]
+    pub recipients: Vec<String>,
+}
+
+impl Drop for SecretRegisterRequest {
+    fn drop(&mut self) {
+        self.value_base64.zeroize();
+    }
+}
+
+impl Drop for SecretRotateRequest {
+    fn drop(&mut self) {
+        self.value_base64.zeroize();
+    }
+}
+
+impl std::fmt::Debug for SecretRegisterRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretRegisterRequest")
+            .field("name", &self.name)
+            .field("class", &self.class)
+            .field("rung", &self.rung)
+            .field("device_only", &self.device_only)
+            .field("bindings", &self.bindings)
+            .field("manifest", &self.manifest)
+            .field("holder", &self.holder)
+            .field("recipients", &self.recipients)
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for SecretRotateRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretRotateRequest")
+            .field("name", &self.name)
+            .field("holder", &self.holder)
+            .field("recipients", &self.recipients)
+            .finish_non_exhaustive()
+    }
+}
+
+/// `vault.secrets.rewrap`'s input: the body `POST /v1/owner/secrets/rewrap`
+/// takes.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SecretRewrapRequest {
+    pub name: String,
+    /// The install that holds the secret, as 32 hex; this install when
+    /// absent.
+    #[serde(default)]
+    pub holder: Option<String>,
+    /// The installs permitted to hold it, as 32 hex each.
+    pub recipients: Vec<String>,
+}
+
+/// `vault.secrets.revoke`'s input: the secret's custody name, as `POST
+/// /v1/owner/secrets/revoke` reads it.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SecretRevokeRequest {
+    pub name: String,
+}
+
+/// `vault.secrets.custody.get`'s input: the secret's custody name.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SecretCustodyGetRequest {
+    pub name: String,
+}
+
+pub fn entity_id(field: &str, value: &str) -> MemoryResult<EntityId> {
+    EntityId::from_hex(value)
+        .map_err(|_| MemoryError::bad_request(format!("{field} must be a 32-hex entity id")))
+}
+
+/// A 32-byte digest or revision a request names, as 64 hex.
+pub fn digest(field: &str, value: &str) -> MemoryResult<[u8; 32]> {
+    let invalid = || MemoryError::bad_request(format!("{field} must be 64 hex"));
+    let text = value.as_bytes();
+    if text.len() != 64 {
+        return Err(invalid());
+    }
+    let mut out = [0_u8; 32];
+    for (byte, pair) in out.iter_mut().zip(text.chunks_exact(2)) {
+        let high = char::from(pair[0]).to_digit(16).ok_or_else(invalid)?;
+        let low = char::from(pair[1]).to_digit(16).ok_or_else(invalid)?;
+        *byte = u8::try_from((high << 4) | low).map_err(|_| invalid())?;
+    }
+    Ok(out)
+}

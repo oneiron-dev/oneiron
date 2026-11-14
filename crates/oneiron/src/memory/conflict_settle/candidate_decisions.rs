@@ -7,43 +7,17 @@
 //! candidates whose subject an owner-delegated conflict review Grant covers.
 //! Ids and decisions only, never a candidate's value.
 
-use serde::{Deserialize, Serialize};
-
 use super::super::outbound::parse_job_ref;
 use super::super::support::hex_string;
 use super::super::{Memory, MemoryResult};
 use crate::consent::AuthenticatedOwner;
-use crate::dreamer_consolidation::KeptDecision;
 use crate::error::Error;
-use crate::{EdgeActorClass, EntityId, Vault};
+use crate::{EdgeActorClass, Vault};
 
-/// `vault.consolidation.candidate_decisions`'s input: the Dreamer attempt.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DreamerCandidateDecisionsRequest {
-    /// 32-hex attempt id (`job:` prefix allowed), as
-    /// `vault.consolidation.status` names it.
-    pub job_ref: String,
-}
-
-/// One candidate a Dreamer attempt decided a correction for.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DreamerDecidedCandidateView {
-    /// 32-hex attempt id.
-    pub job_ref: String,
-    /// Its position in the attempt's extraction.
-    pub position: u64,
-    #[serde(with = "crate::entity_id::serde_hex")]
-    #[schemars(with = "String")]
-    pub subject: EntityId,
-    /// The listed claim its decisions bound it to; none when they bound none.
-    #[serde(with = "crate::entity_id::serde_hex::optional")]
-    #[schemars(with = "Option<String>")]
-    pub corrects: Option<EntityId>,
-    /// Its kept decisions, each with its receipt and, when it went up the
-    /// role chain, that ask.
-    pub decisions: Vec<KeptDecision>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::conflict_settle::candidate_decisions::{
+    DreamerCandidateDecisionsRequest, DreamerDecidedCandidateView,
+};
 
 impl Memory<'_> {
     /// The candidates attempt `job_ref` decided a correction for, in their

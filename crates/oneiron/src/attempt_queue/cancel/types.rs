@@ -28,13 +28,8 @@ pub const LANDING_RESERVE_PERCENT: u64 = 10;
 /// "reserve" is the budget and ordinary execution is the exception.
 pub const MAX_LANDING_RESERVE_PERCENT: u64 = 50;
 
-/// Refused soft cancel requests after which repeated refusal is an observable
-/// pathology rather than a legitimate "not yet".
-///
-/// Crossing it never changes the attempt's state: only the hard rung
-/// ([`AttemptQueue::force_cancel`](crate::attempt_queue::AttemptQueue::force_cancel))
-/// can stop a worker that will not land, and this is the signal that says so.
-pub const SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD: u32 = 3;
+#[doc(hidden)]
+pub use oneiron_verb_wire::attempt_queue::cancel::types::SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD;
 
 /// Fraction of the lease timeout after which the runtime may WARN a worker to
 /// land. Distinct from expiry: the warning asks, expiry forces.
@@ -265,16 +260,6 @@ impl AttemptCancelReceiptKind {
     #[must_use]
     pub const fn answers_request(self) -> bool {
         matches!(self, Self::LandingAccepted | Self::SoftRejected)
-    }
-}
-
-impl AttemptCancelPressure {
-    /// True once refusals have crossed
-    /// [`SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD`]. Observability only: it
-    /// never terminates anything by itself.
-    #[must_use]
-    pub const fn is_pathological(&self) -> bool {
-        self.rejections >= SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD
     }
 }
 

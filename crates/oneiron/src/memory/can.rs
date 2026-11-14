@@ -1,22 +1,67 @@
-//! `can`: the read-only preflight of an ask, or the dated preflight of one
-//! effect (C2:207, FIX 22102). Neither mints a TASK, schedules a send or
-//! records a decision.
+//! `can`: the read-only preflight of an ask, the dated preflight of one
+//! effect (C2:207, FIX 22102), or one verb's gate for an actor (FIX
+//! [UI-GATE-PREVIEW], `can_verb`). None mints a TASK, schedules a send,
+//! records a decision or writes.
 
 use serde::{Deserialize, Serialize};
 
 use super::{Memory, MemoryResult};
 use crate::task_verb::TaskAskPreflight;
 use crate::verbs::{CanEffect, CanRequest};
+use crate::{EdgeActorClass, EntityId};
 
-/// What `can` answers: an ask's preflight, or one effect's dated verdict
-/// (FIX 22102). Untagged, so an ask's answer keeps its wire shape; the two
-/// never decode as each other (an ask's answer has `recipients`, an
-/// effect's `verdict`).
+/// What `can` answers: an ask's preflight, one effect's dated verdict (FIX
+/// 22102), or one verb's gate (FIX [UI-GATE-PREVIEW]). Untagged, so an ask's
+/// answer keeps its wire shape; none decodes as another (an ask's answer has
+/// `recipients`, an effect's `verdict`, a verb's `gate`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CanAnswer {
     Ask(TaskAskPreflight),
     Effect(CanEffectAnswer),
+    Verb(CanVerbAnswer),
+}
+
+/// One verb's gate for one actor, dated (FIX [UI-GATE-PREVIEW];
+/// GENUI-WIRE-GAPS section 4 item 1): what the app shows on an affordance
+/// before anyone presses it. The call itself is judged again when it runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CanVerbAnswer {
+    /// The verb's catalog name.
+    pub verb: String,
+    /// The actor whose call was judged.
+    pub actor_ref: EntityId,
+    /// That actor's class.
+    pub actor_kind: EdgeActorClass,
+    pub gate: CanVerbGate,
+    /// Why the call would not run now: the refusal the call itself answers,
+    /// or the person rule its verb row states. Empty for `auto` and
+    /// `unchecked`.
+    pub reasons: Vec<String>,
+    /// The recording time the judgment read, Unix seconds.
+    pub checked_at: u64,
+}
+
+/// The word a verb's gate answers. Check-in's words (ARCH-0082, designed,
+/// not built) map as Go = `auto`, Wait = `proposed`, Absent = `person` or
+/// `refused`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CanVerbGate {
+    /// The actor's call would run now.
+    Auto,
+    /// The actor's call would wait for a person's yes. No verb answers it
+    /// yet: none of the previewed verbs proposes.
+    Proposed,
+    /// The verb is a person's act and the actor is not a person: the call is
+    /// refused, and a person may act instead.
+    Person,
+    /// The actor's call would be refused for another reason, each in
+    /// `reasons`.
+    Refused,
+    /// No preview reads this verb's gate yet. It says nothing about who may
+    /// call it.
+    Unchecked,
 }
 
 /// The dated preflight of one effect (C2:207, FIX 22102): allow, deny,
@@ -107,9 +152,11 @@ impl CanEffectAnswer {
 impl Memory<'_> {
     /// `can`: the read-only preflight of `request`. `{ask}` is the ask's
     /// preflight, exactly as [`Self::tasks_can_ask`] answers it; `{effect}`
-    /// is the dated preflight of that one effect.
+    /// is the dated preflight of that one effect; `{verb}` is that verb's
+    /// gate for its actor.
     pub fn can(&self, request: &CanRequest) -> MemoryResult<CanAnswer> {
         match request {
+            CanRequest::Verb(verb) => Ok(CanAnswer::Verb(self.can_verb(&verb.verb)?)),
             CanRequest::Ask(can_ask) => Ok(CanAnswer::Ask(self.tasks_can_ask(&can_ask.ask)?)),
             CanRequest::Effect(effect) => match &effect.effect {
                 CanEffect::OutboundSchedule(schedule) => Ok(CanAnswer::Effect(

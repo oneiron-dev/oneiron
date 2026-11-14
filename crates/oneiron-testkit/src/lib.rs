@@ -13,10 +13,12 @@
 //! | A public verb, by name, in process | [`door`] |
 //! | Receipts read through the public door | [`receipt`] |
 //! | No sleeps, wall clock, network or real model | [`lint`] |
+//! | A reference model of the vault, checked against the engine after each step of seeded sequences | [`model`]: [`model::VaultModel`], [`model::engine::check_seeds`] |
 //! | The PR, nightly and quarantine tiers | [`quarantine`] |
 //! | Tests waiting on a product door, nightly only | [`pending_door`] |
 //! | Private words that must not reach a reader outside their audience | [`canary`]: [`CanaryVault`] |
 //! | One Dreamer wake pass in process, its model scripted | [`dreamer`]: [`DreamerPass`] |
+//! | A scripted day and the normalised dump of its receipts | [`golden_day`] |
 //!
 //! The rules a door test keeps (Fable, section 4):
 //! 1. The test's name is the promise, in one sentence a user or agent would say.
@@ -44,7 +46,9 @@ pub mod dreamer;
 pub mod embedder;
 pub mod fault;
 pub mod fixture;
+pub mod golden_day;
 pub mod lint;
+pub mod model;
 pub mod pending_door;
 pub mod provider;
 pub mod quarantine;

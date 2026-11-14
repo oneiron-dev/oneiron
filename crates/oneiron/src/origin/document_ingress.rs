@@ -16,25 +16,9 @@ use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-/// One push operation, including non-text blobs and mode-only changes.
-/// Git objects remain pinned by the hash-keyed origin change claim.
-#[derive(
-    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-pub struct ReceivedFileOperation {
-    pub operation_id: String,
-    /// The pusher's hex id, or [`ERASED_CALL_IDENTITY`] once that actor was
-    /// erased (FIX 4475).
-    pub actor_id: String,
-    pub session_id: String,
-    pub ref_name: String,
-    pub path: String,
-    pub before_hash: [u8; 32],
-    pub after_hash: [u8; 32],
-    pub old_mode: Option<u32>,
-    pub new_mode: Option<u32>,
-    pub document_edit: bool,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::origin::document_ingress::ReceivedFileOperation;
+
 /// Crash-idempotent receipt of one push's ref: its validated source, first receipt time, the
 /// file operations it landed and the candidate matching attached (G4 PR2), keyed by
 /// provenance then blake3(ref_name). Key: id16 ":" hash32 — the ':' is a literal byte, not a

@@ -47,6 +47,27 @@ fn lifecycle_effective_end(body: &ClaimBody, header: &EntityMetadataHeader, now:
         .max(body.valid_from.unwrap_or(header.occurred_start))
 }
 
+/// A retract's or a supersession's validity end, [`lifecycle_effective_end`];
+/// a MACHINE-born claim's also stays inside its own validity window
+/// ([`super::transition::machine_close_end`]), which its signed history
+/// requires.
+fn lifecycle_close_end_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    body: &ClaimBody,
+    header: &EntityMetadataHeader,
+    now: u64,
+) -> Result<u64> {
+    let end = lifecycle_effective_end(body, header, now);
+    Ok(
+        if crate::authority::machine_claim_needs_history(store, txn, body)? {
+            super::transition::machine_close_end(body, end)
+        } else {
+            end
+        },
+    )
+}
+
 /// The family a want derived from behaviour is minted into, beside the
 /// user's own statement (ARCH-0003, ruled 2026-07-29).
 pub(super) const PREFERENCE_PREDICATE_PREFIX: &str = "preference.";
@@ -546,7 +567,7 @@ impl Vault {
         // replacement staged earlier in the same txn rolls back with it.
         let (mut old_body, old_header) = self.guarded_claim_target_parts_in(&*wtxn, old_id)?;
         Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
-        let closed_end = lifecycle_effective_end(&old_body, &old_header, now);
+        let closed_end = lifecycle_close_end_in(&self.store, &*wtxn, &old_body, &old_header, now)?;
 
         let revisions = super::supersession_diff::capture_in_txn(self, &*wtxn, *old_id, *new_id)?;
         old_body.lifecycle = ClaimLifecycleStatus::Superseded;
@@ -768,7 +789,7 @@ impl Vault {
         // gate receipt below: a stale retract must leave the consent row and
         // every receipt exactly as it found them.
         let (mut body, header) = self.guarded_claim_target_parts_in(&*wtxn, id)?;
-        let closed_end = lifecycle_effective_end(&body, &header, now);
+        let closed_end = lifecycle_close_end_in(&self.store, &*wtxn, &body, &header, now)?;
         // The retraction closes the claim, so its owner is shown no item for
         // the open revision; an open obligation stays open.
         let consent_receipt = match run {

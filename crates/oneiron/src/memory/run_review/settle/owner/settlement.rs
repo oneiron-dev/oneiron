@@ -56,7 +56,7 @@ impl Memory<'_> {
                 _ => {}
             }
             changes.push(RunChangeOutcome {
-                change: member.change().to_owned(),
+                change: member.change(),
                 verdict,
                 receipt,
             });

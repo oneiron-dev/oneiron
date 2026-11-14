@@ -4,10 +4,13 @@
 //! Every verb names persons by their `pr` handle and reads the roster through
 //! the caller's own read: a person the caller does not read is not there.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use serde::{Deserialize, Serialize};
 
 use super::{
-    Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
+    MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage,
+    WitnessReceipt, WitnessTurn,
 };
 use crate::access_grant::AccessGrantScope;
 use crate::agent_dispatch::{
@@ -15,7 +18,7 @@ use crate::agent_dispatch::{
 };
 use crate::attempt_queue::AttemptId;
 use crate::claim::ClaimReadStatus;
-use crate::context_board::{People, PersonRow};
+use crate::context_board::{ActorAttribution, People, PersonRow};
 use crate::store::conversation_body::{ConversationBody, ConversationKind};
 use crate::{EdgeActorClass, EntityId};
 
@@ -39,18 +42,11 @@ const LEADER_DIRECT_ROOM_DOMAIN: &[u8] = b"oneiron.people.leader-room.v1";
 /// C5's when unbound.
 const UNSLIPPED_TRANSPORT_COMM: Option<CommReach> = None;
 
-/// `vault.people.list`'s input.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PeopleListRequest {
-    /// The vault tag the board's `<people vault=…>` names; this vault when
-    /// absent.
-    #[serde(default)]
-    pub vault: Option<String>,
-    /// Zero-based page of [`PEOPLE_PAGE_SIZE`] rows.
-    #[serde(default)]
-    pub page: Option<u32>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::people_verbs::{
+    GrantAskRequest, GrantAskScope, GrantAskedRequest, GrantRequestedScope, MessagePersonRequest,
+    PeopleListRequest, PersonRequest,
+};
 
 /// One page of the people the caller reads, in handle order.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,34 +56,6 @@ pub struct PeoplePage {
     pub people: Vec<PersonRow>,
     /// Rows on later pages.
     pub more: usize,
-}
-
-/// `vault.people.get`'s input.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PersonRequest {
-    /// `pr<n>`.
-    pub pr: String,
-}
-
-/// `self.message`'s input.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct MessagePersonRequest {
-    pub pr: String,
-    pub text: String,
-    /// The saved mention `pr` came from, when the agent named the person
-    /// (OF-123): the message refuses while that mention is unsettled.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mention: Option<crate::outbound::MentionProvenance>,
-    /// When the sender leads several projects and sends from no run that
-    /// names one: the project (entity hex) it speaks for.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub from_project: Option<String>,
-    /// When the person leads several projects: the project (entity hex) the
-    /// message addresses.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub to_project: Option<String>,
 }
 
 /// Where an admitted message lands (FIX 1380).
@@ -170,35 +138,6 @@ pub struct MessagePersonReceipt {
     pub receipt: WitnessReceipt,
 }
 
-/// What `self.grants.ask` asks for. A space is a conversation or
-/// relationship id, in hex.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum GrantAskScope {
-    Messages {
-        space_ref: String,
-    },
-    Summaries {
-        space_ref: String,
-    },
-    RelationshipClaims {
-        space_ref: String,
-    },
-    /// The asked person's companion profile, optionally one facet of it.
-    CompanionProfile {
-        #[serde(default)]
-        facet_ref: Option<String>,
-    },
-}
-
-/// `self.grants.ask`'s input.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GrantAskRequest {
-    pub pr: String,
-    pub scope: GrantAskScope,
-}
-
 /// The pending access request. Asking grants nothing; the vault owner, or
 /// the person asked, answers it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -206,38 +145,6 @@ pub struct GrantAskReceipt {
     pub request: String,
     pub asked: String,
     pub status: String,
-}
-
-/// `self.grants.asked`'s input (FIX 11147): one page of the pending access
-/// requests that ask the caller.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GrantAskedRequest {
-    /// Exclusive request-id cursor (32-hex) from a prior page.
-    #[serde(default)]
-    pub after: Option<String>,
-    /// Page size, clamped to 1..=100; 50 when absent.
-    #[serde(default)]
-    pub limit: Option<u32>,
-}
-
-/// What an answered request asked for.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum GrantRequestedScope {
-    Messages {
-        space_ref: EntityId,
-    },
-    Summaries {
-        space_ref: EntityId,
-    },
-    RelationshipClaims {
-        space_ref: EntityId,
-    },
-    CompanionProfile {
-        person_ref: EntityId,
-        facet_ref: Option<EntityId>,
-    },
 }
 
 /// What an access request's `scope` asks for, as its answer and the asked
@@ -317,6 +224,50 @@ impl Memory<'_> {
         people.set_about(&mut |person| self.vault.person_about_sourced(person, ceiling))?;
         people.disclose_names(self.vault, read.actor_key())?;
         Ok(people)
+    }
+
+    /// How the caller's read names each of `actors`, keyed by the ref as
+    /// given ([`ActorAttribution`]): the persons `vault.people.list` reads
+    /// for this caller, their names disclosed by the same rule, loaded for
+    /// these actors alone. A ref that is no entity id names no one, and a
+    /// caller whose credential grants it no read names no one at all. The
+    /// table labels a page already served, never admits it: a caller this
+    /// read refuses (an unbound handle whose actor the vault does not hold)
+    /// keeps its page and names no one too.
+    pub(crate) fn actor_attributions(
+        &self,
+        actors: BTreeSet<String>,
+    ) -> MemoryResult<BTreeMap<String, ActorAttribution>> {
+        if actors.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let ids: BTreeSet<EntityId> = actors
+            .iter()
+            .filter_map(|actor| EntityId::from_hex(actor).ok())
+            .collect();
+        let read = match self.read_lane_if_granted(ClaimReadStatus::Surfaceable) {
+            Ok(read) => read,
+            Err(refusal) if refusal.code == MEMORY_CODE_FORBIDDEN => None,
+            Err(error) => return Err(error),
+        };
+        let people = match read {
+            Some(read) => {
+                let mut people = People::load_named(self.vault, unix_ms(), &ids, &mut |person| {
+                    read.is_entity_readable(&person)
+                })?;
+                people.disclose_names(self.vault, read.actor_key())?;
+                people
+            }
+            None => People::default(),
+        };
+        Ok(actors
+            .into_iter()
+            .map(|actor| {
+                let named = EntityId::from_hex(&actor)
+                    .map_or_else(|_| ActorAttribution::unknown(), |id| people.attribution(id));
+                (actor, named)
+            })
+            .collect())
     }
 
     fn person_by_handle<'p>(people: &'p People, pr: &str) -> MemoryResult<&'p PersonRow> {

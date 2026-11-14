@@ -108,11 +108,26 @@ pub fn enqueue_strength_attempt(
     parent: AttemptId,
     now: u64,
 ) -> Result<DreamerAdmittedAttempt> {
+    enqueue_unadmitted_strength_attempt(vault, parent, now)?;
+    admit_strength_attempt(vault, now)
+}
+
+/// Enqueues `parent`'s strength attempt at `now` as the nightly recipe wake
+/// does (with its authority stamp and run-tree row), and leaves it queued
+/// for a wake pass to admit (untangle 6.9c PR 4).
+///
+/// # Errors
+///
+/// The vault's.
+pub fn enqueue_unadmitted_strength_attempt(
+    vault: &Vault,
+    parent: AttemptId,
+    now: u64,
+) -> Result<()> {
     let store = DreamerRunnerStore::new(vault);
     vault.with_write_txn(|txn| {
         store.enqueue_consolidation_strength_in_txn(txn, parent, Some(STRENGTH_RUN.into()), now)
-    })?;
-    admit_strength_attempt(vault, now)
+    })
 }
 
 /// Admits the next maintenance attempt under [`STRENGTH_LEASE_OWNER`] at

@@ -16,21 +16,8 @@ use crate::{Result, Vault};
 pub(super) const CREDIT_RECEIPT: SideTable<String, LateCreditReceipt, Named> =
     SideTable::new(&side_table::SKILL_ATTRIBUTION_LATE_CREDIT);
 
-/// One fractional share, with its complete eligible used chain. An erase
-/// redacts only the ids it names (FIX 8988): the share keeps its decay and
-/// weight.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct LateCreditShare {
-    /// The credited skill; `None` once that skill is erased.
-    pub subject: Option<EntityId>,
-    /// The contributing skill the chain starts from; `None` for the run's
-    /// output root, and once that skill is erased, which clears the chain too.
-    pub origin_skill: Option<EntityId>,
-    /// The used chain; `None` once an erased entity is one of its ends.
-    pub chain: Option<Vec<UsedProvenanceEdge>>,
-    pub decay: f64,
-    pub weight: f64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_attribution::late_credit::LateCreditShare;
 
 /// An anchored projection's receipt. Empty shares explicitly record no late
 /// credit, including disabled credit, an environment verdict or an unclear one.

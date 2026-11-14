@@ -240,16 +240,8 @@ pub enum TradeoffRung {
     Role,
 }
 
-/// The decision on a mixed (non-floor) goal vector: approve the candidate or
-/// keep the incumbent.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum TradeoffChoice {
-    Approve,
-    Reject,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::gate::verdict::TradeoffChoice;
 
 /// One durable gate ruling.
 ///

@@ -3,29 +3,10 @@
 use super::*;
 use crate::commitment_ledger::CommitmentLedgerEntry;
 
-#[derive(Debug, Clone, Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CommitmentLedgerRequest {
-    pub contact_ref: String,
-}
-
-#[derive(Debug, Clone, Serialize, serde::Deserialize, schemars::JsonSchema)]
-pub struct CommitmentLedgerItem {
-    pub valid_from: u64,
-    pub valid_to: u64,
-    pub commitment: CommitmentView,
-}
-
-#[derive(Debug, Clone, Serialize, serde::Deserialize, schemars::JsonSchema)]
-pub struct CommitmentLedgerView {
-    pub contact_ref: String,
-    pub identity_ref: String,
-    pub counterparty: String,
-    pub channel: String,
-    pub address_or_handle: String,
-    pub owed_by_them: Vec<CommitmentLedgerItem>,
-    pub owed_to_them: Vec<CommitmentLedgerItem>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::commitment_doors::ledger::{
+    CommitmentLedgerItem, CommitmentLedgerRequest, CommitmentLedgerView,
+};
 
 impl Memory<'_> {
     /// Reads both directions in due order, without acting on a reminder or grant.

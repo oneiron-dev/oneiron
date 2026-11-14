@@ -1,8 +1,6 @@
 //! A mention's saved resolution, separate from the tagger's original suggestion.
 //! The answer and its owner evidence land in the same writer as the link.
 
-use serde::{Deserialize, Serialize};
-
 use super::{IdentityAnswerRequest, IdentityAsk, MentionProvenance, ask_key, key_hex};
 use crate::claim::ClaimSource;
 use crate::consent::AuthenticatedOwner;
@@ -15,50 +13,11 @@ use crate::{EntityId, Error, Result, Vault};
 const RESOLUTIONS: SideTable<(EntityId, [u8; 32]), IdentityResolutionView, Named> =
     SideTable::new(&side_table::DREAMER_IDENTITY_RESOLUTION);
 
-/// The existing owner choice, with the later records that support it.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct IdentityAnswerEvidenceRequest {
-    pub ask: String,
-    pub choice: String,
-    #[serde(default)]
-    pub evidence_refs: Vec<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum IdentityMentionState {
-    Unresolved,
-    Candidates,
-    Resolved,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct IdentityResolutionView {
-    /// The ask answered, or the same span key for a saved context-hint resolution.
-    pub ask: String,
-    pub target_ref: String,
-    pub source: String,
-    /// Present only when the resolution's transaction revalidated an owner proof.
-    pub owner_ref: Option<String>,
-    pub owner_evidence_refs: Vec<String>,
-    pub resolved_at: u64,
-    /// The mention before resolution: its span, candidates and model confidences.
-    pub original: TaggedMentionView,
-    pub original_provenance: DerivationEnvelopeView,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct IdentityMentionView {
-    pub mention: MentionProvenance,
-    pub name: String,
-    pub state: IdentityMentionState,
-    pub candidate_refs: Vec<String>,
-    pub target_ref: Option<String>,
-    pub current: TaggedMentionView,
-    pub provenance: DerivationEnvelopeView,
-    pub resolution: Option<IdentityResolutionView>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_runner::maintenance::identity::evidence::{
+    IdentityAnswerEvidenceRequest, IdentityMentionState, IdentityMentionView,
+    IdentityResolutionView,
+};
 
 pub(super) fn snapshot_in_txn(
     vault: &Vault,

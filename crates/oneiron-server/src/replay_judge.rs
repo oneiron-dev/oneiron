@@ -427,8 +427,15 @@ impl HeldOutReplayNotes for ServeReplayJudge {
 
     /// The goal's task axes: the honesty floor is the engine's own audit,
     /// never a scorer declaration, so it is left out as the gate requires.
+    /// The axes of the goal the gate resolved the case under, as the acting
+    /// reader, when it hands one: an owner's scoring then needs no Coach
+    /// read grant (review round 1 of #7553). Else the goal as the Coach
+    /// reads it, as the Coach's own runs score.
     fn goal_axes(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
-        let axes = skill_edit_goal(&self.vault, &case.skill)?.axes;
+        let axes = match case.goal {
+            Some(goal) => goal.axes.clone(),
+            None => skill_edit_goal(&self.vault, &case.skill)?.axes,
+        };
         self.word_axes(&axes);
         Ok(axes
             .into_iter()

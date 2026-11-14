@@ -4,33 +4,10 @@
 use super::*;
 use crate::error::Result;
 use crate::memory::MemoryResult;
-use oneiron_model::llm::FinishReason;
-use serde::Serialize;
 
-/// A MESSAGE's completion, read from its latest stream receipt and its seed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize, schemars::JsonSchema)]
-pub struct MessageCompletion {
-    /// The latest generation ended without finishing its answer: cut off at a
-    /// length, filtered, stopped for another reason, cancelled, failed, idle
-    /// or recovered after a crash. Continue and Retry act on it.
-    pub incomplete: bool,
-    /// A stream is open on the MESSAGE now.
-    pub generating: bool,
-    /// Why the model that wrote the latest generation stopped, when one did.
-    pub finish_reason: Option<FinishReason>,
-}
-impl MessageStreamReceipt {
-    /// Final, and ended by its model's stop or tool call, or by a writer
-    /// that is no model and finalized normally.
-    #[must_use]
-    pub fn complete(&self) -> bool {
-        self.finality == StreamFinality::Final
-            && matches!(
-                self.finish_reason,
-                None | Some(FinishReason::Stop | FinishReason::ToolCalls)
-            )
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::witness::stream::completion::MessageCompletion;
+
 /// [`Memory::message_completion`] in the caller's transaction, for a reader
 /// that reads many MESSAGEs in one snapshot.
 pub(crate) fn message_completion_in_txn(

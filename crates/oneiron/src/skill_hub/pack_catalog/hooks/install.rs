@@ -81,9 +81,13 @@ impl Vault {
         pack: &str,
     ) -> Result<()> {
         let owner_id = owner.revalidate_in_txn(self, txn)?;
+        // The owner stops the pack in person, so each stop carries the
+        // owner's proof past the criticality floor; a narrowed or delegated
+        // credential has none and is gated as any other Approved write.
+        let owner_authored = owner.owner_answer_in_txn(self, txn)?;
         let at = crate::unix_seconds_now();
         let occurred = TimeRange { start: at, end: at };
-        let mut batch = self.batch_in();
+        let mut batch = self.batch_in().with_owner_authored(owner_authored);
         let mut stopped = false;
         let mut transitions = Vec::new();
         for (id, mut row) in bindings_in_txn(&self.store, txn)? {
@@ -138,10 +142,18 @@ impl Vault {
         source: &PackSource,
     ) -> Result<Vec<EntityId>> {
         let pack = source.manifest.name.as_str();
-        let (owner_id, envelope) = match binder {
+        // The owner's binding claims carry the owner's proof, revalidated
+        // here: the binding predicate is critical on the shipped manifest,
+        // and an Approved stamp without that proof pends on the floor. An
+        // agent's claims carry none.
+        let (owner_id, envelope, owner_authored) = match binder {
             HookBinder::Owner(owner) => {
                 let owner_id = owner.revalidate_in_txn(self, txn)?;
-                (owner_id, owner_envelope(owner, owner_id, pack, &source_id)?)
+                (
+                    owner_id,
+                    owner_envelope(owner, owner_id, pack, &source_id)?,
+                    owner.owner_answer_in_txn(self, txn)?,
+                )
             }
             HookBinder::Agent(agent) => {
                 if pack != super::super::LOCAL_PACK_NAME {
@@ -152,7 +164,7 @@ impl Vault {
                     .first()
                     .copied()
                     .ok_or_else(|| invalid("the vault has no live owner"))?;
-                (owner_id, agent_envelope(agent, pack, &source_id)?)
+                (owner_id, agent_envelope(agent, pack, &source_id)?, None)
             }
         };
         let content_hash = source.content_hash().to_hex();
@@ -163,7 +175,7 @@ impl Vault {
             .installed_pack_in_txn(txn, pack)?
             .ok_or_else(|| invalid("pack is not installed"))?;
         let author = self.hook_author_in_txn(txn, &receipt)?;
-        let mut batch = self.batch_in();
+        let mut batch = self.batch_in().with_owner_authored(owner_authored);
         // A publisher acts through its own vault-resident person.
         if let HookAuthor::ForeignActor {
             actor, identity, ..
@@ -349,7 +361,8 @@ impl Vault {
         enabled: bool,
     ) -> Result<()> {
         let owner_id = owner.revalidate_in_txn(self, txn)?;
-        self.write_pack_hook_dial_in_txn(txn, binding, enabled, |row| {
+        let owner_authored = owner.owner_answer_in_txn(self, txn)?;
+        self.write_pack_hook_dial_in_txn(txn, binding, enabled, owner_authored, |row| {
             owner_envelope(owner, owner_id, &row.pack, &row.source)
         })
     }
@@ -378,19 +391,21 @@ impl Vault {
                 "an agent sets the dial of its own hook binding only",
             ));
         }
-        self.write_pack_hook_dial_in_txn(txn, binding, enabled, |row| {
+        self.write_pack_hook_dial_in_txn(txn, binding, enabled, None, |row| {
             agent_envelope(agent, &row.pack, &row.source)
         })
     }
 
     /// Writes binding `binding` with its dial at `enabled`, stamped with
-    /// `envelope`'s envelope for its row; a dial already there writes
-    /// nothing.
+    /// `envelope`'s envelope for its row and marked the owner's own write
+    /// when `owner_authored` is the owner's revalidated proof; a dial
+    /// already there writes nothing.
     fn write_pack_hook_dial_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         binding: EntityId,
         enabled: bool,
+        owner_authored: Option<crate::consent::OwnerAuthoredWrite>,
         envelope: impl FnOnce(&PackHookBinding) -> Result<WriteEnvelope>,
     ) -> Result<()> {
         let (id, mut row) = bindings_in_txn(&self.store, txn)?
@@ -405,6 +420,7 @@ impl Vault {
         let envelope = envelope(&row)?;
         let at = crate::unix_seconds_now();
         self.batch_in()
+            .with_owner_authored(owner_authored)
             .claim_candidate(
                 &id,
                 binding_candidate(&row)?,

@@ -729,7 +729,7 @@ pub(crate) fn revoke_standing_grant_in_txn(
         return Ok(false);
     };
     row.status = status;
-    GRANTS.put(store, wtxn, &key, &row)?;
+    super::codec::put_grant_row_in_txn(store, wtxn, &key, &row)?;
     if retire_reason_rules {
         super::owner_reason::retire_owner_reason_rules_in_txn(store, wtxn, grant_ref)?;
     }
