@@ -397,24 +397,25 @@ fn undeclared_expression_forms_are_refused_at_decode() {
     }
 }
 
+/// The bound is a decode rule: a ninth level never decodes, so no card can hold it.
 #[test]
 fn expressions_nest_at_most_eight_deep() {
-    let nested = |depth: usize| {
+    let nested_props = |depth: usize| {
         let mut value = json!({ "$state": "/weight.a" });
         for _ in 1..depth {
             value = json!({ "$computed": "sum", "args": { "of": [value] } });
         }
-        card(
-            vec![component(
-                "foot",
-                "list_foot",
-                json!({ "picked": value, "total": 3 }),
-            )],
-            state(vec![("weight.a", number(1.0))]),
-        )
+        json!({ "picked": value, "total": 3 })
     };
-    assert!(nested(8).is_ok(), "eight levels assemble");
-    assert!(nested(9).is_err(), "a ninth level is refused");
+    let eight = card(
+        vec![component("foot", "list_foot", nested_props(8))],
+        state(vec![("weight.a", number(1.0))]),
+    );
+    assert!(eight.is_ok(), "eight levels assemble");
+    assert!(
+        component_atom("list_foot", nested_props(9)).is_err(),
+        "a ninth level is refused at decode"
+    );
 }
 
 #[test]
