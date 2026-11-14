@@ -47,6 +47,9 @@ STUB_CARGO = textwrap.dedent(
     deps = target / "debug" / "deps"
     deps.mkdir(parents=True, exist_ok=True)
     if "--no-run" in args:
+        if any(t in os.environ.get("STUB_SETUP_ERROR_TESTS", "").split(",") for t in tests):
+            print("error: the stub's setup error (no unit named)")
+            sys.exit(96)
         broken = [t for t in tests if t in os.environ.get("STUB_FAIL_TESTS", "").split(",")]
         for t in broken:
             print(f'error: could not compile `oneiron` (test "{t}") due to 1 previous error')
@@ -255,6 +258,15 @@ class RunNightlyTest(unittest.TestCase):
         result = self.run_nightly(NIGHTLY_LIB_JOBS="1", CARGO_BUILD_JOBS="4")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual([line.split(" ")[0] for line in self.builds()], ["1", "4"])
+
+    def test_a_shard_whose_build_fails_beyond_pruning_stops_the_night_and_keeps_the_cursor_on_it(self) -> None:
+        cursor = self.out.parent / "cursor.json"
+        result = self.run_nightly("--shard-files", "1", "--cursor", str(cursor), STUB_SETUP_ERROR_TESTS="beta")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("## NIGHTLY stop reason=build-dropped next=tests-02", result.stdout)
+        self.assertIn(" RED build=partial cycle=1 shards_run=1/4 next=beta ", self.summary_line(result))
+        self.assertEqual(json.loads(cursor.read_text()), {"next": "beta", "cycle": 1})
+        self.assertEqual(len(self.builds()), 3, "libs, tests-01, and tests-02 once (no unit to leave out)")
 
     def test_a_host_without_cargo_nextest_cannot_start_the_night(self) -> None:
         result = self.run_nightly(STUB_NO_NEXTEST="1")

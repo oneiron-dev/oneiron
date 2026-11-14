@@ -18,7 +18,9 @@
 #               build, run, delete the shard's test binaries, move the cursor.
 #               The night stops before a shard when --max-shards shards have
 #               run, or when the longest shard so far would end past the
-#               deadline (--stop-at HH:MM Japan time, or --deadline-epoch).
+#               deadline (--stop-at HH:MM Japan time, or --deadline-epoch), and
+#               at a selection whose build fails beyond pruning (the cursor
+#               stays on it, so the next night retries it).
 #               The next night resumes at the cursor; a full cycle runs every
 #               file once.
 # oneiron-bench is left out, as CI's full tier leaves it out.
@@ -180,9 +182,11 @@ for name in $(report args "$plan" | cut -d' ' -f1); do
   fi
   started=$SECONDS
   if ! build_selection "$name"; then
+    # A selection whose build fails beyond pruning (a setup error, a lib or build script, an OOM) stops the night and
+    # leaves the cursor on it: the next night retries it, so no shard is skipped, and the red names it.
     step "build-$name" dropped
-    [ "$name" != libs ] && report advance "$plan" "$name" "$cursor"
-    continue
+    echo "## NIGHTLY stop reason=build-dropped next=$name"
+    break
   fi
   if [ "$name" = libs ]; then
     door_bin=$target/debug/oneiron-testkit-pending-door
