@@ -58,7 +58,23 @@ pub(crate) fn log_in_txn(
     at: u64,
     request_id: Option<String>,
 ) -> Result<()> {
-    let row = LegalHoldEvent {
+    let row = event_row(hold, event, reason, targets, actor, at, request_id);
+    append_event_in_txn(dbs, txn, hold, &row)
+}
+
+/// One event of `hold`'s log, not yet written: what [`log_in_txn`] appends.
+/// An event that placed or widened a sealed capture sets its
+/// `clone_fingerprint` before [`append_event_in_txn`] writes it.
+pub(crate) fn event_row(
+    hold: &LegalHold,
+    event: LegalHoldEventKind,
+    reason: LegalHoldReason,
+    targets: Vec<LegalHoldTarget>,
+    actor: &HoldActor,
+    at: u64,
+    request_id: Option<String>,
+) -> LegalHoldEvent {
+    LegalHoldEvent {
         hold_id: hold.hold_id,
         kind: hold.kind,
         targets,
@@ -69,12 +85,22 @@ pub(crate) fn log_in_txn(
         reason,
         matter_ref: hold.matter_ref.clone(),
         request_id,
-    };
+        clone_fingerprint: None,
+    }
+}
+
+/// Appends `row` to `hold`'s own log, as [`log_in_txn`] does.
+pub(crate) fn append_event_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    hold: &LegalHold,
+    row: &LegalHoldEvent,
+) -> Result<()> {
     let table = match hold.kind {
         LegalHoldKind::Customer => EVENTS,
         LegalHoldKind::HostOrder => HOST_EVENTS,
     };
-    append_in_txn(dbs, txn, table, &row)
+    append_in_txn(dbs, txn, table, row)
 }
 
 /// The newest event of `hold`'s own log.

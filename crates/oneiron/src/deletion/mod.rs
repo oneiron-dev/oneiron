@@ -91,7 +91,7 @@ pub(crate) use legal_hold::prospective::{
     ProspectiveBatch, prospective_standing_in_txn, seal_prospective_message_in_txn,
 };
 pub use legal_hold::{
-    ERASE_COMPLETION_PENDING, ErasePendingReason, EraseWithdrawal, HostOrderHold,
+    ERASE_COMPLETION_PENDING, ErasePendingReason, EraseWithdrawal, HoldCloneCapture, HostOrderHold,
     LEGAL_HOLD_LOG_RETENTION_MONTHS, LEGAL_HOLD_REFUSAL, LIFT_AND_ERASE_PROMPT,
     LIFT_AND_ERASE_TITLE, LegalHold, LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind,
     LegalHoldKind, LegalHoldMaintenance, LegalHoldReason, LegalHoldTarget, LegalHoldUseLimit,

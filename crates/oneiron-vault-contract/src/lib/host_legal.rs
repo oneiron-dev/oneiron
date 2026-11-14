@@ -46,6 +46,12 @@ pub enum CaptureScope {
     /// must be a stored MESSAGE row; it is copied with its document rows and
     /// its outgoing edge rows. Messages stored later are never included.
     Messages(Vec<[u8; 16]>),
+    /// Exact stored records of any type, strictly increasing ids, each with
+    /// its document rows, its outgoing edge rows and its revision ledger
+    /// rows, copied as stored; a MESSAGE also carries its result body as
+    /// `Messages` does. Only an owner hold names it; a host request never
+    /// does, and one that decodes it is refused at the host channel.
+    Records(Vec<[u8; 16]>),
     /// New on-record messages, the order's explicit prospective permission:
     /// each new base MESSAGE row the selector covers is sealed to this order
     /// when it lands, while the order stands and before its `ends_at`. No
@@ -131,6 +137,7 @@ impl CaptureScope {
             Self::GateDecisions(ids) => ids.binary_search(decision).is_ok(),
             Self::LiveSession(_)
             | Self::Messages(_)
+            | Self::Records(_)
             | Self::ProspectiveMessages(_)
             | Self::ArtifactMessages(_) => false,
         }
@@ -161,6 +168,13 @@ impl CaptureScope {
                     return Err(invalid("legal capture message order"));
                 }
                 out.write_all(&[4])?;
+                write_ids(out, ids)
+            }
+            Self::Records(ids) => {
+                if !ids.windows(2).all(|pair| pair[0] < pair[1]) {
+                    return Err(invalid("legal capture record order"));
+                }
+                out.write_all(&[7])?;
                 write_ids(out, ids)
             }
             Self::ProspectiveMessages(MessageSelector::Vault) => out.write_all(&[5, 1]),
@@ -218,6 +232,10 @@ impl CaptureScope {
                 1 => Ok(Self::ProspectiveMessages(MessageSelector::Vault)),
                 _ => Err(invalid("legal capture message selector")),
             },
+            7 => Ok(Self::Records(read_ids(
+                input,
+                "legal capture record order",
+            )?)),
             6 => {
                 let artifact = ArtifactIdentity {
                     vault_id: read_array(input)?,
@@ -531,6 +549,13 @@ pub enum CaptureExtent {
     /// frontiers, then each frontier's reverse identity naming it) and the
     /// result body it still holds (component 11), in one source snapshot.
     Messages,
+    /// The selected stored records of any type, in id order and the
+    /// `Messages` extent's per-record order: row 8, document 9, edges 10,
+    /// ledger 12, then the result body 11 when the record is a MESSAGE
+    /// whose attachment still holds it. Only an owner's hold writes it, to
+    /// its own hold store; a host capture never carries it. `messages`
+    /// counts the copied records.
+    Records,
     /// One batch of a prospective order, in ordinal order: each new MESSAGE
     /// row sealed when it landed (component 8), and each outgoing edge row
     /// its birth batch wrote, sealed at that batch's end under the row's
@@ -577,7 +602,7 @@ pub struct CaptureSummary {
     pub live_bodies: u64,
     /// Selected messages copied; zero for gate and live-session captures.
     /// In a prospective batch, the sealed message rows it carries (edge rows
-    /// not counted).
+    /// not counted). In a `Records` capture, the records copied.
     pub messages: u64,
     /// A prospective batch's first outbox ordinal; zero otherwise.
     pub batch_first_ordinal: u64,

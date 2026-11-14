@@ -103,6 +103,12 @@ pub enum SlotKind {
     /// process in its own store namespace. The order id belongs here, never in
     /// the slot's real host install id. No exported or ordinary-vault copy.
     LegalCloneOrder([u8; 16]),
+    /// The install-level key of one vault's owner-hold sealed copies: it
+    /// wraps each hold's own key, so the copies outlive a full vault erase.
+    /// Filed under the all-zero install, no machine's id, so the vault id
+    /// alone names it; no vault erase, delete, key retirement or forget
+    /// path deletes it.
+    LegalHoldStore,
 }
 
 impl SlotKind {
@@ -117,6 +123,7 @@ impl SlotKind {
             Self::HostRoot => "host-root",
             Self::HostIssuerSeed => "host-issuer-seed",
             Self::OwnerSigning => "owner-signing",
+            Self::LegalHoldStore => "legal-hold-store",
             Self::KitPiece(slot) => return slot.label(),
             Self::LegalCloneOrder(order) => {
                 let mut label = String::from("legal-clone-order-");

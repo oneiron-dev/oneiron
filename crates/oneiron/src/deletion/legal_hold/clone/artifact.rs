@@ -159,7 +159,7 @@ pub(super) fn capture(
 /// when the body stays uncaptured.
 fn result_body(
     read: &mut ArtifactRead<'_>,
-    collector: &mut Collector<'_>,
+    collector: &mut Collector<'_, UnixStream>,
     id: &[u8; 16],
     row: &[u8],
     revision: [u8; 32],

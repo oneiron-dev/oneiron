@@ -19,7 +19,7 @@
 //! owner reads a host order's rows through the one permitted view
 //! (`LegalHold::owner_may_see`), never a copy.
 
-mod events;
+pub(crate) mod events;
 mod notice;
 mod pending;
 mod settlement;
@@ -657,6 +657,7 @@ pub(crate) fn set_partition_hold_in_txn(
                 lifted_at: None,
                 owner_told: true,
                 requires_non_use: false,
+                clone_captures: Vec::new(),
             };
             put_hold_in_txn(dbs, txn, &hold)?;
             log_in_txn(

@@ -5,17 +5,44 @@ use std::io::{self, Read, Write};
 use getrandom::SysRng;
 use oneiron_crypto::HybridPublicKey;
 use oneiron_crypto::legal_clone::{self, CaptureBinding, SourceComponent};
+#[cfg(unix)]
+use oneiron_vault_contract::host_legal::CaptureAck;
 use oneiron_vault_contract::host_legal::{
-    CaptureAck, CaptureExtent, CaptureRequest, CaptureSource, CaptureSummary, FrameHeader,
-    FrameKind,
+    CaptureExtent, CaptureRequest, CaptureSource, CaptureSummary, FrameHeader, FrameKind,
 };
 use zeroize::Zeroizing;
 
 use crate::deletion::legal_hold::prospective::{crypto_error, seal_frames};
 use crate::error::{Error, Result};
 
-pub(super) struct Collector<'stream> {
-    stream: &'stream mut std::os::unix::net::UnixStream,
+/// Where a capture streams its sealed frames, and how it completes
+/// them after the Ready frame.
+pub(super) trait CaptureSink: Write {
+    /// The exact completion after the Ready frame: on a socket, the flush
+    /// and the host's acknowledgement of the exact request and transcript.
+    fn complete(&mut self, request_digest: &[u8; 32], transcript: &[u8; 32]) -> Result<()>;
+}
+
+#[cfg(unix)]
+impl CaptureSink for std::os::unix::net::UnixStream {
+    /// Flushes, reads the host's acknowledgement and checks both digests,
+    /// exactly as a host capture always has.
+    fn complete(&mut self, request_digest: &[u8; 32], transcript: &[u8; 32]) -> Result<()> {
+        self.flush()?;
+        let ack = CaptureAck::read_from(self)?;
+        if ack.request != *request_digest || ack.transcript != *transcript {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "legal capture acknowledgment binding",
+            )
+            .into());
+        }
+        Ok(())
+    }
+}
+
+pub(super) struct Collector<'stream, S: CaptureSink> {
+    stream: &'stream mut S,
     public: &'stream HybridPublicKey,
     request: &'stream CaptureRequest,
     binding: CaptureBinding,
@@ -40,11 +67,11 @@ pub(super) struct SummaryCounts {
     pub(super) final_next_ordinal: Option<u64>,
 }
 
-impl<'stream> Collector<'stream> {
+impl<'stream, S: CaptureSink> Collector<'stream, S> {
     /// The caller already holds its actual source pin. Registration is not
     /// sufficient to emit Accepted.
     pub(super) fn pinned(
-        stream: &'stream mut std::os::unix::net::UnixStream,
+        stream: &'stream mut S,
         public: &'stream HybridPublicKey,
         request: &'stream CaptureRequest,
     ) -> Result<Self> {
@@ -109,6 +136,7 @@ impl<'stream> Collector<'stream> {
     /// One component a prospective order's outbox already holds as its exact
     /// frames, sealed when its message landed. Its descriptor digest stands
     /// in the batch's descriptor hash.
+    #[cfg(unix)]
     pub(super) fn stored_component(
         &mut self,
         frames: &[u8],
@@ -137,6 +165,7 @@ impl<'stream> Collector<'stream> {
 
     /// This acknowledges the exact declared source extent, not an inferred
     /// whole order. The source owner must not wipe an uncaptured extent.
+    #[cfg(unix)]
     pub(super) fn finish(
         self,
         decisions: u64,
@@ -145,7 +174,7 @@ impl<'stream> Collector<'stream> {
         messages: u64,
         extent: CaptureExtent,
         check: impl Fn() -> Result<()>,
-    ) -> Result<()> {
+    ) -> Result<[u8; 32]> {
         self.finish_counted(
             SummaryCounts {
                 decisions,
@@ -167,7 +196,7 @@ impl<'stream> Collector<'stream> {
         counts: SummaryCounts,
         extent: CaptureExtent,
         check: impl Fn() -> Result<()>,
-    ) -> Result<()> {
+    ) -> Result<[u8; 32]> {
         check()?;
         let summary = CaptureSummary {
             order: self.binding.order,
@@ -204,17 +233,9 @@ impl<'stream> Collector<'stream> {
             .bytes(),
         )?;
         self.stream.write_all(&digest)?;
-        self.stream.flush()?;
-        let ack = CaptureAck::read_from(self.stream)?;
+        self.stream.complete(&self.request_digest, &digest)?;
         check()?;
-        if ack.request != self.request_digest || ack.transcript != digest {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "legal capture acknowledgment binding",
-            )
-            .into());
-        }
-        Ok(())
+        Ok(digest)
     }
 
     fn frame(&mut self, kind: FrameKind, member: u64, part: u64, payload: &[u8]) -> Result<()> {
@@ -230,7 +251,7 @@ impl<'stream> Collector<'stream> {
 }
 
 fn write_frame(
-    stream: &mut std::os::unix::net::UnixStream,
+    stream: &mut impl Write,
     transcript: &mut blake3::Hasher,
     kind: FrameKind,
     member: u64,

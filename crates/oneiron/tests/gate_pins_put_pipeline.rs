@@ -52,9 +52,11 @@ const fn range(at: u64) -> TimeRange {
 
 /// An owned vault with a device keystore and install signing, its embedded
 /// owner PERSON and that owner's proof, as the owner-verb fixtures open one
-/// (`tests/agent_definition_proposed_change.rs`).
+/// (`tests/agent_definition_proposed_change.rs`), and a legal hold store
+/// outside the vault directory, where an owner's hold writes its sealed copy.
 struct Owned {
     _dir: tempfile::TempDir,
+    _holds: tempfile::TempDir,
     vault: Vault,
     actor: EntityId,
     owner: AuthenticatedOwner,
@@ -62,7 +64,9 @@ struct Owned {
 
 fn owned() -> TestResult<Owned> {
     let dir = tempfile::tempdir()?;
-    let vault = Vault::open_owned(dir.path(), VaultConfig::device()).map_err(at("open owned"))?;
+    let holds = tempfile::tempdir()?;
+    let config = VaultConfig::device().with_legal_hold_store(holds.path().to_path_buf());
+    let vault = Vault::open_owned(dir.path(), config).map_err(at("open owned"))?;
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
     vault
         .prepare_install_signing()
@@ -75,6 +79,7 @@ fn owned() -> TestResult<Owned> {
         .map_err(at("owner proof"))?;
     Ok(Owned {
         _dir: dir,
+        _holds: holds,
         vault,
         actor,
         owner,

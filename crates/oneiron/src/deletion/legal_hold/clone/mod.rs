@@ -2,32 +2,48 @@
 //! key custody, persistence, legal access audit and destruction. No clone is a
 //! Vault, and no ordinary owner/member/agent surface routes to this channel.
 
+#[cfg(unix)]
 mod artifact;
+#[cfg(unix)]
 mod auth;
 mod collector;
+pub(super) mod legal_hold_store;
+#[cfg(unix)]
 mod live;
 mod messages;
+#[cfg(unix)]
 mod outbox;
 
+#[cfg(unix)]
 pub use auth::{HostLegalChannel, HostLegalConnection, HostLegalConnectionRole};
+#[cfg(unix)]
 pub(crate) use live::HostLegalCaptures;
 
+#[cfg(unix)]
 use std::io::{self, Write};
+#[cfg(unix)]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(unix)]
 use std::time::Duration;
 
+#[cfg(unix)]
 use oneiron_crypto::HybridPublicKey;
 use oneiron_crypto::legal_clone::SourceComponent;
+#[cfg(unix)]
 use oneiron_vault_contract::host_legal::{
     CaptureExtent, CaptureRequest, CaptureScope, CaptureSource, HostLegalRequest, SourceHello,
 };
 
+#[cfg(unix)]
 use crate::error::Result;
 use crate::store::GateCloneComponent;
+#[cfg(unix)]
 use crate::{EntityId, Vault};
 
+#[cfg(unix)]
 use collector::Collector;
 
+#[cfg(unix)]
 impl HostLegalConnection {
     /// Run on the managed blocking executor. At its stop trigger teardown
     /// cancels the private live registry and shuts every accepted stream but
@@ -56,6 +72,11 @@ impl HostLegalConnection {
                 "legal capture source identity",
             )
             .into());
+        }
+        // Only an owner's hold names stored records; a host request never
+        // does, so one that decodes them is refused here.
+        if matches!(&request.scope, CaptureScope::Records(_)) {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "legal capture scope").into());
         }
         let public = HybridPublicKey::from_bytes(&request.recipient)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "legal capture recipient"))?;
@@ -163,6 +184,7 @@ impl HostLegalConnection {
     }
 }
 
+#[cfg(unix)]
 fn check(vault: &Vault, request: &CaptureRequest, cancelled: &AtomicBool) -> Result<()> {
     if cancelled.load(Ordering::Acquire) {
         return Err(io::Error::new(io::ErrorKind::Interrupted, "legal capture stopped").into());
@@ -173,7 +195,9 @@ fn check(vault: &Vault, request: &CaptureRequest, cancelled: &AtomicBool) -> Res
     Ok(())
 }
 
-fn source_component(component: GateCloneComponent) -> SourceComponent {
+/// The clone component a gate source component streams as, on the host
+/// channel and in an owner's hold store alike.
+pub(super) fn source_component(component: GateCloneComponent) -> SourceComponent {
     match component {
         GateCloneComponent::StoredPrimary => SourceComponent::StoredLedger,
         GateCloneComponent::OpenedPrimary => SourceComponent::OpenedMessagePack,

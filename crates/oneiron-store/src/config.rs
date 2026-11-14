@@ -209,6 +209,10 @@ pub struct VaultConfig {
     /// vault's owner to choose checkpoint roots without the host. Never an
     /// owner setting or a request credential; false in both presets.
     pub allow_host_checkpoint_opt_out: bool,
+    /// Where an owner's legal holds keep their sealed copies: outside the
+    /// vault directory, so a vault erase never reaches them. `None` in both
+    /// presets; placing an owner's hold without one is refused.
+    pub legal_hold_store: Option<PathBuf>,
 }
 
 /// Scoring-only BM25F rank profile (ARCH-0031 §bm25f, ARCH-0019 D3).
@@ -394,6 +398,7 @@ impl VaultConfig {
             page_seal: None,
             checkpoint_host_holds: crate::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
             allow_host_checkpoint_opt_out: false,
+            legal_hold_store: None,
         }
     }
 
@@ -431,6 +436,7 @@ impl VaultConfig {
             page_seal: None,
             checkpoint_host_holds: crate::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
             allow_host_checkpoint_opt_out: false,
+            legal_hold_store: None,
         }
     }
 
@@ -449,6 +455,16 @@ impl VaultConfig {
             }
             None => crate::checkpoint_host_recipient::HostHoldsSealing::RecipientMissing,
         };
+        self
+    }
+
+    /// This config, its owner-hold sealed copies kept under `store`: a
+    /// directory outside the vault directory, so a vault erase never
+    /// reaches them. Set by the host; placing an owner's hold without one
+    /// is refused.
+    #[must_use]
+    pub fn with_legal_hold_store(mut self, store: PathBuf) -> Self {
+        self.legal_hold_store = Some(store);
         self
     }
 }
