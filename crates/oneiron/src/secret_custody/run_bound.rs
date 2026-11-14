@@ -467,6 +467,11 @@ impl Vault {
                 crate::store::secret_handle_purpose::erase_secret_handle_purpose_in_txn(
                     self, wtxn, &entry.id,
                 )?;
+                crate::store::secret_payment_marks::erase_secret_payment_mark_in_txn(
+                    &self.store,
+                    wtxn,
+                    &entry.id,
+                )?;
                 // A run-bound name names its one record and is never
                 // reclaimed: its high-water goes with it.
                 NAME_INDEX.delete(&self.store, wtxn, name)?;
@@ -517,6 +522,11 @@ impl Vault {
                     )?;
                     crate::store::secret_handle_purpose::erase_secret_handle_purpose_in_txn(
                         self, wtxn, &entry.id,
+                    )?;
+                    crate::store::secret_payment_marks::erase_secret_payment_mark_in_txn(
+                        &self.store,
+                        wtxn,
+                        &entry.id,
                     )?;
                     // A run-bound name names its one record and is never
                     // reclaimed: its high-water goes with it.

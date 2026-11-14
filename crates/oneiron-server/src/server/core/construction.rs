@@ -7,8 +7,8 @@ use super::{
     McpConnectorActorRegistry, McpCredentialHashKey, Mutex, NEXT_LIFECYCLE_SESSION_ID, Ordering,
     ROOT_LEASES_MAP, SERVER_USER_ID, SyncEngineContext, SyncServer, SyncServerConfig, UsageLedger,
     WindowManager, add_window_to_root, broadcast, host_root_secret, init_window_list,
-    insert_root_schema_version, live_rows, mcp_registry_hash_key, read_window_list, server_state,
-    spawn_local_change_producer,
+    insert_root_schema_version, live_rows, mcp_registry_hash_key, payment_credential_release,
+    read_window_list, server_state, spawn_local_change_producer,
 };
 
 impl SyncServer {
@@ -143,6 +143,7 @@ impl SyncServer {
 
         let wire_telemetry = crate::wire_telemetry::WireTelemetry::new(vault.clone());
         live_rows(&vault, &config.limits, wire_telemetry.limit_questions());
+        payment_credential_release(&vault, config.release_payment_credentials_unfenced);
         let retained = Arc::new(crate::byte_line::ByteLine::new(
             crate::wire_telemetry::LimitRow::RetainedMemoryBytes,
             usize::try_from(config.limits.retained_memory_bytes).unwrap_or(usize::MAX),

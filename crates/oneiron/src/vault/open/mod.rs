@@ -633,6 +633,7 @@ impl Vault {
             )),
             config,
             tagging_arm: Default::default(),
+            payment_credential_release: Default::default(),
             analyzer,
             writer_lease: None,
             secret_use_t1_operations: Default::default(),
