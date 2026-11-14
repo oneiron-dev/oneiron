@@ -5,7 +5,6 @@ use crate::access_grant::decode_live_access_grant_body;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::error::Result;
-use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use std::collections::BTreeSet;
@@ -34,8 +33,10 @@ impl Vault {
     /// for, using the same persisted authorization clock as
     /// `companion_profile_access_grant`. `None` is a person-wide grant.
     /// Deleted grants are skipped; malformed live grants still fail closed.
-    /// Every grant is read: past the threshold row the read raises the
-    /// owner's check and reads on (rule 5).
+    /// The read takes the grants the companion grant index names for this
+    /// principal and PERSON (census L3-28E). Without a complete index it
+    /// reads every grant: past the threshold row the read raises the owner's
+    /// check and reads on (rule 5).
     pub fn authorized_companion_profile_facets(
         &self,
         principal_ref: &EntityId,
@@ -50,10 +51,12 @@ impl Vault {
             &[],
         )?;
         let mut facets = BTreeSet::new();
-        for entry in self
-            .store
-            .port_entity_ids_by_type(&txn, ENTITY_TYPE_ACCESS_GRANT, None)?
-        {
+        for entry in crate::access_grant::companion_grant_candidates_in_txn(
+            &self.store,
+            &txn,
+            principal_ref,
+            person_ref,
+        )? {
             count.row();
             let id = entry?;
             let body = match live_entity_row_in_txn(&self.store, &txn, &id)? {
