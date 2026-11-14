@@ -226,7 +226,9 @@ fn compensate(
                 id,
                 EntityId::from_hex(author)?,
                 actor,
-                now,
+                // That inverse takes milliseconds; `now` is the store
+                // clock's Unix seconds.
+                now.saturating_mul(1_000),
             )?;
             let unrestored = reverted
                 .left_closed
@@ -250,7 +252,7 @@ fn compensate(
             {
                 return Ok(None);
             }
-            vault.retract_claim_in_txn_as(txn, &id, now / 1_000, Some(actor))?;
+            vault.retract_claim_in_txn_as(txn, &id, now, Some(actor))?;
             Ok(Some((id.to_hex(), Vec::new())))
         }
         Some(RunInverse::Note(undo)) => crate::note::revert_run_note_in_txn(memory, txn, undo)
