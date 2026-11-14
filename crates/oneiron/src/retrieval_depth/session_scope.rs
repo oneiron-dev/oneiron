@@ -88,12 +88,8 @@ fn hit_in_session_scope(
     {
         return Ok(false);
     }
-    if !scope.document_short_ids.is_empty()
-        && !scope.matches_short_ref(&short_ref_or_hex(scoped.vault(), id)?)
-    {
-        return Ok(false);
-    }
-    Ok(true)
+    Ok(scope.document_short_ids.is_empty()
+        || scope.matches_short_ref(&short_ref_or_hex(scoped.vault(), id)?))
 }
 
 /// Compares a stored `short_id:hash` ref against a caller-supplied one,

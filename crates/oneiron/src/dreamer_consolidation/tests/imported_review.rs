@@ -42,6 +42,7 @@ fn conversation(native_id: &str, messages: Vec<HistoryMessage>) -> HistoryConver
         cwd: None,
         messages,
         skipped: HistorySkips::default(),
+        sharing: None,
     }
 }
 

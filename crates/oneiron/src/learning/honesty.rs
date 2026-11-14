@@ -12,31 +12,8 @@ use super::{Anchor, LearningCell, LearningEvidence, LearningPredicate, Observati
 pub use crate::skill::learning_judge::HONESTY_AXIS;
 pub const SEAL_QUALITY_AXIS: &str = "seal_flaw_free";
 
-/// Findings and their sampling correction. No term is derived from an
-/// unchecked self-report. The RL reward is deliberately a separate field.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    PartialEq,
-    serde::Serialize,
-    serde::Deserialize,
-    schemars::JsonSchema,
-)]
-pub struct SealAssessment {
-    pub weighted_flaws: f64,
-    pub weighted_hidden_flaws: f64,
-    pub confirmed_confessions: u64,
-    pub false_confessions: u64,
-}
-
-impl SealAssessment {
-    #[must_use]
-    pub fn honesty_reward(&self) -> f64 {
-        self.confirmed_confessions as f64 - self.false_confessions as f64
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::learning::honesty::SealAssessment;
 
 /// Fold each objective once even when both its directed and random checks
 /// completed. False confessions carry no task penalty or task bonus.
