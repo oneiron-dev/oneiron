@@ -24,10 +24,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `examples/write_mix_bench.rs` | src | m | — | — | Agent write-mix bench for the vault's single writer (OF-536 group commit) |
 | `src/access_grant/codec.rs` | src | m | 2 fn · 1 const · 1 re-export · 26 crate-vis | — | Pinned AccessGrant body/scope key sets and fail-closed MessagePack codec |
 | `src/access_grant/companion_admission.rs` | src | s | 1 struct · 2 enum · 2 fn · 1 const | CompanionGrantBounds, CompanionGrantIssuer, CompanionGrantOutcome | The companion grant writer that carries its issuer's bounds (FIX 8140) |
+| `src/access_grant/companion_index.rs` | src | m | 8 crate-vis | — | The companion profile grants by principal and PERSON (ARCH-0044 H424, census L3-28E) |
 | `src/access_grant/context.rs` | src | L | 3 struct · 3 fn · 11 crate-vis | AccessContext, AccessLimited, GrantedData | Relationship read authority built from live grants and stored membership evidence |
 | `src/access_grant/delegation.rs` | src | s | 2 const · 6 crate-vis | — | What a credential may delegate of an access grant (FIX 8140, 1379) |
 | `src/access_grant/erase.rs` | src | s | 1 crate-vis | — | Scrub an erased principal out of non-brief ACCESS_GRANT bodies (FIX 4980) |
-| `src/access_grant/mod.rs` | src | s | 6 re-export · 7 crate-vis | — | AccessGrant control-plane record substrate |
+| `src/access_grant/mod.rs` | src | s | 6 re-export · 8 crate-vis | — | AccessGrant control-plane record substrate |
 | `src/access_grant/owner_act.rs` | src | s | 5 crate-vis | — | The owner's typed grant/revoke acts on connector witness-read access grants (FIX 10980) |
 | `src/access_grant/record.rs` | src | m | 2 struct · 3 enum · 19 fn | AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus, CalendarAccessGrantRow | AccessGrant record and scope, capability, and status enums |
 | `src/access_grant/request.rs` | src | m | 2 struct · 1 enum · 8 fn · 1 re-export · 2 crate-vis | AccessRequest, AccessRequestResponder, AddressedAnswer | Durable request/response lifecycle |
@@ -460,10 +461,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/machine_write/successor.rs` | src | s | 1 crate-vis | — | Re-signing a MACHINE claim's successor with its writer's retained signer |
 | `src/authority/managed_owner_check.rs` | src | s | 1 enum · 1 trait · 2 fn · 5 crate-vis | ManagedOwnerCheck, ManagedOwnerCheckError | The live-owner check a managed vault's attested owner's queued work runs under (FIX 11090) |
 | `src/authority/membership_execution.rs` | src | s | 2 crate-vis | — | The signed record of a shared-vault membership change no host issuer could sign (FIX 12335, Engine 13:13… |
-| `src/authority/mesh_machine.rs` | src | m | 1 struct · 7 fn · 1 const · 3 re-export | MeshMachineAddressEnvelope | Local host-authorized mesh binding and grants, distinct from address hints |
+| `src/authority/mesh_machine.rs` | src | m | 1 struct · 7 fn · 1 const · 3 re-export · 1 crate-vis | MeshMachineAddressEnvelope | Local host-authorized mesh binding and grants, distinct from address hints |
 | `src/authority/mesh_machine/doors.rs` | src | m | 8 fn · 1 re-export · 3 crate-vis | — | Public mesh setup inputs and owner-bound doors over the host's existing binding, ALPN and terminal… |
+| `src/authority/mesh_machine/endpoint_index.rs` | src | s | 8 crate-vis | — | The MACHINE rows by the endpoint key their mesh address names (ARCH-0044 H336, census L3-28B) |
 | `src/authority/mesh_machine/enrolment.rs` | src | s | 2 enum · 1 fn · 2 crate-vis | MeshBindRefusal, MeshEnrolment | The mesh binding a machine link's redemption makes for the machine it enrols (FIX 3374, L02 04:5x) |
-| `src/authority/mod.rs` | src | m | 2 mod · 76 re-export · 59 crate-vis | — | AUTHORITY_LOG record substrate |
+| `src/authority/mod.rs` | src | m | 2 mod · 76 re-export · 60 crate-vis | — | AUTHORITY_LOG record substrate |
 | `src/authority/oauth_server/access_slips.rs` | src | m | 5 crate-vis | — | The native capability slip the server holds for each access token (FIX 4902 slice C; ARCH-0028:91 "The OAuth… |
 | `src/authority/oauth_server/authorization.rs` | src | m | 3 struct · 1 enum · 2 fn · 3 crate-vis | OAuthAuthorizationAllowed, OAuthAuthorizationPending, OAuthAuthorizationStart, OAuthAuthorizationStatus | One sign-in's authorization request: recorded at `/oauth/authorize` with one inbox ask to the vault owner… |
 | `src/authority/oauth_server/clients.rs` | src | m | 2 struct · 2 enum · 10 fn · 1 crate-vis | OAuthClientRecord, OAuthClientRegistration, OAuthClientSource, OAuthRegistrationRefusal | The apps that may sign in, in one table: ones registered at `/oauth/register` (RFC 7591), and ones known by… |
@@ -7668,6 +7670,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/code_view_fork.rs` | src | s | 1 struct · 4 fn | ViewForkEdit | Door for `tests/code_view_edit.rs` (row 6 WORKING-VIEW-EDIT): a tested revision of a repo's files, built… |
 | `src/test_doors/comm_late_stop.rs` | src | s | 5 fn | — | Door for `tests/comm_late_stop_after_clear.rs` (COMM-STOP-LATE-ARRIVAL): a STOP that arrives as a peer's… |
 | `src/test_doors/comm_thread_member_claim_reads.rs` | src | s | 1 fn | — | Door for `tests/comm_thread_member_claim_reads.rs` (L6-23, ARCH-0057 membership-history scans): the claim… |
+| `src/test_doors/companion_grant_index.rs` | src | s | 6 fn | — | Doors for `tests/companion_grant_index.rs` (census L3-28E): the grants the companion grant index names for… |
 | `src/test_doors/connector_key_suspend.rs` | src | s | 1 fn | — | Door for `tests/connector_key_suspend_admission.rs` (FIX 22392): the shared suspend writer, as a budget… |
 | `src/test_doors/consolidation.rs` | src | m | 1 struct · 3 fn · 4 crate-vis | UnboundPass | One Dreamer consolidation pass, for integration tests (S63E live leak 1): a witnessed TURN whose words are a… |
 | `src/test_doors/credit_decay_fit.rs` | src | s | 2 fn | — | Doors to the `credit_decay` fit (FIX-LIST CREDIT-DECAY-FIT-DROPS-OWNER-AND-WORLD-ANCHORS): one credited… |
@@ -7704,9 +7707,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mail_counterparty.rs` | src | m | 1 struct · 2 fn | LandedSpeakers | Doors for `tests/mail_counterparty_author.rs` and `tests/mail_sender_person.rs` (fix list row 15412): land… |
 | `src/test_doors/mail_landing.rs` | src | s | 2 fn | — | Doors for `tests/mail_late_address_headers.rs` (fix list row 20852): the address headers an IMAP or mbox… |
 | `src/test_doors/membership.rs` | src | s | 1 fn | — | A shared vault's member grants, for integration tests (primitive A, slice 6.4f: the Steward arm of the run… |
+| `src/test_doors/mesh_machine_endpoint_index.rs` | src | s | 1 enum · 5 fn | IndexedEndpoint | Doors for `tests/mesh_machine_endpoint_index.rs` (census L3-28B): the endpoint lookup as the MACHINE… |
 | `src/test_doors/meso_extraction_width.rs` | src | m | 1 struct · 1 enum · 1 fn | ExtractionWidth, PriorScenario | Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one… |
 | `src/test_doors/microsoft_token.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ExchangedMicrosoftGrant | Door for `tests/microsoft365_oauth.rs` and `tests/microsoft365_refresh_write_back.rs`… |
-| `src/test_doors/mod.rs` | src | s | 1 fn · 108 mod · 1 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | s | 1 fn · 110 mod · 1 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/nightly.rs` | src | s | 2 struct · 1 enum · 2 fn | PlannedThing, SpentSpan, SpentSpanKind | The nightly plan's things, for integration tests (census L2-04): witnessed TURNs whose sieve spans are… |
 | `src/test_doors/note_bm25f_repair.rs` | src | s | 1 fn | — | FIX 7789: lose one NOTE posting, then run the real deindex self-heal |
@@ -8480,6 +8484,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/commitment_instance_withdrawal.rs` | test | s | — | — | FIX 22383 (COMMITMENT-INSTANCE): a commitment instance withdrawn by a generic retraction neither wakes nor… |
 | `tests/commitment_lapse_writer.rs` | test | s | — | — | L9-42 (ARCH-0005a #housekeeping-open; Engine ruling L9-42-LAPSE-WRITER = A): the housekeeping pass lapses an… |
 | `tests/common/mod.rs` | test | s | 7 crate-vis | — | Shared fixture helpers for `oneiron` integration tests |
+| `tests/companion_grant_index.rs` | test | m | — | — | Census L3-28E (ARCH-0044 H424): the companion grant reads (the persona list, the profile admission and the… |
 | `tests/connector_key_suspend_admission.rs` | test | s | — | — | FIX 22392 CONNECTOR-KEY: the one writer of a connector key's suspension admits Active -> Suspended alone |
 | `tests/consent_guard_compilefail/a_owner_stamp_struct_literal_private_fields.rs` | test | s | — | — | (a) A guard holding a `ConsentProposal` must not be able to struct-literal an `AuthenticatedOwner`: every… |
 | `tests/consent_guard_compilefail/b_no_proposal_to_owner_conversion.rs` | test | s | — | — | (b) There is no `From<ConsentProposal> for AuthenticatedOwner`: a proposal cannot be converted into the… |
@@ -8673,6 +8678,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/mail_late_address_headers.rs` | test | s | — | — | Fix list row 20852: an IMAP or mbox landing reads From, Reply-To, To and Cc from the message's whole header… |
 | `tests/mail_sender_person.rs` | test | s | — | — | Fix list row 15412, slice 2: a received mail MESSAGE names the PERSON its source says sent it |
 | `tests/merged_contact_stop_view.rs` | test | s | — | — | A key whose PERSON was merged into a different key keeps showing the STOP it said before the merge on its… |
+| `tests/mesh_machine_endpoint_index.rs` | test | s | — | — | Census L3-28B (ARCH-0044 H336): the endpoint lookup is served from a derived endpoint-to-MACHINE index… |
+| `tests/mesh_machine_endpoint_lookup.rs` | test | s | — | — | Census L3-28B (ARCH-0044 H336): the lookup any endpoint key can make used to walk every MACHINE row's body… |
 | `tests/microsoft365_connection_refresh.rs` | test | s | — | — | The Microsoft 365 connection refreshes the grant the Microsoft code exchange stores, and a Microsoft grant… |
 | `tests/microsoft365_oauth.rs` | test | m | — | — | Microsoft's code exchange and refresh ([MICROSOFT365-OAUTH-EXCHANGE]): what each posts to the tenant's token… |
 | `tests/microsoft365_refresh_write_back.rs` | test | m | — | — | The engine stores Microsoft's newer refresh token in place of the grant a credential door read… |
