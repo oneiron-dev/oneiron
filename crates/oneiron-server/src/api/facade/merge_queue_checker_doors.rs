@@ -6,6 +6,7 @@
 //! own principal, whose one Grant the engine door judges.
 use std::sync::Arc;
 
+use oneiron::memory::code_doors::{CodeCheckRecordsRequest, CodeCheckRecordsView};
 use oneiron::memory::merge_queue_doors::*;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use oneiron::runtime_hooks::InvocationId;
@@ -83,6 +84,20 @@ pub(crate) async fn vault_code_checks_get(
         auth,
         "vault.code.checks.get",
         move |memory, owner| memory.merge_queue_check_receipt_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_code_checks_records(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeCheckRecordsRequest,
+) -> Listed<CodeCheckRecordsView> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.checks.records",
+        move |memory, owner| memory.code_check_records_as(owner, input),
     )
     .await
 }

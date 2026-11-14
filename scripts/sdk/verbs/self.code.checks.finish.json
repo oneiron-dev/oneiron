@@ -1,0 +1,9 @@
+{
+  "name": "self.code.checks.finish",
+  "input": "crate::memory::repo_doors::RepoCheckFinishInput",
+  "output": "crate::memory::repo_doors::RepoCheckFinishOutput",
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "context": "run",
+  "effect": "RepoChecksFinish"
+}

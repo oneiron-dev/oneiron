@@ -285,6 +285,7 @@ pub mod blob_artifact;
 pub mod browser_library;
 pub mod build_cache;
 pub use oneiron_store::bundle_generations;
+pub mod check_record;
 pub mod checkout;
 pub mod code_artifact;
 pub mod code_document;

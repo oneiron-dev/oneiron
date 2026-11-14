@@ -243,7 +243,9 @@ pub fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> 
         | RunVerb::SelfCodeMergeQueueEnqueue
         | RunVerb::SelfCodeCheckoutBind
         | RunVerb::SelfCodeExport
-        | RunVerb::SelfCodeSymbolsObserve) => SelfCall::Repo(Box::new(
+        | RunVerb::SelfCodeSymbolsObserve
+        | RunVerb::SelfCodeChecksStart
+        | RunVerb::SelfCodeChecksFinish) => SelfCall::Repo(Box::new(
             super::RepoRunCall::decode(verb, input)?
                 .ok_or_else(|| failure("invalid typed component arguments"))?,
         )),

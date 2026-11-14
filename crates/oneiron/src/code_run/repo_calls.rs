@@ -10,12 +10,12 @@ use super::SelfEffect;
 use crate::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::repo_doors::{
-    RepoCheckoutBindInput, RepoExportInput, RepoMergeQueueEnqueueInput, RepoMergeQueueObserveInput,
-    RepoProposalResolveInput, RepoProposalSubmitInput, RepoSnapshotsGetInput,
-    RepoSnapshotsIngestInput, RepoSnapshotsReadInput, RepoSymbolsDeclareInput,
-    RepoSymbolsDefinitionsInput, RepoSymbolsNeighborsInput, RepoSymbolsObserveInput,
-    RepoSymbolsReleaseInput, RepoSymbolsRenewInput, RepoViewsGetInput, RepoViewsReadInput,
-    RepoWorkOpenInput,
+    RepoCheckFinishInput, RepoCheckStartInput, RepoCheckoutBindInput, RepoExportInput,
+    RepoMergeQueueEnqueueInput, RepoMergeQueueObserveInput, RepoProposalResolveInput,
+    RepoProposalSubmitInput, RepoSnapshotsGetInput, RepoSnapshotsIngestInput,
+    RepoSnapshotsReadInput, RepoSymbolsDeclareInput, RepoSymbolsDefinitionsInput,
+    RepoSymbolsNeighborsInput, RepoSymbolsObserveInput, RepoSymbolsReleaseInput,
+    RepoSymbolsRenewInput, RepoViewsGetInput, RepoViewsReadInput, RepoWorkOpenInput,
 };
 use crate::task_verb::sdk::RunVerb;
 
@@ -60,6 +60,10 @@ pub enum RepoRunCall {
     Export(RepoExportInput),
     /// `self.code.symbols.observe` (NO-DOOR SYMBOL-LEASE-OBSERVATION).
     SymbolsObserve(RepoSymbolsObserveInput),
+    /// `self.code.checks.start` (FIX [L4-30-CHECK-REUSE-RECORD]).
+    ChecksStart(RepoCheckStartInput),
+    /// `self.code.checks.finish` (FIX [L4-30-CHECK-REUSE-RECORD]).
+    ChecksFinish(RepoCheckFinishInput),
 }
 
 impl RepoRunCall {
@@ -85,6 +89,8 @@ impl RepoRunCall {
             Self::CheckoutBind(_) => SelfEffect::RepoCheckoutBind,
             Self::Export(_) => SelfEffect::RepoExport,
             Self::SymbolsObserve(_) => SelfEffect::RepoSymbolsObserve,
+            Self::ChecksStart(_) => SelfEffect::RepoChecksStart,
+            Self::ChecksFinish(_) => SelfEffect::RepoChecksFinish,
         }
     }
 
@@ -116,7 +122,9 @@ impl RepoRunCall {
             | Self::SnapshotsIngest(_)
             | Self::WorkOpen(_)
             | Self::CheckoutBind(_)
-            | Self::Export(_) => None,
+            | Self::Export(_)
+            | Self::ChecksStart(_)
+            | Self::ChecksFinish(_) => None,
         }
     }
 
@@ -142,6 +150,8 @@ impl RepoRunCall {
             RunVerb::SelfCodeCheckoutBind => Self::CheckoutBind(typed(input)?),
             RunVerb::SelfCodeExport => Self::Export(typed(input)?),
             RunVerb::SelfCodeSymbolsObserve => Self::SymbolsObserve(typed(input)?),
+            RunVerb::SelfCodeChecksStart => Self::ChecksStart(typed(input)?),
+            RunVerb::SelfCodeChecksFinish => Self::ChecksFinish(typed(input)?),
             _ => return Ok(None),
         }))
     }
@@ -169,12 +179,14 @@ impl RepoRunCall {
             Self::CheckoutBind(_) => Self::CheckoutBind(retyped(args)?),
             Self::Export(_) => Self::Export(retyped(args)?),
             Self::SymbolsObserve(_) => Self::SymbolsObserve(retyped(args)?),
+            Self::ChecksStart(_) => Self::ChecksStart(retyped(args)?),
+            Self::ChecksFinish(_) => Self::ChecksFinish(retyped(args)?),
         })
     }
 }
 
 /// Every run repo effect, in row order.
-const REPO_EFFECTS: [SelfEffect; 18] = [
+const REPO_EFFECTS: [SelfEffect; 20] = [
     SelfEffect::RepoSnapshotsGet,
     SelfEffect::RepoSnapshotsRead,
     SelfEffect::RepoSymbolsDefinitions,
@@ -193,6 +205,8 @@ const REPO_EFFECTS: [SelfEffect; 18] = [
     SelfEffect::RepoCheckoutBind,
     SelfEffect::RepoExport,
     SelfEffect::RepoSymbolsObserve,
+    SelfEffect::RepoChecksStart,
+    SelfEffect::RepoChecksFinish,
 ];
 
 impl SelfEffect {
@@ -219,6 +233,8 @@ impl SelfEffect {
                 | Self::RepoCheckoutBind
                 | Self::RepoExport
                 | Self::RepoSymbolsObserve
+                | Self::RepoChecksStart
+                | Self::RepoChecksFinish
         )
     }
 
@@ -239,6 +255,8 @@ impl SelfEffect {
                 | Self::RepoMergeQueueEnqueue
                 | Self::RepoCheckoutBind
                 | Self::RepoExport
+                | Self::RepoChecksStart
+                | Self::RepoChecksFinish
         )
     }
 
