@@ -51,7 +51,13 @@ pub(crate) fn authorize_share_link_in_txn(
         let fold = vault.authority_fold_readonly_in_txn(txn)?;
         if actor.actor_class() != EdgeActorClass::Human
             || fold.vault_root_is_conflicted()
-            || !crate::authority::actor_binding_is_active(&fold, &actor.entity_ref(), "human")
+            || !crate::authority::actor_binding_is_live_in(
+                &vault.store,
+                txn,
+                &fold,
+                &actor.entity_ref(),
+                "human",
+            )?
         {
             return Err(refused());
         }

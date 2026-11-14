@@ -47,15 +47,25 @@ impl RoomParty {
 }
 
 /// Whether `member` is positively known as the vault owner: the embedded
-/// owner, or a live human owner binding in a rooted vault.
+/// owner, or a live human owner binding in a rooted vault. A deleted owner is
+/// neither (H149; L9-52 (b)): the embedded owner's deleted shell, or a
+/// binding whose PERSON is deleted, names no owner. An embedded owner whose
+/// row was never written still is one, as before.
 pub(crate) fn is_vault_owner(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     fold: &AuthorityFold,
     embedded_owner: EntityId,
     member: &EntityId,
-) -> bool {
-    *member == embedded_owner
-        || (fold.vault_id.is_some()
-            && crate::authority::actor_binding_is_active(fold, member, "human"))
+) -> Result<bool> {
+    if *member == embedded_owner {
+        return Ok(!matches!(
+            crate::vault::live_entity_row_in_txn(&vault.store, txn, member)?,
+            LiveEntityRow::DeletedShell
+        ));
+    }
+    Ok(fold.vault_id.is_some()
+        && crate::authority::actor_binding_is_live_in(&vault.store, txn, fold, member, "human")?)
 }
 
 /// The existing Owner party rule for a positively placed live PERSON,
@@ -77,7 +87,13 @@ pub(crate) fn live_vault_owner_person_in_txn(
     let fold = vault.authority_view_readonly_in_txn(txn)?;
     let owners = crate::policy_model::owners_in_txn(vault, txn).unwrap_or_default();
     Ok(owners.contains(&member)
-        || is_vault_owner(&fold, crate::vault::embedded_owner_actor_id()?, &member))
+        || is_vault_owner(
+            vault,
+            txn,
+            &fold,
+            crate::vault::embedded_owner_actor_id()?,
+            &member,
+        )?)
 }
 
 /// One member's room party with the facts the party alone no longer
@@ -129,7 +145,13 @@ fn room_party_entry_with(
     admits: Option<&dyn Fn(&EntityId) -> Result<bool>>,
     member: EntityId,
 ) -> Result<RoomPartyEntry> {
-    let bound_owner = is_vault_owner(fold, crate::vault::embedded_owner_actor_id()?, &member);
+    let bound_owner = is_vault_owner(
+        vault,
+        txn,
+        fold,
+        crate::vault::embedded_owner_actor_id()?,
+        &member,
+    )?;
     if bound_owner {
         // The embedded/binding owner's entry is fixed (VaultOwner, no
         // roster contact, never agent-side), as the classifier's first arm
@@ -164,7 +186,7 @@ fn room_party_entry_with(
         _ => None,
     };
     let agent_bound = fold.vault_id.is_some()
-        && crate::authority::actor_binding_is_active(fold, &member, "agent");
+        && crate::authority::actor_binding_is_live_in(&vault.store, txn, fold, &member, "agent")?;
     let party = if owner {
         RoomParty::VaultOwner
     } else if let Some(contact) = sole_contact {

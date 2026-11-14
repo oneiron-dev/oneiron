@@ -425,10 +425,22 @@ fn second_owner_hard_deletes_actor_before_target_delete_txn1() {
         arrived_rx
             .recv()
             .expect("A reached pre-TXN1 after the gate");
-        let purge = facade_for(&vault, actor_a)
+        // A holds the vault's last owner binding, so the last-owner guard
+        // (L9-52 b) refuses the owner's own purge of A at every delete door.
+        // The route that still purges A's row with its binding untouched is
+        // a peer's hard-delete tombstone, replayed here.
+        let refused = facade_for(&vault, actor_a)
             .safe_delete(&actor_a.to_hex(), SafeDeleteReason::UserHardDelete)
-            .expect("the owner's second request hard-deletes A through the facade");
-        assert!(purge.existed, "the second request really purged A");
+            .expect_err("the last bound owner's own purge");
+        assert_eq!(refused.code, MEMORY_CODE_INVALID_STATE, "{refused:?}");
+        let peer_purge = crate::deletion::TombstoneValueV2 {
+            reason: crate::deletion::TombstoneReason::UserHardDelete,
+            deleted_at: 1_000,
+            request_id: *EntityId::now().as_bytes(),
+        };
+        vault
+            .apply_replayed_tombstone(&actor_a, &peer_purge.encode())
+            .expect("a peer's purge of A replays");
         assert!(vault.get_raw(&actor_a).expect("actor A row").is_none());
 
         let decisions_before = vault.gate_decisions(50).expect("decisions after the purge");
@@ -445,7 +457,7 @@ fn second_owner_hard_deletes_actor_before_target_delete_txn1() {
                 .count()
         };
         #[cfg(feature = "sync")]
-        while harness.outbound.try_recv().is_ok() {} // the purge's authorized publication
+        while harness.outbound.try_recv().is_ok() {} // nothing before A resumes counts as A's
         resume_tx
             .send(())
             .expect("resume A after the purge commits");
@@ -809,9 +821,9 @@ fn narrower_embedded_owner_reads_past(reason: crate::deletion::DeleteReason) {
         "the embedded owner's narrower credential"
     );
 
-    vault
-        .delete_entity_with_reason(&embedded, reason)
-        .expect("delete the embedded owner");
+    // The last-owner guard refuses deleting the bound owner (L9-52 b): the
+    // embedded owner is deleted under a stand-in binding and bound again.
+    crate::test_util::delete_bound_person(&vault, &issuer, embedded, "human", reason);
     let fresh = lane_of();
     for (lane, which) in [(&kept, "kept"), (&fresh, "fresh")] {
         assert!(

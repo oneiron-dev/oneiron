@@ -42,7 +42,13 @@ impl Vault {
             let fold = self.authority_fold_readonly_in_txn(&txn)?;
             if actor.actor_class() != EdgeActorClass::Human
                 || fold.vault_root_is_conflicted()
-                || !crate::authority::actor_binding_is_active(&fold, &actor.entity_ref(), "human")
+                || !crate::authority::actor_binding_is_live_in(
+                    &self.store,
+                    &txn,
+                    &fold,
+                    &actor.entity_ref(),
+                    "human",
+                )?
             {
                 return Err(revoke_refused());
             }

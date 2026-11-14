@@ -21,7 +21,10 @@ use rmpv::Value;
 
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptRecord};
-use crate::authority::{TaskActorProof, TaskActorVerb, TaskGrantStanding, actor_binding_is_active};
+use crate::authority::{
+    TaskActorProof, TaskActorVerb, TaskGrantStanding, actor_binding_is_active,
+    actor_binding_is_live_in,
+};
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error};
 use crate::memory::{
@@ -128,7 +131,9 @@ impl Memory<'_> {
     /// else the slip its request presented, whose refusal stands; else the
     /// ask guest grant its host admitted, whose refusal stands too; else,
     /// for the in-process host's own caller, its store truth; else a binding,
-    /// which it then lacks. A TASK the actor is no party to is not found; a
+    /// which it then lacks. An actor whose binding stands but whose row is
+    /// deleted has neither of the last two (L9-52 (b)). A TASK the actor is
+    /// no party to is not found; a
     /// party the verb does not admit is told why, with `suggestion`.
     ///
     /// A handle bound to an ask guest's grant proves that exact grant again
@@ -173,8 +178,15 @@ impl Memory<'_> {
             .vault()
             .authority_view_readonly_in_txn(txn)
             .map_err(refusal)?;
-        let bound =
-            actor_binding_is_active(&fold, &self.actor(), self.actor_class().gate_actor_class());
+        let class = self.actor_class().gate_actor_class();
+        let bound = actor_binding_is_live_in(&self.vault().store, txn, &fold, &self.actor(), class)
+            .map_err(refusal)?;
+        // A deleted actor keeps its binding but no longer acts on it (L9-52
+        // (b)): its binding is no proof, and it never falls through to the
+        // store-truth or bare-binding proofs below, which read the deleted
+        // row's header as live. A slip or grant it presents is judged as
+        // before.
+        let bound_deleted = !bound && actor_binding_is_active(&fold, &self.actor(), class);
         let writer = if bound {
             self.vault()
                 .observed_write_actor_in_txn(txn, actor)
@@ -194,6 +206,11 @@ impl Memory<'_> {
                 actor: self.actor(),
                 grant: grant.grant(),
             }
+        } else if bound_deleted {
+            return Err(forbidden(
+                "the actor's row is deleted: a deleted actor's binding authorizes nothing",
+                suggestion,
+            ));
         } else if self.native_invocation() {
             TaskActorProof::Native(&writer)
         } else {

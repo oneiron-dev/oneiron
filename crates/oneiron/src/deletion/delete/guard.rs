@@ -21,6 +21,52 @@ pub(super) enum DeleteGuard {
 }
 
 impl Vault {
+    /// Refuses deleting the PERSON that holds the vault's last Active owner
+    /// binding (the lead's L9-52-OWNER-SELF-DELETE = B, 14 Nov 2026), on
+    /// every delete door: the vault would keep no owner, and no ceremony binds
+    /// one again ("A deleted owner is not brought back"). Another live PERSON
+    /// holding an Active `human` binding lets the delete through, as does a
+    /// row that holds no live owner binding. An unrooted vault binds no one.
+    /// Revisit once an owner recovery ceremony exists.
+    fn refuse_last_bound_owner_delete_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        if !matches!(
+            crate::vault::live_entity_row_in_txn(&self.store, txn, id)?,
+            crate::vault::LiveEntityRow::Live {
+                entity_type: crate::registry::ENTITY_TYPE_PERSON,
+                ..
+            }
+        ) {
+            return Ok(());
+        }
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        if fold.vault_id.is_none() || !crate::authority::actor_binding_is_active(&fold, id, "human")
+        {
+            return Ok(());
+        }
+        for binding in fold.actor_bindings.values() {
+            if binding.status == crate::authority::ActorBindingStatus::Active
+                && binding.actor_class == "human"
+                && binding.actor_ref != *id
+                && crate::authority::actor_binding_is_live_in(
+                    &self.store,
+                    txn,
+                    &fold,
+                    &binding.actor_ref,
+                    "human",
+                )?
+            {
+                return Ok(());
+            }
+        }
+        Err(Error::Record(
+            crate::error::RecordError::LastBoundOwnerDelete,
+        ))
+    }
+
     /// Refuses a protected, held or unsafe delete before any tombstone can be
     /// published; a headerless id runs the headerless leg instead.
     pub(super) fn delete_guard_phase(
@@ -34,6 +80,7 @@ impl Vault {
         crate::store::base_agent::guard_actor_delete(id)?;
         {
             let rtxn = self.store.env.read_txn()?;
+            self.refuse_last_bound_owner_delete_in(&rtxn, id)?;
             crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, &rtxn, id)?;
             self.require_room_delete_gate(&rtxn, id, gate.as_ref(), allow_replay_test)?;
         }

@@ -559,7 +559,15 @@ fn a_deleted_owner_does_not_export_the_vault_with_a_live_slip() {
             .export_with_verified_owner(&ExportOptions::default(), &proof, ActSurface::ThisInstall)
             .is_ok()
     );
-    assert!(vault.delete_entity(&actor).unwrap());
+    // The last-owner guard refuses deleting the bound owner (L9-52 b): the
+    // owner is deleted under a stand-in binding and bound again.
+    assert!(crate::test_util::delete_bound_person(
+        &vault,
+        &issuer,
+        actor,
+        "human",
+        crate::deletion::DeleteReason::UserDelete,
+    ));
     assert_eq!(
         memory
             .export_with_verified_owner(&ExportOptions::default(), &proof, ActSurface::ThisInstall)

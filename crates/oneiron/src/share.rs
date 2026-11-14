@@ -535,7 +535,13 @@ fn share_viewer_actor_in_txn(
     }
     let mut actor_class = None;
     for class in classes {
-        if !crate::authority::actor_binding_is_active(&fold, viewer, class.gate_actor_class()) {
+        if !crate::authority::actor_binding_is_live_in(
+            &vault.store,
+            txn,
+            &fold,
+            viewer,
+            class.gate_actor_class(),
+        )? {
             continue;
         }
         if crate::provenance::validate_actor_class(raw.entity_type, class).is_err()

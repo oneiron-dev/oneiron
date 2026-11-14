@@ -156,6 +156,18 @@ impl From<Error> for MemoryError {
                     "Ask the customer for a support grant; the operator's own admin commands (status, backup, restore, repair, move) need none.",
                 ],
             ),
+            // L9-52 (b): the vault would keep no owner. The request is well
+            // formed; the vault's owners, or its end, are what change. The
+            // second hint loses its "not yet available" clause once FIX
+            // OWNER-DELETE-GUARD-RECOVERY lands.
+            ErrorKind::LastBoundOwnerDelete => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "Erase the vault if ending it is the goal; that is available now.",
+                    "Binding another owner first needs the owner enrollment ceremony, which is not yet available; after it, this person can be deleted.",
+                ],
+            ),
             // FIX 7463a: a world's read setting keeps a row the call reads,
             // named as that setting rather than as a row that is not there.
             ErrorKind::WorldRecipientLimit => Self::new(

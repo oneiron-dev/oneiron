@@ -308,6 +308,41 @@ pub fn actor_binding_is_active(
     })
 }
 
+/// [`actor_binding_is_active`] for a door that lets the bound actor act: the
+/// Active binding AND a live row behind it whose kind admits the class
+/// (`human`: a PERSON; `agent`: a PERSON or an AGENT_DEF; `system`: a
+/// MACHINE; `provenance::validate_actor_class`). A soft-deleted actor keeps
+/// its row's header (ARCH-0038) and its binding, so the fold alone would
+/// still let it act; a deleted actor's binding authorizes nothing, as H149
+/// rules for the unrooted owner and for host acts ("A deleted owner is not
+/// brought back").
+///
+/// # Errors
+///
+/// The row or deletion-state read's: it fails closed, never live.
+pub(crate) fn actor_binding_is_live_in(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    actor_ref: &EntityId,
+    actor_class: &str,
+) -> crate::Result<bool> {
+    if !actor_binding_is_active(fold, actor_ref, actor_class) {
+        return Ok(false);
+    }
+    let class = match actor_class {
+        "human" => crate::edge::EdgeActorClass::Human,
+        "agent" => crate::edge::EdgeActorClass::Agent,
+        "system" => crate::edge::EdgeActorClass::System,
+        _ => return Ok(false),
+    };
+    Ok(crate::vault::live_entity_row_in_txn(store, txn, actor_ref)?
+        .live_type()
+        .is_some_and(|entity_type| {
+            crate::provenance::validate_actor_class(entity_type, class).is_ok()
+        }))
+}
+
 impl AuthorityFold {
     /// The entries this install holds back (FIX 1104): each machine revision
     /// that landed restriction only, and each world edit, grant travel choice
