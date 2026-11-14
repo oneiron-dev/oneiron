@@ -15,7 +15,6 @@
 use crate::access_grant::decode_live_access_grant_body;
 use crate::claim::{CompanionProfileSourceJudgement, ScopedRead};
 use crate::error::{Error, Result};
-use crate::ports::EntityStoreRead;
 use crate::psych_profile::{
     PsychProfileKey, PsychProfileSource, PsychProfileState, psych_profile_entity_id,
 };
@@ -105,10 +104,14 @@ impl Vault {
         now: u64,
     ) -> Result<GrantMatch> {
         let mut bounded = None;
-        for entry in self
-            .store
-            .port_entity_ids_by_type(txn, ENTITY_TYPE_ACCESS_GRANT, None)?
-        {
+        // The grants the companion grant index names for this pair, else
+        // every grant, in grant id order either way (census L3-28E).
+        for entry in crate::access_grant::companion_grant_candidates_in_txn(
+            &self.store,
+            txn,
+            principal_ref,
+            &key.person,
+        )? {
             let id = entry?;
             let body = match live_entity_row_in_txn(&self.store, txn, &id)? {
                 LiveEntityRow::Absent | LiveEntityRow::DeletedShell => continue,
