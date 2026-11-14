@@ -3,18 +3,15 @@
 //! its lease (slice 6.5c, primitive D).
 use std::collections::HashSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::super::{
-    BudgetGuard, ContentPart, FallbackRegistry, LlmBackend, LlmError, LlmRequest, LlmResponse,
-    ResponseFormat,
+    BudgetGuard, ContentPart, FallbackRegistry, LlmBackend, LlmError, LlmResponse, ResponseFormat,
 };
 use super::step_claim::{step_index_lookup, step_index_lookup_in_txn};
 use super::step_state::step_state_read;
 use super::submission_custody::{SUBMISSIONS, Submission, erased, put_submission_in_txn};
 use super::{
-    DREAMER_STEP_RETRY_BACKOFF_MS, DreamerTrapState, DurableStepContext, DurableStepError,
-    StepOutcome, StepProgression, StepSpendScope,
+    DreamerTrapState, DurableStepContext, DurableStepError, StepOutcome, StepProgression,
+    StepSpendScope,
 };
 use crate::agent_def::{AgentDefinition, ensure_listed};
 use crate::agent_dispatch::{
@@ -46,62 +43,10 @@ pub use crate::store::model_step_submission::{
 };
 const WORKER: &str = "model-step-door";
 
-impl Default for ModelStepRetryPolicy {
-    fn default() -> Self {
-        Self {
-            max_attempts: (DREAMER_STEP_RETRY_BACKOFF_MS.len() + 1) as u8,
-        }
-    }
-}
-
-/// What `ai.steps.submit` takes: one step, and the live run a run's own
-/// actor submits it on. The vault owner names no run.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ModelStepSubmitRequest {
-    /// The handle of the caller's attached live run. Absent: the call is
-    /// the vault owner's.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub live_run: Option<String>,
-    pub step_key: String,
-    pub request: LlmRequest,
-    #[serde(default)]
-    pub retry: ModelStepRetryPolicy,
-}
-
-impl ModelStepSubmitRequest {
-    /// The live run the call names, and the step it freezes.
-    #[must_use]
-    pub fn into_parts(self) -> (Option<String>, ModelStepSubmit) {
-        let step = ModelStepSubmit {
-            step_key: self.step_key,
-            request: self.request,
-            retry: self.retry,
-        };
-        (self.live_run, step)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ModelStepReceiptRequest {
-    /// The handle of the caller's attached live run, for a step that run
-    /// submitted. Absent: the call is the vault owner's.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub live_run: Option<String>,
-    pub step_key: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ModelStepReceipt {
-    pub step_ref: String,
-    pub step_hash: String,
-    pub model: super::super::ModelId,
-    pub retry: ModelStepRetryPolicy,
-    pub progression: Option<StepProgression>,
-    /// None while an admitted request is running or recovering.
-    pub result: Option<ModelStepResult>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::llm::step::public::{
+    ModelStepReceipt, ModelStepReceiptRequest, ModelStepSubmitRequest,
+};
 
 /// Submit or resume the caller's own logical step. Successes AND terminal
 /// failures are durable; replay neither multiplies retries nor sends a failed
