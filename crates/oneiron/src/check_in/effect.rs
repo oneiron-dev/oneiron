@@ -550,3 +550,19 @@ fn update_short_text(hasher: &mut blake3::Hasher, text: &str) {
         .update(&[u8::try_from(text.len()).unwrap_or(u8::MAX)])
         .update(text.as_bytes());
 }
+
+/// The digest of deleting `record` for `reason`: the effect a person's
+/// `vault.delete` judges, and the one an approved check-in for it spends
+/// (2k5; P25-SHAPE Q1 = A). BLAKE3, key derived from `oneiron check_in
+/// record delete v1`, over the record's 16 id bytes and the reason's wire
+/// token, as its length in one byte and its bytes.
+#[must_use]
+pub fn record_delete_effect_digest(
+    record: &EntityId,
+    reason: crate::deletion::DeleteReason,
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in record delete v1");
+    hasher.update(record.as_bytes());
+    update_short_text(&mut hasher, reason.as_str());
+    *hasher.finalize().as_bytes()
+}

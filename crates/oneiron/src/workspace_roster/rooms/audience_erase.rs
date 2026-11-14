@@ -304,6 +304,7 @@ impl Memory<'_> {
                     .receipt_id
                     .map(|receipt| format!("redaction:{}", receipt.to_hex())),
                 state: DeleteRequestState::Applied,
+                check_in: None,
             }),
             None => self.safe_delete_as_owner(owner, &record.to_hex(), reason),
         }

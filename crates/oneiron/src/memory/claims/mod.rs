@@ -290,6 +290,13 @@ pub struct DeleteReceipt {
     pub receipt_ref: Option<String>,
     /// Whether the local rail applied it or it waits (FIX 1465).
     pub state: DeleteRequestState,
+    /// The check-in decision `vault.delete` ran on (ROLES-CHECKIN 2k5;
+    /// P25-SHAPE Q1 = A): the Owner's own proof, or a person's judgment
+    /// under their membership role. None for an agent's delete under its
+    /// Grant, which PR 3's act gate judges, and for a delete another door
+    /// runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 /// One pending gated write awaiting consent.

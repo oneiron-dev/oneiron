@@ -766,6 +766,7 @@ impl Lower<sdk::SafeDeleteRequest> for (String, SafeDeleteReason) {
                 SafeDeleteReason::GdprDelete => engine::SafeDeleteReason::GdprDelete,
                 SafeDeleteReason::PolicyDelete => engine::SafeDeleteReason::PolicyDelete,
             },
+            check_in_ref: None,
         })
     }
 }
