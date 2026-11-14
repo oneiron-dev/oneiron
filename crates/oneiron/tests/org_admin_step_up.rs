@@ -22,12 +22,13 @@ mod admin_step_up;
 
 use oneiron::authority::HostSlipIssuer;
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
+use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember, OrgAdminPower};
 use oneiron::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::managed_person::managed_person_proof;
-use oneiron::{EntityId, Vault};
+use oneiron::test_doors::org_admin_gate::admin_act_gate;
+use oneiron::{EdgeActorClass, EntityId, Vault, WriteActor};
 
 const SHARED: u64 = 42;
 
@@ -268,4 +269,22 @@ fn a_managed_admins_act_stands_on_the_supervisors_mfa_claim() {
         .add_shared_member(&with, SHARED, admitted_member, Some(Role::Member))
         .expect("a managed Admin's AddMember on the supervisor's MFA claim");
     assert!(invited_at(&shared.vault, admitted_member, Role::Member));
+}
+
+#[test]
+fn a_person_declaring_the_agent_class_still_steps_up() {
+    let shared = shared();
+    // A slip declares the class its pairing link names. The PERSON row
+    // behind it steps up whatever class it asserts.
+    oneiron::test_support::bind_host_actor(&shared.vault, &shared.issuer, shared.admin, "agent")
+        .expect("the host key bound to the Admin as an agent");
+    refused_for_step_up(
+        admin_act_gate(
+            &shared.vault,
+            SHARED,
+            WriteActor::new(shared.admin, EdgeActorClass::Agent),
+            OrgAdminPower::AddMember,
+        ),
+        "a PERSON Admin's act under the agent class with no step-up",
+    );
 }
