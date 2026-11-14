@@ -47,6 +47,8 @@ pub struct PipelineBuilder<'a> {
     pub(super) params: super::params::RetrievalParams,
     pub(super) blend_weights_override: Option<crate::store::RetrievalBlendWeights>,
     pub(super) phonetic_search: Option<Vec<String>>,
+    /// The learned phonetic rung's query: its own ranked list of the phonetic channel.
+    pub(super) phonetic_vector_search: Option<super::phonetic_vector_channel::PhoneticVectorQuery>,
     /// Typed media queries, one ranked list per declared space (OF-370).
     pub(super) media_search: super::media_query_memory::MediaQueries,
     pub(super) temporal_search: Option<TemporalSearchConfig>,
@@ -159,6 +161,7 @@ impl<'a> PipelineBuilder<'a> {
             params: super::params::RetrievalParams::shipped(),
             blend_weights_override: None,
             phonetic_search: None,
+            phonetic_vector_search: None,
             media_search: Default::default(),
             temporal_search: None,
             ppr_search: None,
@@ -460,6 +463,22 @@ impl<'a> PipelineBuilder<'a> {
 
     pub fn search_phonetic(mut self, codes: &[&str]) -> Self {
         self.phonetic_search = Some(codes.iter().map(|code| (*code).to_owned()).collect());
+        self
+    }
+
+    /// Searches the phonetic channel's learned rung (CROSS-ARCH-0013 rung 2) with the caller's
+    /// `vector` of a name, from model `model_id`: exact cosine against every stored name vector
+    /// of that model, each entity scored by its best name, at most `limit` (capped at
+    /// [`PHONETIC_VECTOR_MAX_LIMIT`](crate::phonetic_learned::PHONETIC_VECTOR_MAX_LIMIT)). The
+    /// vector is caller-supplied, as the codes are. A vector of another width than the model's
+    /// stored ones fails the run with
+    /// [`Error::DimensionMismatch`](crate::error::Error::DimensionMismatch).
+    pub fn search_phonetic_vector(mut self, model_id: &str, vector: &[f32], limit: usize) -> Self {
+        self.phonetic_vector_search = Some(super::phonetic_vector_channel::PhoneticVectorQuery {
+            model_id: model_id.to_owned(),
+            vector: vector.to_vec(),
+            limit: limit.min(crate::phonetic_learned::PHONETIC_VECTOR_MAX_LIMIT),
+        });
         self
     }
 

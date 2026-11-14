@@ -14,6 +14,20 @@ pub struct HybridPprQuery {
     pub depth: u32,
 }
 
+/// A query on the phonetic channel's learned rung (CROSS-ARCH-0013 rung 2): the caller's
+/// vector of a name, from the model the vault's names were embedded with.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HybridPhoneticVectorQuery {
+    /// The id of the model the vector is of.
+    pub model_id: String,
+    /// The name's vector, of the width the model's stored vectors have.
+    pub vector: Vec<f32>,
+    /// The list length: 200 when unset, at most 1000.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HybridTemporalQuery {

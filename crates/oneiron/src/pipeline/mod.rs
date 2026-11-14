@@ -23,6 +23,7 @@ mod l2_evidence;
 mod media_channel;
 mod media_query_memory;
 mod params;
+mod phonetic_vector_channel;
 pub mod retrieval_policy;
 mod support;
 mod temporal_bound;

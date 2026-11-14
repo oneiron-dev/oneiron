@@ -57,6 +57,7 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
     );
     fork_hash_text_query(&mut hasher, builder.text_search.as_ref());
     fork_hash_phonetic_query(&mut hasher, builder.phonetic_search.as_deref());
+    fork_hash_phonetic_vector_query(&mut hasher, builder.phonetic_vector_search.as_ref());
     fork_hash_media_queries(&mut hasher, &builder.media_search);
     fork_hash_temporal_query(&mut hasher, builder.temporal_search.as_ref());
     fork_hash_entity_seeds(&mut hasher, builder.ppr_search.as_ref());
@@ -290,6 +291,24 @@ fn fork_hash_text_query(hasher: &mut Sha256, query: Option<&(String, usize)>) {
     fork_hash_bool(hasher, true);
     fork_hash_len(hasher, *limit);
     fork_hash_str(hasher, query);
+}
+
+/// The learned rung's query, hashed only when the run has one, so every fork hash of a run
+/// without it stays as it was.
+fn fork_hash_phonetic_vector_query(
+    hasher: &mut Sha256,
+    query: Option<&super::super::phonetic_vector_channel::PhoneticVectorQuery>,
+) {
+    let Some(query) = query else {
+        return;
+    };
+    fork_hash_bytes(hasher, b"phonetic_vector");
+    fork_hash_str(hasher, &query.model_id);
+    fork_hash_len(hasher, query.limit);
+    fork_hash_len(hasher, query.vector.len());
+    for value in &query.vector {
+        fork_hash_f32(hasher, *value);
+    }
 }
 
 fn fork_hash_phonetic_query(hasher: &mut Sha256, codes: Option<&[String]>) {

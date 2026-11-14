@@ -10,7 +10,11 @@
 //! drops its vectors in the same transaction, so an erased name leaves no vector.
 
 mod reconcile;
+mod search;
 pub(crate) mod tables;
+
+pub(crate) use search::search_phonetic_vectors_in_txn;
+pub use search::{PHONETIC_VECTOR_DEFAULT_LIMIT, PHONETIC_VECTOR_MAX_LIMIT};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};

@@ -679,7 +679,10 @@ impl PipelineBuilder<'_> {
         for (requested, signal) in [
             (self.vector_search.is_some(), RetrievalSignal::Vector),
             (self.text_search.is_some(), RetrievalSignal::Text),
-            (self.phonetic_search.is_some(), RetrievalSignal::Phonetic),
+            (
+                self.phonetic_search.is_some() || self.phonetic_vector_search.is_some(),
+                RetrievalSignal::Phonetic,
+            ),
             (!self.media_search.is_empty(), RetrievalSignal::MediaVector),
             (self.temporal_search.is_some(), RetrievalSignal::Temporal),
             (
@@ -709,6 +712,7 @@ impl PipelineBuilder<'_> {
             .phonetic_search
             .as_ref()
             .is_some_and(|codes| !codes.is_empty())
+            || self.phonetic_vector_search.is_some()
         {
             signals.push(RetrievalSignal::Phonetic);
         }
@@ -741,6 +745,10 @@ impl PipelineBuilder<'_> {
                 .phonetic_search
                 .as_ref()
                 .is_some_and(|codes| !codes.is_empty())
+            || self
+                .phonetic_vector_search
+                .as_ref()
+                .is_some_and(|query| query.limit > 0)
             || self
                 .temporal_search
                 .as_ref()
