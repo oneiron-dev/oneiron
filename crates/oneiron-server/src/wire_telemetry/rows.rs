@@ -29,6 +29,10 @@ pub enum LimitRow {
     EmbedderBodyBytes,
     /// Bytes the embedder endpoint's answers hold until they are delivered.
     EmbedderAnswerBytes,
+    /// Input tokens one account of the embedder endpoint uses in a UTC day,
+    /// its accounts file row's `daily_input_tokens`: a soft quota, crossed
+    /// once a day per account, and the request is served (census L10-10).
+    EmbedderAccountDailyInputTokens,
     /// Windows and documents one sync socket keeps state for.
     WindowsPerConnection,
     /// Live-query sessions held at once, attached or kept for a reconnect.
@@ -85,6 +89,7 @@ impl LimitRow {
         Self::EmbedderRequests,
         Self::EmbedderBodyBytes,
         Self::EmbedderAnswerBytes,
+        Self::EmbedderAccountDailyInputTokens,
         Self::WindowsPerConnection,
         Self::LiveSessions,
         Self::LiveSubscriptions,
@@ -133,6 +138,7 @@ impl LimitRow {
             Self::EmbedderRequests => "limits.embedder_requests",
             Self::EmbedderBodyBytes => "embedder.serve:body_bytes",
             Self::EmbedderAnswerBytes => "limits.embedder_answer_bytes",
+            Self::EmbedderAccountDailyInputTokens => "embedder.serve:account_daily_input_tokens",
             Self::WindowsPerConnection => "max_windows_per_connection",
             Self::LiveSessions => "limits.live_sessions",
             Self::LiveSubscriptions => "limits.live_subscriptions",
