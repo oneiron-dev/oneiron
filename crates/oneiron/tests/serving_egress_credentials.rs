@@ -412,10 +412,16 @@ fn agent_graph_ask_is_shown_the_released_source_body() -> TestResult {
             .iter()
             .find(|source| source.id == id)
             .expect("the answerer receives the admitted fixture source");
+        // The context may also carry admitted neighbours one edge out
+        // (graph_ask unit_context); the fixture row appears exactly once.
         assert_eq!(
-            context.sources.len(),
+            context
+                .sources
+                .iter()
+                .filter(|source| source.id == id)
+                .count(),
             1,
-            "the unlinked fixture has only its own source"
+            "the fixture source appears once in the graph context"
         );
         assert_eq!(
             context.sources[0].id, id,
