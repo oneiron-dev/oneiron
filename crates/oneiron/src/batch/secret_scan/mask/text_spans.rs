@@ -12,7 +12,14 @@ use std::ops::Range;
 /// meet, in order: a private-key block, a blocklist entry, a provider key
 /// token, an assigned value under a credential name, and a recovery phrase.
 pub(super) fn secret_spans(text: &str) -> Vec<(Range<usize>, &'static str)> {
-    let spans: Vec<(Range<usize>, &'static str)> = shapes::private_key_block_spans(text)
+    merged(rule_placed_spans(text))
+}
+
+/// Each span one of the write door's text rules places in `text`, as that
+/// rule places it: two that meet are two spans here, one in
+/// [`secret_spans`].
+fn rule_placed_spans(text: &str) -> Vec<(Range<usize>, &'static str)> {
+    shapes::private_key_block_spans(text)
         .into_iter()
         .map(|span| (span, REASON_PRIVATE_KEY))
         .chain(
@@ -32,13 +39,27 @@ pub(super) fn secret_spans(text: &str) -> Vec<(Range<usize>, &'static str)> {
                 .into_iter()
                 .map(|span| (span, REASON_MNEMONIC)),
         )
-        .collect();
-    merged(spans)
+        .collect()
 }
 
 /// The spans the door's text rules place in each run of text in a file, at
 /// their offsets in its bytes.
 pub(super) fn file_spans(data: &[u8]) -> Vec<(Range<usize>, &'static str)> {
+    text_run_spans(data, secret_spans)
+}
+
+/// [`rule_placed_spans`] in each run of text in a file, at their offsets in
+/// its bytes: each span as one rule places it, unmerged.
+pub(super) fn file_rule_placed_spans(data: &[u8]) -> Vec<(Range<usize>, &'static str)> {
+    text_run_spans(data, rule_placed_spans)
+}
+
+/// The spans `spans_of` places in each run of text in `data` (its longest
+/// valid UTF-8 runs), at their offsets in `data`.
+fn text_run_spans(
+    data: &[u8],
+    spans_of: impl Fn(&str) -> Vec<(Range<usize>, &'static str)>,
+) -> Vec<(Range<usize>, &'static str)> {
     let mut spans = Vec::new();
     let mut at = 0;
     while let Some(rest) = data.get(at..).filter(|rest| !rest.is_empty()) {
@@ -56,7 +77,7 @@ pub(super) fn file_spans(data: &[u8]) -> Vec<(Range<usize>, &'static str)> {
             .and_then(|run| std::str::from_utf8(run).ok())
         {
             spans.extend(
-                secret_spans(text)
+                spans_of(text)
                     .into_iter()
                     .map(|(span, reason)| (span.start + at..span.end + at, reason)),
             );

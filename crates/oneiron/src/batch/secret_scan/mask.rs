@@ -86,7 +86,7 @@ use crate::write_envelope::ClaimCandidate;
 pub(in crate::batch) use batch_door::mask_batch_ops;
 pub(crate) use promoted_message_parts::seal_promoted_message_ops_in_txn;
 use split_phrase::Spread;
-use text_spans::{file_spans, merged, occurrences, secret_spans};
+use text_spans::{file_rule_placed_spans, file_spans, merged, occurrences, secret_spans};
 use wipe::{PlanOps, PlanValues, replace_wiped};
 
 const REASON_BLOCKLIST: &str = "gate.secret_scan.blocklist";
@@ -179,12 +179,20 @@ pub(crate) fn seal_whole_part_in_txn(
         ))
 }
 
-/// The spans of `bytes` the door's text rules place, at their offsets in it.
+/// The spans of `bytes` the door's text rules place, at their offsets in it:
+/// each as one rule places it, and each the mask merges where they meet. A
+/// value the owner ruled in a record is either: one rule's span, when the
+/// rules place it next to another span (`password=<ruled>/<other key>`), or
+/// the merged span the mask lifted it as (L6-03-RULED-SCREEN-MERGED-SPAN).
 pub(super) fn rule_spans(bytes: &[u8]) -> Vec<Range<usize>> {
-    file_spans(bytes)
-        .into_iter()
-        .map(|(span, _)| span)
-        .collect()
+    let placed = file_rule_placed_spans(bytes);
+    let mut spans: Vec<Range<usize>> = placed.iter().map(|(span, _)| span.clone()).collect();
+    for (span, _) in merged(placed) {
+        if !spans.contains(&span) {
+            spans.push(span);
+        }
+    }
+    spans
 }
 
 /// Test door (`test_doors::lifted_text`): marks each place the stored `text`
