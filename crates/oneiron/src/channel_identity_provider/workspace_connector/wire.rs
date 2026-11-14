@@ -24,6 +24,9 @@ const DOCS_ORIGIN: &str = "https://docs.googleapis.com";
 /// The Slides v1 origin.
 const SLIDES_ORIGIN: &str = "https://slides.googleapis.com";
 
+/// The Drive v3 origin, under Google's shared API host.
+const DRIVE_ORIGIN: &str = "https://www.googleapis.com";
+
 /// The Microsoft Graph origin.
 const GRAPH_ORIGIN: &str = "https://graph.microsoft.com";
 
@@ -57,6 +60,12 @@ pub enum WorkspaceEndpoint {
     SlidesPresentationGet,
     /// Slides v1: `POST /v1/presentations/{id}:batchUpdate`.
     SlidesBatchUpdate,
+    /// Drive v3: `GET /drive/v3/changes/startPageToken`.
+    DriveChangesStartPageToken,
+    /// Drive v3: `GET /drive/v3/changes`, one page of the change log.
+    DriveChangesList,
+    /// Drive v3: `GET /drive/v3/files/{id}`, one file's metadata.
+    DriveFileGet,
     /// Graph v1.0: `POST /v1.0/me/drive/items/{id}/workbook/createSession`.
     ExcelCreateSession,
     /// Graph v1.0: `GET /v1.0/me/drive/items/{id}/workbook/worksheets/{name}/range(address='{a1}')`.
@@ -78,6 +87,9 @@ impl WorkspaceEndpoint {
             | Self::SheetsBatchUpdate => SHEETS_ORIGIN,
             Self::DocsDocumentGet | Self::DocsBatchUpdate => DOCS_ORIGIN,
             Self::SlidesPresentationGet | Self::SlidesBatchUpdate => SLIDES_ORIGIN,
+            Self::DriveChangesStartPageToken | Self::DriveChangesList | Self::DriveFileGet => {
+                DRIVE_ORIGIN
+            }
             Self::ExcelCreateSession
             | Self::ExcelRangeGet
             | Self::ExcelRangeUpdate
@@ -96,6 +108,9 @@ impl WorkspaceEndpoint {
             | Self::SheetsBatchUpdate => "sheets.v4",
             Self::DocsDocumentGet | Self::DocsBatchUpdate => "docs.v1",
             Self::SlidesPresentationGet | Self::SlidesBatchUpdate => "slides.v1",
+            Self::DriveChangesStartPageToken | Self::DriveChangesList | Self::DriveFileGet => {
+                "drive.v3"
+            }
             Self::ExcelCreateSession
             | Self::ExcelRangeGet
             | Self::ExcelRangeUpdate
@@ -112,6 +127,9 @@ impl WorkspaceEndpoint {
             | Self::SheetsValuesBatchGet
             | Self::DocsDocumentGet
             | Self::SlidesPresentationGet
+            | Self::DriveChangesStartPageToken
+            | Self::DriveChangesList
+            | Self::DriveFileGet
             | Self::ExcelRangeGet => "GET",
             Self::SheetsValuesBatchUpdate
             | Self::SheetsBatchUpdate
@@ -134,6 +152,9 @@ impl WorkspaceEndpoint {
             Self::DocsBatchUpdate => "docs.documents.batchUpdate",
             Self::SlidesPresentationGet => "slides.presentations.get",
             Self::SlidesBatchUpdate => "slides.presentations.batchUpdate",
+            Self::DriveChangesStartPageToken => "drive.changes.getStartPageToken",
+            Self::DriveChangesList => "drive.changes.list",
+            Self::DriveFileGet => "drive.files.get",
             Self::ExcelCreateSession => "excel.workbook.createSession",
             Self::ExcelRangeGet => "excel.range.get",
             Self::ExcelRangeUpdate => "excel.range.update",

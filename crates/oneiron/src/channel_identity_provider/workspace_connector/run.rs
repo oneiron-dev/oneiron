@@ -237,7 +237,9 @@ impl WorkspaceRun<'_> {
             WorkspaceWireOutcome::Uncertain(reason) => return WorkspaceAnswer::Uncertain(reason),
             WorkspaceWireOutcome::Answered { status, body } if !(200..300).contains(&status) => {
                 let mut output = json!({ "status": status, "error": body });
-                output[field] = Value::from(plan.target.as_str());
+                if !plan.target.is_empty() {
+                    output[field] = Value::from(plan.target.as_str());
+                }
                 if let Some(receipts) = receipts {
                     output["receipts"] = receipts;
                 }
