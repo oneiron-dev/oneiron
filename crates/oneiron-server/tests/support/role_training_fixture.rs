@@ -42,6 +42,7 @@ use oneiron::{EdgeActorClass, EntityId, ModelId, ModelTierRef, Vault, VaultConfi
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::ai_host::AiHost;
 use oneiron_server::config::{SyncServerConfig, models::ModelsConfig};
+use oneiron_server::test_doors::lost_training_waiter::{self, LostWaiter};
 use oneiron_server::{build_app, server::SyncServer};
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -442,6 +443,20 @@ impl Fixture {
         .await
         .expect("coach round thread")
         .expect("coach round");
+    }
+
+    /// Dispatches the authorized `run` (hex) on a waiter that records
+    /// nothing until it rejoins, as after a host restart, off the test's
+    /// async thread; returns once the run is sent to the role trainer.
+    pub(crate) async fn dispatch_with_lost_waiter(&self, run: &str) -> LostWaiter {
+        let server = Arc::clone(&self.server);
+        let run = EntityId::from_hex(run).expect("run hex");
+        tokio::task::spawn_blocking(move || {
+            lost_training_waiter::dispatch_with_lost_waiter(&server, &run)
+        })
+        .await
+        .expect("dispatch thread")
+        .expect("dispatch with a lost waiter")
     }
 
     /// Pairs one agent the way `token agent` does (template
