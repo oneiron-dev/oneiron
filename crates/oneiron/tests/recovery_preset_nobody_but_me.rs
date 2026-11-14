@@ -4,7 +4,8 @@
 //! sheet, removes the password and passkey wraps and retires every escrow
 //! recipient but the world kit's, in one write; while it holds, the add
 //! doors refuse those kinds, a presented capsule opens nothing on the live
-//! vault, and a host-managed or supervisor-delivered key cannot enter it.
+//! vault nor on a checkpoint sealed under the preset, and a host-managed or
+//! supervisor-delivered key cannot enter it.
 //!
 //! A fresh device is a host with no vault: it opens a sealed checkpoint's
 //! carried key header ([`CheckpointKey::unlock`]), or reopens the vault with
@@ -251,6 +252,57 @@ fn nobody_but_me_retires_a_host_escrow_and_refuses_its_capsule_and_a_new_one() {
         "a new host escrow",
     );
     assert_eq!(wrap_ids(&vault), ids, "a refused add changes no wrap");
+}
+
+/// A capsule a host escrow kept from before the change still opens a
+/// checkpoint sealed before it, as the data key does not rotate, and never
+/// one sealed under the preset: its key header names the preset (review of
+/// #7766, round 1).
+#[test]
+fn a_checkpoint_sealed_under_nobody_but_me_refuses_an_earlier_capsule() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let vault = keyed_vault(&directory.path().join("vault"));
+    let owner_proof = owner(&vault).expect("owner proof");
+    let recipient = escrow_recipient(&[7u8; 32]).expect("escrow recipient");
+    vault
+        .add_vault_key_escrow_as(&owner_proof, "box", recipient.public_key())
+        .expect("a host escrow on the standard preset");
+    let capsule = vault
+        .vault_key_escrow_capsules()
+        .expect("escrow capsules")
+        .into_iter()
+        .find(|capsule| capsule.label == "box")
+        .expect("the box's capsule, as a registry would keep it")
+        .capsule;
+    let before = directory.path().join("before");
+    vault
+        .snapshot_checkpoint(&before, 100)
+        .expect("seal a checkpoint on the standard preset");
+
+    vault
+        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe)
+        .expect("the owner enters \"Nobody but me\"");
+    let after = directory.path().join("after");
+    vault
+        .snapshot_checkpoint(&after, 101)
+        .expect("seal a checkpoint under the preset");
+
+    let presented = |image: &Path| {
+        CheckpointKey::unlock(
+            image,
+            &VaultKeyUnlock::EscrowCapsule {
+                label: "box",
+                capsule: &capsule,
+                secret: &recipient,
+            },
+        )
+        .map(|_| ())
+    };
+    presented(&before).expect("the earlier capsule still opens what was sealed before the change");
+    refused_by_preset(
+        presented(&after),
+        "the earlier capsule on a checkpoint sealed under the preset",
+    );
 }
 
 #[test]
