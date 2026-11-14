@@ -42,13 +42,19 @@ impl GraphFsResolver<'_, '_> {
                             return Ok(Some(row));
                         };
                         if row.entity_type == crate::registry::ENTITY_TYPE_ASSET {
-                            *body = crate::store::file_key_masks::sighted_bytes_in_txn(
+                            // A file no masked copy is served of, or one the
+                            // release scan reads a key in, has no body here,
+                            // as a withheld row has none: it is no error that
+                            // fails a listing or a walk over it (FIX
+                            // RAWBODY-CENSUS-UNTRACED-SERVE-PATHS).
+                            row.body = crate::store::file_key_masks::served_bytes_in_txn(
                                 &self.scoped_read.vault().store,
                                 txn,
-                                body.clone(),
+                                std::mem::take(body),
                                 None,
                                 crate::file_secret_marks::SecretSight::Masked,
                             )?;
+                            return Ok(Some(row));
                         } else {
                             let mut cursor = std::io::Cursor::new(body.as_slice());
                             let value = rmpv::decode::read_value(&mut cursor)
@@ -83,6 +89,24 @@ impl GraphFsResolver<'_, '_> {
                                     *body = masked.into_bytes();
                                 }
                             }
+                            // The credential filter an entity view and an
+                            // export read a body by: a row stored while the
+                            // write door's scan was off holds keys no lift
+                            // recorded, and serve still redacts
+                            // (`SecretScanMode::Off`; FIX
+                            // RAWBODY-CENSUS-UNTRACED-SERVE-PATHS).
+                            let stored = std::mem::take(body);
+                            let released = crate::batch::export::redacted_memory_payload(stored)?;
+                            // A claim the filter left no claim (a predicate
+                            // redacted out of its grammar) has no body here,
+                            // as a withheld row has none: a grep or a walk
+                            // over it skips it rather than failing whole.
+                            row.body = (row.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+                                || crate::write_envelope::claim_body::decode_claim_body(
+                                    &released, true,
+                                )
+                                .is_ok())
+                            .then_some(released);
                         }
                         Ok(Some(row))
                     })
