@@ -87,6 +87,7 @@ pub mod stretch_pack_finalize;
 pub mod substrate_reads;
 pub mod tray_answered_removal;
 pub mod turn_programs;
+pub mod typed_reply_handle;
 pub mod uncertain_send_questions;
 pub mod untangle_regressions;
 pub mod verb_hook_ask;

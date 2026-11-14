@@ -13,6 +13,8 @@ mod replay_context;
 mod reply;
 mod results;
 mod skill_delivery;
+#[cfg(oneiron_test_support)]
+mod spill_door;
 mod type_feedback;
 
 use super::cancel::StepCancellation;
@@ -61,6 +63,8 @@ pub(super) use self::deadline_replay::DeadlineReplay;
 pub(super) use self::prompt::executor_turn_instruction;
 pub(crate) use self::prompt::{executor_declarations_block, executor_system_prompt};
 use self::results::recorded_output;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::spill_door::spill_before_record;
 pub(super) use self::type_feedback::{CallableChecks, PINNED_PROGRAM_STEP};
 
 pub(super) struct RecordingJsHost<'a, 's> {
