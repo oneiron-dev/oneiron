@@ -1,0 +1,41 @@
+{
+  "communication": {
+    "audience": "Board",
+    "outcome": "Approve the budget",
+    "main_message": "Spending stayed within its limit"
+  },
+  "language": "en-GB",
+  "accessibility": [
+    "Describe every figure"
+  ],
+  "pages": [
+    {
+      "id": "main",
+      "job": "explain",
+      "division": "fixed",
+      "blocks": [
+        {
+          "id": "t-title",
+          "kind": "title",
+          "text": "The board reviews fourth-quarter spending across every region before approving next year's operating budget proposal today"
+        },
+        {
+          "id": "t-claim",
+          "kind": "claim",
+          "text": "Spending stayed within the approved limit.",
+          "evidence": [
+            {
+              "document": "doc:annual-report",
+              "version": "v3",
+              "start": "cursor:10",
+              "end": "cursor:47",
+              "quote": "within the approved limit",
+              "quote_hash": "6acf8552698b2af9d53390386128e1e39fcd62638e981e6fc259764f736becd8"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "datasets": []
+}

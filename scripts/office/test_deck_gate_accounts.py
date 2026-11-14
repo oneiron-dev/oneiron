@@ -135,8 +135,28 @@ class RoleKeyedFontApproval(OwnerFile):
         self.assertIsNone(oracle.environment_mismatch(self.observed('isolated', approved['isolated'])))
         self.assertIn('unapproved font inventory for the isolated role',
                       oracle.environment_mismatch(self.observed('isolated', approved['owner'])))
-        self.assertIn("account 'someone' holds no role",
+        self.assertIn('the rendering account holds no role',
                       oracle.environment_mismatch(self.observed(None, approved['owner'])))
+
+    def test_receipt_names_the_role_not_the_account(self):
+        """A committed receipt names the font account by its role label only (RULING
+        L4-20-OFFICE-ACCOUNT, 14 Nov): oneiron is public."""
+        digest = ENVIRONMENT['approved_font_inventories']['owner']
+        self.owner_file.write_text('someone\n')
+        pins = {}
+        for account in ('someone', 'decktest', 'stranger'):
+            with mock.patch.object(oracle, 'font_inventory', return_value=(account, digest, ())), \
+                 mock.patch.object(oracle, 'command', return_value='16.0'):
+                pins[account] = oracle.env_pin('system-events')
+        self.assertEqual([(pin['font_account'], pin['font_role']) for pin in pins.values()],
+                         [('owner-console', 'owner'), ('isolated-console', 'isolated'), ('no-role', None)])
+        for account, pin in pins.items():
+            self.assertNotIn(account, json.dumps(pin))
+        stray = dict(self.observed(None, digest), font_account=pins['stranger']['font_account'])
+        why = oracle.environment_mismatch(stray)
+        self.assertIn('holds no role', why)
+        self.assertNotIn('stranger', why)
+        self.assertNotIn(str(self.tmp), why, 'the message names no home directory')
 
     def test_version_2_environment_is_refused(self):
         old = dict(ENVIRONMENT, version=2)

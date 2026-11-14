@@ -1,0 +1,103 @@
+{
+  "communication": {
+    "audience": "Board",
+    "outcome": "Approve the budget",
+    "main_message": "Site costs compared"
+  },
+  "language": "en-GB",
+  "accessibility": [
+    "Describe every figure"
+  ],
+  "pages": [
+    {
+      "id": "sites",
+      "job": "explain",
+      "division": "fixed",
+      "blocks": [
+        {
+          "id": "s-title",
+          "kind": "title",
+          "text": "Site costs by region"
+        },
+        {
+          "id": "s-table",
+          "kind": "data",
+          "dataset": "by-site",
+          "carriers": [
+            "table"
+          ]
+        },
+        {
+          "id": "s-claim",
+          "kind": "claim",
+          "text": "Two sites run above plan.",
+          "evidence": [
+            {
+              "document": "doc:annual-report",
+              "version": "v3",
+              "start": "cursor:10",
+              "end": "cursor:47",
+              "quote": "above plan",
+              "quote_hash": "319a6976eafb5b4346cec35f40e566072acac784462a0c3484732abb0f1c6803"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "datasets": [
+    {
+      "id": "by-site",
+      "columns": [
+        {
+          "name": "Site",
+          "type": "text"
+        },
+        {
+          "name": "Region",
+          "type": "text"
+        },
+        {
+          "name": "Cost",
+          "type": "number",
+          "unit": "EUR k"
+        }
+      ],
+      "rows": [
+        [
+          "North Depot Extension Wing",
+          "North",
+          412
+        ],
+        [
+          "Harbour Side Storage Yard",
+          "South",
+          388
+        ],
+        [
+          "Central Sorting Office Annex",
+          "Central",
+          445
+        ],
+        [
+          "West Gate Logistics Park",
+          "West",
+          371
+        ],
+        [
+          "East Field Service Centre",
+          "East",
+          402
+        ],
+        [
+          "Old Mill Distribution Hub",
+          "Central",
+          359
+        ]
+      ],
+      "sources": [
+        "site ledgers"
+      ]
+    }
+  ]
+}

@@ -34,6 +34,11 @@ VERSION = 'one-2531-v1'
 REPAIR_WORDS = ('repair', 'repaired', 'recover', 'corrupt', 'damaged', 'problem with content')
 UNSUPPORTED_WORDS = ('grant file access', 'permission', 'sign in', 'activate office')
 STAGING = Path.home() / 'Library/Containers/com.microsoft.Powerpoint/Data/tmp/w8-oracle'
+FIT_SCRIPT = ROOT / 'deck_fit.applescript'
+# A laid-out bound may exceed its room by this much and still fit (0.05 pt);
+# a measured frame may differ from the planned one by this much (0.5 pt).
+FIT_EPS_EMU = 635
+FIT_SLACK_EMU = 6350
 
 
 def has_header(path: Path, header: bytes) -> bool:
@@ -95,6 +100,9 @@ def font_account() -> str:
 # account holds `owner`.
 ROLES = ('owner', 'isolated')
 OWNER_ACCOUNT_FILE = Path.home() / '.config/oneiron/office-owner-account'
+# Messages that can land in a receipt name the file by this form: the expanded
+# path holds the account's home directory, and so its name.
+OWNER_ACCOUNT_FILE_SHOWN = '~/.config/oneiron/office-owner-account'
 
 
 def owner_account_name() -> str | None:
@@ -104,6 +112,13 @@ def owner_account_name() -> str | None:
     except OSError:
         return None
     return name or None
+
+
+def role_label(role: str | None) -> str:
+    """What a receipt records as `font_account`: the role's console label
+    (`owner-console`, `isolated-console`) or `no-role`, never the account name.
+    Receipts are committed to a public repository."""
+    return f'{role}-console' if role in ROLES else 'no-role'
 
 
 def account_role(account: str, isolated_accounts: list[str]) -> str | None:
@@ -189,11 +204,12 @@ def env_pin(observer: str) -> dict:
     info = command(['/usr/libexec/PlistBuddy', '-c', 'Print CFBundleShortVersionString',
                     str(APP / 'Contents/Info.plist')])
     account, inventory, _ = font_inventory()
+    role = font_role(account)
     return {'harness': VERSION, 'powerpoint': info,
             'macos': command(['sw_vers', '-productVersion']),
             'macos_build': command(['sw_vers', '-buildVersion']),
             'pdfkit': platform.mac_ver()[0], 'raster_scale': 2,
-            'font_account': account, 'font_role': font_role(account),
+            'font_account': role_label(role), 'font_role': role,
             'font_inventory_sha256': inventory,
             'observer': observer, 'locale': os.environ.get('LANG', '')}
 
@@ -251,8 +267,9 @@ def environment_mismatch(observed: dict) -> str | None:
     if not inventory:
         return 'the environment records no font inventory'
     if role not in ROLES:
-        return (f"account {observed.get('font_account')!r} holds no role: only an account in "
-                f'environment.json `isolated_accounts`, or the one {OWNER_ACCOUNT_FILE} names, may render')
+        return (f"the rendering account holds no role (font_account {observed.get('font_account')!r}): "
+                f'only an account in environment.json `isolated_accounts`, or the one '
+                f'{OWNER_ACCOUNT_FILE_SHOWN} names, may render')
     if approved.get(role) != inventory:
         held = approved.get(role)
         why = (f'approved {held}' if held else 'none approved')
@@ -383,16 +400,22 @@ def stop_script(proc: subprocess.Popen) -> None:
 
 
 def run_script(source: Path, action: str, target: Path | None, observer: str,
-               deadline: float, dialogs=None) -> tuple[str | None, str]:
+               deadline: float, dialogs=None, *, script: Path | None = None,
+               argv: list[str] | None = None) -> tuple[str | None, str]:
     """One AppleScript action, watched until it ends or the deadline passes.
     An observer that fails (a window closing under it, PowerPoint not
     answering) is read again within the deadline, never taken as the deck's;
-    a known first-run dialog `dialogs` dismisses is looked past."""
+    a known first-run dialog `dialogs` dismisses is looked past. With `argv`
+    the script runs as `osascript <script> <argv...>` (the fit probe) instead
+    of the powerpoint.applescript line; watching is unchanged."""
     if time.monotonic() >= deadline:
         return 'timed_out', f'{action} exceeded deadline before launch'
-    args = ['osascript', str(ROOT / 'powerpoint.applescript'), action, str(source)]
-    if target:
-        args.append(str(target))
+    if argv is not None:
+        args = ['osascript', str(script), *argv]
+    else:
+        args = ['osascript', str(ROOT / 'powerpoint.applescript'), action, str(source)]
+        if target:
+            args.append(str(target))
     proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     classification = None
     detail = ''
@@ -550,14 +573,123 @@ def quit_if_empty() -> None:
     command(['osascript', '-e', 'tell application "Microsoft PowerPoint" to quit'], 10)
 
 
+def _fit_row(unit: dict, verdict: str, detail: str, frame=None, inner=None, bound=None) -> dict:
+    return {'slide': unit['slide'], 'shape_index': unit['shape_index'], 'shape_id': unit['shape_id'],
+            'name': unit['name'], 'block': unit['block'], 'kind': unit['kind'],
+            'verdict': verdict, 'detail': detail, 'planned_emu': list(unit['planned_emu']),
+            'frame_emu': frame, 'inner_emu': inner, 'bound_emu': bound}
+
+
+def fit_rows(units: list[dict], output: str) -> list[dict]:
+    """One fit row per unit from the fit probe's output, in the units' order.
+
+    Pure function: the SPEC section 4 rules, in order. A row never changes the
+    receipt's status; only the fit step itself ending badly does (as any step).
+    """
+    measured = {}
+    for line in output.splitlines():
+        if line.startswith('OK\t'):
+            parts = line.split('\t')
+            if len(parts) < 17:
+                continue  # unreadable: no row for its unit
+            try:
+                key = (int(parts[1]), int(parts[2]))
+                numbers = [int(field) for field in parts[-13:]]
+                name = '\t'.join(parts[3:len(parts) - 13])
+            except (ValueError, IndexError):
+                continue  # unreadable: no row for its unit
+            measured.setdefault(key, ('ok', name, numbers))
+        elif line.startswith('ERR\t'):
+            parts = line.split('\t', 3)
+            try:
+                key = (int(parts[1]), int(parts[2]))
+            except (ValueError, IndexError):
+                continue
+            measured.setdefault(key, ('err', parts[3] if len(parts) > 3 else '', None))
+    rows = []
+    for unit in units:
+        key = (unit['slide'], unit['shape_index'])
+        entry = measured.get(key)
+        if entry is None:
+            rows.append(_fit_row(unit, 'inconclusive', 'PowerPoint returned no row'))
+            continue
+        if entry[0] == 'err':
+            rows.append(_fit_row(unit, 'inconclusive', entry[1]))
+            continue
+        _, name, numbers = entry
+        left, top, width, height, text, ml, mt, mr, mb, bw, bh, table, summed = numbers
+        if name != unit['name']:
+            rows.append(_fit_row(
+                unit, 'inconclusive',
+                f"PowerPoint names shape {unit['shape_index']} of slide {unit['slide']} "
+                f"'{name}', the candidate '{unit['name']}'"))
+            continue
+        frame = [left, top, width, height]
+        if unit['kind'] == 'chart':
+            rows.append(_fit_row(unit, 'inconclusive',
+                                 "PowerPoint's AppleScript dictionary exposes no chart text layout",
+                                 frame=frame))
+            continue
+        planned = list(unit['planned_emu'])
+        grown = [abs(found - want) > FIT_SLACK_EMU for found, want in zip(frame, planned)]
+        if any(grown[:3]) or (unit['kind'] == 'text' and grown[3]):
+            rows.append(_fit_row(unit, 'inconclusive',
+                                 "PowerPoint's frame differs from the planned frame", frame=frame))
+            continue
+        if unit['kind'] == 'text':
+            if not text or bh <= 0:
+                rows.append(_fit_row(unit, 'inconclusive', 'PowerPoint laid out no text',
+                                     frame=frame))
+                continue
+            inner = [width - ml - mr, height - mt - mb]
+            bound = [bw, bh]
+            wide = bw > inner[0] + FIT_EPS_EMU
+            high = bh > inner[1] + FIT_EPS_EMU
+            if not wide and not high:
+                rows.append(_fit_row(unit, 'fits', '', frame=frame, inner=inner, bound=bound))
+            else:
+                over = []
+                if wide:
+                    over.append(f'horizontally by {(bw - inner[0]) / 12700:.2f} pt')
+                if high:
+                    over.append(f'vertically by {(bh - inner[1]) / 12700:.2f} pt')
+                rows.append(_fit_row(unit, 'overflows', 'text overflows ' + ' and '.join(over),
+                                     frame=frame, inner=inner, bound=bound))
+        elif unit['kind'] == 'table':
+            if not table:
+                rows.append(_fit_row(unit, 'inconclusive', 'PowerPoint laid out no table',
+                                     frame=frame))
+                continue
+            inner = [planned[2], planned[3]]
+            bound = [width, summed]
+            if summed <= planned[3] + FIT_EPS_EMU:
+                rows.append(_fit_row(unit, 'fits', '', frame=frame, inner=inner, bound=bound))
+            else:
+                rows.append(_fit_row(unit, 'overflows', 'PowerPoint grew the rows past the frame',
+                                     frame=frame, inner=inner, bound=bound))
+        else:
+            rows.append(_fit_row(unit, 'inconclusive', f"unknown unit kind {unit['kind']!r}",
+                                 frame=frame))
+    return rows
+
+
 def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeout: int = 90,
-           dialogs=None) -> dict:
+           dialogs=None, *, fit: list[dict] | None = None, binding: dict | None = None) -> dict:
     """One candidate's session. `dialogs` (deck_session.FirstRun) dismisses the
-    known first-run dialogs the session meets; its records join the receipt."""
+    known first-run dialogs the session meets; its records join the receipt.
+    With `binding` the receipt carries it from the start. With `fit` (the run
+    manifest's units) PowerPoint also measures each unit between `open` and
+    `pdf`; the receipt carries `fit_script_sha256` and one row per unit. With
+    both absent the session behaves and writes exactly as before."""
     candidate = candidate.resolve()
     output = output.resolve()
     receipt = {'status': 'unsupported', 'detail': '', 'input': {'sha256': digest(candidate),
                'bytes': candidate.stat().st_size}, 'outputs': {}, 'environment': None}
+    if binding is not None:
+        receipt['binding'] = binding
+    if fit is not None:
+        receipt['fit_script_sha256'] = digest(FIT_SCRIPT)
+        receipt['fit'] = []
     output.mkdir(parents=True, exist_ok=False)
     stage = None
     allowed: set[str] = set()
@@ -618,7 +750,11 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
             receipt.update(status='timed_out', detail=f'{stage_name} exceeded deadline')
             return True
 
-        for action in ('open', 'pdf', 'raster', 'saveback'):
+        actions = ('open', 'fit', 'pdf', 'raster', 'saveback') if fit is not None else \
+            ('open', 'pdf', 'raster', 'saveback')
+        presentation = ''
+        did_open = False
+        for action in actions:
             if expired(action):
                 break
             if action == 'raster':
@@ -647,12 +783,20 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
                                    detail=f'raster: {exc}')
                     break
                 continue
-            target = stage / {'pdf': 'render.pdf', 'saveback': 'reference.pptx'}[action] if action != 'open' else None
+            target = stage / {'pdf': 'render.pdf', 'saveback': 'reference.pptx'}[action] \
+                if action in ('pdf', 'saveback') else None
             try:
                 if action == 'open':
                     opened = True  # open may leave a modal or a presentation on failure
                 # The hook rides only when given, so run_script keeps its five-argument form.
-                status, detail = run_script(staged, action, target, observer, deadline, *([met] if dialogs else []))
+                if action == 'fit':
+                    argv = [presentation, *(f"{unit['slide']}:{unit['shape_index']}" for unit in fit)]
+                    status, detail = run_script(staged, action, target, observer, deadline,
+                                                *([met] if dialogs else []),
+                                                script=FIT_SCRIPT, argv=argv)
+                else:
+                    status, detail = run_script(staged, action, target, observer, deadline,
+                                                *([met] if dialogs else []))
             finally:
                 hide_powerpoint()
             if expired(action):
@@ -665,6 +809,8 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
                 status, detail, failure = open_failure(detail, staged, deadline)
             if status:
                 repair_alert_seen = status == 'repaired'
+                if action == 'fit':
+                    receipt['fit'] = [_fit_row(unit, 'inconclusive', detail) for unit in fit]
                 if repair_alert_seen and invalid_presentation_package(staged):
                     receipt.update(status='failed', detail=f'{action}: repair alert on invalid package/XML; refused')
                 else:
@@ -684,6 +830,12 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
                 detail = problem or f'expected one owned presentation; found {names}'
                 receipt.update(status='unsupported', detail=f'{action}: {detail}')
                 break
+            if action == 'open':
+                # The open action returns name:slideCount; the fit probe takes the name.
+                presentation = detail.rsplit(':', 1)[0]
+                did_open = True
+            elif action == 'fit':
+                receipt['fit'] = fit_rows(fit, detail)
             if target:
                 if expired(action + ' validation'):
                     break
@@ -718,6 +870,11 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
         else:
             if not expired('final validation'):
                 receipt.update(status='clean', detail=f"PDFKit rasterized {receipt['pages']} page(s)")
+        if fit is not None and did_open and not receipt.get('fit'):
+            # The fit step never completed (a deadline met at its boundary):
+            # every row is inconclusive with what ended the candidate.
+            receipt['fit'] = [_fit_row(unit, 'inconclusive', receipt.get('detail', ''))
+                              for unit in fit]
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
         receipt.update(status='timed_out' if isinstance(exc, subprocess.TimeoutExpired) else 'unsupported',
                        detail=f'oracle control failure: {exc}')
