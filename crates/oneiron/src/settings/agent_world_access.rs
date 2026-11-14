@@ -15,8 +15,11 @@
 //! ARCH-0067); the newest default wins, so the agent may still move its own
 //! default inside the grant later. A grant that no longer covers the default
 //! in force writes the default narrowed to it in the same commit, so the
-//! owner's own act never fails the agent's reads closed. A set that changes
-//! nothing writes and records nothing.
+//! owner's own act never fails the agent's reads closed. A set the rows in
+//! force already state writes and records nothing. Naming a default where no
+//! default row is in force writes one even when the agent's reads already
+//! match: with no row, the default follows the grant (base reality while the
+//! grant holds it), and the named one pins it.
 //!
 //! `vault.agents.worlds.get` answers the owner what the agent reads now.
 
@@ -114,8 +117,9 @@ pub struct AgentWorldAccess {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AgentWorldAccessChange {
     pub access: AgentWorldAccess,
-    /// False when the set matched the access in force: nothing was written
-    /// and no act recorded.
+    /// False when the rows in force already state the set: nothing was
+    /// written and no act recorded. A named default where no default row is
+    /// in force is a change, even when the agent's reads already match.
     pub changed: bool,
 }
 
@@ -139,8 +143,9 @@ struct WorldAccessWrite {
 
 impl WorldAccessWrite {
     /// The rows a set of `allowed`, and of `named_default` when the request
-    /// names one, writes over `prior`. An agent no grant governs takes a
-    /// grant row whatever it names: an empty one revokes its base reality.
+    /// names one, writes over `prior`, the tiers the agent's reads fold to.
+    /// An agent no grant governs takes a grant row whatever it names: an
+    /// empty one revokes its base reality.
     fn plan(
         governed: bool,
         prior: &FoldedWorldAccess,
@@ -191,8 +196,8 @@ impl Vault {
     /// one new grant row, writes a default row (superseding the defaults in
     /// force) where the request names another one or the new grant no longer
     /// covers the default in force, and records the owner's act, all in one
-    /// commit, when `surface` names where the owner said so. Access that
-    /// already reads as requested writes and records nothing.
+    /// commit, when `surface` names where the owner said so. A set the rows
+    /// in force already state writes and records nothing.
     ///
     /// # Errors
     ///
@@ -225,13 +230,21 @@ impl Vault {
             let now = self.store.clock.now_recorded_at();
             let governed =
                 WorldGrantIndex::read(&self.store, txn)?.governs(&self.store, txn, agent)?;
-            let prior = folded_world_access(&self.store, txn, &agent, now)?;
+            // Planned over the rows the agent's reads admit, so a row the
+            // authority fold quarantines never decides the plan; every row in
+            // force closes, so none comes back when its quarantine lifts.
+            let rtxn: &heed::RoTxn<'_> = txn;
+            let fold = self.authority_fold_readonly_in_txn(rtxn)?;
+            let prior = folded_world_access(&self.store, rtxn, &agent, now, &|id, body| {
+                crate::authority::claim_causal_admitted(&self.store, rtxn, &fold, id, body)
+            })?;
+            let in_force = folded_world_access(&self.store, rtxn, &agent, now, &|_, _| Ok(true))?;
             let write = WorldAccessWrite::plan(governed, &prior, allowed, named_default);
             if !write.changes() {
                 return Ok(false);
             }
             let owner_writer = WriteActor::new(actor, EdgeActorClass::Human);
-            self.write_world_access_in_txn(txn, owner_writer, agent, &prior, &write, now)?;
+            self.write_world_access_in_txn(txn, owner_writer, agent, &in_force, &write, now)?;
             let digest =
                 |governed: bool, allowed: &WorldAuthoritySet, default_on| AgentWorldAccessDigest {
                     agent,
@@ -269,13 +282,13 @@ impl Vault {
     }
 
     /// Writes `write`'s rows about `agent` as `owner_writer`: each new row
-    /// supersedes the rows of its tier in force in `prior`.
+    /// supersedes every row of its tier in `in_force`.
     fn write_world_access_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner_writer: WriteActor,
         agent: EntityId,
-        prior: &FoldedWorldAccess,
+        in_force: &FoldedWorldAccess,
         write: &WorldAccessWrite,
         now: u64,
     ) -> Result<()> {
@@ -283,15 +296,15 @@ impl Vault {
             (
                 PREDICATE_WORLD_ACCESS_ALLOWED_SET,
                 write.grant.as_ref(),
-                &prior.allowed_claim_ids,
+                &in_force.allowed_claim_ids,
             ),
             (
                 PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
                 write.default.as_ref(),
-                &prior.default_claim_ids,
+                &in_force.default_claim_ids,
             ),
         ];
-        for (predicate, worlds, in_force) in tiers {
+        for (predicate, worlds, closing) in tiers {
             let Some(worlds) = worlds else {
                 continue;
             };
@@ -306,7 +319,7 @@ impl Vault {
             // The meet of grants could only narrow, so the grant in force
             // closes. The defaults in force close too: a default the agent
             // writes later is newer, and wins.
-            for old in in_force {
+            for old in closing {
                 self.supersede_claim_in_txn_as(txn, &row, old, now, Some(owner_writer))?;
             }
         }

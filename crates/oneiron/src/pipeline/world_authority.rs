@@ -160,19 +160,18 @@ pub(crate) struct FoldedWorldAccess {
     pub(crate) default_claim_ids: Vec<EntityId>,
 }
 
-/// The tiers `agent`'s in-force rows fold to at `at`, every row admitted and
-/// no subset check made. The owner's writer reads what it replaces through
-/// it, so a stored default its grant no longer covers never blocks the
-/// owner's own repair.
+/// The tiers `agent`'s in-force rows that `admit` keeps fold to at `at`, no
+/// subset check made. The owner's writer plans over the rows the agent's
+/// reads admit and closes every row in force, so a stored default its grant
+/// no longer covers never blocks the owner's own repair.
 pub(crate) fn folded_world_access(
     store: &Store,
     rtxn: &RoTxn<'_>,
     agent: &EntityId,
     at: u64,
+    admit: &RowAdmission<'_>,
 ) -> Result<FoldedWorldAccess> {
-    fold_world_access(&world_access_rows(store, rtxn, agent, at, &|_, _| {
-        Ok(true)
-    })?)
+    fold_world_access(&world_access_rows(store, rtxn, agent, at, admit)?)
 }
 
 /// Folds in-force rows into the allowed and default tiers.
@@ -445,14 +444,34 @@ fn newer_default(
     current.is_none_or(|(prior, _)| default_row_precedence(row) > default_row_precedence(prior))
 }
 
-/// The owner's bar on top of [`claim_surfaceable`]: a grant counts only when
-/// the OWNER stated it and it carries explicit approval. An agent-authored
-/// `auto` row under the same predicate is ignored, so authoring one is not a
-/// self-widen path. A default the owner stated (`vault.agents.worlds.set`)
-/// passes the same bar beside the agent's own (ARCH-0067: "owner-set or
-/// agent-proposed"); a default never widens past the grant either way.
+/// The owner tier's extra bar on top of [`claim_surfaceable`]: a grant counts
+/// only when the OWNER stated it and it carries explicit approval. An
+/// agent-authored `auto` row under the same predicate is ignored, so authoring
+/// one is not a self-widen path.
 fn owner_stated_row(body: &ClaimBody) -> bool {
     body.approval == ClaimApprovalStatus::Approved && body.source == Some(ClaimSource::UserStated)
+}
+
+/// Whether a DEFAULT-SUBSET row is the owner's own statement, which counts
+/// beside the agent's own (ARCH-0067: "owner-set or agent-proposed"): it
+/// passes [`owner_stated_row`] and its envelope-stamped writer is a live owner
+/// of the vault, as `vault.agents.worlds.set` stamps the owner. Approval alone
+/// is no owner decision: a holder that settles another writer's proposal
+/// approves it without becoming its writer. A default never widens past the
+/// grant either way.
+fn owner_stated_default(store: &Store, rtxn: &RoTxn<'_>, body: &ClaimBody) -> Result<bool> {
+    if !owner_stated_row(body) {
+        return Ok(false);
+    }
+    let Some(writer) = session_claim_producer(body) else {
+        return Ok(false);
+    };
+    crate::policy_model::is_live_vault_owner_for_store_in_txn(
+        store,
+        store.privacy_posture,
+        rtxn,
+        &writer,
+    )
 }
 
 /// Whether a row's valid-time window contains `at`. Half-open `[from, to)`:
@@ -471,9 +490,9 @@ fn world_access_row_in_force(body: &ClaimBody, at: u64) -> bool {
 /// `at`), rows about another subject, and rows under any other predicate are
 /// skipped here, BEFORE any value decode: the resolver only ever decodes rows
 /// it would honour. Defaults also require the subject's envelope-stamped writer
-/// identity, or the owner's statement ([`owner_stated_row`]). Another writer's
-/// row cannot win precedence or cause a value-decode refusal, even when its
-/// value is malformed.
+/// identity, or the owner's own statement ([`owner_stated_default`]). Another
+/// writer's row cannot win precedence or cause a value-decode refusal, even
+/// when its value is malformed.
 ///
 /// Every row read here was written on this node, or restored from this
 /// vault's own checkpoint (RULING L2-53-CHECKPOINT = B): both tiers are local
@@ -512,7 +531,7 @@ fn world_access_rows(
             }
             if body.predicate == PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
                 && session_claim_producer(&body) != Some(*agent_ref)
-                && !owner_stated_row(&body)
+                && !owner_stated_default(store, rtxn, &body)?
             {
                 return Ok(());
             }

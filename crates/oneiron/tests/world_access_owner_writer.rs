@@ -10,7 +10,9 @@
 //! that no longer covers the agent's default narrows the default in the same
 //! commit, so the agent's reads never fail closed. A set that changes
 //! nothing writes and records nothing; a caller other than the owner, and an
-//! id that names no agent or no world, are refused with nothing written.
+//! id that names no agent or no world, are refused with nothing written. A
+//! default counts when the agent or the owner wrote it, never because another
+//! writer's row carries the owner's stamps.
 //!
 //! Every door is reached by its verb name, and every read and fixture
 //! through a door the base (#7793) already has, so this file builds on a tree
@@ -124,21 +126,39 @@ impl Fixture {
     /// stamps one, landed through #7793's fixture door (the raw put door
     /// parks a world-access row at the criticality floor).
     fn put_agent_default(&self, include_base: bool, worlds: &[EntityId]) {
+        self.put_default(
+            WriteActor::new(self.agent, EdgeActorClass::Agent),
+            (ClaimSource::Inferred, ClaimApprovalStatus::Auto),
+            None,
+            &authority_set(include_base, worlds),
+        );
+    }
+
+    /// A default about the agent stamped with `writer`'s envelope, with the
+    /// source and approval `stamps` names, valid from `valid_from`.
+    fn put_default(
+        &self,
+        writer: WriteActor,
+        stamps: (ClaimSource, ClaimApprovalStatus),
+        valid_from: Option<u64>,
+        subset: &WorldAuthoritySet,
+    ) {
+        let (source, approval) = stamps;
         let mut body = world_access_claim_body(
             PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
             self.agent,
-            &WorldAuthoritySet::new(include_base, worlds.iter().copied()).unwrap(),
-            ClaimSource::Inferred,
-            ClaimApprovalStatus::Auto,
-            None,
+            subset,
+            source,
+            approval,
+            valid_from,
             None,
         )
         .unwrap();
         let envelope = WriteEnvelope::new(
-            WriteActor::new(self.agent, EdgeActorClass::Agent),
-            ClaimSource::Inferred,
+            writer,
+            source,
             WriteProvenance::new(rmpv::Value::from("world-default-test")).unwrap(),
-            ClaimApprovalStatus::Auto,
+            approval,
         );
         body.evidence = Some(write_envelope_evidence(&envelope, None));
         put_world_access_row(
@@ -148,7 +168,7 @@ impl Fixture {
             at(LEARNED_AT),
             LEARNED_AT,
         )
-        .expect("the agent's own default");
+        .expect("a default row about the agent");
     }
 }
 
@@ -314,6 +334,34 @@ fn an_unchanged_set_writes_and_records_nothing() {
         "the rows in force are the first set's"
     );
     assert_eq!(f.acts(), 1, "an unchanged set records no act");
+}
+
+/// A default another writer wrote about the agent never counts, though it
+/// is user-stated and approved, as a holder's settlement of that writer's
+/// proposal leaves it: approval is no owner decision. Valid from an earlier
+/// time, it would win precedence over the owner's empty default.
+#[test]
+fn a_default_another_writer_stated_never_counts() {
+    let f = Fixture::new();
+    f.set(worlds(true, &[]), Some(worlds(false, &[])))
+        .expect("the owner grants base reality with an empty default");
+    let other = f
+        .vault
+        .ensure_agent_principal("yuki")
+        .expect("another agent");
+    f.put_default(
+        WriteActor::new(other, EdgeActorClass::Agent),
+        (ClaimSource::UserStated, ClaimApprovalStatus::Approved),
+        Some(LEARNED_AT),
+        &authority_set(true, &[]),
+    );
+
+    let authority = f.authority();
+    assert!(
+        authority.active_set.is_empty(),
+        "another writer's default moved the agent's: {authority:?}"
+    );
+    assert_eq!(f.get()["default_on"], worlds(false, &[]));
 }
 
 /// Only the owner sets or reads an agent's worlds. A listed id that is not a
