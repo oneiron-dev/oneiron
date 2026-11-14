@@ -14,6 +14,10 @@ const BINARY_WORKBOOK_TYPE = "application/vnd.ms-excel.sheet.binary.macroEnabled
 const MACRO_WORKBOOK_TYPE = "application/vnd.ms-excel.sheet.macroEnabled.main+xml";
 const EXTERNAL_LINK_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml";
 const COMMENTS_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml";
+const THREADED_COMMENTS_TYPE = "application/vnd.ms-excel.threadedcomments+xml";
+const PEOPLE_TYPE = "application/vnd.ms-excel.person+xml";
+const THREADED_COMMENTS_NS = "http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments";
+const THREADED_COMMENT_REL = "http://schemas.microsoft.com/office/2017/10/relationships/threadedComment";
 
 /** A worksheet part's XML: `sheetData` rows, then the elements that follow them. */
 export function worksheet(sheetData: string, after = ""): string {
@@ -250,7 +254,11 @@ export type CraftedKind =
   | "many-listed-sheets"
   | "listed-sheet-lookups"
   | "external-link-lookups"
-  | "repeated-sheet-name";
+  | "repeated-sheet-name"
+  | "array-range-checks"
+  | "stacked-comments"
+  | "threaded-comments-people"
+  | "far-shifted-copies";
 
 /** The crafted package of `kind`; its sheet is S1. */
 export function craftedPackage(kind: CraftedKind): Uint8Array {
@@ -302,6 +310,21 @@ export function craftedPackage(kind: CraftedKind): Uint8Array {
         contentTypes: externalLinkOverrides(400_000),
         fillers: LOOKUP_FILLERS,
       });
+    case "array-range-checks":
+      return sheetsPackage([text(arrayRangeChecksSheet())]);
+    case "stacked-comments":
+      // 200,000 comments on A1: SheetJS looks at every comment already on the
+      // cell before it adds one, 2 x 10^10 steps.
+      return commentsPackage(
+        `<comments xmlns="${MAIN}"><authors><author>owen</author></authors><commentList>${`<comment ref="A1" authorId="0"><text><r><t>x</t></r></text></comment>`.repeat(200_000)}</commentList></comments>`,
+      );
+    case "threaded-comments-people":
+      // 100,000 threaded comments on their own cells, each by a person the
+      // 300,000 people listed do not hold: SheetJS looks each author up in
+      // every person, 3 x 10^10 steps.
+      return threadedCommentsPackage(100_000, 300_000);
+    case "far-shifted-copies":
+      return sheetsPackage([text(farShiftedCopiesSheet(1_000))]);
     case "repeated-sheet-name": {
       // 5,000 listed sheets, all named S1 and all pointing at one sheet part
       // of 100,000 cells: SheetJS reads S1 by name, without case, and so
@@ -422,4 +445,122 @@ export function realShapedPackage(): Uint8Array {
     // 4 workbook parts, 300 sheets and 8 more parts: 1,500 entries in all.
     fillers: 1_500 - 4 - 300 - parts.length,
   });
+}
+
+/** An Excel column name: 0 is A, 25 is Z, 26 is AA. */
+export function columnName(index: number): string {
+  let name = "";
+  for (let rest = index + 1; rest > 0; rest = Math.floor((rest - 1) / 26)) {
+    name = String.fromCharCode(65 + ((rest - 1) % 26)) + name;
+  }
+  return name;
+}
+
+/**
+ * 40,000 cells whose formulas are array formulas over A1:A2, then 500,000
+ * plain cells, one per row: with formula text kept SheetJS checks every cell
+ * against every array range filed before it, 2 x 10^10 steps from 24 MB.
+ */
+export function arrayRangeChecksSheet(): string {
+  return worksheet(
+    Array.from({ length: 540_000 }, (_, i) =>
+      i < 40_000
+        ? `<row r="${i + 1}"><c r="A${i + 1}"><f t="array" ref="A1:A2">1</f><v>1</v></c></row>`
+        : `<row r="${i + 1}"><c r="A${i + 1}"><v>1</v></c></row>`,
+    ).join(""),
+  );
+}
+
+/** S1 with one cell, and `comments` as the comments part its relationships name. */
+function commentsPackage(comments: string): Uint8Array {
+  return sheetsPackage([text(PLAIN_SHEET)], {
+    contentTypes: `<Override PartName="/xl/comments1.xml" ContentType="${COMMENTS_TYPE}"/>`,
+    parts: [
+      {
+        name: "xl/worksheets/_rels/sheet1.xml.rels",
+        body: text(
+          `<Relationships xmlns="${REL}"><Relationship Id="rId1" Type="${DOC_REL}/comments" Target="../comments1.xml"/></Relationships>`,
+        ),
+      },
+      { name: "xl/comments1.xml", body: text(comments) },
+    ],
+  });
+}
+
+/** S1 with one cell, `comments` threaded comments on cells A1, A2, ..., and `people` people listed. */
+function threadedCommentsPackage(comments: number, people: number): Uint8Array {
+  const persons = Array.from(
+    { length: people },
+    (_, i) => `<person displayName="p${i}" id="{p${i}}" userId="u${i}" providerId="None"/>`,
+  ).join("");
+  const threaded = Array.from(
+    { length: comments },
+    (_, i) =>
+      `<threadedComment ref="A${i + 1}" dT="2026-11-15T00:00:00.00" personId="{nobody}" id="{c${i}}"><text>x</text></threadedComment>`,
+  ).join("");
+  return sheetsPackage([text(PLAIN_SHEET)], {
+    contentTypes:
+      `<Override PartName="/xl/persons/person.xml" ContentType="${PEOPLE_TYPE}"/>` +
+      `<Override PartName="/xl/threadedComments/threadedComment1.xml" ContentType="${THREADED_COMMENTS_TYPE}"/>`,
+    parts: [
+      { name: "xl/persons/person.xml", body: text(`<personList xmlns="${THREADED_COMMENTS_NS}">${persons}</personList>`) },
+      {
+        name: "xl/worksheets/_rels/sheet1.xml.rels",
+        body: text(
+          `<Relationships xmlns="${REL}"><Relationship Id="rId1" Type="${THREADED_COMMENT_REL}" Target="../threadedComments/threadedComment1.xml"/></Relationships>`,
+        ),
+      },
+      {
+        name: "xl/threadedComments/threadedComment1.xml",
+        body: text(`<ThreadedComments xmlns="${THREADED_COMMENTS_NS}">${threaded}</ThreadedComments>`),
+      },
+    ],
+  });
+}
+
+/**
+ * A shared master at A1 of 21,845 references `A1+` (64 KiB), and `followers`
+ * cells at a 12-letter column and 16-digit rows: each copy moves every
+ * reference there, about 633,000 characters, while the master is 65,535.
+ */
+export function farShiftedCopiesSheet(followers: number): string {
+  const column = "A".repeat(12);
+  const master = "A1+".repeat(21_845);
+  const rows = [`<row r="1"><c r="A1"><f t="shared" ref="A1:A2" si="0">${master}</f><v>1</v></c></row>`];
+  for (let i = 0; i < followers; i += 1) {
+    const row = 9_000_000_000_000_001 + i;
+    rows.push(`<row r="${row}"><c r="${column}${row}"><f t="shared" si="0"/><v>1</v></c></row>`);
+  }
+  return worksheet(rows.join(""));
+}
+
+/**
+ * A 40-character shared master at A1 with 4 references, and `followers`
+ * cells below it, 10 to a row (columns A to J): each copy is about the
+ * master's length.
+ */
+export function nearShiftedCopiesSheet(followers: number): string {
+  const master = "B1*2+C1*3+D1*4+E1*5+SUM(1,2,3,4,5,6,7,8)";
+  const rows = [`<row r="1"><c r="A1"><f t="shared" ref="A1:J${followers / 10 + 1}" si="0">${master}</f><v>1</v></c></row>`];
+  for (let row = 2; row <= followers / 10 + 1; row += 1) {
+    const cells = Array.from(
+      { length: 10 },
+      (_, c) => `<c r="${columnName(c)}${row}"><f t="shared" si="0"/><v>1</v></c>`,
+    ).join("");
+    rows.push(`<row r="${row}">${cells}</row>`);
+  }
+  return worksheet(rows.join(""));
+}
+
+/** 10,000 cells in 100 rows, each row starting with an array formula that spills over it. */
+export function spilledFormulasSheet(): string {
+  const rows: string[] = [];
+  for (let row = 1; row <= 100; row += 1) {
+    const cells = [`<c r="A${row}"><f t="array" ref="A${row}:CV${row}">B${row}*2</f><v>2</v></c>`];
+    for (let c = 1; c < 100; c += 1) {
+      cells.push(`<c r="${columnName(c)}${row}"><v>${c}</v></c>`);
+    }
+    rows.push(`<row r="${row}">${cells.join("")}</row>`);
+  }
+  return worksheet(rows.join(""));
 }

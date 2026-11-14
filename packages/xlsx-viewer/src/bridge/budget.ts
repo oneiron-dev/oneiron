@@ -54,6 +54,12 @@ export interface PreviewBudget {
    * lookup compares the part's name with every path of the package.
    */
   readonly partLookups: number;
+  /**
+   * Steps of the loops SheetJS runs over what one read has gathered: each cell
+   * over the array ranges before it, and each comment over the comments of
+   * its cell before it and, for a threaded comment, over the people.
+   */
+  readonly loopSteps: number;
   /** Cells one sheet holds. */
   readonly sheetCells: number;
   /** Characters of cell text and formula text in one sheet. */
@@ -73,7 +79,9 @@ const MIB = 1024 * 1024;
  * before 200 MiB of media copies about 20 GiB, so the line sits well above
  * that and far below the terabytes 10,000 entries could ask for. A real
  * workbook of 300 sheets in 1,500 entries makes about 1.4 million path
- * comparisons per read; the line sits at 2^24.
+ * comparisons per read; the line sits at 2^24. A sheet of a million cells
+ * after 1,000 spilled array ranges takes a billion loop steps; the line sits
+ * just above, at 2^30.
  */
 export const PREVIEW_BUDGET: PreviewBudget = Object.freeze({
   inputBytes: 512 * MIB,
@@ -84,6 +92,7 @@ export const PREVIEW_BUDGET: PreviewBudget = Object.freeze({
   copyBytes: 64 * 1024 * MIB,
   sheets: 10_000,
   partLookups: 1 << 24,
+  loopSteps: 1 << 30,
   sheetCells: 1_000_000,
   sheetTextChars: 64 * MIB,
 });
