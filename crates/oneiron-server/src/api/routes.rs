@@ -333,6 +333,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // The public ceremony bypasses the hosted device lease but retains
         // matched-route wire receipts and threshold questions.
         .merge(self::esign::public_routes())
+        // The QR page a sealed certificate names: keyless, its capability
+        // checked in the vault on each report.
+        .merge(self::esign_qr::public_routes())
         // OF-519: the served built-in channels' provider webhooks. Keyless;
         // the provider's HMAC over the raw body authenticates each one.
         .merge(crate::builtin_host::routes())

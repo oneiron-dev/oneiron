@@ -437,6 +437,10 @@ impl Memory<'_> {
             recheck(txn)
         };
         let revokes_guests = guest_revoke.is_some();
+        // The code run that asks the delete, from its own write origin: the
+        // write that commits the delete joins that run's change journal
+        // (ARCH-0040 #revert-run).
+        let run = self.host_run_ref();
         let gated = if stop_check_after_soft_scrub {
             crate::deletion::GatedDeletion::with_pre_scrub_check(gate, &reverify, &recheck)
         } else {
@@ -444,7 +448,8 @@ impl Memory<'_> {
         }
         .with_claim(claim)
         .with_guest_revoke(guest_revoke)
-        .with_owner_act(owner_act);
+        .with_owner_act(owner_act)
+        .with_run(run.as_deref());
         let outcome = self
             .vault
             .delete_entity_with_reason_gated(id, reason, gated);
