@@ -2028,6 +2028,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/wire_telemetry/tests.rs` | test | s | — | — | — |
 | `src/xlsx_recalc.rs` | src | m | 1 crate-vis | — | The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless… |
 | `tests/agent_definition_served_batch.rs` | test | m | — | — | The served row doors follow ARCH-0053:20 on their credential's agent slice: `vault.batch`, and the… |
+| `tests/artifact_pinned_document_cache.rs` | test | s | — | — | A pinned public code bundle's documents revalidate on every load, so a policy change reaches a browser that… |
 | `tests/artifact_private_owner_read.rs` | test | m | — | — | A private published app serves its vault's owner alone (CROSS-ARCH-0019 #public-backend, PUBLIC-BACKEND = A… |
 | `tests/big_rung_written_reply.rs` | test | s | — | — | FIX 22368: the Big rung's written reply (`reply = "json"` or `"lines"`, the path without token scores)… |
 | `tests/bounded_legacy_reads.rs` | test | m | — | — | BOUNDED-LEGACY-READ (RETRIEVAL-04): the legacy reads `GET /api/search/vector`, `/api/entity/{id}` and… |
