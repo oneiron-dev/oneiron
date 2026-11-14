@@ -18,8 +18,8 @@ use crate::memory::{
     RecallRequest, RecallScope, RecallWorlds,
 };
 use crate::note::{
-    FileHandle, FileReadiness, FolderFileState, FolderSourceFile, NameMatch, file_path_of,
-    name_match, text_excerpt,
+    FileHandle, FileReadiness, FolderFileState, FolderSourceFile, NameMatch, name_match,
+    part_file_path, text_excerpt,
 };
 use crate::{EdgeActorClass, Vault};
 
@@ -264,6 +264,18 @@ fn searched_files(
     Ok(searched)
 }
 
+/// Every searched row by its source and path.
+type RowsByPath<'s> = HashMap<(EntityId, &'s str), &'s SearchedFile>;
+
+/// The row of the file whose continuation part `found` is: the row its
+/// source's ledger holds at `<path>` when `found`'s path is `<path>/#part<n>`.
+/// `None` for a row of any other path, and for a row of that shape whose
+/// `<path>` the ledger holds no file at: a file of its own named `#part<n>`
+/// in a folder at `<path>` (REVIEW-7705 P1).
+fn part_file_row<'s>(found: &'s SearchedFile, rows: &RowsByPath<'s>) -> Option<&'s SearchedFile> {
+    part_file_path(&found.file.path).and_then(|file| rows.get(&(found.source, file)).copied())
+}
+
 /// The recall a search's meaning tier runs as the owner: the query, over
 /// this install's Files world alone with base declined, for twice the
 /// search's limit (a recalled row that is no chosen file's note is dropped).
@@ -298,9 +310,9 @@ pub fn files_search_recall(
 /// [`files_search_recall`]'s request answered, or its refusal; `None` when
 /// no recall ran. The name tier covers every ledger row of the chosen
 /// sources but a retracted file's, a file held by name only included; a
-/// continuation part's row is its file's. A recalled note maps back to its
-/// file through the ledger, and a file the name tier listed is not listed
-/// again.
+/// continuation part's row is its file's when the ledger holds that file. A
+/// recalled note maps back to its file through the ledger, and a file the
+/// name tier listed is not listed again.
 ///
 /// It answers for this install's Files world alone, whatever `devices` says:
 /// the host asks the other devices and merges their answers
@@ -333,10 +345,14 @@ fn files_search_here(
     let query = searched_query(input)?;
     let limit = search_limit(input.limit);
     let searched = searched_files(vault, input.sources.as_deref(), strict)?;
+    let rows: RowsByPath<'_> = searched
+        .iter()
+        .map(|found| ((found.source, found.file.path.as_str()), found))
+        .collect();
 
     let mut named: Vec<(NameMatch, &SearchedFile)> = searched
         .iter()
-        .filter(|found| file_path_of(&found.file.path) == found.file.path)
+        .filter(|found| part_file_row(found, &rows).is_none())
         .filter_map(|found| name_match(&found.file.path, query).map(|class| (class, found)))
         .collect();
     named.sort_by(|(left_class, left), (right_class, right)| {
@@ -365,10 +381,6 @@ fn files_search_here(
                 .iter()
                 .filter_map(|found| found.file.note.map(|note| (note, found)))
                 .collect();
-            let by_path: HashMap<(EntityId, &str), &SearchedFile> = searched
-                .iter()
-                .map(|found| ((found.source, found.file.path.as_str()), found))
-                .collect();
             let mut rank: u32 = 0;
             for item in &pack.items {
                 let Some(note) = item
@@ -384,13 +396,13 @@ fn files_search_here(
                 if hits.len() >= limit {
                     break;
                 }
-                let path = file_path_of(&found.file.path);
-                if !listed.insert((found.source, path)) {
+                // A part's hit answers its file's own row; its snippet is
+                // the recalled note's own words.
+                let row = part_file_row(found, &rows).unwrap_or(found);
+                let path = row.file.path.as_str();
+                if !listed.insert((row.source, path)) {
                     continue;
                 }
-                // A part's hit answers its file's own row when the ledger
-                // holds it; its snippet is the recalled note's own words.
-                let row = by_path.get(&(found.source, path)).copied().unwrap_or(found);
                 let snippet = vault
                     .read_note(&note)?
                     .map(|body| text_excerpt(&body.markdown, query))

@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 
 /// The mark a continuation part of a long file's text carries after the
 /// file's path in its source's ledger: `<path>/#part<n>` (FIX 6942). The
-/// part's row is the same file as the row at `<path>`.
+/// part's row is the same file as the row at `<path>`. A real file named
+/// `#part<n>` in a folder at `<path>` has the same path; a folder and a file
+/// never share one, so the ledger's row at `<path>` tells them apart.
 pub const FILES_PART_MARK: &str = "/#part";
 
 /// How a file's name matches a search query, best first. Names compare in
@@ -37,20 +39,19 @@ pub enum NameMatch {
     PathWords,
 }
 
-/// The path of the file a ledger row holds: a continuation part's row
-/// (`<path>/#part<n>`) holds the file at `<path>`.
+/// The file path a ledger row's path names when it has a continuation
+/// part's shape (`<path>/#part<n>`): `<path>`. The row is that file's part
+/// only when its source's ledger holds a file at `<path>`; else it is a file
+/// of its own, named `#part<n>`.
 #[must_use]
-pub fn file_path_of(path: &str) -> &str {
-    match path.rsplit_once(FILES_PART_MARK) {
-        Some((file, number))
-            if !file.is_empty()
+pub fn part_file_path(path: &str) -> Option<&str> {
+    path.rsplit_once(FILES_PART_MARK)
+        .filter(|(file, number)| {
+            !file.is_empty()
                 && !number.is_empty()
-                && number.bytes().all(|byte| byte.is_ascii_digit()) =>
-        {
-            file
-        }
-        _ => path,
-    }
+                && number.bytes().all(|byte| byte.is_ascii_digit())
+        })
+        .map(|(file, _)| file)
 }
 
 /// How the file at `path` (under its folder, `/`-separated) matches

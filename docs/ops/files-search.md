@@ -11,8 +11,9 @@ second (ARCH-0027 #files-world).
   with it (`prefix`), then a name holding every word of it (`name_words`), then a path under the
   folder holding every word of it (`path_words`). Within a class, the file written last comes first.
 - **Meaning tier.** One recall as the owner over this install's Files world alone, base declined.
-  A recalled note is mapped back to its file through the source's ledger (a long file's parts map
-  to the file), and its text excerpt is the hit's `snippet`. A file the name tier listed is not
+  A recalled note is mapped back to its file through the source's ledger (a long file's parts,
+  `<path>/#part<n>`, map to the file at `<path>`; a file named `#part<n>` in a folder, with no file
+  at the folder's path, is a file of its own), and its text excerpt is the hit's `snippet`. A file the name tier listed is not
   listed again. A running server runs this recall through its own recall pipeline, so the query is
   embedded where the host embeds; an embedded handle recalls with no query vector.
 - `meaning` in the answer is `ran`, or `unavailable` with the reason (no Files world on this
