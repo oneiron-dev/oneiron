@@ -45,9 +45,17 @@
 #
 # For each selection:
 #   build       `cargo nextest run --no-run`. A unit that does not compile is
-#               left out (nightly_report.py prune) and the build retried, at
-#               most three rounds; a failed lib or build script drops the
-#               selection. Any unit left out makes the night red.
+#               left out (nightly_report.py prune) and the build retried. A
+#               round's build stops at its first failed unit, so each broken
+#               lib test takes a round of its own: the rounds go on while each
+#               leaves a new unit out, up to NIGHTLY_BUILD_ROUNDS (default 8)
+#               rounds and not past the deadline. A failed lib or build
+#               script, or a round that names no new unit, drops the
+#               selection. Any unit left out makes the night red. A workspace
+#               package none of whose lib, bin or test targets is tested
+#               (`test = false`, as oneiron-py sets: a PyO3 extension-module
+#               never links as a test) is left out of every selection by
+#               design, as `cargo test` with no target flag leaves it.
 #   pending     (after the libs build) oneiron-testkit-pending-door <date>:
 #               the NO-DOOR register (ONEIRON_TESTKIT_NO_DOOR_REGISTER) gives
 #               the pending filter P and the expired filter X. An expired test
@@ -112,6 +120,8 @@ night=${night:-$(TZ=Asia/Tokyo date +%F)}
 for number in "$shard_files" "${max_shards:-0}" "${deadline:-0}"; do
   [[ $number =~ ^[0-9]+$ ]] || { echo "run_nightly.sh: $number is not a number" >&2; exit 2; }
 done
+build_rounds=${NIGHTLY_BUILD_ROUNDS:-8}
+[[ $build_rounds =~ ^[1-9][0-9]*$ ]] || { echo "run_nightly.sh: NIGHTLY_BUILD_ROUNDS=$build_rounds is not a positive number" >&2; exit 2; }
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
 mkdir -p "$out" && out=$(cd "$out" && pwd)
@@ -129,7 +139,7 @@ commit=$(git rev-parse HEAD) || exit 2
 # a reused --out dir must not lend an older night's results or build errors
 rm -f "$out"/junit-*.xml "$out/pending-door.json" "$out/stages.tsv" "$out"/build-*.log "$out"/failed-units-*.json \
   "$out/budget-baseline-proposal.tsv" "$out/bench-jobs.tsv" "$out"/bench-*.out "$out"/bench-*.err
-echo "## NIGHTLY head=${commit:0:12} date=$night shard_files=$shard_files max_shards=${max_shards:-none} deadline=${deadline:-none} jobs=${CARGO_BUILD_JOBS:-default} lib_jobs=${NIGHTLY_LIB_JOBS:-default}"
+echo "## NIGHTLY head=${commit:0:12} date=$night shard_files=$shard_files max_shards=${max_shards:-none} deadline=${deadline:-none} jobs=${CARGO_BUILD_JOBS:-default} lib_jobs=${NIGHTLY_LIB_JOBS:-default} build_rounds=$build_rounds"
 if ! cargo nextest --version > "$out/nextest-version.txt" 2>&1; then
   step nextest missing; exit 2
 fi
@@ -168,8 +178,12 @@ build_selection() {  # name -> 0 once its units build (failed units left out), 1
     [ $rc -eq 0 ] && return 0
     sed -n 's/^error: could not compile /## NIGHTLY failed-unit /p' "$log" | sort -u | head -40
     report failed-units "${logs[@]}" > "$out/failed-units-$name.json"   # this build's rounds only
-    if [ $round -ge 3 ]; then
+    if [ $round -ge "$build_rounds" ]; then
       report drop "$plan" "$name" "the build failed in $round rounds"
+      return 1
+    fi
+    if [ -n "$deadline" ] && [ "$(date +%s)" -ge "$deadline" ]; then
+      report drop "$plan" "$name" "the build failed in round $round, at the deadline"
       return 1
     fi
     report prune "$plan" "$name" "$out/failed-units-$name.json" "$out/metadata.json" || return 1
