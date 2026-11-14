@@ -340,6 +340,12 @@ pub(super) fn touch(
                 _held: held,
             });
     }
+    // The served item seeds this machine's prediction; a touch the log drops never fails it.
+    if let PeerMachine::Proven { machine, .. } = peer
+        && let Err(error) = server.vault.record_machine_touch(machine, target.id)
+    {
+        tracing::warn!(%error, "a served residence touch left no prediction seed");
+    }
     Ok((reply, rows))
 }
 
