@@ -32,6 +32,7 @@ mod companion;
 mod context_board_history;
 mod context_board_standing;
 mod context_pack_disclosure;
+mod context_pack_phonetic_vector;
 mod context_pack_v4;
 mod contract_snapshots;
 mod conversation_dag;
