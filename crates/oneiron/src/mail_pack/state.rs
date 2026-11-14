@@ -7,9 +7,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::push::MailWatchState;
-use super::quota::MailQuotaWindow;
 use super::source::MailCopySetting;
 use super::wire::MailAttachmentRef;
+use crate::provider_quota::ProviderQuotaWindow;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
@@ -94,7 +94,7 @@ pub(super) struct MailSyncState {
     /// Where the source's provider quota windows stand, and until when it
     /// rests ([`super::quota`]).
     #[serde(default)]
-    pub(super) quota: MailQuotaWindow,
+    pub(super) quota: ProviderQuotaWindow,
     /// The mailbox's push channel, while one is open ([`super::push`]).
     #[serde(default)]
     pub(super) watch: Option<MailWatchState>,

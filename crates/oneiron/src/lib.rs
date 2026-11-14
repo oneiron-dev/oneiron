@@ -147,6 +147,7 @@ pub mod note;
 pub mod persona_snapshot;
 pub mod provenance;
 pub mod provider_confidence;
+pub(crate) mod provider_quota;
 pub mod psych_profile;
 // ===== Gates, consent & authority ===== every write passes the Gate; consent, policy, grants
 pub mod access_grant;

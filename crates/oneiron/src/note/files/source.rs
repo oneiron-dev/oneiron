@@ -261,6 +261,7 @@ impl Vault {
             include,
             kind.unwrap_or(FILES_DEFAULT_KIND),
             Some(placement),
+            None,
         )?;
         Ok((files, source))
     }
