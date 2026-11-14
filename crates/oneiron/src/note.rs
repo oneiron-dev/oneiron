@@ -290,6 +290,8 @@ pub(crate) use fork_downlink::{
 };
 #[cfg(feature = "sync")]
 mod fork_upload;
+#[cfg(all(feature = "sync", oneiron_test_support))]
+pub(crate) use fork_upload::fork_upload_refusal_in_txn;
 #[cfg(feature = "sync")]
 pub use fork_upload::{NoteForkUpload, NoteForkUploadOutcome, NoteForkUploadReceipt};
 #[cfg(feature = "sync")]
