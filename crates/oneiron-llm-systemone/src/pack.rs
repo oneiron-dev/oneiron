@@ -1,6 +1,9 @@
 //! One native System One request over a shared state and ordered typed questions.
 
-use super::{MAX_RESPONSE_BYTES, Response, SystemOneSeat, build_question, parse_prediction};
+use super::{
+    MAX_RESPONSE_BYTES, Response, SystemOneSeat, build_question, parse_prediction,
+    stopped_at_token_cap, token_cap,
+};
 use oneiron::llm::decision::{
     DecisionAnswer, DecisionAudio, DecisionImage, DecisionQuestion, SeatPhase, SeatRequest,
 };
@@ -136,6 +139,9 @@ impl SystemOneSeat {
         }
         if response.body.len() > MAX_RESPONSE_BYTES {
             return Err(FatalLlmError::InvalidRequest.into());
+        }
+        if stopped_at_token_cap(&response.body) {
+            return Err(token_cap());
         }
         let wire: Response =
             serde_json::from_slice(&response.body).map_err(|_| FatalLlmError::InvalidRequest)?;
