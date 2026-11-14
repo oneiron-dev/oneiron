@@ -702,7 +702,5 @@ impl crate::Vault {
 }
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-FAILURE-SIGNALS-TESTS]: the lib test target's type check fails here (24 errors: E0308 x10, E0599 x6, E0061 x5, E0063 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

@@ -26,8 +26,6 @@ mod store;
 mod task_ask;
 mod windows;
 
-// FIX [LIBTEST-QUARANTINE-LLM-DECISION-QUESTIONS-STANDING-TESTS]: the lib test target's type check fails here (26 errors: E0308 x16, E0063 x9, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod standing_tests;
 
