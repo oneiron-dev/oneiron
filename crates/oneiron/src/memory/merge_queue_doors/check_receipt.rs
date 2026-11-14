@@ -16,17 +16,8 @@ use crate::merge_queue::{
     CheckPhase, QUEUE_CHECK_CANDIDATE_PREFIX, QueueCheckHoldReason, StoredQueueCheckReceipt,
 };
 
-/// One inputs reference of one checker work row to read.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeCheckReceiptRequest {
-    /// An existing CODE_ARTIFACT whose stored pointer is a local folder.
-    pub repo: EntityId,
-    /// The work reference a checker door returned, 64 hex characters.
-    pub work_ref: String,
-    /// One of that work's `receipt_refs`: `queue-check:v1:<inputs digest>`.
-    pub receipt_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::merge_queue_doors::check_receipt::CodeCheckReceiptRequest;
 
 /// One phase command's recorded result: its exit status or the signal
 /// that ended it, and the BLAKE3 of its recorded output.

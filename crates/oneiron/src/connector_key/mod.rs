@@ -73,13 +73,17 @@ pub use self::record::{
     EffectorBudgetOnExhaust, EffectorBudgetReservePolicy, EffectorBudgetWindow,
     PendingConnectorCharter, PendingConnectorManifest,
 };
+pub(crate) use self::setup::GrantAccess;
 pub use self::setup::{
-    BROWSER_SESSION_CHECK, GMAIL_PROFILE_CHECK, GoogleAuthorizationCode, GoogleAuthorizationGrant,
-    LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK, NATIVE_MAIL_JMAP_CHECK,
-    PACK_CONNECTION_ACTOR_CLASS, PACK_SETUP_ALLOW_ASK_DOOR, PACK_SETUP_ALLOW_ASK_QUEUE,
-    PackConnectionCheck, PackConnectionEvidence, PackConnectionVerifier, PackSetupOwnerAsk,
-    ProviderConnectionChecks, SHEETS_TOKEN_CHECK, SLACK_AUTH_TEST_CHECK, TELEGRAM_GET_ME_CHECK,
+    AuthorizationCodeGrant, BROWSER_SESSION_CHECK, GMAIL_PROFILE_CHECK, GOOGLE_TOKEN_CHECK,
+    GoogleAuthorizationCode, LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK, MICROSOFT365_ME_CHECK,
+    MicrosoftAuthorizationCode, NATIVE_MAIL_JMAP_CHECK, PACK_CONNECTION_ACTOR_CLASS,
+    PACK_SETUP_ALLOW_ASK_DOOR, PACK_SETUP_ALLOW_ASK_QUEUE, PackConnectionCheck,
+    PackConnectionEvidence, PackConnectionVerifier, PackSetupOwnerAsk, ProviderConnectionChecks,
+    SLACK_AUTH_TEST_CHECK, TELEGRAM_GET_ME_CHECK,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::setup::{exchange_microsoft_code_at, refresh_stored_microsoft_grant_at};
 pub use self::txn::ConnectorKeyGeneration;
 
 pub(crate) use self::charter::{

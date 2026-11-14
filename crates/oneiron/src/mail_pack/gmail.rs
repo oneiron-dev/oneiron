@@ -29,8 +29,8 @@ use serde_json::Value;
 use super::credential::WireReads;
 use super::quota::{GMAIL_MAIL_QUOTA, MailCall, MailQuota};
 use super::rest::{
-    self, FreshGoogleTokens, RestAnswer, VerifiedCredentials, array, header_value, html_text,
-    refused, text_of,
+    self, FreshAccessTokens, GrantIssuer, RestAnswer, VerifiedCredentials, array, header_value,
+    html_text, refused, text_of,
 };
 use super::source::MailProvider;
 use super::wire::{
@@ -74,7 +74,7 @@ pub struct HttpGmailMailWire<'v> {
     verified: VerifiedCredentials,
     /// The fresh access tokens its sources' stored grants were exchanged
     /// for (fix list row 16311).
-    tokens: FreshGoogleTokens,
+    tokens: FreshAccessTokens,
 }
 
 impl<'v> HttpGmailMailWire<'v> {
@@ -89,7 +89,7 @@ impl<'v> HttpGmailMailWire<'v> {
             client: rest::https_client()?,
             read_bytes: Cell::new(0),
             verified: VerifiedCredentials::new(),
-            tokens: FreshGoogleTokens::new(),
+            tokens: FreshAccessTokens::new(GrantIssuer::Google),
         })
     }
 

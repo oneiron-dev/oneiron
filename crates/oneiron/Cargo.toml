@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "Embedded retrieval engine for memory-first applications"
 repository.workspace = true
-homepage.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
@@ -94,6 +93,8 @@ schemars = "=0.8.22"
 serde_json = { workspace = true, features = ["raw_value", "float_roundtrip"] }
 jsonschema = { version = "0.33", default-features = false }
 serde_path_to_error = "0.1"
+# RESEARCH-0651 contract item 1: RetrievalParams::digest is sha256 over RFC 8785 JSON.
+serde_json_canonicalizer.workspace = true
 postcard = { workspace = true, optional = true }
 # `zeroize`: the recovery kit wipes the hasher that saw a kit secret.
 blake3 = { workspace = true, features = ["zeroize"] }
