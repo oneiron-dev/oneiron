@@ -15,6 +15,7 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, Raw, RawValue, SideTable};
 use crate::store::Store;
 
+pub mod agent_world_access;
 pub(crate) mod archive_restore;
 pub mod backup;
 pub(crate) mod board_layout;
