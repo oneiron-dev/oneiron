@@ -336,10 +336,10 @@ pub(super) fn import_embedding_setup_in_txn<R: Read + Seek>(
         match import_setup_outcome(here.as_ref(), Some(&incoming)) {
             SetupOutcome::Write(incoming) => {
                 crate::embed::declare_embedding_space_in_txn(store, txn, incoming)?;
-                report.declared_spaces.push(space.id.clone());
+                report.declared_spaces.push(space.id);
             }
-            SetupOutcome::Unchanged => report.unchanged_spaces.push(space.id.clone()),
-            SetupOutcome::Conflict => report.conflicted_spaces.push(space.id.clone()),
+            SetupOutcome::Unchanged => report.unchanged_spaces.push(space.id),
+            SetupOutcome::Conflict => report.conflicted_spaces.push(space.id),
             SetupOutcome::Skip => {}
         }
     }
