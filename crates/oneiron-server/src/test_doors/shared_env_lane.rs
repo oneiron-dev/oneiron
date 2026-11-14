@@ -1,14 +1,15 @@
 //! Door for `tests/shared_env_lane_reach.rs` (MEMBER-SELECTOR-SOCKET): the
 //! lane a shared env's paired slip opens.
 
-/// The lane a slip naming `grant_ref` and `holder_ref` opens on `vault`:
-/// `"full"` when it names no member grant, `"member <grant hex> <holder
-/// hex>"` when this env holds a live copy of the grant it names, and
-/// `"grant-missing"` when it holds none.
+/// The lane a slip naming `grant_ref` and `holder_ref` opens: `"full"` when
+/// it names no member grant, else `"member <grant hex> <holder hex>"` from
+/// the slip's own claims (MEMBER-SYNC D8: HOME proves the grant, so no local
+/// copy is needed). The vault stays in the signature so this door's shape is
+/// unchanged.
 ///
 /// # Errors
 ///
-/// A `grant_ref` or `holder_ref` that is not an entity id, and the vault's.
+/// A `grant_ref` or `holder_ref` that is not an entity id.
 pub fn lane_reach(
     vault: &oneiron::Vault,
     grant_ref: Option<&str>,
@@ -22,7 +23,6 @@ pub fn lane_reach(
                 selector.grant_id.to_hex(),
                 selector.member_ref.to_hex()
             ),
-            crate::shared_envs::LaneReach::GrantMissing => "grant-missing".to_owned(),
         },
     )
 }

@@ -87,9 +87,10 @@ impl SyncConnection {
     }
 
     /// Runs every pending directive naming this machine, oldest first, and
-    /// returns how many it finished. A federation lane runs none.
+    /// returns how many it finished. A federation or member lane runs none
+    /// (H8-SHARED-ENV-LANE = B).
     async fn apply_residence_directives(&self) -> Result<usize, TransportError> {
-        if self.config.client_config.federation_peer.is_some() {
+        if self.config.client_config.residence_mode_is_fixed() {
             return Ok(0);
         }
         let vault = self.manager.vault();

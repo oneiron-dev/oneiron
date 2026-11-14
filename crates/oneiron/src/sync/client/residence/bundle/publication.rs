@@ -113,8 +113,9 @@ async fn publish_all(
     config: &SyncClientConfig,
 ) -> Result<(), TransportError> {
     let vault = manager.vault();
-    // A federation lane reaches another vault's home.
-    if config.federation_peer.is_some() {
+    // A federation lane reaches another vault's home. A member lane publishes
+    // nothing: the home admits no bundle call on it (MEMBER-SYNC P5).
+    if config.federation_peer.is_some() || config.member_lane {
         return Ok(());
     }
     let asked = vault.pending_bundle_publications().map_err(storage)?;

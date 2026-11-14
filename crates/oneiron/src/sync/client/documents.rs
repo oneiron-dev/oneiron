@@ -119,7 +119,13 @@ impl SyncClient {
                     if pending.is_empty() {
                         self.clear_document_retry(frame.entity)?;
                     }
-                    out.extend(pending);
+                    // A member lane replays NOTE operations only: a queued
+                    // fork upload would be refused (H8-SHARED-ENV-LANE = B).
+                    out.extend(
+                        pending
+                            .into_iter()
+                            .filter(|frame| !self.member_refuses_document_frame(frame)),
+                    );
                     return Ok(out);
                 }
                 document_sub_tags::NOTE_RECEIPT => {
@@ -414,7 +420,12 @@ impl SyncClient {
         let mut out = Vec::new();
         for id in ids {
             match self.manager.documents().retry_request_frame(id) {
-                Ok(Some(frame)) if !self.frame_withheld(&frame) => out.push(frame),
+                Ok(Some(frame))
+                    if !self.frame_withheld(&frame)
+                        && !self.member_refuses_document_frame(&frame) =>
+                {
+                    out.push(frame);
+                }
                 Ok(Some(_)) => {}
                 Ok(None) => {
                     if let Err(error) = self.clear_document_retry(id) {
@@ -455,11 +466,14 @@ impl SyncClient {
     /// An own device's NOTE client subscribes every NOTE row it holds on the
     /// owner lane, and every typed body and office artifact (FIX 2458): at
     /// connect, then each row born here or materialized from a window. A peer
-    /// session subscribes none: the NOTE lane is the home's (FIX 4748).
+    /// session subscribes none: the NOTE lane is the home's (FIX 4748). A
+    /// member lane subscribes none either (H8-SHARED-ENV-LANE = B): its documents
+    /// arrive under its pinned selector, never as owner NOTE subscribes.
     pub(super) fn owner_note_requests(&self) -> Result<Vec<Vec<u8>>, TransportError> {
         if self.config.federation_peer.is_some()
             || self.config.note_session.is_none()
             || self.peer_session.is_some()
+            || self.config.member_lane
         {
             return Ok(Vec::new());
         }
@@ -482,6 +496,29 @@ impl SyncClient {
                         self.vault.get_entity_type(&doc.entity),
                         Ok(Some(kind)) if kind != crate::registry::ENTITY_TYPE_NOTE
                     )
+                })
+    }
+
+    /// Whether `frame` is an owner-only document frame this lane must not
+    /// send on a member lane (H8-SHARED-ENV-LANE = B): an owner REQUEST (its
+    /// four zero bytes, never a selector envelope), an artifact publication,
+    /// or a NOTE fork upload. The home refuses each on a member lane and
+    /// closes it. Selector requests, member NOTE operations and ACKs still
+    /// go. `false` off a member lane, and for any frame that does not read
+    /// as a document frame.
+    pub(crate) fn member_refuses_document_frame(&self, frame: &[u8]) -> bool {
+        self.config.member_lane
+            && frame.first() == Some(&transport::TAG_DOCUMENT)
+            && frame
+                .get(1..)
+                .and_then(|payload| transport::decode_document(payload).ok())
+                .is_some_and(|doc| {
+                    matches!(
+                        doc.kind,
+                        document_sub_tags::ARTIFACT_PUBLICATION
+                            | document_sub_tags::NOTE_FORK_UPLOAD
+                    ) || (doc.kind == document_sub_tags::REQUEST
+                        && doc.payload.starts_with(&[0; 4]))
                 })
     }
 }

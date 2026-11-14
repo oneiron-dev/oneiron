@@ -109,6 +109,20 @@ pub(super) enum RpcFault {
     /// the endpoint's URL (FIX 22217), its bind's or request's encode or
     /// size, or its request ids running out.
     Local(TransportError),
+    /// The home's HTTP 401 to a member lane's residence upgrade (MEMBER-SYNC
+    /// threat F5): it did not accept the credential. The session tells it
+    /// once as the main upgrade's 401 and redials; every other caller sees
+    /// [`refused`] through [`Self::into_error`]. Only a member lane's dial
+    /// names it: owner and federation dials keep [`Self::Remote`] here, so
+    /// their paths stay as they were.
+    Unauthorized,
+    /// The home's HTTP 403 to a member lane's residence upgrade (MEMBER-SYNC
+    /// threat F5): it accepted the credential and refuses that credential
+    /// this socket, with the typed reason when the home named one
+    /// (MEMBER-SYNC-WORLD-PACT = C). The session tells it once and parks as
+    /// the main upgrade's 403 does; every other caller sees [`refused`]
+    /// through [`Self::into_error`]. Only a member lane's dial names it.
+    Forbidden(Option<crate::sync::carrier::ForbiddenReason>),
 }
 
 impl RpcFault {
@@ -123,10 +137,13 @@ impl RpcFault {
         Self::Local(TransportError::InvalidPayload(cause))
     }
 
-    /// The error the call tells, its side dropped.
+    /// The error the call tells, its side dropped. An upgrade refusal tells
+    /// [`refused`], as its dial did before F5 named it: owner-machine callers
+    /// keep a plain error.
     pub(super) fn into_error(self) -> TransportError {
         match self {
             Self::Remote(error) | Self::Local(error) => error,
+            Self::Unauthorized | Self::Forbidden(_) => refused(),
         }
     }
 }
@@ -234,11 +251,17 @@ impl ResidenceRpc {
     /// The upgrade proves this machine's transport slip, and the home's answer
     /// names the machine it is; machine-only residence calls judge their own
     /// read authority without an actor bind. `None` is only a transport outage.
+    /// A member lane never opens it (MEMBER-SYNC threat F8: the client
+    /// invariant): the home serves a member lane no machine call, so this
+    /// refuses at once there.
     pub(super) async fn connect_machine(
         vault: &crate::Vault,
         config: &SyncClientConfig,
         budgets: ResidenceOperationBudgets,
     ) -> Result<Option<Self>, TransportError> {
+        if config.member_lane {
+            return Err(refused());
+        }
         let timeout = Duration::from_millis(budgets.rpc_timeout_ms);
         let deadline = tokio::time::Instant::now() + timeout;
         // A bearer token alone proves no holder, so the home could not
@@ -263,7 +286,12 @@ impl ResidenceRpc {
     /// endpoint, its URL and the upgrade's credential are this machine's own
     /// (FIX 22179), and so is a carrier it cannot set up for that URL
     /// ([`crate::sync::carrier::own_setup_fault`], FIX 22217); a refused
-    /// upgrade and the hello's send are the home's.
+    /// upgrade and the hello's send are the home's. A member lane's dial
+    /// carries the [`crate::sync::carrier::MEMBER_LANE_HEADER`] request
+    /// (MEMBER-SYNC D1), and its HTTP 401/403 answer is classified with the
+    /// main upgrade's shared rule and named as [`RpcFault::Unauthorized`] or
+    /// [`RpcFault::Forbidden`] (MEMBER-SYNC threat F5); an owner or
+    /// federation dial keeps the old [`RpcFault::Remote`] there.
     async fn dial(
         vault: &crate::Vault,
         config: &SyncClientConfig,
@@ -298,6 +326,20 @@ impl ResidenceRpc {
                 })?;
             request.headers_mut().insert(AUTHORIZATION, header);
         }
+        // MEMBER-SYNC D1: a member lane asks for itself with one request
+        // header, a restriction request that is never authority. Without it
+        // this upgrade takes the path it took before.
+        if config.member_lane {
+            request.headers_mut().insert(
+                crate::sync::carrier::MEMBER_LANE_HEADER,
+                tokio_tungstenite::tungstenite::http::HeaderValue::from_static(
+                    crate::sync::carrier::MEMBER_LANE_HEADER_VALUE,
+                ),
+            );
+        }
+        // Whether the upgrade carries a credential, as the main upgrade
+        // reads it: a 403 to one that carries none refuses nothing held.
+        let carried = binding.is_some() || request.headers().contains_key(AUTHORIZATION);
         let (mut socket, response) = match tokio::time::timeout_at(
             deadline,
             crate::sync::carrier::connect_sync_socket(request, endpoint.dialer),
@@ -305,7 +347,24 @@ impl ResidenceRpc {
         .await
         {
             Ok(Ok(connected)) => connected,
-            Ok(Err(tokio_tungstenite::tungstenite::Error::Http(_))) => {
+            Ok(Err(error @ tokio_tungstenite::tungstenite::Error::Http(_))) => {
+                // MEMBER-SYNC threat F5, member lanes only: the residence
+                // upgrade's HTTP refusal is classified with the main
+                // upgrade's shared rule, so the session tells it once and a
+                // 403 parks as the main upgrade's does. Owner and federation
+                // dials keep the old remote fault here.
+                if config.member_lane
+                    && let Some(refusal) = crate::sync::carrier::upgrade_refusal(&error, carried)
+                {
+                    return Err(match refusal {
+                        crate::sync::carrier::UpgradeRefusal::Unauthorized => {
+                            RpcFault::Unauthorized
+                        }
+                        crate::sync::carrier::UpgradeRefusal::Forbidden(reason) => {
+                            RpcFault::Forbidden(reason)
+                        }
+                    });
+                }
                 return Err(RpcFault::remote());
             }
             Ok(Err(error)) if crate::sync::carrier::own_setup_fault(&error) => {

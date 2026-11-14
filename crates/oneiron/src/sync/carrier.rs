@@ -118,6 +118,48 @@ fn sync_socket_message_bytes() -> usize {
     usize::try_from(bytes).unwrap_or(usize::MAX)
 }
 
+/// The request header a member lane's upgrade carries, valued
+/// [`MEMBER_LANE_HEADER_VALUE`]: it asks for the selector-only lane and grants
+/// nothing (H8-SHARED-ENV-LANE = B, MEMBER-SYNC D1; shared here so both
+/// client upgrade builders send the same bytes the home's member arm reads).
+pub const MEMBER_LANE_HEADER: &str = "oneiron-sync-lane";
+/// The one value of [`MEMBER_LANE_HEADER`].
+pub const MEMBER_LANE_HEADER_VALUE: &str = "member";
+/// The response header a refused upgrade carries when the home names why it
+/// refused (MEMBER-SYNC-WORLD-PACT = C).
+pub const UPGRADE_REFUSAL_HEADER: &str = "oneiron-upgrade-refusal";
+/// The one value of [`UPGRADE_REFUSAL_HEADER`]: the lane's grant stands under
+/// a world-bounded pact, whose ceiling is narrower than All, and per-world
+/// lanes are not built yet, so the lane parks and the member sees why.
+pub const UPGRADE_REFUSAL_WORLD_BOUNDED_PACT: &str = "world-bounded-pact";
+
+/// Why the home refused a sync upgrade with 403, when it names one
+/// (MEMBER-SYNC-WORLD-PACT = C). A bare 403 carries `None`: the credential is
+/// still refused the socket, only the reason is untold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForbiddenReason {
+    /// The member lane's grant stands under a world-bounded pact: the home
+    /// would serve the lane nothing, so it refuses the lane instead of
+    /// running it silently empty, and the client parks through the typed stop.
+    WorldBoundedPact,
+}
+
+impl ForbiddenReason {
+    /// The reason an [`UPGRADE_REFUSAL_HEADER`] `value` names, when it names
+    /// one this build knows. Unknown values answer `None`: a newer home's
+    /// reason still refuses the socket, only untold.
+    pub(crate) fn from_wire(value: &str) -> Option<Self> {
+        if value
+            .trim()
+            .eq_ignore_ascii_case(UPGRADE_REFUSAL_WORLD_BOUNDED_PACT)
+        {
+            Some(Self::WorldBoundedPact)
+        } else {
+            None
+        }
+    }
+}
+
 /// The home's HTTP refusal of a sync upgrade, by what it refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UpgradeRefusal {
@@ -125,7 +167,8 @@ pub(crate) enum UpgradeRefusal {
     Unauthorized,
     /// 403: it accepted the credential and refuses that credential this
     /// socket, so a redial on it is refused again (MEMBER-SELECTOR-SOCKET).
-    Forbidden,
+    /// It carries the reason the home named, when it named one.
+    Forbidden(Option<ForbiddenReason>),
 }
 
 impl UpgradeRefusal {
@@ -133,7 +176,7 @@ impl UpgradeRefusal {
     pub(crate) fn event(self) -> crate::sync::client::SyncEvent {
         match self {
             Self::Unauthorized => crate::sync::client::SyncEvent::UpgradeUnauthorized,
-            Self::Forbidden => crate::sync::client::SyncEvent::UpgradeForbidden,
+            Self::Forbidden(reason) => crate::sync::client::SyncEvent::UpgradeForbidden { reason },
         }
     }
 }
@@ -142,9 +185,10 @@ impl UpgradeRefusal {
 /// answer to the upgrade; `None` for any other failure. A 403 refuses the
 /// credential the upgrade carried, so a 403 to an upgrade that `carried` none
 /// (a clear socket off loopback and mesh withholds it, FIX 11111) refuses
-/// nothing this machine holds and stays the far end's failure. The home dial
-/// and a peer session's probe of the home read a failed upgrade by this one
-/// rule.
+/// nothing this machine holds and stays the far end's failure. A 403 that
+/// names its reason in [`UPGRADE_REFUSAL_HEADER`] is told with it. The home
+/// dial, the residence RPC dial and a peer session's probe of the home read a
+/// failed upgrade by this one rule.
 pub(crate) fn upgrade_refusal(error: &WsError, carried: bool) -> Option<UpgradeRefusal> {
     use tokio_tungstenite::tungstenite::http::StatusCode;
     let WsError::Http(response) = error else {
@@ -152,7 +196,14 @@ pub(crate) fn upgrade_refusal(error: &WsError, carried: bool) -> Option<UpgradeR
     };
     match response.status() {
         StatusCode::UNAUTHORIZED => Some(UpgradeRefusal::Unauthorized),
-        StatusCode::FORBIDDEN if carried => Some(UpgradeRefusal::Forbidden),
+        StatusCode::FORBIDDEN if carried => {
+            let reason = response
+                .headers()
+                .get(UPGRADE_REFUSAL_HEADER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(ForbiddenReason::from_wire);
+            Some(UpgradeRefusal::Forbidden(reason))
+        }
         _ => None,
     }
 }

@@ -27,11 +27,19 @@ impl SyncClient {
     /// sync frame the host sends now, or `None` while it waits: the frame
     /// that starts it comes back from the reply that ends the one before it.
     /// `deadline` is the caller's own, for a download that waits.
+    ///
+    /// A member lane refuses (H8-SHARED-ENV-LANE = B): the home admits no LFS chunk
+    /// frame on it, so no download starts nor queues.
     pub fn begin_lfs_download(
         &mut self,
         oid: LfsOid,
         deadline: Option<Instant>,
     ) -> Result<(u64, Option<Vec<u8>>), TransportError> {
+        if self.config.member_lane {
+            return Err(TransportError::InvalidPayload(
+                "a member lane downloads no LFS chunks",
+            ));
+        }
         self.lfs_last_id += 1;
         let id = self.lfs_last_id;
         if self.lfs_download.is_some() {

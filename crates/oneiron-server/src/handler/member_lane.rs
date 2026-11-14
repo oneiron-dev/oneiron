@@ -17,19 +17,20 @@
 
 use std::sync::Arc;
 
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 
 use crate::auth::CoreAuth;
 use crate::protocol::{ProtocolError, SyncMessage, window_sub_tags};
 use crate::server::SyncServer;
 
-/// The request header a member lane's upgrade carries, valued
-/// [`MEMBER_LANE_HEADER_VALUE`]: it asks for the selector-only lane and grants
-/// nothing.
-pub(crate) const MEMBER_LANE_HEADER: &str = "oneiron-sync-lane";
-/// The one value of [`MEMBER_LANE_HEADER`].
-pub(crate) const MEMBER_LANE_HEADER_VALUE: &str = "member";
+/// The member lane's shared wire names (MEMBER-SYNC P2): the engine's
+/// `oneiron::sync::carrier` constants, re-exported so the member arm and its
+/// readers name one spelling.
+pub(crate) use oneiron::sync::carrier::{
+    MEMBER_LANE_HEADER, MEMBER_LANE_HEADER_VALUE, UPGRADE_REFUSAL_HEADER,
+    UPGRADE_REFUSAL_WORLD_BOUNDED_PACT,
+};
 
 /// A member lane, fixed for its socket's life: the standing its home proved
 /// at the upgrade and the credential that proved it.
@@ -132,7 +133,10 @@ pub(super) fn member_lane_requested(headers: &HeaderMap) -> bool {
 /// proof, a human slip held by a registered PERSON, its `grant_ref` naming a
 /// live first-party member grant of that PERSON under this shared vault's own
 /// scope ([`oneiron::Vault::member_lane_standing`]), the slip carrying that
-/// grant whole ([`carries_whole_grant`]), and the credential live.
+/// grant whole ([`carries_whole_grant`]), and the credential live. Only after
+/// every one of those stands, a grant under a world-bounded pact is refused
+/// with the typed reason (MEMBER-SYNC-WORLD-PACT = C), so no reason reaches a
+/// non-member; every other refusal stays the bare 403 it was.
 /// A managed vault's sockets take each call under its reap freeze (FIX
 /// 5128), which this lane does not, so it is refused there. A host fault the
 /// check met stays a 500, which the client redials.
@@ -167,6 +171,18 @@ pub(super) fn member_lane(
         || !credential.credential_is_live(server.vault().as_ref())
     {
         return Err(refused());
+    }
+    let world_bounded = server
+        .vault()
+        .member_lane_pact_bounds_worlds(grant)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
+    if world_bounded {
+        let mut typed = StatusCode::FORBIDDEN.into_response();
+        typed.headers_mut().insert(
+            UPGRADE_REFUSAL_HEADER,
+            HeaderValue::from_static(UPGRADE_REFUSAL_WORLD_BOUNDED_PACT),
+        );
+        return Err(typed);
     }
     Ok(Arc::new(MemberLane {
         standing,

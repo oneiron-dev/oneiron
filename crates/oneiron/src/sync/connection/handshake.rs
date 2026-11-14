@@ -182,8 +182,15 @@ impl SyncConnection {
         let mut promotion_rx = self.manager.subscribe_promotions();
         let mut mode_rx = self.mode.subscribe();
         // Whether the home serves this machine's sync; while it is down,
-        // sessions go to this vault's other machines (FIX 4748).
-        let mut reach = HomeReach::new(self.config.client_config.peer_dialer.is_some());
+        // sessions go to this vault's other machines (FIX 4748). A member
+        // lane never counts the home down: its home is the shared vault's,
+        // and a peer's full-lane bytes are never its lane's (MEMBER-SYNC D7).
+        // `open_lane` sets no peer dialer, so this is unreachable there; the
+        // flag holds the invariant even if a caller supplied one.
+        let mut reach = HomeReach::new(
+            self.config.client_config.peer_dialer.is_some()
+                && !self.config.client_config.member_lane,
+        );
         self.running.send_replace(true);
         // Every connection's upkeep, owned here across reconnects (FIX 12785).
         let mut upkeep = super::steady::UpkeepTasks::default();
@@ -206,7 +213,16 @@ impl SyncConnection {
             // While the home is down this session goes to a peer (FIX 4748).
             // A server's vector witnesses for the machine that sent it alone:
             // a session with another machine than the last starts with none.
-            let peer = reach.next_peer(self.config.client_config.peer_dialer.as_deref());
+            // A member lane passes no dialer: no peer session, even if one
+            // were configured (MEMBER-SYNC D7; the `HomeReach` above is
+            // already disabled there, so this is belt and braces).
+            let peer_dialer = self
+                .config
+                .client_config
+                .peer_dialer
+                .as_deref()
+                .filter(|_| !self.config.client_config.member_lane);
+            let peer = reach.next_peer(peer_dialer);
             if peer != client.peer_session {
                 client.server_vvs.clear();
             }
@@ -631,7 +647,10 @@ impl SyncConnection {
         // Opened-item enrol finishes only after the grant-filtered thin index
         // is durable. A missing actor grant/session is a failure, never an
         // excuse to fall back to full-window sync. The index is the home's: a
-        // peer session reads none (FIX 4748).
+        // peer session reads none (FIX 4748). A member lane's residence
+        // upgrade refusal is told once here, as the main upgrade's is in
+        // `open_socket`, and its 403 parks through `SessionFault::Forbidden`
+        // (MEMBER-SYNC threat F5); only a member lane's dial names either.
         if peer.is_none() && client.config.residence_mode == crate::sync::SyncResidenceMode::Opened
         {
             let now_secs = std::time::SystemTime::now()
@@ -641,6 +660,9 @@ impl SyncConnection {
                 .fetch_current_index_by_side(now_secs)
                 .await
                 .map_err(|fault| {
+                    if let Some(refusal) = fault.upgrade_refusal() {
+                        let _ = event_tx.send(refusal.event());
+                    }
                     SessionFault::of_index_fetch(
                         &fault,
                         format!("Fetch residence index failed: {fault}"),

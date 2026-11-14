@@ -393,15 +393,23 @@ impl SyncClient {
     }
 
     /// Whether a vector request may name window `key` to the home this
-    /// connection proved (`ITEM11_UNREADABLE_HOME_DISCOVERY`).
+    /// connection proved (`ITEM11_UNREADABLE_HOME_DISCOVERY`). A member lane
+    /// always may: the home judged the catalogue window's world when it
+    /// listed it (MEMBER-SYNC-CATALOGUE = A), so no local check drops it.
     pub(crate) fn home_may_request(&self, key: &WindowKey) -> bool {
-        !ITEM11_UNREADABLE_HOME_DISCOVERY || home_reads_window(&self.vault, self.home_peer, key)
+        self.config.member_lane
+            || !ITEM11_UNREADABLE_HOME_DISCOVERY
+            || home_reads_window(&self.vault, self.home_peer, key)
     }
 
     /// Whether the home this connection proved may be asked to promote window
-    /// `key` (`ITEM11_UNREADABLE_HOME_PROMOTION`).
+    /// `key` (`ITEM11_UNREADABLE_HOME_PROMOTION`). A member lane always may,
+    /// as [`Self::home_may_request`]: the catalogue window is asked under the
+    /// lane's pinned selector, which the home grant-checks.
     pub(crate) fn home_may_promote(&self, key: &WindowKey) -> bool {
-        !ITEM11_UNREADABLE_HOME_PROMOTION || home_reads_window(&self.vault, self.home_peer, key)
+        self.config.member_lane
+            || !ITEM11_UNREADABLE_HOME_PROMOTION
+            || home_reads_window(&self.vault, self.home_peer, key)
     }
 
     /// Returns the live window for `key` if loaded — registry lookup only,
@@ -434,18 +442,31 @@ impl SyncClient {
         keys
     }
 
-    /// Sets a local ephemeral key and returns the wire frame to send.
+    /// Sets a local ephemeral key and returns the wire frame to send. A member
+    /// lane refuses (MEMBER-SYNC-PRESENCE = A): the home admits no presence frame on it.
     pub fn set_ephemeral(
         &self,
         key: &str,
         value: impl Into<LoroValue>,
     ) -> std::result::Result<Vec<u8>, TransportError> {
+        if self.config.member_lane {
+            return Err(TransportError::InvalidPayload(
+                "a member lane sends no presence",
+            ));
+        }
         self.ephemeral_store.set(key, value);
         transport::encode_ephemeral(&self.ephemeral_store.encode(key)).into_result()
     }
 
-    /// Deletes a local ephemeral key and returns the wire frame to send.
+    /// Deletes a local ephemeral key and returns the wire frame to send. A
+    /// member lane refuses (MEMBER-SYNC-PRESENCE = A): the home admits no presence frame
+    /// on it.
     pub fn delete_ephemeral(&self, key: &str) -> std::result::Result<Vec<u8>, TransportError> {
+        if self.config.member_lane {
+            return Err(TransportError::InvalidPayload(
+                "a member lane sends no presence",
+            ));
+        }
         self.ephemeral_store.delete(key);
         transport::encode_ephemeral(&self.ephemeral_store.encode(key)).into_result()
     }
@@ -485,8 +506,13 @@ impl SyncClient {
     /// worlds it names that are readable here. Read at every check, so a world whose setting turns
     /// away from this machine is unfollowed at once (DEC-0005). `None`, the
     /// home's sync all, follows every world. A federation lane follows what
-    /// it names.
+    /// it names. A member lane follows all (MEMBER-SYNC-CATALOGUE = A): its
+    /// windows are the home's `residence.windows` catalogue, each already
+    /// judged readable for its grant there, so no local world check drops one.
     pub(crate) fn effective_worlds(&self) -> std::result::Result<FollowedWorlds, TransportError> {
+        if self.config.member_lane {
+            return Ok(FollowedWorlds::All);
+        }
         let txn = self
             .vault
             .store
@@ -557,6 +583,9 @@ impl SyncClient {
         Ok(FollowedWorlds::AllExcept(withheld))
     }
 
+    /// Whether `key` is in `worlds`: a base window always is. A member lane
+    /// reads `worlds` as all ([`Self::effective_worlds`]), so every catalogue
+    /// window follows (MEMBER-SYNC-CATALOGUE = A).
     pub(crate) fn follows_window(key: &WindowKey, worlds: &FollowedWorlds) -> bool {
         key.world().is_none_or(|world| worlds.contains(&world))
     }
@@ -657,15 +686,18 @@ impl SyncClient {
     }
 
     /// Whether `key` is this vault's embedding setup window on an opened-item
-    /// owner lane that did not promote it (OF-370). Such a device takes the
-    /// setup rows from the home whatever it opened: it asks for the window's
-    /// promotion, and once the home grants it, exchanges vectors for it. It
-    /// sends none of the window's writes back, since the home admits no setup
-    /// row from an opened-item lane; they wait queued, as an unpromoted
-    /// window's do.
+    /// owner lane that did not promote it (OF-370). Never on a member lane
+    /// (H8-SHARED-ENV-LANE = B): the setup window is owner embedding setup,
+    /// so a fresh member lane's first frames stay hello + auth.bind. Such a
+    /// device takes the setup rows from the home whatever it opened: it asks
+    /// for the window's promotion, and once the home grants it, exchanges
+    /// vectors for it. It sends none of the window's writes back, since the
+    /// home admits no setup row from an opened-item lane; they wait queued,
+    /// as an unpromoted window's do.
     pub(crate) fn setup_catch_up(&self, key: &str) -> bool {
         self.config.residence_mode == super::SyncResidenceMode::Opened
             && self.config.federation_peer.is_none()
+            && !self.config.member_lane
             && key
                 == WindowKey::from_timestamp(crate::store::embedding::EMBEDDING_SETUP_LEARNED_AT)
                     .as_str()

@@ -170,7 +170,7 @@ impl SyncConnection {
         mut config: ConnectionConfig,
     ) -> crate::error::Result<Self> {
         let queue = SyncQueue::new(Arc::clone(manager.vault()))?;
-        let mode = if config.client_config.federation_peer.is_some() {
+        let mode = if config.client_config.residence_mode_is_fixed() {
             config.client_config.residence_mode
         } else {
             crate::sync::residence::resolve_residence_mode(
@@ -188,7 +188,7 @@ impl SyncConnection {
         }
         let mode = tokio::sync::watch::channel(mode).0;
         // An own device's query doors ask the home through this connection.
-        let home_search = config.client_config.federation_peer.is_none().then(|| {
+        let home_search = (!config.client_config.residence_mode_is_fixed()).then(|| {
             HomeSearch::attach(
                 manager.vault(),
                 config.client_config.clone(),
@@ -516,6 +516,20 @@ impl SyncConnection {
         finish: impl FnOnce(&mut heed::RwTxn<'_>, &ResidenceModeChange) -> crate::error::Result<()>,
     ) -> Result<ResidenceModeChange, crate::sync::TransportError> {
         let storage = |e: crate::Error| crate::sync::TransportError::Storage(e.to_string());
+        // H8-SHARED-ENV-LANE = B: the member lane stays Opened for its life.
+        if self.config.client_config.member_lane {
+            if mode != SyncResidenceMode::Opened {
+                return Err(crate::sync::TransportError::InvalidPayload(
+                    "a member lane is always Opened",
+                ));
+            }
+            return Ok(ResidenceModeChange {
+                mode: SyncResidenceMode::Opened,
+                retained: Vec::new(),
+                unsynced: Vec::new(),
+                pruned_items: 0,
+            });
+        }
         if self.config.client_config.federation_peer.is_some() {
             return Err(crate::sync::TransportError::InvalidPayload(
                 "a federation lane has no residence mode",
@@ -586,9 +600,13 @@ impl SyncConnection {
         worlds: std::collections::BTreeSet<crate::EntityId>,
         finish: impl FnOnce(&mut heed::RwTxn<'_>) -> crate::error::Result<()>,
     ) -> Result<std::collections::BTreeSet<crate::EntityId>, crate::sync::TransportError> {
-        if self.config.client_config.federation_peer.is_some() {
+        if self.config.client_config.residence_mode_is_fixed() {
             return Err(crate::sync::TransportError::InvalidPayload(
-                "a federation lane has no world pick",
+                if self.config.client_config.member_lane {
+                    "a member lane has no world pick"
+                } else {
+                    "a federation lane has no world pick"
+                },
             ));
         }
         if worlds.len() > crate::authority::RESIDENCE_FOLLOW_WORLDS_MAX {
@@ -628,9 +646,13 @@ impl SyncConnection {
     /// Take in the signed authority entries the home holds and this machine
     /// lacks (OF-469). See [`crate::sync::SyncClient::catch_up_authority`].
     pub async fn catch_up_authority(&self) -> Result<usize, crate::sync::TransportError> {
-        if self.config.client_config.federation_peer.is_some() {
+        if self.config.client_config.residence_mode_is_fixed() {
             return Err(crate::sync::TransportError::InvalidPayload(
-                "a federation lane takes no home authority history",
+                if self.config.client_config.member_lane {
+                    "a member lane takes no home authority history"
+                } else {
+                    "a federation lane takes no home authority history"
+                },
             ));
         }
         self.client()?.catch_up_authority().await
@@ -689,9 +711,13 @@ impl SyncConnection {
         &self,
         window: &crate::sync::WindowKey,
     ) -> Result<crate::sync::residence::WindowDemotion, crate::sync::TransportError> {
-        if self.config.client_config.federation_peer.is_some() {
+        if self.config.client_config.residence_mode_is_fixed() {
             return Err(crate::sync::TransportError::InvalidPayload(
-                "a federation lane has no residence mode",
+                if self.config.client_config.member_lane {
+                    "a member lane is always Opened"
+                } else {
+                    "a federation lane has no residence mode"
+                },
             ));
         }
         let demotion = self.client()?.demote_window(window).await?;

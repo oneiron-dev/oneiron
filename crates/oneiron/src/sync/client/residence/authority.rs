@@ -100,7 +100,8 @@ impl SyncClient {
     /// Takes in the signed authority entries the home holds and this machine
     /// lacks, a page at a time, then appends those the home lacks. A machine
     /// whose pairing pinned a checkpoint adopts its image first, while this
-    /// vault has adopted none. Returns how many entries it imported.
+    /// vault has adopted none. Returns how many entries it imported. A member
+    /// lane refuses: the home admits no authority call on it (MEMBER-SYNC P5).
     pub async fn catch_up_authority(&self) -> Result<usize, TransportError> {
         catch_up_authority(&self.vault, &self.config).await
     }
@@ -124,11 +125,15 @@ pub(crate) fn pinned_checkpoint_pending(vault: &Vault, config: &SyncClientConfig
 }
 
 /// [`SyncClient::catch_up_authority`] on a vault and a client config alone,
-/// for a task off the live sync loop.
+/// for a task off the live sync loop. A member lane takes none: the home
+/// admits no authority call on it (MEMBER-SYNC P5).
 pub(crate) async fn catch_up_authority(
     vault: &Vault,
     config: &SyncClientConfig,
 ) -> Result<usize, TransportError> {
+    if config.member_lane {
+        return Err(refused());
+    }
     let budgets = residence_budgets(vault)?;
     let Some(mut rpc) = ResidenceRpc::connect(vault, config, budgets).await? else {
         return Err(TransportError::home_offline());

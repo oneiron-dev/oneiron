@@ -129,6 +129,8 @@ fn thin_row_admitted(entity_type: u8) -> bool {
 
 impl SyncClient {
     /// Resolve and import one grant-selected ledger item on first touch.
+    /// A member lane leaves world admission to the home under its pinned
+    /// selector, as for its catalogue (MEMBER-SYNC-CATALOGUE = A).
     pub async fn fetch_item(
         &mut self,
         window: &WindowKey,
@@ -174,7 +176,7 @@ impl SyncClient {
         // A home that may not read the window's world is not told its name,
         // the selector or the item (FIX 922 item 11): the touch is refused,
         // this machine's own policy, never a storage fault (FIX 22217).
-        if !home_reads_window(&self.vault, rpc.home, window) {
+        if !self.config.member_lane && !home_reads_window(&self.vault, rpc.home, window) {
             return Err(TransportError::world_unreadable_by_home());
         }
         let touch = json!({

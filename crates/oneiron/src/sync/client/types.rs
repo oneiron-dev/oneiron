@@ -23,6 +23,13 @@ pub struct SyncClientConfig {
     pub federation_peer: Option<crate::sync::federation_burst::FederationPeer>,
     /// Explicit role for selector UPDATE frames on a bound federation lane.
     pub federation_admission_role: crate::sync::FederationAdmissionRole,
+    /// Whether this lane is a shared-vault member's selector-only lane
+    /// (H8-SHARED-ENV-LANE = B): its residence mode is Opened for its life, its
+    /// windows come from the home's `residence.windows` catalogue, and it
+    /// sends no root, presence, owner-machine or owner-NOTE frames. Default
+    /// `false`, set `true` only by the shared-env lane opener; every member
+    /// branch keys on it, so off paths stay unchanged.
+    pub member_lane: bool,
     /// WebSocket server URL (e.g., "wss://user-{id}.fly.dev/ws").
     pub server_url: String,
     /// Legacy bearer-only token. A production host requires `transport_credential`.
@@ -126,6 +133,7 @@ impl Default for SyncClientConfig {
             residence_selector: None,
             federation_peer: None,
             federation_admission_role: crate::sync::FederationAdmissionRole::Guest,
+            member_lane: false,
             server_url: String::new(),
             auth_token: String::new(),
             transport_credential: None,
@@ -155,6 +163,7 @@ impl std::fmt::Debug for SyncClientConfig {
             .field("residence_selector", &self.residence_selector)
             .field("federation_peer", &self.federation_peer)
             .field("federation_admission_role", &self.federation_admission_role)
+            .field("member_lane", &self.member_lane)
             .field("server_url", &self.server_url)
             .field("auth_token", &"[redacted]")
             .field("transport_credential", &self.transport_credential)
@@ -208,6 +217,17 @@ impl ResidenceHomeRoute {
 }
 
 impl SyncClientConfig {
+    /// Whether this lane's residence mode is fixed for its life
+    /// (H8-SHARED-ENV-LANE = B): a federation peer lane keeps its configured
+    /// mode, and a member lane is Opened for its life, like a peer lane. The
+    /// connection reads this where a federation peer today keeps its mode
+    /// (construction, follow-home, the mode and follow setters, the residence
+    /// directives).
+    #[must_use]
+    pub fn residence_mode_is_fixed(&self) -> bool {
+        self.federation_peer.is_some() || self.member_lane
+    }
+
     /// The endpoint residence RPCs dial: the elected home when the host
     /// routes one, else the configured sync server.
     #[must_use]
@@ -425,7 +445,15 @@ pub enum SyncEvent {
     /// the event never proves a leave. A 403 to an upgrade that carried no
     /// credential (FIX 11111) is not told: it refuses nothing this device
     /// holds, and the connection redials with backoff.
-    UpgradeForbidden,
+    UpgradeForbidden {
+        /// Why the home refused, when it said: a member lane under a
+        /// world-bounded pact is refused as
+        /// [`crate::sync::ForbiddenReason::WorldBoundedPact`]
+        /// (MEMBER-SYNC-WORLD-PACT = C), so the member sees why its lane
+        /// never runs. `None` for every refusal that names no reason, as
+        /// before.
+        reason: Option<crate::sync::ForbiddenReason>,
+    },
     Error(String),
 }
 

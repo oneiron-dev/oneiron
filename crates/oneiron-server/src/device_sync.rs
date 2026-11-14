@@ -623,9 +623,11 @@ fn observer(
         }
         // The home refuses this credential the socket: the connection does
         // not redial on it; a renewed credential opens a new one
-        // (MEMBER-SELECTOR-SOCKET).
-        SyncEvent::UpgradeForbidden => tracing::warn!(
+        // (MEMBER-SELECTOR-SOCKET). A named reason travels with the event
+        // (MEMBER-SYNC-WORLD-PACT = C) and is logged, not acted on.
+        SyncEvent::UpgradeForbidden { reason } => tracing::warn!(
             %home,
+            ?reason,
             "device sync: the home refuses this credential a sync socket (403); \
              it does not redial on it"
         ),

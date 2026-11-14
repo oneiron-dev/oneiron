@@ -96,6 +96,8 @@ pub(crate) async fn retry_refused_retains(
 impl SyncClient {
     /// Promote a thin item's whole canonical window before the first edit.
     /// A denied or oversized full-window grant leaves the thin cache read-only.
+    /// Member world admission belongs to the home's pinned selector, not
+    /// local owner placement policy (MEMBER-SYNC-CATALOGUE = A).
     pub async fn promote_window(
         &mut self,
         window: &WindowKey,
@@ -122,7 +124,10 @@ impl SyncClient {
         // A home that may not read the window's world is not told its name
         // (FIX 922 item 11): the promotion is refused and the thin cache stays
         // read-only (FIX 22217).
-        if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
+        if !self.config.member_lane
+            && ITEM11_UNREADABLE_HOME_PROMOTION
+            && !home_reads_window(&self.vault, rpc.home, window)
+        {
             return Err(TransportError::world_unreadable_by_home());
         }
         let reply: PromotionReply = serde_json::from_value(
@@ -216,7 +221,8 @@ impl SyncClient {
     /// window marked promoted. Its snapshot merges into the held copy: the
     /// two are the same canonical CRDT, never an independently authored one.
     /// A refused window stays on disk but no longer syncs, and is marked so the
-    /// residence upkeep asks again ([`retry_refused_retains`]).
+    /// residence upkeep asks again ([`retry_refused_retains`]). A member lane
+    /// leaves world admission to the home (MEMBER-SYNC-CATALOGUE = A).
     pub async fn retain_window(&mut self, window: &WindowKey) -> Result<bool, TransportError> {
         if self.config.residence_mode != SyncResidenceMode::Opened {
             return Err(refused());
@@ -258,7 +264,10 @@ impl SyncClient {
         // A home that may not read the window's world is not told its name or
         // the selector (FIX 3872): the window stays on disk, marked for the
         // residence upkeep to ask again, as when the home refuses it.
-        if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
+        if !self.config.member_lane
+            && ITEM11_UNREADABLE_HOME_PROMOTION
+            && !home_reads_window(&self.vault, rpc.home, window)
+        {
             self.mark_retain_refused(window)?;
             return Ok(false);
         }
@@ -349,7 +358,8 @@ impl SyncClient {
     /// and a later first edit promotes it again. Controls, tombstoned and
     /// pending rows stay. Not `complete` while the home lacks an op, a queued
     /// write for the window waits, or a handle keeps the window open: call
-    /// again.
+    /// again. A member lane's world admission belongs to the home
+    /// (MEMBER-SYNC-CATALOGUE = A), as for promotion.
     pub async fn demote_window(
         &mut self,
         window: &WindowKey,
@@ -378,7 +388,10 @@ impl SyncClient {
         // A home that may not read the window's world is not told its name or
         // the selector (FIX 3872): the demotion is refused and the window
         // stays promoted here (FIX 22217).
-        if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
+        if !self.config.member_lane
+            && ITEM11_UNREADABLE_HOME_PROMOTION
+            && !home_reads_window(&self.vault, rpc.home, window)
+        {
             return Err(TransportError::world_unreadable_by_home());
         }
         let reply: WindowVvReply = serde_json::from_value(

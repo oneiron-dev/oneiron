@@ -278,7 +278,9 @@ impl SyncClient {
     /// Every pad of `window`'s world as capsules, through the promotion's own
     /// socket `rpc` and admission (`selector`, its wire form in base64, and
     /// `item`), while a key of the world this vault's authority names has no
-    /// pad here. A failure is logged: the promotion's pad rows still land.
+    /// pad here. A failure is logged: the promotion's pad rows still land. A
+    /// member lane ends at once (H8-SHARED-ENV-LANE = B): the home serves its
+    /// socket no pad call, so it sends none.
     pub(super) async fn hydrate_promoted_pads(
         &self,
         rpc: &mut ResidenceRpc,
@@ -286,6 +288,9 @@ impl SyncClient {
         selector: &str,
         item: EntityId,
     ) {
+        if self.config.member_lane {
+            return;
+        }
         let Some(world) = window.world() else {
             return;
         };
@@ -306,10 +311,14 @@ impl SyncClient {
     /// Schedules the exact repair of the pads `window`'s world lacks here, the
     /// keys this vault's authority names with no pad here, on a task of its
     /// own: the caller never waits on it. Nothing for a base window, a
-    /// federation lane, a client with no residence socket or no runtime to
+    /// federation lane, a member lane (H8-SHARED-ENV-LANE = B: the home serves
+    /// it no pad call), a client with no residence socket or no runtime to
     /// run it on, a world whose pads are all here, or one whose repair runs
     /// already.
     pub(crate) fn schedule_world_pad_repair(&self, window: &WindowKey) {
+        if self.config.member_lane {
+            return;
+        }
         let Some(world) = window.world() else {
             return;
         };

@@ -93,7 +93,7 @@ pub(crate) mod withdrawn_cutoffs;
 pub use asset_body::session::{
     ASSET_BODY_FRAMES_PER_POLL, AssetBodyLane, AssetBodyPeer, AssetBodySession,
 };
-pub use carrier::{SyncDial, SyncDialer, SyncIo, SyncPeerDialer, SyncStream};
+pub use carrier::{ForbiddenReason, SyncDial, SyncDialer, SyncIo, SyncPeerDialer, SyncStream};
 pub use client::{
     ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined,
     EphemeralChangeOrigin, OpenedItem, ResidenceHit, ResidenceHomeRoute, ResidenceIndexWindow,

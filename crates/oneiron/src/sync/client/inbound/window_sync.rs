@@ -33,7 +33,10 @@ impl SyncClient {
         // lands here again (FIX 14534): its frames read as nothing, but for
         // the home's version vector, which carries no content and tells the
         // eviction what the home holds of the window. Nothing is answered.
-        if let Some(world) = key.world()
+        // A member lane takes the home's catalogue, never this machine's owner
+        // placement choices (MEMBER-SYNC-CATALOGUE = A).
+        if !self.config.member_lane
+            && let Some(world) = key.world()
             && crate::sync::residence::world_placed_elsewhere(&self.vault, world)
                 .map_err(|error| TransportError::Storage(error.to_string()))?
         {

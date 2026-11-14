@@ -175,8 +175,12 @@ impl SyncClient {
             return Err(TransportError::home_offline());
         };
         // A home that may not read the window's world is not told its name
-        // (FIX 922 item 11).
-        if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
+        // (FIX 922 item 11). The member lane's home judges its own worlds
+        // under the pinned selector (MEMBER-SYNC-CATALOGUE = A).
+        if !self.config.member_lane
+            && ITEM11_UNREADABLE_HOME_PROMOTION
+            && !home_reads_window(&self.vault, rpc.home, window)
+        {
             return Err(TransportError::world_unreadable_by_home());
         }
         self.hydrate_promoted_pads(&mut rpc, window, &selector, item)
@@ -189,7 +193,10 @@ impl SyncClient {
         let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
             return Err(TransportError::home_offline());
         };
-        if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
+        if !self.config.member_lane
+            && ITEM11_UNREADABLE_HOME_PROMOTION
+            && !home_reads_window(&self.vault, rpc.home, window)
+        {
             return Err(TransportError::world_unreadable_by_home());
         }
         let reply: PromotionReply = serde_json::from_value(

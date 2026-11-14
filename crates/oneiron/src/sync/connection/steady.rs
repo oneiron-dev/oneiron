@@ -234,7 +234,8 @@ impl SyncConnection {
                 }
 
                 // Live and lossy: no admission, and none sent while paused.
-                partial = presence_rx.recv(), if !gate.paused() => {
+                partial = presence_rx.recv(),
+                    if !gate.paused() && !self.config.client_config.member_lane => {
                     match partial {
                         Ok(frame) => {
                             let mut send_left = self.left.subscribe();
@@ -277,6 +278,9 @@ impl SyncConnection {
                                 },
                                 Err(error) => return LoopExit::Disconnected(error.to_string()),
                             };
+                            if client.member_refuses_document_frame(&frame) {
+                                continue;
+                            }
                             let withheld = client.frame_withheld(&frame);
                             // Owner lane only: ask the home for its body instead, and
                             // the VV exchange carries the edit up. A body gone since
@@ -284,6 +288,7 @@ impl SyncConnection {
                             if !withheld
                                 && convert
                                 && client.config.federation_peer.is_none()
+                                && !client.config.member_lane
                                 && client.config.note_session.is_some()
                                 && client.note_session_bound
                             {
@@ -397,7 +402,10 @@ impl SyncConnection {
                     }
                 }
 
-                _ = sealed_relay.tick(), if !gate.paused() => {
+                // H8-SHARED-ENV-LANE = B: owner-machine upkeep never runs on a
+                // member lane, including its initial immediately due tick.
+                _ = sealed_relay.tick(),
+                    if !gate.paused() && !self.config.client_config.member_lane => {
                     // Each upkeep task holds the host's admission until its
                     // last write; a pause leaves the tick due at the thaw
                     // (FIX 12036).
@@ -798,7 +806,7 @@ impl SyncConnection {
         gate: &mut super::batch_admission::BatchGate<'_>,
     ) {
         tasks.retain(|task| !task.is_finished());
-        if self.config.client_config.federation_peer.is_some()
+        if self.config.client_config.residence_mode_is_fixed()
             || tasks.len() >= MACHINE_HISTORY_FETCH_TASKS
             || !due.swap(false, Ordering::Relaxed)
         {

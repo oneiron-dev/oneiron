@@ -20,8 +20,10 @@ impl SyncClient {
     /// Fills `slot`, when it is empty, with the next publication part due
     /// on this connection; `true` when it did. The server applies a
     /// publication only from the vault owner's bound session, so none goes
-    /// before it. A publication that does not prepare is reported and stays
-    /// owed; the next pull moves on to the next one.
+    /// before it. A member lane pulls none (H8-SHARED-ENV-LANE = B): the home
+    /// refuses every artifact publication on it. A publication that does not
+    /// prepare is reported and stays owed; the next pull moves on to the next
+    /// one.
     pub(crate) fn pull_artifact_publication(
         &mut self,
         cursor: &mut ArtifactPublicationCursor,
@@ -31,6 +33,7 @@ impl SyncClient {
             || !self.note_session_bound
             || self.config.note_session.is_none()
             || self.config.federation_peer.is_some()
+            || self.config.member_lane
         {
             return Ok(false);
         }

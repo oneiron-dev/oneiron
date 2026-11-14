@@ -9,7 +9,7 @@
 //! slip names. Membership opens the restricted carrier; each selector the lane
 //! sends is still judged by `authorize_sync_selector` under that scope.
 
-use super::{FederationGrantRole, FederationGrantScope, MembershipStanding, Scope};
+use super::{FederationGrantRole, FederationGrantScope, MembershipStanding, Scope, ScopeAxis};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
@@ -78,5 +78,21 @@ impl Vault {
             }
             _ => Ok(None),
         }
+    }
+
+    /// Whether `grant` stands under a world-bounded pact
+    /// (MEMBER-SYNC-WORLD-PACT = C): some pact binds it, and the meet of its
+    /// bound pacts' effective scopes holds fewer worlds than All, the same
+    /// ceiling `authorize_sync_selector` judges an All selector against.
+    /// Unpacted is
+    /// `false`: with no pact the grant carries every world its own authority
+    /// holds. One read transaction: the authority fold in this snapshot,
+    /// nothing written. The member arm asks this only after every other
+    /// admission check stands, so no reason reaches a non-member.
+    pub fn member_lane_pact_bounds_worlds(&self, grant: EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        Ok(crate::authority::current_grant_scope(&fold, &grant)
+            .is_some_and(|current| current.worlds != ScopeAxis::All))
     }
 }

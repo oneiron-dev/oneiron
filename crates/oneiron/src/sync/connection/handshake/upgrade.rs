@@ -5,8 +5,8 @@
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::handshake::client::Request;
-use tokio_tungstenite::tungstenite::http::HeaderMap;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
+use tokio_tungstenite::tungstenite::http::{HeaderMap, HeaderValue};
 
 use crate::sync::carrier::SyncSocket;
 use crate::sync::client::{SyncClient, SyncClientConfig, SyncEvent};
@@ -30,6 +30,10 @@ use super::super::session::SessionFault;
 /// FIX 11111: no credential rides a clear `ws` upgrade that is neither
 /// loopback nor mesh; the socket opens as one with no credential. A peer
 /// session rides the paired mesh to its peer.
+///
+/// MEMBER-SYNC D1: a member lane's upgrade carries one request header, a
+/// restriction request that is never authority; without it the upgrade takes
+/// the path it took before.
 pub(in crate::sync::connection) fn upgrade_request(
     vault: &crate::Vault,
     config: &SyncClientConfig,
@@ -63,6 +67,12 @@ pub(in crate::sync::connection) fn upgrade_request(
             .parse()
             .map_err(|_| "Auth token is not a valid header value".to_string())?;
         request.headers_mut().insert(AUTHORIZATION, header_value);
+    }
+    if config.member_lane {
+        request.headers_mut().insert(
+            crate::sync::carrier::MEMBER_LANE_HEADER,
+            HeaderValue::from_static(crate::sync::carrier::MEMBER_LANE_HEADER_VALUE),
+        );
     }
     Ok((request, binding, withheld))
 }
@@ -116,8 +126,10 @@ impl SyncConnection {
                 {
                     let _ = event_tx.send(refusal.event());
                     // A 403 refuses this credential the socket: no redial on
-                    // it opens one (MEMBER-SELECTOR-SOCKET).
-                    if refusal == crate::sync::carrier::UpgradeRefusal::Forbidden {
+                    // it opens one (MEMBER-SELECTOR-SOCKET). The refusal
+                    // carries the typed reason when the home named one
+                    // (MEMBER-SYNC-WORLD-PACT = C).
+                    if matches!(refusal, crate::sync::carrier::UpgradeRefusal::Forbidden(_)) {
                         return SessionFault::Forbidden(message);
                     }
                 }

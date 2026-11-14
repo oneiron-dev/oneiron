@@ -89,10 +89,13 @@ pub(super) fn lane_observer(mark: LaneMark) -> impl FnMut(oneiron::sync::SyncEve
         }
         // The home refuses this credential the lane's socket: the lane does
         // not redial on it (MEMBER-SELECTOR-SOCKET), and only the signed
-        // check decides whether the membership ended.
-        oneiron::sync::SyncEvent::UpgradeForbidden => {
+        // check decides whether the membership ended. A named reason (a
+        // world-bounded pact, MEMBER-SYNC-WORLD-PACT = C) is logged with it;
+        // the park and the owed leave check stay as they are.
+        oneiron::sync::SyncEvent::UpgradeForbidden { reason } => {
             tracing::warn!(
                 vault_id = vault_id,
+                ?reason,
                 "shared env lane's socket refused (403); it does not redial on this credential, \
                  and its leave check runs next round"
             );

@@ -192,7 +192,8 @@ impl SyncClient {
     /// newest generation and, on an eligible publisher, the slot's upload. A
     /// federation lane and a machine not mine here do nothing; a phone grants
     /// and sweeps only, and a home known to be a phone gets no sweep or
-    /// upload.
+    /// upload. A member lane relays nothing: the home admits no bundle call
+    /// on it (MEMBER-SYNC P5).
     pub async fn relay_sealed_bundle(&self) -> Result<SealedBundleRelay, TransportError> {
         relay_sealed_bundle(&self.manager, &self.config).await
     }
@@ -207,7 +208,8 @@ impl SyncClient {
     /// yet, held back this slot or not, and reports how many a kept object
     /// held, and what still waits. A federation lane and a machine not mine
     /// here sweep nothing, nor does a home known to be a phone, which keeps
-    /// none.
+    /// none. A member lane sweeps nothing: the home admits no bundle call on
+    /// it (MEMBER-SYNC P5).
     pub async fn sweep_sealed_bundle_erases_with_kit(
         &self,
         seed: &RecoveryRootSeed,
@@ -215,6 +217,7 @@ impl SyncClient {
         let vault = &self.vault;
         let mut relay = SealedBundleRelay::default();
         if self.config.federation_peer.is_some()
+            || self.config.member_lane
             || !vault
                 .local_machine()
                 .map_err(storage)?
@@ -252,11 +255,15 @@ impl SyncClient {
 
     /// One generation's bundle and pad object as the home keeps them, for a
     /// restore from the cloud copy: `generation` names one, `None` the newest.
-    /// `None` when the home keeps no such generation.
+    /// `None` when the home keeps no such generation. A member lane refuses:
+    /// the home admits no bundle call on it (MEMBER-SYNC P5).
     pub async fn fetch_sealed_bundle(
         &self,
         generation: Option<SealedBundleGeneration>,
     ) -> Result<Option<(SealedVaultBundle, SealedKeyPads)>, TransportError> {
+        if self.config.member_lane {
+            return Err(refused());
+        }
         let budgets = residence_budgets(&self.vault)?;
         let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
             return Err(TransportError::home_offline());
@@ -269,7 +276,8 @@ impl SyncClient {
 /// config alone, for a task off the live sync loop. Every tick reaches for
 /// the home, an erase or a slot due or not, so an old reader serves the
 /// admissions waiting there (FIX 4271); a home out of reach is no error
-/// unless an erase or the slot was due.
+/// unless an erase or the slot was due. A member lane relays nothing: the
+/// home admits no bundle call on it (MEMBER-SYNC P5).
 pub(crate) async fn relay_sealed_bundle(
     manager: &Arc<WindowManager>,
     config: &SyncClientConfig,
@@ -278,6 +286,7 @@ pub(crate) async fn relay_sealed_bundle(
     let mut relay = SealedBundleRelay::default();
     publication::publish_asked(manager, config).await;
     if config.federation_peer.is_some()
+        || config.member_lane
         || !vault
             .local_machine()
             .map_err(storage)?

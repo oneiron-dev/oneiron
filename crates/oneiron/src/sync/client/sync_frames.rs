@@ -178,10 +178,15 @@ impl SyncClient {
     {
         let mut messages = Vec::new();
 
-        // Phase 1: Send our root VV (empty for new client — server will send snapshot)
-        let mut vv_msg = vec![TAG_VERSION_VECTOR];
-        vv_msg.extend_from_slice(&doc_version_vector(&self.root_doc));
-        messages.push(vv_msg);
+        // Phase 1: Send our root VV (empty for new client — server will send snapshot).
+        // A member lane sends none (H8-SHARED-ENV-LANE = B): the `residence.windows`
+        // catalogue replaces root discovery, and the home neither sends a
+        // snapshot nor admits root frames on it.
+        if !self.config.member_lane {
+            let mut vv_msg = vec![TAG_VERSION_VECTOR];
+            vv_msg.extend_from_slice(&doc_version_vector(&self.root_doc));
+            messages.push(vv_msg);
+        }
 
         // Phase 2: Default windows for the wall clock now (current +
         // previous), then any other windows already loaded in the manager.
@@ -370,11 +375,12 @@ impl SyncClient {
             .documents()
             .request_frames()
             .map_err(|error| TransportError::Storage(error.to_string()))?;
-        messages.extend(
-            requests
-                .into_iter()
-                .filter(|frame| self.peer_session.is_none() || !self.note_document_frame(frame)),
-        );
+        messages.extend(requests.into_iter().filter(|frame| {
+            // A member lane replays selector subscriptions only: a stale
+            // owner row's REQUEST would be refused (H8-SHARED-ENV-LANE = B).
+            (self.peer_session.is_none() || !self.note_document_frame(frame))
+                && !self.member_refuses_document_frame(frame)
+        }));
         Ok(messages)
     }
 

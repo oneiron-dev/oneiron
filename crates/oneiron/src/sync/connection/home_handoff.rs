@@ -176,13 +176,14 @@ pub(super) fn feed_move_routes(
 impl SyncConnection {
     /// Runs a delivery round at start, then each time the upkeep wakes it or
     /// an election moves the home or this node's recorded move. A federation
-    /// lane runs none. Each round holds the host's admission, a pause waited
+    /// or member lane runs none (H8-SHARED-ENV-LANE = B). Each round holds the
+    /// host's admission, a pause waited
     /// out (FIX 12036).
     pub(super) async fn run_home_handoff(
         &self,
         events: mpsc::UnboundedSender<SyncEvent>,
     ) -> Infallible {
-        if !HOME_HANDOFF_DELIVERY || self.config.client_config.federation_peer.is_some() {
+        if !HOME_HANDOFF_DELIVERY || self.config.client_config.residence_mode_is_fixed() {
             match std::future::pending::<Infallible>().await {}
         }
         let vault = Arc::clone(self.manager.vault());
