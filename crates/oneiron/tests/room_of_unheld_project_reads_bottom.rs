@@ -223,8 +223,8 @@ fn a_deleted_projects_home_room_goes_with_it() -> TestResult {
         .vault
         .delete_entity_with_reason(&project, DeleteReason::UserDelete)?;
     assert!(
-        fixture.vault.project_room(project)?.is_none(),
-        "the deleted project has no home room"
+        fixture.vault.project_room(home)?.is_none(),
+        "the deleted project's home room reads as absent"
     );
     assert!(
         fixture.vault.get(&home)?.is_none(),
