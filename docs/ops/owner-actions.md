@@ -2627,8 +2627,15 @@ only through `lift`, which destroys its sealed copy and erases nothing in the
 vault. The hold log keeps ids, times and reason codes only, for the hold's life
 and 24 months after.
 
+A hold copies nothing new unless it names future messages. With
+`--future-messages-until SECS` (the vault's recorded time, in seconds), each new
+MESSAGE written before that time is sealed into the hold's copy as it is
+written, until that time or the lift. Erasing such a message still runs; the
+copy keeps it.
+
 ```sh
 oneiron legal-holds place --record HEX [--record HEX] [--gate-partition HEX|none] [--matter-ref REF]
+    [--future-messages-until SECS]
 oneiron legal-holds widen HOLD --record HEX
 oneiron legal-holds list
 oneiron legal-holds log
@@ -2640,7 +2647,9 @@ Routes take targets as `{"record": "<hex>"}`, `{"gate_partition": "<hex>"}` or
 `{"gate_partition": null}` (the claim-free partition):
 
 - `POST /v1/owner/legal-holds` with `{"targets": [...], "matter_ref": "..."}` places a hold, and
-  `GET /v1/owner/legal-holds` lists the holds you may see.
+  `GET /v1/owner/legal-holds` lists the holds you may see. Add
+  `"future_messages": {"selector": "vault", "until": SECS}` to name future messages; an `until`
+  that is not ahead is refused.
 - `POST /v1/owner/legal-holds/widen` with `{"hold_id": "<hex>", "targets": [...]}`.
 - A hold on a claim's gate-decision partition that an erase took, or whose key is retired, is
   refused with 409 and the state `hold_target_erased` or `hold_target_key_retired`, on these

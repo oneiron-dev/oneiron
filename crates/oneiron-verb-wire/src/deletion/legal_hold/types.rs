@@ -76,6 +76,53 @@ pub struct HoldCloneCapture {
     pub fingerprint: [u8; 32],
 }
 
+/// Which new on-record messages an owner's hold names (Ruling
+/// L10-21-OWNER-FUTURE-MESSAGES = A, ARCH-0038 :320-321: new messages join
+/// the hold only if the order explicitly says so, and only for the order's
+/// term).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageSelector {
+    /// Every new base on-record MESSAGE row of this vault.
+    Vault,
+}
+
+/// An owner's hold on future messages (Ruling L10-21-OWNER-FUTURE-MESSAGES
+/// = A, ARCH-0038 :320-321): each matching new MESSAGE is sealed into this
+/// hold's copy as it is written, until `until` or the lift. A hold without
+/// it captures nothing new.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldFutureMessages {
+    pub selector: MessageSelector,
+    /// The vault's recorded time after which no new message joins.
+    pub until: u64,
+}
+
 /// One hold row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -116,6 +163,11 @@ pub struct LegalHold {
     /// first. Empty on rows written before the sealed copy.
     #[serde(default)]
     pub clone_captures: Vec<HoldCloneCapture>,
+    /// The future messages this hold names (Ruling
+    /// L10-21-OWNER-FUTURE-MESSAGES = A, ARCH-0038 :321). None captures
+    /// nothing new; none on host orders and on rows written before it.
+    #[serde(default)]
+    pub future_messages: Option<LegalHoldFutureMessages>,
 }
 
 impl LegalHold {

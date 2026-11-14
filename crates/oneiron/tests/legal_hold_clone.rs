@@ -101,6 +101,7 @@ fn an_owner_hold_copies_its_exact_scope_into_the_sealed_store() -> TestResult {
             &fixture.owner,
             vec![LegalHoldTarget::Record(a), LegalHoldTarget::Record(b)],
             None,
+            None,
         )
         .map_err(at("the owner's legal hold"))?;
     assert_eq!(hold.clone_captures.len(), 1, "the hold has one capture");
@@ -160,6 +161,7 @@ fn widening_copies_only_the_added_records() -> TestResult {
             &fixture.owner,
             vec![LegalHoldTarget::Record(a), LegalHoldTarget::Record(b)],
             None,
+            None,
         )
         .map_err(at("the owner's legal hold"))?;
     let hold = vault
@@ -208,7 +210,8 @@ fn place_refuses_a_store_inside_the_vault() -> TestResult {
     let vault = Vault::open_owned(vault_dir.path(), config).map_err(at("open owned"))?;
     let (_actor, owner) = owner_on(&vault)?;
     let id = named_row(&vault, "held record")?;
-    let error = match vault.place_legal_hold(&owner, vec![LegalHoldTarget::Record(id)], None) {
+    let error = match vault.place_legal_hold(&owner, vec![LegalHoldTarget::Record(id)], None, None)
+    {
         Ok(_) => return Err("a store inside the vault must refuse the hold".into()),
         Err(error) => format!("{error:?}"),
     };
@@ -233,7 +236,7 @@ fn place_refuses_a_store_inside_the_vault() -> TestResult {
         Vault::open_owned(bare_dir.path(), VaultConfig::device()).map_err(at("open owned"))?;
     let (_actor, owner) = owner_on(&bare)?;
     let id = named_row(&bare, "held record")?;
-    let error = match bare.place_legal_hold(&owner, vec![LegalHoldTarget::Record(id)], None) {
+    let error = match bare.place_legal_hold(&owner, vec![LegalHoldTarget::Record(id)], None, None) {
         Ok(_) => return Err("a missing store must refuse the hold".into()),
         Err(error) => format!("{error:?}"),
     };
@@ -268,7 +271,7 @@ fn a_hold_writes_only_under_its_own_vault_root() -> TestResult {
     let _second_owner = owner_on(&second)?;
     let held = named_row(&first, "held record")?;
     let hold = first
-        .place_legal_hold(&owner, vec![LegalHoldTarget::Record(held)], None)
+        .place_legal_hold(&owner, vec![LegalHoldTarget::Record(held)], None, None)
         .map_err(at("the first vault's hold"))?;
     let roots = std::fs::read_dir(store_dir.path())
         .map_err(at("list the hold store"))?
@@ -316,7 +319,12 @@ fn lifting_a_hold_destroys_its_copy_and_never_erases() -> TestResult {
     let vault = &fixture.vault;
     let record = named_row(vault, "held record")?;
     let hold = vault
-        .place_legal_hold(&fixture.owner, vec![LegalHoldTarget::Record(record)], None)
+        .place_legal_hold(
+            &fixture.owner,
+            vec![LegalHoldTarget::Record(record)],
+            None,
+            None,
+        )
         .map_err(at("the owner's legal hold"))?;
     let lifted = vault
         .lift_legal_hold(&fixture.owner, hold.hold_id)
@@ -380,7 +388,12 @@ fn producing_reseals_to_the_named_recipient_and_logs_access() -> TestResult {
     let vault = &fixture.vault;
     let record = named_row(vault, "held record")?;
     let hold = vault
-        .place_legal_hold(&fixture.owner, vec![LegalHoldTarget::Record(record)], None)
+        .place_legal_hold(
+            &fixture.owner,
+            vec![LegalHoldTarget::Record(record)],
+            None,
+            None,
+        )
         .map_err(at("the owner's legal hold"))?;
     let recipient = HybridSecretKey::from_seed(&[0x5c; 32], b"test/legal-hold-recipient")
         .map_err(at("the recipient's key"))?;

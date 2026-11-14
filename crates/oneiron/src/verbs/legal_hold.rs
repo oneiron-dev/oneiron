@@ -10,13 +10,15 @@ use oneiron_crypto::HybridPublicKey;
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
-use crate::deletion::{LegalHold, LegalHoldEvent, LegalHoldProduction, LegalHoldTarget};
+use crate::deletion::{
+    LegalHold, LegalHoldEvent, LegalHoldFutureMessages, LegalHoldProduction, LegalHoldTarget,
+};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::{EntityId, Vault};
 
 /// `vault.legal_holds.place`'s input: what the owner's customer hold names,
-/// and an optional opaque matter reference.
+/// an optional opaque matter reference, and the future messages it names.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldPlaceRequest {
@@ -27,6 +29,12 @@ pub struct LegalHoldPlaceRequest {
     /// An opaque id, never free text: 1 to 128 of A-Z a-z 0-9 . _ : - /.
     #[serde(default)]
     pub matter_ref: Option<String>,
+    /// The future messages the hold names: each matching new MESSAGE joins
+    /// its copy until `until` or the lift (Ruling
+    /// L10-21-OWNER-FUTURE-MESSAGES = A, ARCH-0038 :321). None captures
+    /// nothing new.
+    #[serde(default)]
+    pub future_messages: Option<LegalHoldFutureMessages>,
 }
 
 /// `vault.legal_holds.widen`'s input: more targets for one of the owner's
@@ -110,7 +118,12 @@ pub fn place_legal_hold_as(
     owner: &AuthenticatedOwner,
     input: LegalHoldPlaceRequest,
 ) -> MemoryResult<LegalHold> {
-    Ok(vault.place_legal_hold(owner, input.targets, input.matter_ref)?)
+    Ok(vault.place_legal_hold(
+        owner,
+        input.targets,
+        input.matter_ref,
+        input.future_messages,
+    )?)
 }
 
 /// `vault.legal_holds.widen`: adds targets to the owner's standing hold.

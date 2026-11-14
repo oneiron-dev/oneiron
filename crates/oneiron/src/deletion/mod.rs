@@ -90,10 +90,14 @@ pub use legal_hold::clone::{HostLegalChannel, HostLegalConnection, HostLegalConn
 pub(crate) use legal_hold::prospective::{
     ProspectiveBatch, prospective_standing_in_txn, seal_prospective_message_in_txn,
 };
+// The hold-store door reads one hold's standing (`test_doors::legal_hold`).
+#[cfg(oneiron_test_support)]
+pub(crate) use legal_hold::prospective::outbox_in_txn;
 pub use legal_hold::{
     HoldCloneCapture, HostOrderHold, LEGAL_HOLD_LOG_RETENTION_MONTHS, LegalHold,
-    LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind, LegalHoldKind, LegalHoldMaintenance,
-    LegalHoldProduction, LegalHoldReason, LegalHoldTarget, ProducedHoldCapture,
+    LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind, LegalHoldFutureMessages, LegalHoldKind,
+    LegalHoldMaintenance, LegalHoldProduction, LegalHoldReason, LegalHoldTarget, MessageSelector,
+    ProducedHoldCapture,
 };
 // A source's dependents go in bounded batches (`Vault::finish_dependent_walks`).
 pub use crate::ports::{

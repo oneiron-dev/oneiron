@@ -107,7 +107,8 @@ async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 }
 
 /// `POST /v1/owner/legal-holds`: places the owner's customer hold on
-/// `targets`, with an optional opaque `matter_ref`.
+/// `targets`, with an optional opaque `matter_ref` and the future messages
+/// it names.
 async fn place(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -123,7 +124,12 @@ async fn place(
             "vault.legal_holds.place",
             request,
             |request: LegalHoldPlaceRequest| {
-                Ok(vault.place_legal_hold(&owner, request.targets, request.matter_ref)?)
+                Ok(vault.place_legal_hold(
+                    &owner,
+                    request.targets,
+                    request.matter_ref,
+                    request.future_messages,
+                )?)
             },
         )
     })

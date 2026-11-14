@@ -107,24 +107,29 @@ impl Vault {
     /// placed, with a sealed copy of exactly its scope written to the
     /// install's hold store outside the vault. A hold never refuses an erase,
     /// a delete or a backup expiry (LEGAL-HOLD-USE = B, ARCH-0038
-    /// #legal-hold-clone-ruling), and the sealed copy outlives them.
+    /// #legal-hold-clone-ruling), and the sealed copy outlives them. With
+    /// `future_messages`, each matching new MESSAGE joins the hold's copy
+    /// until its end (Ruling L10-21-OWNER-FUTURE-MESSAGES = A, ARCH-0038
+    /// :320-321); without it, nothing new joins.
     ///
     /// # Errors
-    /// The owner proof no longer holds, `matter_ref` is not an opaque id, a
-    /// named claim's erase has already committed, or no legal hold store is
-    /// set: the sealed copy has nowhere to go.
+    /// The owner proof no longer holds, `matter_ref` is not an opaque id,
+    /// `future_messages.until` lies not ahead, a named claim's erase has
+    /// already committed, or no legal hold store is set: the sealed copy
+    /// has nowhere to go.
     pub fn place_legal_hold(
         &self,
         owner: &AuthenticatedOwner,
         targets: Vec<LegalHoldTarget>,
         matter_ref: Option<String>,
+        future_messages: Option<LegalHoldFutureMessages>,
     ) -> Result<LegalHold> {
         // Fresh before the writer, so a failed write still names its hold
         // directory for cleanup: the clock hands no id twice, even across
         // an abort.
         let hold_id = self.store.clock.entity_id()?;
         let outcome = self.with_write_txn_grouped(|txn| {
-            self.place_legal_hold_in_txn(txn, owner, targets, matter_ref, hold_id)
+            self.place_legal_hold_in_txn(txn, owner, targets, matter_ref, hold_id, future_messages)
         });
         if outcome.is_err() {
             self.remove_uncommitted_hold_copy(&hold_id);
@@ -147,6 +152,7 @@ impl Vault {
         targets: Vec<LegalHoldTarget>,
         matter_ref: Option<String>,
         hold_id: EntityId,
+        future_messages: Option<LegalHoldFutureMessages>,
     ) -> Result<LegalHold> {
         if let Some(matter) = &matter_ref {
             check_opaque(matter, "matter reference")?;
@@ -155,9 +161,37 @@ impl Vault {
         let actor = owner.revalidate_in_txn(self, txn)?;
         self.refuse_erased_targets_in_txn(txn, &targets)?;
         let now = self.store.clock.now_recorded_at();
+        if let Some(future) = &future_messages
+            && future.until <= now
+        {
+            return Err(Error::InvalidConfig(
+                "a hold's future-messages end must lie ahead".into(),
+            ));
+        }
         let placed = (|| -> Result<LegalHold> {
             let captures =
                 clone::legal_hold_store::write_hold_clone_in_txn(self, txn, hold_id, &targets)?;
+            if let Some(future) = future_messages {
+                let selector = match future.selector {
+                    MessageSelector::Vault => {
+                        oneiron_vault_contract::host_legal::MessageSelector::Vault
+                    }
+                };
+                let public = clone::legal_hold_store::hold_public_key(self, &hold_id)?;
+                let (request, _) = clone::legal_hold_store::prospective_capture_request_for(
+                    self,
+                    &hold_id,
+                    &public,
+                    selector,
+                    future.until,
+                )?;
+                let request_digest = request.digest()?;
+                let dir = clone::legal_hold_store::configured(self)?
+                    .hold_dir(self, &hold_id)
+                    .to_string_lossy()
+                    .into_owned();
+                prospective::stand_in_txn(&self.store, txn, &request, request_digest, Some(dir))?;
+            }
             let hold = LegalHold {
                 hold_id,
                 kind: LegalHoldKind::Customer,
@@ -175,6 +209,7 @@ impl Vault {
                 owner_told: true,
                 requires_non_use: false,
                 clone_captures: captures,
+                future_messages,
             };
             let first = hold
                 .clone_captures
@@ -305,6 +340,13 @@ impl Vault {
             };
             if !hold.stands() {
                 return Ok(hold);
+            }
+            // No message is sealed for a lifted hold (Ruling
+            // L10-21-OWNER-FUTURE-MESSAGES = A): its standing ends with its
+            // outbox, and never stands again. A hold without future
+            // messages has none.
+            if hold.future_messages.is_some() {
+                prospective::end_in_txn(&self.store, txn, (*hold_id.as_bytes(), 0), true)?;
             }
             let now = self.store.clock.now_recorded_at();
             hold.lifted_at = Some(now);
@@ -522,6 +564,7 @@ impl Vault {
                 owner_told: order.secret_until.is_none_or(|until| now >= until),
                 requires_non_use: order.requires_non_use,
                 clone_captures: Vec::new(),
+                future_messages: None,
             };
             hold_store::put_hold_in_txn(&self.store, txn, &hold)?;
             hold_store::log_in_txn(
@@ -652,6 +695,10 @@ impl Vault {
     pub fn maintain_legal_holds(&self) -> Result<LegalHoldMaintenance> {
         let lapsed = self.with_write_txn_grouped(|txn| {
             let now = self.store.clock.now_recorded_at();
+            // An owner's pending outbox reaches its hold store before its
+            // term ends it (Ruling L10-21-OWNER-FUTURE-MESSAGES = A).
+            #[cfg(unix)]
+            prospective::flush_owner_standings_in_txn(&self.store, txn)?;
             // A prospective capture order whose term passed ends with its
             // outbox, even with no live connection (FIX 13867).
             prospective::end_lapsed_in_txn(&self.store, txn, now)?;

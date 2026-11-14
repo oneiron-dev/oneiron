@@ -558,7 +558,9 @@ fn hold_for_ask(
         });
     let hold = match held {
         Some(hold) => hold,
-        None => vault.place_legal_hold_in_txn(txn, owner, targets, Some(matter_ref), hold_id)?,
+        None => {
+            vault.place_legal_hold_in_txn(txn, owner, targets, Some(matter_ref), hold_id, None)?
+        }
     };
     Ok((Some(hold), excluded))
 }

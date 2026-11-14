@@ -1,6 +1,6 @@
 {
   "name": "vault.legal_holds.place",
-  "description": "The owner places a customer legal hold on the named records or gate partitions.",
+  "description": "The owner places a customer legal hold on the named records or gate partitions, optionally naming future messages until a recorded time.",
   "input": "crate::task_verb::sdk::LegalHoldPlaceRequest",
   "output": "crate::deletion::LegalHold",
   "call": "crate::task_verb::sdk::place_legal_hold_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.place\")?, input)?",

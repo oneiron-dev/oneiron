@@ -22,6 +22,7 @@ use oneiron_crypto::{
 use oneiron_keystore::{KeystoreSlot, SlotKind};
 use oneiron_vault_contract::host_legal::{
     CaptureExtent, CaptureRequest, CaptureScope, CaptureSource, FrameHeader, FrameKind,
+    MessageSelector,
 };
 use zeroize::Zeroizing;
 
@@ -383,6 +384,43 @@ fn capture_request_for(
     Ok((request, capture))
 }
 
+/// One prospective capture request of `hold` for its future messages
+/// (Ruling L10-21-OWNER-FUTURE-MESSAGES = A, ARCH-0038 :320-321), sealed to
+/// the hold's key, standing until `until`.
+///
+/// # Errors
+/// The vault's clock hands no id.
+pub(crate) fn prospective_capture_request_for(
+    vault: &Vault,
+    hold: &EntityId,
+    public: &HybridPublicKey,
+    selector: MessageSelector,
+    until: u64,
+) -> Result<(CaptureRequest, EntityId)> {
+    let capture = vault.store.clock.entity_id()?;
+    let request = CaptureRequest {
+        order: *hold.as_bytes(),
+        capture: *capture.as_bytes(),
+        source_vault: *vault.vault_id().as_bytes(),
+        generation: 0,
+        ends_at: until,
+        scope: CaptureScope::ProspectiveMessages(selector),
+        recipient: public.to_bytes(),
+    };
+    Ok((request, capture))
+}
+
+/// The hold's public key, from its `hold.key`.
+///
+/// # Errors
+/// No legal hold store is set, or the hold's key does not open.
+pub(crate) fn hold_public_key(vault: &Vault, hold: &EntityId) -> Result<HybridPublicKey> {
+    let store = configured(vault)?;
+    let dir = store.hold_dir(vault, hold);
+    let vault_id = *vault.vault_id().as_bytes();
+    Ok(hold_secret(vault, &vault_id, hold, &dir)?.public_key())
+}
+
 /// Writes one capture: its frames through a collector into its file, and its
 /// fingerprint. The caller streams the capture's extent.
 fn write_capture_in(
@@ -646,6 +684,74 @@ pub(crate) fn destroy_hold_copy(vault: &Vault, hold: &EntityId) -> Result<()> {
         crate::store::sync_dir(&vault_dir)?;
     }
     Ok(())
+}
+
+/// One prospective batch through `sink`: the outbox entries already
+/// sealed when their messages landed, then the summary naming this batch's
+/// exact ordinal range. The host connection and an owner's hold-store flush
+/// both run it, so the frame format is one.
+///
+/// # Errors
+/// The sink fails, `check` fails, or a counter overflows.
+#[cfg(unix)]
+pub(super) fn write_prospective_batch<S: CaptureSink>(
+    sink: &mut S,
+    public: &HybridPublicKey,
+    request: &CaptureRequest,
+    batch: &[(u64, super::super::prospective::OutboxEntry)],
+    first: u64,
+    final_next_ordinal: Option<u64>,
+    check: impl Fn() -> Result<()>,
+) -> Result<[u8; 32]> {
+    use super::super::prospective::OutboxEntry;
+    let mut collector = Collector::pinned(sink, public, request)?;
+    let mut counts = SummaryCounts {
+        batch_first_ordinal: first,
+        batch_entries: batch.len() as u64,
+        final_next_ordinal,
+        ..SummaryCounts::default()
+    };
+    for (_, entry) in batch {
+        match entry {
+            OutboxEntry::SealedRow { sealed, .. } => {
+                collector.stored_component(
+                    &sealed.frames,
+                    &sealed.descriptor_digest,
+                    sealed.plaintext_len,
+                    || check(),
+                )?;
+                counts.messages += 1;
+            }
+            OutboxEntry::SealedEdge { sealed, .. } => collector.stored_component(
+                &sealed.frames,
+                &sealed.descriptor_digest,
+                sealed.plaintext_len,
+                || check(),
+            )?,
+            OutboxEntry::Missed { message } => counts.missed_messages.push(*message),
+        }
+    }
+    collector.finish_counted(counts, CaptureExtent::ProspectiveMessages, check)
+}
+
+/// One owner's prospective flush file: `batch` sealed to the hold's key
+/// under `request`, written as `file_hex`.clone in `dir` (Ruling
+/// L10-21-OWNER-FUTURE-MESSAGES = A, ARCH-0038 :320-321). The file opens
+/// the way a place capture does.
+///
+/// # Errors
+/// The file or the collector fails.
+#[cfg(unix)]
+pub(crate) fn write_owner_prospective_file(
+    dir: &Path,
+    file_hex: &str,
+    public: &HybridPublicKey,
+    request: &CaptureRequest,
+    batch: &[(u64, super::super::prospective::OutboxEntry)],
+    first: u64,
+) -> Result<[u8; 32]> {
+    let mut file = HoldCloneFile::create(dir, file_hex)?;
+    write_prospective_batch(&mut file, public, request, batch, first, None, || Ok(()))
 }
 
 /// Recomputes a capture file's fingerprint the way the collector computed

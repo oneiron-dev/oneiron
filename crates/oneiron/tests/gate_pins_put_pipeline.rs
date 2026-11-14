@@ -218,7 +218,12 @@ fn g429_a_record_under_legal_hold_is_written_again() -> TestResult {
     let vault = &fixture.vault;
     let id = named_row(vault, ENTITY_TYPE_PERSON, "held person")?;
     vault
-        .place_legal_hold(&fixture.owner, vec![LegalHoldTarget::Record(id)], None)
+        .place_legal_hold(
+            &fixture.owner,
+            vec![LegalHoldTarget::Record(id)],
+            None,
+            None,
+        )
         .map_err(at("the owner's legal hold"))?;
     assert!(
         !vault

@@ -948,6 +948,11 @@ pub struct LegalHoldPlaceArgs {
     #[arg(long)]
     pub matter_ref: Option<String>,
 
+    /// Also hold future messages until this recorded time (seconds):
+    /// every new vault MESSAGE joins the copy.
+    #[arg(long)]
+    pub future_messages_until: Option<u64>,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }

@@ -1,5 +1,7 @@
-//! A HOST order's explicit prospective capture of new on-record messages
-//! (LEGAL-HOLD-USE = B as a clone, owner 2026-11-05; FIX 13866, 13867).
+//! A HOST order's or an owner's hold's explicit prospective capture of new
+//! on-record messages (LEGAL-HOLD-USE = B as a clone, owner 2026-11-05; FIX
+//! 13866, 13867; Ruling L10-21-OWNER-FUTURE-MESSAGES = A, ARCH-0038
+//! :320-321).
 //!
 //! Default off: only a `CaptureScope::ProspectiveMessages` request stands one.
 //! While it stands and before its `ends_at`, every new base MESSAGE row is
@@ -8,10 +10,12 @@
 //! are the outgoing edge rows the batch wrote for it (its turn, conversation,
 //! author, parent and reply links). The clone owns that ciphertext from the moment the
 //! message lands, so the user's own erase, scrub or compaction of the message
-//! is never gated. The order's connection drains the outbox in batches, each
-//! acknowledged on its own. Release or expiry destroys the standing and its
-//! outbox. A seal that fails keeps the user's write and records the message
-//! as missed, never as captured.
+//! is never gated. A host order's connection drains the outbox in batches,
+//! each acknowledged on its own; an owner's hold flushes its outbox into its
+//! hold store in the same writer. Release or expiry destroys the standing
+//! and its outbox, except an owner's term keeps its unflushed entries until
+//! they flush. A seal that fails keeps the user's write and records the
+//! message as missed, never as captured.
 
 use std::cell::RefCell;
 use std::io::{self, Read};
@@ -64,6 +68,17 @@ pub(crate) struct Standing {
     /// The first outbox ordinal whose message's edge rows are not sealed
     /// yet: the entries of the batch now being written.
     edges_from: u64,
+    /// The hold dir path, for an owner's future-messages standing (Ruling
+    /// L10-21-OWNER-FUTURE-MESSAGES = A, ARCH-0038 :320-321); none for a
+    /// host order, whose connection drains its outbox.
+    #[serde(default)]
+    owner_hold_dir: Option<String>,
+    /// An owner's standing only: the components sealed into its pending
+    /// file so far, which is the member the next one takes. A flushed file's
+    /// members run from zero without a gap, as a place capture's do; a
+    /// missed entry takes none.
+    #[serde(default)]
+    file_members: u64,
 }
 
 /// The order's own selector, kept with its standing and applied to each new
@@ -82,6 +97,14 @@ impl CoveredMessages {
             Self::Vault => true,
         }
     }
+
+    /// The request's selector this was stood from.
+    #[cfg(unix)]
+    fn selector(self) -> MessageSelector {
+        match self {
+            Self::Vault => MessageSelector::Vault,
+        }
+    }
 }
 
 impl Standing {
@@ -93,6 +116,29 @@ impl Standing {
             capture: self.capture,
             request_digest: self.request_digest,
         }
+    }
+
+    /// The member the next sealed component takes: an owner's pending file
+    /// counts from zero, so each flushed file opens the way a place capture
+    /// does; a host order keeps its global ordinals on the wire.
+    fn next_member(&self) -> u64 {
+        if self.owner_hold_dir.is_some() {
+            self.file_members
+        } else {
+            self.next_ordinal
+        }
+    }
+
+    /// Counts `entry` into an owner's pending file when it is sealed; a
+    /// missed entry, or any host order's, counts nothing.
+    fn count_member(&mut self, entry: &OutboxEntry) -> Result<()> {
+        if self.owner_hold_dir.is_some() && !matches!(entry, OutboxEntry::Missed { .. }) {
+            self.file_members = self
+                .file_members
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("legal prospective file member"))?;
+        }
+        Ok(())
     }
 }
 
@@ -164,7 +210,7 @@ pub(crate) fn seal_prospective_message_in_txn(
         let entry = match seal_component(
             &standing,
             key,
-            standing.next_ordinal,
+            standing.next_member(),
             SourceComponent::MessageRow,
             &message,
             "entities",
@@ -233,8 +279,8 @@ fn clear_prior_edges(store: &Store) {
     PRIOR_EDGES.with(|notes| notes.borrow_mut().retain(|(store, _, _)| *store != at));
 }
 
-/// Appends `entry` at `standing`'s next ordinal. The caller stores the
-/// standing.
+/// Appends `entry` at `standing`'s next ordinal, and counts it into an
+/// owner's pending file when it is sealed. The caller stores the standing.
 fn append_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -247,7 +293,7 @@ fn append_in_txn(
     standing.next_ordinal = ordinal
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("legal prospective ordinal"))?;
-    Ok(())
+    standing.count_member(entry)
 }
 
 thread_local! {
@@ -285,7 +331,8 @@ impl<'s> ProspectiveBatch<'s> {
     }
 
     /// After every op of the batch applied, in its writer: the outermost
-    /// batch seals its new messages' edge rows; a nested one does nothing.
+    /// batch seals its new messages' edge rows and flushes every owner's
+    /// pending outbox into its hold store; a nested one does nothing.
     pub(crate) fn seal_edges_in_txn(&self, wtxn: &mut RwTxn<'_>) -> Result<()> {
         if !self.outermost {
             return Ok(());
@@ -371,7 +418,7 @@ fn seal_prospective_edges_in_txn(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<
                 let sealed = seal_component(
                     &standing,
                     key,
-                    standing.next_ordinal,
+                    standing.next_member(),
                     SourceComponent::MessageEdge,
                     &message,
                     "edges_out",
@@ -410,6 +457,10 @@ fn seal_prospective_edges_in_txn(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<
         standing.edges_from = standing.next_ordinal;
         STANDINGS.put(store, wtxn, &key, &standing)?;
     }
+    // An owner's pending outbox reaches its hold store in the same writer,
+    // so the copy outlives a later vault erase.
+    #[cfg(unix)]
+    flush_owner_standings_in_txn(store, wtxn)?;
     // Every standing order read the batch's notes; none outlives the batch.
     clear_prior_edges(store);
     if sealed_any {
@@ -496,11 +547,14 @@ fn push_frame(out: &mut Vec<u8>, kind: FrameKind, member: u64, part: u64, payloa
 
 /// Stands the prospective order of `request`, or finds it standing for a
 /// reconnect of the same capture. A released generation never stands again.
+/// `owner_hold_dir` is the hold dir path for an owner's future-messages
+/// standing, none for a host order.
 pub(crate) fn stand_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     request: &CaptureRequest,
     request_digest: [u8; 32],
+    owner_hold_dir: Option<String>,
 ) -> Result<()> {
     let key = (request.order, request.generation);
     let CaptureScope::ProspectiveMessages(selector) = &request.scope else {
@@ -525,6 +579,7 @@ pub(crate) fn stand_in_txn(
             if standing.capture != request.capture
                 || standing.request_digest != request_digest
                 || standing.covered != covered
+                || standing.owner_hold_dir != owner_hold_dir
             {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -547,6 +602,8 @@ pub(crate) fn stand_in_txn(
                 recipient: request.recipient.clone(),
                 next_ordinal: 0,
                 edges_from: 0,
+                owner_hold_dir,
+                file_members: 0,
             },
         ),
     }
@@ -627,23 +684,185 @@ pub(crate) fn end_in_txn(
     Ok(())
 }
 
+/// Flushes every owner's future-messages standing with a pending outbox
+/// into its hold store (Ruling L10-21-OWNER-FUTURE-MESSAGES = A, ARCH-0038
+/// :320-321): one file per pending range, named for its request's capture,
+/// then acknowledged and rotated for the next file. A file or collector
+/// failure keeps the entries for the next flush; only a storage error
+/// fails.
+///
+/// # Errors
+/// A storage error.
+#[cfg(unix)]
+pub(crate) fn flush_owner_standings_in_txn(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
+    let owners: Vec<(OrderKey, Standing)> = STANDINGS
+        .scan(store, wtxn)?
+        .into_iter()
+        .filter(|(_, standing)| standing.owner_hold_dir.is_some())
+        .collect();
+    for (key, standing) in owners {
+        flush_one_owner_in_txn(store, wtxn, key, standing)?;
+    }
+    Ok(())
+}
+
+/// One owner's pending outbox into its hold store: the file first, then
+/// the hold row, the acknowledgement and the next file's binding, all in
+/// the caller's writer. A file or collector failure warns and keeps the
+/// entries; a storage failure fails, as any write's would.
+#[cfg(unix)]
+fn flush_one_owner_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    key: OrderKey,
+    mut standing: Standing,
+) -> Result<()> {
+    let Some(dir) = standing.owner_hold_dir.clone() else {
+        return Ok(());
+    };
+    let mut batch = Vec::new();
+    for row in OUTBOX.iter_from(store, wtxn, &order_prefix(key))? {
+        let ((order, generation, ordinal), entry) = row?;
+        if (order, generation) != key {
+            break;
+        }
+        batch.push((ordinal, entry));
+    }
+    if batch.is_empty() {
+        return Ok(());
+    }
+    let first = batch[0].0;
+    let hold_id = match hold_id_for(key) {
+        Ok(hold_id) => hold_id,
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "an owner's future-messages outbox could not be flushed; kept for the next flush"
+            );
+            return Ok(());
+        }
+    };
+    let Some(mut hold) = crate::store::legal_hold::hold_in_txn(store, wtxn, &hold_id)? else {
+        // Nowhere to flush, ever: the standing ends with its outbox.
+        tracing::warn!("an owner's future-messages hold is gone; its standing ends");
+        return end_in_txn(store, wtxn, key, true);
+    };
+    let flushed = (|| -> Result<([u8; 32], [u8; 16], [u8; 32], EntityId)> {
+        let public = HybridPublicKey::from_bytes(&standing.recipient).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "legal prospective recipient")
+        })?;
+        let capture_id = EntityId::from_bytes(standing.capture)?;
+        let file_hex = crate::entity_id::bytes_to_hex_lower(&standing.capture);
+        let dir_path = std::path::Path::new(&dir);
+        // Files a failed writer left: the standing still names their
+        // capture, so no committed row names them, and the one writer
+        // excludes any other flush.
+        let _ = std::fs::remove_file(dir_path.join(format!("{file_hex}.clone")));
+        let _ = std::fs::remove_file(dir_path.join(format!("{file_hex}.clone.partial")));
+        let request_for = |capture: [u8; 16]| CaptureRequest {
+            order: key.0,
+            capture,
+            source_vault: standing.source_vault,
+            generation: key.1,
+            ends_at: standing.ends_at,
+            scope: CaptureScope::ProspectiveMessages(standing.covered.selector()),
+            recipient: standing.recipient.clone(),
+        };
+        let request = request_for(standing.capture);
+        // Every entry was sealed under the stood request's digest.
+        if request.digest()? != standing.request_digest {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "legal prospective request binding",
+            )
+            .into());
+        }
+        let new_capture_id = store.clock.entity_id()?;
+        let new_digest = request_for(*new_capture_id.as_bytes()).digest()?;
+        let fingerprint = super::clone::legal_hold_store::write_owner_prospective_file(
+            dir_path, &file_hex, &public, &request, &batch, first,
+        )?;
+        Ok((
+            fingerprint,
+            *new_capture_id.as_bytes(),
+            new_digest,
+            capture_id,
+        ))
+    })();
+    let (fingerprint, new_capture, new_digest, capture_id) = match flushed {
+        Ok(flushed) => flushed,
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "an owner's future-messages outbox could not be flushed; kept for the next flush"
+            );
+            return Ok(());
+        }
+    };
+    hold.clone_captures.push(crate::deletion::HoldCloneCapture {
+        capture: capture_id,
+        fingerprint,
+    });
+    crate::store::legal_hold::put_hold_in_txn(store, wtxn, &hold)?;
+    let acknowledged = acknowledge_in_txn(
+        store,
+        wtxn,
+        key,
+        standing.capture,
+        first,
+        batch.len() as u64,
+    )?;
+    if !acknowledged {
+        return Err(Error::InvariantViolation(
+            "legal prospective acknowledgement",
+        ));
+    }
+    standing.capture = new_capture;
+    standing.request_digest = new_digest;
+    standing.file_members = 0;
+    STANDINGS.put(store, wtxn, &key, &standing)?;
+    Ok(())
+}
+
+/// The hold id of an owner's standing key.
+#[cfg(unix)]
+fn hold_id_for(key: OrderKey) -> Result<EntityId> {
+    EntityId::from_bytes(key.0)
+}
+
 /// Ends every prospective order whose term passed at `now`, with its outbox:
 /// the maintenance pass's half of expiry, for an order with no live
-/// connection. Births after `ends_at` are never sealed either way.
+/// connection. Births after `ends_at` are never sealed either way. An
+/// owner's standing with unflushed entries stays until its outbox empties
+/// (Ruling L10-21-OWNER-FUTURE-MESSAGES = A, ARCH-0038 :320-321); a host
+/// order ends with its outbox as before.
 pub(crate) fn end_lapsed_in_txn(store: &Store, wtxn: &mut RwTxn<'_>, now: u64) -> Result<u64> {
-    let lapsed: Vec<OrderKey> = STANDINGS
+    let candidates: Vec<(OrderKey, Standing)> = STANDINGS
         .scan(store, wtxn)?
         .into_iter()
         .filter(|(_, standing)| now >= standing.ends_at)
-        .map(|(key, _)| key)
         .collect();
-    for key in &lapsed {
-        end_in_txn(store, wtxn, *key, false)?;
+    let mut ended = 0_u64;
+    for (key, standing) in candidates {
+        if standing.owner_hold_dir.is_some() {
+            #[cfg(unix)]
+            {
+                let empty = match outbox_in_txn(store, wtxn, key)? {
+                    None => true,
+                    Some((_, batch)) => batch.is_empty(),
+                };
+                if !empty {
+                    continue;
+                }
+            }
+        }
+        end_in_txn(store, wtxn, key, false)?;
+        ended = ended.saturating_add(1);
     }
-    if !lapsed.is_empty() {
+    if ended != 0 {
         store.host_legal_prospective.bump();
     }
-    Ok(lapsed.len() as u64)
+    Ok(ended)
 }
 
 /// One component sealed under `binding` at `member`: its exact Descriptor

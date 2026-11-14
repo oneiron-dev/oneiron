@@ -93,7 +93,12 @@ fn owner_hold_never_refuses_the_owners_erase() -> TestResult {
     let vault = &fixture.vault;
     let id = named_row(vault, "held record")?;
     let hold = vault
-        .place_legal_hold(&fixture.owner, vec![LegalHoldTarget::Record(id)], None)
+        .place_legal_hold(
+            &fixture.owner,
+            vec![LegalHoldTarget::Record(id)],
+            None,
+            None,
+        )
         .map_err(at("the owner's legal hold"))?;
     let memory = vault.memory(fixture.actor, EdgeActorClass::Human);
     let preview = preview_record_erase(&memory, RecordEraseRequest { record: id })
