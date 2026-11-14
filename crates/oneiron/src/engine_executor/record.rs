@@ -71,7 +71,9 @@ impl StoredTerminalStatus {
             EngineExecutorStatus::Waiting(wait) => Ok(Self::Waiting {
                 wait: StoredDurableWait::from_wait(wait),
             }),
-            EngineExecutorStatus::Yielded { .. } | EngineExecutorStatus::WindowFull { .. } => {
+            EngineExecutorStatus::Yielded { .. }
+            | EngineExecutorStatus::WindowFull { .. }
+            | EngineExecutorStatus::Paused { .. } => {
                 Err(Error::InvariantViolation("non-terminal executor status marker").into())
             }
         }

@@ -33,21 +33,9 @@ pub(crate) const ORIGIN_ERASED_WRITER: &str = ERASED_CALL_IDENTITY;
 /// a call): it names the owner's cutover, never another host. A live writer
 /// elsewhere keeps its own refusal.
 pub const ORIGIN_WRITER_ERASED_REFUSAL: &str = "this origin's writer was erased; it takes no write until the owner's cutover names its next writer";
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum OriginResidence {
-    LocalVault,
-    CloudVault,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct OriginAuthority {
-    pub epoch: u64,
-    pub residence: OriginResidence,
-    /// The one host/vault principal that can obtain an epoch-bound publication permit.
-    pub writer: String,
-    /// Mirrored repositories are read-only, including main and deletions.
-    pub mirror: bool,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::origin::residence::{OriginAuthority, OriginResidence};
+
 #[derive(Debug, Clone)]
 pub struct OriginAuthorityLease {
     repo_id: EntityId,

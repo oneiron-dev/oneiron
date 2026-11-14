@@ -14,7 +14,6 @@
 //! the decision that waits, and the minutes it is shown to cost come from the
 //! judge-calibration policy row. A digest carries it once, paid from the same
 //! funded minutes as the judge asks.
-use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -32,32 +31,8 @@ pub(in crate::skill_optimize) const LABEL_ASK_PREFIX: &[u8] = b"skill_optimize:e
 const ASK_DOMAIN: &[u8] = b"skill_optimize:eval_label_ask:v1\0";
 const MAX_TEXT_BYTES: usize = 512;
 
-/// The measurements a card is read from. Every number is supplied by the
-/// measuring workflow; the card computes nothing it was not given.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SufficiencyInput {
-    /// Independent source families in the set.
-    pub families: u32,
-    /// Families per floor slice, by slice.
-    pub floor_slices: BTreeMap<String, u32>,
-    /// The fewest families a floor slice needs: the skill's or the owner's
-    /// policy, never a default here.
-    pub min_families_per_slice: u32,
-    /// The seat's retest noise, the default margin.
-    pub retest_noise: Option<f64>,
-    /// The owner's margin; it can only be stricter than the noise.
-    pub owner_margin: Option<f64>,
-    /// Candidate minus incumbent on identical tasks, grouped by family.
-    pub paired_interval: Option<(f64, f64)>,
-    pub detectable_effect: Option<f64>,
-    /// The set or rubric version moved since the incumbent was measured.
-    pub set_changed: bool,
-    pub rubric_changed: bool,
-    /// The seat's unrewarded canary moved apart from the measured axis.
-    /// `None` when no canary was measured: the card reads unknown.
-    pub canary_diverged: Option<bool>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::eval_set::sufficiency::SufficiencyInput;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
