@@ -83,6 +83,12 @@ pub struct OwnerWorkView {
     /// (FIX 4739).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cancel_text: Option<String>,
+    /// The check-in decision a root request `vault.roots.requests.create`
+    /// recorded ran on (2k3): the Owner on their own proof, and the approved
+    /// check-in of another asker it applied, with its requester. `None` for
+    /// every other answer, and when nothing was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 impl From<OwnerWorkReceipt> for OwnerWorkView {
@@ -110,6 +116,7 @@ impl From<OwnerWorkReceipt> for OwnerWorkView {
             advice_text,
             home_warning_text,
             cancel_text,
+            check_in: None,
         }
     }
 }
@@ -164,6 +171,11 @@ pub struct RootRequestCreateRequest {
     /// The machine an `anchor` marks, 32 hex.
     #[serde(default)]
     pub machine: Option<String>,
+    /// An asker's approved check-in for this change, 32 hex
+    /// (`root_request_effect_digest`): the Owner applies it on their own
+    /// proof, and the answer names its asker.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
 
 /// One root change as a surface shows it: its kind, and the ids it binds.
@@ -219,13 +231,18 @@ pub struct OwnerWorkGetRequest {
 /// surface he is authenticated on; `surface` is audit only. The answer is
 /// the request's receipt: "recorded, awaiting a holder" until the target
 /// makes the change, or, for a target this install cannot name (itself, or
-/// one not linked), why nothing was written.
+/// one not linked), why nothing was written. A recorded request answers the
+/// check-in decision it ran on; with `check_in_ref` the Owner applies an
+/// asker's approved check-in for this change (2k3; P25-SHAPE Q1 = A).
 ///
 /// # Errors
 ///
-/// `BAD_REQUEST` for a malformed target, root or machine, or a change that
-/// is not pin, restore (each with root), anchor (with root and machine) or
-/// activate (with neither); a stale owner proof; storage errors.
+/// `BAD_REQUEST` for a malformed target, root, machine or `check_in_ref`,
+/// or a change that is not pin, restore (each with root), anchor (with root
+/// and machine) or activate (with neither); a stale owner proof; a check-in
+/// that does not apply to a recorded request (a target this install cannot
+/// name records nothing, so it answers no decision and spends no check-in);
+/// storage errors.
 pub fn create_root_request_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -235,9 +252,13 @@ pub fn create_root_request_as(
     let target = EntityId::from_hex(&input.target)
         .map_err(|_| MemoryError::bad_request("target must be 32 hex"))?;
     let change = root_change(&input)?;
-    Ok(vault
-        .request_root_change(owner, surface, target, change)?
-        .into())
+    let check_in_ref = super::shared::check_in_ref(input.check_in_ref.as_deref())?;
+    let (receipt, check_in) =
+        vault.request_root_change_with_check_in(owner, surface, target, change, check_in_ref)?;
+    Ok(OwnerWorkView {
+        check_in,
+        ..OwnerWorkView::from(receipt)
+    })
 }
 
 /// `vault.roots.requests.list` (FIX 5598): the root requests naming this

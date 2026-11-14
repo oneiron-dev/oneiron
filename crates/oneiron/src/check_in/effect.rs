@@ -25,8 +25,6 @@
 //! 3). An agent reaches these acts through `vault.check_in.open`; PR 3's act
 //! gate admits agents at these doors.
 
-use serde::{Deserialize, Serialize};
-
 use super::act_class::ActClass;
 use super::chain::{NoAgentVerdict, VerifiedChain};
 use super::mode::CheckInMode;
@@ -39,6 +37,7 @@ use super::resolve::{CheckInRequest, ResolvedMode, WaitReason, resolve_mode};
 use super::role_preset::RolePreset;
 use super::waits::refuse;
 use crate::Vault;
+use crate::authority::{RootChange, StepUpFactor};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::FederationGrantRole;
@@ -62,30 +61,8 @@ pub(crate) struct DoorAct<'a> {
     pub(crate) effect_digest: [u8; 32],
 }
 
-/// The check-in decision an act's family receipt records (P24-SHAPE Q9 =
-/// A): the act class, the role it was judged under, the mode and why it
-/// went.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CheckInDecision {
-    /// The act class's token.
-    pub act_class: String,
-    /// The role's token.
-    pub role: String,
-    /// The mode's wire token; none when the role acts on its own proof.
-    pub mode: Option<String>,
-    /// Why the act went: `never_ask`, `sure` (the person's own judgment),
-    /// `own_proof`, or the basis the spent check-in gave (`approved`,
-    /// `proceed_with_undo` or `window_passed`).
-    pub basis: String,
-    /// The check-in the act spent, 32 hex.
-    pub check_in: Option<String>,
-    /// Who asked for the act, PERSON or agent id hex, when an Owner applied
-    /// another asker's approved check-in on their own proof (P24-SHAPE Q7 =
-    /// A); none for an act its own actor asked.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub requester: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::check_in::effect::CheckInDecision;
 
 /// What a door does with its act.
 pub(crate) enum DoorCheckIn {
@@ -474,5 +451,51 @@ pub fn outbound_call_request_erase_effect_digest(attempt: &EntityId, call_seq: u
         blake3::Hasher::new_derive_key("oneiron check_in outbound call request erase v1");
     hasher.update(attempt.as_bytes());
     hasher.update(&call_seq.to_be_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+/// The digest of the Owner's root `change` for install `target`: the effect
+/// an asker's `vault.check_in.open` names for `vault.roots.requests.create`,
+/// and the one the recorded request spends (2k3; P25-SHAPE Q1 = A). BLAKE3,
+/// key derived from `oneiron check_in root request v1`, over the target's 16
+/// id bytes, the change's wire tag's length as one byte and its bytes, one
+/// byte 1 and the root's 32 bytes or one byte 0, and one byte 1 and the
+/// anchored machine's 16 id bytes or one byte 0.
+#[must_use]
+pub fn root_request_effect_digest(target: &EntityId, change: RootChange) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in root request v1");
+    hasher.update(target.as_bytes());
+    let tag = change.as_str().as_bytes();
+    hasher
+        .update(&[u8::try_from(tag.len()).unwrap_or(u8::MAX)])
+        .update(tag);
+    match change.root() {
+        Some(root) => hasher.update(&[1]).update(&root.0),
+        None => hasher.update(&[0]),
+    };
+    match change {
+        RootChange::Anchor { machine, .. } => hasher.update(&[1]).update(machine.as_bytes()),
+        RootChange::Pin { .. } | RootChange::Activate | RootChange::Restore { .. } => {
+            hasher.update(&[0])
+        }
+    };
+    *hasher.finalize().as_bytes()
+}
+
+/// The digest of the Owner's reset of every `factor` step-up factor `person`
+/// enrolled: the effect an asker's `vault.check_in.open` names for
+/// `vault.step_up.passkeys.reset` (passkeys) and `vault.step_up.totp.reset`
+/// (authenticator apps), and the one the reset spends (2k3; P25-SHAPE Q1 =
+/// A). BLAKE3, key derived from `oneiron check_in step up reset v1`, over
+/// the person's 16 id bytes and one byte, 0 for passkeys and 1 for
+/// authenticator apps.
+#[must_use]
+pub fn step_up_reset_effect_digest(person: &EntityId, factor: StepUpFactor) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in step up reset v1");
+    hasher.update(person.as_bytes());
+    hasher.update(&[match factor {
+        StepUpFactor::Passkey => 0,
+        StepUpFactor::Totp => 1,
+    }]);
     *hasher.finalize().as_bytes()
 }
