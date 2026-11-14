@@ -87,6 +87,9 @@ enum NameVectors {
         url: String,
     },
     /// Vectors computed offline, one JSONL line `{"name", "vector"}` each.
+    /// The file holds every case name and query ([`BenchModel::covers`]); a
+    /// name it lacks is one the vault wrote itself (the bootstrap's owner
+    /// PERSON) and takes the zero vector, which the learned rung never ranks.
     Table(BTreeMap<String, Vec<f32>>),
 }
 
@@ -141,15 +144,33 @@ impl PhoneticEmbedder for BenchModel {
                 .and_then(reqwest::blocking::Response::json::<NamesAnswer>)
                 .map(|answer| answer.vectors)
                 .map_err(|error| refused(format!("phonetic model endpoint: {error}"))),
-            NameVectors::Table(table) => names
+            NameVectors::Table(table) => Ok(names
                 .iter()
                 .map(|name| {
                     table
                         .get(*name)
                         .cloned()
-                        .ok_or_else(|| refused(format!("the vectors file has no row for {name}")))
+                        .unwrap_or_else(|| vec![0.0; self.dimensions])
                 })
-                .collect(),
+                .collect()),
+        }
+    }
+}
+
+impl BenchModel {
+    /// Refuses a vectors file that lacks a case's name or query: each one the
+    /// bench writes or asks must have its row.
+    fn covers(&self, cases: &[PhoneticCase]) -> EvalResult<()> {
+        let NameVectors::Table(table) = &self.vectors else {
+            return Ok(());
+        };
+        match cases
+            .iter()
+            .flat_map(|case| case.entity.names.iter().chain([&case.query]))
+            .find(|name| !table.contains_key(name.as_str()))
+        {
+            Some(name) => Err(failure(format!("the vectors file has no row for {name}"))),
+            None => Ok(()),
         }
     }
 }
@@ -420,6 +441,9 @@ pub(super) fn run_phonetic_eval(args: &[String]) -> EvalResult<()> {
         refuse_trained_entities(&cases, &read_keys(path)?)?;
     }
     let model = bench_model(&args)?;
+    if let Some(model) = &model {
+        model.covers(&cases)?;
+    }
     let entities = entities_of(&cases)?;
     let bench = BenchVault::create(&entities, model.as_ref())?;
     let arms: &[Arm] = if model.is_some() {
@@ -716,5 +740,19 @@ mod tests {
             .ask(&cases[0], Arm::Both, Some(&model))
             .expect("both arms");
         assert_eq!(both.rank, Some(1), "{both:?}");
+    }
+
+    /// A vectors file must hold each case name and query; the vault's own
+    /// names need no row.
+    #[test]
+    fn a_vectors_file_without_a_case_query_is_refused() {
+        let model = BenchModel {
+            model_id: "fixture-phonetic-v1".to_owned(),
+            dimensions: 2,
+            vectors: NameVectors::Table(BTreeMap::from([("Siobhan".to_owned(), vec![1.0, 0.0])])),
+        };
+        let cases = [case("c1", "siobhan", &["Siobhan"], "Shivon", "Latn-Latn")];
+        let refused = model.covers(&cases).expect_err("no row for the query");
+        assert!(refused.to_string().contains("Shivon"), "{refused}");
     }
 }
