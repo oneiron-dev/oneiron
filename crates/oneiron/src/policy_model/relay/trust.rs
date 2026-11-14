@@ -10,8 +10,6 @@ use crate::error::RelayError;
 #[doc(hidden)]
 pub(super) use oneiron_records::policy_model::relay::trust::EDGE_SERVICE_IDENTITY_PREFIX;
 #[doc(hidden)]
-pub(crate) use oneiron_records::policy_model::relay::trust::HostedDomain;
-#[doc(hidden)]
 pub use oneiron_records::policy_model::relay::trust::{ConnectionClass, RelayTrustDomain};
 
 /// Connection identity as established by connector-edge auth. Sealed:
@@ -175,6 +173,29 @@ impl AttestedRelayDomain {
         Self {
             domain,
             service_identity: service_identity.to_owned(),
+        }
+    }
+}
+
+/// Hosted-edge domain: two variants ONLY. There is no `LocalViaByoConnector`
+/// variant to name — a hosted-edge process relaying content that concludes
+/// "not relayed by us" is a contradiction, and this type makes it
+/// unrepresentable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum HostedDomain {
+    CloudVault,
+    LocalViaHostedConnector,
+}
+
+impl HostedDomain {
+    /// The ONLY `ConnectionClass` to hosted-domain mapping: every mint path
+    /// routes through here, so the general mint and the hosted-edge attester
+    /// cannot drift apart. Exhaustive with no wildcard — a new
+    /// `ConnectionClass` variant breaks this match at compile time.
+    fn from_connection_class(class: ConnectionClass) -> Self {
+        match class {
+            ConnectionClass::CloudVaultPeer => Self::CloudVault,
+            ConnectionClass::LocalVaultViaHostedConnector => Self::LocalViaHostedConnector,
         }
     }
 }

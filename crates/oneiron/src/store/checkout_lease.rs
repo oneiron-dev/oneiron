@@ -121,7 +121,7 @@ pub enum CheckoutLeaseState {
     Retained,
 }
 #[doc(hidden)]
-pub use oneiron_records::store::checkout_lease::{CheckoutError, CheckoutHolder, CheckoutResult};
+pub use oneiron_records::store::checkout_lease::CheckoutHolder;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CheckoutFactMutation {
@@ -237,6 +237,22 @@ pub enum CheckoutRetainReason {
     LiveOccupant,
     DirtyOrUncertain,
 }
+#[derive(Debug)]
+pub enum CheckoutError {
+    StaleEpoch { held: u64, presented: u64 },
+    LivenessOccupied { occupant: CheckoutHolder },
+    ReceiptMismatch,
+    SettlementAlreadyWon,
+    RepoOps(String),
+    Store(Error),
+    Invalid(&'static str),
+}
+impl From<Error> for CheckoutError {
+    fn from(e: Error) -> Self {
+        Self::Store(e)
+    }
+}
+pub type CheckoutResult<T> = Result<T, CheckoutError>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckoutTeardownInspection {
     pub observed_head: Option<GitOid>,

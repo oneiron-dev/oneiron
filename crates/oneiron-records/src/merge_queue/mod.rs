@@ -11,7 +11,6 @@ pub use crate::merge_queue::check_inputs::QueueCheckTarget;
 pub use crate::merge_queue::check_inputs::QueueCommandReceipt;
 pub use crate::merge_queue::check_store::QueueCheckInitStage;
 pub use crate::merge_queue::check_store::QueueCheckLease;
-pub use crate::merge_queue::check_store::QueueCheckRequest;
 pub use crate::merge_queue::check_store::QueueCheckStatus;
 pub use crate::merge_queue::plan::REPO_CHECK_PLAN_PATH;
 pub use crate::merge_queue::run::RepoQueueOrder;

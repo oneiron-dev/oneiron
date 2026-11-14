@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/embed/home_vectors.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::embedding_vocabulary::EmbeddingProvenance;
 use serde::Deserialize;

@@ -1,10 +1,8 @@
 pub use crate::tagging::output::OutputRefusal;
 pub use crate::tagging::provisional::ProvisionalEntity;
 pub use crate::tagging::tags::DerivationEnvelope;
-pub use crate::tagging::tags::MentionLink;
 pub use crate::tagging::tags::MentionReference;
 pub use crate::tagging::tags::MergeEvidence;
-pub use crate::tagging::tags::TaggedMention;
 pub use crate::tagging::trace::HandBackReason;
 pub use crate::tagging::trace::SkipReason;
 pub use crate::tagging::trace::TaggingFailure;

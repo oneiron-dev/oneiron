@@ -54,9 +54,7 @@ const MIN_CASES_PER_SPLIT: usize = 1;
 #[doc(hidden)]
 use oneiron_records::skill::helper::invalid;
 #[doc(hidden)]
-pub use oneiron_records::skill::helper::{
-    CallableCase, CallableGateVerdict, HarnessScore, HelperPairedVerdict,
-};
+pub use oneiron_records::skill::helper::{CallableCase, HelperPairedVerdict};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::skill::helper::{
@@ -140,6 +138,29 @@ pub enum CaseSplit {
     HeldOut,
 }
 
+/// A pass rate before and after: the incumbent (the parent helper, or no
+/// helper at all) against the candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct HarnessScore {
+    pub baseline: f64,
+    pub candidate: f64,
+}
+
+impl HarnessScore {
+    #[must_use]
+    pub fn delta(&self) -> f64 {
+        self.candidate - self.baseline
+    }
+
+    fn validate(&self) -> Result<()> {
+        if (0.0..=1.0).contains(&self.baseline) && (0.0..=1.0).contains(&self.candidate) {
+            Ok(())
+        } else {
+            Err(invalid("a harness score is a pass rate in [0, 1]"))
+        }
+    }
+}
+
 /// The host's sandboxed runner. It executes the exact source on each case
 /// under the callable contract (no host file or credential services) and
 /// reports pass rates for the incumbent and the candidate.
@@ -154,6 +175,24 @@ pub trait CallableHarness {
         incumbent: Option<(&SkillRecord, &[HubFile])>,
         cases: &[&CallableCase],
     ) -> Result<HarnessScore>;
+}
+
+/// A helper's standing promotion verdict, bound to the exact content scored.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CallableGateVerdict {
+    pub skill: EntityId,
+    pub content_hash: Option<String>,
+    pub in_sample: HarnessScore,
+    pub held_out: HarnessScore,
+    pub in_sample_cases: usize,
+    pub held_out_cases: usize,
+    /// The shared paired measurement read, by its digest.
+    pub measurement: String,
+    /// What that measurement's sufficiency card says of the helper.
+    pub paired: HelperPairedVerdict,
+    pub accepted: bool,
+    pub reason: String,
+    pub at: u64,
 }
 
 /// The Self-Harness acceptance rule.

@@ -74,46 +74,6 @@ pub struct EnsureView {
     pub state: ReassertKeyState,
 }
 
-/// One page of a re-assertion's keys on its executor (FIX 4686).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ReassertDiagnostics {
-    pub world: EntityId,
-    /// Why the read checks did not run; `None` when they did.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unread: Option<ReassertUnread>,
-    /// The world reads everywhere: it counts no key, and nothing blocks the
-    /// re-assertion.
-    pub reads_everywhere: bool,
-    /// A door on this handle raised OF-520's question for this world since
-    /// the handle opened: history. Each key's own state says whether its
-    /// frontier still needs a split (FIX 5552).
-    pub question_raised: bool,
-    /// Every key in this page, ascending by id: the keys this install's own
-    /// records name, with the keys of unknown history among them.
-    pub keys: Vec<ReassertKey>,
-    /// Where the next page starts; `None` on the last.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_offset: Option<usize>,
-    /// The ensure step after every key is wrapped again (FIX 5552); `None`
-    /// when the read checks did not run or the world reads everywhere.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ensure: Option<EnsureView>,
-}
-
-impl ReassertDiagnostics {
-    fn empty(world: EntityId, question_raised: bool) -> Self {
-        Self {
-            world,
-            unread: None,
-            reads_everywhere: false,
-            question_raised,
-            keys: Vec::new(),
-            next_offset: None,
-            ensure: None,
-        }
-    }
-}
-
 /// A world's key work in Ensure mode on its executor (FIX 5552).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct EnsureDiagnostics {

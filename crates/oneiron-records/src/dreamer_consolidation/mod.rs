@@ -8,11 +8,9 @@ pub use oneiron_verb_wire::dreamer_consolidation::thing_agent::ThingExtractOutpu
 pub use oneiron_verb_wire::dreamer_consolidation::thing_agent::ThingProposalRef;
 
 pub mod failure_rules;
-pub mod nightly_links;
 pub mod note_topics;
 pub mod redirty;
 pub mod resident_dream;
 pub mod root_evidence;
 pub mod routing;
 pub mod selection;
-pub mod strength;

@@ -2,59 +2,9 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_verb_wire::gate::owner_policy_mutation::PolicyRowScope;
 use serde::Deserialize;
 use serde::Serialize;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PolicyNotificationRule {
-    PushOtherHolders,
-    LogOnly,
-}
-
-impl PolicyNotificationRule {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::PushOtherHolders => "push_other_holders",
-            Self::LogOnly => "log_only",
-        }
-    }
-
-    fn parse(text: &str) -> Result<Self> {
-        match text {
-            "push_other_holders" => Ok(Self::PushOtherHolders),
-            "log_only" => Ok(Self::LogOnly),
-            _ => Err(invalid()),
-        }
-    }
-}
-
-/// The manifest rule being edited; no fabricated world/project scope is used
-/// for an all-overrides rule.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PolicyNotificationTarget {
-    VaultDefault,
-    AllOverrides,
-}
-
-impl PolicyNotificationTarget {
-    const fn row_scope(self) -> &'static str {
-        match self {
-            Self::VaultDefault => "vault",
-            Self::AllOverrides => "override",
-        }
-    }
-
-    const fn grant_target(self) -> &'static str {
-        match self {
-            Self::VaultDefault => "policy-notification:vault-default",
-            Self::AllOverrides => "policy-notification:all-overrides",
-        }
-    }
-}
 
 /// Recipient-owned delivery override. Absence inherits the manifest rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

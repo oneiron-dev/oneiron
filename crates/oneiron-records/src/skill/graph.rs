@@ -3,19 +3,10 @@
 
 use oneiron_base::error::ArtifactError;
 use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_store::model_decision::questions::GraphQuestionInput;
 use oneiron_store::model_decision::questions::GraphQuestionRef;
 use serde::Deserialize;
 use serde::Serialize;
-
-/// Policy is authored in a skill file, not shipped as an engine question set.
-/// Stages can ask per-unit questions, roll up their answers, then propose a pick.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GraphSkillProgram {
-    pub stages: Vec<GraphSkillStage>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -43,31 +34,4 @@ pub struct GraphSkillAnswerRef {
 
 pub fn invalid(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidSkillBody(reason))
-}
-
-impl GraphSkillProgram {
-    /// Structure only: every stage, input and reference is admitted however
-    /// many there are, and each input runs as its own question (FIX 10152).
-    fn validate(&self) -> Result<()> {
-        if self.stages.is_empty() {
-            return Err(invalid("graph workflow requires at least one stage"));
-        }
-        for (stage, step) in self.stages.iter().enumerate() {
-            if step.inputs.is_empty() || step.question.version == 0 {
-                return Err(invalid("invalid graph workflow stage"));
-            }
-            for input in &step.inputs {
-                for source in &input.answers {
-                    if source.stage >= stage
-                        || source
-                            .input
-                            .is_some_and(|index| index >= self.stages[source.stage].inputs.len())
-                    {
-                        return Err(invalid("graph workflow must reference an earlier input"));
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
 }

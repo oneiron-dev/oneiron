@@ -34,8 +34,18 @@ pub const REVERT_INVERSE_REFUSED: &str = "derive.revert.inverse_refused";
 /// committing actor, with its derive verdict standing, nor the owner.
 pub const REVERT_NOT_YOURS: &str = "gate.deny.derive.revert_not_yours";
 
-#[doc(hidden)]
-pub use oneiron_records::derive::revert::DeriveRevertReceipt;
+/// What one batch revert did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeriveRevertReceipt {
+    /// The batch.
+    pub batch: EntityId,
+    /// The items undone, by local name, in the order they were undone.
+    pub reverted: Vec<String>,
+    /// The items left standing, by local name, each with why.
+    pub left: Vec<(String, String)>,
+    /// The revert's receipt in the gate decision ledger.
+    pub receipt: [u8; 16],
+}
 
 /// The revision of `row`, as an item of `kind` landed it, in `txn`: a digest
 /// of the stored row, or of the PERSON's `about` row for an `about` item.

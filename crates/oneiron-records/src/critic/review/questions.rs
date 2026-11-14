@@ -19,13 +19,3 @@ pub struct ReviewNote {
     /// ([`flaw_fits_review_state`]).
     pub flaw: Option<FlawIdentity>,
 }
-
-impl ReviewArtifactKind {
-    const fn token(self) -> &'static str {
-        match self {
-            Self::Document => "document",
-            Self::Design => "design",
-            Self::ClaimWrite => "claim_write",
-        }
-    }
-}

@@ -36,26 +36,6 @@ pub const EVAL_FLOOR_MIN_FAMILIES_PER_SLICE: SettingSpec = SettingSpec {
     seed: 0.0,
 };
 
-/// How an owner row steers its setting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SettingMode {
-    /// Replaces the shipped seed; a fit, once built, keeps learning from it.
-    Seed,
-    /// Fixes the value in force; a fit may propose a change, never apply it.
-    Pin,
-}
-
-impl SettingMode {
-    /// The pinned on-disk token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Seed => "seed",
-            Self::Pin => "pin",
-        }
-    }
-}
-
 pub const ROW_VERSION: u8 = 2;
 
 pub const ROW_LABEL: &str = "learning setting row";

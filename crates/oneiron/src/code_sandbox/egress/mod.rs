@@ -24,8 +24,68 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// Host-owned limits, shared by all transports in a session.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EgressConfig {
+    pub allowed_domains: Option<Vec<String>>,
+    /// The owner's raw endpoint grants (FIX 7652). Each admits raw sockets
+    /// to its endpoint unread, where a domain of `allowed_domains` alone
+    /// admits a stream only once the name its opening bytes carry is bound
+    /// to the address.
+    pub raw_endpoints: Vec<RawEndpointGrant>,
+    pub request_timeout: Duration,
+    pub max_response_bytes: usize,
+    pub max_redirects: u8,
+}
+impl Default for EgressConfig {
+    fn default() -> Self {
+        Self {
+            allowed_domains: None,
+            raw_endpoints: Vec::new(),
+            request_timeout: Duration::from_secs(30),
+            max_response_bytes: 32 * 1024 * 1024,
+            max_redirects: 3,
+        }
+    }
+}
+
+impl EgressConfig {
+    pub fn from_env() -> io::Result<Self> {
+        match std::env::var_os("ONEIRON_EGRESS_CONFIG") {
+            Some(path) => serde_json::from_slice(&std::fs::read(path)?).map_err(io::Error::other),
+            None => Ok(Self::default()),
+        }
+    }
+}
+
+/// An owner grant of raw socket authority to one endpoint (FIX 7652, CALLS):
+/// its streams and datagrams go on unread, past the name gate a domain of
+/// the allowlist alone keeps. A grant is the owner's own act, written in the
+/// host's egress config.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RawEndpointGrant {
+    /// An IP address, or a name matched as `allowed_domains` matches its
+    /// entries, which grants an address it is bound to now.
+    pub host: String,
+    pub port: u16,
+    pub protocol: RawProtocol,
+}
+
 #[doc(hidden)]
-pub use oneiron_records::code_sandbox::egress::{EgressConfig, RawEndpointGrant, RawProtocol};
+pub use oneiron_records::code_sandbox::egress::RawProtocol;
+
+impl RawEndpointGrant {
+    /// The address this grant names, when its host is an IP literal.
+    fn address(&self) -> Option<IpAddr> {
+        self.host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse()
+            .ok()
+    }
+}
 
 /// What admits a raw socket to an address (FIX 7652).
 #[derive(Clone, Copy, PartialEq, Eq)]

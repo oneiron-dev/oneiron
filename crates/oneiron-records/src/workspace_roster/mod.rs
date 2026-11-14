@@ -3,8 +3,6 @@ pub use oneiron_contracts::room_join::ConsentPart;
 pub use oneiron_contracts::room_join::JoinSubject;
 pub use oneiron_contracts::room_join::RequiredParty;
 pub use oneiron_contracts::room_join::RoomJoinHold;
-#[cfg_attr(not(feature = "sync"), allow(unused_imports))]
-pub(crate) use oneiron_store::batch::export::home_room_project::project_room_dependency;
 pub use oneiron_store::conversation_body::ProjectRoom;
 pub use oneiron_store::conversation_body::RoomOriginCard;
 pub use oneiron_store::conversation_body::ThreadJoinRequestsRequest;

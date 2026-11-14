@@ -1,5 +1,4 @@
 pub use crate::gate::consult_fanout_values::ConsultFanOutRate;
-pub use crate::gate::consult_fanout_values::ConsultFanOutScope;
 pub use crate::gate::consult_fanout_values::TaskCreateRateLimit;
 pub use crate::task_verb::task_actor::TaskActor;
 pub use oneiron_verb_wire::authority::task_ask_handle::TaskAskHandle;

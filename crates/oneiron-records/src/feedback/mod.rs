@@ -2,7 +2,6 @@ pub use crate::feedback::bundle::FEEDBACK_BUNDLE_ENCODING;
 pub use crate::feedback::bundle::FEEDBACK_BUNDLE_ENCODING_V2;
 pub use crate::feedback::bundle::FEEDBACK_ENGINE_VERSION_MAX_BYTES;
 pub use crate::feedback::bundle::FeedbackHnswSnapshot;
-pub use crate::feedback::conversation_training::anonymous::TrainingPieceState;
 pub use crate::feedback::conversation_training::anonymous::TrainingTransport;
 pub use crate::feedback::conversation_training::anonymous::files::PieceFilesProblem;
 pub use crate::feedback::inbox::FeedbackInboxVia;

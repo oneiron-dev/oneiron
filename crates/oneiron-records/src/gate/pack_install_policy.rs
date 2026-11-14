@@ -30,15 +30,6 @@ pub struct HolderInstallRow {
     pub rules: PackInstallRuleRow,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PackInstallPolicy {
-    pub precedence: PackInstallPrecedence,
-    pub vault: PackInstallRuleRow,
-    pub owner: PackInstallRuleRow,
-    pub holders: Vec<HolderInstallRow>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectivePackInstallPolicy {
     pub hidden_instructions: Vec<String>,
@@ -132,82 +123,5 @@ impl PackInstallRuleRow {
         if let Some(calls) = &self.allowed_calls {
             effective.allowed_calls.retain(|call| calls.contains(call));
         }
-    }
-}
-
-impl PackInstallPolicy {
-    pub fn shipped() -> Self {
-        serde_json::from_str(include_str!("pack_install_defaults.json"))
-            .expect("shipped install policy must decode")
-    }
-
-    pub fn decode(value: Value) -> Option<Self> {
-        let policy: Self = rmpv::ext::from_value(value).ok()?;
-        policy.validate().then_some(policy)
-    }
-
-    pub fn encode(&self) -> Value {
-        rmpv::ext::to_value(self).expect("validated install policy must encode")
-    }
-
-    fn validate(&self) -> bool {
-        self.vault.validate()
-            && self
-                .vault
-                .allowed_calls
-                .as_ref()
-                .is_some_and(|calls| !calls.is_empty())
-            && self.owner.validate()
-            && self.holders.iter().all(|row| {
-                !row.holder_ref.trim().is_empty()
-                    && row.holder_ref.len() <= 256
-                    && row.rules.validate()
-            })
-            && self
-                .holders
-                .iter()
-                .map(|row| row.holder_ref.as_str())
-                .collect::<BTreeSet<_>>()
-                .len()
-                == self.holders.len()
-    }
-
-    pub fn restrict(&mut self, other: Self) {
-        self.vault.restrict(other.vault);
-        self.owner.restrict(other.owner);
-        for holder in other.holders {
-            if let Some(existing) = self
-                .holders
-                .iter_mut()
-                .find(|row| row.holder_ref == holder.holder_ref)
-            {
-                existing.rules.restrict(holder.rules);
-            } else {
-                self.holders.push(holder);
-            }
-        }
-    }
-
-    pub fn effective(&self, holder: &str) -> EffectivePackInstallPolicy {
-        let mut effective = EffectivePackInstallPolicy {
-            hidden_instructions: Vec::new(),
-            parameter_injection: Vec::new(),
-            allowed_calls: self
-                .vault
-                .allowed_calls
-                .as_ref()
-                .expect("validated vault row")
-                .iter()
-                .cloned()
-                .collect(),
-            known_bad_patterns: Vec::new(),
-            removed_hashes: Vec::new(),
-        };
-        self.vault.apply(&mut effective);
-        self.owner.apply(&mut effective);
-        if let Some(row) = self.holders.iter().find(|row| row.holder_ref == holder) {
-            row.rules.apply(&mut effective);
-        }
-        effective
     }
 }

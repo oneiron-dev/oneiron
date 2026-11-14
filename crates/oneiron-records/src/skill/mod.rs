@@ -1,6 +1,5 @@
 pub use crate::skill::graph::GraphSkillAnswerRef;
 pub use crate::skill::graph::GraphSkillInput;
-pub use crate::skill::graph::GraphSkillProgram;
 pub use crate::skill::graph::GraphSkillStage;
 pub use oneiron_store::write_envelope::skill_record::codec::decode_skill_record;
 pub use oneiron_store::write_envelope::skill_record::codec::encode_skill_record;

@@ -2,7 +2,6 @@ pub use crate::world_keys::owner_work::diagnostics::EnsureDiagnostics;
 pub use crate::world_keys::owner_work::diagnostics::EnsureView;
 pub use crate::world_keys::owner_work::diagnostics::PublishAttemptView;
 pub use crate::world_keys::owner_work::diagnostics::PublishReach;
-pub use crate::world_keys::owner_work::diagnostics::ReassertDiagnostics;
 pub use crate::world_keys::owner_work::diagnostics::ReassertKey;
 pub use crate::world_keys::owner_work::diagnostics::ReassertKeyState;
 pub use crate::world_keys::owner_work::diagnostics::ReassertUnread;

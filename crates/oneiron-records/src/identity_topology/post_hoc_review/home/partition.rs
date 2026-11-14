@@ -1,12 +1,8 @@
 //! Moved from `crates/oneiron/src/identity_topology/post_hoc_review/home/partition.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use oneiron_base::error::Result;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
-use std::collections::BTreeMap;
 
 /// One place a fact keeps: its value, or the place of an actor's piece.
 #[derive(Serialize, Deserialize)]

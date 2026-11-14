@@ -2,7 +2,6 @@ pub use crate::snapshot_read::strength_observations::ObservedClaim;
 pub use crate::snapshot_read::strength_observations::ObservedClaimStatus;
 pub use crate::snapshot_read::strength_observations::ObservedSignals;
 pub use crate::snapshot_read::strength_observations::ObservedSource;
-pub use crate::snapshot_read::strength_observations::StrengthObservationsPage;
 pub use oneiron_verb_wire::snapshot_read::evidence_spans::EvidenceMessageSlice;
 pub use oneiron_verb_wire::snapshot_read::evidence_spans::EvidenceRange;
 pub use oneiron_verb_wire::snapshot_read::evidence_spans::EvidenceSourceStatus;

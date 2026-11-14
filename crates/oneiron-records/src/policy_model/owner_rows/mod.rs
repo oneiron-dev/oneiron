@@ -1,9 +1,6 @@
-pub use crate::policy_model::owner_rows::ledger::PolicyChangedEvent;
 pub use crate::policy_model::owner_rows::ledger::PolicyProposalStatus;
 pub use crate::policy_model::owner_rows::notifications::PolicyNotificationFailure;
 pub use crate::policy_model::owner_rows::notifications::PolicyNotificationMode;
-pub use crate::policy_model::owner_rows::notifications::PolicyNotificationRule;
-pub use crate::policy_model::owner_rows::notifications::PolicyNotificationTarget;
 pub use oneiron_verb_wire::policy_model::owner_rows::secret_scan_switch::SecretScanReceipt;
 pub use oneiron_verb_wire::policy_model::owner_rows::world_privacy_will::carry::ForeignWorldPrivacyCarry;
 pub use oneiron_verb_wire::policy_model::owner_rows::world_privacy_will::carry::ForeignWorldPrivacyDelivery;

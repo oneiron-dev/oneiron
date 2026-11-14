@@ -26,12 +26,3 @@ impl Default for TaskCreateRateLimit {
         }
     }
 }
-
-/// Policy path supplied by an authenticated host for a frozen consult plan.
-/// The vault level is implicit; each additional level names its parent.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConsultFanOutScope {
-    pub project_ref: Option<String>,
-    pub subproject_ref: Option<String>,
-    pub thread_ref: Option<String>,
-}

@@ -26,7 +26,27 @@ pub(crate) use repo_index::reindex_repo_document_in_txn;
 #[doc(hidden)]
 pub use oneiron_records::entity_doc::storage::TextField;
 #[doc(hidden)]
-pub(super) use oneiron_records::entity_doc::storage::{DocumentOwnerKind, decode};
+pub(super) use oneiron_records::entity_doc::storage::decode;
+
+/// The kind of owner a document head belongs to (FIX 11535). The head is
+/// keyed by its owner's id either way; only a stored entity has a ledger row.
+/// An entity's head names no kind: only an artifact's head writes one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum DocumentOwnerKind {
+    /// A stored entity: a record whose text lives on this plane.
+    #[default]
+    Entity,
+    /// A finalized proposal-text artifact (ED-00), which has no ledger row:
+    /// its artifact record names this head.
+    ProposalArtifact,
+}
+
+impl DocumentOwnerKind {
+    fn is_entity(&self) -> bool {
+        *self == Self::Entity
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

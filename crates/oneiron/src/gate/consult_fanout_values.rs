@@ -25,6 +25,13 @@ impl Default for ConsultFanOutPolicy {
 }
 
 #[doc(hidden)]
-pub use oneiron_records::gate::consult_fanout_values::{
-    ConsultFanOutRate, ConsultFanOutScope, TaskCreateRateLimit,
-};
+pub use oneiron_records::gate::consult_fanout_values::{ConsultFanOutRate, TaskCreateRateLimit};
+
+/// Policy path supplied by an authenticated host for a frozen consult plan.
+/// The vault level is implicit; each additional level names its parent.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConsultFanOutScope {
+    pub project_ref: Option<String>,
+    pub subproject_ref: Option<String>,
+    pub thread_ref: Option<String>,
+}

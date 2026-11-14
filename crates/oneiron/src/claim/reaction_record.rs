@@ -17,8 +17,6 @@ const KEY_OCCURRED_AT: &str = "occurredAt";
 const KEY_BY: &str = "by";
 const KEY_EXTERNAL_ID: &str = "externalId";
 #[doc(hidden)]
-pub use oneiron_records::claim::reaction_record::ReactionExternalId;
-#[doc(hidden)]
 use oneiron_records::claim::reaction_record::{
     KEY_CONNECTOR, KEY_ID, MAX_CONNECTOR_BYTES, MAX_EXTERNAL_ID_BYTES, exact_map, find, invalid,
     string,
@@ -28,6 +26,49 @@ const MAX_GLYPH_SCALARS: usize = 64;
 pub(crate) fn is_reaction_claim_predicate(predicate: &str) -> bool {
     predicate == PREDICATE_CONVERSATION_REACTION
         || predicate == PREDICATE_CONVERSATION_REACTION_ECHO
+}
+
+/// A connector's stable provider generation for one add. A remove and a later
+/// re-add carry distinct ids; a delivery id is not a generation.
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+pub struct ReactionExternalId {
+    pub connector: String,
+    pub id: String,
+}
+
+impl ReactionExternalId {
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self.connector.trim().is_empty()
+            || self.id.trim().is_empty()
+            || self.connector.len() > MAX_CONNECTOR_BYTES
+            || self.id.len() > MAX_EXTERNAL_ID_BYTES
+        {
+            return Err(invalid("reaction external id"));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn to_value(&self) -> Value {
+        Value::Map(vec![
+            (
+                Value::from(KEY_CONNECTOR),
+                Value::from(self.connector.as_str()),
+            ),
+            (Value::from(KEY_ID), Value::from(self.id.as_str())),
+        ])
+    }
+
+    fn from_value(value: &Value) -> Result<Self> {
+        let entries = exact_map(value, &[KEY_CONNECTOR, KEY_ID], &[])?;
+        let external = Self {
+            connector: string(&entries, KEY_CONNECTOR)?.to_owned(),
+            id: string(&entries, KEY_ID)?.to_owned(),
+        };
+        external.validate()?;
+        Ok(external)
+    }
 }
 
 /// The value of one `conversation.reaction` claim. `by` is the reacting

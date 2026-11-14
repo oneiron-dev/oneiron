@@ -64,7 +64,7 @@ pub(crate) fn merge_queue_check_work_accepts_masked(bytes: &[u8]) -> bool {
 
 #[doc(hidden)]
 pub use oneiron_records::merge_queue::check_store::{
-    QueueCheckInitStage, QueueCheckLease, QueueCheckRequest, QueueCheckStatus,
+    QueueCheckInitStage, QueueCheckLease, QueueCheckStatus,
 };
 
 /// One object store's checked configuration: the owner-approved baseline,
@@ -90,6 +90,60 @@ pub struct QueueCheckConfiguration {
     /// The attached branch checked initialization proved, which enrolls
     /// this queue for automatic driving (G2 PR2); `None` drives nothing.
     pub driver_target: Option<super::QueueDriverTarget>,
+}
+
+/// What a work row asks for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum QueueCheckRequest {
+    Initialize {
+        baseline_commit: String,
+        contract_baseline_ref: Option<String>,
+    },
+    Check {
+        batch: String,
+        mask: u64,
+        phase: CheckPhase,
+        force_refresh: bool,
+    },
+    Diagnose {
+        batch: String,
+    },
+}
+
+impl QueueCheckRequest {
+    /// The request's identity: the same init, check or diagnosis maps to
+    /// the same work row. A refresh is the same request asked again.
+    pub(super) fn digest(&self) -> Result<String> {
+        let identity = match self {
+            Self::Initialize {
+                baseline_commit,
+                contract_baseline_ref,
+            } => (
+                "init",
+                baseline_commit.as_str(),
+                0,
+                None,
+                contract_baseline_ref.as_deref(),
+            ),
+            Self::Check {
+                batch, mask, phase, ..
+            } => ("check", batch.as_str(), *mask, Some(*phase), None),
+            Self::Diagnose { batch } => ("diagnose", batch.as_str(), 0, None, None),
+        };
+        let bytes = rmp_serde::to_vec_named(&("oneiron:queue-check-request:v1", identity))
+            .map_err(|_| invalid("queue check request encoding failed"))?;
+        Ok(blake3::hash(&bytes).to_hex().to_string())
+    }
+
+    fn force_refresh(&self) -> bool {
+        matches!(
+            self,
+            Self::Check {
+                force_refresh: true,
+                ..
+            }
+        )
+    }
 }
 
 /// One requested init, check or diagnosis.

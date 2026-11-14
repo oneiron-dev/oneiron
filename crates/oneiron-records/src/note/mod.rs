@@ -7,7 +7,6 @@ pub use crate::note::files::metadata::FileMeta;
 pub use crate::note::files::source::FilesPlacement;
 pub use crate::note::files::source::FilesWorld;
 pub use crate::note::folder_source::FolderFileState;
-pub use crate::note::folder_source::FolderRescanReport;
 pub use crate::note::folder_source::FolderSourceFile;
 #[cfg(feature = "sync")]
 pub use crate::note::fork_upload::NoteForkUpload;

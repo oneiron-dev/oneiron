@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/authority/leave_notice_continuity/home_rows.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use heed::RwTxn;
 use serde::Deserialize;
 use serde::Serialize;
 

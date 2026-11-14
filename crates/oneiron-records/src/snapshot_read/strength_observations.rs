@@ -1,22 +1,9 @@
 //! Moved from `crates/oneiron/src/snapshot_read/strength_observations.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::dreamer_consolidation::selection::SelectionConfig;
-use crate::dreamer_consolidation::strength::ConsolidationStrengthPolicy;
 pub use oneiron_verb_wire::snapshot_read::strength_observations::StrengthObservationsPageRequest;
 use serde::Deserialize;
 use serde::Serialize;
-
-/// One observation page and the policy and config it was read under.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StrengthObservationsPage {
-    pub policy: ConsolidationStrengthPolicy,
-    pub policy_pin: String,
-    pub config: SelectionConfig,
-    pub config_pin: String,
-    pub claims: Vec<ObservedClaim>,
-    pub next: Option<String>,
-}
 
 /// Whether all observed sources still read at their observed revisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

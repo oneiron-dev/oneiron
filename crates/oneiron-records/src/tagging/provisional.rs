@@ -4,8 +4,6 @@
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-#[cfg(feature = "sync")]
-use std::collections::BTreeSet;
 
 /// A cold entity a save minted, waiting for the Dreamer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

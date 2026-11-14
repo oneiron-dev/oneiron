@@ -16,7 +16,19 @@ const NAMED_REACTORS: usize = 2;
 const PERSON_NAME_KEYS: [&str; 2] = ["display_name", "name"];
 
 #[doc(hidden)]
-pub use oneiron_records::reaction::read::{ReactionHistoryEntry, ReactionPill};
+pub use oneiron_records::reaction::read::ReactionPill;
+
+/// One claim of a (message, person, glyph) chain.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ReactionHistoryEntry {
+    pub id: EntityId,
+    pub glyph: String,
+    pub by: EntityId,
+    pub occurred_at: u64,
+    pub recorded_at: u64,
+    pub removed_at: Option<u64>,
+    pub external_id: Option<ReactionExternalId>,
+}
 
 /// Groups the live reactions on `record` whose reactor was in the room
 /// audience at the reaction's own time and which `admit` lets through.

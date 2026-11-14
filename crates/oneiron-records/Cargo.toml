@@ -13,7 +13,6 @@ doctest = false
 
 [dependencies]
 blake3 = { workspace = true, features = ["zeroize"] }
-heed = { workspace = true }
 loro = { workspace = true }
 oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
 oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
@@ -31,7 +30,6 @@ oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
 oneiron-policy-vocabulary = { version = "0.1.0", path = "../oneiron-policy-vocabulary" }
 oneiron-retrieval = { version = "0.1.0", path = "../oneiron-retrieval" }
 oneiron-store = { version = "0.1.0", path = "../oneiron-store" }
-oneiron-vault-contract = { version = "0.1.0", path = "../oneiron-vault-contract" }
 oneiron-verb-wire = { version = "0.1.0", path = "../oneiron-verb-wire" }
 oneiron-wake-contract = { version = "0.1.0", path = "../oneiron-wake-contract" }
 oneiron-web-fetch = { version = "0.1.0", path = "../oneiron-web-fetch" }

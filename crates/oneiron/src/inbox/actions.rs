@@ -30,8 +30,25 @@ const THREAD_JOIN_DENY_VERB: &str = "vault.rooms.thread_join.deny";
 /// The owner's answer to an outside app's OAuth sign-in request (FIX 4902).
 const OAUTH_AUTHORIZATION_ANSWER_VERB: &str = "vault.oauth.authorization.answer";
 
-#[doc(hidden)]
-pub use oneiron_records::inbox::actions::NotificationAction;
+/// One tap a notification offers: the registered verb it calls and that
+/// verb's own input, so a client renders the button the engine describes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NotificationAction {
+    /// The registered verb the tap calls.
+    pub verb: String,
+    /// The verb's input, as its own fields name it.
+    pub args: serde_json::Value,
+}
+
+impl NotificationAction {
+    fn new(verb: &str, args: serde_json::Value) -> Self {
+        Self {
+            verb: verb.to_owned(),
+            args,
+        }
+    }
+}
 
 impl Memory<'_> {
     /// `row` with the taps it offers this caller now.

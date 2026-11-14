@@ -29,9 +29,20 @@ use crate::{EntityId, Result, Vault};
 #[doc(hidden)]
 pub use oneiron_verb_wire::snapshot_read::strength_observations::StrengthObservationsPageRequest;
 
+/// One observation page and the policy and config it was read under.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StrengthObservationsPage {
+    pub policy: ConsolidationStrengthPolicy,
+    pub policy_pin: String,
+    pub config: SelectionConfig,
+    pub config_pin: String,
+    pub claims: Vec<ObservedClaim>,
+    pub next: Option<String>,
+}
+
 #[doc(hidden)]
 pub use oneiron_records::snapshot_read::strength_observations::{
-    ObservedClaim, ObservedClaimStatus, ObservedSignals, ObservedSource, StrengthObservationsPage,
+    ObservedClaim, ObservedClaimStatus, ObservedSignals, ObservedSource,
 };
 
 /// Reads observations through the caller's live reach and scoped read.

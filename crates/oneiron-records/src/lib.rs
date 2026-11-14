@@ -4,7 +4,6 @@
 //! path.
 #![deny(ambiguous_glob_reexports)]
 pub mod access_grant;
-pub mod agent_inbox_lens;
 pub mod artifact_hosting;
 pub mod attempt_queue;
 pub mod authority;
@@ -25,7 +24,6 @@ pub mod context_pack;
 pub mod conversation_dag;
 pub mod counterparty_contact;
 pub mod critic;
-pub mod derive;
 pub mod dispatch_byoa;
 pub mod dreamer_consolidation;
 pub mod dreamer_prefilter;
@@ -48,7 +46,6 @@ pub mod interlocutor;
 pub mod learning;
 pub mod learning_setting;
 pub mod learning_setting_choice;
-pub mod learning_setting_doors;
 pub mod lens;
 pub mod linear_sync;
 pub mod linkedin_connector;

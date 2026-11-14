@@ -53,7 +53,7 @@ pub use crate::store::setting_seed::{
 
 #[doc(hidden)]
 pub use oneiron_records::learning_setting::{
-    EVAL_FLOOR_MIN_FAMILIES, EVAL_FLOOR_MIN_FAMILIES_PER_SLICE, SettingMode,
+    EVAL_FLOOR_MIN_FAMILIES, EVAL_FLOOR_MIN_FAMILIES_PER_SLICE,
 };
 #[doc(hidden)]
 use oneiron_records::learning_setting::{ROW_LABEL, ROW_VERSION};
@@ -106,6 +106,26 @@ pub const SETTING_CATALOG: &[SettingSpec] = &[
 #[must_use]
 pub fn setting_spec(key: &str) -> Option<&'static SettingSpec> {
     SETTING_CATALOG.iter().find(|spec| spec.key == key)
+}
+
+/// How an owner row steers its setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SettingMode {
+    /// Replaces the shipped seed; a fit, once built, keeps learning from it.
+    Seed,
+    /// Fixes the value in force; a fit may propose a change, never apply it.
+    Pin,
+}
+
+impl SettingMode {
+    /// The pinned on-disk token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Seed => "seed",
+            Self::Pin => "pin",
+        }
+    }
 }
 
 /// One owner seed or pin over a vault-scoped setting. The setter is the owner

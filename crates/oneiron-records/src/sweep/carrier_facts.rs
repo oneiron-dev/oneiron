@@ -1,12 +1,6 @@
 //! Moved from `crates/oneiron/src/sweep/carrier_facts.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use heed::RwTxn;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeSet;
-
 /// The derive-key context of a copied-id fingerprint.
 pub const COPIED_ID_CONTEXT: &str = "oneiron.asset-carrier.scrub-hex.v1";
 

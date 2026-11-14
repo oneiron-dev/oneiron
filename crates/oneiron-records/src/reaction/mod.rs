@@ -1,11 +1,8 @@
-pub use crate::claim::reaction_record::ReactionExternalId;
 pub use crate::reaction::channel_adapters::IMESSAGE_TAPBACK_GLYPHS;
 pub use crate::reaction::channel_adapters::IMessageTapbackOperation;
 pub use crate::reaction::channel_adapters::ReactionChannelCapability;
 pub use crate::reaction::outbound::ReactionOutboundAttempt;
-pub use crate::reaction::read::ReactionHistoryEntry;
 pub use crate::reaction::read::ReactionPill;
-pub use crate::reaction::signal::ReactionSignal;
 pub use oneiron_store::reaction_predicate::PREDICATE_REACTION_OUTCOME;
 pub use oneiron_verb_wire::reaction::verbs::MessageReactionExternal;
 pub use oneiron_verb_wire::reaction::verbs::MessageReactionReceipt;

@@ -173,6 +173,16 @@ pub fn flaw_fits_review_state(
     }
 }
 
+impl ReviewArtifactKind {
+    const fn token(self) -> &'static str {
+        match self {
+            Self::Document => "document",
+            Self::Design => "design",
+            Self::ClaimWrite => "claim_write",
+        }
+    }
+}
+
 impl ReviewDecisions<'_> {
     pub(super) fn validate(&self) -> Result<()> {
         self.wording.validate()

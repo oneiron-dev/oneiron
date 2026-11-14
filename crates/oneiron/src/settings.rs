@@ -56,10 +56,8 @@ pub use room_threads::RoomThreadAdminSettings;
 
 #[doc(hidden)]
 pub use oneiron_records::settings::{
-    AccentLayer, CUSTOMIZATION_SETTINGS_CHANGED_EVENT_KIND, CUSTOMIZATION_SETTINGS_LAYER_COUNT,
-    CUSTOMIZATION_SETTINGS_SCHEMA_VERSION, CustomizationLayer, CustomizationLayerValue,
-    CustomizationSettings, CustomizationSettingsChangeEvent, CustomizationSettingsUpdate,
-    ModeLayer, TypeLayer, WorldLayer,
+    CUSTOMIZATION_SETTINGS_CHANGED_EVENT_KIND, CUSTOMIZATION_SETTINGS_LAYER_COUNT,
+    CUSTOMIZATION_SETTINGS_SCHEMA_VERSION, CustomizationLayer,
 };
 #[doc(hidden)]
 use oneiron_records::settings::{
@@ -122,6 +120,286 @@ const CUSTOMIZATION_EVENT: SideTable<u64, CustomizationSettingsChangeEvent, Name
 /// for the historical lift sweep (FIX 2680).
 pub(crate) fn customization_event_accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<CustomizationSettingsChangeEvent, Named>(bytes)
+}
+
+/// Complete persisted customization profile.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomizationSettings {
+    pub schema_version: u16,
+    pub accent: AccentLayer,
+    #[serde(rename = "type")]
+    pub type_layer: TypeLayer,
+    pub mode: ModeLayer,
+    pub world: WorldLayer,
+}
+
+impl Default for CustomizationSettings {
+    fn default() -> Self {
+        Self {
+            schema_version: CUSTOMIZATION_SETTINGS_SCHEMA_VERSION,
+            accent: AccentLayer::default(),
+            type_layer: TypeLayer::default(),
+            mode: ModeLayer::default(),
+            world: WorldLayer::default(),
+        }
+    }
+}
+
+impl CustomizationSettings {
+    fn layer_value(&self, layer: CustomizationLayer) -> CustomizationLayerValue {
+        match layer {
+            CustomizationLayer::Accent => CustomizationLayerValue::Accent(self.accent.clone()),
+            CustomizationLayer::Type => CustomizationLayerValue::Type(self.type_layer.clone()),
+            CustomizationLayer::Mode => CustomizationLayerValue::Mode(self.mode.clone()),
+            CustomizationLayer::World => CustomizationLayerValue::World(self.world.clone()),
+        }
+    }
+
+    fn apply_layer_value(&mut self, value: CustomizationLayerValue) {
+        match value {
+            CustomizationLayerValue::Accent(layer) => self.accent = layer,
+            CustomizationLayerValue::Type(layer) => self.type_layer = layer,
+            CustomizationLayerValue::Mode(layer) => self.mode = layer,
+            CustomizationLayerValue::World(layer) => self.world = layer,
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.schema_version != CUSTOMIZATION_SETTINGS_SCHEMA_VERSION {
+            return Err(Error::CorruptedIndex("customization settings"));
+        }
+        self.accent.validate()?;
+        self.type_layer.validate()?;
+        self.mode.validate()?;
+        self.world.validate()?;
+        Ok(())
+    }
+}
+
+/// Accent color selection layer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccentLayer {
+    pub palette: String,
+}
+
+impl AccentLayer {
+    /// Creates an accent layer from a stable palette token.
+    pub fn new(palette: impl Into<String>) -> Result<Self> {
+        let layer = Self {
+            palette: palette.into(),
+        };
+        layer.validate()?;
+        Ok(layer)
+    }
+
+    fn validate(&self) -> Result<()> {
+        validate_token("accent.palette", &self.palette)
+    }
+}
+
+impl Default for AccentLayer {
+    fn default() -> Self {
+        Self {
+            palette: "system".to_owned(),
+        }
+    }
+}
+
+/// Typography/type selection layer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TypeLayer {
+    pub typeface: String,
+}
+
+impl TypeLayer {
+    /// Creates a type layer from a stable typeface token.
+    pub fn new(typeface: impl Into<String>) -> Result<Self> {
+        let layer = Self {
+            typeface: typeface.into(),
+        };
+        layer.validate()?;
+        Ok(layer)
+    }
+
+    fn validate(&self) -> Result<()> {
+        validate_token("type.typeface", &self.typeface)
+    }
+}
+
+impl Default for TypeLayer {
+    fn default() -> Self {
+        Self {
+            typeface: "system".to_owned(),
+        }
+    }
+}
+
+/// App mode/theme selection layer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModeLayer {
+    pub mode: String,
+}
+
+impl ModeLayer {
+    /// Creates a mode layer from a stable mode token.
+    pub fn new(mode: impl Into<String>) -> Result<Self> {
+        let layer = Self { mode: mode.into() };
+        layer.validate()?;
+        Ok(layer)
+    }
+
+    fn validate(&self) -> Result<()> {
+        validate_token("mode.mode", &self.mode)
+    }
+}
+
+impl Default for ModeLayer {
+    fn default() -> Self {
+        Self {
+            mode: "system".to_owned(),
+        }
+    }
+}
+
+/// World selection layer.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorldLayer {
+    pub world_ref: Option<String>,
+    pub label: Option<String>,
+}
+
+impl WorldLayer {
+    /// Creates a world layer from an optional world entity id and display label.
+    pub fn new(world_ref: Option<EntityId>, label: Option<String>) -> Result<Self> {
+        let layer = Self {
+            world_ref: world_ref.map(|id| id.to_hex()),
+            label,
+        };
+        layer.validate()?;
+        Ok(layer)
+    }
+
+    /// Creates a world layer from an already-serialized world entity id.
+    pub fn from_hex(world_ref: Option<String>, label: Option<String>) -> Result<Self> {
+        let layer = Self { world_ref, label };
+        layer.validate()?;
+        Ok(layer)
+    }
+
+    fn validate(&self) -> Result<()> {
+        if let Some(world_ref) = &self.world_ref {
+            EntityId::from_hex(world_ref).map_err(|_| {
+                Error::InvalidConfig("settings world_ref must be an entity id".into())
+            })?;
+        }
+        if let Some(label) = &self.label {
+            validate_label("world.label", label)?;
+        }
+        Ok(())
+    }
+}
+
+/// New value for one customization layer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "layer", content = "value")]
+pub enum CustomizationLayerValue {
+    Accent(AccentLayer),
+    Type(TypeLayer),
+    Mode(ModeLayer),
+    World(WorldLayer),
+}
+
+impl CustomizationLayerValue {
+    /// Returns the layer this value updates.
+    #[must_use]
+    pub const fn layer(&self) -> CustomizationLayer {
+        match self {
+            Self::Accent(_) => CustomizationLayer::Accent,
+            Self::Type(_) => CustomizationLayer::Type,
+            Self::Mode(_) => CustomizationLayer::Mode,
+            Self::World(_) => CustomizationLayer::World,
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        match self {
+            Self::Accent(layer) => layer.validate(),
+            Self::Type(layer) => layer.validate(),
+            Self::Mode(layer) => layer.validate(),
+            Self::World(layer) => layer.validate(),
+        }
+    }
+
+    fn summary(&self) -> String {
+        match self {
+            Self::Accent(layer) => layer.palette.clone(),
+            Self::Type(layer) => layer.typeface.clone(),
+            Self::Mode(layer) => layer.mode.clone(),
+            Self::World(layer) => layer
+                .label
+                .clone()
+                .or_else(|| layer.world_ref.clone())
+                .unwrap_or_else(|| "default world".to_owned()),
+        }
+    }
+}
+
+/// Result of writing a customization layer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomizationSettingsUpdate {
+    pub settings: CustomizationSettings,
+    pub event: Option<CustomizationSettingsChangeEvent>,
+}
+
+/// Client-readable event emitted when a customization layer changes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomizationSettingsChangeEvent {
+    pub sequence: u64,
+    pub kind: String,
+    pub changed_at: u64,
+    pub layer: CustomizationLayer,
+    pub previous: CustomizationLayerValue,
+    pub current: CustomizationLayerValue,
+    pub notice: String,
+}
+
+impl CustomizationSettingsChangeEvent {
+    fn new(
+        sequence: u64,
+        changed_at: u64,
+        previous: CustomizationLayerValue,
+        current: CustomizationLayerValue,
+    ) -> Self {
+        let layer = current.layer();
+        let notice = format!(
+            "User changed the {} setting to {}.",
+            layer.as_str(),
+            current.summary()
+        );
+        Self {
+            sequence,
+            kind: CUSTOMIZATION_SETTINGS_CHANGED_EVENT_KIND.to_owned(),
+            changed_at,
+            layer,
+            previous,
+            current,
+            notice,
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.sequence == 0
+            || self.kind != CUSTOMIZATION_SETTINGS_CHANGED_EVENT_KIND
+            || self.previous.layer() != self.layer
+            || self.current.layer() != self.layer
+            || self.notice.is_empty()
+        {
+            return Err(Error::CorruptedIndex("customization settings event"));
+        }
+        self.previous.validate()?;
+        self.current.validate()?;
+        Ok(())
+    }
 }
 
 impl Vault {

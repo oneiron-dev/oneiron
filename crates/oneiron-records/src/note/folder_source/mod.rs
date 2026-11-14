@@ -77,35 +77,3 @@ impl FolderSourceFile {
         }
     }
 }
-
-/// What one rescan did.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub struct FolderRescanReport {
-    pub landed: usize,
-    pub links: usize,
-    pub unchanged: usize,
-    /// Changed files whose text replaced their note's.
-    pub superseded: usize,
-    /// Changed files whose note the owner edited: forks for review.
-    pub proposed: usize,
-    pub retracted: usize,
-    /// Notes a returning file brought back from the archive.
-    pub restored: usize,
-    /// Files whose note the owner deleted or archived: left as they are.
-    pub removed: usize,
-    /// Files a Files source now holds by name only, new or changed.
-    pub name_only: usize,
-    /// Files the write door refused and folders that would not open (FIX
-    /// 10246); a later rescan tries them again.
-    pub failed: usize,
-    /// Why the first of them was refused, or the first folder that would
-    /// not open.
-    pub first_error: Option<String>,
-}
-
-impl FolderRescanReport {
-    fn fail(&mut self, error: impl std::fmt::Display) {
-        self.failed += 1;
-        self.first_error.get_or_insert_with(|| error.to_string());
-    }
-}

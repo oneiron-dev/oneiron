@@ -1,6 +1,3 @@
-pub use crate::inbox::actions::NotificationAction;
-pub use crate::inbox::list::NotificationPage;
-pub use crate::inbox::list::NotificationRow;
 pub use crate::inbox::notification::NotificationBody;
 pub use crate::inbox::notification::NotificationKind;
 pub use crate::inbox::notification::NotificationSource;
@@ -23,8 +20,6 @@ pub use oneiron_verb_wire::inbox::restore_group::RestoreMemberVerdict;
 pub use oneiron_verb_wire::inbox::restore_group::RestoreMemberWait;
 pub use oneiron_verb_wire::inbox::unified::InboxGroupResolveTarget;
 
-pub mod actions;
 pub mod compilation_target;
-pub mod list;
 pub mod notification;
 pub mod unified;
