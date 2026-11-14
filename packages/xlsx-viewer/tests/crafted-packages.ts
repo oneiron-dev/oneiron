@@ -262,7 +262,9 @@ export type CraftedKind =
   | "stacked-comments"
   | "threaded-comments-people"
   | "far-shifted-copies"
-  | "unfinished-cdata-master";
+  | "unfinished-cdata-master"
+  | "cdata-cell-value"
+  | "escaped-cdata-string-result";
 
 /** The crafted package of `kind`; its sheet is S1. */
 export function craftedPackage(kind: CraftedKind): Uint8Array {
@@ -331,6 +333,19 @@ export function craftedPackage(kind: CraftedKind): Uint8Array {
       return sheetsPackage([text(farShiftedCopiesSheet(1_000))]);
     case "unfinished-cdata-master":
       return sheetsPackage([text(unfinishedCdataSheet(40_000, 600_000))]);
+    case "escaped-cdata-string-result":
+      // The same, written as a formula's string result with the marker
+      // escaped: SheetJS unescapes the value, then unescapes it again.
+      return sheetsPackage([
+        text(worksheet(`<row r="1"><c r="A1" t="str"><f>A2</f><v>${"x".repeat(8_000)}&lt;![CDATA[${"y".repeat(120_000)}</v></c></row>`)),
+      ]);
+    case "cdata-cell-value":
+      // One cell string of 8,000 characters, a CDATA marker no `]]>` ends,
+      // and 120,000 more: SheetJS's unescape copies the 120,000 once per two
+      // of the 8,000, 480 million characters from a 130 KB part.
+      return sheetsPackage([
+        text(worksheet(`<row r="1"><c r="A1" t="str"><v>${"x".repeat(8_000)}<![CDATA[${"y".repeat(120_000)}</v></c></row>`)),
+      ]);
     case "repeated-sheet-name": {
       // 5,000 listed sheets, all named S1 and all pointing at one sheet part
       // of 100,000 cells: SheetJS reads S1 by name, without case, and so
@@ -478,7 +493,7 @@ export function arrayRangeChecksSheet(): string {
 }
 
 /** S1 with one cell, and `comments` as the comments part its relationships name. */
-function commentsPackage(comments: string): Uint8Array {
+export function commentsPackage(comments: string): Uint8Array {
   return sheetsPackage([text(PLAIN_SHEET)], {
     contentTypes: `<Override PartName="/xl/comments1.xml" ContentType="${COMMENTS_TYPE}"/>`,
     parts: [
