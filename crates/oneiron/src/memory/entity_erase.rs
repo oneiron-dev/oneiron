@@ -835,13 +835,15 @@ impl crate::Vault {
 
     /// Starts `record`'s own `erase` act in shared vault `vault_id` under
     /// `starter`'s proof, naming no bytes, as a confirmed record's own act
-    /// is started (FIX 9781). Returns its id; its starter executes it once
-    /// it completes, as any `erase` act.
+    /// is started (FIX 9781), recording `check_in`, the decision the erase
+    /// runs on, when one is given (2k2). Returns its id; its starter
+    /// executes it once it completes, as any `erase` act.
     pub(crate) fn start_record_erase_act(
         &self,
         starter: &AuthenticatedOwner,
         vault_id: u64,
         record: EntityId,
+        check_in: Option<&CheckInDecision>,
     ) -> crate::Result<String> {
         let payload = serde_json::to_vec(&HeldErase {
             v: 1,
@@ -849,9 +851,17 @@ impl crate::Vault {
             hashes: Vec::new(),
         })
         .map_err(|_| Error::InvariantViolation("erase act payload"))?;
-        Ok(self
-            .start_authority_act(starter, vault_id, ERASE_ACT, payload)?
-            .id)
+        Ok(match check_in {
+            Some(decision) => self.start_authority_act_recorded(
+                starter,
+                vault_id,
+                ERASE_ACT,
+                payload,
+                decision.clone(),
+            )?,
+            None => self.start_authority_act(starter, vault_id, ERASE_ACT, payload)?,
+        }
+        .id)
     }
 }
 
