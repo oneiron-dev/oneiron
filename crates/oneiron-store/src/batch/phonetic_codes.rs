@@ -1,7 +1,18 @@
-//! Deterministic name codes for the first phonetic rung (OF-101).
+//! Deterministic name codes for the phonetic rungs (OF-101; CROSS-ARCH-0013
+//! `#ladder`).
 //!
 //! Kana and Latin romaji share a romanized key. English additionally gets a
-//! Soundex key; it is a Latin-only shortcut, not G2P/NPD or a learned model.
+//! Soundex key, a Latin-only shortcut. Every name a reader reads also gets a
+//! sound key per reading, `ipa:<lang>:<ipa>`: the G2P → IPA string that the
+//! Normalized Phonetic Distance ([`npd()`]) compares across scripts (rung 1).
+
+mod features;
+mod ipa;
+mod npd;
+
+pub use features::{Segment, ipa_segments};
+pub use ipa::{IpaReading, phonetic_readings, strip_org_suffix};
+pub use npd::{NPD_CAP, NPD_KEEP_RATIO, NPD_THRESHOLD, npd};
 
 use std::collections::BTreeSet;
 use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
@@ -9,11 +20,15 @@ use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 /// Generate the same codes used on writes for a name or a query mention.
 ///
 /// Hiragana, katakana and half-width kana are folded to hiragana and Hepburn
-/// romaji. Latin names receive a romaji key and an English Soundex key. Han
-/// readings are entity-specific: pass a known kana/romaji reading separately
-/// rather than guessing a pronunciation from the written name.
+/// romaji. Latin names receive a romaji key and an English Soundex key. Each
+/// reading of [`phonetic_readings`] adds a sound key `ipa:<lang>:<ipa>`;
+/// Han reads as Mandarin only, so a Japanese kanji name still needs its
+/// reading passed separately rather than guessed from the written name.
 pub fn generate_phonetic_codes(name: &str) -> Vec<String> {
     let mut codes = BTreeSet::new();
+    for reading in phonetic_readings(name) {
+        codes.insert(format!("ipa:{}:{}", reading.lang, reading.ipa()));
+    }
     match spelling(&normalize(name)) {
         Spelling::Kana { folded, romaji } => {
             codes.insert(format!("kana:{folded}"));
