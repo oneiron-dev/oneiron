@@ -48,6 +48,7 @@ pub(in crate::batch) fn stage_entity_body_row(
     if entity_type == crate::registry::ENTITY_TYPE_NOTE && !data.is_empty() {
         crate::note::validate_registered_kind(store, wtxn, data)?;
     }
+    crate::access_grant::reindex_companion_grant(store, wtxn, id, Some((entity_type, data)))?;
     crate::store::identity_hints::reindex_identity_hints(
         store,
         wtxn,

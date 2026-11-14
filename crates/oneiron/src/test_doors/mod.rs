@@ -30,6 +30,7 @@ pub mod code_run_write_identity;
 pub mod code_view_fork;
 pub mod comm_late_stop;
 pub mod comm_thread_member_claim_reads;
+pub mod companion_grant_index;
 pub mod connector_key_suspend;
 pub mod consolidation;
 pub mod credit_decay_fit;
