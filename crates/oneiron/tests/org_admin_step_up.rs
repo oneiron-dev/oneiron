@@ -203,7 +203,7 @@ fn a_step_up_on_another_credential_counts_for_nothing() {
     let [first_member, second_member] = [shared.newcomer(), shared.newcomer()];
     shared.admin_acts();
     let first = admin_step_up::credential(&shared.vault, &shared.issuer, shared.admin);
-    admin_step_up::step_up_with_totp(&shared.vault, &first);
+    admin_step_up::enroll_totp_and_step_up(&shared.vault, &first);
     let second = admin_step_up::credential(&shared.vault, &shared.issuer, shared.admin);
 
     refused_for_step_up(

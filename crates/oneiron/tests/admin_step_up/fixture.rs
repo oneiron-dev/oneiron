@@ -77,7 +77,7 @@ pub(crate) fn credential(vault: &Vault, issuer: &HostSlipIssuer, person: EntityI
 /// Steps `credential`'s holder up on it with an authenticator app: a new
 /// TOTP enrollment whose first code confirms it and records the step-up on
 /// this exact slip.
-pub(crate) fn step_up_with_totp(vault: &Vault, credential: &VerifiedSlip) {
+pub(crate) fn enroll_totp_and_step_up(vault: &Vault, credential: &VerifiedSlip) {
     let enrollment = vault
         .begin_step_up_totp(credential)
         .expect("a TOTP enrollment on the person's own credential");
@@ -121,6 +121,6 @@ pub(crate) fn stepped_up_proof(
     person: EntityId,
 ) -> AuthenticatedOwner {
     let credential = credential(vault, issuer, person);
-    step_up_with_totp(vault, &credential);
+    enroll_totp_and_step_up(vault, &credential);
     proof_on(vault, person, &credential)
 }
