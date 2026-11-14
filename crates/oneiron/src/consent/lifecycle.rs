@@ -140,6 +140,11 @@ pub struct ConsentActReceipt {
     /// ref, even beside a receipt. Absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revoked_by: Option<String>,
+    /// The check-in decision of the Owner's own act on a catastrophe row: a
+    /// bypass grant's creation goes on the Owner's own proof and records it
+    /// (2k4; P25-SHAPE Q1 = A; owner-own-acts). Absent on every other act.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 impl From<ConsentReceipt> for ConsentActReceipt {
@@ -152,6 +157,7 @@ impl From<ConsentReceipt> for ConsentActReceipt {
             diff_handle: crate::consent::consent_receipt_diff_handle(&receipt),
             already_revoked: false,
             revoked_by: None,
+            check_in: None,
         }
     }
 }
@@ -215,6 +221,7 @@ pub fn revoke(
             grant_ref: Some(grant),
             already_revoked: revocation.already_revoked,
             revoked_by: revocation.revoked_by,
+            check_in: None,
         },
     })
 }
@@ -246,6 +253,7 @@ pub fn revoke_as_grantee(
             grant_ref: Some(grant),
             already_revoked: revocation.already_revoked,
             revoked_by: revocation.revoked_by,
+            check_in: None,
         },
     })
 }

@@ -29,6 +29,7 @@ pub use world_privacy_will::{
     WorldPrivacySetOutput, WorldReadInput, WorldSealedInput,
 };
 
+use crate::check_in::{ActClass, AppliedCheckIn, CheckInDecision};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::gate::PolicyRowChange;
@@ -127,11 +128,56 @@ fn propose_in_txn(
     Ok(proposal)
 }
 
+/// The saved verb an Owner's own policy row change is: the verb an asker's
+/// check-in names for it (2k4).
+const POLICY_ROW_CHANGE_VERB: &str = "vault.policy.owner.row.change";
+
+/// The check-in decision `holder`'s change runs on, in `txn`, the change's
+/// writer (2k4; P25-SHAPE Q1 = A): the vault's Owner changes a row on their
+/// own proof, and with `check_in_ref` applies another asker's approved
+/// check-in for this exact change, spent here. Another holder's change
+/// records none and applies no ask: their Grant is the authority, as before.
+///
+/// # Errors
+///
+/// A `check_in_ref` from a holder who is not the vault's Owner; as
+/// [`crate::check_in::owner_act_decision_in_txn`].
+fn holder_check_in_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    holder: EntityId,
+    change: &PolicyRowChange,
+    check_in_ref: Option<&EntityId>,
+) -> Result<Option<CheckInDecision>> {
+    if !owners_in_txn(vault, txn)?.contains(&holder) {
+        return match check_in_ref {
+            Some(_) => Err(denied()),
+            None => Ok(None),
+        };
+    }
+    let applied = match check_in_ref {
+        Some(id) => Some(AppliedCheckIn {
+            id: *id,
+            verb: POLICY_ROW_CHANGE_VERB,
+            effect_digest: crate::check_in::policy_row_change_effect_digest(change)?,
+        }),
+        None => None,
+    };
+    crate::check_in::owner_act_decision_in_txn(
+        vault,
+        txn,
+        ActClass::SecurityControlDisable,
+        applied.as_ref(),
+    )
+    .map(Some)
+}
+
 fn land_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     holder: &AuthenticatedOwner,
     change: PolicyRowChange,
+    check_in_ref: Option<&EntityId>,
     now: u64,
 ) -> Result<PolicyRowReceipt> {
     // Person tier, own holder check: the named holder's grant is the authority.
@@ -140,8 +186,9 @@ fn land_in_txn(
     if !holders.contains(&holder_actor) {
         return Err(denied());
     }
+    let check_in = holder_check_in_in_txn(vault, txn, holder_actor, &change, check_in_ref)?;
     crate::gate::apply_owner_policy_row_change_in_txn(vault, holder, txn, &change, now)?;
-    let receipt = ledger::append_change_in_txn(vault, txn, holder_actor, change, now)?;
+    let receipt = ledger::append_change_in_txn(vault, txn, holder_actor, change, check_in, now)?;
     notifications::enqueue_change_in_txn(vault, txn, &receipt, &holders, now)?;
     Ok(receipt)
 }
@@ -159,7 +206,7 @@ impl Vault {
         // Person tier, own holder check: a holder lands, anyone else proposes.
         let actor_id = actor.revalidate_person_in_txn(self, &txn)?;
         let result = if holders_for_change_in_txn(self, &txn, &change, now)?.contains(&actor_id) {
-            PolicyRowSubmission::Landed(land_in_txn(self, &mut txn, actor, change, now)?)
+            PolicyRowSubmission::Landed(land_in_txn(self, &mut txn, actor, change, None, now)?)
         } else {
             PolicyRowSubmission::Proposed(propose_in_txn(self, &mut txn, actor_id, change, now)?)
         };
@@ -176,8 +223,29 @@ impl Vault {
         change: PolicyRowChange,
         now: u64,
     ) -> Result<PolicyRowReceipt> {
+        self.change_policy_row_with_check_in(holder, change, None, now)
+    }
+
+    /// [`Self::change_policy_row`], where the vault's Owner may apply
+    /// `check_in_ref`, another asker's approved check-in for this exact
+    /// change (2k4; P25-SHAPE Q1 = A). The Owner's change records its
+    /// decision on the receipt, and the check-in is spent in the change's
+    /// writer: an abort leaves it eligible.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::change_policy_row`]; a `check_in_ref` from a holder who is
+    /// not the vault's Owner; a check-in that names no row, another act or
+    /// another change, or is not eligible or already spent.
+    pub fn change_policy_row_with_check_in(
+        &self,
+        holder: &AuthenticatedOwner,
+        change: PolicyRowChange,
+        check_in_ref: Option<EntityId>,
+        now: u64,
+    ) -> Result<PolicyRowReceipt> {
         let mut txn = self.store.env.write_txn()?;
-        let receipt = land_in_txn(self, &mut txn, holder, change, now)?;
+        let receipt = land_in_txn(self, &mut txn, holder, change, check_in_ref.as_ref(), now)?;
         txn.commit()?;
         Ok(receipt)
     }
@@ -211,6 +279,7 @@ impl Vault {
                 &mut txn,
                 holder,
                 proposal.change.clone(),
+                None,
                 now,
             )?)
         } else {

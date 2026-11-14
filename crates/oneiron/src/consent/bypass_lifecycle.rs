@@ -166,6 +166,15 @@ pub fn bypass_grant_warning(
     Ok(prepare_warning(vault, owner, input.bound)?.0)
 }
 
+/// `vault.consent.create_bypass_grant`: the Owner's acknowledged bypass
+/// grant, one consent row per class. The Owner's own act on a catastrophe
+/// row goes on their own proof, and each receipt records that decision (2k4;
+/// P25-SHAPE Q1 = A; owner-own-acts).
+///
+/// # Errors
+///
+/// A warning that is not the current one, unchanged; as
+/// [`Vault::create_bypass_grant`].
 pub fn create_bypass_grant(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -185,7 +194,12 @@ pub fn create_bypass_grant(
                 .collect::<crate::Result<Vec<_>>>()
         })?
         .into_iter()
-        .map(ConsentActReceipt::from)
+        .map(|receipt| ConsentActReceipt {
+            check_in: Some(crate::check_in::owner_own_proof_decision(
+                crate::check_in::ActClass::SecurityControlDisable,
+            )),
+            ..ConsentActReceipt::from(receipt)
+        })
         .collect())
 }
 

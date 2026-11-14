@@ -12,6 +12,11 @@ use super::{PolicyClassifyRequest, PolicyClassifySubject, PolicyRowChange, Polic
 #[serde(deny_unknown_fields)]
 pub struct PolicyRowChangeRequest {
     pub change: PolicyRowChange,
+    /// The check-in an asker opened for this exact change, 32 hex: with it
+    /// the Owner applies the asker's approved ask on their own proof, and
+    /// the receipt names it (2k4; P25-SHAPE Q1 = A).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// No verdict, caller identity, policy document or attestation is accepted here.
@@ -50,12 +55,34 @@ impl PolicyOutboundRequest {
     }
 }
 
+/// `vault.policy.owner.row.change`: the Owner's change of one policy row,
+/// whose receipt records the Owner's check-in decision; with `check_in_ref`
+/// the Owner applies an asker's approved check-in for this change (2k4).
+///
+/// # Errors
+///
+/// A `check_in_ref` that is no 32-hex id; as
+/// [`Vault::change_policy_row_with_check_in`].
 pub fn change_owner_policy_row(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: PolicyRowChangeRequest,
 ) -> Result<PolicyRowReceipt> {
-    vault.change_policy_row(owner, input.change, crate::unix_seconds_now())
+    let check_in_ref = input
+        .check_in_ref
+        .as_deref()
+        .map(|hex| {
+            EntityId::from_hex(hex).map_err(|_| {
+                crate::Error::InvalidConfig("check_in_ref is not a check-in id".into())
+            })
+        })
+        .transpose()?;
+    vault.change_policy_row_with_check_in(
+        owner,
+        input.change,
+        check_in_ref,
+        crate::unix_seconds_now(),
+    )
 }
 
 /// Validate configured patterns with the classifier's own compiler.

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::notifications::PolicyNotificationTarget;
 use crate::batch::secret_scan::admit_typed;
+use crate::check_in::CheckInDecision;
 use crate::error::{Error, GateError, Result};
 use crate::gate::{PolicyRowChange, PolicyRowScope};
 use crate::side_table::{self, Raw, SideTable};
@@ -27,6 +28,12 @@ pub struct PolicyRowReceipt {
     /// The prior holder ruling on this exact row/scope, retained for one-step reverts.
     pub previous_receipt_id: Option<String>,
     pub at: u64,
+    /// The check-in decision the change ran on (2k4; P25-SHAPE Q1 = A): the
+    /// vault's Owner on their own proof, naming the asker's approved
+    /// check-in it applied. Absent on another holder's change and on a
+    /// receipt kept before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -78,6 +85,7 @@ pub(super) fn append_change_in_txn(
     txn: &mut heed::RwTxn<'_>,
     author: EntityId,
     change: PolicyRowChange,
+    check_in: Option<CheckInDecision>,
     now: u64,
 ) -> Result<PolicyRowReceipt> {
     let next = match vault.store.vault_meta.get(txn, SEQUENCE)? {
@@ -104,6 +112,7 @@ pub(super) fn append_change_in_txn(
         change,
         previous_receipt_id,
         at: now,
+        check_in,
     };
     // OF-067: the owner's row text and reasons as the side-row wall keeps them.
     let receipt_key = [RECEIPT, &next.to_be_bytes()].concat();

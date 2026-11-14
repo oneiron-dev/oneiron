@@ -42,6 +42,7 @@ use crate::Vault;
 use crate::authority::{RootChange, StepUpFactor};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::gate::PolicyRowChange;
 use crate::store::custody_protocol::{TargetScope, TargetSpec};
 
 /// One act a door runs for a person, as check-in judges it.
@@ -497,6 +498,23 @@ pub fn custody_reenrol_effect_digest(spec: &TargetSpec) -> [u8; 32] {
         TargetScope::LogOnly => 1,
     }]);
     *hasher.finalize().as_bytes()
+}
+
+/// The digest of an Owner policy row change: the effect an asker's
+/// `vault.check_in.open` names for `vault.policy.owner.row.change`, and the
+/// one the Owner's change spends (2k4; P25-SHAPE Q1 = A). BLAKE3, key
+/// derived from `oneiron check_in policy row change v1`, over the change's
+/// MessagePack encoding with field names, as the change ledger keeps it.
+///
+/// # Errors
+///
+/// The change does not encode.
+pub fn policy_row_change_effect_digest(change: &PolicyRowChange) -> Result<[u8; 32]> {
+    let encoded = rmp_serde::to_vec_named(change)
+        .map_err(|_| Error::InvariantViolation("policy row change encode"))?;
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in policy row change v1");
+    hasher.update(&encoded);
+    Ok(*hasher.finalize().as_bytes())
 }
 
 /// `text`'s length as one byte (at most 255; custody ids are at most 128)
