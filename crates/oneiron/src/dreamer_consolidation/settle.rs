@@ -21,11 +21,12 @@
 //! `user_stated`. The open marker is never edited; it stays as audit
 //! evidence beside the claim that answers it.
 //!
-//! The Dreamer asks its host's decision ladder ([`ConflictSettleDecisions`])
-//! and applies the answer at once; the owner reverts it
-//! (`Memory::revert_conflict_settlement`), and a reverted conflict, or one
-//! under the owner's hold, is the owner's to answer. An abstention or an
-//! escalation leaves the marker parked for the owner.
+//! The rule loop in `oneiron_dreamer::conflict_settle` chooses whole asks or
+//! pages and rounds. The engine builds and runs each bound `ai.verdict` ask
+//! on the host's decision ladder ([`ConflictSettleDecisions`]), and derive
+//! Settle items apply the answers. The owner reverts through `vault.derive.revert`.
+//! A reverted conflict, or one under the owner's hold, is the owner's to answer.
+//! An abstention or an escalation leaves the marker parked for the owner.
 
 use std::collections::BTreeSet;
 
@@ -35,7 +36,7 @@ pub(crate) mod keep_approval;
 
 use self::keep_approval::KeepAs;
 use super::retained_conflict::RetainedAlternative;
-use super::retained_keep::{ConflictSettleOutcome, KeptAlternative, SettlementApplied, StagedKeep};
+use super::retained_keep::{KeptAlternative, SettlementApplied};
 use super::support::invalid_consolidation;
 use crate::claim::{
     ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject, PREDICATE_CONFLICT_OPEN,
@@ -964,13 +965,11 @@ const DISMISS: &str = "dismiss";
 const ESCALATE: &str = "escalate";
 const KEEP_PREFIX: &str = "keep:";
 
-/// The shared decision path a settlement ask goes through: the host's ladder,
-/// the principal the answer is for, the dial and learned bands, the host's
-/// wording of the question, and the call's clock. A provider sees the marker
-/// and its members as evidence ids; the contested predicates and each member's
-/// predicate, value, source, approval and window are its state, each member by
-/// a call-local label (FIX 7506). Each value rides whole; past the ladder's
-/// bound the members are asked in pages (`decision_pages`).
+/// The host's ladder, principal, dial, learned bands, wording and deadline for
+/// one bound settlement ask. The engine builds and runs the ask for `ai.verdict`;
+/// `oneiron_dreamer::conflict_settle` owns the rule loop over whole asks, pages
+/// and rounds. A provider sees the marker and stored members as evidence ids,
+/// and each offered member or retained alternative whole by a call-local label.
 pub struct ConflictSettleDecisions<'a> {
     pub ladder: DecisionLadder<'a>,
     pub principal: EntityId,
@@ -978,99 +977,4 @@ pub struct ConflictSettleDecisions<'a> {
     pub bands: DecisionBandPolicy,
     pub wording: String,
     pub deadline: &'a RetrievalDeadline,
-}
-
-impl ConflictSettleDecisions<'_> {
-    /// Rules on one open conflict: `None` when the ladder abstains, escalates
-    /// or answers outside the vocabulary. The asks are `decision_pages`':
-    /// every member is asked about whole, in pages past one ask's bound,
-    /// and every standing member can be kept.
-    pub fn rule(
-        &self,
-        vault: &Vault,
-        conflict: &OpenConflict,
-    ) -> Result<Option<ConflictSettlement>> {
-        decision_pages::rule(self, vault, conflict)
-    }
-}
-
-/// One Dreamer pass over the parked conflicts it reviews.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ParkedConflictPass {
-    pub asked: usize,
-    pub settled: Vec<ConflictSettleReceipt>,
-    /// Kept alternatives from imported words, staged in their import's
-    /// review (FIX 5754): each conflict stays open.
-    pub staged: Vec<StagedKeep>,
-    /// Abstained, escalated, refused or failed: each stays for the owner.
-    pub left_parked: usize,
-    /// The last marker asked about: the next pass starts after it.
-    pub last: Option<EntityId>,
-}
-
-/// Asks `decisions` about up to `limit` open conflicts `memory`'s actor may
-/// settle and settles each answer through the same authorised door a person
-/// uses. The pass starts at the first marker after `after` and wraps to the
-/// oldest, so the conflicts a ladder leaves parked never starve newer ones.
-/// A failure on one conflict is logged by a closed name and leaves it
-/// parked; the pass goes on.
-pub fn settle_parked_conflicts(
-    memory: &crate::memory::Memory<'_>,
-    decisions: &ConflictSettleDecisions<'_>,
-    after: Option<EntityId>,
-    limit: usize,
-    now: u64,
-) -> crate::memory::MemoryResult<ParkedConflictPass> {
-    settle_parked_conflicts_while(memory, decisions, after, limit, now, &mut || true)
-}
-
-/// [`settle_parked_conflicts`] under a host's pause (FIX 7376): no next
-/// conflict is asked once `may_start` says no. The one in flight finishes
-/// its ruling and settlement, and the pass returns as it stands. A conflict
-/// left unasked is neither counted nor left parked: `last` stays on the last
-/// one asked, and the next pass starts after it.
-pub fn settle_parked_conflicts_while(
-    memory: &crate::memory::Memory<'_>,
-    decisions: &ConflictSettleDecisions<'_>,
-    after: Option<EntityId>,
-    limit: usize,
-    now: u64,
-    may_start: &mut impl FnMut() -> bool,
-) -> crate::memory::MemoryResult<ParkedConflictPass> {
-    let mut pass = ParkedConflictPass::default();
-    let open = memory.open_conflicts(None, None, usize::MAX)?;
-    let start = after.map_or(0, |after| {
-        open.partition_point(|conflict| conflict.marker <= after)
-    });
-    let (older, newer) = open.split_at(start);
-    for conflict in newer.iter().chain(older).take(limit) {
-        if !may_start() {
-            break;
-        }
-        pass.asked += 1;
-        pass.last = Some(conflict.marker);
-        let settlement = match decisions.rule(memory.vault(), conflict) {
-            Ok(Some(settlement)) => settlement,
-            Ok(None) => {
-                pass.left_parked += 1;
-                continue;
-            }
-            Err(error) => {
-                tracing::warn!(target: "oneiron::dreamer", kind = ?error.kind(), marker = %conflict.marker.to_hex(), "a settlement ask failed; the conflict stays parked");
-                pass.left_parked += 1;
-                continue;
-            }
-        };
-        match memory.settle_conflict(None, conflict.marker, settlement, now) {
-            Ok(ConflictSettleOutcome::Settled(receipt)) => pass.settled.push(receipt),
-            Ok(ConflictSettleOutcome::ImportReviewPending { staged, .. }) => {
-                pass.staged.push(staged);
-            }
-            Err(_) => {
-                tracing::warn!(target: "oneiron::dreamer", marker = %conflict.marker.to_hex(), "a ruled settlement was refused; the conflict stays parked");
-                pass.left_parked += 1;
-            }
-        }
-    }
-    Ok(pass)
 }

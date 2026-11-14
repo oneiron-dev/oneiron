@@ -79,11 +79,14 @@ impl BoundSettlePage {
     }
 }
 
-/// Reads the marker and distinct offered row ids without resolving generic evidence views.
+/// Reads the marker and distinct offered row ids without resolving generic
+/// evidence views. The marker may stand alone: a final round whose pages
+/// kept no member offers no row, and asks among hold both, dismiss and
+/// escalate beside the pages' answers, as the parked path asked.
 fn settle_evidence_ids(references: &[String]) -> MemoryResult<Vec<EntityId>> {
-    if references.len() < 2 {
+    if references.is_empty() {
         return Err(MemoryError::bad_request(
-            "settlement evidence needs a conflict marker followed by at least one offered row",
+            "settlement evidence needs a conflict marker, then the rows the ask offers",
         ));
     }
     let ids: Vec<EntityId> = references
@@ -137,8 +140,9 @@ impl DreamerAttemptBinding {
     /// Asks one conflict-settlement question as the Dreamer on the host's ladder.
     ///
     /// Evidence names a page-readable conflict marker followed by distinct
-    /// offered rows. The Choice options must match the canonical settlement
-    /// options for those rows in order. A null state makes an unpaged ask;
+    /// offered rows, none in a final round whose pages kept no member. The
+    /// Choice options must match the canonical settlement options for those
+    /// rows in order. A null state makes an unpaged ask;
     /// a page state supplies its round, zero-based page, page count and prior
     /// page answers. The shared settlement ask supplies the predicate-keyed
     /// question, labelled state and model options, and outbound reversibility.

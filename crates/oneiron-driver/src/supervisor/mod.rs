@@ -59,7 +59,7 @@ pub use self::attachment::{
     AttachedPassFuture, LinkedShutdown, PassAttachment, PassAttachmentSource, WakePassFuture,
 };
 pub use self::config::{NowSeconds, RestartBackoffConfig, WakeSupervisorConfig};
-pub use self::dreamer_jobs::DreamerJobsExecutor;
+pub use self::dreamer_jobs::{ConflictSettleCursor, DreamerJobsExecutor};
 pub use self::factory::{
     ConsolidationExecutorFactory, PassExecutorFactory, SkillOptimizerLoan, WaveReadyDispatcher,
 };

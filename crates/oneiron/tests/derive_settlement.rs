@@ -18,8 +18,9 @@ use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derivation_floor::{define_agent, write_derived_claim};
 use oneiron::test_doors::derive::{
-    Claim, Derived, Named, Settle, Settlement, Supersede, claim_lifecycle, commit,
-    define_auto_agent, grant_derive_rows, open_conflict, refusal_receipt,
+    Claim, Derived, Named, Settle, Settlement, Supersede, batch_items, claim_lifecycle, commit,
+    define_auto_agent, grant_derive_rows, open_conflict, open_conflict_with_imported_alternative,
+    refusal_receipt, revert_as_owner,
 };
 use oneiron::test_doors::steward::{
     STEWARD_ARCHIVE_VERB, STEWARD_READ_VERB, STEWARD_VERBS, dreamer, receive_steward_grant_row,
@@ -738,4 +739,90 @@ fn an_agent_with_no_steward_grant_settles_and_supersedes_nothing() {
         settled.landed,
         "the conflict the agent could not settle is still open: {settled:?}"
     );
+}
+
+#[test]
+fn a_derived_keep_of_imported_words_stages_it_and_the_revert_takes_it_back() {
+    let fixture = fixture();
+    let first = landed_claim(&fixture, "an oat milk flat white");
+    let (marker, alternative) =
+        open_conflict_with_imported_alternative(&fixture.vault, first, "a cortado")
+            .expect("an open conflict with an imported alternative");
+
+    let committed = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-keep-imported",
+        &[Derived::Settle(Settle {
+            local: "keep_imported",
+            marker: Named::Stored(marker),
+            settlement: Settlement::Keep(Named::Stored(alternative)),
+        })],
+    )
+    .expect("commit");
+    let recorded = batch_items(&fixture.vault, committed.batch)
+        .expect("read")
+        .expect("the batch record");
+    let [settled] = recorded.as_slice() else {
+        panic!("one item: {recorded:?}");
+    };
+    assert!(settled.landed, "the imported Keep stages: {settled:?}");
+    let [staged, recorded_marker] = settled.rows.as_slice() else {
+        panic!("the staged proposal and the marker: {settled:?}");
+    };
+    assert_eq!(
+        *recorded_marker, marker,
+        "the marker follows the staged proposal: {settled:?}"
+    );
+    assert_eq!(
+        settled.approval.as_deref(),
+        Some("proposed"),
+        "the staged proposal waits for review: {settled:?}"
+    );
+    let staged_body = fixture
+        .vault
+        .get_claim(staged)
+        .expect("read")
+        .expect("the staged proposal");
+    assert_ne!(
+        staged_body.predicate, "core.conflict.resolved",
+        "the first row stages the kept words, not an answer"
+    );
+    assert_eq!(
+        staged_body.approval,
+        ClaimApprovalStatus::Proposed,
+        "the staged proposal waits for review"
+    );
+    assert_eq!(staged_body.source, Some(ClaimSource::Imported));
+    let marker_is_open = || {
+        fixture
+            .vault
+            .memory(fixture.dreamer, EdgeActorClass::System)
+            .open_conflicts(None, Some(fixture.person), usize::MAX)
+            .expect("open conflicts")
+            .iter()
+            .any(|conflict| conflict.marker == marker)
+    };
+    assert!(
+        marker_is_open(),
+        "the marker stays open beside the staged proposal"
+    );
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, first).expect("read"),
+        Some("active".to_owned()),
+        "no member is superseded while the proposal waits"
+    );
+
+    let (reverted, left) = revert_as_owner(&fixture.vault, committed.batch)
+        .expect("revert")
+        .expect("the owner may revert any batch");
+    assert_eq!(reverted, vec!["keep_imported".to_owned()]);
+    assert!(left.is_empty(), "{left:?}");
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, *staged).expect("read"),
+        Some("retracted".to_owned()),
+        "the revert takes the staged proposal back"
+    );
+    assert!(marker_is_open(), "the marker stays open after the revert");
 }
