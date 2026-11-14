@@ -21,7 +21,6 @@ use serde::{Deserialize, Serialize};
 pub const REPRESENTATION_FACET: &str = "dreamer.representation";
 const PREDICATE: &str = "dreamer.representation.proposal";
 use crate::attempt_queue::maintenance_predicate::CONTENT_PREFIX;
-pub(crate) use crate::attempt_queue::maintenance_predicate::REPRESENTATION_CONTENT_PREFIX;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,13 +46,8 @@ pub struct RepresentationRequest {
     pub voice: Vec<RepresentationSourceRef>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RepresentationSourceRef {
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub claim: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_runner::maintenance::representation::RepresentationSourceRef;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
