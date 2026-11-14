@@ -1,15 +1,12 @@
 //! Moved from `crates/oneiron/src/verbs/secret_custody.rs` (lib split W3: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use base64::Engine as _;
-use oneiron_authority::authority::CustodyRecipientPermit;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::memory::MemoryError;
 use oneiron_contracts::memory::MemoryResult;
 use serde::Deserialize;
 use serde::Serialize;
 use zeroize::Zeroize;
-use zeroize::Zeroizing;
 
 /// `vault.secrets.register`'s input: the body `POST
 /// /v1/owner/secrets/register` takes. `Debug` never prints the value.
@@ -150,74 +147,6 @@ pub struct SecretRevokeRequest {
 #[serde(deny_unknown_fields)]
 pub struct SecretCustodyGetRequest {
     pub name: String,
-}
-
-/// `vault.secrets.custody.submit`'s input: the body `POST
-/// /v1/owner/secrets/custody` takes, a register or rotate whose protected
-/// input the surface sealed to the holder itself ([`seal_custody_submit`]).
-/// `Debug` never prints the ciphertext.
-#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SecretCustodySubmitRequest {
-    /// `register` or `rotate`.
-    pub change: String,
-    /// The custody record id the view gave, as 32 hex.
-    pub secret_id: String,
-    /// The generation the change approves.
-    pub generation: u32,
-    /// The custody revision the surface read, as 64 hex.
-    pub seen: String,
-    /// The install the input is sealed to, as 32 hex.
-    pub holder: String,
-    /// The exact permits the input binds, ascending by machine.
-    pub recipients: Vec<SecretCustodyPermit>,
-    /// For a register, the `manifest_ref` its sealed record names: this
-    /// install attaches the manifest it resolves for it. Absent, it
-    /// attaches every manifest the vault publishes, or says it has none.
-    #[serde(default)]
-    pub manifest_ref: Option<String>,
-    /// The input sealed to the holder's key, as standard base64: one
-    /// envelope, or the frame of numbered envelopes.
-    pub input_base64: String,
-}
-
-impl std::fmt::Debug for SecretCustodySubmitRequest {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SecretCustodySubmitRequest")
-            .field("change", &self.change)
-            .field("secret_id", &self.secret_id)
-            .field("generation", &self.generation)
-            .field("holder", &self.holder)
-            .field("recipients", &self.recipients.len())
-            .field("manifest_ref", &self.manifest_ref)
-            .finish_non_exhaustive()
-    }
-}
-
-/// One exact permit a sealed input binds, as the custody view lists its
-/// candidate.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SecretCustodyPermit {
-    /// The install, as 32 hex.
-    pub machine: String,
-    /// The profile entry the permit binds, as 64 hex.
-    pub profile: String,
-    /// The encryption key digest the permit binds, as 64 hex.
-    pub encryption_key_digest: String,
-}
-
-impl SecretCustodyPermit {
-    fn permit(&self) -> MemoryResult<CustodyRecipientPermit> {
-        Ok(CustodyRecipientPermit {
-            machine: entity_id("recipients.machine", &self.machine)?,
-            profile: digest("recipients.profile", &self.profile)?,
-            encryption_key: digest(
-                "recipients.encryption_key_digest",
-                &self.encryption_key_digest,
-            )?,
-        })
-    }
 }
 
 pub fn entity_id(field: &str, value: &str) -> MemoryResult<EntityId> {

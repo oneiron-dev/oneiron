@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
 
 pub const MAX_SECRET_REF_BYTES: usize = 256;
 

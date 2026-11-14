@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// Why a re-draft names no proposal on a host with no slate drafter: one
 /// sentence, so a later ruling changes one line.

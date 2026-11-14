@@ -5,8 +5,6 @@ use crate::store::key_custody::protocol::drain::DrainAck;
 use oneiron_store::key_custody::protocol::TargetScope;
 use serde::Deserialize;
 use serde::Serialize;
-use std::path::PathBuf;
-use zeroize::Zeroize;
 
 /// `vault.custody.members.drain.begin`'s and `.drain.folder`'s input: one
 /// member of the required set.

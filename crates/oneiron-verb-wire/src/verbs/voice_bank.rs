@@ -12,8 +12,6 @@ pub use crate::verbs::voice_records::views::VoiceRenderConsentView;
 pub use crate::verbs::voice_records::views::VoiceTargetCloneView;
 pub use crate::verbs::voice_records::views::VoiceTargetInspection;
 pub use crate::verbs::voice_records::views::VoiceTargetRender;
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
 use oneiron_consent_state::memory::voice_actor::VoiceRefSubjectKind;
 use oneiron_consent_state::verbs::voice_records::consent::VoiceConsentBasis;
 use oneiron_consent_state::verbs::voice_records::consent::VoiceConsentState;

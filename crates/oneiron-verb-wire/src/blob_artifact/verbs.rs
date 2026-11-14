@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::edit_roundtrip::slides_review::SlideReviewLabels;
-use base64::Engine as _;
 use oneiron_authority::share_travel::TravelChoice;
 use oneiron_docedit::edit::transaction::DeckTransaction;
 use oneiron_docedit::pptx_comments::PptxAuthor;

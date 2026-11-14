@@ -4,8 +4,6 @@
 pub use oneiron_store::blob_artifact::unit_refusal::UnitRefusal;
 use oneiron_wake_contract::llm::decision::types::TypedDecision;
 use serde_json::Value;
-use std::time::Duration;
-use std::time::Instant;
 
 /// A unit the ask left unanswered, with its receipt; none when the unit had
 /// no input to read or its state was past the call's bound.

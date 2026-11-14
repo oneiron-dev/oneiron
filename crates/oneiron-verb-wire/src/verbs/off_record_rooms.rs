@@ -68,12 +68,6 @@ pub struct OffRecordRoomSuggestion {
     pub at: String,
 }
 
-/// What a holder's save wrote into this vault.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct OffRecordRoomSaved {
-    pub saved: Vec<OffRecordRoomSavedTurn>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OffRecordRoomSavedTurn {
     pub turn: String,

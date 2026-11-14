@@ -52,9 +52,9 @@ pub use preview::{EsignSigningPreviewRequest, EsignSigningPreviewView, layout_es
 #[doc(hidden)]
 pub use oneiron_verb_wire::blob_artifact::esign::door::{
     EsignCreateRequest, EsignDispatchRequest, EsignGetRequest, EsignLinksIssueRequest,
-    EsignSealAttemptView, EsignSealGetRequest, EsignSealView, EsignSealedItemView, EsignSealedView,
+    EsignSealAttemptView, EsignSealGetRequest, EsignSealedItemView, EsignSealedView,
     EsignSigningImageRequest, EsignSigningImageView, EsignSigningPdfRequest, EsignSigningPdfView,
-    EsignSigningRequest, EsignSigningSignatureRequest, EsignSigningSignatureView, EsignVoidRequest,
+    EsignSigningSignatureRequest, EsignSigningSignatureView, EsignVoidRequest,
 };
 
 /// A drafted signing document, as it landed.
@@ -95,6 +95,39 @@ pub struct EsignLinksView {
     pub issued: Vec<EsignIssuedLink>,
     /// The recipients whose earlier link still holds, and is not shown again.
     pub unchanged: Vec<String>,
+}
+
+/// One recipient ceremony act (`vault.esign.signing.act`): the signing
+/// link's capability and the act it asks for. The public `POST /sign/action`
+/// door takes the act alone; its capability rides in the
+/// `x-oneiron-esign-capability` header, admitted before the body is read.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSigningRequest {
+    /// The recipient's Bearer [REDACTED] from their signing link. It is the
+    /// ceremony's authority; a credential the call also presents only
+    /// classes the caller (an agent's Complete is an automated sign act).
+    pub token: String,
+    /// Load, save one field, complete with consent, or reject.
+    pub action: super::SigningAction,
+}
+
+/// Where one document's seal stands: every seal attempt the queue still
+/// holds for it, its sealed manifest once one attempt sealed it, its
+/// delivery receipts, and its folded status, or why its trail does not read
+/// (FIX 6554).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct EsignSealView {
+    pub document_ref: String,
+    pub attempts: Vec<EsignSealAttemptView>,
+    pub sealed: Option<EsignSealedView>,
+    /// The document's delivery receipts, as `vault.esign.get` lists them,
+    /// read whether or not its trail reads.
+    pub delivery_receipts: Vec<EsignDeliveryReceipt>,
+    /// `trail`, `readable` with the folded `status`, or `unreadable` with
+    /// its error.
+    #[serde(flatten)]
+    pub trail: EsignSealTrail,
 }
 
 /// What the gate made of one e-sign dispatch.

@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/blob_artifact/esign/delivery_capability.rs` (lib split W3: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::blob_artifact::esign::model::*;
 use serde::Deserialize;
 use serde::Serialize;
 

@@ -6,7 +6,6 @@ use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeSet;
-use std::path::Path;
 
 /// `vault.repo.git_push.mint`'s input: the holder, the repos and an
 /// optional expiry. The host chooses the grant's vault scope, its mint time

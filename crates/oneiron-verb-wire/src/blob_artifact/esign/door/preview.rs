@@ -3,14 +3,8 @@
 
 use crate::blob_artifact::esign::render::presentation::FieldLayout;
 use crate::blob_artifact::esign::render::presentation::PageGeometry;
-use lopdf::DecodeAdmissionError;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::MutexGuard;
-use std::sync::PoisonError;
 
 /// One recipient ceremony item to preview under its signing capability.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -9,12 +9,20 @@ use super::{
 };
 use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Result, Vault};
-#[doc(hidden)]
-pub use oneiron_verb_wire::blob_artifact::esign::ceremony::{
-    SigningAction, SigningOutcome, SigningPage, SigningSealedItem,
-};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SigningAction {
+    Load,
+    SaveField { field: String, value: FieldValue },
+    Complete { consent: bool, next: Option<String> },
+    Reject { reason: String },
+}
+#[doc(hidden)]
+pub use oneiron_verb_wire::blob_artifact::esign::ceremony::{
+    SigningOutcome, SigningPage, SigningSealedItem,
+};
 
 /// Who a signing call shows itself to be (OF-415). The capability proves
 /// access to a recipient's turn, not who holds the link: only a vault
@@ -37,6 +45,17 @@ impl SigningCaller {
             Self::Bearer => EsignAuthenticationMethod::Bearer,
             Self::Person => EsignAuthenticationMethod::Person,
             Self::Agent => EsignAuthenticationMethod::Agent,
+        }
+    }
+}
+
+impl SigningAction {
+    fn verb(&self) -> &'static str {
+        match self {
+            Self::Load => "load",
+            Self::SaveField { .. } => "save_field",
+            Self::Complete { .. } => "complete",
+            Self::Reject { .. } => "reject",
         }
     }
 }

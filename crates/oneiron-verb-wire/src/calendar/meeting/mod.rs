@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/calendar/meeting/mod.rs` (lib split W3: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::calendar::outcome;
 use crate::calendar::outcome::EventOutcome;
 use crate::calendar::outcome::EventOutcomeClaimValue;
 use serde::Deserialize;

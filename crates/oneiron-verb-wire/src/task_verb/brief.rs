@@ -1,13 +1,11 @@
 //! Moved from `crates/oneiron/src/task_verb/brief.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Error;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::memory::MemoryError;
 use oneiron_contracts::memory::MemoryResult;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// Domain of [`brief_digest`].
 pub const BRIEF_DIGEST_DOMAIN: &[u8] = b"oneiron.tasks.brief.digest.v1";

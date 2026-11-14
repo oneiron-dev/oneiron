@@ -4,7 +4,6 @@
 use crate::calendar::query::requests::CalendarRangeDto;
 use serde::Deserialize;
 use serde::Serialize;
-use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

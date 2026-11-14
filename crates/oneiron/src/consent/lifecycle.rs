@@ -20,10 +20,52 @@ pub use crate::gate::weave_grant::{
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::consent::lifecycle::{
-    ActionBoundRequest, ActionEnvelopeRequest, ApproveOnceRequest, CreateStandingGrantRequest,
-    DenyConsentRequest, DisclosureBoundRequest, DisclosureEnvelopeRequest, RevokeGrantRequest,
-    StandingGrantBound,
+    ActionBoundRequest, ActionEnvelopeRequest, ApproveOnceRequest, DenyConsentRequest,
+    DisclosureBoundRequest, DisclosureEnvelopeRequest, RevokeGrantRequest,
 };
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateStandingGrantRequest {
+    pub bound: StandingGrantBound,
+}
+
+/// Action and disclosure bounds are disjoint, including on the wire.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum StandingGrantBound {
+    Action(ActionBoundRequest),
+    Disclosure(DisclosureBoundRequest),
+}
+
+impl StandingGrantBound {
+    fn into_bound(self) -> crate::Result<GrantBound> {
+        match self {
+            Self::Action(bound) => {
+                let project = normalized_ref("project", bound.envelope.project)?;
+                let mut selectors = vec![format!("project:{project}")];
+                for member in bound.envelope.audience {
+                    let member = normalized_ref("action audience member", member)?;
+                    selectors.push(format!("audience:{member}"));
+                }
+                let mut envelope = ActionEnvelope::new(selectors)?.with_target(project)?;
+                if let Some(budget) = bound.envelope.budget {
+                    envelope = envelope.with_budget(budget);
+                }
+                GrantBound::action(
+                    ActorBound::new(bound.actor)?,
+                    ActionClass::new(bound.class)?,
+                    envelope,
+                )
+            }
+            Self::Disclosure(bound) => GrantBound::disclosure(
+                AudienceBound::new(bound.audience)?,
+                DisclosureClass::new(bound.class)?,
+                DisclosureEnvelope::new(bound.envelope.selectors)?,
+            ),
+        }
+    }
+}
 
 /// The existing Gate receipt, not a second settlement ledger.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

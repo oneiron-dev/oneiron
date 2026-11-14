@@ -4,7 +4,6 @@
 use oneiron_authority::share_travel::TravelChoice;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// `vault.shares.create`'s input: the brief, its recipient, the most the view
 /// may show, and what born-with text travels.

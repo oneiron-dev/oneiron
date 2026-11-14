@@ -5,9 +5,6 @@ use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::attempt_state::AttemptState;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::collections::VecDeque;
 
 /// Everything one agent made, transitively, and what each is doing now.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

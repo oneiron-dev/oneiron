@@ -1,23 +1,9 @@
 //! Moved from `crates/oneiron/src/blob_artifact/esign/render/presentation.rs` (lib split W3: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::blob_artifact::esign::model::*;
 use crate::blob_artifact::esign::render::*;
-use lopdf::Dictionary;
-use lopdf::Document;
-use lopdf::LoadOptions;
-use lopdf::Object;
-use lopdf::ObjectId;
-use lopdf::Stream;
-use lopdf::content::Content;
-use lopdf::content::Operation;
-use lopdf::dictionary;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

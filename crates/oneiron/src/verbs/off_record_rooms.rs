@@ -16,7 +16,7 @@ mod copy;
 pub use oneiron_verb_wire::verbs::off_record_rooms::{
     OffRecordRoomCopyLoss, OffRecordRoomCopyResult, OffRecordRoomCopySlot,
     OffRecordRoomCopySlotHandling, OffRecordRoomExportRequest, OffRecordRoomNotice,
-    OffRecordRoomRequest, OffRecordRoomSaved, OffRecordRoomSavedTurn, OffRecordRoomShortIdPair,
+    OffRecordRoomRequest, OffRecordRoomSavedTurn, OffRecordRoomShortIdPair,
     OffRecordRoomStartRequest, OffRecordRoomSuggestion, OffRecordRoomView,
 };
 
@@ -29,6 +29,12 @@ pub struct OffRecordRoomWitnessRequest {
     pub turn: crate::memory::WitnessTurn,
     #[serde(default)]
     pub summary: Option<String>,
+}
+
+/// What a holder's save wrote into this vault.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct OffRecordRoomSaved {
+    pub saved: Vec<OffRecordRoomSavedTurn>,
 }
 
 impl From<crate::off_record::SavedTurns> for OffRecordRoomSaved {

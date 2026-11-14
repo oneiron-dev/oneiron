@@ -8,21 +8,8 @@ pub use crate::blob_artifact::esign::render::presentation::FieldMark;
 pub use crate::blob_artifact::esign::render::presentation::FieldPresentation;
 pub use crate::blob_artifact::esign::render::presentation::PageGeometry;
 pub use lopdf::DecodeAdmissionError;
-use lopdf::Dictionary;
-use lopdf::Document;
-use lopdf::LoadOptions;
-use lopdf::Object;
-use lopdf::ObjectId;
-use lopdf::Stream;
-use lopdf::content::Content;
-use lopdf::content::Operation;
-use lopdf::dictionary;
 use oneiron_contracts::limit_ask::EngineLimit;
 pub use oneiron_store::blob_artifact::esign::render::admitted::InspectionMemory;
-use sha2::Digest;
-use sha2::Sha256;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 pub type Result<T> = std::result::Result<T, PdfPreparationError>;
 

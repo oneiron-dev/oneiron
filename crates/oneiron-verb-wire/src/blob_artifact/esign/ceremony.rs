@@ -7,15 +7,6 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
-pub enum SigningAction {
-    Load,
-    SaveField { field: String, value: FieldValue },
-    Complete { consent: bool, next: Option<String> },
-    Reject { reason: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SigningPage {
     pub item_count: usize,
     pub title: String,
@@ -50,15 +41,4 @@ pub enum SigningOutcome {
         held_at: u64,
     },
     ConsentRequired,
-}
-
-impl SigningAction {
-    fn verb(&self) -> &'static str {
-        match self {
-            Self::Load => "load",
-            Self::SaveField { .. } => "save_field",
-            Self::Complete { .. } => "complete",
-            Self::Reject { .. } => "reject",
-        }
-    }
 }

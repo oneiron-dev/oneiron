@@ -10,9 +10,6 @@ pub use crate::policy_model::owner_rows::world_privacy_will::record::WorldPrivac
 pub use crate::policy_model::owner_rows::world_privacy_will::sdk::WorldPrivacySetInput;
 pub use crate::policy_model::owner_rows::world_privacy_will::sdk::WorldReadInput;
 pub use crate::policy_model::owner_rows::world_privacy_will::sdk::WorldSealedInput;
-pub use crate::policy_model::owner_rows::world_privacy_will::unanimity::WidenUnanimity;
-pub use crate::policy_model::owner_rows::world_privacy_will::unanimity::WidenUnanimityOffRequest;
-pub use crate::policy_model::owner_rows::world_privacy_will::unanimity::WidenUnanimityOutcome;
 
 pub mod secret_scan_switch;
 pub mod world_privacy_will;

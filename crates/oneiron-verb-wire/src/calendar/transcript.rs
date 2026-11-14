@@ -4,8 +4,6 @@
 pub use crate::calendar::transcript::door::TranscriptFileDropInput;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "outcome", rename_all = "snake_case")]

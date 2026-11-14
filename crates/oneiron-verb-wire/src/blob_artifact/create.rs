@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/blob_artifact/create.rs` (lib split W3: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use base64::Engine as _;
 use serde::Deserialize;
 use serde::Serialize;
 

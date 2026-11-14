@@ -38,18 +38,27 @@ use crate::skill_attribution::{
 };
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::verbs::skill_attribution::{
-    AmendmentDeltaView, AmendmentEvidenceView, AmendmentShareView, AttemptJudgmentView,
-    AttributionEvidenceReceipt, AttributionEvidenceRequest, AttributionLabel,
-    AttributionListRequest, AttributionProjectRequest, AttributionProjection,
-    AttributionProposalsView, FollowedStateInput, OpsSummaryView, PositiveProposalView,
-    PositiveRetireReceipt, PositiveRetireRequest, PreferenceProposalView, ProposalAmendmentCause,
-    ProposalArtifactView, ProposalDeltaReadRequest, ProposalDeltaSettleRequest,
-    ProposalHunkVerdict, ProposalOpSpanView, ProposalReplacement, ProposalShareClaim,
-    SettledHunkView, SkillEditProposalView, UnclearAttributionView, UnclearNoteView,
-};
+use oneiron_verb_wire::verbs::skill_attribution::invalid;
 #[doc(hidden)]
-use oneiron_verb_wire::verbs::skill_attribution::{certain, invalid};
+pub use oneiron_verb_wire::verbs::skill_attribution::{
+    AmendmentDeltaView, AmendmentEvidenceView, AttributionEvidenceReceipt, AttributionListRequest,
+    AttributionProjectRequest, AttributionProposalsView, OpsSummaryView, PositiveProposalView,
+    PositiveRetireReceipt, PositiveRetireRequest, PreferenceProposalView, ProposalAmendmentCause,
+    ProposalArtifactView, ProposalDeltaReadRequest, ProposalOpSpanView, ProposalReplacement,
+    SettledHunkView, SkillEditProposalView,
+};
+
+/// One attribution label, spelled as the engine's pinned token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AttributionLabel {
+    SkillDefect,
+    ExecutionLapse,
+    Discovery,
+    Environment,
+    PreferenceShift,
+    Unclear,
+}
 
 impl From<AttributionLabel> for AttributionVerdict {
     fn from(label: AttributionLabel) -> Self {
@@ -60,6 +69,19 @@ impl From<AttributionLabel> for AttributionVerdict {
             AttributionLabel::Environment => Self::Environment,
             AttributionLabel::PreferenceShift => Self::PreferenceShift,
             AttributionLabel::Unclear => Self::Unclear,
+        }
+    }
+}
+
+impl From<AttributionVerdict> for AttributionLabel {
+    fn from(verdict: AttributionVerdict) -> Self {
+        match verdict {
+            AttributionVerdict::SkillDefect => Self::SkillDefect,
+            AttributionVerdict::ExecutionLapse => Self::ExecutionLapse,
+            AttributionVerdict::Discovery => Self::Discovery,
+            AttributionVerdict::Environment => Self::Environment,
+            AttributionVerdict::PreferenceShift => Self::PreferenceShift,
+            AttributionVerdict::Unclear => Self::Unclear,
         }
     }
 }
@@ -82,6 +104,70 @@ impl From<AmendmentCause> for ProposalAmendmentCause {
             AmendmentCause::DeciderPreference => Self::DeciderPreference,
         }
     }
+}
+
+/// The owner's label for one changed hunk, in replacement order.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProposalHunkVerdict {
+    pub verdict: AttributionLabel,
+    #[serde(default = "certain")]
+    pub confidence: f32,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+const fn certain() -> f32 {
+    1.0
+}
+
+/// One entry of a claimed percentage vector. The vector is validated as a
+/// distribution; routed shares are always the hunk-weighted computed ones.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProposalShareClaim {
+    pub class: AttributionLabel,
+    pub share: f32,
+}
+
+/// Settle one amended proposal: the proposed text, the owner's exact
+/// replacements in order, the original artifact when the edit rode one, the
+/// routing facts, and optionally the owner's per-hunk labels and claimed
+/// percentage vector.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProposalDeltaSettleRequest {
+    pub proposed_text: String,
+    pub replacements: Vec<ProposalReplacement>,
+    /// The actor whose proposal was amended.
+    pub actor: EntityId,
+    #[serde(default)]
+    pub skill: Option<EntityId>,
+    /// The terminal pack receipt of the attempt whose proposal was amended.
+    #[serde(default)]
+    pub attempt_receipt: Option<String>,
+    /// The executor identity at revision that drafted the proposal, for a
+    /// host without an attempt receipt; a named attempt's own stamp wins.
+    #[serde(default)]
+    pub executor: Option<String>,
+    /// The original proposal artifact; absent for an edit imported with its
+    /// endpoints only, which is measured as reconstructed (FIX 10176).
+    #[serde(default)]
+    pub artifact_ref: Option<EntityId>,
+    pub scope: String,
+    #[serde(default)]
+    pub cause: Option<ProposalAmendmentCause>,
+    #[serde(default)]
+    pub followed_skill: Option<bool>,
+    #[serde(default)]
+    pub skill_covered_step: Option<bool>,
+    pub at: u64,
+    /// One label per replacement, in order. Absent, the rule tier judges.
+    #[serde(default)]
+    pub hunk_verdicts: Option<Vec<ProposalHunkVerdict>>,
+    /// The claimed percentage vector, validated before anything persists.
+    #[serde(default)]
+    pub shares: Option<Vec<ProposalShareClaim>>,
 }
 
 impl From<OpsSummary> for OpsSummaryView {
@@ -107,6 +193,13 @@ impl From<AmendmentDelta> for AmendmentDeltaView {
             engine_ver: delta.engine_ver,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AmendmentShareView {
+    pub class: AttributionLabel,
+    pub share: f32,
+    pub subject: Option<EntityId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -394,6 +487,24 @@ impl From<PreferenceProposal> for PreferenceProposalView {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct UnclearNoteView {
+    pub reason: String,
+    pub leaning: Option<AttributionLabel>,
+    pub confidence: f32,
+    pub share: f32,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct UnclearAttributionView {
+    pub lane: String,
+    pub reference: String,
+    pub evidence_receipts: Vec<String>,
+    pub notes: Vec<UnclearNoteView>,
+    pub at: u64,
+}
+
 impl From<UnclearAttribution> for UnclearAttributionView {
     fn from(row: UnclearAttribution) -> Self {
         Self {
@@ -470,6 +581,61 @@ pub fn skill_attribution_read_as_owner(
     })
 }
 
+/// How one loaded skill was followed, as recorded outcome evidence.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum FollowedStateInput {
+    Followed,
+    Partly,
+    Ignored,
+    DeviatedWithReason {
+        reason: String,
+        #[serde(default)]
+        cause: Option<String>,
+    },
+}
+
+impl FollowedStateInput {
+    fn engine(&self) -> MemoryResult<FollowedState> {
+        Ok(match self {
+            Self::Followed => FollowedState::Followed,
+            Self::Partly => FollowedState::Partly,
+            Self::Ignored => FollowedState::Ignored,
+            Self::DeviatedWithReason { reason, cause } => FollowedState::DeviatedWithReason {
+                reason: reason.clone(),
+                cause: cause
+                    .as_deref()
+                    .map(|token| match token {
+                        "incorrect_instruction" => Ok(DeviationCause::IncorrectInstruction),
+                        "missing_instruction" => Ok(DeviationCause::MissingInstruction),
+                        "executor_error" => Ok(DeviationCause::ExecutorError),
+                        _ => Err(invalid("unknown deviation cause")),
+                    })
+                    .transpose()?,
+            },
+        })
+    }
+}
+
+/// Record one attempt outcome for later attribution. Recording never
+/// classifies; the projector owns the verdict.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AttributionEvidenceRequest {
+    pub receipt_ref: String,
+    pub actor: EntityId,
+    #[serde(default)]
+    pub skill: Option<EntityId>,
+    pub outcome: String,
+    #[serde(default)]
+    pub followed_skill: Option<bool>,
+    #[serde(default)]
+    pub followed_state: Option<FollowedStateInput>,
+    #[serde(default)]
+    pub skill_covered_step: Option<bool>,
+    pub at: u64,
+}
+
 pub fn skill_attribution_evidence_record_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -493,6 +659,28 @@ pub fn skill_attribution_evidence_record_as_owner(
     Ok(AttributionEvidenceReceipt { sequence })
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AttemptJudgmentView {
+    pub sequence: u64,
+    pub verdict: AttributionLabel,
+    /// `None` once the actor it charged is erased (FIX 8988).
+    pub subject: Option<EntityId>,
+    pub evidence_receipts: Vec<String>,
+    pub at: u64,
+}
+
+impl From<AttributionJudgment> for AttemptJudgmentView {
+    fn from(judgment: AttributionJudgment) -> Self {
+        Self {
+            sequence: judgment.sequence,
+            verdict: judgment.verdict.into(),
+            subject: judgment.subject,
+            evidence_receipts: judgment.evidence_receipts,
+            at: judgment.at,
+        }
+    }
+}
+
 impl From<PositiveSkillProposal> for PositiveProposalView {
     fn from(proposal: PositiveSkillProposal) -> Self {
         let (finding, reason) = match proposal.finding {
@@ -511,6 +699,14 @@ impl From<PositiveSkillProposal> for PositiveProposalView {
             at: proposal.at,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AttributionProjection {
+    pub cursor: u64,
+    pub judgments: Vec<AttemptJudgmentView>,
+    pub positive_proposals: Vec<PositiveProposalView>,
+    pub pending_edit_proposals: Vec<SkillEditProposalView>,
 }
 
 pub fn skill_attribution_project_as_owner(

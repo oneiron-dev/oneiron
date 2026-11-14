@@ -3,57 +3,11 @@
 
 use crate::calendar::query::requests::CalendarEventView;
 use crate::calendar::query::requests::CalendarRangeDto;
-use crate::calendar::query::requests::CalendarSearchRequest;
 use crate::calendar::query::requests::CalendarSel;
 use crate::calendar::query::window::CalendarOccurrenceView;
 use crate::memory::outbound::calendar::CalendarFreebusyIntervalDto;
 use serde::Deserialize;
 use serde::Serialize;
-use std::time::Duration;
-use std::time::Instant;
-
-/// `vault.calendar.search` as a page: [`CalendarSearchRequest`]'s fields,
-/// a deadline, and the frontier an earlier page answered.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CalendarSearchPageRequest {
-    /// Calendar selectors; see [`CalendarSel`] for passport matching.
-    pub calendars: Vec<CalendarSel>,
-    /// Inclusive UTC window; `None` means unbounded (then nothing expands
-    /// and the page is the whole answer).
-    pub range: Option<CalendarRangeDto>,
-    /// Case-insensitive substring matched against the EVENT name.
-    pub text: Option<String>,
-    /// Maximum rows one page holds, clamped to
-    /// [`super::MAX_CALENDAR_SEARCH_LIMIT`]; a page ends only between two
-    /// distinct starts, so one start shared by more rows than the limit is
-    /// returned whole.
-    pub limit: u32,
-    /// Milliseconds this call may read for, 1 to 60000, checked between
-    /// slices; none reads to the window's end or the limit.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deadline_ms: Option<u64>,
-    /// The `resume_from` an earlier page of this same request answered;
-    /// none starts at the range's start. Needs a range.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resume_from: Option<u64>,
-    /// The caller's retrieval filter (FIX 3977): it narrows every EVENT the
-    /// page reads, conjoined with the calendar, window and name selectors.
-    #[serde(default)]
-    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
-}
-
-impl CalendarSearchPageRequest {
-    fn search(&self) -> CalendarSearchRequest {
-        CalendarSearchRequest {
-            calendars: self.calendars.clone(),
-            range: self.range,
-            text: self.text.clone(),
-            limit: self.limit,
-            filter: self.filter.clone(),
-        }
-    }
-}
 
 /// One page of `vault.calendar.search`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

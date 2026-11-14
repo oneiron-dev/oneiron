@@ -3,8 +3,6 @@
 
 pub use crate::authority::clock_repair::AuthorityClockRepair;
 pub use crate::authority::clock_repair::AuthorityClockRepairOutcome;
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
 use serde::Deserialize;
 use serde::Serialize;
 

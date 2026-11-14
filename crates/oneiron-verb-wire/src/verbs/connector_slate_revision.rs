@@ -7,8 +7,6 @@ use oneiron_contracts::memory::MemoryError;
 use oneiron_contracts::memory::MemoryResult;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 pub fn id(value: &str, field: &'static str) -> MemoryResult<EntityId> {
     EntityId::from_hex(value).map_err(|_| MemoryError::bad_request(field))

@@ -27,14 +27,11 @@ pub use self::local_pack_agent::*;
 pub use self::pack_setup::*;
 
 #[doc(hidden)]
-use oneiron_verb_wire::verbs::host::yes_no;
-#[doc(hidden)]
 pub use oneiron_verb_wire::verbs::host::{
-    AiAnswer, AiCallRequest, AiImageMask, AiOptionsRequest, AiPart, AiVerdictRequest,
-    AiVerdictReversibility, AiVideoJobRequest, AiVoice, ChannelSubscriptionRequest,
-    ChannelSubscriptionRevokeRequest, ChannelSubscriptionsRequest, PackBytesFile,
-    PackFileDecodeError, PackFileInput, PackPutRequest, PackRemoveRequest, PackTextFile,
-    decode_pack_files,
+    AiAnswer, AiCallRequest, AiImageMask, AiOptionsRequest, AiPart, AiVideoJobRequest, AiVoice,
+    ChannelSubscriptionRequest, ChannelSubscriptionRevokeRequest, ChannelSubscriptionsRequest,
+    PackBytesFile, PackFileDecodeError, PackFileInput, PackPutRequest, PackRemoveRequest,
+    PackTextFile, decode_pack_files,
 };
 
 pub use crate::memory::hook_regen_doors::{PackPutOutcome, PackPutReceipt};
@@ -278,6 +275,19 @@ pub struct AiVideoCancelled {
     pub job: String,
 }
 
+/// What a wrong `ai.verdict` would cost: a read that can be redone, or an
+/// effect that leaves the vault. The bands escalate an outbound effect
+/// sooner.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AiVerdictReversibility {
+    #[default]
+    ReversibleRead,
+    OutboundEffect,
+}
+
 impl From<AiVerdictReversibility> for crate::llm::decision::Reversibility {
     fn from(value: AiVerdictReversibility) -> Self {
         match value {
@@ -288,6 +298,74 @@ impl From<AiVerdictReversibility> for crate::llm::decision::Reversibility {
 }
 
 pub use crate::receipt::AI_VERDICT_DEADLINE_MS;
+
+/// `ai.verdict`'s input: one typed question through the host's decision
+/// ladder (ARCH-0076), asked for the caller. The principal is the caller's
+/// own actor, never a field here.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AiVerdictRequest {
+    /// The question, as the ladder's providers read it.
+    pub question: String,
+    /// What the answer is (ARCH-0076): `{"kind": "noul"}`, yes or no with
+    /// P(yes), when absent; `{"kind": "choice", "options": [...]}`, one of
+    /// its labels; `{"kind": "score", "min": 1, "max": 5}`, one number in
+    /// that range, in the units and direction the question names;
+    /// `{"kind": "box"}` or `{"kind": "point"}`, where the question's target
+    /// sits in `image`, as fractions of it from its top left (none when the
+    /// target is absent, once the host's presence question says so).
+    #[serde(default = "yes_no")]
+    pub contract: crate::llm::decision::AnswerContract,
+    /// Entity refs (short refs or 32-hex ids, each optionally `@<revision>`)
+    /// the answer reads. Each must be readable by the caller; the providers
+    /// read their views in the call's state, every text in them cut to fit
+    /// it when the views do not fit whole (`evidence_cut_at_bytes`).
+    #[serde(default)]
+    pub evidence: Vec<String>,
+    /// What else the question reads, beside the evidence.
+    #[serde(default)]
+    pub state: Option<serde_json::Value>,
+    /// The highest rung that may answer; `big` when absent. A verdict never
+    /// queues an owner ask, so `human` is refused.
+    #[serde(default)]
+    pub ceiling: Option<crate::llm::decision::DecisionRung>,
+    #[serde(default)]
+    pub reversibility: AiVerdictReversibility,
+    /// The call's clock, 1 to 60000 milliseconds;
+    /// [`AI_VERDICT_DEADLINE_MS`] when absent.
+    #[serde(default)]
+    pub deadline_ms: Option<u64>,
+    /// A routine driver step (OF-523, the CUA-S1 pattern): a Choice's
+    /// `options` are the step's candidates (at most 61), and the ladder also
+    /// offers NONE, reobserve and "too complicated, ask up"; a Box or a Point
+    /// acts where it finds the target. The answer comes back as an `outcome`
+    /// the program acts on.
+    #[serde(default)]
+    pub routine: bool,
+    /// An image the question reads, by its view handle (`<asset>@<hash>`):
+    /// a screenshot, as an evidence ref. Read under the caller's own scoped
+    /// read; the question names it as `image`. An image call starts at the
+    /// Local-vision rung. In a code run, a `blake3:` ref names a screenshot
+    /// the run's browser holds, read from that browser as an evidence ref on
+    /// the run.
+    #[serde(default)]
+    pub image: Option<String>,
+    /// NONE or reobserve outcomes the subgoal's steps gave in a row before
+    /// this one: the answer says when the next observation takes a
+    /// screenshot.
+    #[serde(default)]
+    pub misses: u32,
+    /// The subgoal's one clock, as the Unix milliseconds it ends at: every
+    /// routine step of one subgoal names the same instant, so a reobserve or
+    /// a retry never restarts it. One call still runs at most 60000
+    /// milliseconds. The answer names the instant its own clock ends at.
+    #[serde(default)]
+    pub until_ms: Option<u64>,
+}
+
+fn yes_no() -> crate::llm::decision::AnswerContract {
+    crate::llm::decision::AnswerContract::Noul
+}
 
 /// `ai.verdict`'s answer: the ladder's answer on the request's contract, its
 /// probability (P(yes) for a yes/no, else the answer's confidence; none for a

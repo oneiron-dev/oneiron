@@ -7,7 +7,6 @@ pub use crate::code_run::dispatcher::connector_answer::ConnectorQuestionAnswer;
 use crate::outbound_consent::connector_call_types::ConnectorSource;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
 
 /// `connector.schema`'s input: a selected connector and one of its tools.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

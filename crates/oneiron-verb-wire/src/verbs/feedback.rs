@@ -9,7 +9,6 @@ use crate::feedback::report::routing::ReportDisclosureChoice;
 use crate::feedback::report::routing::ReportRoute;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// `vault.reports.disclosure`: whether one publisher-routed report's exact
 /// text may cross to its publisher, once or for that publisher.

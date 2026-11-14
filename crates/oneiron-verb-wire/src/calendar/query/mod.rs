@@ -4,7 +4,6 @@ pub use crate::calendar::query::pages::CalendarFreebusyPageRequest;
 pub use crate::calendar::query::pages::CalendarOccurrencesPage;
 pub use crate::calendar::query::pages::CalendarOccurrencesPageRequest;
 pub use crate::calendar::query::pages::CalendarSearchPage;
-pub use crate::calendar::query::pages::CalendarSearchPageRequest;
 pub use crate::calendar::query::requests::CalendarEventView;
 pub use crate::calendar::query::requests::CalendarRangeDto;
 pub use crate::calendar::query::requests::CalendarReadRequest;

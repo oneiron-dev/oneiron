@@ -9,7 +9,6 @@ use oneiron_docedit::pptx_comments::PptxCommentTarget;
 pub use oneiron_store::blob_artifact::slide_review::REVIEW_IMAGE;
 pub use oneiron_store::blob_artifact::slide_review::SlideRenderer;
 pub use oneiron_store::blob_artifact::slide_review::SlideUnitRefusalReason;
-pub(crate) use oneiron_store::blob_artifact::slide_review::review_copy_bytes;
 pub use oneiron_store::blob_artifact::slide_review::review_image_key;
 use oneiron_store::model_decision::AnswerContract;
 use oneiron_store::model_decision::BandMode;
@@ -19,9 +18,6 @@ use oneiron_store::model_decision::DecisionRung;
 use oneiron_wake_contract::llm::decision::types::TypedDecision;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::HashSet;
-use std::time::Duration;
-use std::time::Instant;
 
 /// User-configured display words, including the severity words in comments.
 /// No question, glossary, prompt or user-facing label is compiled into Rust.

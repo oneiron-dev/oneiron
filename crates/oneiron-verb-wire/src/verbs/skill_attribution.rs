@@ -3,42 +3,12 @@
 
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
-use oneiron_skill_attribution::types::AttributionJudgment;
-use oneiron_skill_attribution::types::AttributionVerdict;
-use oneiron_skill_attribution::types::DeviationCause;
-use oneiron_skill_attribution::types::FollowedState;
 use oneiron_skill_attribution::types::SkillEditProposal;
 use serde::Deserialize;
 use serde::Serialize;
 
 pub fn invalid(message: &'static str) -> MemoryError {
     MemoryError::bad_request(message)
-}
-
-/// One attribution label, spelled as the engine's pinned token.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AttributionLabel {
-    SkillDefect,
-    ExecutionLapse,
-    Discovery,
-    Environment,
-    PreferenceShift,
-    Unclear,
-}
-
-impl From<AttributionVerdict> for AttributionLabel {
-    fn from(verdict: AttributionVerdict) -> Self {
-        match verdict {
-            AttributionVerdict::SkillDefect => Self::SkillDefect,
-            AttributionVerdict::ExecutionLapse => Self::ExecutionLapse,
-            AttributionVerdict::Discovery => Self::Discovery,
-            AttributionVerdict::Environment => Self::Environment,
-            AttributionVerdict::PreferenceShift => Self::PreferenceShift,
-            AttributionVerdict::Unclear => Self::Unclear,
-        }
-    }
 }
 
 /// Why the decider amended, spelled as the engine's pinned token.
@@ -59,70 +29,6 @@ pub struct ProposalReplacement {
     pub after: String,
 }
 
-/// The owner's label for one changed hunk, in replacement order.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProposalHunkVerdict {
-    pub verdict: AttributionLabel,
-    #[serde(default = "certain")]
-    pub confidence: f32,
-    #[serde(default)]
-    pub note: Option<String>,
-}
-
-pub const fn certain() -> f32 {
-    1.0
-}
-
-/// One entry of a claimed percentage vector. The vector is validated as a
-/// distribution; routed shares are always the hunk-weighted computed ones.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProposalShareClaim {
-    pub class: AttributionLabel,
-    pub share: f32,
-}
-
-/// Settle one amended proposal: the proposed text, the owner's exact
-/// replacements in order, the original artifact when the edit rode one, the
-/// routing facts, and optionally the owner's per-hunk labels and claimed
-/// percentage vector.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProposalDeltaSettleRequest {
-    pub proposed_text: String,
-    pub replacements: Vec<ProposalReplacement>,
-    /// The actor whose proposal was amended.
-    pub actor: EntityId,
-    #[serde(default)]
-    pub skill: Option<EntityId>,
-    /// The terminal pack receipt of the attempt whose proposal was amended.
-    #[serde(default)]
-    pub attempt_receipt: Option<String>,
-    /// The executor identity at revision that drafted the proposal, for a
-    /// host without an attempt receipt; a named attempt's own stamp wins.
-    #[serde(default)]
-    pub executor: Option<String>,
-    /// The original proposal artifact; absent for an edit imported with its
-    /// endpoints only, which is measured as reconstructed (FIX 10176).
-    #[serde(default)]
-    pub artifact_ref: Option<EntityId>,
-    pub scope: String,
-    #[serde(default)]
-    pub cause: Option<ProposalAmendmentCause>,
-    #[serde(default)]
-    pub followed_skill: Option<bool>,
-    #[serde(default)]
-    pub skill_covered_step: Option<bool>,
-    pub at: u64,
-    /// One label per replacement, in order. Absent, the rule tier judges.
-    #[serde(default)]
-    pub hunk_verdicts: Option<Vec<ProposalHunkVerdict>>,
-    /// The claimed percentage vector, validated before anything persists.
-    #[serde(default)]
-    pub shares: Option<Vec<ProposalShareClaim>>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AmendmentDeltaView {
     pub proposed_ref: String,
@@ -140,13 +46,6 @@ pub struct OpsSummaryView {
     pub kept: u32,
     pub moved: u32,
     pub approx: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct AmendmentShareView {
-    pub class: AttributionLabel,
-    pub share: f32,
-    pub subject: Option<EntityId>,
 }
 
 /// One changed hunk as settled: the recorded replacement, its measured edit
@@ -214,103 +113,8 @@ pub struct PreferenceProposalView {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct UnclearNoteView {
-    pub reason: String,
-    pub leaning: Option<AttributionLabel>,
-    pub confidence: f32,
-    pub share: f32,
-    pub note: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct UnclearAttributionView {
-    pub lane: String,
-    pub reference: String,
-    pub evidence_receipts: Vec<String>,
-    pub notes: Vec<UnclearNoteView>,
-    pub at: u64,
-}
-
-/// How one loaded skill was followed, as recorded outcome evidence.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum FollowedStateInput {
-    Followed,
-    Partly,
-    Ignored,
-    DeviatedWithReason {
-        reason: String,
-        #[serde(default)]
-        cause: Option<String>,
-    },
-}
-
-impl FollowedStateInput {
-    fn engine(&self) -> MemoryResult<FollowedState> {
-        Ok(match self {
-            Self::Followed => FollowedState::Followed,
-            Self::Partly => FollowedState::Partly,
-            Self::Ignored => FollowedState::Ignored,
-            Self::DeviatedWithReason { reason, cause } => FollowedState::DeviatedWithReason {
-                reason: reason.clone(),
-                cause: cause
-                    .as_deref()
-                    .map(|token| match token {
-                        "incorrect_instruction" => Ok(DeviationCause::IncorrectInstruction),
-                        "missing_instruction" => Ok(DeviationCause::MissingInstruction),
-                        "executor_error" => Ok(DeviationCause::ExecutorError),
-                        _ => Err(invalid("unknown deviation cause")),
-                    })
-                    .transpose()?,
-            },
-        })
-    }
-}
-
-/// Record one attempt outcome for later attribution. Recording never
-/// classifies; the projector owns the verdict.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AttributionEvidenceRequest {
-    pub receipt_ref: String,
-    pub actor: EntityId,
-    #[serde(default)]
-    pub skill: Option<EntityId>,
-    pub outcome: String,
-    #[serde(default)]
-    pub followed_skill: Option<bool>,
-    #[serde(default)]
-    pub followed_state: Option<FollowedStateInput>,
-    #[serde(default)]
-    pub skill_covered_step: Option<bool>,
-    pub at: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AttributionEvidenceReceipt {
     pub sequence: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct AttemptJudgmentView {
-    pub sequence: u64,
-    pub verdict: AttributionLabel,
-    /// `None` once the actor it charged is erased (FIX 8988).
-    pub subject: Option<EntityId>,
-    pub evidence_receipts: Vec<String>,
-    pub at: u64,
-}
-
-impl From<AttributionJudgment> for AttemptJudgmentView {
-    fn from(judgment: AttributionJudgment) -> Self {
-        Self {
-            sequence: judgment.sequence,
-            verdict: judgment.verdict.into(),
-            subject: judgment.subject,
-            evidence_receipts: judgment.evidence_receipts,
-            at: judgment.at,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -350,14 +154,6 @@ pub struct PositiveProposalView {
 pub struct AttributionProjectRequest {
     #[serde(default)]
     pub since_cursor: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct AttributionProjection {
-    pub cursor: u64,
-    pub judgments: Vec<AttemptJudgmentView>,
-    pub positive_proposals: Vec<PositiveProposalView>,
-    pub pending_edit_proposals: Vec<SkillEditProposalView>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]

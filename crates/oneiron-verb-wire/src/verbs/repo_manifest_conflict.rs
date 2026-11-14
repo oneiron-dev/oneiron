@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/verbs/repo_manifest_conflict.rs` (lib split W3: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use base64::Engine;
 use serde::Deserialize;
 use serde::Serialize;
 

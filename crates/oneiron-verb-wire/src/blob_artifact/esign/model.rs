@@ -5,8 +5,6 @@ use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_store::blob_artifact::esign::model::*;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

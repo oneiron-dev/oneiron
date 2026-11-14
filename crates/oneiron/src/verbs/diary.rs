@@ -11,9 +11,38 @@ use crate::consent::AuthenticatedOwner;
 use crate::memory::{DiaryReadOutcome, DiaryReadRecord, Memory, MemoryError, MemoryResult};
 use crate::{EdgeActorClass, EntityId};
 
+/// `self.memory.diary.query`'s input: whose diary, and the one-line reason
+/// the read states.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DiaryQueryRequest {
+    /// Whose diary, as 32 hex.
+    pub agent: String,
+    /// Why the caller reads; the agent sees it. One non-empty line.
+    pub reason: String,
+}
+
+impl DiaryQueryRequest {
+    /// Refuses an agent that is not an entity id, and a reason that is empty
+    /// or more than one line.
+    pub fn validate(&self) -> MemoryResult<()> {
+        self.agent_id()?;
+        let reason = self.reason.trim();
+        if reason.is_empty() || reason.contains(['\n', '\r']) {
+            return Err(MemoryError::bad_request("reason is one non-empty line"));
+        }
+        Ok(())
+    }
+
+    fn agent_id(&self) -> MemoryResult<EntityId> {
+        EntityId::from_hex(&self.agent)
+            .map_err(|_| MemoryError::bad_request("agent is not an entity id"))
+    }
+}
+
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::diary::{
-    AdminPadReadsRequest, AdminPadReadsView, DiaryQueryEntry, DiaryQueryOutcome, DiaryQueryRequest,
+    AdminPadReadsRequest, AdminPadReadsView, DiaryQueryEntry, DiaryQueryOutcome,
 };
 
 /// `self.memory.diary.query` on a handle: reads as the handle's actor, under

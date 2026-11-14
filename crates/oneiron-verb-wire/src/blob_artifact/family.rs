@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/blob_artifact/family.rs` (lib split W3: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
 use oneiron_store::blob_artifact::office_address::OfficeFormat;
 use serde::Deserialize;
 use serde::Serialize;
