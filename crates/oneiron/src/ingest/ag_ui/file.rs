@@ -69,9 +69,54 @@ fn decode_events(jsonl: &str) -> Result<Vec<super::AgUiDecodedEvent>> {
     AgUiSource::decode(jsonl).map_err(|_| Error::InvalidClaimBody("invalid AG-UI JSONL source"))
 }
 
+/// The binding every reader holds a stored capture to: an Imported claim
+/// under [`AG_UI_FILE_PREDICATE`] about the capture's own live ASSET, which
+/// names this claim and the project and app the capture names, authored by
+/// the owner it names, who is still a live vault owner.
+fn bound_file_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    claim: &crate::claim::ClaimBody,
+) -> Result<StoredFile> {
+    if claim.predicate != AG_UI_FILE_PREDICATE || claim.source != Some(ClaimSource::Imported) {
+        return Err(Error::InvalidClaimBody("not an imported AG-UI source"));
+    }
+    let file: StoredFile = rmpv::ext::from_value(claim.value.clone())
+        .map_err(|_| Error::InvalidClaimBody("invalid AG-UI source record"))?;
+    let project = EntityId::from_hex(&file.project_ref)?;
+    let actor = EntityId::from_hex(&file.capture_actor_ref)?;
+    let author = crate::batch::authenticated_claim_author_in_txn(&vault.store, txn, id, claim)?;
+    let asset_binds = if let ClaimSubject::Entity(asset) = claim.subject {
+        super::capture_asset::capture_asset_binds_in_txn(
+            &vault.store,
+            txn,
+            &asset,
+            *id,
+            project,
+            &file.app_id,
+        )?
+    } else {
+        false
+    };
+    if !asset_binds || author.is_none_or(|author| author.entity_ref() != actor) {
+        return Err(Error::InvalidClaimBody(
+            "AG-UI source capture binding changed",
+        ));
+    }
+    if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)? {
+        return Err(Error::InvalidClaimBody(
+            "AG-UI source mapping is not registered by a live owner",
+        ));
+    }
+    Ok(file)
+}
+
 impl Vault {
     /// Capture one owner-selected file as Imported/Proposed through the ordinary
     /// claim Gate. Source context is data, never a grant or an app-selected actor.
+    /// The file lands as its own ASSET, scoped to the project, and the claim is
+    /// about that asset (Engine RULING L2-15-CAPTURE-SUBJECT = C).
     pub fn ingest_ag_ui_file(
         &self,
         owner: &AuthenticatedOwner,
@@ -89,6 +134,7 @@ impl Vault {
             .map(EntityId::from_hex)
             .transpose()?
             .unwrap_or_else(EntityId::now);
+        let asset = EntityId::now();
         let actor = WriteActor::new(owner.revalidate(self)?, EdgeActorClass::Human);
         let file = StoredFile {
             capture_actor_ref: actor.entity_ref().to_hex(),
@@ -100,6 +146,10 @@ impl Vault {
         let hash = fingerprint(&file)?;
         let value = serde_json::to_value(&file)
             .map_err(|_| Error::InvalidClaimBody("AG-UI source encoding failed"))?;
+        let asset_body =
+            super::capture_asset::CaptureAssetBody::new(project, &input.app_id, id).encode()?;
+        // An erased capture whose delete ran no collection owes its asset here.
+        super::capture_asset::collect_capture_asset_erases(self);
         self.try_with_actor_content_write_txn(actor, CoreWriteLaneRef::Unbound, |content| {
             owner.revalidate_in_txn(self, content.read())?;
             if self
@@ -120,10 +170,33 @@ impl Vault {
                 start: now,
                 end: now,
             };
+            content.apply_batch(
+                self.batch_in()
+                    .put(
+                        &asset,
+                        crate::registry::ENTITY_TYPE_ASSET,
+                        occurred,
+                        now,
+                        &asset_body,
+                    )
+                    .made_by(
+                        &asset,
+                        crate::provenance::birth::RowBirth::written(
+                            actor,
+                            crate::provenance::made_by::MadeByClass::of_writer(
+                                EdgeActorClass::Human,
+                            ),
+                            "vault.ingest.ag_ui.import",
+                            &[],
+                            &[input.jsonl.as_bytes()],
+                            now,
+                        ),
+                    ),
+            )?;
             let admission = ImportedEvidenceAdmission::proposed(
                 super::AG_UI_SOURCE_ID,
                 id,
-                ImportedEvidenceEntityResolution::subject(project),
+                ImportedEvidenceEntityResolution::subject(asset),
                 actor,
                 occurred,
                 now,
@@ -190,33 +263,7 @@ impl Memory<'_> {
                     return Ok(None);
                 };
                 let claim = crate::claim::decode_claim_body(&bytes, true)?;
-                if claim.predicate != AG_UI_FILE_PREDICATE
-                    || claim.source != Some(ClaimSource::Imported)
-                {
-                    return Err(Error::InvalidClaimBody("not an imported AG-UI source"));
-                }
-                let file: StoredFile = rmpv::ext::from_value(claim.value.clone())
-                    .map_err(|_| Error::InvalidClaimBody("invalid AG-UI source record"))?;
-                let project = EntityId::from_hex(&file.project_ref)?;
-                let actor = EntityId::from_hex(&file.capture_actor_ref)?;
-                let author = crate::batch::authenticated_claim_author_in_txn(
-                    &self.vault().store,
-                    txn,
-                    &id,
-                    &claim,
-                )?;
-                if claim.subject != ClaimSubject::Entity(project)
-                    || author.is_none_or(|author| author.entity_ref() != actor)
-                {
-                    return Err(Error::InvalidClaimBody(
-                        "AG-UI source capture binding changed",
-                    ));
-                }
-                if !crate::policy_model::is_live_vault_owner_in_txn(self.vault(), txn, &actor)? {
-                    return Err(Error::InvalidClaimBody(
-                        "AG-UI source mapping is not registered by a live owner",
-                    ));
-                }
+                let file = bound_file_in_txn(self.vault(), txn, &id, &claim)?;
                 let hash = fingerprint(&file)?;
                 if hash != input.source_hash {
                     return Err(Error::InvalidClaimBody("AG-UI source fingerprint changed"));

@@ -99,6 +99,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     },
     // FIX 9876: an imported MESSAGE's text hash in the history import ledger.
     |write, txn, id| crate::ingest::history::erase_message_in_txn(write.store, txn, id),
+    // L2-15-CAPTURE-SUBJECT: an erased AG-UI capture's asset, owed its own delete.
+    |write, txn, id| crate::ingest::owe_capture_asset_erase_in_txn(write.store, txn, id),
     // FIX 9775: a PERSON's trusted-contact relations, asks and staged notices.
     |write, txn, id| erase_trusted_contact_rows_in_txn(write.store, txn, id),
     // FIX 11952: a TASK's comm receipt-import skip marker.
