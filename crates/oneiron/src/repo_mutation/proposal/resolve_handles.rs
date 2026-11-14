@@ -280,6 +280,7 @@ pub(super) fn resolved_successor(
                     keys: Vec::new(),
                     masked_at: marked_at,
                     members: Vec::new(),
+                    sealed: false,
                 },
             );
         for ((_, _, text), (start, end)) in spans.iter().zip(resolved_ranges.iter()) {
