@@ -72,6 +72,7 @@ use crate::connector_elicitation::{
 };
 use crate::server::SyncServer;
 
+mod http_api;
 mod json_wire;
 mod live_exchange;
 mod presenting;
@@ -84,7 +85,7 @@ mod served_calls;
 mod stream_pump;
 use json_wire::{KeptWire, post_json};
 use live_exchange::{Continuation, LiveSession, hand_over};
-use presenting::{Intake, KeptRound, KeyAliases, clear_event, clear_questions};
+use presenting::{CallExchange, Intake, KeptRound, KeyAliases, clear_event, clear_questions};
 pub(crate) use remote_task_poll::poll_remote_tasks;
 use reply_read::{Reply, StreamEvent, open_reply, read_reply, tool_result};
 use resume::RoundResume;
@@ -236,9 +237,6 @@ impl ServedConnectorCallHost {
         let Some(connector) = self.connectors.get(view.server()) else {
             return Sent::not_sent(OutboundFailureKind::TransportNotStarted, None);
         };
-        match connector.transport {
-            ConnectorTransport::McpHttp => {}
-        }
         // The grant admitted the frozen endpoint; this host sends only to
         // the one it installed under the same name.
         if connector.endpoint != view.endpoint() {
@@ -250,6 +248,13 @@ impl ServedConnectorCallHost {
             Ok(Some(route)) => Some(self.presenting(route)),
             _ => None,
         };
+        match connector.transport {
+            ConnectorTransport::McpHttp => {}
+            // One request to the API (L8-31 D7): no session, no question.
+            ConnectorTransport::HttpApi => {
+                return self.send_http_operation(call, &view, presenting, presented);
+            }
+        }
         // The setting is read before the exchange starts.
         let elicitation = self.declared(call, &view);
         let Some(mut exchange) = Exchange::new(&self.client, &view, &self.vault, elicitation)
@@ -529,6 +534,12 @@ struct Exchange<'a> {
     /// Whether a task this call becomes can be polled: its credential can
     /// be presented again (FIX 11023), so its session stays open for that.
     pollable: bool,
+}
+
+impl CallExchange for Exchange<'_> {
+    fn run(&self, auth: Option<HeaderValue>, value: Option<&SentValue<'_>>) -> Sent {
+        Exchange::run(self, auth, value)
+    }
 }
 
 impl<'a> Exchange<'a> {

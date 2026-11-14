@@ -58,8 +58,10 @@ const METHOD_HEADER: &str = "mcp-method";
 const NAME_HEADER: &str = "mcp-name";
 const ACCEPT_BOTH: &str = "application/json, text/event-stream";
 
+mod api_document;
 mod issuer_rerun;
 mod reply_read;
+pub(crate) use api_document::list_tools;
 pub(crate) use issuer_rerun::rerun_issuer_dependents;
 use reply_read::read_reply;
 
@@ -295,9 +297,13 @@ pub(crate) fn self_declared_hints_warning(tools: &[ListedTool]) -> Option<String
 
 /// What one discovery found.
 pub(crate) struct Discovery {
-    /// The revision `initialize` negotiated.
+    /// The revision `initialize` negotiated, or an API document's OpenAPI
+    /// version (`openapi-3.1`).
     pub(crate) revision: String,
     pub(crate) tools: Vec<ListedTool>,
+    /// What an API document holds that became no tool, each with why
+    /// (L8-31); empty for an MCP listing.
+    pub(crate) skipped: Vec<String>,
 }
 
 /// Lists the connector's tools at `endpoint`: at `pinned` once the key has
@@ -313,6 +319,7 @@ pub(crate) fn discover(
     Ok(Discovery {
         revision: std::mem::take(&mut session.revision),
         tools,
+        skipped: Vec::new(),
     })
 }
 
@@ -320,10 +327,13 @@ pub(crate) fn discover(
 /// the elicitation declaration MCP admission makes for every connector it
 /// admits (ARCH-0072). Elicitation is a client capability: `initialize`
 /// carries no server flag for it, and the call host decides per revision
-/// whether to declare it on the wire.
+/// whether to declare it on the wire. Tools an API document declares
+/// (L8-31) are each one HTTP request, which never asks a question: they
+/// declare none.
 pub(crate) fn resolve(tools: &[ListedTool]) -> oneiron::Result<ResolvedConnectorManifest> {
+    let asks = !tools.iter().any(|tool| tool.http.is_some());
     ResolvedConnectorManifest::resolve(tools.iter().map(ListedTool::schema_row).collect())
-        .map(|manifest| manifest.with_elicitation(true))
+        .map(|manifest| manifest.with_elicitation(asks))
 }
 
 /// What the owner names for one tool at registration. MCP declares none of it.

@@ -564,6 +564,9 @@ pub(in crate::connector_key) fn declaration_expands(
             next.resolved_input_schema.as_ref(),
         )
         || next.resolved_output_schema != old.resolved_output_schema
+        // Where the tool sends (L8-31): a new method or path is a new
+        // destination the owner never stamped.
+        || next.http != old.http
 }
 
 /// Whether the elicitation declaration reaches further than before: a

@@ -39,6 +39,9 @@ pub(crate) struct TranslatedTool {
 
 #[derive(Debug, Default)]
 pub(crate) struct Translation {
+    /// The document's format and version, as the connector key pins it in
+    /// place of an MCP protocol revision: `openapi-3.0` or `openapi-3.1`.
+    pub(crate) revision: String,
     pub(crate) tools: Vec<TranslatedTool>,
     /// What the document holds that became no tool, each with why. The
     /// register reply lists them.

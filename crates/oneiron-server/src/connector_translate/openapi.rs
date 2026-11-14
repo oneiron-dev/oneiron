@@ -83,7 +83,15 @@ pub(super) fn translate(document: &Value, endpoint: &Url) -> oneiron::Result<Tra
         .and_then(Value::as_object)
         .ok_or_else(|| refused("the OpenAPI document has no paths".to_owned()))?;
     let schemes = SecuritySchemes::read(document)?;
-    let mut translation = Translation::default();
+    let mut translation = Translation {
+        revision: if version.starts_with("3.0") {
+            "openapi-3.0"
+        } else {
+            "openapi-3.1"
+        }
+        .to_owned(),
+        ..Translation::default()
+    };
     let mut names = BTreeSet::new();
     for (path, item) in paths {
         let item = deref(item, document).map_err(refused)?;

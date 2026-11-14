@@ -57,6 +57,7 @@ use crate::api::body_spool::OwnerJsonBody;
 use crate::api::{query_params, unix_seconds_now};
 use crate::auth::CoreAuth;
 use crate::config::connectors::normalize_name;
+use crate::config::{ConnectorHostConfig, ConnectorTransport};
 use crate::connector_admission_host::{self as host, QualificationKit, ToolClass};
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -182,6 +183,10 @@ struct Registered {
     /// What registration took on the connector's word and could not check
     /// (TP4, FIX 2607); empty when it took nothing.
     warnings: Vec<String>,
+    /// What an HTTP API's document holds that became no tool, each with
+    /// why (L8-31); absent for an MCP connector.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    skipped: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -222,13 +227,38 @@ fn installed_endpoint(server: &SyncServer, name: &str) -> Option<String> {
         .map(|(_, installed)| installed.endpoint.clone())
 }
 
-/// The connector's name as the engine stores it, and its installed endpoint.
-pub(crate) fn installed(server: &SyncServer, connector: &str) -> OwnerResult<(String, String)> {
+/// The connector's name as the engine stores it, and the section this host
+/// installed for it: an MCP endpoint, or an HTTP API and its document.
+pub(crate) fn installed_host(
+    server: &SyncServer,
+    connector: &str,
+) -> OwnerResult<(String, ConnectorHostConfig)> {
     let name = normalize_name(connector);
-    let endpoint = installed_endpoint(server, &name).ok_or_else(|| {
-        OwnerError::Invalid("this host installed no transport for the connector".to_owned())
-    })?;
-    Ok((name, endpoint))
+    let installed = server
+        .config
+        .connectors
+        .iter()
+        .find(|(section, _)| normalize_name(section) == name)
+        .map(|(_, installed)| installed.clone())
+        .ok_or_else(|| {
+            OwnerError::Invalid("this host installed no transport for the connector".to_owned())
+        })?;
+    Ok((name, installed))
+}
+
+/// The connector's name as the engine stores it, and its installed MCP
+/// endpoint, for a door that speaks MCP alone (a connector pack's). An
+/// HTTP API connector (L8-31) refuses there.
+pub(crate) fn installed(server: &SyncServer, connector: &str) -> OwnerResult<(String, String)> {
+    let (name, installed) = installed_host(server, connector)?;
+    match installed.transport {
+        ConnectorTransport::McpHttp => Ok((name, installed.endpoint)),
+        ConnectorTransport::HttpApi => Err(OwnerError::Invalid(
+            "the connector is an HTTP API (transport = \"http_api\"); this door takes MCP \
+             connectors only"
+                .to_owned(),
+        )),
+    }
 }
 
 /// The catalog key registered under a name.
@@ -337,17 +367,20 @@ fn register_connector(
     request: RegisterRequest,
 ) -> OwnerResult<Registered> {
     let vault = server.vault();
-    let (name, endpoint) = installed(server, &request.connector)?;
+    let (name, installed) = installed_host(server, &request.connector)?;
+    let endpoint = installed.endpoint.clone();
     if vault.describe_connector(&name)?.is_some() {
         return Err(OwnerError::Invalid(
             "a connector is already registered under that name".to_owned(),
         ));
     }
-    let discovery = host::with_credential(vault, request.secret_ref.as_deref(), &name, |auth| {
-        host::discover(&host::client()?, &endpoint, auth, None)
-    })
-    .map_err(engine)?
-    .map_err(engine)?;
+    let mut discovery =
+        host::with_credential(vault, request.secret_ref.as_deref(), &name, |auth| {
+            host::list_tools(&host::client()?, &installed, auth, None)
+        })
+        .map_err(engine)?
+        .map_err(engine)?;
+    let skipped = std::mem::take(&mut discovery.skipped);
     if let Some(unknown) = request
         .tools
         .keys()
@@ -410,6 +443,7 @@ fn register_connector(
         warnings: host::self_declared_hints_warning(&discovery.tools)
             .into_iter()
             .collect(),
+        skipped,
     })
 }
 
