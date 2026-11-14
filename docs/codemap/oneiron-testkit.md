@@ -24,8 +24,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/golden_day/manifest.rs` | src | s | 1 enum · 3 const | FieldClass | The field manifest: how the normaliser treats every object key the golden-day trace holds (the receipt… |
 | `src/golden_day/mod.rs` | src | m | 2 struct · 8 fn · 7 const · 2 mod · 2 re-export | GoldenDayError, GoldenDayRun | The golden day: one scripted day on a fresh vault, and the normalised dump of what it leaves behind (Fable's… |
 | `src/golden_day/normalise.rs` | src | m | 3 struct · 9 fn · 1 const | NormaliseError, Normaliser, UnknownKey | The trace normaliser: one walk over a raw trace that classifies every object key it meets by… |
-| `src/lib.rs` | src | s | 14 mod · 7 re-export | — | `oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09… |
+| `src/lib.rs` | src | s | 15 mod · 7 re-export | — | `oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09… |
 | `src/lint.rs` | src | L | 3 struct · 1 enum · 13 fn · 1 const | Baseline, Finding, LintReport, Rule | The test lint: no sleeps, no wall clock, no network and no real model in tests (Fable's verdict, sections 3… |
+| `src/model/engine.rs` | src | m | 2 struct · 7 fn · 1 const | EngineVault, SeedReport | The engine side of the reference-model test: one real vault that takes each generated [`Step`] through the… |
+| `src/model/generator.rs` | src | s | 1 enum · 2 fn | Step | — |
+| `src/model/mod.rs` | src | m | 11 struct · 3 enum · 27 fn · 1 type · 1 const · 2 mod | Actor, Aud, Claim, ClaimKey, Ent, Entity, Observed, Outcome +6 | A reference model of the vault and seeded step sequences checked against the engine (Fable's verdict 52… |
+| `src/model/tests.rs` | test | m | — | — | — |
 | `src/pending_door.rs` | src | s | 2 struct · 7 fn · 1 const | PendingDoors, WaitingTest | The nightly pending-door filter (Engine ruling 03:32, 10 Nov; Fable's verdict, section 1, "Door waits")… |
 | `src/provider/backend.rs` | src | s | 1 struct · 5 fn | ScriptedBackend | [`ScriptedBackend`]: the script as an in-process [`LlmBackend`], for door tests that hand the engine a… |
 | `src/provider/digest.rs` | src | s | 1 struct · 6 fn · 2 const | PromptDigest | The prompt digest a scripted reply is keyed by |
@@ -42,6 +46,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/golden_day.rs` | test | s | — | — | The golden day (`oneiron_testkit::golden_day`): one scripted day on a fresh vault, and the normalised dump… |
 | `tests/kit.rs` | test | s | — | — | The hashing embedder, the fake clock and fixture copies keep their promises |
 | `tests/lint_rules.rs` | test | s | — | — | The test lint finds sleeps, wall-clock reads, network, fixed ports and real models in test code, and nothing… |
+| `tests/model_seq.rs` | test | s | — | — | The engine ends every step of a seeded sequence where the reference model does (F3.12 step 1; Fable's… |
 | `tests/pending_door.rs` | test | s | — | — | A test that waits on a product door runs nightly without failing it until its deadline; past the deadline… |
 | `tests/provider.rs` | test | m | — | — | The scripted provider answers each prompt from its script, in the mode the request asked for, and fails… |
 | `tests/server.rs` | test | s | — | — | A server starts on a free port the test owns, says when it is ready, and comes back on the same port after a… |
