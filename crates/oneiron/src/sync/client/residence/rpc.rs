@@ -285,7 +285,12 @@ impl ResidenceRpc {
         if let Some(credential) = &config.transport_credential {
             binding = Some(
                 credential
-                    .sign_upgrade(vault, vault.store.clock.wall_now(), &mut request)
+                    .sign_upgrade(
+                        vault,
+                        config.authority_checkpoint_pin.as_ref(),
+                        vault.store.clock.wall_now(),
+                        &mut request,
+                    )
                     .map_err(|_| {
                         RpcFault::local("this machine could not sign its residence upgrade")
                     })?,
