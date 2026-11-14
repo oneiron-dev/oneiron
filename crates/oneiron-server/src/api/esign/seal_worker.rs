@@ -14,8 +14,10 @@
 //! `ONEIRON_SEAL_TSA` a timestamp authority (a B-T seal, B-LT with revocation origins; B-B without one),
 //! `ONEIRON_SEAL_CRL_ORIGINS` and `ONEIRON_SEAL_OCSP_ORIGINS` comma-separated
 //! origins whose revocation material the seal may fetch, and
-//! `ONEIRON_SEAL_URL` the signing page the evidence names (the sign page
-//! at the host's public origin when unset). A managed vault reads no
+//! `ONEIRON_SEAL_URL` the public signing page (the sign page at the host's
+//! public origin when unset): the certificate's QR names the QR page
+//! `/esign/verify` at that page's origin, with the seal's QR capability as
+//! its fragment. A managed vault reads no
 //! environment, so its supervisor passes the same settings per vault as
 //! `--seal-key-file` (or `--seal-key-handle`), `--seal-chain-file`,
 //! `--seal-trust-file`, `--seal-tsa-url`, `--seal-crl-origins`,
@@ -78,7 +80,8 @@ pub(crate) struct SealConfig {
     pub(crate) crl_origins: Vec<String>,
     /// Origins whose OCSP responders the seal may query.
     pub(crate) ocsp_origins: Vec<String>,
-    /// The signing page the evidence names.
+    /// The public signing page; the QR page the evidence names sits at its
+    /// origin.
     pub(crate) signing_url: Option<String>,
     /// The seal organ's program, in place of an installed pack's build.
     pub(crate) organ: Option<PathBuf>,
@@ -116,9 +119,6 @@ impl SealConfig {
         if self.argv { flag } else { env }
     }
 }
-
-/// The public sign page under the host's origin (the `/sign` route).
-const SIGN_PAGE_PATH: &str = "/sign";
 
 const TICK: Duration = Duration::from_secs(30);
 const LEASE_OWNER: &str = "esign-seal-worker";
@@ -253,7 +253,7 @@ fn tick(
         }
         None => SealProfile::BaselineB,
     };
-    let url = signing_url(server, seal)?;
+    let url = qr_page_url(server, seal)?;
     let sealer = HostedSealer::new(host, &server.vault, &*keys, settings);
     server
         .vault
@@ -303,21 +303,25 @@ fn seal_keys<'a>(
     loaded.map_err(|err| format!("the seal key: {err}"))
 }
 
-/// The signing page the evidence names: the configured one, else the sign
-/// page at the host's public origin. With neither, seals wait: the
-/// certificate names only an https URL.
-fn signing_url(server: &SyncServer, seal: &SealConfig) -> Result<String, String> {
-    if let Some(url) = &seal.signing_url {
-        return Ok(url.clone());
-    }
-    public_origin(server.config.oauth_resource_indicator.as_deref())
-        .map(|origin| format!("{origin}{SIGN_PAGE_PATH}"))
-        .ok_or_else(|| {
-            format!(
-                "no public signing page: set {}, or oauth_resource_indicator to the host's https origin",
-                seal.name(URL)
-            )
-        })
+/// The QR page the certificate names (`/esign/verify`, ARCH-0064a section
+/// 6): at the configured signing page's origin, else at the host's public
+/// origin. The seal adds its QR capability as the fragment. With neither,
+/// seals wait: the certificate names only an https URL.
+fn qr_page_url(server: &SyncServer, seal: &SealConfig) -> Result<String, String> {
+    let origin = match &seal.signing_url {
+        Some(url) => reqwest::Url::parse(url)
+            .map(|url| url.origin().ascii_serialization())
+            .map_err(|_| format!("{} is not a URL", seal.name(URL)))?,
+        None => public_origin(server.config.oauth_resource_indicator.as_deref()).ok_or_else(
+            || {
+                format!(
+                    "no public QR page: set {}, or oauth_resource_indicator to the host's https origin",
+                    seal.name(URL)
+                )
+            },
+        )?,
+    };
+    Ok(format!("{origin}{}", crate::api::esign_qr::QR_PAGE_PATH))
 }
 
 /// The seal organ to install: the program the host names, else the build

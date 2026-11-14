@@ -202,10 +202,10 @@ pub(super) fn self_use_invocation(
 /// I/O, a full map) may try the same leaf again: the retry runs from the
 /// cursor checkpoint before the park, rebuilds the call's invocation and
 /// finds that ask. A lease fence, a fenced meter, a body admission refusal or
-/// a missing checkpoint route ends the step, as before. Only a call not
-/// resumed from a park comes here (`StepConversationFault::ParkSave`): a
-/// resumed call's committed checkpoint still holds its earlier wait, which
-/// the requeue refuses, so its failed park save ends the step.
+/// a missing checkpoint route ends the step, as before. A call resumed from
+/// its own park retries the same way: its committed checkpoint still holds
+/// that park's wait, which the requeue keeps, so the retry resumes the call
+/// with its invocation and use ordinal ([WORKFLOW-PARK-RESUMED-CALL-RETRY]).
 pub(super) fn park_save_fault(error: Error) -> StepFault {
     let store_fault = matches!(
         error.kind(),
