@@ -124,6 +124,15 @@ fn handle_document_inner(
             max: server.config.max_update_payload,
         });
     }
+    // A member lane holds no owner document lane (MEMBER-SYNC D4): no
+    // artifact publication, and no owner REQUEST, so no owner NOTE, fork or
+    // upload under one; it subscribes each document by its own selector.
+    if state.selector_lane.member().is_some()
+        && (kind == document_sub_tags::ARTIFACT_PUBLICATION
+            || (kind == document_sub_tags::REQUEST && payload.get(..4) == Some(&[0; 4])))
+    {
+        return Err(ProtocolError::InvalidPayload("not served on a member lane"));
+    }
     if kind == document_sub_tags::ARTIFACT_PUBLICATION {
         return artifact_publication(server, state, entity, payload, direct);
     }

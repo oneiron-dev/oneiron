@@ -20,6 +20,7 @@ mod pad_objects;
 mod pad_refill;
 mod pages;
 mod search;
+mod windows;
 mod work;
 pub(crate) use work::{ResidenceWorkCall, ResidenceWorkState};
 
@@ -484,6 +485,9 @@ pub(super) fn run(
                 &mut attribution,
                 &mut off_carrier,
             ),
+            "residence.windows" => {
+                windows::windows(server, auth, peer, lane, request.params, budgets)
+            }
             "residence.media_vectors" => {
                 media_vectors::media_vectors(server, auth, peer, lane, request.params)
             }

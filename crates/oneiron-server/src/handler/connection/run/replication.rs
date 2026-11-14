@@ -343,6 +343,17 @@ pub(super) async fn handle_connection(
             ConnEvent::Broadcast(broadcast_result) => {
                 match broadcast_result {
                     Ok(Some(data)) => {
+                        // Of the shared fan-out a member lane is sent only the
+                        // documents re-exported under its own selectors and its
+                        // promoted windows' invalidations (MEMBER-SYNC D5).
+                        if conn_state.selector_lane.member().is_some()
+                            && !super::super::super::member_lane::member_receives_broadcast(
+                                protocol_version,
+                                &data,
+                            )
+                        {
+                            continue;
+                        }
                         if crate::livequery::connection::Connection::is_scoped_broadcast(&data) {
                             let Some(frame) = app_connection.release_for(
                                 conn_state.locality,

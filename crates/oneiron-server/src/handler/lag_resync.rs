@@ -35,7 +35,11 @@ use crate::server::SyncServer;
 /// The notices that resync every subscription `state` holds after a lag.
 pub(super) fn lag_resync_frames(server: &SyncServer, state: &ConnState) -> Vec<Vec<u8>> {
     let mut frames = Vec::new();
-    if let Ok(root) = server.export_root_updates(&VersionVector::new()) {
+    // A member lane holds no root (MEMBER-SYNC D5): only its documents and
+    // promoted windows are told again.
+    if state.selector_lane.member().is_none()
+        && let Ok(root) = server.export_root_updates(&VersionVector::new())
+    {
         frames.push(protocol::encode_root_update(&root));
     }
     if protocol::is_owner_window_version(state.protocol_version) {

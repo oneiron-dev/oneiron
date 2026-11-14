@@ -199,6 +199,23 @@ pub(crate) fn member_admits(
     }
 }
 
+/// Whether a member lane on `version` is handed `data` from the shared
+/// fan-out (D5), a positive allow-list: a document or node batch, which the
+/// loop re-exports under the lane's stored selectors only, and on a
+/// residence protocol a window frame, which the loop turns into an
+/// invalidation of a window this socket promoted, or drops. Root updates,
+/// presence, lease, leaf-key, sealed-update and routed app frames never
+/// reach it.
+pub(crate) fn member_receives_broadcast(version: u8, data: &[u8]) -> bool {
+    match data.first().copied() {
+        Some(oneiron::sync::transport::TAG_DOCUMENT | oneiron::sync::transport::TAG_BATCH) => true,
+        Some(crate::protocol::TAG_WINDOW_SYNC) => {
+            oneiron::sync::transport::is_residence_version(version)
+        }
+        _ => false,
+    }
+}
+
 /// The RPC methods a member lane may call (D4, D6): the in-band bind (of its
 /// own credential only, [`MemberLane::binds`]), `ping`, and the residence
 /// reads and promotion an Opened device uses, each behind its pinned
