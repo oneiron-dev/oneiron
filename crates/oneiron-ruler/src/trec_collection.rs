@@ -378,10 +378,10 @@ pub fn convert(
         }
         let id = corpus_id(split);
         let converted = convert_split(split, slice, &id, fill, &mut left_out)?;
-        if let Some((corpus, mut split_records, mut split_queries)) = converted {
-            records.append(&mut split_records);
-            corpora.push(corpus);
-            queries.append(&mut split_queries);
+        if let Some(mut part) = converted {
+            records.append(&mut part.records);
+            corpora.push(part.corpus);
+            queries.append(&mut part.queries);
         }
     }
     if queries.is_empty() {
@@ -405,6 +405,14 @@ pub fn convert(
     };
     pack.validate()?;
     Ok(TrecConversion { pack, left_out })
+}
+
+/// One converted split: its corpus, its records in session order, and its
+/// queries.
+struct ConvertedSplit {
+    corpus: Corpus,
+    records: Vec<Record>,
+    queries: Vec<Query>,
 }
 
 /// One JSON passage line. Unknown keys are accepted.
@@ -568,7 +576,7 @@ fn convert_split(
     corpus_id: &str,
     fill: Option<Fill>,
     left_out: &mut Vec<String>,
-) -> Result<Option<(Corpus, Vec<Record>, Vec<Query>)>, TrecError> {
+) -> Result<Option<ConvertedSplit>, TrecError> {
     check_topics_qrels(split, corpus_id)?;
     let passages = index_passages(split, corpus_id)?;
     let mut kept: BTreeSet<&str> = BTreeSet::new();
@@ -717,5 +725,9 @@ fn convert_split(
         corpus_id: corpus_id.to_owned(),
         sessions,
     };
-    Ok(Some((corpus, split_records, split_queries)))
+    Ok(Some(ConvertedSplit {
+        corpus,
+        records: split_records,
+        queries: split_queries,
+    }))
 }
