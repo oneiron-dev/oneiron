@@ -17,9 +17,11 @@
 //! read, and the principal's relationship grants are read live. A revocation
 //! after the save therefore never widens what the work reads. A lane that
 //! read under no narrowing freezes as its principal's own
-//! ([`FrozenReadLane::principal`]), unless a non-guest credential's native
-//! key lacks the owner's full floor. Even with a top read Scope, that lane
-//! keeps its credential rather than becoming its holder's principal lane.
+//! ([`FrozenReadLane::principal`]), unless its credential names a grant or
+//! a non-guest credential's native key lacks the owner's full floor. Even
+//! with a top read Scope, that lane keeps its credential rather than
+//! becoming its holder's principal lane, so a rebuild after the grant is
+//! withdrawn reads nothing (FIX OWN-DEVICE-GRANT-NOT-RECHECKED).
 //!
 //! Sight is never frozen: a door that serves a secret derives it again from
 //! the rebuilt lane.
@@ -99,8 +101,10 @@ impl FrozenReadLane {
     }
 
     /// `lane`, frozen. A lane under no narrowing freezes as the principal's
-    /// own, except a non-guest credential whose native key lacks the owner's
-    /// full floor: its credential's id stays even with a top read Scope.
+    /// own, except under a credential that names a grant, or a non-guest
+    /// credential whose native key lacks the owner's full floor: its
+    /// credential's id stays even with a top read Scope, so each rebuild
+    /// judges that grant live (FIX OWN-DEVICE-GRANT-NOT-RECHECKED).
     /// Otherwise the credential's id, read Scope and records caveat, each
     /// agent Grant alternative alone, the asked worlds and the room facets
     /// are kept. A channel caveat the lane
@@ -147,19 +151,22 @@ impl FrozenReadLane {
             } != Scope::top()
         });
         let worlds = key.worlds.as_ref().map(WorldAuthoritySet::scope_axis);
-        let keep_credential =
-            claims.is_some_and(|claims| claims.grant_ref.is_none()) && !key.reads_as_vault_owner();
-        if !keep_credential
-            && !scope_narrows
-            && records.is_empty()
-            && !channel_refused
-            && worlds.is_none()
-            && key.room_facets.is_none()
-            && key.grant_alternatives().is_none()
-        {
+        let names_grant = claims.is_some_and(|claims| claims.grant_ref.is_some());
+        // A credential that names a grant stands only while the grant does:
+        // its lane keeps the credential's id, so each rebuild judges the
+        // grant live. Frozen as its holder's principal lane, saved work read
+        // on after the grant was withdrawn (FIX OWN-DEVICE-GRANT-NOT-RECHECKED).
+        let keep_credential = names_grant || (claims.is_some() && !key.reads_as_vault_owner());
+        let narrows = scope_narrows
+            || !records.is_empty()
+            || channel_refused
+            || worlds.is_some()
+            || key.room_facets.is_some()
+            || key.grant_alternatives().is_some();
+        if !keep_credential && !narrows {
             return Ok(Self::principal());
         }
-        if claims.is_some_and(|claims| claims.grant_ref.is_some()) {
+        if names_grant && narrows {
             return Err(Error::InvalidConfig(GUEST_LANE_NOT_SAVED.into()));
         }
         // A key agent Grants bind keeps each Grant's alternative, never their
