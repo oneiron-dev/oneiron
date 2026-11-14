@@ -342,8 +342,14 @@ fn listen_unix_is_refused_off_a_reranker_only_llama_row() {
         ),
         "serves each reranker model from a listen = \"unix\" row",
     );
+    // An EXL3 row runs no native server binary, so the row drops `server`
+    // and `server_sha256`; the refusal then names `listen`.
     refused(
-        base.replace("kind = \"llama_cpp\"", "kind = \"exl3\""),
+        base.replace("kind = \"llama_cpp\"", "kind = \"exl3\"")
+            .lines()
+            .filter(|line| !line.starts_with("server"))
+            .collect::<Vec<_>>()
+            .join("\n"),
         "only a llama_cpp worker listens on a Unix socket",
     );
     refused(

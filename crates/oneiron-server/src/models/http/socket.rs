@@ -87,7 +87,7 @@ async fn exchange(
                 .await
                 .map_err(|_| HttpFailure::Connection)?;
             let status = response.status().as_u16();
-            let headers = response
+            let headers: BTreeMap<String, String> = response
                 .headers()
                 .iter()
                 .filter_map(|(name, value)| {
@@ -98,7 +98,7 @@ async fn exchange(
                 })
                 .collect();
             let bytes = read_body(response.into_body(), max_bytes).await?;
-            Ok((status, headers, bytes))
+            Ok::<_, HttpFailure>((status, headers, bytes))
         };
         // The connection is driven until it ends, and the reply is taken as
         // soon as it is read whole, whichever comes first.
