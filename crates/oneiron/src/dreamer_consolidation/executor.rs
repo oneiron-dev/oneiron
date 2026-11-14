@@ -29,6 +29,7 @@ pub(crate) use decisions::{
 use conflicts::{ConflictInput, ResolvedSets};
 pub use decisions::ConsolidationDecisions;
 pub(super) use decisions::{Decider, ScopedRead};
+pub use extraction::ExtractionPrompt;
 use merge_resolution::MergeResolution;
 
 use super::evidence::{
