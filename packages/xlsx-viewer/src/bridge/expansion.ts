@@ -267,11 +267,18 @@ const ROW_PART_CEILING = 24;
  * The attributes SheetJS's `parsexmltag` files from a tag, by key: each name
  * and value cut as {@link attributeValues} cuts them, a later attribute
  * replacing an earlier one under the same key, except that a prefixed name
- * whose prefix ends in `ext` never replaces a value already filed.
+ * whose prefix ends in `ext` never replaces a value already filed. With
+ * `named`, the tag's name (its text up to the first space or line break) is
+ * filed first under key `0`, as `parsexmltag` files it unless told to skip
+ * it, so an attribute filed under `0` replaces the name.
  */
-export function sheetJsAttributes(tag: string): Map<string, string> {
+export function sheetJsAttributes(tag: string, named = false): Map<string, string> {
   const filed = new Map<string, string>();
-  if (!/[ \n\r]/.test(tag)) {
+  const nameEnd = tag.search(/[ \n\r]/);
+  if (named) {
+    filed.set("0", nameEnd === -1 ? tag : tag.slice(0, nameEnd));
+  }
+  if (nameEnd === -1) {
     return filed;
   }
   for (const [match] of tag.matchAll(ATTRIBUTE)) {
