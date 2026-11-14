@@ -20,9 +20,11 @@
 //!
 //! An act a live Owner grant admits needs none: the Owner is exempt, judged
 //! over every grant the writer holds ([`Vault::owner_grant_admits_in_txn`]).
-//! MFA is a person's: an agent's or a machine's Admin grant stands alone, as
-//! the house mind's role does (HOUSE-BIND = A, the owner 10 Nov 07:43: the
-//! gate judges the house "by that role and by nothing else"). Every other
+//! MFA is a person's: an agent definition's or a machine's Admin grant stands
+//! alone, as the house mind's role does (HOUSE-BIND = A, the owner 10 Nov
+//! 07:43: the gate judges the house "by that role and by nothing else"). The
+//! writer's stored kind decides, never the class it asserts: a PERSON row
+//! steps up whatever class its slip declares. Every other
 //! admitted act with no standing step-up is refused
 //! [`ORG_ADMIN_STEP_UP_REQUIRED`]. An invitation's accept keeps its
 //! inviter's standing check alone: the step-up binds at the invitation's
@@ -32,7 +34,6 @@ use super::{OrgAdminPower, SharedVaultWrite};
 use crate::Vault;
 use crate::authority::VerifiedSlip;
 use crate::consent::AuthenticatedOwner;
-use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::write_envelope::WriteActor;
@@ -115,8 +116,8 @@ impl Vault {
     /// `writer` may use `power` over shared vault `vault_id`, judged in
     /// `txn`: the gate admits the act
     /// ([`Self::authorize_shared_vault_write_in_txn`]), and a live Owner
-    /// grant admits it, or the writer is no person, or the request's
-    /// step-up stands ([`Self::require_org_admin_step_up_in_txn`]).
+    /// grant admits it, or the writer is stored as an agent definition or a
+    /// machine, or the request's step-up stands ([`Self::require_org_admin_step_up_in_txn`]).
     ///
     /// # Errors
     /// The gate's refusal; `AuthorityRefused(ORG_ADMIN_STEP_UP_REQUIRED)`;
@@ -130,9 +131,13 @@ impl Vault {
     ) -> Result<()> {
         let requested = SharedVaultWrite::Admin(power);
         self.authorize_shared_vault_write_in_txn(txn, vault_id, &writer.actor, &requested)?;
-        if !matches!(writer.actor.actor_class(), EdgeActorClass::Human)
-            || self.owner_grant_admits_in_txn(txn, vault_id, &writer.actor, &requested)?
-        {
+        // The stored kind, not the asserted class: a person may declare any
+        // class on a slip, and a PERSON row may be a person or an agent.
+        let factorless = matches!(
+            self.get_entity_type_in_txn(txn, &writer.actor.entity_ref())?,
+            Some(crate::registry::ENTITY_TYPE_AGENT_DEF | crate::registry::ENTITY_TYPE_MACHINE)
+        );
+        if factorless || self.owner_grant_admits_in_txn(txn, vault_id, &writer.actor, &requested)? {
             return Ok(());
         }
         self.require_org_admin_step_up_in_txn(txn, writer.actor.entity_ref(), &writer.step_up)
