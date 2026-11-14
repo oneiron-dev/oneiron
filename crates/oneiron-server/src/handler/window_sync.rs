@@ -411,8 +411,11 @@ pub(super) async fn handle_window_sync(
                     .get(&key)
                     .ok_or(ProtocolError::InvalidPayload("window not promoted"))?;
                 let auth = require_bound_app_auth(server, conn_state)?;
-                auth.require(crate::auth::CoreScope::Write)
-                    .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+                // A member lane's whole-grant credential writes as its grant
+                // allows (MEMBER-SYNC review F2); an owner socket keeps the top check.
+                if !conn_state.selector_lane.admits_write(auth) {
+                    return Err(ProtocolError::RpcNoPrincipal);
+                }
                 let proof = auth.verified_slip().ok_or(ProtocolError::RpcNoPrincipal)?;
                 let scope = conn_state
                     .selector_lane

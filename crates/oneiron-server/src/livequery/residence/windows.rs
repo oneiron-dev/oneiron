@@ -13,6 +13,14 @@
 //! and a window that becomes readable behind a page already read is found on
 //! the lane's next catalogue pass (each reconnect and refresh asks again).
 //! `residence.index` carries the revision a reader holds a window at.
+//!
+//! A page's continuation names only a window the page listed: a window the
+//! caller cannot read never ends a page, so its key (a world key names its
+//! world) never reaches the caller (MEMBER-SYNC review F1). A page judges
+//! windows until it has listed `limit` and found one more readable, or the
+//! months asked run out, as `residence.index` reads past withheld rows to
+//! fill a page; its work is bounded by the home's windows in the months
+//! asked (at most 36 months).
 
 use super::*;
 
@@ -25,7 +33,8 @@ struct WindowsRequest {
     selector: String,
     /// The months asked for, each `YYYY-MM`.
     months: Vec<String>,
-    /// The last window key a page before judged; the next page starts past it.
+    /// The `next` of the page before: the last window it listed. The next
+    /// page starts past it.
     #[serde(default)]
     after: Option<String>,
     limit: usize,
@@ -33,9 +42,10 @@ struct WindowsRequest {
 
 /// One page of the windows `params.selector` reads a row of, among the
 /// home's windows of `params.months` past `params.after`, in key order. A
-/// page judges at most the index page limit of windows and names at most
-/// `limit`; `next` is the last key it judged while more remain. A refused
-/// credential, grant or selector looks missing, as `residence.index` does.
+/// page names at most `limit` (and at most the index page limit); `next` is
+/// its last listed window while another readable one follows, else null. A
+/// refused credential, grant or selector looks missing, as `residence.index`
+/// does.
 pub(super) fn windows(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -74,14 +84,10 @@ pub(super) fn windows(
         .collect();
     candidates.sort_by(|left, right| left.as_str().cmp(right.as_str()));
     candidates.dedup();
-    let judged = budgets.index_page_limit.max(1);
-    let limit = input.limit.min(judged);
+    let limit = input.limit.min(budgets.index_page_limit.max(1));
     let mut listed = Vec::new();
-    let mut last = None;
-    for key in candidates.iter().take(judged) {
-        if listed.len() == limit {
-            break;
-        }
+    let mut more = false;
+    for key in &candidates {
         let window = server
             .reassert_manager
             .open_window(key)
@@ -97,18 +103,18 @@ pub(super) fn windows(
             |id| admission.allows_item(id),
         )
         .map_err(|_| AppError::internal_server_error("catalogue unavailable"))?;
-        if !rows.is_empty() {
-            listed.push(key.as_str().to_owned());
+        if rows.is_empty() {
+            continue;
         }
-        last = Some(key.as_str().to_owned());
+        // One readable window past a full page: the caller has more to read.
+        if listed.len() == limit {
+            more = true;
+            break;
+        }
+        listed.push(key.as_str().to_owned());
     }
     // The grant, credential and selector are judged again after the page.
     bound_selector(server, auth, lane, &input.selector)?;
-    let more = last
-        .as_deref()
-        .is_some_and(|last| candidates.iter().any(|key| key.as_str() > last));
-    Ok((
-        json!({ "windows": listed, "next": if more { last } else { None } }),
-        None,
-    ))
+    let next = if more { listed.last().cloned() } else { None };
+    Ok((json!({ "windows": listed, "next": next }), None))
 }

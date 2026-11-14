@@ -39,10 +39,13 @@ pub(super) async fn handle_selector_fetch(
     // live app-tier credential must name the actual granted principal.
     let auth = require_bound_app_auth(server, state)?;
     // The window is the selector grant's, not the credential's lane, so a
-    // credential limited to facets is refused (owner ruling FACET-READ).
+    // credential limited to facets is refused (owner ruling FACET-READ); a
+    // member lane's whole-grant credential holds those rows (MEMBER-SYNC review F2).
     auth.require(CoreScope::Read)
-        .and_then(|()| auth.require_unnarrowed_facets())
         .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+    if !state.selector_lane.admits_export_facets(auth) {
+        return Err(ProtocolError::RpcNoPrincipal);
+    }
     let principal = oneiron::EntityId::from_hex(
         auth.require_registered_principal()
             .map_err(|_| ProtocolError::RpcNoPrincipal)?,

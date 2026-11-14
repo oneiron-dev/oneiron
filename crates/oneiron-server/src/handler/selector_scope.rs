@@ -5,6 +5,8 @@ use std::sync::Arc;
 
 use oneiron::sync::SyncSelector;
 
+use crate::auth::{CoreAuth, CoreScope};
+
 /// The grant scope this single-vault selector server path checks: the one an
 /// owner's own-device grant is minted under (FIX 3134). Distinct from the
 /// lease ABI's internal vault id. A socket asks its [`SelectorLane`] instead;
@@ -70,6 +72,39 @@ impl SelectorLane {
                 }
                 Ok(standing.scope)
             }
+        }
+    }
+
+    /// Whether `auth`, this socket's bound credential, may write through a
+    /// selector-qualified door: a promoted window's update, a subscribed
+    /// document's UPDATE or NOTE_OPS (RULING MEMBER-SYNC-WRITES = A). An
+    /// owner socket keeps [`CoreAuth::require`]: a credential narrower than
+    /// top on a record axis is refused there, as before. A member lane's
+    /// doors judge every row by its grant, and its credential carries that
+    /// whole grant (`MemberLane::binds`, asked again here), so a grant
+    /// bounded to some worlds or facets writes there as it allows
+    /// (MEMBER-SYNC review F2): only the Write verb is left
+    /// ([`CoreAuth::require_granted`]).
+    pub(crate) fn admits_write(&self, auth: &CoreAuth) -> bool {
+        match self {
+            Self::OwnDevice => auth.require(CoreScope::Write).is_ok(),
+            Self::Member(lane) => {
+                lane.binds(auth) && auth.require_granted(CoreScope::Write).is_ok()
+            }
+        }
+    }
+
+    /// Whether `auth` may open a selector export on this socket (a window
+    /// fetch, a document subscription), which serves the selector grant's
+    /// rows, not the credential's lane. An owner socket refuses a credential
+    /// limited to facets (owner ruling FACET-READ). A member lane's credential
+    /// carries its whole grant, so the grant's rows are within its own
+    /// bounds: a facet bound the grant also holds refuses nothing
+    /// (MEMBER-SYNC review F2).
+    pub(crate) fn admits_export_facets(&self, auth: &CoreAuth) -> bool {
+        match self {
+            Self::OwnDevice => auth.require_unnarrowed_facets().is_ok(),
+            Self::Member(lane) => lane.binds(auth),
         }
     }
 }

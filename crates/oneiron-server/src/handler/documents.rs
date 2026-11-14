@@ -142,10 +142,12 @@ fn handle_document_inner(
     if state.owner_documents.contains_key(&entity) {
         return owner_document(server, conn_id, state, entity, kind, payload, direct);
     }
-    if kind == document_sub_tags::UPDATE {
-        require_bound_app_auth(server, state)?
-            .require(CoreScope::Write)
-            .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+    if kind == document_sub_tags::UPDATE
+        && !state
+            .selector_lane
+            .admits_write(require_bound_app_auth(server, state)?)
+    {
+        return Err(ProtocolError::RpcNoPrincipal);
     }
     if let Some(request) = state.documents.get(&entity)
         && request.selector.member_ref != principal
@@ -917,10 +919,13 @@ fn document_principal(server: &SyncServer, state: &ConnState) -> Result<EntityId
     let auth = require_bound_app_auth(server, state)?;
     // A selector export serves its grant's rows, not the credential's lane,
     // so a credential limited to facets is refused here (owner ruling
-    // FACET-READ), as the raw HTTP doors refuse it.
+    // FACET-READ), as the raw HTTP doors refuse it; a member lane's
+    // whole-grant credential holds those rows (MEMBER-SYNC review F2).
     auth.require(CoreScope::Read)
-        .and_then(|()| auth.require_unnarrowed_facets())
         .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+    if !state.selector_lane.admits_export_facets(auth) {
+        return Err(ProtocolError::RpcNoPrincipal);
+    }
     EntityId::from_hex(
         auth.require_registered_principal()
             .map_err(|_| ProtocolError::RpcNoPrincipal)?,
@@ -1018,9 +1023,8 @@ fn require_note_auth<'a>(
     let auth = super::app_tier::require_bound_app_auth(server, state)?;
     auth.require(crate::auth::CoreScope::Read)
         .map_err(|_| ProtocolError::RpcNoPrincipal)?;
-    if write {
-        auth.require(crate::auth::CoreScope::Write)
-            .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+    if write && !state.selector_lane.admits_write(auth) {
+        return Err(ProtocolError::RpcNoPrincipal);
     }
     let actor = auth
         .require_registered_principal()
