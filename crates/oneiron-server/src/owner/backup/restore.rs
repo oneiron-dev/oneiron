@@ -10,15 +10,23 @@ use oneiron::VaultPageSeal;
 use oneiron::recovery::checkpoint::{
     CheckpointKey, CustodyRecovery, HostOrderHolds, SideRestoreSource,
 };
+#[cfg(unix)]
 use oneiron::world_keys::{
     page_seal_custody_path, page_seal_incarnations, unlock_page_seal, vault_is_sealed,
 };
+#[cfg(unix)]
 use oneiron_vault_contract::backup_handoff::write_private_file;
 use serde::Serialize;
 
-use super::super::stamp::{file_stamp, now_unix_ms, parse_file_stamp};
-use super::rehearse::{Owned, SharedPathWarning, shared_path_warning};
-use super::{kind_counts, sync_dir};
+use super::super::stamp::now_unix_ms;
+#[cfg(unix)]
+use super::super::stamp::{file_stamp, parse_file_stamp};
+use super::kind_counts;
+#[cfg(unix)]
+use super::rehearse::Owned;
+use super::rehearse::{SharedPathWarning, shared_path_warning};
+#[cfg(unix)]
+use super::sync_dir;
 
 /// What a real restore did.
 #[derive(Clone, Debug, Serialize)]
@@ -81,17 +89,39 @@ pub(crate) struct Restored {
 ///
 /// The backup opens with `keystore`, the install's configured one; with
 /// none it refuses, naming the platform backend (FIX 12225).
+#[cfg(unix)]
 pub(crate) fn restore_over(
     backup: &Path,
     vault_path: &Path,
     config: oneiron::VaultConfig,
     keystore: Option<Arc<dyn oneiron_keystore::DeviceKeystore>>,
 ) -> anyhow::Result<Restored> {
-    restore_over_syncing(backup, vault_path, config, keystore, exchange, sync_dir)
+    restore_over_syncing(
+        backup,
+        vault_path,
+        config,
+        keystore,
+        oneiron::store::exchange_held,
+        sync_dir,
+    )
+}
+
+/// A restore over a vault where no atomic directory exchange exists:
+/// refused before anything is made or opened.
+#[cfg(not(unix))]
+pub(crate) fn restore_over(
+    backup: &Path,
+    vault_path: &Path,
+    config: oneiron::VaultConfig,
+    keystore: Option<Arc<dyn oneiron_keystore::DeviceKeystore>>,
+) -> anyhow::Result<Restored> {
+    let _ = (backup, vault_path, config, keystore);
+    anyhow::bail!("a restore over a vault is not supported on this platform");
 }
 
 /// [`restore_over`] with a key the caller unlocked from another wrap the
 /// backup carries and pinned to the signers it trusts.
+#[cfg(unix)]
 pub(crate) fn restore_over_keyed(
     backup: &Path,
     vault_path: &Path,
@@ -106,17 +136,31 @@ pub(crate) fn restore_over_keyed(
         config,
         None,
         |_| Ok(key),
-        exchange,
+        oneiron::store::exchange_held,
         sync_dir,
     )
 }
 
+/// A keyed restore over a vault where no atomic directory exchange
+/// exists: refused before anything is made or opened.
+#[cfg(not(unix))]
+pub(crate) fn restore_over_keyed(
+    backup: &Path,
+    vault_path: &Path,
+    config: oneiron::VaultConfig,
+    key: CheckpointKey,
+) -> anyhow::Result<Restored> {
+    let _ = (backup, vault_path, config, key);
+    anyhow::bail!("a restore over a vault is not supported on this platform");
+}
+
+#[cfg(unix)]
 pub(super) fn restore_over_syncing(
     backup: &Path,
     vault_path: &Path,
     config: oneiron::VaultConfig,
     keystore: Option<Arc<dyn oneiron_keystore::DeviceKeystore>>,
-    swap: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+    swap: impl FnOnce(&oneiron::store::HeldEntry, &oneiron::store::HeldEntry) -> std::io::Result<()>,
     sync_after_swap: impl FnOnce(&Path) -> anyhow::Result<()>,
 ) -> anyhow::Result<Restored> {
     // This install's keystore unlocks the key from the device wrap the backup
@@ -138,13 +182,14 @@ pub(super) fn restore_over_syncing(
     )
 }
 
+#[cfg(unix)]
 fn restore_over_with(
     backup: &Path,
     vault_path: &Path,
     config: oneiron::VaultConfig,
     staging_unlock: Option<&oneiron::world_keys::VaultKeyUnlock>,
     open_key: impl FnOnce(&Path) -> anyhow::Result<CheckpointKey>,
-    swap: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+    swap: impl FnOnce(&oneiron::store::HeldEntry, &oneiron::store::HeldEntry) -> std::io::Result<()>,
     sync_after_swap: impl FnOnce(&Path) -> anyhow::Result<()>,
 ) -> anyhow::Result<Restored> {
     // Absolute from here on: a bare `vault` has an empty parent to sync.
@@ -272,8 +317,8 @@ fn restore_over_with(
     // other reads but never writes, erases or shreds a key until the owner
     // activates it as a side vault with custody of its own.
     let exchanged = std::cell::Cell::new(false);
-    if let Err(error) = live.swap_in_replacement(&restored, || {
-        swap(&restored_path, vault_path)?;
+    if let Err(error) = live.swap_in_replacement(&restored, |live_entry, replacement_entry| {
+        swap(live_entry, replacement_entry)?;
         exchanged.set(true);
         Ok(())
     }) {
@@ -389,6 +434,7 @@ fn restore_over_with(
 /// archive rename never run. The scan never fails the restore that lists it.
 /// Each hit is claimed or left whole by [`claim_staged_archive`], which names
 /// it in `staging_notes` so it is not lost track of.
+#[cfg(unix)]
 fn interrupted_restore_staging(vault_path: &Path, name: &str) -> Vec<(u64, String, PathBuf)> {
     let Some(parent) = vault_path.parent() else {
         return Vec::new();
@@ -435,11 +481,13 @@ fn interrupted_restore_staging(vault_path: &Path, name: &str) -> Vec<(u64, Strin
 /// meets the same inode (unlinking on drop would let a contender lock a
 /// fresh inode while the winner still holds the old one); the held-open
 /// file (and its flock on unix) lasts until the guard drops.
+#[cfg(unix)]
 struct StagingClaimGuard {
     _held: std::fs::File,
     path: PathBuf,
 }
 
+#[cfg(unix)]
 impl StagingClaimGuard {
     /// Unlinks the lock file; call only once the staging directory is gone,
     /// so no later taker can meet a live staging under a fresh inode.
@@ -454,6 +502,7 @@ impl StagingClaimGuard {
 /// unix the flock releases if the holder dies, so no stale lock survives a
 /// crash; elsewhere the create is exclusive and the file stays until the
 /// staging is gone and the holder releases it.
+#[cfg(unix)]
 fn take_staging_claim_lock(
     parent: &Path,
     name: &str,
@@ -505,6 +554,7 @@ fn take_staging_claim_lock(
 /// leftover staging take the cross-process claim lock in turn; the contender
 /// leaves the staging and archive mirrors untouched. Returns the
 /// `staging_notes` line for the staging directory.
+#[cfg(unix)]
 fn claim_staged_archive(
     vault_path: &Path,
     name: &str,
@@ -981,46 +1031,4 @@ pub(crate) fn restore_target_seal(
             )
         }),
     }
-}
-
-/// Atomically exchanges two directory entries.
-pub(super) fn exchange(a: &Path, b: &Path) -> std::io::Result<()> {
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    {
-        use std::os::unix::ffi::OsStrExt;
-        let a = std::ffi::CString::new(a.as_os_str().as_bytes())?;
-        let b = std::ffi::CString::new(b.as_os_str().as_bytes())?;
-        if exchange_raw(&a, &b) == 0 {
-            Ok(())
-        } else {
-            Err(std::io::Error::last_os_error())
-        }
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        let _ = (a, b);
-        Err(std::io::ErrorKind::Unsupported.into())
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn exchange_raw(a: &std::ffi::CStr, b: &std::ffi::CStr) -> libc::c_int {
-    // SAFETY: both pointers come from live NUL-terminated `CStr`s that outlive
-    // the call; renameat2 only reads the two paths and writes no memory.
-    unsafe {
-        libc::renameat2(
-            libc::AT_FDCWD,
-            a.as_ptr(),
-            libc::AT_FDCWD,
-            b.as_ptr(),
-            libc::RENAME_EXCHANGE,
-        )
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn exchange_raw(a: &std::ffi::CStr, b: &std::ffi::CStr) -> libc::c_int {
-    // SAFETY: both pointers come from live NUL-terminated `CStr`s that outlive
-    // the call; renamex_np only reads the two paths and writes no memory.
-    unsafe { libc::renamex_np(a.as_ptr(), b.as_ptr(), libc::RENAME_SWAP) }
 }

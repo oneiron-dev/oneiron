@@ -85,6 +85,7 @@ pub use pad_reopen::{PadReopenFault, PadReopenReport, PadReopenStage};
 pub(crate) use payload::side_table_registry_gaps;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 pub use tiers::{StorageTier, storage_tier};
 pub use watermark::{
@@ -126,6 +127,7 @@ const RESTORE_EPOCH: SideTable<u64, RestoreEpoch, Named> =
 /// closed the vault's in-memory nonce spends (FIX 12023 W0, L02 10-31): a
 /// spend whose rows have not landed by then is left to the swap's fence,
 /// which refuses it as it refuses one the swap never waited for.
+#[cfg(unix)]
 const SWAP_SPEND_DRAIN_WAIT: Duration = Duration::from_secs(5);
 /// Whose exterior key custody a restored vault holds (ARCH-0038
 /// #erasure-completeness, "Key custody in a side restore").
@@ -601,10 +603,11 @@ impl Vault {
     ///
     /// Whichever of the two sits at this vault's path is the live one, at
     /// every instant of the swap and after a crash anywhere in it; the other
-    /// opens archived. `swap` must exchange the directories the two handles
-    /// opened, not a symlink to one. When `swap` fails, neither directory
-    /// moved; this handle stays sealed, and should lifting this vault's mark
-    /// fail too, the mark stays, which still opens it live where it is. When
+    /// opens archived. `swap` receives this vault's entry first, then its
+    /// replacement's, inside the parents held since the directory checks.
+    /// It must exchange those entries, not reopen their paths (ARCH-0038,
+    /// restore path). A failed swap leaves this handle sealed and both marks
+    /// in place: failure is no proof that nothing moved. When
     /// `swap` returns but the replacement's directory cannot be found at this
     /// vault's path, the swap is refused with both marks left as they were:
     /// the caller must not take either directory to be where it put it.
@@ -632,10 +635,11 @@ impl Vault {
     /// failed, or are still queued when the wait ends, refuses the swap as
     /// above. The spends stay closed on this handle when the swap then
     /// fails; its admissions take the writer, which refuses none of them.
+    #[cfg(unix)]
     pub fn swap_in_replacement(
         &self,
         replacement: &Self,
-        swap: impl FnOnce() -> std::io::Result<()>,
+        swap: impl FnOnce(&crate::store::HeldEntry, &crate::store::HeldEntry) -> std::io::Result<()>,
     ) -> Result<()> {
         // Waited for before the swap's writer opens, never in it: the
         // queued writes need that writer to commit.
