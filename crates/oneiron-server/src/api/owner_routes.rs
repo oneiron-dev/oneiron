@@ -81,6 +81,8 @@ mod handoff_alarm_routes;
 mod harness_evaluation_routes;
 pub(super) mod history_routes;
 mod hook_check_routes;
+#[cfg(unix)]
+mod hosted_import_routes;
 pub(super) mod house_routes;
 mod hub_table;
 mod inbox_routes;
@@ -110,6 +112,7 @@ pub(super) mod schema;
 pub(super) mod secret_control_routes;
 pub(super) mod secret_found_routes;
 pub(super) mod secret_lift_routes;
+mod secret_payment_mark_routes;
 pub(super) mod secret_reveal_routes;
 pub(super) mod secret_use_routes;
 pub(super) mod shared_training_setup_routes;
@@ -164,6 +167,7 @@ fn owner_tables() -> OwnerTable {
         export_audit_routes::owner_table(),
         history_routes::owner_table(),
         folder_source_routes::owner_table(),
+        hosted_import_table(),
         house_routes::owner_table(),
         inbox_routes::owner_table(),
         intent_routes::owner_table(),
@@ -212,6 +216,7 @@ fn owner_tables() -> OwnerTable {
         secret_found_routes::owner_table(),
         code_run_secret_lift_routes::owner_table(),
         secret_lift_routes::owner_table(),
+        secret_payment_mark_routes::owner_table(),
         steer_routes::owner_table(),
         stream_recovery_routes::owner_table(),
         training_swap_routes::owner_table(),
@@ -238,6 +243,16 @@ fn owner_tables() -> OwnerTable {
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     serve(owner_tables())
+}
+
+/// The hosted import's upload routes (ARCH-0027 #hosted-import); none off
+/// unix, where no hosted import is staged.
+fn hosted_import_table() -> OwnerTable {
+    #[cfg(unix)]
+    let table = hosted_import_routes::owner_table();
+    #[cfg(not(unix))]
+    let table = Vec::new();
+    table
 }
 
 /// The vault VM outbox carrier's owner routes (FIX 11074); none off Linux,

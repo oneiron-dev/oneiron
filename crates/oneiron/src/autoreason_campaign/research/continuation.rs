@@ -8,7 +8,11 @@
 //! run's one JSON answer and records it through the campaign's own doors.
 //! A measurement is a fresh run under the root, outside the experiment's
 //! write scope. A consumed confirmation shot stays spent: a referee that does
-//! not answer holds the campaign, and is never asked again.
+//! not answer holds the campaign, and is never asked again. Serving that
+//! sealed cohort to the referee spends one exposure on the campaign's own
+//! exploration line, reserved before the shot and settled in the write that
+//! serves; the meter never counts it as token work. A step's reservations,
+//! serving and settlements commit in the same write as the row it moves.
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound::{Excluded, Unbounded};
 
@@ -19,16 +23,19 @@ use serde_json::json;
 use super::super::CampaignDatasetRef;
 use super::super::beam_promotion::SealedRefereeMeasurement;
 use super::super::general::Measurement;
-use super::budget::{is_budget_refusal, settle_research_work_unknown};
+use super::budget::{
+    Finish, ReservationAsk, Reserved, finish_in_txn, reservation_in_txn, reservation_signing,
+    reserve_in_txn,
+};
 use super::estimator::{self, ENGINE_ESTIMATOR_VERSION};
+use super::promotion::{basis_in_txn, serve_confirmation_in_txn, spend_confirmation_shot_in_txn};
 use super::{
     BINDING, CandidateRef, ConfirmationOutcome, ExperimentNode, ForkInput, ForkKind, HeldOutCall,
     NODE, PromotionBasis, PromotionDisposition, ROUND, ResearchBinding, ResearchExecution,
-    ResearchReservation, ResearchStep, ResearchTarget, SearchEvidence, SelectionReceipt, hex,
-    invalid, nodes_in_txn, promote_measured, promotion_basis, proposal_of, record_fork,
-    record_held_out_measurement, record_invalid_experiment, record_search_measurement,
-    refund_research_work, research_binding, research_incumbent, research_promotions,
-    research_reservations, reserve_confirmation, reserve_research_work, settle_research_work,
+    ResearchReservation, ResearchReservationLine, ResearchStep, ResearchTarget, SearchEvidence,
+    SelectionReceipt, hex, invalid, nodes_in_txn, promote_measured, promotion_basis, proposal_of,
+    record_fork, record_held_out_measurement, record_invalid_experiment, record_search_measurement,
+    research_binding, research_incumbent, research_promotions, research_reservations,
 };
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatcher, AgentSpawnContext, DispatchAgent,
@@ -59,6 +66,9 @@ const MAX_STEPS_PER_PASS: usize = 16;
 const MAX_ROOTS_PER_PASS: usize = 32;
 /// The one hold a pass retries: the reservation found no room.
 const BUDGET_HELD: &str = "budget";
+/// Exposure one serving of the sealed cohort spends: the cohort ledger
+/// counts servings, so one release is one exposure.
+const SERVING_EXPOSURE: u64 = 1;
 const SHOT_SPENT: &str = "the sealed shot is spent; the referee did not answer";
 const NO_SEAT: &str = "no confirmation seat: promotion waits";
 const TRADEOFF: &str = "tradeoff escalates to the goal's decision path";
@@ -69,7 +79,7 @@ const SCORE_ANSWER: &str = r#"{"scores": {axis: number}, "confirmed_hits": n, "a
 const REFEREE_ANSWER: &str = r#"{"candidate": 0..1, "incumbent": 0..1, "referee_pin": "identity@sha256:<hex>", "sufficiency": SufficiencyInput}"#;
 
 /// Which campaign work a continuation carries out.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ResearchWork {
     /// Measure the unmeasured incumbent root on the search split.
@@ -87,7 +97,7 @@ impl ResearchWork {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ResearchSplit {
     Search,
@@ -119,14 +129,18 @@ pub struct ResearchRunning {
     pub task: ResearchTask,
     /// The RSI reservation the task's run spends.
     pub reservation: EntityId,
+    /// A confirmation's exposure reservation on the exploration line: the
+    /// sealed cohort's one serving to the referee.
+    #[serde(default)]
+    pub exposure: Option<EntityId>,
     pub run: Option<AttemptId>,
-    /// A confirmation's sealed release, kept once `reserve_confirmation`
-    /// returned it: a restart re-briefs the referee and never spends a
-    /// second shot.
+    /// A confirmation's sealed release, kept in the write that spent the
+    /// shot, served the cohort and settled `exposure`: a restart re-briefs
+    /// the referee and never spends a second shot.
     pub release: Option<EvalRelease>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ResearchContinuationState {
     Open,
@@ -157,6 +171,10 @@ pub struct ResearchContinuation {
     pub pending: Vec<ResearchTask>,
     pub running: Option<ResearchRunning>,
     pub state: ResearchContinuationState,
+    /// The line whose refusal holds the front task, while it is held for
+    /// budget: token work under the campaign's share, or exploration.
+    #[serde(default)]
+    pub held_line: Option<ResearchReservationLine>,
     /// Every run this continuation dispatched, in order: the receipt trail.
     pub runs: Vec<AttemptId>,
     /// Whether this work already took its one debug child.
@@ -366,31 +384,7 @@ pub fn advance_research_continuations(
         if !coach_attempt_still_usable(vault, coach_attempt, &coach_lease)? {
             break;
         }
-        create_missing(vault, root, now)?;
-        let Some(binding) = research_binding(vault, root)? else {
-            continue;
-        };
-        let Some(execution) = &binding.execution else {
-            continue;
-        };
-        let txn = vault.store.env.read_txn()?;
-        let live: Vec<ResearchWork> = CONTINUATION
-            .scan_from(&vault.store, &txn, root.as_bytes())?
-            .into_iter()
-            .filter(|(_, row)| row.state.live())
-            .map(|(_, row)| row.work)
-            .collect();
-        drop(txn);
-        for work in live {
-            served += 1;
-            Pass {
-                vault,
-                binding: &binding,
-                execution,
-                now,
-            }
-            .advance(work)?;
-        }
+        served += advance_root(vault, root, now)?;
     }
     tracing::debug!(
         coach_attempt = %hex(&coach_attempt),
@@ -398,6 +392,130 @@ pub fn advance_research_continuations(
         "autoresearch continuations advanced"
     );
     Ok(())
+}
+
+/// One root's pass: create its owed continuations, then advance each live
+/// one. Answers how many it advanced; a root bound without an execution
+/// spec has none.
+fn advance_root(vault: &Vault, root: AttemptId, now: u64) -> Result<usize> {
+    create_missing(vault, root, now)?;
+    let Some(binding) = research_binding(vault, root)? else {
+        return Ok(0);
+    };
+    let Some(execution) = &binding.execution else {
+        return Ok(0);
+    };
+    let txn = vault.store.env.read_txn()?;
+    let live: Vec<ResearchWork> = CONTINUATION
+        .scan_from(&vault.store, &txn, root.as_bytes())?
+        .into_iter()
+        .filter(|(_, row)| row.state.live())
+        .map(|(_, row)| row.work)
+        .collect();
+    drop(txn);
+    for work in &live {
+        Pass {
+            vault,
+            binding: &binding,
+            execution,
+            now,
+        }
+        .advance(*work)?;
+    }
+    Ok(live.len())
+}
+
+/// The host pass for one campaign, outside the Coach tick: the same work
+/// [`advance_research_continuations`] does for each root it serves, then
+/// the campaign's continuations as they stand.
+/// # Errors
+/// A campaign that is not bound, or bound without an execution spec (its
+/// workflow drives its own record); storage errors; another pass advancing
+/// one of its continuations concurrently.
+pub fn advance_research_campaign(
+    vault: &Vault,
+    root: AttemptId,
+    now: u64,
+) -> Result<Vec<ResearchContinuation>> {
+    let binding = research_binding(vault, root)?
+        .ok_or(invalid("no research campaign is bound to this root"))?;
+    if binding.execution.is_none() {
+        return Err(invalid(
+            "the campaign has no execution spec: its workflow drives its own record",
+        ));
+    }
+    advance_root(vault, root, now)?;
+    research_continuations(vault, root)
+}
+
+/// Put `root`'s continuation for `work`, open, with `pending` to run and
+/// nothing in flight, as an earlier pass or selection round leaves one. A
+/// key that already holds a continuation is refused.
+#[cfg(oneiron_test_support)]
+pub(crate) fn seed_research_continuation(
+    vault: &Vault,
+    root: AttemptId,
+    work: ResearchWork,
+    pending: Vec<ResearchTask>,
+    now: u64,
+) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        let key = (*root.as_bytes(), work.key());
+        if CONTINUATION.contains(&vault.store, txn, &key)? {
+            return Err(invalid("the campaign already holds this continuation"));
+        }
+        let row = ResearchContinuation {
+            root,
+            work,
+            pending,
+            running: None,
+            state: ResearchContinuationState::Open,
+            held_line: None,
+            runs: Vec::new(),
+            debug_spawned: false,
+            created_at: now,
+            updated_at: now,
+        };
+        CONTINUATION.put(&vault.store, txn, &key, &row)
+    })
+}
+
+/// One pass step of `root`'s campaign on `row` as the caller read it, as a
+/// pass that read `row` earlier takes it: no failure handling and no next
+/// step.
+#[cfg(oneiron_test_support)]
+pub(crate) fn step_research_continuation(
+    vault: &Vault,
+    root: AttemptId,
+    row: &ResearchContinuation,
+    now: u64,
+) -> Result<()> {
+    let binding = research_binding(vault, root)?
+        .ok_or(invalid("no research campaign is bound to this root"))?;
+    let execution = binding
+        .execution
+        .as_ref()
+        .ok_or(invalid("the campaign has no execution spec"))?;
+    Pass {
+        vault,
+        binding: &binding,
+        execution,
+        now,
+    }
+    .step(row)
+    .map(|_| ())
+}
+
+/// Every continuation of a campaign, bootstrap first, then by round.
+/// # Errors
+/// Storage errors.
+pub fn research_continuations(vault: &Vault, root: AttemptId) -> Result<Vec<ResearchContinuation>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(CONTINUATION
+        .scan_from(&vault.store, &txn, root.as_bytes())?
+        .into_iter()
+        .map(|(_, row)| row)
+        .collect())
 }
 
 /// What the round continuations say about the next selection round:
@@ -505,6 +623,7 @@ fn create_missing(vault: &Vault, root: AttemptId, now: u64) -> Result<()> {
                 pending,
                 running: None,
                 state: ResearchContinuationState::Open,
+                held_line: None,
                 runs: Vec::new(),
                 debug_spawned: false,
                 created_at: now,

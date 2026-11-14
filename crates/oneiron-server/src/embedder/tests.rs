@@ -1590,6 +1590,13 @@ fn the_worker_fills_pending_vectors_and_the_semantic_door_finds_them() {
     );
 }
 
+/// The served app with each request from a loopback peer: a hatch server
+/// answers only callers on this device.
+fn loopback_app(server: Arc<crate::server::SyncServer>) -> Router {
+    let loopback = axum::extract::ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0)));
+    crate::build_app(server).layer(axum::Extension(loopback))
+}
+
 async fn wait_for_vectors(vault: &oneiron::Vault, ids: &[oneiron::entity_id::EntityId]) -> bool {
     for _ in 0..200 {
         let filled = ids
@@ -1678,7 +1685,7 @@ fn the_semantic_door_refuses_with_503_when_no_embedder_is_configured() {
         .build()
         .expect("runtime");
     let (status, body) = runtime.block_on(async {
-        let response = crate::build_app(server)
+        let response = loopback_app(server)
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -1735,7 +1742,7 @@ fn the_text_search_door_refuses_an_oversized_query_with_413() {
         .build()
         .expect("runtime");
     let (status, body) = runtime.block_on(async {
-        let response = crate::build_app(server)
+        let response = loopback_app(server)
             .oneshot(
                 Request::builder()
                     .method("GET")
@@ -1870,7 +1877,7 @@ fn a_local_provider_that_cannot_fetch_its_model_still_serves_lexical_reads() {
         let worker = server
             .spawn_embedding_worker()
             .expect("a configured slot starts a worker");
-        let text = crate::build_app(Arc::clone(&server))
+        let text = loopback_app(Arc::clone(&server))
             .oneshot(
                 Request::builder()
                     .uri("/api/search/text?query=anything")
@@ -1881,7 +1888,7 @@ fn a_local_provider_that_cannot_fetch_its_model_still_serves_lexical_reads() {
             .expect("text response");
         let text_status = text.status();
         let _ = to_bytes(text.into_body(), 1 << 20).await;
-        let semantic = crate::build_app(Arc::clone(&server))
+        let semantic = loopback_app(Arc::clone(&server))
             .oneshot(
                 Request::builder()
                     .method("POST")

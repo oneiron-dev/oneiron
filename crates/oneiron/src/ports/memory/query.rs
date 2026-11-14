@@ -404,23 +404,30 @@ impl ShortIdStoreRead for Memory {
 }
 
 impl RetrievalIndexRead for Memory {
-    fn port_retrieval_phonetic_search(
+    fn port_retrieval_phonetic_search_with_deadline(
         &self,
         txn: &Snapshot,
         codes: &[String],
+        deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
     ) -> Result<Vec<ScoredEntity>> {
+        use crate::ports::query::{PHONETIC_IDS_PER_CHECKPOINT, phonetic_checkpoint};
         let mut counts = BTreeMap::<EntityId, usize>::new();
         let mut distinct_codes = BTreeSet::new();
         for code in codes {
             if !distinct_codes.insert(code) {
                 continue;
             }
+            phonetic_checkpoint(deadline)?;
             if let Some(ids) = txn.phonetic.get(code) {
-                for id in ids {
+                for (index, id) in ids.iter().enumerate() {
+                    if index > 0 && index.is_multiple_of(PHONETIC_IDS_PER_CHECKPOINT) {
+                        phonetic_checkpoint(deadline)?;
+                    }
                     *counts.entry(*id).or_default() += 1;
                 }
             }
         }
+        phonetic_checkpoint(deadline)?;
         let mut rows: Vec<_> = counts
             .into_iter()
             .map(|(id, count)| ScoredEntity {

@@ -120,10 +120,13 @@ fn answer(request: &LlmRequest, input: u64, output: u64) -> LlmResponse {
             role: LlmMessageRole::Assistant,
             content: vec![ContentPart::Text {
                 text: "teacher output".to_owned(),
+                signature: None,
             }],
         },
         usage,
         finish_reason: FinishReason::Stop,
+        reply_assertions: Default::default(),
+        token_scores: None,
     }
 }
 
@@ -184,6 +187,7 @@ impl LlmBackend for FakeProvider {
                         message: response.message,
                         usage: response.usage,
                         finish_reason: response.finish_reason,
+                        reply_assertions: response.reply_assertions,
                     }),
                 ])
             }

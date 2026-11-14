@@ -10,6 +10,7 @@ use crate::error::{Error, OffRecordError, Result};
 use crate::session_overlay::SessionWriteRoute;
 use crate::store::SessionStoreView;
 
+use super::room::ROOM_KEY_PREFIX;
 use super::session::{OffRecordSession, OffRecordSessionVault};
 use super::telemetry::SessionRetrievalTelemetry;
 
@@ -29,11 +30,14 @@ pub struct RoomPackRead<'s> {
 }
 
 impl<'vault> OffRecordSessionVault<'vault> {
-    /// The stretch `key` names, bound for `reader` to read a context pack in.
-    /// In a room `reader` must be on its roster, at bind and in every
-    /// transaction the pack reads the stretch in. `None` when the pack reads
-    /// base alone, as a pack did before: a ref no stretch can carry, a
-    /// stretch that is gone, closing or closed, or a room `reader` is not in.
+    /// The stretch `key` names, bound for `reader`, the vault's owner, to
+    /// read a context pack in. In a room `reader` must be on its roster, at
+    /// bind and in every transaction the pack reads the stretch in. `None`
+    /// when the pack reads base alone, as a pack did before: a ref no stretch
+    /// can carry, a stretch that is gone, closing or closed, or a room
+    /// `reader` is not in. A key that names no room binds as
+    /// [`Self::bind_for`] does, with no roster to check, so any other reader
+    /// binds through [`Self::bind_pack_member`].
     ///
     /// # Errors
     ///
@@ -55,6 +59,29 @@ impl<'vault> OffRecordSessionVault<'vault> {
         };
         let route = session.write_route()?;
         Ok(Some(RoomPackSession { session, route }))
+    }
+
+    /// The stretch `key` names, bound for `member` of its room to read a
+    /// context pack in (ARCH-0052 #e5-read-union-open = B, the lead's ruling
+    /// 13 Nov 05:5x): a person or agent other than the owner reads a room's
+    /// stretch only while on that room's roster, checked at bind and in
+    /// every transaction the pack reads the stretch in, and each row is read
+    /// under the member's own key. `None`, for a base read, as
+    /// [`Self::bind_pack_reader`] answers it, and also for a key that names
+    /// no room: a stretch entered alone has no roster to admit a member by.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::bind_pack_reader`].
+    pub fn bind_pack_member(
+        &self,
+        key: &str,
+        member: EntityId,
+    ) -> Result<Option<RoomPackSession<'vault>>> {
+        if !key.starts_with(ROOM_KEY_PREFIX) {
+            return Ok(None);
+        }
+        self.bind_pack_reader(key, member)
     }
 }
 

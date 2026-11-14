@@ -111,6 +111,8 @@ impl EnvConfig {
         values.failure_signal_training =
             lookup_bool(&mut lookup, "ONEIRON_FAILURE_SIGNAL_TRAINING")?;
         values.hosted_kms_key_ref = lookup("ONEIRON_HOSTED_KMS_KEY_REF");
+        values.off_record_dump_suppression =
+            lookup_bool(&mut lookup, "ONEIRON_OFF_RECORD_DUMP_SUPPRESSION")?;
 
         Ok(Self {
             config_path,
@@ -377,6 +379,9 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.maximum_tier {
             resolved.maximum_tier = value;
+        }
+        if let Some(value) = self.off_record_dump_suppression {
+            resolved.off_record_dump_suppression = value;
         }
         if let Some(value) = self.device_class {
             resolved.device_class = value;

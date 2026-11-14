@@ -113,6 +113,10 @@ pub enum ShadowStatus {
     Unavailable {
         unavailable: ShadowUnavailable,
     },
+    /// A person's pause the run took at its step boundary.
+    Paused {
+        next_step_seq: u64,
+    },
 }
 
 impl ShadowStatus {
@@ -134,6 +138,9 @@ impl ShadowStatus {
             } => Self::WindowFull {
                 next_step_seq: *next_step_seq,
                 reason: reason.into(),
+            },
+            EngineExecutorStatus::Paused { next_step_seq } => Self::Paused {
+                next_step_seq: *next_step_seq,
             },
         }
     }

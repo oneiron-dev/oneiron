@@ -73,13 +73,17 @@ pub use self::record::{
     EffectorBudgetOnExhaust, EffectorBudgetReservePolicy, EffectorBudgetWindow,
     PendingConnectorCharter, PendingConnectorManifest,
 };
+pub(crate) use self::setup::GrantAccess;
 pub use self::setup::{
-    BROWSER_SESSION_CHECK, GMAIL_PROFILE_CHECK, GoogleAuthorizationCode, GoogleAuthorizationGrant,
-    LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK, NATIVE_MAIL_JMAP_CHECK,
-    PACK_CONNECTION_ACTOR_CLASS, PACK_SETUP_ALLOW_ASK_DOOR, PACK_SETUP_ALLOW_ASK_QUEUE,
-    PackConnectionCheck, PackConnectionEvidence, PackConnectionVerifier, PackSetupOwnerAsk,
-    ProviderConnectionChecks, SHEETS_TOKEN_CHECK, SLACK_AUTH_TEST_CHECK, TELEGRAM_GET_ME_CHECK,
+    AuthorizationCodeGrant, BROWSER_SESSION_CHECK, GMAIL_PROFILE_CHECK, GOOGLE_TOKEN_CHECK,
+    GoogleAuthorizationCode, LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK, MICROSOFT365_ME_CHECK,
+    MicrosoftAuthorizationCode, NATIVE_MAIL_JMAP_CHECK, PACK_CONNECTION_ACTOR_CLASS,
+    PACK_SETUP_ALLOW_ASK_DOOR, PACK_SETUP_ALLOW_ASK_QUEUE, PackConnectionCheck,
+    PackConnectionEvidence, PackConnectionVerifier, PackSetupOwnerAsk, ProviderConnectionChecks,
+    SLACK_AUTH_TEST_CHECK, TELEGRAM_GET_ME_CHECK,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::setup::{exchange_microsoft_code_at, refresh_stored_microsoft_grant_at};
 pub use self::txn::ConnectorKeyGeneration;
 
 pub(crate) use self::charter::{
@@ -92,10 +96,10 @@ pub(crate) use self::credential_binding::{
 pub(crate) use self::lifecycle::catalog_charter_in_txn;
 pub(crate) use self::meter::{
     BudgetBlock, EffectorBudgetChargeOutcome, SpendReserve, append_effector_steering_message,
-    budget_block_pooled, budget_exhausted_reason, charge_effector_budgets,
-    charge_effector_budgets_pooled, fire_settled_effector_debits_in_txn,
-    preflight_effector_budgets_pooled, reconcile_connector_spend_in_txn,
-    release_effector_debits_in_txn, reserve_connector_spend_in_txn, restore_effector_debits_in_txn,
+    budget_block_pooled, charge_effector_budgets, charge_effector_budgets_pooled,
+    fire_settled_effector_debits_in_txn, preflight_effector_budgets_pooled,
+    reconcile_connector_spend_in_txn, release_effector_debits_in_txn,
+    reserve_connector_spend_in_txn, restore_effector_debits_in_txn,
     set_effector_debits_reserved_in_txn, shares_budget_pool, spend_overrun_in_txn,
     tool_spend_price_in_txn,
 };
@@ -113,11 +117,14 @@ pub(crate) use self::tool_remember::{
     connector_tool_remember_bound_in_txn, connector_tool_remembered_in_txn,
 };
 pub(crate) use self::txn::{
-    governing_connector_key, governing_keys_for_actor_in_txn, suspend_connector_key_in_txn,
+    SuspendAdmission, SuspendCause, governing_connector_key, governing_keys_for_actor_in_txn,
+    suspend_connector_key_in_txn,
 };
 
 // Crate-visible paths whose only live consumers are the test modules of sibling
 // modules; gated so the non-test build carries no unused re-export.
+#[cfg(test)]
+pub(crate) use self::meter::budget_exhausted_reason;
 #[cfg(test)]
 pub(crate) use self::txn::rewrite_connector_key_in_txn;
 

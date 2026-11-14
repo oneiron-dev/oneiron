@@ -953,6 +953,70 @@ fn destructive_external_link_fallback_is_refused() {
 }
 
 #[test]
+fn a_cell_naming_a_linked_workbooks_name_or_table_cannot_be_destroyed_by_fallback() {
+    // ARCH-0075 #calc-bounds-built's open follow-up (census L4-33): the parser
+    // reads `[1]!Rate` as a name and `[1]!Table1[Col]` as a table, not as an
+    // external reference, so the fallback's link check counted the cell as
+    // local, and a fallback that rewrote or dropped its formula passed. A
+    // sheet-qualified linked table (`'[1]Rates'!Table1[Col]`) loses its book
+    // in the parser altogether: it reads as the table `Table1`.
+    let cell = |formula: &str| format!(r#"<c r="A1"><f>{formula}</f><v>84</v></c>"#);
+    let resources = Resources::measuring();
+    for formula in [
+        "[1]!Rate*2",
+        "[1]Rates!Rate*2",
+        "'[1]Rates'!Rate*2",
+        "SUM([1]!Table1[Col])",
+        "SUM('[1]Rates'!Table1[Col])",
+        "SUM([1]Rates!Table1[Col])",
+    ] {
+        let input = linked_workbook(RATES, &cell(formula));
+        for damaged in [sheet(r#"<c r="A1"><v>84</v></c>"#), sheet(&cell("#REF!*2"))] {
+            assert_eq!(
+                preserve_external_links(
+                    &input,
+                    &with_part(&input, OUTPUT, damaged),
+                    limits(),
+                    &resources
+                ),
+                Err(FormulaError::InvalidWorkbook(
+                    "fallback altered or dropped an external formula link"
+                )),
+                "{formula}"
+            );
+        }
+        let recached = with_part(
+            &input,
+            OUTPUT,
+            sheet(&format!(r#"<c r="A1"><f>{formula}</f><v>85</v></c>"#)),
+        );
+        assert_eq!(
+            preserve_external_links(&input, &recached, limits(), &resources),
+            Ok(()),
+            "{formula}"
+        );
+        assert!(
+            !route_workbook([], [], [formula], &resources).is_in_process(),
+            "{formula}"
+        );
+    }
+    // The workbook's own name and tables stay local, and so does a column
+    // header that holds `!` (the parser reads `Prices[[Cost!USD]]` as a name
+    // too).
+    for formula in [
+        "[0]!Rate*2",
+        "SUM(Prices[[Cost!USD]])",
+        "SUM(Rates!Table1[Col])",
+        "SUM('[0]Rates'!Table1[Col])",
+    ] {
+        assert!(
+            route_workbook([], [], [formula], &resources).is_in_process(),
+            "{formula}"
+        );
+    }
+}
+
+#[test]
 fn formula_only_external_references_cannot_be_destroyed_by_fallback() {
     let input = fixture(
         "",

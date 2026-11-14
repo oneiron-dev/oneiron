@@ -91,6 +91,28 @@ pub enum ArtifactError {
     /// nothing was written.
     #[error("settle not authorized: {0}")]
     SettleNotAuthorized(&'static str),
+    /// A retain, propose, settle or second hold named a ref that an organ
+    /// call holds (OF-575, FIX 22386): the call has not run yet, or it ran
+    /// and failed. The refusal names the call and how its hold ends: a
+    /// redrive runs a waiting call when a node can and lands its files under
+    /// the ref, and `vault.artifacts.release_wait` lets either kind go.
+    /// Nothing was written.
+    #[error(
+        "the ref {run_ref} is held by organ call {organ}.{verb} (held by {}), which {}",
+        held_by.to_hex(),
+        if *failed {
+            "ran and failed; release it with vault.artifacts.release_wait"
+        } else {
+            "has not run yet; a redrive lands its files under this ref when a node can run it, or release it with vault.artifacts.release_wait"
+        }
+    )]
+    EditRefHeldByOrganCall {
+        run_ref: String,
+        organ: String,
+        verb: String,
+        held_by: EntityId,
+        failed: bool,
+    },
     /// A SKILL entity body failed pinned reliability/provenance validation.
     /// Nothing was written.
     #[error("invalid SKILL body: {0}")]
@@ -299,7 +321,9 @@ impl ArtifactError {
             Self::InvalidLfsObject(_) => ErrorKind::InvalidLfsObject,
             Self::InvalidAnchor(_) => ErrorKind::InvalidAnchor,
             Self::AnnotationThreadNotFound => ErrorKind::AnnotationThreadNotFound,
-            Self::InvalidEditManifest(_) => ErrorKind::InvalidEditManifest,
+            Self::InvalidEditManifest(_) | Self::EditRefHeldByOrganCall { .. } => {
+                ErrorKind::InvalidEditManifest
+            }
             Self::EditRoundtripFailed(_) => ErrorKind::EditRoundtripFailed,
             Self::LiveDeckRefused { .. } => ErrorKind::LiveDeckRefused,
             Self::MemoryFloorRefused { .. } => ErrorKind::MemoryFloorRefused,

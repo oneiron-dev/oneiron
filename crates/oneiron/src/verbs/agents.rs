@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::agent_def::{AgentDefinition, switches_off_or_narrows};
-use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use crate::claim::ClaimApprovalStatus;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
 use crate::{EntityId, TimeRange, Vault};
@@ -31,30 +31,11 @@ pub struct AgentDefinitionUpdateRequest {
     pub definition: AgentDefinitionSpec,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentDefinitionRequest {
-    pub agent_def_ref: EntityId,
-}
-
-/// The persisted currentness axis, using its canonical wire spellings.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentDefinitionLifecycle {
-    Active,
-    Superseded,
-    Retracted,
-}
-
-impl From<ClaimLifecycleStatus> for AgentDefinitionLifecycle {
-    fn from(status: ClaimLifecycleStatus) -> Self {
-        match status {
-            ClaimLifecycleStatus::Active => Self::Active,
-            ClaimLifecycleStatus::Superseded => Self::Superseded,
-            ClaimLifecycleStatus::Retracted => Self::Retracted,
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::agents::{
+    AgentDefinitionLifecycle, AgentDefinitionRequest, ProposedAgentDefinitionChangeApproveRequest,
+    ProposedAgentDefinitionChangeRejectRequest, ProposedAgentDefinitionChangesRequest,
+};
 
 /// The saved revision; its ceiling is a self-limit, never a dispatch grant.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -184,35 +165,6 @@ pub fn read_agent_definition_as(
         input.agent_def_ref,
         &load(vault, input.agent_def_ref)?,
     ))
-}
-
-/// The owner's approval of one proposed change to a stored definition.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProposedAgentDefinitionChangeApproveRequest {
-    /// The proposal row, as `vault.agents.proposed_changes.list` names it.
-    pub proposal_ref: EntityId,
-    /// The stored definition's version the owner read beside the proposal.
-    /// The approval is refused once the stored definition has moved on.
-    pub expected_target_version: String,
-}
-
-/// The owner's rejection of one proposed change to a stored definition.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProposedAgentDefinitionChangeRejectRequest {
-    /// The proposal row, as `vault.agents.proposed_changes.list` names it.
-    pub proposal_ref: EntityId,
-}
-
-/// Which proposed changes the owner lists.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProposedAgentDefinitionChangesRequest {
-    /// Only the changes proposed to this stored definition; every waiting
-    /// change when absent.
-    #[serde(default)]
-    pub target_ref: Option<EntityId>,
 }
 
 /// One proposed change waiting for the owner, beside the stored definition

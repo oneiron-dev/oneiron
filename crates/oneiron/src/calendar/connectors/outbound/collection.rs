@@ -127,16 +127,12 @@ pub(crate) fn omission_observed(
         uid,
         CalendarWriteAction::Upsert,
     );
-    if OUTBOX
+    Ok(!OUTBOX
         .get(&vault.store, &txn, &OutboxKey(outbox_id))?
         .is_some_and(|row| {
             matches!(
                 row.state,
                 CalendarWriteOutboxState::Prepared | CalendarWriteOutboxState::RemoteApplied
             )
-        })
-    {
-        return Ok(false);
-    }
-    Ok(true)
+        }))
 }

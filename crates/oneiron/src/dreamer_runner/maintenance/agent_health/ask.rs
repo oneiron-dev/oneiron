@@ -17,9 +17,7 @@ use serde::{Deserialize, Serialize};
 use super::apply::{AgentHealthApplicationState, AgentHealthCoachApplication};
 use super::brief::{HealthBriefPin, HealthObservedBrief, observed_brief_in};
 use super::erase::{any_gone_in_txn, sync_card_membership};
-use super::loaded::{
-    AgentHealthLoadedSkill, AgentHealthSkillTarget, bind_target, run_skills_sourced,
-};
+use super::loaded::{AgentHealthLoadedSkill, bind_target, run_skills_sourced};
 use super::sources::known_source_rows;
 use super::{
     AgentHealthCard, AgentHealthMove, CARDS, ConcernMoveOutcome, card_ref, parse_card_ref,
@@ -82,58 +80,10 @@ pub struct AgentHealthCoachAnswer {
     pub draft_erased: Option<bool>,
 }
 
-/// The Coach's sealed-pad read for one ask. A held or refused read leaves the
-/// Coach the card and the TASK alone.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum AgentHealthPadRead {
-    /// The pads were read; `read` is the agent's read-log row. `pads` counts
-    /// the pads the read returned and `pad_ids` names them, in its order
-    /// (FIX 5457).
-    Read {
-        read: Option<EntityId>,
-        pads: usize,
-        pad_ids: Vec<EntityId>,
-    },
-    /// The agent reviews reads first; `request` waits for its answer.
-    PendingReview { request: EntityId },
-    /// The agent said no to the Coach's reason.
-    Declined { request: EntityId },
-    /// The Coach does not read this agent's pads (a companion).
-    NotCovered,
-    /// The read door refused, with its code.
-    Refused { code: String },
-}
-
-/// The fix the Coach proposes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentHealthCoachRoute {
-    /// Edit the skill the agent ran.
-    SkillEdit,
-    /// Inject a prompt and resume from before the trouble.
-    PromptInject,
-    /// Neither fits: a person should look.
-    Neither,
-}
-
-/// One proposal in the Coach's words. The reader decides; only the owner's
-/// approval of exact bytes applies a skill edit (`apply.rs`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentHealthCoachDraft {
-    pub route: AgentHealthCoachRoute,
-    /// What the Coach thinks is going on.
-    pub diagnosis: String,
-    /// For a skill edit, the whole replacement instructions of `target`; for
-    /// a prompt injection, the exact prompt; else what a person should see.
-    pub proposal: String,
-    /// The loaded revision a skill edit replaces, as the apply door takes it.
-    /// `None` for another route, or when the Coach named no revision the
-    /// card's run loaded.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target: Option<AgentHealthSkillTarget>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_runner::maintenance::agent_health::ask::{
+    AgentHealthCoachDraft, AgentHealthCoachRoute, AgentHealthPadRead,
+};
 
 /// What the host's model reads to answer one ask.
 #[derive(Debug, Clone)]

@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "Starts a subprocess with only the standard descriptors and the ones its caller names"
 repository.workspace = true
-homepage.workspace = true
 
 [lib]
 doctest = false

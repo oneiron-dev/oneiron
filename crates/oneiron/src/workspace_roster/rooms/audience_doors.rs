@@ -67,44 +67,10 @@ use crate::workspace_roster::RosterActor;
 /// (FIX 6384, 6464), as its refusal names it: a conflict, HTTP 409.
 pub const MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN: &str = "AGENT_THREAD_WALK_IN_FORBIDDEN";
 
-/// `vault.rooms.thread_audience.add`'s input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ThreadAudienceAddRequest {
-    /// The private thread's root TURN, 32-hex.
-    pub thread_ref: String,
-    /// The PERSON or AGENT_DEF added, 32-hex.
-    pub person_ref: String,
-    /// What the added person reads: the whole thread, or its turns from this
-    /// add on. A walk-in reads from now on whatever this asks (FIX 6381), and
-    /// so does an Admin's add from outside the thread; a self re-add, and an
-    /// Admin's outside add for someone already in, change nothing.
-    pub history: ThreadAudienceHistory,
-}
-
-/// `vault.rooms.thread_audience.remove`'s input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ThreadAudienceRemoveRequest {
-    /// The private thread's root TURN, 32-hex.
-    pub thread_ref: String,
-    /// The PERSON or AGENT_DEF removed, 32-hex.
-    pub person_ref: String,
-}
-
-/// What an audience edit wrote: its thread's root and the edit's own TURN.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ThreadAudienceReceipt {
-    pub thread_ref: String,
-    pub event_ref: String,
-    /// What the person the edit names reads of the thread after it, the
-    /// history that applied (FIX 6381): `from_now` for a walk-in that
-    /// entered whatever its call asked, as before for one already in.
-    /// Absent on a remove.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub history: Option<ThreadAudienceHistory>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::rooms::audience_doors::{
+    ThreadAudienceAddRequest, ThreadAudienceReceipt, ThreadAudienceRemoveRequest,
+};
 
 /// A private thread as an edit door reads it in its write (FIX 5545): its
 /// binding, its audience and its room's members now, and the caller's

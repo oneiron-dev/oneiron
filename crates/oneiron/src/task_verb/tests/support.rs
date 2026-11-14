@@ -15,7 +15,10 @@ impl DescribeArms for Memory<'_> {
     fn describe_section(&self) -> MemoryResult<TasksSection> {
         match self.describe(None)? {
             TaskDescription::Section(section) => Ok(section),
-            TaskDescription::Card { .. } | TaskDescription::SelfCard { .. } => {
+            TaskDescription::Card { .. }
+            | TaskDescription::SelfCard { .. }
+            | TaskDescription::VaultCard { .. }
+            | TaskDescription::Status { .. } => {
                 panic!("describe without a task returned a card")
             }
         }
@@ -24,7 +27,10 @@ impl DescribeArms for Memory<'_> {
     fn describe_card(&self, task_ref: EntityId) -> MemoryResult<Vec<String>> {
         match self.describe(Some(task_ref))? {
             TaskDescription::Card { lines } => Ok(lines),
-            TaskDescription::Section(_) | TaskDescription::SelfCard { .. } => {
+            TaskDescription::Section(_)
+            | TaskDescription::SelfCard { .. }
+            | TaskDescription::VaultCard { .. }
+            | TaskDescription::Status { .. } => {
                 panic!("describe with a task returned a different card")
             }
         }
@@ -115,14 +121,9 @@ pub(super) const CONSULT_DEADLINE: u64 = CONSULT_NOW + 60;
 /// `CONSULT_NOW + 10` lands before the deadline on the engine's clock.
 pub(in crate::task_verb) fn open_consult_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(
-        dir.path(),
-        VaultConfig {
-            store_clock: crate::test_util::pinned_store_clock(CONSULT_NOW + 30),
-            ..VaultConfig::default()
-        },
-    )
-    .expect("open vault");
+    let mut config = VaultConfig::device();
+    config.store_clock = crate::test_util::pinned_store_clock(CONSULT_NOW + 30);
+    let vault = Vault::open(dir.path(), config).expect("open vault");
     (dir, vault)
 }
 
@@ -177,8 +178,6 @@ pub(super) fn digest_route() -> ConsultDigestRoute {
         verb: "send".to_owned(),
         channel: "email".to_owned(),
         target: "owner@example.test".to_owned(),
-        on_behalf_of: None,
-        recovery: vec![ConsultRecovery::NudgeAssignee],
     }
 }
 
@@ -228,6 +227,7 @@ pub(super) fn answer_input(
             evidence_refs: vec![evidence],
         },
         completed_at: CONSULT_NOW + 10,
+        measured_spend: None,
     }
 }
 

@@ -9,49 +9,16 @@ use crate::lens::LensSpanSelectionRequest;
 use crate::lens::{
     GeneratedUiRender, GeneratedUiResultSetActionEvent, GeneratedUiResultSetScope,
     GeneratedUiStateSnapshot, GeneratedUiValidatedAction, InspectionResolved, LensAtomId,
-    LensAtomSelectionRequest, LensBackingTargetKind, LensHandleName, LensReadHandle, LensReadReach,
+    LensAtomSelectionRequest, LensBackingTargetKind, LensReadHandle, LensReadReach,
     LensRenderFrame, LensRenderId,
 };
 use crate::memory::{Memory, MemoryError, MemoryResult};
 
-/// Half-open Unicode scalar offsets. A supplied version is an echo to check,
-/// never a version the engine is asked to trust or read instead of the live one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LensSelectionRange {
-    pub start: usize,
-    pub end: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version: Option<Vec<u8>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LensSelectRequest {
-    pub card_id: LensRenderId,
-    pub atom_id: LensAtomId,
-    pub handle: LensHandleName,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub span: Option<LensSelectionRange>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LensSelectionResolveRequest {
-    pub card_id: LensRenderId,
-    pub selection_ref: String,
-}
-
-/// Cursor bytes, not a copy of the selected text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LensSelectedSpan {
-    pub start: usize,
-    pub end: usize,
-    pub version: Vec<u8>,
-    pub start_cursor: Vec<u8>,
-    pub end_cursor: Vec<u8>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::lens::selection::{
+    LensResultSetActionRequest, LensResultSetActionResult, LensSelectRequest, LensSelectedSpan,
+    LensSelectionRange, LensSelectionResolveRequest,
+};
 
 /// The wire view of a host-held selection. The ref is a locator, not authority;
 /// the engine-issued LensReadHandle itself remains serialize-only and host-held.
@@ -98,24 +65,6 @@ impl LensSelection {
 pub struct LensSelectionResolved {
     pub selection: LensSelection,
     pub source: InspectionResolved,
-}
-
-/// Row ids are echoes of this rendered result set. Each selected ref must name
-/// the corresponding engine-issued selection, in rendered order; select-all
-/// instead names the rendered predicate's one QueryResult selection.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LensResultSetActionRequest {
-    pub event: GeneratedUiResultSetActionEvent,
-    pub selected: Vec<String>,
-    pub idempotency_key: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LensResultSetActionResult {
-    pub outcome: serde_json::Value,
-    pub read_receipt: crate::claim::ScopedReadReceipt,
 }
 
 impl Memory<'_> {

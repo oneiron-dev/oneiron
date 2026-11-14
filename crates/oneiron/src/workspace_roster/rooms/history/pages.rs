@@ -56,6 +56,7 @@ impl Memory<'_> {
                 rows: Vec::new(),
                 next_after: None,
                 scope,
+                actors: std::collections::BTreeMap::new(),
             });
         }
         let cursor = after
@@ -117,6 +118,7 @@ impl Memory<'_> {
             rows,
             next_after,
             scope,
+            actors: std::collections::BTreeMap::new(),
         })
     }
 

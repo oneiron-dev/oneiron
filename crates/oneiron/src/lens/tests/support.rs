@@ -79,6 +79,7 @@ pub(super) fn install_read_grants(vault: &crate::Vault, grants: Vec<rmpv::Value>
         entity_type: crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
         occurred: TimeRange { start: 1, end: 1 },
         learned_at: 1,
+        row_version: None,
         data: encode_read_manifest(grants),
         allow_maintenance: true,
         allow_reserved_predicate: false,
@@ -493,6 +494,7 @@ pub(super) fn selectable_render(
     GeneratedUiRender::new(
         render_id(card),
         GeneratedUiCatalog::LensAtomKit,
+        GeneratedUiCatalogVersion::lens_atom_kit(),
         id("root"),
         vec![generated_ui_node("root", None, &[atom]), leaf],
     )

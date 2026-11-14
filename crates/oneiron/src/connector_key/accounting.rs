@@ -19,8 +19,8 @@ use super::record::{
     invalid_body, normalize_connector_key,
 };
 use super::txn::{
-    append_connector_key_op_record, governing_connector_key, read_connector_key_in_txn,
-    suspend_connector_key_in_txn,
+    SuspendAdmission, SuspendCause, append_connector_key_op_record, governing_connector_key,
+    read_connector_key_in_txn, suspend_connector_key_in_txn,
 };
 
 mod batch;
@@ -331,15 +331,17 @@ impl Vault {
                 // debited, so the same ref must still be admittable once the
                 // window rolls or the owner widens the budget.
                 let mut suspended = false;
-                if on_exhaust == EffectorBudgetOnExhaust::Suspend {
-                    record = suspend_connector_key_in_txn(
+                if on_exhaust == EffectorBudgetOnExhaust::Suspend
+                    && let SuspendAdmission::Suspended(written) = suspend_connector_key_in_txn(
                         &self.store,
                         &mut wtxn,
                         id,
                         &record,
-                        budget_exhausted_reason(&location),
+                        SuspendCause::BudgetExhausted(&location),
                         accounting_now,
-                    )?;
+                    )?
+                {
+                    record = written;
                     let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
                     append_connector_key_op_record(
                         &self.store,
@@ -457,17 +459,16 @@ impl Vault {
         let mut settled_record = record;
         if usage.used() >= budget.limit
             && budget.on_exhaust == EffectorBudgetOnExhaust::Suspend
-            && settled_record.status == ConnectorKeyStatus::Active
-        {
-            let reason = budget_exhausted_reason(&EffectorBudgetLocation { key_ref: *id, row });
-            settled_record = suspend_connector_key_in_txn(
+            && let SuspendAdmission::Suspended(written) = suspend_connector_key_in_txn(
                 &self.store,
                 &mut wtxn,
                 id,
                 &settled_record,
-                reason,
+                SuspendCause::BudgetExhausted(&EffectorBudgetLocation { key_ref: *id, row }),
                 settled_at,
-            )?;
+            )?
+        {
+            settled_record = written;
         }
 
         let row_read = budget_row_read(row, &budget, &usage);

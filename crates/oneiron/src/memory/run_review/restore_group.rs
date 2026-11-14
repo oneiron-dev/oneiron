@@ -229,6 +229,8 @@ impl Memory<'_> {
         let mut changes = Vec::new();
         let mut metrics = Vec::new();
         let mut vad = Vec::new();
+        // One read of each subject's standing claims for the whole act.
+        let mut heads = crate::memory::claims::ConflictHeadIndex::default();
         for id in restore_group_members(self, txn, group_key, actor)? {
             let mut savepoint = self
                 .vault()
@@ -243,6 +245,7 @@ impl Memory<'_> {
                 id,
                 action,
                 now,
+                &mut heads,
             )? {
                 // Dropping the savepoint aborts it: nothing it read wrote.
                 RestoredMemberSettle::Closed => {}

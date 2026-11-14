@@ -372,7 +372,9 @@ mod entity_ref_serde {
 
 mod lookup;
 mod state;
-pub(crate) use state::{ensure_no_pending_effect_in, verify_frozen_effect_in};
+pub(crate) use state::{
+    ensure_no_pending_effect_in, pending_effect_fences_in, verify_frozen_effect_in,
+};
 use state::{persist_content_in, verify_owner_home_in};
 
 mod enumeration;

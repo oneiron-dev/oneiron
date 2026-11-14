@@ -19,23 +19,10 @@ use crate::connector_key::{
 use crate::entity_id::EntityId;
 use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult};
 
-/// Why a re-draft names no proposal on a host with no slate drafter: one
-/// sentence, so a later ruling changes one line.
-pub const SLATE_REDRAFT_UNAVAILABLE: &str =
-    "this host has no connector slate drafter configured; the slate is unchanged";
-
-/// `vault.connectors.slates.redraft`: the owner's instruction for re-drafting
-/// one connector grant slate.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ConnectorSlateRedraftRequest {
-    /// The slate to re-draft, 32 hex.
-    pub slate_ref: String,
-    /// The slate revision the owner reviewed.
-    pub expected_revision: u64,
-    /// What the owner wants changed, in his own words.
-    pub instruction: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::connector_slate::{
+    ConnectorSlateRedraftRequest, SLATE_REDRAFT_UNAVAILABLE,
+};
 
 /// What a re-draft came to. Nothing is stamped, activated or granted.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

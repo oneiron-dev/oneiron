@@ -40,6 +40,12 @@ pub enum PieceHome {
     TrustedPerson,
     /// A hardware security key holding the piece's export. Never required.
     SecurityKey,
+    /// The owner's synced passkey: the piece is sealed under its WebAuthn PRF
+    /// output into a wrap the vault data key carries, so a new device with the
+    /// passkey opens it. A data-key kit only, and one per kit: "a synced
+    /// passkey restores the vault key only, never a world key" (CROSS-ARCH-0019
+    /// #vault-20-world).
+    Passkey,
 }
 
 impl PieceHome {

@@ -10,6 +10,7 @@ use super::super::base::{SyncClient, home_reads_window};
 use super::super::types::SyncResidenceMode;
 use super::{OpenedItem, ThinItem};
 use crate::EntityId;
+use crate::registry::{ENTITY_TYPE_DIAGNOSTIC, ENTITY_TYPE_SECRET_CUSTODY};
 use crate::sync::residence::{ContentWorld, RESIDENCE_PAGE_REPLY_BYTES};
 use crate::sync::selector::encode_sync_selector;
 use crate::sync::transport::{self, TransportError};
@@ -115,6 +116,17 @@ async fn touch_item_bytes(
     Ok(bytes)
 }
 
+/// Whether a thin item's row may enter, or be read from, this machine's read
+/// cache. A diagnostic or a credential is local-only (ARCH-0069): a home
+/// never sends one, so a touch that brings one is refused, and a copy an
+/// older build cached is never served.
+fn thin_row_admitted(entity_type: u8) -> bool {
+    !matches!(
+        entity_type,
+        ENTITY_TYPE_DIAGNOSTIC | ENTITY_TYPE_SECRET_CUSTODY
+    )
+}
+
 impl SyncClient {
     /// Resolve and import one grant-selected ledger item on first touch.
     pub async fn fetch_item(
@@ -199,6 +211,9 @@ impl SyncClient {
             .filter(|worlds| worlds.matches(item, &blob, &document))
             .and_then(|worlds| rmp_serde::to_vec_named(&worlds).ok());
         let header = crate::batch::EntityMetadataHeader::parse(&blob).ok_or_else(refused)?;
+        if !thin_row_admitted(header.entity_type) {
+            return Err(refused());
+        }
         if window
             .start_timestamp()
             .is_none_or(|start| header.learned_at < start)
@@ -371,6 +386,14 @@ pub(super) fn read_thin_item(
         .get(&txn, &format!("ri:b:{id}"))
         .map_err(|e| TransportError::Storage(e.to_string()))?
         .ok_or_else(refused)?;
+    // A cached row a touch would refuse today reads as not cached, never as
+    // a fault: an open then touches the home afresh, where the touch refuses
+    // it again, and the offline search passes over it.
+    if !crate::batch::EntityMetadataHeader::parse(&raw)
+        .is_some_and(|header| thin_row_admitted(header.entity_type))
+    {
+        return Ok(None);
+    }
     let document = vault
         .store
         .sync_state

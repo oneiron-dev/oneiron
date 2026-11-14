@@ -78,6 +78,11 @@ pub(crate) fn validate_signal_rows(record: &AttemptRecord) -> Result<()> {
                     return Err(Error::InvalidConfig("orphan Signal ask answer".into()));
                 }
             }
+            RunSignalKind::Pause { note } => {
+                if let Some(note) = note {
+                    field(note)?;
+                }
+            }
         }
     }
     let mut handles = std::collections::HashSet::new();

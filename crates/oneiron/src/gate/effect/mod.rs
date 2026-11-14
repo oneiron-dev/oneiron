@@ -302,16 +302,18 @@ fn charge_admitted_external_effect(
             on_exhaust,
             mut charge,
         } => {
-            if on_exhaust == EffectorBudgetOnExhaust::Suspend {
-                connector_key::suspend_connector_key_in_txn(
-                    store,
-                    wtxn,
-                    &target.key_id,
-                    &target.key,
-                    connector_key::budget_exhausted_reason(&location),
-                    budget_now,
-                )?;
-                charge.read.status = ConnectorKeyStatus::Suspended;
+            if on_exhaust == EffectorBudgetOnExhaust::Suspend
+                && let connector_key::SuspendAdmission::Suspended(suspended) =
+                    connector_key::suspend_connector_key_in_txn(
+                        store,
+                        wtxn,
+                        &target.key_id,
+                        &target.key,
+                        connector_key::SuspendCause::BudgetExhausted(&location),
+                        budget_now,
+                    )?
+            {
+                charge.read.status = suspended.status;
             }
             (charge, true)
         }
