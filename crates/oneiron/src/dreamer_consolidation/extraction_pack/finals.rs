@@ -60,7 +60,8 @@ fn identity_round_questions(
 /// The `target` one-based round over `shortlist` with `answers` as the rounds
 /// before it: each earlier round validated against the round its shortlist
 /// builds, each shortlist narrowed to the ids its round named. Returns the
-/// target round's questions with the answers consumed.
+/// target round's questions with the answers consumed and the target round's
+/// shortlist for the lent execution.
 fn replay_identity_final(
     base: &[DecisionKeyPart],
     none: bool,
@@ -68,7 +69,7 @@ fn replay_identity_final(
     answers: &[EarlierAnswer],
     target: usize,
     candidate_ids: &[EntityId],
-) -> Result<(Vec<PackQuestion>, usize)> {
+) -> Result<(Vec<PackQuestion>, usize, Vec<EntityId>)> {
     if target == 0 {
         return Err(invalid_consolidation(
             "extraction final round does not exist",
@@ -115,18 +116,19 @@ fn replay_identity_final(
         }
     }
     let questions = identity_round_questions(base, none, target, &shortlist);
-    Ok((questions, consumed))
+    Ok((questions, consumed, shortlist))
 }
 
 /// The questions of the correction final round over `checked` with `earlier`
 /// as its group answers: the position read from the earlier keys, its groups
 /// validated across the rebuilt pages, and the requested one-based round over
-/// the shortlist they name.
+/// the shortlist they name. Returns the round questions with the candidate
+/// position and the target round shortlist for the lent execution.
 pub(super) fn correction_final_plan(
     checked: &CheckedPack,
     earlier: &[EarlierAnswer],
     part: ExtractionPart,
-) -> Result<Vec<PackQuestion>> {
+) -> Result<(Vec<PackQuestion>, usize, Vec<EntityId>)> {
     let ExtractionPart::Final { round } = part else {
         return Err(invalid_consolidation(
             "extraction pack part does not match its read",
@@ -203,26 +205,27 @@ pub(super) fn correction_final_plan(
         invalid_consolidation("extraction earlier answers do not cover their read")
     })?;
     let base = [DecisionKeyPart::Number(position)];
-    let (questions, consumed) =
+    let (questions, consumed, target) =
         replay_identity_final(&base, true, shortlist, rest, round, &candidate_ids)?;
     if consumed != rest.len() {
         return Err(invalid_consolidation(
             "extraction earlier answers do not cover their read",
         ));
     }
-    Ok(questions)
+    Ok((questions, position, target))
 }
 
 /// The resolution final question over `built` with `earlier` as its page
 /// answers: one answer per rebuilt page in page order, each inside the
 /// canonical resolutions, with at least two pages reading different
 /// non-standing resolutions, or native asks no final. The part carries the
-/// resolution sentinel round zero.
+/// resolution sentinel round zero. Returns the final question with the
+/// checked page answers for the lent execution.
 pub(super) fn resolution_final_plan(
     built: &BuiltConflict,
     earlier: &[EarlierAnswer],
     part: ExtractionPart,
-) -> Result<PackQuestion> {
+) -> Result<(PackQuestion, Vec<Option<String>>)> {
     let ExtractionPart::Final { round } = part else {
         return Err(invalid_consolidation(
             "extraction pack part does not match its read",
@@ -276,21 +279,23 @@ pub(super) fn resolution_final_plan(
     }
     let read: Vec<Option<String>> = answers.into_iter().map(Some).collect();
     let spec = resolution_final_prep(&read);
-    Ok(PackQuestion {
+    let question = PackQuestion {
         key: key_texts(&spec.key),
         options: spec.options,
-    })
+    };
+    Ok((question, read))
 }
 
 /// The questions of the conflict identity final `part` over `built` with
 /// `earlier` as its group and round answers: the groups validated across the
 /// rebuilt pages, then the requested one-based round replayed over the
-/// shortlist they name.
+/// shortlist they name. Returns the round questions with the target round
+/// shortlist for the lent execution.
 pub(super) fn identity_final_plan(
     built: &BuiltConflict,
     earlier: &[EarlierAnswer],
     part: ExtractionPart,
-) -> Result<Vec<PackQuestion>> {
+) -> Result<(Vec<PackQuestion>, Vec<EntityId>)> {
     let ExtractionPart::Final { round } = part else {
         return Err(invalid_consolidation(
             "extraction pack part does not match its read",
@@ -346,7 +351,7 @@ pub(super) fn identity_final_plan(
         invalid_consolidation("extraction earlier answers do not cover their read")
     })?;
     let base = [DecisionKeyPart::Text("identity")];
-    let (questions, consumed) = replay_identity_final(
+    let (questions, consumed, target) = replay_identity_final(
         &base,
         !built.across,
         shortlist,
@@ -359,5 +364,5 @@ pub(super) fn identity_final_plan(
             "extraction earlier answers do not cover their read",
         ));
     }
-    Ok(questions)
+    Ok((questions, target))
 }

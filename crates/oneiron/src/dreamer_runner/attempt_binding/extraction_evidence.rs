@@ -1,11 +1,13 @@
 //! One-snapshot evidence checks for a bound extraction verdict pack.
 
 use super::DreamerAttemptBinding;
+use super::extraction_execution::CheckedExtractionCall;
 use crate::EntityId;
 use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::dreamer_consolidation::ConsolidationBranchPlan;
 use crate::dreamer_consolidation::extraction_pack::{
-    BoundBranchInput, map_candidate_alias, project_bound_branch, rebuild_checked_pack,
+    BoundBranchInput, evidence_version_for_row, map_candidate_alias, project_bound_branch,
+    rebuild_checked_pack,
 };
 use crate::dreamer_runner::DreamerConsolidationScope;
 use crate::federation::Scope;
@@ -20,7 +22,10 @@ use crate::verbs::{ExtractionPack, PinnedClaim};
 
 impl DreamerAttemptBinding {
     /// Checks every pack operand and its rebuilt contract in one live read snapshot.
-    pub(super) fn checked_extraction_pack(&self, pack: &ExtractionPack) -> MemoryResult<()> {
+    pub(super) fn checked_extraction_pack(
+        &self,
+        pack: &ExtractionPack,
+    ) -> MemoryResult<CheckedExtractionCall> {
         let vault = &*self.vault;
         let memory = vault.memory(self.stamp.actor, self.actor().actor_class());
         let read = memory.read_lane(ClaimReadStatus::Recorded)?;
@@ -29,7 +34,7 @@ impl DreamerAttemptBinding {
         self.check_in_txn(&txn)?;
         memory.prove_read_authority_in_txn(&txn)?;
         let reader_scope = extraction_reader_scope_in_txn(&memory, &txn, None)?;
-        let _ = read.read_projected_in_txn(&txn, &[], None, |txn, _| {
+        let checked = read.read_projected_in_txn(&txn, &[], None, |txn, _| {
             let (scope, branch) = queued_extraction_branch_in_txn(vault, txn, self.attempt())?;
             check_pack_rows(
                 &memory,
@@ -52,6 +57,7 @@ impl DreamerAttemptBinding {
             )
             .map_err(bound_branch_error)?;
             check_pack_subjects(&read, txn, reader_scope.as_ref(), pack)?;
+            let branch_subject = branch.subject().unwrap_or_else(|| self.attempt());
             let rebuilt = rebuild_checked_pack(
                 pack,
                 &bound,
@@ -59,13 +65,33 @@ impl DreamerAttemptBinding {
                 &branch.axes(),
                 &read,
                 txn,
+                branch_subject,
             )
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
             check_engine_claim_pins(&read, txn, &pack.listed, &rebuilt.listed)?;
             check_engine_claim_pins(&read, txn, &pack.priors, &rebuilt.priors)?;
-            compare_pack_questions(&pack.questions, &rebuilt.questions, &rebuilt.candidate_ids)
+            compare_pack_questions(&pack.questions, &rebuilt.questions, &rebuilt.candidate_ids)?;
+            let evidence = rebuilt.execution.evidence();
+            let rows = read.get_entities_parts_in_txn(txn, evidence)?;
+            let versions = evidence
+                .iter()
+                .zip(rows)
+                .map(|(id, row)| {
+                    let (_, _, body) = row.ok_or_else(extraction_not_served)?;
+                    Ok(evidence_version_for_row(*id, &body))
+                })
+                .collect::<MemoryResult<Vec<_>>>()?;
+            Ok(CheckedExtractionCall {
+                execution: rebuilt.execution,
+                versions,
+                keys: rebuilt
+                    .questions
+                    .into_iter()
+                    .map(|question| question.key)
+                    .collect(),
+            })
         })?;
-        Ok(())
+        Ok(checked.value)
     }
 }
 

@@ -166,6 +166,9 @@ pub use sieve_ports::{
     RoleNeighbourhoodExtractionPort, RoleSieveNoveltyPort, SieveNoveltyPort, SieveRungCall,
     SieveRungOutcome, SieveRungRead, SliceStep,
 };
+#[cfg(oneiron_test_support)]
+pub use step_charge::SpentObservation;
+pub use step_charge::StepChargeTally;
 pub use support::*;
 pub use task_realize::{TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel, run_task_realize};
 pub(crate) use task_realize::{seal_task_realize_confession_in_txn, task_realize_confession};

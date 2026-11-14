@@ -1,11 +1,11 @@
 //! Request rules and facet dispatch for a checked extraction verdict pack.
 //!
-//! This leaf rebuilds contracts without wording or question identifiers. No
-//! extraction loan exists yet, so a checked pack parks without asking a model.
+//! The engine checks every contract before borrowing the attempt's native read
+//! resources. A host without an extraction loan still refuses the checked pack.
 
 use super::{BoundFacet, DreamerAttemptBinding, facet_refused};
 use crate::llm::decision::{AnswerContract, DecisionRung};
-use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
+use crate::memory::{MemoryError, MemoryResult};
 use crate::model_decision::MAX_DECISION_STATE_BYTES;
 use crate::verbs::{
     AiVerdict, AiVerdictRequest, AiVerdictReversibility, ExtractionPack, ExtractionPart,
@@ -22,7 +22,7 @@ impl DreamerAttemptBinding {
         }
     }
 
-    /// Checks one extraction pack before refusing its absent extraction loan.
+    /// Checks one extraction pack before running its lent native read, when available.
     fn extraction_verdict(&self, input: AiVerdictRequest) -> MemoryResult<AiVerdict> {
         let pack: ExtractionPack =
             serde_json::from_value(input.state.clone().unwrap_or(serde_json::Value::Null))
@@ -31,12 +31,8 @@ impl DreamerAttemptBinding {
                 })?;
         check_pack_bounds(&pack)?;
         check_extraction_request(&input, &pack)?;
-        self.checked_extraction_pack(&pack)?;
-        Err(MemoryError::new(
-            MEMORY_CODE_MODEL_UNAVAILABLE,
-            "no extraction loan is lent to this attempt",
-            &["The extraction attempt parks until its host lends an extraction read."],
-        ))
+        let checked = self.checked_extraction_pack(&pack)?;
+        self.execute_extraction_pack(&input, &checked)
     }
 }
 
