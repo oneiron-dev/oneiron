@@ -156,6 +156,19 @@ impl OAuthSignIn {
     pub(crate) fn write(&self, path: &Path) -> anyhow::Result<()> {
         credential_file::replace(path, &serde_json::to_vec_pretty(self)?)
     }
+
+    /// Moves the sign-in written at `staged` to `path`, in one rename under
+    /// `path`'s refresh lock, so no refresh in flight writes the sign-in it
+    /// replaces back over it. Answers the replaced sign-in, when `path` held
+    /// one that reads.
+    pub(crate) fn take_place(staged: &Path, path: &Path) -> anyhow::Result<Option<Self>> {
+        let _lock = RefreshLock::take(path)?;
+        let replaced = Self::read(path).ok();
+        std::fs::rename(staged, path).map_err(|error| {
+            anyhow::anyhow!("move {} to {}: {error}", staged.display(), path.display())
+        })?;
+        Ok(replaced)
+    }
 }
 
 /// The HTTP client every call to a vault's OAuth endpoints goes through: no

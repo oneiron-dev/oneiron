@@ -51,8 +51,10 @@ pub fn hosted(command: HostedCommand) -> anyhow::Result<()> {
 /// Records the vault `args` name once its origin admits the credential
 /// and, in owner mode, answers for the vault named, and selects it.
 /// Nothing is recorded when it does not. In OAuth mode this signs in first
-/// and writes the sign-in beside the selection; a sign-in that is then not
-/// recorded is revoked and removed again.
+/// and stages the sign-in beside the selection, where it takes the place of
+/// the origin's recorded sign-in only once it is admitted; a staged sign-in
+/// that is then not recorded is revoked and removed again, and the recorded
+/// one stays as it was.
 fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
     let mut selection = held()?;
     let origin = origin(&args.origin)?;
@@ -64,7 +66,7 @@ fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
     } else {
         McpAuthMode::OAuth
     });
-    let (auth_mode, file, id) = match mode {
+    let (auth_mode, file, id, staged) = match mode {
         McpAuthMode::Slip => {
             anyhow::ensure!(
                 args.owner_upgrade_headers_file.is_none(),
@@ -87,7 +89,7 @@ fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
                     file.display()
                 );
             }
-            (HostedAuthMode::Slip, file.to_owned(), Some(own))
+            (HostedAuthMode::Slip, file.to_owned(), Some(own), None)
         }
         McpAuthMode::Owner => {
             anyhow::ensure!(
@@ -111,6 +113,7 @@ fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
                 HostedAuthMode::Owner,
                 file.to_owned(),
                 Some(vault_id(named)?),
+                None,
             )
         }
         McpAuthMode::OAuth => {
@@ -124,18 +127,29 @@ fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
                 anyhow::anyhow!("there is no per-user oneiron folder (HOME is not set)")
             })?;
             hosted_selection::create_user_dir_for(&file)?;
+            let staged = hosted_sign_in::staged_file(&file);
             hosted_sign_in::sign_in(
                 &origin,
-                &file,
+                &staged,
                 Duration::from_secs(args.sign_in_timeout_secs),
             )?;
-            (HostedAuthMode::OAuth, file, named)
+            (HostedAuthMode::OAuth, file, named, Some(staged))
         }
     };
-    let recorded = record(args, &mut selection, origin, auth_mode, &file, id);
-    if recorded.is_err() && auth_mode == HostedAuthMode::OAuth {
-        // Nothing names this sign-in now: it goes, at the vault too.
-        let _ = hosted_sign_in::sign_out(&file);
+    let recorded = record(
+        args,
+        &mut selection,
+        origin,
+        auth_mode,
+        &file,
+        staged.as_deref(),
+        id,
+    );
+    if recorded.is_err()
+        && let Some(staged) = &staged
+    {
+        // Nothing names the staged sign-in: it goes, at the vault too.
+        let _ = hosted_sign_in::sign_out(staged);
     }
     recorded
 }
@@ -143,21 +157,25 @@ fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
 /// Records the vault at `origin` reached by `file` in `auth_mode`, once
 /// the origin admits that credential and answers for the vault `id` names
 /// (or, signed in by OAuth with no id named, for the vault it answers), and
-/// selects it.
+/// selects it. A new OAuth sign-in waits at `staged`: the origin admits it
+/// there, and only then does it take `file`'s place.
 fn record(
     args: &HostedLoginArgs,
     selection: &mut Selection,
     origin: String,
     auth_mode: HostedAuthMode,
     file: &Path,
+    staged: Option<&Path>,
     id: Option<String>,
 ) -> anyhow::Result<()> {
+    let absolute = |file: &Path| {
+        std::path::absolute(file).map_err(|error| anyhow::anyhow!("{}: {error}", file.display()))
+    };
     let mut vault = HostedVault {
         origin,
         vault_id: id.clone().unwrap_or_default(),
         auth_mode,
-        credential_file: std::path::absolute(file)
-            .map_err(|error| anyhow::anyhow!("{}: {error}", file.display()))?,
+        credential_file: absolute(staged.unwrap_or(file))?,
         verified_at_ms: 0,
     };
     let deadline = Instant::now() + Duration::from_secs(args.timeout_secs);
@@ -201,6 +219,10 @@ fn record(
                 vault.origin
             ),
         }
+    }
+    if let Some(staged) = staged {
+        hosted_sign_in::take_place(staged, file)?;
+        vault.credential_file = absolute(file)?;
     }
     vault.verified_at_ms = now_ms();
     selection

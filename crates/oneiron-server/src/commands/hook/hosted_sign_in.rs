@@ -17,7 +17,7 @@
 
 use std::io::{Read as _, Write as _};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
@@ -127,35 +127,64 @@ pub(super) fn sign_in(origin: &str, token_file: &Path, timeout: Duration) -> any
     OAuthSignIn::from_answer(party, answer, oauth_sign_in::now_ms())?.write(token_file)
 }
 
+/// Where a new sign-in for `token_file` waits until its origin admits it
+/// for the vault named, beside `token_file`.
+pub(super) fn staged_file(token_file: &Path) -> PathBuf {
+    let mut name = token_file.as_os_str().to_owned();
+    name.push(".staged");
+    PathBuf::from(name)
+}
+
+/// Puts the admitted sign-in at `staged` in `token_file`'s place, and
+/// revokes the sign-in it replaced, best effort: no file holds that one now.
+pub(super) fn take_place(staged: &Path, token_file: &Path) -> anyhow::Result<()> {
+    if let Some(replaced) = OAuthSignIn::take_place(staged, token_file)? {
+        revoke(&replaced);
+    }
+    let _ = std::fs::remove_file(lock_file(staged));
+    Ok(())
+}
+
 /// Revokes the sign-in in `token_file` at its vault, best effort, and
 /// removes the file, which `hosted login` wrote. A vault that does not
 /// answer is named on stderr; the file goes all the same.
 pub(super) fn sign_out(token_file: &Path) -> anyhow::Result<()> {
     if let Ok(sign_in) = OAuthSignIn::read(token_file) {
-        let revoked = tokio::runtime::Handle::try_current()
-            .map_err(|_| anyhow::anyhow!("no runtime"))
-            .and_then(|runtime| {
-                let client = oauth_sign_in::endpoint_client()?;
-                runtime.block_on(oauth_sign_in::revoke(&client, &sign_in))
-            });
-        if let Err(error) = revoked {
-            let _ = writeln!(
-                std::io::stderr().lock(),
-                "the vault did not confirm the sign-out ({error}); the owner can revoke it in his \
-                 consent registry"
-            );
-        }
+        revoke(&sign_in);
     }
-    let mut lock = token_file.as_os_str().to_owned();
-    lock.push(".lock");
-    for path in [token_file, Path::new(&lock)] {
-        if let Err(error) = std::fs::remove_file(path)
+    for path in [token_file.to_owned(), lock_file(token_file)] {
+        if let Err(error) = std::fs::remove_file(&path)
             && error.kind() != std::io::ErrorKind::NotFound
         {
             anyhow::bail!("remove {}: {error}", path.display());
         }
     }
     Ok(())
+}
+
+/// Revokes `sign_in` at its vault, best effort. A vault that does not
+/// answer is named on stderr.
+fn revoke(sign_in: &OAuthSignIn) {
+    let revoked = tokio::runtime::Handle::try_current()
+        .map_err(|_| anyhow::anyhow!("no runtime"))
+        .and_then(|runtime| {
+            let client = oauth_sign_in::endpoint_client()?;
+            runtime.block_on(oauth_sign_in::revoke(&client, sign_in))
+        });
+    if let Err(error) = revoked {
+        let _ = writeln!(
+            std::io::stderr().lock(),
+            "the vault did not confirm the sign-out ({error}); the owner can revoke it in his \
+             consent registry"
+        );
+    }
+}
+
+/// The refresh lock file beside the sign-in in `token_file`.
+fn lock_file(token_file: &Path) -> PathBuf {
+    let mut name = token_file.as_os_str().to_owned();
+    name.push(".lock");
+    PathBuf::from(name)
 }
 
 /// GETs `url` and reads its JSON answer.

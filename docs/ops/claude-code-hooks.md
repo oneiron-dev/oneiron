@@ -211,6 +211,10 @@ oneiron hosted status
   refreshes on use; the refresh token lasts 30 days from its last use.
   `oneiron mcp --auth-mode oauth --oauth-token-file <file>` reaches the vault
   with it, over HTTP. The browser must run on the machine that runs `login`.
+  Run again for the same origin, `login` keeps the new sign-in apart until
+  the vault admits it for the vault named; only then does it take the old
+  one's place, and the old one is revoked. A login that is not recorded
+  leaves the old sign-in as it was.
   A vault that serves no OAuth sign-in (no https `oauth_resource_indicator`
   in its server config) answers 404, and `login` says so.
 - `select` takes a recorded vault id, or its first characters when no other
