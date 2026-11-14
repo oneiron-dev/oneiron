@@ -184,7 +184,9 @@ impl BatchBuilder<'_> {
             })
             .transpose()?
             .flatten();
+        let person_writer = self.person_writer_for(actor);
         let mut gate_mode = gate_mode
+            .with_person_writer(person_writer)
             .with_birth_mask(self.birth_mask)
             .with_text_births(std::mem::take(&mut self.text_births))
             .with_births(std::mem::take(&mut self.births))

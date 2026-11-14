@@ -47,7 +47,9 @@ pub(crate) use connect_proposal::{
     pending_connect_proposals_in_txn, settle_connect_proposal_in_txn,
 };
 mod content_write;
-pub(crate) use content_write::{ActorContentTxn, actor_for_txn, person_writer_in_txn};
+pub(crate) use content_write::{
+    ActorContentTxn, actor_for_txn, person_writer_in_txn, person_writing,
+};
 mod coreference;
 pub mod derivation;
 pub(crate) mod facet_read;

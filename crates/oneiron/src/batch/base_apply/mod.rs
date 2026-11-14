@@ -312,6 +312,7 @@ pub(super) fn apply_ops_with_authority_beside(
     let asset_file_bodies = std::mem::take(&mut gate_mode.asset_file_bodies);
     let replicated_puts = std::mem::take(&mut gate_mode.replicated_puts);
     let marked_carriers = std::mem::take(&mut gate_mode.marked_carriers);
+    let person_writer = gate_mode.person_writer.take();
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let authority_generation = crate::authority::authority_cache_generation(store, wtxn)?;
     let record_gate_decisions = gate_mode.record_decisions;
@@ -349,6 +350,7 @@ pub(super) fn apply_ops_with_authority_beside(
             !replay
                 || matches!(origin, BaseWriteOrigin::PromoteReplay(grant)
                     if grant.selected_saver().is_some()),
+            person_writer,
             mutation_recorded_at,
         )
     };
