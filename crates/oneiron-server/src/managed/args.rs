@@ -297,7 +297,8 @@ pub struct ManagedArgs {
     /// Origins whose OCSP responders the seal may query
     /// (`--seal-ocsp-origins`).
     pub seal_ocsp_origins: Vec<String>,
-    /// The signing page seal evidence names (`--seal-signing-url`).
+    /// The public signing page, whose origin the seal's QR page sits at
+    /// (`--seal-signing-url`).
     pub seal_signing_url: Option<String>,
     /// The seal organ's program (`--seal-organ`).
     pub seal_organ: Option<PathBuf>,
