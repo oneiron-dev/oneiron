@@ -270,7 +270,7 @@ fn every_fit_unverified_unit_has_a_measured_row() {
             .unwrap_or_else(|| panic!("{id}: receipt has no fit script hash"));
         assert_eq!(script.len(), 64, "{id}: fit script hash");
         assert!(
-            script.bytes().all(u8::is_ascii_hexdigit),
+            script.bytes().all(|byte| byte.is_ascii_hexdigit()),
             "{id}: fit script hash is hex"
         );
     }
