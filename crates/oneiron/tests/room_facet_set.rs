@@ -274,6 +274,28 @@ fn a_childs_set_stays_inside_its_parents_room() -> TestResult {
 }
 
 #[test]
+fn a_parents_set_keeps_its_childrens_sets_inside_it() -> TestResult {
+    let fixture = open()?;
+    let (work, health) = (facet(&fixture)?, facet(&fixture)?);
+    let (parent, parent_home) = project(&fixture, None, work, 1, true)?;
+    let (child, home) = project(&fixture, Some(parent), work, 0, true)?;
+    fixture.set(parent, Some(facets([work, health])))?;
+    fixture.set(child, Some(facets([work, health])))?;
+    assert!(
+        fixture.set(parent, None).is_err(),
+        "dropping a parent's set leaves no child's set reading a facet the parent's room does not"
+    );
+    assert_eq!(fixture.reads(parent_home)?, axis([work, health]));
+
+    // With the child's set dropped first, the parent's set drops too.
+    fixture.set(child, None)?;
+    fixture.set(parent, None)?;
+    assert_eq!(fixture.reads(parent_home)?, axis([work]));
+    assert_eq!(fixture.reads(home)?, axis([work]));
+    Ok(())
+}
+
+#[test]
 fn a_set_outside_the_writers_slip_facets_is_refused() -> TestResult {
     let fixture = open()?;
     let (work, health) = (facet(&fixture)?, facet(&fixture)?);
