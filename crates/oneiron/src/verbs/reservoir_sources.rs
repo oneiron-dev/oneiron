@@ -6,31 +6,15 @@
 //! so far, so he ticks by what he sees. Read only: the prepare route and
 //! its consent decision stay as they are.
 
-use serde::{Deserialize, Serialize};
-
+use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::edit_distance::reservoir::{
     ReservoirScope, ReservoirSourcePreview, reservoir_source_preview,
 };
 use crate::memory::MemoryResult;
-use crate::{EntityId, Vault};
 
-/// `vault.coach.training_offers.sources`'s input: the reservoir scope a run
-/// would export, as the prepare route reads it, and the sources ticked so
-/// far.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ReservoirSourcesRequest {
-    /// Keep only pairs of these task classes; absent keeps every class.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub task_classes: Option<Vec<String>>,
-    /// Keep only pairs observed at or after this Unix second.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub since: Option<u64>,
-    /// The sources the owner ticked "I obtained consent" for so far.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub consented_sources: Vec<EntityId>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::reservoir_sources::ReservoirSourcesRequest;
 
 /// `vault.coach.training_offers.sources`: the scope's sources a run holds to
 /// the owner's tick, and the pairs it would carry and leave out.
