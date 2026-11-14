@@ -9,8 +9,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    LEARNED_VECTOR, LearnedVectorRow, NAMES_PER_ENTITY_CAP, PHONETIC_VECTOR_MAX_DIMENSIONS,
-    PhoneticEmbedReport, PhoneticEmbedder, model_key, name_key,
+    LEARNED_VECTOR, LearnedVectorKey, LearnedVectorRow, NAMES_PER_ENTITY_CAP,
+    PHONETIC_VECTOR_MAX_DIMENSIONS, PhoneticEmbedReport, PhoneticEmbedder, model_key, name_key,
 };
 use crate::Vault;
 use crate::batch::phonetic_codes::names_for_body;
@@ -108,7 +108,7 @@ impl Vault {
         model: [u8; 16],
         pending: &[PendingName],
         vectors: Vec<Vec<f32>>,
-        dropped: &[(EntityId, [u8; 16])],
+        dropped: &[LearnedVectorKey],
         report: &mut PhoneticEmbedReport,
     ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
@@ -167,7 +167,7 @@ impl Vault {
         model: ([u8; 16], usize),
         max_names: usize,
         report: &mut PhoneticEmbedReport,
-    ) -> Result<(Vec<PendingName>, Vec<(EntityId, [u8; 16])>)> {
+    ) -> Result<(Vec<PendingName>, Vec<LearnedVectorKey>)> {
         let mut pending = Vec::new();
         let mut dropped = Vec::new();
         for entity_type in NAMED_ENTITY_TYPES {
