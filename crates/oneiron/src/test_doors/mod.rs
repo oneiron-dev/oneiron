@@ -15,6 +15,7 @@ pub mod claim_facet_birth;
 pub mod claim_source_recheck;
 pub mod claim_transition;
 pub mod claim_value_redaction;
+pub mod cleanup_archive;
 pub mod coach;
 pub mod code_mode_capture;
 pub mod code_reply_healer;
