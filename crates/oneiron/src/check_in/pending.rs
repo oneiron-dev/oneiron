@@ -82,14 +82,8 @@ impl Rung {
     }
 }
 
-/// Whether a holder is a person or an agent. Only a person rung waits; an
-/// agent answers at once or passes up (ARCH-0082 #waits, ruling R2).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HolderKind {
-    Person,
-    Agent,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::check_in::pending::HolderKind;
 
 /// One holder a rung asks, pinned when the ask enters the rung.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

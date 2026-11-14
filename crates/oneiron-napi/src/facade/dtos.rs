@@ -34,8 +34,10 @@ pub(super) use self::witness_assertions::NapiWitnessAssertions;
 pub struct NapiWitnessMessage {
     /// Deterministic 32-hex entity id; omitted ⇒ generated.
     pub id: Option<String>,
-    /// `user` | `companion` | `system` (system rows get no AuthoredBy edge,
-    /// and authoring one takes engine-voice authority — see the type docs).
+    /// `user` | `companion` | `system` | `counterparty` (system rows get no
+    /// AuthoredBy edge, and authoring one takes engine-voice authority — see
+    /// the type docs; counterparty rows, somebody else's imported words, get
+    /// no AuthoredBy edge to their writer).
     pub author: String,
     /// Message type token (bounded, printable, no whitespace).
     pub message_type: String,

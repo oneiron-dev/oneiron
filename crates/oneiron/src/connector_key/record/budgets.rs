@@ -138,18 +138,8 @@ impl EffectorBudgetReservePolicy {
     }
 }
 
-/// A call's declared price (FIX 8689): what one call of a verb costs, in a
-/// Spend row's denomination (an ISO-4217 code in minor units, or a provider
-/// unit as an opaque integer). It is read only where `unit` is the row's own
-/// unit; nothing converts between units.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-#[serde(deny_unknown_fields)]
-pub struct ConnectorSpendEstimate {
-    pub unit: String,
-    pub minor_units: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::connector_key::record::budgets::ConnectorSpendEstimate;
 
 /// What a send's preauthorized spend stood on (FIX 8689): the verb's
 /// declared price, reserved before the call and kept as its charge unless a

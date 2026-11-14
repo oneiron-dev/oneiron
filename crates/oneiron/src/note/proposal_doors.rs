@@ -22,39 +22,10 @@ pub struct NoteForkRequest {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NoteForkReadRequest {
-    pub note_ref: String,
-    pub fork_ref: String,
-    #[serde(default)]
-    pub reason: Option<String>,
-}
-
-/// A fork identity is not an entity ref or an authority credential.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NoteProposalForkRef {
-    pub note_ref: String,
-    pub fork_ref: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NoteProposalOpenRequest {
-    pub forks: Vec<NoteProposalForkRef>,
-    pub explainer: String,
-    #[serde(default)]
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NoteProposalRequest {
-    pub proposal_ref: String,
-    #[serde(default)]
-    pub reason: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::note::proposal_doors::{
+    NoteForkReadRequest, NoteProposalForkRef, NoteProposalOpenRequest, NoteProposalRequest,
+};
 
 /// Public provenance only; the engine's recovery merge basis is not a wire DTO.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
