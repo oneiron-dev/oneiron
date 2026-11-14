@@ -178,6 +178,8 @@ pub(super) async fn preview(
 /// editor-computation token (FIX 5618, `editor_auth`) into the no-store
 /// page; the page's script reads it, removes it from the document and sends
 /// it only in the `x-oneiron-esign-editor` header of its computation POSTs.
+/// Its scripts are inline and hash-pinned, as the ceremony's are, so no other
+/// script on the API's origin runs in it (ARCH-0050 #artifact-origin-open).
 pub(super) async fn editor(
     auth: crate::auth::CoreAuth,
     axum::Extension(desk): axum::Extension<Arc<EditorDesk>>,
@@ -186,24 +188,15 @@ pub(super) async fn editor(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let token = desk.mint(auth);
-    let html = format!(
-        "<!doctype html><html lang=en><meta charset=utf-8><meta name=referrer content=no-referrer><meta id=editor-capability name=oneiron-esign-editor content=\"{token}\"><title>Field geography editor</title><main><h1>Field geography editor</h1><p>Load a PDF and a field geography pack. Positions are percentages of the visible page after rotation.</p><label>PDF <input id=pdf-file type=file accept=application/pdf></label><label>Pack JSON <input id=pack-file type=file accept=application/json></label><label>Item <input id=current-item type=number min=0 value=0></label><label>Recipient reference <input id=recipient></label><label>Field type <select id=field-kind><option>signature</option><option>initials</option><option>name</option><option>email</option><option>date</option><option>text</option><option>checkbox</option><option>select</option></select></label><label>Select options (one per line)<textarea id=select-options></textarea></label><button id=add>Add field</button><section id=fields></section><section id=preview></section><button id=save>Export geography pack</button><p id=status></p></main><script src=/sign/field-renderer.js></script><script src=/sign/editor.js></script></html>"
+    let script = [include_str!("field-renderer.js"), include_str!("editor.js")].join("\n");
+    let source = super::super::first_party_html::inline_script_source(&script);
+    let csp = format!(
+        "default-src 'none'; script-src {source}; connect-src 'self'; style-src 'unsafe-inline'; img-src blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     );
-    ([ (header::CONTENT_SECURITY_POLICY,"default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; img-src blob:; base-uri 'none'; frame-ancestors 'none'"), (header::CACHE_CONTROL,"no-store") ],axum::response::Html(html)).into_response()
-}
-pub(super) async fn field_script() -> Response {
-    (
-        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
-        include_str!("field-renderer.js"),
-    )
-        .into_response()
-}
-pub(super) async fn editor_script() -> Response {
-    (
-        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
-        include_str!("editor.js"),
-    )
-        .into_response()
+    let html = format!(
+        "<!doctype html><html lang=en><meta charset=utf-8><meta name=referrer content=no-referrer><meta id=editor-capability name=oneiron-esign-editor content=\"{token}\"><title>Field geography editor</title><main><h1>Field geography editor</h1><p>Load a PDF and a field geography pack. Positions are percentages of the visible page after rotation.</p><label>PDF <input id=pdf-file type=file accept=application/pdf></label><label>Pack JSON <input id=pack-file type=file accept=application/json></label><label>Item <input id=current-item type=number min=0 value=0></label><label>Recipient reference <input id=recipient></label><label>Field type <select id=field-kind><option>signature</option><option>initials</option><option>name</option><option>email</option><option>date</option><option>text</option><option>checkbox</option><option>select</option></select></label><label>Select options (one per line)<textarea id=select-options></textarea></label><button id=add>Add field</button><section id=fields></section><section id=preview></section><button id=save>Export geography pack</button><p id=status></p></main><script>{script}</script></html>"
+    );
+    super::super::first_party_html::isolated_html(csp, html)
 }
 /// `POST /sign/geometry`: byte-only inspection, no template parse, blob
 /// write, or outbound effects. Every PDF spools under the disk floor and is
