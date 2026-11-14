@@ -55,6 +55,8 @@ pub mod history_import_rows;
 pub mod home_handoff_retire;
 #[cfg(feature = "sync")]
 pub mod home_sections;
+#[cfg(feature = "sync")]
+pub mod host_node_seals;
 pub mod house_link;
 pub mod hydration_decode_guard;
 pub mod identity_recheck;
@@ -64,6 +66,8 @@ pub mod learning_claim_value;
 pub mod learning_setting_sourced;
 pub mod lifted_text;
 pub mod live_run_claim_put;
+#[cfg(feature = "sync")]
+pub mod live_window_import;
 pub mod machine_history;
 pub mod mail_counterparty;
 pub mod mail_landing;
@@ -88,6 +92,7 @@ pub mod repo_secret_marks;
 pub mod research_continuation;
 pub mod resident_wake_hold;
 pub mod retrieval_policy_default_floor;
+pub mod room_facet_limit;
 pub mod room_turn_backfill;
 pub mod run_changes;
 pub mod run_hold;
