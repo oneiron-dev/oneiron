@@ -67,6 +67,15 @@ pub(in crate::sync::connection) fn upgrade_request(
     Ok((request, binding, withheld))
 }
 
+/// Whether `request` carries a credential: the slip its `binding` proves, or
+/// a bearer token.
+pub(in crate::sync::connection) fn carries_credential(
+    request: &Request,
+    binding: Option<&UpgradeBinding>,
+) -> bool {
+    binding.is_some() || request.headers().contains_key(AUTHORIZATION)
+}
+
 impl SyncConnection {
     /// Opens the session's socket, its upgrade proved: to the home on the
     /// configured carrier, or to the session's peer on its mesh dial (FIX
@@ -82,6 +91,7 @@ impl SyncConnection {
         let (request, binding, withheld) =
             upgrade_request(self.manager.vault(), config, client.peer_session.is_some())
                 .map_err(SessionFault::Local)?;
+        let carried = carries_credential(&request, binding.as_ref());
         if withheld && !client.cleartext_withhold_logged {
             client.cleartext_withhold_logged = true;
             tracing::warn!("sync server is clear ws off loopback and mesh: no credential sent");
@@ -102,7 +112,7 @@ impl SyncConnection {
                 // the host asks the home, and this socket decides nothing
                 // (FIX 12442). A peer's refusal is not the home's.
                 if client.peer_session.is_none()
-                    && let Some(refusal) = crate::sync::carrier::upgrade_refusal(&e)
+                    && let Some(refusal) = crate::sync::carrier::upgrade_refusal(&e, carried)
                 {
                     let _ = event_tx.send(refusal.event());
                     // A 403 refuses this credential the socket: no redial on

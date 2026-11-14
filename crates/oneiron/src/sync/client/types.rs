@@ -422,7 +422,9 @@ pub enum SyncEvent {
     /// confirmed leave, and a host that renews the credential opens a new
     /// connection (MEMBER-SELECTOR-SOCKET). A host holding a shared
     /// membership asks the home through its signed leave check, as on a 401;
-    /// the event never proves a leave.
+    /// the event never proves a leave. A 403 to an upgrade that carried no
+    /// credential (FIX 11111) is not told: it refuses nothing this device
+    /// holds, and the connection redials with backoff.
     UpgradeForbidden,
     Error(String),
 }

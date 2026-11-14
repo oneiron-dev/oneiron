@@ -292,13 +292,14 @@ impl ProbedHome {
     /// as the home dial tells it: the host asks the home, and the probe
     /// decides nothing (FIX 12442, MEMBER-SELECTOR-SOCKET).
     async fn probe(&self) -> Option<bool> {
-        let (request, _, _) =
+        let (request, binding, _) =
             super::handshake::upgrade_request(&self.vault, &self.config, false).ok()?;
+        let carried = super::handshake::carries_credential(&request, binding.as_ref());
         let dialer = self.config.mesh_dialer.as_deref();
         let mut socket = match crate::sync::carrier::connect_sync_socket(request, dialer).await {
             Ok((socket, _)) => socket,
             Err(error) => {
-                if let Some(refusal) = crate::sync::carrier::upgrade_refusal(&error) {
+                if let Some(refusal) = crate::sync::carrier::upgrade_refusal(&error, carried) {
                     let _ = self.events.send(refusal.event());
                 }
                 return None;

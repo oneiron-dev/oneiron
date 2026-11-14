@@ -139,16 +139,20 @@ impl UpgradeRefusal {
 }
 
 /// The home's refusal `error` is, when it is the home's HTTP 401 or 403
-/// answer to the upgrade; `None` for any other failure. The home dial and a
-/// peer session's probe of the home read a failed upgrade by this one rule.
-pub(crate) fn upgrade_refusal(error: &WsError) -> Option<UpgradeRefusal> {
+/// answer to the upgrade; `None` for any other failure. A 403 refuses the
+/// credential the upgrade carried, so a 403 to an upgrade that `carried` none
+/// (a clear socket off loopback and mesh withholds it, FIX 11111) refuses
+/// nothing this machine holds and stays the far end's failure. The home dial
+/// and a peer session's probe of the home read a failed upgrade by this one
+/// rule.
+pub(crate) fn upgrade_refusal(error: &WsError, carried: bool) -> Option<UpgradeRefusal> {
     use tokio_tungstenite::tungstenite::http::StatusCode;
     let WsError::Http(response) = error else {
         return None;
     };
     match response.status() {
         StatusCode::UNAUTHORIZED => Some(UpgradeRefusal::Unauthorized),
-        StatusCode::FORBIDDEN => Some(UpgradeRefusal::Forbidden),
+        StatusCode::FORBIDDEN if carried => Some(UpgradeRefusal::Forbidden),
         _ => None,
     }
 }

@@ -3,11 +3,13 @@
 //! refuses that credential the socket, so the connection tells its host
 //! `SyncEvent::UpgradeForbidden` once and never redials on it. It waits for
 //! its shutdown instead. A 401 and any other failed upgrade still redial with
-//! backoff, as before.
+//! backoff, as before, and so does a 403 to an upgrade that carried no
+//! credential: it refuses nothing the device holds (Astra review of #8018).
 //!
 //! Each case runs a real reconnecting `SyncConnection` against a fake home on
 //! a loopback port that answers every upgrade with one fixed HTTP status and
-//! counts the upgrades it was sent.
+//! counts the upgrades it was sent. A loopback `ws` home admits credentials
+//! (FIX 11111), so a configured bearer token rides each upgrade.
 //!
 //! `cargo test --locked -p oneiron --all-features --test sync_upgrade_forbidden`.
 #![cfg(feature = "sync")]
@@ -29,16 +31,28 @@ use oneiron::{Vault, VaultConfig};
 /// steps at the steps below.
 const RUN_WINDOW: Duration = Duration::from_millis(1_500);
 
-/// A fake home on a loopback port that answers every upgrade request with
-/// `status` (an HTTP status line's code and reason) and counts the requests.
-/// Returns its sync URL and the count.
-fn refusing_home(status: &'static str) -> (String, Arc<AtomicUsize>) {
+/// The bearer token a credentialed device's upgrades carry.
+const DEVICE_TOKEN: &str = "owen-device-token";
+
+/// The sync upgrades a fake home was sent.
+#[derive(Default)]
+struct Upgrades {
+    /// Every WebSocket upgrade request.
+    sent: AtomicUsize,
+    /// The ones that carried an `Authorization` header.
+    credentialed: AtomicUsize,
+}
+
+/// A fake home on a loopback port that answers every request with `status`
+/// (an HTTP status line's code and reason) and counts the WebSocket upgrade
+/// requests among them. Returns its sync URL and the counts.
+fn refusing_home(status: &'static str) -> (String, Arc<Upgrades>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind the fake home");
     let url = format!(
         "ws://{}/ws",
         listener.local_addr().expect("fake home address")
     );
-    let upgrades = Arc::new(AtomicUsize::new(0));
+    let upgrades = Arc::new(Upgrades::default());
     let counted = Arc::clone(&upgrades);
     std::thread::spawn(move || {
         for stream in listener.incoming() {
@@ -54,7 +68,13 @@ fn refusing_home(status: &'static str) -> (String, Arc<AtomicUsize>) {
             if !request.windows(4).any(|end| end == b"\r\n\r\n") {
                 continue;
             }
-            counted.fetch_add(1, Ordering::SeqCst);
+            let head = String::from_utf8_lossy(&request).to_ascii_lowercase();
+            if head.contains("upgrade: websocket") {
+                counted.sent.fetch_add(1, Ordering::SeqCst);
+                if head.contains("authorization:") {
+                    counted.credentialed.fetch_add(1, Ordering::SeqCst);
+                }
+            }
             let answer =
                 format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
             let _ = stream.write_all(answer.as_bytes());
@@ -68,6 +88,8 @@ fn refusing_home(status: &'static str) -> (String, Arc<AtomicUsize>) {
 struct Run {
     /// The upgrades the home was sent.
     upgrades: usize,
+    /// The upgrades among them that carried a credential.
+    credentialed: usize,
     /// Every event the host was told, by its `Debug` form.
     events: Vec<String>,
 }
@@ -80,7 +102,8 @@ impl Run {
 
 /// Runs a reconnecting connection against a home answering `status` for
 /// [`RUN_WINDOW`], then shuts it down; the run must end on that shutdown.
-async fn run_against(status: &'static str) -> Run {
+/// Its upgrades carry [`DEVICE_TOKEN`] when `credentialed`, else none.
+async fn run_against(status: &'static str, credentialed: bool) -> Run {
     let (url, upgrades) = refusing_home(status);
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("vault"));
@@ -94,6 +117,11 @@ async fn run_against(status: &'static str) -> Run {
         ConnectionConfig {
             client_config: SyncClientConfig {
                 server_url: url,
+                auth_token: if credentialed {
+                    DEVICE_TOKEN.to_owned()
+                } else {
+                    String::new()
+                },
                 reconnect_initial_ms: 20,
                 reconnect_backoff_max_ms: 40,
                 ..SyncClientConfig::default()
@@ -120,7 +148,8 @@ async fn run_against(status: &'static str) -> Run {
         .expect("the run ends cleanly");
     let events = events.lock().expect("event sink").clone();
     Run {
-        upgrades: upgrades.load(Ordering::SeqCst),
+        upgrades: upgrades.sent.load(Ordering::SeqCst),
+        credentialed: upgrades.credentialed.load(Ordering::SeqCst),
         events,
     }
 }
@@ -151,7 +180,11 @@ where
 #[test]
 fn a_forbidden_upgrade_is_told_once_and_never_redialed() {
     on_sync_runtime("forbidden_upgrade", || async {
-        let run = run_against("403 Forbidden").await;
+        let run = run_against("403 Forbidden", true).await;
+        assert_eq!(
+            run.credentialed, run.upgrades,
+            "the device's upgrades carry its credential"
+        );
         assert_eq!(
             run.upgrades, 1,
             "a 403 refuses the credential the socket: the connection never redials on it \
@@ -175,7 +208,7 @@ fn a_forbidden_upgrade_is_told_once_and_never_redialed() {
 #[test]
 fn an_unauthorized_upgrade_still_redials() {
     on_sync_runtime("unauthorized_upgrade", || async {
-        let run = run_against("401 Unauthorized").await;
+        let run = run_against("401 Unauthorized", true).await;
         assert!(
             run.upgrades >= 3,
             "a 401 redials with backoff as before: {} upgrades",
@@ -199,7 +232,7 @@ fn an_unauthorized_upgrade_still_redials() {
 #[test]
 fn a_failing_home_still_redials() {
     on_sync_runtime("failing_home", || async {
-        let run = run_against("503 Service Unavailable").await;
+        let run = run_against("503 Service Unavailable", true).await;
         assert!(
             run.upgrades >= 3,
             "any other failed upgrade redials with backoff as before: {} upgrades",
@@ -207,5 +240,25 @@ fn a_failing_home_still_redials() {
         );
         assert_eq!(run.told("UpgradeForbidden"), 0);
         assert_eq!(run.told("UpgradeUnauthorized"), 0);
+    });
+}
+
+#[test]
+fn a_forbidden_upgrade_without_a_credential_still_redials() {
+    on_sync_runtime("forbidden_uncredentialed_upgrade", || async {
+        let run = run_against("403 Forbidden", false).await;
+        assert_eq!(run.credentialed, 0, "the device holds no credential");
+        assert!(
+            run.upgrades >= 3,
+            "a 403 to an upgrade that carried no credential refuses nothing this device \
+             holds: it redials with backoff ({} upgrades, events {:?})",
+            run.upgrades,
+            run.events
+        );
+        assert_eq!(
+            run.told("UpgradeForbidden"),
+            0,
+            "no credential was refused, so none is told"
+        );
     });
 }

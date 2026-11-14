@@ -209,9 +209,11 @@ fn replication_mode(
     // slip another holder carries is a scope, not ownership, and is refused
     // before the upgrade (OWNER-GRADE-IS-NOT-OWNERSHIP). A hosted operator's
     // root is refused too (FIX 2222), with its typed body (FIX 6032). Every
-    // refusal stays this door's 403.
+    // refusal stays this door's 403, which the sync client stops on; a host
+    // fault the check met stays its 500, which the client redials
+    // (MEMBER-SELECTOR-SOCKET).
     crate::api::owner(&auth, server).map_err(|refused| {
-        if refused.status() == StatusCode::FORBIDDEN {
+        if refused.status() == StatusCode::FORBIDDEN || refused.status().is_server_error() {
             refused.into_response()
         } else {
             StatusCode::FORBIDDEN.into_response()
