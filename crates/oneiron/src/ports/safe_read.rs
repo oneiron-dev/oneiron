@@ -38,7 +38,8 @@ pub struct AssetTextValidity {
     /// The row is deleted (its tombstone stands).
     pub deleted: bool,
     /// The row is marked stale (its source was withdrawn, or a walk is
-    /// pending), or its served body carries `stale: true`.
+    /// pending), or its stored body carries `stale: true`, which the store's
+    /// read gate withholds, so `absent` is set with it.
     pub stale: bool,
     /// The store serves no live row under the id: none was written, or the
     /// store's own read gate withholds it.
@@ -76,10 +77,17 @@ pub fn safe_read_asset_text_diagnostic<P: EntityStore + TombstoneStore>(
     let row = ports.port_entity_get(txn, id)?;
     let deleted = ports.port_tombstone_is_deleted(txn, id)?;
     let marked_stale = super::TombstoneStoreRead::port_deletion_state(ports, txn, id)?.stale;
+    // Each backend's get withholds a row whose body carries `stale: true`, so
+    // that flag is read from the stored row, in place.
+    let body_stale = super::EntityStoreRead::port_entity_with_raw(ports, txn, id, |raw| {
+        let (body, _) = stored_body(raw);
+        Ok(body_is_stale(body))
+    })?
+    .unwrap_or(false);
     let validity = AssetTextValidity {
         hash_mismatch: derived_hash != source_hash,
         deleted,
-        stale: marked_stale || row.as_ref().is_some_and(|row| body_is_stale(&row.body)),
+        stale: marked_stale || body_stale,
         absent: row.is_none(),
     };
     let body = row.filter(|_| validity.is_valid()).map(|row| row.body);
