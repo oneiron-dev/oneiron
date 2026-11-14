@@ -595,10 +595,14 @@ impl Memory<'_> {
             }
         };
         let vault = self.vault();
-        let (minted, decision) =
+        let issued =
             vault.issue_esign_links_with_check_in(owner, document, input.rotate, check_in)?;
-        let state = vault.esign_document(document)?;
-        Ok(links::links_view(document, state, minted, decision))
+        Ok(links::links_view(
+            document,
+            issued.state,
+            issued.minted,
+            issued.decision,
+        ))
     }
 
     /// `vault.esign.send_for_signature`: sends the drafted document to its
