@@ -112,15 +112,25 @@ pub(crate) fn page_turns_with_versions(page: &Value) -> Vec<(String, Value)> {
         .collect()
 }
 
-/// Builds the fixed plain-text step reply the capturing backend answers.
+/// Builds a valid extraction reply over the served words the capturing backend receives.
 pub(crate) fn step_plain_reply() -> String {
-    "owen keeps tea warm".to_owned()
+    json!({
+        "persons": [{"id": "new:P1", "name": "owen", "evidence_turn_refs": ["T1"]}],
+        "candidates": [{
+            "subject": "new:P1",
+            "predicate": "likes",
+            "value": "tea",
+            "confidence": 0.9,
+            "evidence_refs": [{"source": "T1", "quote": "owen likes tea"}],
+        }],
+    })
+    .to_string()
 }
 
-/// Answers every generation with the fixed reply and captures each request it serves.
+/// Answers generations with scripted replies and captures each request it serves.
 pub(crate) struct CapturingStepBackend {
-    /// Holds the fixed plain-text reply.
-    reply: String,
+    /// Holds replies in generation order, repeating the final reply when exhausted.
+    replies: Vec<String>,
     /// Declares the reply input tokens.
     input_tokens: u64,
     /// Declares the reply output tokens.
@@ -134,8 +144,13 @@ pub(crate) struct CapturingStepBackend {
 impl CapturingStepBackend {
     /// Builds a backend answering every generation with `reply`, declaring the token counts.
     pub(crate) fn new(reply: String, input_tokens: u64, output_tokens: u64) -> Self {
+        Self::scripted(vec![reply], input_tokens, output_tokens)
+    }
+
+    /// Builds a backend with one reply per generation, repeating the final reply afterward.
+    pub(crate) fn scripted(replies: Vec<String>, input_tokens: u64, output_tokens: u64) -> Self {
         Self {
-            reply,
+            replies,
             input_tokens,
             output_tokens,
             seen: Mutex::new(Vec::new()),
@@ -186,7 +201,12 @@ impl LlmBackend for CapturingStepBackend {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(request.clone());
-        let reply = self.reply.clone();
+        let reply = self
+            .replies
+            .get(self.call_count())
+            .or_else(|| self.replies.last())
+            .cloned()
+            .unwrap_or_default();
         let (input_tokens, output_tokens) = (self.input_tokens, self.output_tokens);
         Box::pin(async move {
             let digest = ScriptedBackend::digest_of(&request);
