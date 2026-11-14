@@ -455,7 +455,8 @@ impl Vault {
     }
 
     /// [`Self::room_audience_members`] as `read` reads the room, in one
-    /// snapshot: a room `read` cannot read is a missing room, unless
+    /// snapshot: a room `read` cannot read, its row or its own admission
+    /// ([`Self::room_structure_admitted`], L9-52), is a missing room, unless
     /// `member` is one of its members, who reads its roster by membership as
     /// its room turns do. Membership never widens the credential: one
     /// narrowed on any read axis or whose records leave the room out, or a
@@ -469,7 +470,9 @@ impl Vault {
         read.persist_grant_clock()?;
         let txn = self.store.env.read_txn()?;
         let policy = read.live_policy_manifest_in(&txn)?;
-        if read.is_ref_readable_with_policy_in(&txn, &policy, &room)? {
+        if read.is_ref_readable_with_policy_in(&txn, &policy, &room)?
+            && self.room_structure_admitted_in_txn(read, &txn, &room)?
+        {
             return self.room_audience_members_in_txn(&txn, room);
         }
         if !read.reaches_by_membership_in(&txn, &room)? {

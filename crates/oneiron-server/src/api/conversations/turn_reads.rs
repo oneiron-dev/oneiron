@@ -128,7 +128,8 @@ struct ListedTurns {
 /// private thread it does not read, the opener included, is no row here.
 /// Below the owner (`Vault::turn_doors_owner`), the conversation and each
 /// turn are read through the caller's own lane, and so is the body served;
-/// a conversation it does not read is not here (FIX 5938). A turn withheld
+/// a conversation it does not read is not here (FIX 5938), nor one whose
+/// room does not admit it (`Vault::room_structure_admitted`, L9-52). A turn withheld
 /// is not projected, takes no place on a page, is never a cursor and is not
 /// counted. The page, each row's admission and words, and an exact count
 /// are read in one snapshot (FIX 5870).
@@ -211,7 +212,9 @@ fn live_turn_page(
     if limit == 0 {
         return Ok((Vec::new(), None));
     }
-    let admits = |id: &oneiron::EntityId| vault.turn_door_admits_in_txn(read, txn, owner, id);
+    // The door admitted the room before its page (L9-52).
+    let admits =
+        |id: &oneiron::EntityId| vault.turn_door_admits_listed_in_txn(read, txn, owner, id);
     let mut ids = Vec::with_capacity(limit);
     let mut resume = after;
     loop {
@@ -271,7 +274,7 @@ fn count_live_turns_in(
         )?;
         for id in &page.ids {
             if !vault.is_deleted_shell_in_txn(txn, id)?
-                && vault.turn_door_admits_in_txn(read, txn, owner, id)?
+                && vault.turn_door_admits_listed_in_txn(read, txn, owner, id)?
             {
                 total = total.saturating_add(1);
             }

@@ -547,6 +547,15 @@ pub(crate) fn project_hydrated_short_id(
     else {
         return Ok(None);
     };
+    // A room's row, or one of its turns, that its room does not admit the
+    // caller to is a missing ref (L9-52).
+    if !scoped_read
+        .vault()
+        .room_structure_admitted(scoped_read, &id)
+        .map_err(|error| core_engine_error("core short hydrate failed", error))?
+    {
+        return Ok(None);
+    }
     // The admitted row is the answer's source, its deleted shell's metadata
     // and a Summary or omitted body included (FIX 1435).
     producers.push(id);
