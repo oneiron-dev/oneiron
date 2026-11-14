@@ -65,6 +65,20 @@ impl Vault {
         seed: &RecoveryRootSeed,
         confirm: Option<KitConfirmation>,
     ) -> Result<RootAppointmentReceipt> {
+        self.appoint_owner_root_between(owner, seed, confirm, || {})
+    }
+
+    /// [`Self::appoint_owner_root`], with `between` run after the door's
+    /// read-only check and before its writer: the gap in which another run
+    /// of the door can commit first (the test door
+    /// `test_doors::root_appointment::appoint_owner_root_between`).
+    pub(crate) fn appoint_owner_root_between(
+        &self,
+        owner: &AuthenticatedOwner,
+        seed: &RecoveryRootSeed,
+        confirm: Option<KitConfirmation>,
+        between: impl FnOnce(),
+    ) -> Result<RootAppointmentReceipt> {
         if !owner.is_unbound() {
             return Err(refused(BOUND_PROOF));
         }
@@ -72,6 +86,7 @@ impl Vault {
             let pin = self.appointment_pin_in_txn(txn, fold, seed, confirm)?;
             refuse_unneeded_appointment(fold, pin.anchor_key)
         })?;
+        between();
         let successor = self.fresh_device_owner_signing_key()?;
         self.with_write_txn(|txn| {
             let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;

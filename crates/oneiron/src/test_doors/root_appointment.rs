@@ -1,9 +1,17 @@
 //! Doors for `tests/root_appointment_verdict.rs` (OWNER-ANCHOR-ROOT-RECOVERY
 //! parts (a) and (b1)): the reference fold of a vault's own log under a pin,
 //! which the appointment judge reads, and the stored-log fold whole and
-//! resumed from a base.
+//! resumed from a base. For `tests/owner_anchor_appointment.rs` (part (b2)):
+//! the appointment door with a step run between its read-only check and its
+//! writer.
 
-use crate::authority::{AuthorityFold, AuthorityLogEntry, PinnedRoot, fold_own_authority_log};
+use crate::Vault;
+use crate::authority::{
+    AuthorityFold, AuthorityLogEntry, PinnedRoot, RootAppointmentReceipt, fold_own_authority_log,
+};
+use crate::consent::AuthenticatedOwner;
+use crate::error::Result;
+use crate::world_keys::{KitConfirmation, RecoveryRootSeed};
 
 /// The fold of `entries` as a self-hosted install that pins `pin` folds its
 /// own log, with no seen-times.
@@ -29,4 +37,21 @@ pub fn whole_and_resumed_folds(
     window_secs: u64,
 ) -> (AuthorityFold, Option<AuthorityFold>) {
     crate::authority::whole_and_resumed_folds_for_test(entries, base_len, pin, window_secs)
+}
+
+/// [`Vault::appoint_owner_root`] with `between` run after the door's
+/// read-only check and before its writer, where another run of the door can
+/// commit first.
+///
+/// # Errors
+///
+/// As [`Vault::appoint_owner_root`].
+pub fn appoint_owner_root_between(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    seed: &RecoveryRootSeed,
+    confirm: Option<KitConfirmation>,
+    between: impl FnOnce(),
+) -> Result<RootAppointmentReceipt> {
+    vault.appoint_owner_root_between(owner, seed, confirm, between)
 }

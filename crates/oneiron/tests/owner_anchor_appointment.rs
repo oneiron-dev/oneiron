@@ -19,10 +19,17 @@
 //! against its binding. A row that also reaches a witness by a path of its
 //! own still stands on the retired key and is refused.
 //!
-//! Red before part (b2): every test here. The door answered
-//! `AppointmentUnavailable`; the import refused the appointment, since its
-//! witnesses are signed by a key the conflict retired, and the store door
-//! held the successor's binding as a row no admitter signed.
+//! Two runs of the door on one install, the second checked before the first
+//! commits: the second is refused before it makes a key, so the install's
+//! owner signing slot still holds the successor the roster names live.
+//!
+//! Red before part (b2): every test here but the last, which needs its test
+//! door. The door answered `AppointmentUnavailable`; the import held the
+//! appointment as a row no admitter signed, its witnesses signed by a key
+//! the conflict retired, and the successor's binding with it. Red before the
+//! fix of review-b2's P1: the last test, since the second run dropped the
+//! slot's seed before its writer read the roster, and the live successor
+//! was a key no install held.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test owner_anchor_appointment`.
 #![cfg(oneiron_test_support)]
@@ -45,6 +52,7 @@ use oneiron::recovery::{
     KitIssue, KitSecretKind, PassphraseCost, PieceHome, issue_recovery_root_kit, restore_kit,
 };
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::root_appointment::appoint_owner_root_between;
 use oneiron::test_support::bind_host_owner;
 use oneiron::world_keys::RecoveryRootSeed;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
@@ -540,4 +548,55 @@ fn a_row_with_its_own_path_to_a_witness_is_refused() {
         .expect("the appointment and its binding land alone");
     assert!(owned.live(&key_of(&successor)));
     assert!(!owned.valid(&hash(&beside)));
+}
+
+/// A second run of the door whose read-only check passed before the first
+/// run committed: the first appoints its successor; the second, at its
+/// writer, finds a live root key and is refused before it makes a key. The
+/// install's owner signing slot still holds the successor the roster names
+/// live, so the owner's root key stays one this install can sign with.
+#[test]
+fn a_door_run_beside_a_committed_appointment_keeps_the_successor_in_the_slot() {
+    let owned = owned();
+    owned.revoke_unrelated_binding();
+    owned.fork();
+    assert!(owned.rootless(), "the fork leaves no live root key");
+
+    let mut first = None;
+    let refusal = appoint_owner_root_between(
+        &owned.vault,
+        &proof(&owned.vault, owned.person),
+        &owned.seed,
+        None,
+        || {
+            first = Some(owned.vault.appoint_owner_root(
+                &proof(&owned.vault, owned.person),
+                &owned.seed,
+                None,
+            ));
+        },
+    )
+    .expect_err("the roster holds a root key once the first run commits");
+    let first = first
+        .expect("the first run ran between the check and the writer")
+        .expect("the first run appoints a successor");
+
+    assert!(
+        refusal.to_string().contains("live root key"),
+        "the second run names the live root key: {refusal}"
+    );
+    assert!(
+        owned.live(&AuthorityKey::Ed25519(first.successor)),
+        "the first run's successor is a live root key"
+    );
+    let held = owned
+        .vault
+        .device_owner_signing_key()
+        .expect("the install's owner signing key")
+        .public_key();
+    assert_eq!(
+        held, first.successor,
+        "the install's owner signing slot holds the live successor"
+    );
+    assert!(owned.passes_owner_verbs());
 }
