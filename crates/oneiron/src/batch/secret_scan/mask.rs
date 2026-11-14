@@ -247,7 +247,7 @@ pub(crate) fn mark_text_value_in_txn(
     }];
     let minted = plan.mint(&CustodyWrite::of(vault), wtxn, at)?;
     let handle = minted
-        .get(value.as_bytes())
+        .get(value.as_bytes(), HeldForm::Raw)
         .map(|(handle, _)| handle.clone())
         .ok_or(Error::InvariantViolation(
             "a seeded key's custody record has no handle",
@@ -291,9 +291,10 @@ fn put_file_marks_in_txn(
         for key in file.keys {
             let custody = match key.custody {
                 Some(custody) => custody,
+                // A file's key is held as its own bytes (`Masker::handle`).
                 None => {
                     minted
-                        .get(&key.value)
+                        .get(&key.value, HeldForm::Raw)
                         .ok_or(Error::InvariantViolation(
                             "a file's key has no custody record",
                         ))?
@@ -599,7 +600,8 @@ struct Found {
 /// that `mints` nothing (a replayed batch) only reads files marked before.
 #[derive(Default)]
 struct Masker {
-    /// Each value's handle, by its bytes, wiped when the pass ends.
+    /// Each value's handle, by its bytes and how custody holds them, wiped
+    /// when the pass ends.
     handles: PlanValues<String>,
     found: Vec<Found>,
     minted: bool,
@@ -1069,20 +1071,25 @@ impl Masker {
         }
     }
 
-    /// The handle `value` takes: one per distinct value in a batch.
+    /// The handle `value`, held as its own bytes, takes: one per distinct
+    /// value in a batch.
     fn handle(&mut self, value: &[u8], reason: &'static str) -> Result<String> {
         self.handle_held(value, reason, HeldForm::Raw)
     }
 
-    /// [`Self::handle`] for a value custody holds as `held`; the first
-    /// placement of a value in a batch names its form.
+    /// [`Self::handle`] for a value custody holds as `held`: one per
+    /// distinct value and form in a batch. The same bytes written two ways
+    /// (the text "7" and the number 55, whose encoding is that byte; a
+    /// phrase as text and as an array of its words) take two records, so
+    /// each key puts back its own form (FIX
+    /// SEALED-SAME-BYTES-RAW-AND-ENCODED-ONE-HANDLE).
     fn handle_held(
         &mut self,
         value: &[u8],
         reason: &'static str,
         held: HeldForm,
     ) -> Result<String> {
-        if let Some(handle) = self.handles.get(value) {
+        if let Some(handle) = self.handles.get(value, held) {
             return Ok(handle.clone());
         }
         if self.minted {
@@ -1094,7 +1101,8 @@ impl Masker {
             .at
             .clone()
             .ok_or(Error::InvariantViolation("mask on write read no record"))?;
-        self.handles.insert(value.to_vec(), STAND_IN.to_owned());
+        self.handles
+            .insert(value.to_vec(), held, STAND_IN.to_owned());
         self.found.push(Found {
             value: Zeroizing::new(value.to_vec()),
             reason,
@@ -1108,10 +1116,11 @@ impl Masker {
     /// Registers each found value as its own active custody record, in the
     /// batch's transaction, with no binding: no effector reads it until the
     /// owner grants one. Its `sc` handle is the record's short id. Each value
-    /// maps to its handle and its record. The found key names the person who
-    /// writes in their own name, who may answer it as the owner may
-    /// (L6-03-WRITER-MARK): the batch's person writer, else the writer of the
-    /// actor content transaction open in `wtxn`. An agent's write names none.
+    /// maps, with the form custody holds it in, to its handle and its
+    /// record. The found key names the person who writes in their own name,
+    /// who may answer it as the owner may (L6-03-WRITER-MARK): the batch's
+    /// person writer, else the writer of the actor content transaction open
+    /// in `wtxn`. An agent's write names none.
     fn mint(
         self,
         write: &CustodyWrite<'_>,
@@ -1126,6 +1135,7 @@ impl Masker {
         let mut handles = PlanValues::default();
         let mut notes = Vec::with_capacity(self.found.len());
         for mut found in self.found {
+            let held = found.held;
             let id = write.store.clock.entity_id()?;
             let mut rec = SecretCustodyRecord {
                 schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
@@ -1176,9 +1186,9 @@ impl Masker {
                 reason: found.reason,
                 place: found.place,
                 writer,
-                held: found.held,
+                held,
             });
-            handles.insert(std::mem::take(&mut *value), (handle, id));
+            handles.insert(std::mem::take(&mut *value), held, (handle, id));
         }
         // The owner hears of what was lifted, once per record.
         note_found_keys_in_txn(write.store, wtxn, &notes, at)?;
