@@ -119,8 +119,9 @@ impl BatchBuilder<'_> {
         }
         let vault = self.vault;
         // An agent's batch: each definition it creates is the one its author
-        // writer gives it (ARCH-0053:20), before anything stages.
-        vault.bound_agent_authored_puts_in_txn(
+        // writer gives it (ARCH-0053:20), before anything stages. Each one
+        // the batch lands is stamped with its author after the apply.
+        let creates = vault.bound_agent_authored_puts_in_txn(
             &*wtxn,
             self.agent_authoring.as_ref(),
             &mut self.ops,
@@ -157,10 +158,10 @@ impl BatchBuilder<'_> {
             if let Some(scope) = scope {
                 super::vad_postcommit::merge_postcommit_work(vault, wtxn, scope.finish());
             }
-            Ok(())
         } else {
-            self.apply_staged(wtxn, gate_mode, None, lane, authority_beside, own_device)
+            self.apply_staged(wtxn, gate_mode, None, lane, authority_beside, own_device)?;
         }
+        vault.stamp_agent_authored_creates_in_txn(wtxn, creates)
     }
 
     fn apply_staged(
