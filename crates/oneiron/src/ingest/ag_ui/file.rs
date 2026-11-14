@@ -63,6 +63,14 @@ pub struct AgUiFileRead {
     pub receipt: ScopedReadReceipt,
 }
 
+/// A stored capture's file record. The capture writes it as JSON-shaped
+/// MessagePack (`json_to_msgpack_value`), so it is read back through JSON:
+/// `rmpv::ext::from_value` reads a unit enum only from an array, never from
+/// the string each mapping's `kind` is stored as.
+fn stored_file_of(value: &Msgpack) -> Option<StoredFile> {
+    serde_json::from_value(crate::serialize::msgpack_value_to_json(value)).ok()
+}
+
 fn fingerprint(file: &StoredFile) -> Result<String> {
     let bytes = serde_json::to_vec(file)
         .map_err(|_| Error::InvalidClaimBody("AG-UI source encoding failed"))?;
@@ -86,8 +94,8 @@ fn bound_file_in_txn(
     if claim.predicate != AG_UI_FILE_PREDICATE || claim.source != Some(ClaimSource::Imported) {
         return Err(Error::InvalidClaimBody("not an imported AG-UI source"));
     }
-    let file: StoredFile = rmpv::ext::from_value(claim.value.clone())
-        .map_err(|_| Error::InvalidClaimBody("invalid AG-UI source record"))?;
+    let file = stored_file_of(&claim.value)
+        .ok_or(Error::InvalidClaimBody("invalid AG-UI source record"))?;
     let project = EntityId::from_hex(&file.project_ref)?;
     let actor = EntityId::from_hex(&file.capture_actor_ref)?;
     let author = crate::batch::authenticated_claim_author_in_txn(&vault.store, txn, id, claim)?;
@@ -339,8 +347,8 @@ impl Vault {
             let stored_claim = self
                 .get_claim_in_txn(content.read(), &id)?
                 .ok_or(Error::InvalidClaimBody("AG-UI capture was not stored"))?;
-            let stored_file: StoredFile = rmpv::ext::from_value(stored_claim.value)
-                .map_err(|_| Error::InvalidClaimBody("invalid finalized AG-UI source"))?;
+            let stored_file = stored_file_of(&stored_claim.value)
+                .ok_or(Error::InvalidClaimBody("invalid finalized AG-UI source"))?;
             if fingerprint(&stored_file)? != hash {
                 return Err(Error::InvalidClaimBody(
                     "AG-UI exact capture was changed by admission",
