@@ -33,6 +33,8 @@ struct ListedModel {
     dimensions: usize,
     /// How the served vectors are made.
     transform: String,
+    /// The run profile the row names, if any.
+    profile: Option<serde_json::Value>,
 }
 
 /// Embed every record then every query of one slice, pin the finished vectors.
@@ -152,6 +154,7 @@ fn list_model(
         model_id,
         dimensions,
         transform,
+        profile: row.get("profile").cloned(),
     })
 }
 
@@ -205,6 +208,7 @@ fn embed_batch(
             "POST {url} answered an error member"
         )));
     }
+    check_answer_agrees(&body, listed, &url)?;
     let Some(rows) = body.get("data").and_then(serde_json::Value::as_array) else {
         return Err(ScorecardFailure::Run(format!(
             "POST {url} answered no data"
@@ -241,12 +245,6 @@ fn embed_batch(
         }
         *slot = Some(row);
     }
-    let tail = body.get("model_id").and_then(serde_json::Value::as_str);
-    if tail != Some(listed.model_id.as_str()) {
-        return Err(ScorecardFailure::Run(format!(
-            "POST {url} tail model_id differs from the listed one"
-        )));
-    }
     let mut out = Vec::with_capacity(texts.len() * listed.dimensions);
     for slot in ordered {
         let Some(row) = slot else {
@@ -271,6 +269,38 @@ fn embed_batch(
         out.extend(finish_vector(vector, listed.dimensions, &url)?);
     }
     Ok(out)
+}
+
+/// Refuse an answer that names another model id, transform or profile than
+/// the `/v1/models` row: vectors made under another transform would be pinned
+/// as the listed one. The engine's endpoint client asks the same of every
+/// `embedder serve` answer (oneiron-server/src/embedder/endpoint.rs,
+/// `agrees_with`).
+fn check_answer_agrees(
+    body: &serde_json::Value,
+    listed: &ListedModel,
+    url: &str,
+) -> Result<(), ScorecardFailure> {
+    let model_id = body.get("model_id").and_then(serde_json::Value::as_str);
+    if model_id != Some(listed.model_id.as_str()) {
+        let listed_model_id = &listed.model_id;
+        return Err(ScorecardFailure::Run(format!(
+            "POST {url} answered model_id {model_id:?}, the listing names {listed_model_id:?}"
+        )));
+    }
+    let transform = body.get("transform").and_then(serde_json::Value::as_str);
+    if transform != Some(listed.transform.as_str()) {
+        let listed_transform = &listed.transform;
+        return Err(ScorecardFailure::Run(format!(
+            "POST {url} answered transform {transform:?}, the listing names {listed_transform:?}"
+        )));
+    }
+    if body.get("profile") != listed.profile.as_ref() {
+        return Err(ScorecardFailure::Run(format!(
+            "POST {url} answered another profile than the listing names"
+        )));
+    }
+    Ok(())
 }
 
 /// The served numerics contract, copying the embedder's own arithmetic: exact

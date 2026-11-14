@@ -213,9 +213,13 @@ fn scorecard_run_refuses_sealed_without_a_ledger() {
     assert!(!out.exists());
 }
 
-/// The input types the stub saw, in request order.
+/// What the stub saw and how it answers.
 struct StubState {
+    /// The input types the stub saw, in request order.
     input_types: Mutex<Vec<String>>,
+    /// The first request (0-based) whose answer names another transform than
+    /// the listing; `None` keeps every answer on the listed one.
+    transform_changes_at: Option<usize>,
 }
 
 /// The stub embedder: `/v1/models` plus `/v1/embeddings` on a live port.
@@ -235,9 +239,10 @@ impl Drop for Stub {
 
 impl Stub {
     /// Start the stub on 127.0.0.1 with an ephemeral port.
-    fn start() -> Self {
+    fn start(transform_changes_at: Option<usize>) -> Self {
         let state = Arc::new(StubState {
             input_types: Mutex::new(Vec::new()),
+            transform_changes_at,
         });
         let app = Router::new()
             .route("/v1/models", get(stub_models))
@@ -262,6 +267,11 @@ impl Stub {
     }
 }
 
+/// The run profile the stub lists and names in every answer.
+fn stub_profile() -> Value {
+    json!({"model_dir": false, "max_input_tokens": 512})
+}
+
 /// One served row shaped like the real listing.
 async fn stub_models() -> Json<Value> {
     Json(json!({
@@ -274,13 +284,14 @@ async fn stub_models() -> Json<Value> {
             "dimensions": 4,
             "model_id": "test/stub-embed@v1",
             "transform": "stub",
-            "profile": {"model_dir": false, "max_input_tokens": 512},
+            "profile": stub_profile(),
             "oneiron_wire": 1,
         }],
     }))
 }
 
 /// Every input answers `[3, 4, 0, 0]`; every request's side is recorded.
+/// From `transform_changes_at` on, answers name the transform `stub-bidirectional`.
 async fn stub_embeddings(
     State(state): State<Arc<StubState>>,
     Json(body): Json<Value>,
@@ -290,11 +301,15 @@ async fn stub_embeddings(
         .and_then(Value::as_str)
         .unwrap_or("missing")
         .to_owned();
-    state
-        .input_types
-        .lock()
-        .expect("stub lock")
-        .push(input_type);
+    let request = {
+        let mut seen = state.input_types.lock().expect("stub lock");
+        seen.push(input_type);
+        seen.len() - 1
+    };
+    let transform = match state.transform_changes_at {
+        Some(first) if request >= first => "stub-bidirectional",
+        _ => "stub",
+    };
     let inputs = body
         .get("input")
         .and_then(Value::as_array)
@@ -316,15 +331,15 @@ async fn stub_embeddings(
         "model": body.get("model").cloned().unwrap_or(Value::Null),
         "usage": {"prompt_tokens": 8, "total_tokens": 8},
         "model_id": "test/stub-embed@v1",
-        "transform": "stub",
-        "profile": {},
+        "transform": transform,
+        "profile": stub_profile(),
         "provenance": {},
     }))
 }
 
 #[test]
 fn scorecard_pack_embed_pins_finished_vectors() {
-    let stub = Stub::start();
+    let stub = Stub::start(None);
     let dir = tempfile::tempdir().expect("embed fixture dir");
     write_search_slice(dir.path(), false);
     let pack_dir = dir.path().to_str().expect("fixture dir").to_owned();
@@ -365,6 +380,46 @@ fn scorecard_pack_embed_pins_finished_vectors() {
     assert_eq!(seen.len(), 2);
     assert_eq!(seen[0], "document");
     assert_eq!(seen[1], "query");
+}
+
+#[test]
+fn scorecard_pack_embed_refuses_an_answer_under_another_transform() {
+    // Documents embed under the listed transform, then the query answer names
+    // another one: no vector of the slice may be pinned as the listed transform.
+    let stub = Stub::start(Some(1));
+    let dir = tempfile::tempdir().expect("embed fixture dir");
+    write_search_slice(dir.path(), false);
+    let manifest_before = std::fs::read(dir.path().join("search.json")).expect("manifest");
+    let pack_dir = dir.path().to_str().expect("fixture dir").to_owned();
+    let result = scorecard(&[
+        "pack-embed",
+        "--pack-dir",
+        &pack_dir,
+        "--slice",
+        "search",
+        "--endpoint",
+        &stub.endpoint,
+    ]);
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert_eq!(
+        result.status.code(),
+        Some(1),
+        "pack-embed answered: {stdout}"
+    );
+    let body: Value = serde_json::from_slice(&result.stdout).expect("refusal prints JSON");
+    let error = body["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains("transform"),
+        "refusal names the transform: {error}"
+    );
+    let manifest_after = std::fs::read(dir.path().join("search.json")).expect("manifest");
+    assert_eq!(
+        manifest_before, manifest_after,
+        "a refused embed pins nothing"
+    );
+    assert!(!dir.path().join("search.vectors.f32").exists());
+    let seen = stub.state.input_types.lock().expect("stub lock").clone();
+    assert_eq!(seen, ["document", "query"]);
 }
 
 #[test]

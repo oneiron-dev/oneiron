@@ -293,7 +293,7 @@ fn with_repeated_session(position: usize, edit: bool) -> (Vec<LmeQuestion>, Stri
     let question = questions
         .iter_mut()
         .find(|question| question.question_id == "mini_ssu_1")
-        .unwrap();
+        .expect("the mini fixture holds mini_ssu_1");
     let session_id = question.haystack_session_ids[position].clone();
     let mut copy = question.haystack_sessions[position].clone();
     if edit {
