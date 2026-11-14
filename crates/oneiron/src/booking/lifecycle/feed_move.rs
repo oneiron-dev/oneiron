@@ -36,7 +36,7 @@ use crate::attempt_queue::{
     FailAttempt, RequeueAttempt,
 };
 use crate::booking::BookingError;
-use crate::booking::emergency_reschedule::ensure_no_pending_effect_in;
+use crate::booking::emergency_reschedule::pending_effect_fences_in;
 use crate::booking::invite_grant::dispatch_booking_revision_invite_outcome;
 use crate::outbound::OutboundExecutionSink;
 use crate::registry::ENTITY_TYPE_EVENT;
@@ -132,11 +132,10 @@ pub(crate) fn move_booking_by_feed(
             return Ok(FeedMoveOutcome::Unchanged);
         }
         // The one refusal the ruling holds back per item: every other item
-        // of the feed still lands, and this one is read again.
-        match ensure_no_pending_effect_in(vault, &*wtxn, event_ref) {
-            Ok(()) => {}
-            Err(BookingError::InvalidConstraint(_)) => return Ok(FeedMoveOutcome::HeldBack),
-            Err(error) => return Err(error),
+        // of the feed still lands, and this one is read again. The fence is
+        // read as a fact, never from a refusal's variant.
+        if pending_effect_fences_in(vault, &*wtxn, event_ref)? {
+            return Ok(FeedMoveOutcome::HeldBack);
         }
         let reads = booking_read_rows(vault, &*wtxn, &event_ref)?;
 

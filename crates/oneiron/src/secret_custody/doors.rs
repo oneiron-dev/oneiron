@@ -267,7 +267,9 @@ impl Vault {
     /// The value never escapes into claims/CRDT/export/receipts/logs; this
     /// door is the narrowest possible read and exists so SECRET-02's door /
     /// lease machinery is the single value-read call-site. Consumed by
-    /// [`crate::secret_lease`] (ONE-1920).
+    /// [`crate::secret_lease`] (ONE-1920). A payment credential is refused
+    /// with [`SecretError::PaymentCredentialWithheld`](crate::error::SecretError::PaymentCredentialWithheld)
+    /// while this host withholds them (L8-60).
     pub(crate) fn get_secret_value_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -294,6 +296,9 @@ impl Vault {
                 secret_ref: rec.name,
             }));
         }
+        // A payment credential stays home while this host's runner fence is
+        // unproven (L8-60); every other credential is released at its rung.
+        super::refuse_withheld_payment_credential_in_txn(self, txn, id, &rec.name)?;
         Ok(Some(rec.value_bytes))
     }
 }
