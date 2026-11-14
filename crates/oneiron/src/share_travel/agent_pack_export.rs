@@ -246,6 +246,18 @@ fn pack_in(
     for reference in &refs {
         let id = EntityId::from_hex(reference.entity_id())?;
         if let Some(package) = vault.export_hub_package_in_txn(&txn, &id)? {
+            // A skill's files leave whole or the pack does not: its tree hash
+            // and the pack's bind every byte (EXPORTDOORS-SHAPE Q6 = A).
+            for file in &package.files {
+                if !crate::batch::export::export_file_body_admitted(&file.content)? {
+                    return Err(Error::InvalidConfig(format!(
+                        "agent pack: skill {} file {} holds a credential a pack may not carry",
+                        id.to_hex(),
+                        file.path
+                    ))
+                    .into());
+                }
+            }
             packages.insert(id, package);
         }
     }
