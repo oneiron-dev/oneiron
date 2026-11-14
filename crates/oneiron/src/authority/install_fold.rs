@@ -9,13 +9,14 @@ use super::machine_standing::{InstallCounted, InstallHold};
 use super::*;
 
 pub(super) fn fold_as_install(
-    entries: &[AuthorityLogEntry],
+    entries: &[FoldRow],
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
     now_secs: Option<u64>,
     peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
     consent_arm: fn(&FoldedDevice) -> bool,
     local: FoldLocalInputs<'_>,
 ) -> AuthorityFold {
+    let open_entries: Vec<_> = entries.iter().filter_map(FoldRow::open).collect();
     let sequence_floors = local
         .observations
         .map(|observations| &observations.sequence_floors);
@@ -77,7 +78,7 @@ pub(super) fn fold_as_install(
             }
         };
         let fold = install_view(
-            entries,
+            &open_entries,
             fold_authority_log_once(
                 entries,
                 FoldContext {
@@ -191,10 +192,10 @@ pub(super) fn stale_chains(fold: &AuthorityFold) -> BTreeSet<(crate::EntityId, M
 }
 
 /// The heads, scope heads and next sequences of an install's fold.
-pub(super) fn finish_install_fold(entries: &[AuthorityLogEntry], fold: &mut AuthorityFold) {
+pub(super) fn finish_install_fold(entries: &[FoldRow], fold: &mut AuthorityFold) {
     let rows: Vec<_> = entries
         .iter()
-        .map(|entry| super::fold_resume::RowMeta::of(authority_entry_hash(entry).ok(), entry))
+        .map(|row| super::fold_resume::RowMeta::of_row(row.hash().ok(), row))
         .collect();
     finish_install_fold_of(&rows, fold);
 }
@@ -206,7 +207,7 @@ pub(super) fn finish_install_fold_of(
 ) {
     (fold.append_heads, fold.anchor_heads) = super::world_privacy::main_log_heads(
         rows,
-        &fold.valid_entries,
+        (&fold.valid_entries, &fold.pass_through_entries),
         &fold.anchor_entries,
         fold.pinned_root.map(|pin| pin.anchor_key),
     );
@@ -253,8 +254,9 @@ pub(super) fn fold_pinned_with_machine_standing(
         held: !counts(machine, admitter),
         stale: false,
     };
+    let rows = super::fold_engine::open_rows(entries);
     super::fold_engine::fold_authority_log_inner(
-        entries,
+        &rows,
         &BTreeMap::new(),
         None,
         &BTreeMap::new(),
@@ -293,7 +295,7 @@ struct NoVouch {
 impl NoVouch {
     /// `bare` is this install's fold context with no vouch and no hold.
     fn of(
-        entries: &[AuthorityLogEntry],
+        entries: &[FoldRow],
         first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
         now_secs: Option<u64>,
         local: FoldLocalInputs<'_>,
@@ -308,7 +310,7 @@ impl NoVouch {
         }
         let by_hash: BTreeMap<_, _> = entries
             .iter()
-            .filter_map(|entry| authority_entry_hash(entry).ok().map(|hash| (hash, entry)))
+            .filter_map(|row| row.hash().ok().map(|hash| (hash, row)))
             .collect();
         // Only a row a floor would refuse needs a vouch. A removal vouches for
         // its own branch, whichever rows that holds. A row causal ancestry
@@ -318,15 +320,17 @@ impl NoVouch {
         // alone rule out most folds first.
         let removal = by_hash
             .values()
-            .any(|entry| super::revoke_proof::removes_machine(&entry.op));
+            .any(|row| row.op().is_some_and(super::revoke_proof::removes_machine));
         let rescues = |floors: &BTreeMap<AuthorityEntryHash, u64>| {
             let refused = |hash: &AuthorityEntryHash| {
                 by_hash
                     .get(hash)
                     .zip(floors.get(hash))
                     .is_some_and(|(entry, floor)| {
-                        entry.seq < *floor
-                            && !super::entry_transition::lands_restriction_only(&entry.op)
+                        entry.seq() < *floor
+                            && !entry
+                                .op()
+                                .is_some_and(super::entry_transition::lands_restriction_only)
                     })
             };
             observations.vouched.iter().any(refused) || (removal && floors.keys().any(refused))
@@ -357,7 +361,9 @@ impl NoVouch {
         let held = by_hash
             .iter()
             .filter(|(hash, entry)| {
-                super::entry_transition::lands_restriction_only(&entry.op)
+                entry
+                    .op()
+                    .is_some_and(super::entry_transition::lands_restriction_only)
                     && !fold.valid_entries.contains(*hash)
             })
             .map(|(hash, _)| hash)
@@ -365,9 +371,10 @@ impl NoVouch {
             .filter(|hash| !after.contains(*hash))
             .copied()
             .collect();
+        let open_entries: Vec<_> = entries.iter().filter_map(FoldRow::open).collect();
         let deadline = now_secs.and_then(|now| {
             next_stale_roster_deadline(
-                entries,
+                &open_entries,
                 &fold,
                 first_seen_at_secs,
                 now,
@@ -565,12 +572,12 @@ pub(super) fn cap_by_no_vouch_fold(
 
 /// The rows a handoff in `handoffs` precedes.
 fn after_handoffs(
-    by_hash: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
+    by_hash: &BTreeMap<AuthorityEntryHash, &FoldRow>,
     handoffs: &BTreeSet<AuthorityEntryHash>,
 ) -> BTreeSet<AuthorityEntryHash> {
     let mut children = BTreeMap::<_, Vec<_>>::new();
     for (hash, entry) in by_hash {
-        for parent in &entry.parent_hashes {
+        for parent in entry.parent_hashes() {
             children.entry(*parent).or_default().push(*hash);
         }
     }

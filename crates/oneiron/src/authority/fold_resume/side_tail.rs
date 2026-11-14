@@ -29,7 +29,7 @@ pub(super) struct FrontierPoint {
 /// and each side row no row names, each with its state. `None` when the
 /// head has no state.
 pub(super) fn frontier_of(
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &BTreeMap<AuthorityEntryHash, FoldRow>,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     entry_ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     uncounted: &BTreeSet<AuthorityEntryHash>,
@@ -37,11 +37,16 @@ pub(super) fn frontier_of(
 ) -> Option<BTreeMap<AuthorityEntryHash, FrontierPoint>> {
     let named: BTreeSet<_> = by_hash
         .values()
+        .filter_map(FoldRow::open)
         .flat_map(|entry| entry.parent_hashes.iter())
         .collect();
     let leaves = by_hash
         .iter()
-        .filter(|(hash, entry)| side_world(&entry.op).is_some() && !named.contains(hash))
+        .filter(|(hash, row)| {
+            row.open()
+                .is_some_and(|entry| side_world(&entry.op).is_some())
+                && !named.contains(hash)
+        })
         .map(|(hash, _)| *hash);
     let frontier: BTreeMap<_, _> = std::iter::once(head)
         .chain(leaves)

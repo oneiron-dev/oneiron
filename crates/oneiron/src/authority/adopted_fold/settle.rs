@@ -67,6 +67,11 @@ pub(super) fn settle_tail(
 ) -> Result<Option<SettledTail>> {
     let mut issues = image.safety.issues.clone();
     let judged = judged_tail(image, tail, &mut issues);
+    // The seeded fold takes rows; everything else here reads the judged whole entries.
+    let judged_rows = judged
+        .iter()
+        .map(|(hash, entry)| (*hash, FoldRow::Open(entry.clone())))
+        .collect::<BTreeMap<_, _>>();
     let uncounted: BTreeSet<_> = image
         .safety
         .uncounted
@@ -133,7 +138,7 @@ pub(super) fn settle_tail(
         seed.insert(*parent, state);
     }
     let mut states = crate::authority::fold_schedule::fold_entry_states_seeded(
-        &judged,
+        &judged_rows,
         &seed,
         context,
         &mut issues,

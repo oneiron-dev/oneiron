@@ -581,7 +581,11 @@ fn the_slip_issuers_slip_rows_count_toward_no_fold_bound() {
             .iter()
             .map(|entry| (authority_entry_hash(entry).unwrap(), entry.clone()))
             .collect();
-        let uncounted = crate::authority::log_budget::uncounted_rows(&by_hash);
+        let rows: BTreeMap<_, _> = by_hash
+            .iter()
+            .map(|(hash, entry)| (*hash, FoldRow::Open(entry.clone())))
+            .collect();
+        let uncounted = crate::authority::log_budget::uncounted_rows(&rows);
         assert_eq!(uncounted.len(), slips.len() + 1, "the root mint too");
         let counted_rows = (entries.len() - uncounted.len()) as u64;
         assert!(

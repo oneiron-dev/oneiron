@@ -716,8 +716,9 @@ impl Vault {
         let capture = super::fold_resume::FoldCapture::for_checkpoint(frontier.clone());
         let (consent, local) = super::fold_engine::own_log_inputs(posture, pin.as_ref());
         // No first-seen time and no clock: nothing time-dependent is decided.
+        let rows = super::fold_engine::open_rows(&entries);
         let fold = super::fold_engine::fold_authority_log_inner(
-            &entries,
+            &rows,
             &BTreeMap::new(),
             None,
             &peers,

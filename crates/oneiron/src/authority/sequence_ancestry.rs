@@ -3,7 +3,7 @@ use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn causal_sequence_floors(
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &BTreeMap<AuthorityEntryHash, FoldRow>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     context: FoldContext<'_>,
 ) -> Option<BTreeMap<AuthorityEntryHash, u64>> {
@@ -13,17 +13,17 @@ pub(super) fn causal_sequence_floors(
         let before = floors.len();
         for (tip_hash, tip) in by_hash {
             let tip_floor = original.get(tip_hash).copied();
-            if tip_floor.is_some_and(|floor| tip.seq < floor) {
+            if tip_floor.is_some_and(|floor| tip.seq() < floor) {
                 continue;
             }
             let covered: Vec<_> = ancestors[tip_hash]
                 .iter()
                 .filter(|hash| {
-                    by_hash.get(*hash).is_some_and(|entry| {
-                        entry.signer_key() == tip.signer_key()
-                            && entry.seq < tip.seq
-                            && tip_floor.is_none_or(|floor| entry.seq > floor)
-                            && floors.get(*hash).is_some_and(|floor| entry.seq < *floor)
+                    by_hash.get(*hash).is_some_and(|row| {
+                        row.signer_key() == tip.signer_key()
+                            && row.seq() < tip.seq()
+                            && tip_floor.is_none_or(|floor| row.seq() > floor)
+                            && floors.get(*hash).is_some_and(|floor| row.seq() < *floor)
                     })
                 })
                 .copied()
@@ -65,7 +65,7 @@ pub(super) fn causal_sequence_floors(
 /// would quietly disagree with it about which history can vouch a sequence floor.
 fn entry_folds_on_available_ancestry(
     target_hash: AuthorityEntryHash,
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &BTreeMap<AuthorityEntryHash, FoldRow>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     context: FoldContext<'_>,
 ) -> bool {
@@ -89,11 +89,11 @@ fn entry_folds_on_available_ancestry(
         let hashes: Vec<_> = pending.iter().copied().collect();
         let mut progressed = false;
         for hash in hashes {
-            let Some(entry) = by_hash.get(&hash) else {
+            let Some(row) = by_hash.get(&hash) else {
                 return false;
             };
-            match fold_entry_state(
-                entry,
+            match fold_row_state(
+                row,
                 hash,
                 &states,
                 FoldContext {

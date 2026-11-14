@@ -37,6 +37,15 @@ impl RowsReadWhole for BTreeMap<AuthorityEntryHash, AuthorityLogEntry> {
     }
 }
 
+/// A fold's own map of its rows: only the rows whose records opened here
+/// read whole; a row that passes through reads as absent, so no folded key
+/// carries an envelope the fold never held (census L5-22 1a-iii).
+impl RowsReadWhole for BTreeMap<AuthorityEntryHash, FoldRow> {
+    fn get(&self, hash: &AuthorityEntryHash) -> Option<&AuthorityLogEntry> {
+        BTreeMap::get(self, hash).and_then(FoldRow::open)
+    }
+}
+
 /// What the projection reads of each surviving row's own state beside the
 /// merge, given the final merged state.
 pub(super) trait RowStates {
@@ -55,7 +64,7 @@ pub(super) trait RowStates {
 
 /// Every surviving row's state, as the reference fold holds them.
 pub(super) struct AllStates<'a> {
-    pub(super) by_hash: &'a BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    pub(super) by_hash: &'a BTreeMap<AuthorityEntryHash, FoldRow>,
     pub(super) states: &'a BTreeMap<AuthorityEntryHash, FoldState>,
 }
 
@@ -78,9 +87,11 @@ impl RowStates for AllStates<'_> {
         bindings: &BTreeMap<AuthorityKey, FoldedActorBinding>,
     ) -> BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>> {
         super::causal_write::causal_actor_frontiers(self.states, Some(merged), bindings, |hash| {
-            self.by_hash
-                .get(hash)
-                .is_some_and(|entry| super::world_privacy::side_world(&entry.op).is_none())
+            self.by_hash.get(hash).is_some_and(|row| {
+                row.op()
+                    .and_then(super::world_privacy::side_world)
+                    .is_none()
+            })
         })
     }
 }
@@ -183,6 +194,7 @@ pub(super) fn project_once(
             .map_or_else(SlipAuthorityState::default, |state| state.slips.clone()),
         vault_id: merged.as_ref().map(|state| state.vault_id),
         valid_entries,
+        pass_through_entries: BTreeSet::new(),
         roster: merged
             .as_ref()
             .map_or_else(BTreeMap::new, |state| state.roster.clone()),

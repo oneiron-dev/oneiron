@@ -406,20 +406,60 @@ fn install_signer(
     machine: EntityId,
     hash: AuthorityEntryHash,
 ) -> std::result::Result<[u8; 32], AuthorityFoldIssue> {
-    let AuthorityKey::Ed25519(key) = entry.signer_key() else {
+    install_key_signer(
+        standing,
+        state,
+        (entry.signer_key(), entry.seq),
+        machine,
+        hash,
+    )
+}
+
+/// [`install_signer`] over the signer's key and sequence alone.
+fn install_key_signer(
+    standing: &Standing<'_>,
+    state: &FoldState,
+    (signer, seq): (&AuthorityKey, u64),
+    machine: EntityId,
+    hash: AuthorityEntryHash,
+) -> std::result::Result<[u8; 32], AuthorityFoldIssue> {
+    let AuthorityKey::Ed25519(key) = signer else {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     };
     if !standing.names_key(machine, key) {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     }
-    if state
-        .seqs
-        .get(entry.signer_key())
-        .is_some_and(|prior| entry.seq <= *prior)
-    {
+    if state.seqs.get(signer).is_some_and(|prior| seq <= *prior) {
         return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
     Ok(*key)
+}
+
+/// Whether an owner work result whose record does not open here stands as
+/// structure (census L5-22 1a-iii): its signer is the named executor's
+/// install key past its last sequence, and its request is in its causal
+/// past, admitted for that executor or refused, as [`apply_result`] judges
+/// it. It writes nothing: no answer, no refusal, no result marker. The
+/// request stays unanswered here, and a later answer that opens may be the
+/// first that counts.
+pub(super) fn owner_work_result_stands(
+    state: &FoldState,
+    signer: (&AuthorityKey, u64),
+    (executor, request): (EntityId, AuthorityEntryHash),
+    hash: AuthorityEntryHash,
+    (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
+) -> std::result::Result<(), AuthorityFoldIssue> {
+    let standing = Standing::new(state, pin, counted);
+    install_key_signer(&standing, state, signer, executor, hash)?;
+    let work = &state.owner_work;
+    match work.requests.get(&request) {
+        Some(held) if held.request.executor != executor => {
+            Err(AuthorityFoldIssue::InvalidEntry(hash))
+        }
+        Some(_) => Ok(()),
+        None if work.refused.contains(&request) => Ok(()),
+        None => Err(AuthorityFoldIssue::InvalidEntry(hash)),
+    }
 }
 
 /// A request lands as a live head of its (kind, target). The target row need

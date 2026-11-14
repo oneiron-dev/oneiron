@@ -13,8 +13,9 @@ use super::*;
 pub fn fold_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
     let first_seen_at_secs = BTreeMap::new();
     let peer_consent_roots = BTreeMap::new();
+    let rows = open_rows(entries);
     fold_authority_log_inner(
-        entries,
+        &rows,
         &first_seen_at_secs,
         None,
         &peer_consent_roots,
@@ -29,8 +30,9 @@ pub fn fold_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
 pub(in crate::authority) fn fold_legacy_authority_log(
     entries: &[AuthorityLogEntry],
 ) -> AuthorityFold {
+    let rows = open_rows(entries);
     fold_authority_log_inner(
-        entries,
+        &rows,
         &BTreeMap::new(),
         None,
         &BTreeMap::new(),
@@ -45,8 +47,9 @@ pub(in crate::authority) fn fold_legacy_authority_log_with_seen_times(
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
     now_secs: u64,
 ) -> AuthorityFold {
+    let rows = open_rows(entries);
     fold_authority_log_inner(
-        entries,
+        &rows,
         first_seen_at_secs,
         Some(now_secs),
         &BTreeMap::new(),
@@ -59,8 +62,9 @@ pub(in crate::authority) fn fold_legacy_authority_log_with_seen_times(
 pub(in crate::authority) fn fold_legacy_peer_authority_log(
     entries: &[AuthorityLogEntry],
 ) -> AuthorityFold {
+    let rows = open_rows(entries);
     fold_authority_log_inner(
-        entries,
+        &rows,
         &BTreeMap::new(),
         None,
         &BTreeMap::new(),
@@ -102,8 +106,9 @@ pub(crate) fn fold_authority_log_with_peer_consent_roots(
     now_secs: u64,
     peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
 ) -> AuthorityFold {
+    let rows = open_rows(entries);
     fold_authority_log_inner(
-        entries,
+        &rows,
         first_seen_at_secs,
         Some(now_secs),
         peer_consent_roots,
@@ -142,8 +147,9 @@ pub(crate) fn fold_own_authority_log(
     pin: Option<&PinnedRoot>,
 ) -> AuthorityFold {
     let (consent, local) = own_log_inputs(posture, pin);
+    let rows = open_rows(entries);
     fold_authority_log_inner(
-        entries,
+        &rows,
         &BTreeMap::new(),
         None,
         &BTreeMap::new(),
@@ -182,8 +188,9 @@ pub(crate) fn fold_pinned_authority_log_for_posture(
     pin: Option<&PinnedRoot>,
 ) -> AuthorityFold {
     let (consent, local) = own_log_inputs(posture, pin);
+    let rows = open_rows(entries);
     fold_authority_log_inner(
-        entries,
+        &rows,
         first_seen_at_secs,
         Some(now_secs),
         peer_consent_roots,
@@ -205,8 +212,9 @@ pub(crate) fn fold_pinned_authority_log_for_posture(
 pub fn fold_peer_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
     let first_seen_at_secs = BTreeMap::new();
     let peer_consent_roots = BTreeMap::new();
+    let rows = open_rows(entries);
     fold_authority_log_inner(
-        entries,
+        &rows,
         &first_seen_at_secs,
         None,
         &peer_consent_roots,
@@ -228,8 +236,9 @@ pub(in crate::authority) fn fold_authority_log_with_local_observations_and_postu
     pin: Option<&PinnedRoot>,
 ) -> AuthorityFold {
     let (consent, local) = own_log_inputs(posture, pin);
+    let rows = open_rows(entries);
     fold_authority_log_inner(
-        entries,
+        &rows,
         first_seen_at_secs,
         Some(now_secs),
         peer_consent_roots,

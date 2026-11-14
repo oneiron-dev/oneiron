@@ -246,12 +246,15 @@ pub(super) fn slip_issuers(entries: &[AuthorityLogEntry]) -> BTreeSet<AuthorityK
 
 /// The hashes of the rows no fold bound counts: the slip issuers' slip ops.
 pub(super) fn uncounted_rows(
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &BTreeMap<AuthorityEntryHash, FoldRow>,
 ) -> BTreeSet<AuthorityEntryHash> {
-    let issuers = authority_structure(by_hash.values()).issuers;
+    let issuers = authority_structure(by_hash.values().filter_map(FoldRow::open)).issuers;
     by_hash
         .iter()
-        .filter(|(_, entry)| is_uncounted(entry, &issuers))
+        .filter(|(_, row)| {
+            row.open()
+                .is_some_and(|entry| is_uncounted(entry, &issuers))
+        })
         .map(|(hash, _)| *hash)
         .collect()
 }

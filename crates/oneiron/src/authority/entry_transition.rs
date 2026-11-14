@@ -15,10 +15,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
+use crate::EntityId;
 
 pub(super) use super::entry_transition_predicates::{
     active_participant_keys, entry_is_retired, has_authority_consent, lands_restriction_only,
-    op_is_retired_device_op,
+    public_participant_keys, public_row_is_retired, row_is_re_root, row_is_retired,
+    row_is_retired_device_op,
 };
 
 #[expect(clippy::large_enum_variant, reason = "transient per-entry fold value")]
@@ -68,13 +70,8 @@ pub(super) fn fold_entry_state(
     // #1430b). A row a handoff or a removal vouches for is never refused, and
     // still lands restriction only, as does every row the fold with no vouch
     // holds back or only the vouch admits (`install_fold::NoVouch`).
-    let past_floor = context
-        .sequence_floors
-        .and_then(|floors| floors.get(&hash))
-        .is_some_and(|floor| entry.seq < *floor);
-    let vouched = context
-        .floor_vouched
-        .is_some_and(|vouched| vouched.contains(&hash));
+    let past_floor = seq_past_floor(hash, entry.seq, context);
+    let vouched = floor_vouched(hash, context);
     if past_floor && !vouched && !lands_restriction_only(&entry.op) {
         return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
@@ -94,13 +91,7 @@ pub(super) fn fold_entry_state(
         _ => None,
     };
     if let Some(device) = incoming_device
-        && device.roles & (ROLE_OWNER | ROLE_ADMIN) != 0
-        && !context.device_can_consent(&FoldedDevice {
-            key: device.key.clone(),
-            tier: device.tier,
-            roles: device.roles,
-            revoked: false,
-        })
+        && !incoming_device_stands(&device.key, device.tier, device.roles, context)
     {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
@@ -114,75 +105,16 @@ pub(super) fn fold_entry_state(
         let Ok(vault_id) = genesis_vault_id(entry) else {
             return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
         };
-        let mut state = FoldState {
-            slips: SlipAuthorityState::default(),
-            vault_id,
-            roster: BTreeMap::new(),
-            genesis_recovery_dismissed: recovery.dismissed(),
-            recovery_redundancy_established: false,
-            federation_pacts: BTreeMap::new(),
-            federation_confirms: BTreeMap::new(),
-            critical_write_confirms: BTreeMap::new(),
-            consumed_critical_write_confirm_nonces: BTreeSet::new(),
-            critical_write_confirm_nonce_provenance: BTreeMap::new(),
-            conflicted_critical_write_confirms: BTreeSet::new(),
-            federation_grant_bindings: BTreeMap::new(),
-            actor_bindings: BTreeMap::new(),
-            actor_binding_revocations: BTreeMap::new(),
-            actor_revocation_hashes: BTreeMap::new(),
-            seqs: BTreeMap::new(),
-            machines: BTreeMap::new(),
-            machine_keys: BTreeMap::new(),
-            root_anchors: BTreeMap::new(),
-            anchor_entries: BTreeSet::new(),
-            host_custody_keys: BTreeSet::new(),
-            worlds: BTreeMap::new(),
-            refused_world_edits: BTreeSet::new(),
-            grant_travel: BTreeMap::new(),
-            refused_grant_travel: BTreeSet::new(),
-            checkpoint_policy: super::checkpoint_choice::CheckpointChoiceState::default(),
-            home_pick: super::home_pick::HomePickChoiceState::default(),
-            origin_cut: super::origin_cut::OriginCutChoiceState::default(),
-            device_succession: super::device_succession::DeviceSuccessionChoiceState::default(),
-            conversation_training:
-                super::conversation_training::ConversationTrainingChoiceState::default(),
-            conversation_training_vault:
-                super::conversation_training_vault::ConversationTrainingVaultState::default(),
-            policy_settings: super::policy_setting_choice::PolicySettingChoiceState::default(),
-            refused_export_acts: BTreeSet::new(),
-            agent_carried_acts: BTreeMap::new(),
-            home_candidacy: super::home_candidacy::HomeCandidacyState::default(),
-            owner_work: super::owner_work::OwnerWorkState::default(),
-            world_keys: BTreeMap::new(),
-            refused_world_keys: BTreeSet::new(),
-            key_admitters: BTreeMap::new(),
-            hosted: context.hosted,
-            actor_rows: BTreeSet::new(),
-            residence_directives: BTreeMap::new(),
-        };
+        let mut state = genesis_state(vault_id, recovery.dismissed(), context.hosted);
         upsert_device(&mut state, device, None);
         state.seqs.insert(device.key.clone(), 0);
         return EntryFold::Ready(state);
     }
 
-    let mut parent_state: Option<FoldState> = None;
-    for parent in &entry.parent_hashes {
-        let Some(state) = states.get(parent) else {
-            return EntryFold::Waiting;
-        };
-        if parent_state
-            .as_ref()
-            .is_some_and(|current| current.vault_id != state.vault_id)
-        {
-            return EntryFold::Invalid(AuthorityFoldIssue::WrongVault(hash));
-        }
-        parent_state = Some(match parent_state {
-            Some(current) => merge_states(&current, state),
-            None => state.clone(),
-        });
-    }
-    let Some(mut state) = parent_state else {
-        return EntryFold::Invalid(AuthorityFoldIssue::InvalidAncestry(hash));
+    let mut state = match parent_state(&entry.parent_hashes, hash, states) {
+        Some(Ok(state)) => state,
+        Some(Err(issue)) => return EntryFold::Invalid(issue),
+        None => return EntryFold::Waiting,
     };
 
     if entry.vault_id != Some(state.vault_id) {
@@ -434,7 +366,12 @@ pub(super) fn fold_entry_state(
     // A machine's residence result, signed by its own install key under a
     // chain the owner marked "yours" (OF-534). It changes no state.
     if let AuthorityOp::ResidenceResult(result) = &entry.op {
-        if let Err(issue) = residence_result_stands(&state, entry, result, hash) {
+        if let Err(issue) = residence_result_stands(
+            &state,
+            (entry.signer_key(), entry.seq, &entry.parent_hashes),
+            (result.directive_entry, result.directive, result.machine),
+            hash,
+        ) {
             return EntryFold::Invalid(issue);
         }
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
@@ -597,6 +534,234 @@ pub(super) fn fold_entry_state(
     EntryFold::Ready(state)
 }
 
+/// One stored row's transition (census L5-22 1a-iii): an open row's is
+/// [`fold_entry_state`], a row that passes through
+/// [`fold_public_row_state`].
+pub(super) fn fold_row_state(
+    row: &FoldRow,
+    hash: AuthorityEntryHash,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    context: FoldContext<'_>,
+) -> EntryFold {
+    match row {
+        FoldRow::Open(entry) => fold_entry_state(entry, hash, states, context),
+        FoldRow::PassThrough(row) => fold_public_row_state(row, hash, states, context),
+    }
+}
+
+/// The transition of a sealed row whose record does not open here: structure
+/// only (RULING PLAN-L5-22-ERASED-ROWS = A). Its signer is judged as its
+/// kind's open row judges it, on the public fields alone ([`PublicStanding`]):
+/// a retired device op, the sequence floor, the incoming device's posture,
+/// parents of one vault, and the kind's signer rule with its strict
+/// sequence. A row any of them refuses is refused, as the open row would be;
+/// no sealed kind lands restriction only. A row that stands moves only its
+/// signer's sequence: no roster entry, slip, grant, answer, refusal, handoff
+/// or any other effect, so nothing it made counts, and a later row that
+/// needs its effect does not count either. A genesis starts its vault's
+/// identity with an empty roster, so nothing stands on its key until it
+/// opens. When the record opens here later, the same bytes fold as the open
+/// row.
+fn fold_public_row_state(
+    row: &AuthorityPublicRow,
+    hash: AuthorityEntryHash,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    context: FoldContext<'_>,
+) -> EntryFold {
+    #[cfg(test)]
+    TRANSITIONED_FOR_TEST.with(|rows| {
+        if let Some(rows) = rows.borrow_mut().as_mut() {
+            rows.push(hash);
+        }
+    });
+    let scaffold = row.scaffold();
+    let standing = row.standing();
+    let signer = &scaffold.signer.public_key;
+    if public_row_is_retired(row, hash, context) {
+        return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
+    }
+    if seq_past_floor(hash, scaffold.seq, context) && !floor_vouched(hash, context) {
+        return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
+    }
+    if let Some((key, tier, roles)) = standing.incoming_device()
+        && !incoming_device_stands(key, tier, roles, context)
+    {
+        return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
+    }
+    if let PublicStanding::Genesis { key, .. } = standing {
+        if signer != key || scaffold.seq != 0 {
+            return EntryFold::Invalid(AuthorityFoldIssue::SignerNotInAncestry(hash));
+        }
+        if scaffold.vault_id.is_some() || !scaffold.parent_hashes.is_empty() {
+            return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
+        }
+        let mut state = genesis_state(scaffold.hash, false, context.hosted);
+        state.seqs.insert(signer.clone(), 0);
+        return EntryFold::Ready(state);
+    }
+    let mut state = match parent_state(&scaffold.parent_hashes, hash, states) {
+        Some(Ok(state)) => state,
+        Some(Err(issue)) => return EntryFold::Invalid(issue),
+        None => return EntryFold::Waiting,
+    };
+    if scaffold.vault_id != Some(state.vault_id) {
+        return EntryFold::Invalid(AuthorityFoldIssue::WrongVault(hash));
+    }
+    let view = (context.pin, context.machine_standing);
+    let alone = scaffold.cosigns.is_empty() && matches!(signer, AuthorityKey::Ed25519(_));
+    let stands = match standing {
+        PublicStanding::AgentGrantAct { machine } => {
+            super::agent_grant_act::agent_grant_signer_stands(
+                &state,
+                (&scaffold.signer, &scaffold.cosigns, scaffold.seq),
+                *machine,
+                hash,
+                view,
+            )
+        }
+        // Both are signed by the machine's install key alone.
+        PublicStanding::ResidenceResult { .. } | PublicStanding::OwnerWorkResult { .. }
+            if !alone =>
+        {
+            Err(AuthorityFoldIssue::InvalidEntry(hash))
+        }
+        PublicStanding::ResidenceResult {
+            machine,
+            directive,
+            directive_entry,
+        } => residence_result_stands(
+            &state,
+            (signer, scaffold.seq, &scaffold.parent_hashes),
+            (*directive_entry, *directive, *machine),
+            hash,
+        ),
+        PublicStanding::OwnerWorkResult { executor, request } => {
+            super::owner_work::owner_work_result_stands(
+                &state,
+                (signer, scaffold.seq),
+                (*executor, *request),
+                hash,
+                view,
+            )
+        }
+        PublicStanding::SlipMint
+        | PublicStanding::EnrollDevice { .. }
+        | PublicStanding::RotateKey { .. }
+        | PublicStanding::ReRoot { .. } => roster_row_stands(&state, row, hash, context),
+        PublicStanding::Genesis { .. } => Err(AuthorityFoldIssue::InvalidEntry(hash)),
+    };
+    if let Err(issue) = stands {
+        return EntryFold::Invalid(issue);
+    }
+    state.seqs.insert(signer.clone(), scaffold.seq);
+    EntryFold::Ready(state)
+}
+
+/// The roster rule of [`fold_entry_state`] for a slip mint, an enrollment, a
+/// rotation or a re-root that passes through, in the open row's order: a
+/// live roster signer, live co-signers, one consenting participant, a
+/// strictly later sequence, a re-root's roles within its old root's, a
+/// fresh incoming key, and a mint's live owner issuer. None of its effects.
+fn roster_row_stands(
+    state: &FoldState,
+    row: &AuthorityPublicRow,
+    hash: AuthorityEntryHash,
+    context: FoldContext<'_>,
+) -> std::result::Result<(), AuthorityFoldIssue> {
+    let scaffold = row.scaffold();
+    let signer = &scaffold.signer.public_key;
+    if state.roster.get(signer).is_none_or(|device| device.revoked) {
+        return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
+    }
+    let participants = public_participant_keys(state, row)?;
+    if !has_authority_consent(state, &participants, context) {
+        return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+    }
+    if state
+        .seqs
+        .get(signer)
+        .is_some_and(|prior| scaffold.seq <= *prior)
+    {
+        return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
+    }
+    if let PublicStanding::ReRoot { roles, .. } = row.standing() {
+        let old_root = &state.roster[signer];
+        if old_root.roles & ROLE_OWNER == 0 || roles & !(old_root.roles | ROLE_CLOUD) != 0 {
+            return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+        }
+    }
+    if let Some((key, ..)) = row.standing().incoming_device()
+        && state.roster.contains_key(key)
+    {
+        return Err(AuthorityFoldIssue::InvalidEntry(hash));
+    }
+    // A consent cosigner cannot launder an agent primary into a mint issuer.
+    if matches!(row.standing(), PublicStanding::SlipMint)
+        && !roster_has_live_owner(&state.roster, signer)
+    {
+        return Err(AuthorityFoldIssue::InvalidEntry(hash));
+    }
+    Ok(())
+}
+
+/// Whether the sequence floor this install observed for `hash` lies above
+/// `seq`: a strictly older sequence is rollback.
+fn seq_past_floor(hash: AuthorityEntryHash, seq: u64, context: FoldContext<'_>) -> bool {
+    context
+        .sequence_floors
+        .and_then(|floors| floors.get(&hash))
+        .is_some_and(|floor| seq < *floor)
+}
+
+/// Whether a handoff or a removal vouches for `hash`, so no floor refuses it.
+fn floor_vouched(hash: AuthorityEntryHash, context: FoldContext<'_>) -> bool {
+    context
+        .floor_vouched
+        .is_some_and(|vouched| vouched.contains(&hash))
+}
+
+/// Whether a device a row brings in may hold its roles under this fold's
+/// consent arm: wire validation is posture-blind, and cloud owner roles are
+/// lawful only under the managed or peer root arm.
+fn incoming_device_stands(
+    key: &AuthorityKey,
+    tier: AuthorityTier,
+    roles: u16,
+    context: FoldContext<'_>,
+) -> bool {
+    roles & (ROLE_OWNER | ROLE_ADMIN) == 0
+        || context.device_can_consent(&FoldedDevice {
+            key: key.clone(),
+            tier,
+            roles,
+            revoked: false,
+        })
+}
+
+/// The merge of the states of `parents`, all of one vault: None while one
+/// has not folded yet; no parents at all is a broken ancestry.
+fn parent_state(
+    parents: &[AuthorityEntryHash],
+    hash: AuthorityEntryHash,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+) -> Option<std::result::Result<FoldState, AuthorityFoldIssue>> {
+    let mut merged: Option<FoldState> = None;
+    for parent in parents {
+        let state = states.get(parent)?;
+        if merged
+            .as_ref()
+            .is_some_and(|current| current.vault_id != state.vault_id)
+        {
+            return Some(Err(AuthorityFoldIssue::WrongVault(hash)));
+        }
+        merged = Some(match merged {
+            Some(current) => merge_states(&current, state),
+            None => state.clone(),
+        });
+    }
+    Some(merged.ok_or(AuthorityFoldIssue::InvalidAncestry(hash)))
+}
+
 /// Whether a residence result's signer is the install key of the machine it
 /// names under a chain that says "yours" in the result's parent state, or
 /// under that machine's live, answered roster revision there, mine or not
@@ -607,20 +772,19 @@ pub(super) fn fold_entry_state(
 /// directive of the same id naming the same machine.
 fn residence_result_stands(
     state: &FoldState,
-    entry: &AuthorityLogEntry,
-    result: &ResidenceResult,
+    (signer_key, seq, parents): (&AuthorityKey, u64, &[AuthorityEntryHash]),
+    (directive_entry, directive, machine_id): (AuthorityEntryHash, EntityId, EntityId),
     hash: AuthorityEntryHash,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
-    let AuthorityKey::Ed25519(signer) = entry.signer_key() else {
+    let AuthorityKey::Ed25519(signer) = signer_key else {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     };
-    if !entry.parent_hashes.contains(&result.directive_entry)
-        && state.residence_directives.get(&result.directive_entry)
-            != Some(&(result.directive, result.machine))
+    if !parents.contains(&directive_entry)
+        && state.residence_directives.get(&directive_entry) != Some(&(directive, machine_id))
     {
         return Err(AuthorityFoldIssue::InvalidAncestry(hash));
     }
-    if !super::machine_claims::folded_machine_in(state, result.machine).is_some_and(|machine| {
+    if !super::machine_claims::folded_machine_in(state, machine_id).is_some_and(|machine| {
         machine
             .chains()
             .any(|(_, chain)| chain.says_yours() && chain.profile.machine_key == *signer)
@@ -634,8 +798,8 @@ fn residence_result_stands(
     }
     if state
         .seqs
-        .get(entry.signer_key())
-        .is_some_and(|prior| entry.seq <= *prior)
+        .get(signer_key)
+        .is_some_and(|prior| seq <= *prior)
     {
         return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
@@ -699,5 +863,56 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::CustodyPermitPiece(_)
         | AuthorityOp::FrontierJoin(_)
         | AuthorityOp::MembershipExecution(_) => false,
+    }
+}
+
+/// The state a genesis starts its vault with, before its root device is
+/// enrolled: no roster, no sequence, no effect of any kind.
+fn genesis_state(vault_id: AuthorityVaultId, recovery_dismissed: bool, hosted: bool) -> FoldState {
+    FoldState {
+        slips: SlipAuthorityState::default(),
+        vault_id,
+        roster: BTreeMap::new(),
+        genesis_recovery_dismissed: recovery_dismissed,
+        recovery_redundancy_established: false,
+        federation_pacts: BTreeMap::new(),
+        federation_confirms: BTreeMap::new(),
+        critical_write_confirms: BTreeMap::new(),
+        consumed_critical_write_confirm_nonces: BTreeSet::new(),
+        critical_write_confirm_nonce_provenance: BTreeMap::new(),
+        conflicted_critical_write_confirms: BTreeSet::new(),
+        federation_grant_bindings: BTreeMap::new(),
+        actor_bindings: BTreeMap::new(),
+        actor_binding_revocations: BTreeMap::new(),
+        actor_revocation_hashes: BTreeMap::new(),
+        seqs: BTreeMap::new(),
+        machines: BTreeMap::new(),
+        machine_keys: BTreeMap::new(),
+        root_anchors: BTreeMap::new(),
+        anchor_entries: BTreeSet::new(),
+        host_custody_keys: BTreeSet::new(),
+        worlds: BTreeMap::new(),
+        refused_world_edits: BTreeSet::new(),
+        grant_travel: BTreeMap::new(),
+        refused_grant_travel: BTreeSet::new(),
+        checkpoint_policy: super::checkpoint_choice::CheckpointChoiceState::default(),
+        home_pick: super::home_pick::HomePickChoiceState::default(),
+        origin_cut: super::origin_cut::OriginCutChoiceState::default(),
+        device_succession: super::device_succession::DeviceSuccessionChoiceState::default(),
+        conversation_training:
+            super::conversation_training::ConversationTrainingChoiceState::default(),
+        conversation_training_vault:
+            super::conversation_training_vault::ConversationTrainingVaultState::default(),
+        policy_settings: super::policy_setting_choice::PolicySettingChoiceState::default(),
+        refused_export_acts: BTreeSet::new(),
+        agent_carried_acts: BTreeMap::new(),
+        home_candidacy: super::home_candidacy::HomeCandidacyState::default(),
+        owner_work: super::owner_work::OwnerWorkState::default(),
+        world_keys: BTreeMap::new(),
+        refused_world_keys: BTreeSet::new(),
+        key_admitters: BTreeMap::new(),
+        hosted,
+        actor_rows: BTreeSet::new(),
+        residence_directives: BTreeMap::new(),
     }
 }

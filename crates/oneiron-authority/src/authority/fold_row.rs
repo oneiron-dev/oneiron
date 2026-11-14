@@ -155,4 +155,40 @@ impl FoldRow {
             Self::PassThrough(_) => None,
         }
     }
+
+    /// The primary signer's public key.
+    pub fn signer_key(&self) -> &AuthorityKey {
+        &self.signer().public_key
+    }
+
+    /// The op, when the row's record opened here. A row that passes through
+    /// has none: nothing it made counts.
+    pub fn op(&self) -> Option<&AuthorityOp> {
+        self.open().map(|entry| &entry.op)
+    }
+
+    /// The structure-only row, when its record does not open here.
+    pub fn public(&self) -> Option<&AuthorityPublicRow> {
+        match self {
+            Self::Open(_) => None,
+            Self::PassThrough(row) => Some(row),
+        }
+    }
+}
+
+impl PublicStanding {
+    /// The device a genesis, an enrollment, a rotation or a re-root brings
+    /// in: its key, tier and roles.
+    pub fn incoming_device(&self) -> Option<(&AuthorityKey, AuthorityTier, u16)> {
+        match self {
+            Self::Genesis { key, tier, roles }
+            | Self::EnrollDevice { key, tier, roles }
+            | Self::RotateKey { key, tier, roles }
+            | Self::ReRoot { key, tier, roles } => Some((key, *tier, *roles)),
+            Self::SlipMint
+            | Self::AgentGrantAct { .. }
+            | Self::ResidenceResult { .. }
+            | Self::OwnerWorkResult { .. } => None,
+        }
+    }
 }

@@ -57,16 +57,16 @@ impl Fence {
     fn of(
         handoff: &AuthorityEntryHash,
         states: &BTreeMap<AuthorityEntryHash, FoldState>,
-        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     ) -> Self {
-        let entry = &entries[handoff];
-        let successor = match &entry.op {
-            AuthorityOp::ReRoot { new_device } => Some(&new_device.key),
+        let row = &entries[handoff];
+        let successor = match row.op() {
+            Some(AuthorityOp::ReRoot { new_device }) => Some(&new_device.key),
             _ => None,
         };
-        let keys = entry
-            .parent_hashes
+        let keys = row
+            .parent_hashes()
             .iter()
             .filter_map(|parent| states.get(parent))
             .flat_map(|state| state.roster.keys())
@@ -77,7 +77,7 @@ impl Fence {
         line.insert(*handoff);
         Self {
             handoff: *handoff,
-            vault_id: entry.vault_id,
+            vault_id: row.vault_id(),
             keys,
             line,
             conflict: false,
@@ -90,15 +90,15 @@ impl Fence {
     fn signed_outside(
         &self,
         hash: &AuthorityEntryHash,
-        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
         anchored: &BTreeSet<AuthorityEntryHash>,
     ) -> bool {
-        entries.get(hash).is_some_and(|entry| {
-            !matches!(entry.op, AuthorityOp::Genesis { .. })
+        entries.get(hash).is_some_and(|row| {
+            !matches!(row.op(), Some(AuthorityOp::Genesis { .. }))
                 && !anchored.contains(hash)
-                && entry.vault_id == self.vault_id
+                && row.vault_id() == self.vault_id
                 && !self.line.contains(hash)
-                && entry_signer_keys(entry).any(|key| self.keys.contains(key))
+                && row_signer_keys(row).any(|key| self.keys.contains(key))
         })
     }
 
@@ -106,7 +106,7 @@ impl Fence {
     fn excludes(
         &self,
         hash: &AuthorityEntryHash,
-        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
         anchored: &BTreeSet<AuthorityEntryHash>,
     ) -> bool {
@@ -148,7 +148,7 @@ impl Retirements {
     pub(super) fn excludes(
         &self,
         hash: &AuthorityEntryHash,
-        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
         routed: &BTreeSet<AuthorityEntryHash>,
     ) -> bool {
@@ -169,7 +169,7 @@ impl Retirements {
 /// pruned, and the fold settles again without it until nothing more is.
 pub(super) fn settle_handoffs(
     states: &mut BTreeMap<AuthorityEntryHash, FoldState>,
-    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     eligible: Option<&BTreeSet<AuthorityEntryHash>>,
     issues: &mut Vec<AuthorityFoldIssue>,
@@ -181,7 +181,7 @@ pub(super) fn settle_handoffs(
     let mut pruned: BTreeMap<_, _> = states
         .keys()
         .filter(|hash| {
-            matches!(entries[*hash].op, AuthorityOp::ReRoot { .. })
+            matches!(entries[*hash].op(), Some(AuthorityOp::ReRoot { .. }))
                 && eligible.is_some_and(|eligible| !eligible.contains(*hash))
         })
         .map(|handoff| (*handoff, AuthorityFoldIssue::UnsettledHandoff(*handoff)))
@@ -243,7 +243,7 @@ fn with_descendants(
 /// that does not settle, and returns the closed fences.
 fn close_fences(
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
-    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     refused: &mut BTreeMap<AuthorityEntryHash, AuthorityFoldIssue>,
 ) -> Retirements {
@@ -256,7 +256,7 @@ fn close_fences(
     let fences: Vec<Fence> = states
         .keys()
         .filter(|hash| {
-            !gone.contains(*hash) && matches!(entries[*hash].op, AuthorityOp::ReRoot { .. })
+            !gone.contains(*hash) && matches!(entries[*hash].op(), Some(AuthorityOp::ReRoot { .. }))
         })
         .map(|handoff| Fence::of(handoff, states, entries, ancestors))
         .collect();
@@ -371,6 +371,11 @@ fn anchor_signed(entry: &AuthorityLogEntry, anchor: impl Fn(&[u8; 32]) -> bool) 
 pub(super) fn entry_signer_keys(entry: &AuthorityLogEntry) -> impl Iterator<Item = &AuthorityKey> {
     std::iter::once(&entry.signer.public_key)
         .chain(entry.cosigns.iter().map(|cosign| &cosign.public_key))
+}
+
+/// The primary signer and every co-signer of `row`.
+fn row_signer_keys(row: &FoldRow) -> impl Iterator<Item = &AuthorityKey> {
+    std::iter::once(row.signer_key()).chain(row.cosigns().iter().map(|cosign| &cosign.public_key))
 }
 
 /// The row stored as authority history at `hash`'s id, if one is. A row of

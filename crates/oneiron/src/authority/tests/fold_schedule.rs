@@ -9,7 +9,7 @@ use rand::Rng;
 
 /// The scheduler as it was: rescan every pending entry after each transition.
 fn rescan_entry_states(
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &BTreeMap<AuthorityEntryHash, FoldRow>,
     context: FoldContext<'_>,
     issues: &mut Vec<AuthorityFoldIssue>,
 ) -> BTreeMap<AuthorityEntryHash, FoldState> {
@@ -23,8 +23,8 @@ fn rescan_entry_states(
         hashes.sort_by_key(|hash| {
             (
                 !matches!(
-                    by_hash[hash].op,
-                    AuthorityOp::RevokeActor { .. } | AuthorityOp::RevokeDevice { .. }
+                    by_hash[hash].op(),
+                    Some(AuthorityOp::RevokeActor { .. } | AuthorityOp::RevokeDevice { .. })
                 ),
                 *hash,
             )
@@ -33,9 +33,12 @@ fn rescan_entry_states(
             if progressed {
                 break;
             }
-            let entry = &by_hash[&hash];
+            let row = &by_hash[&hash];
+            // Every row in this oracle is open; the retired-entry predicate
+            // still reads the whole entry.
+            let entry = row.open().unwrap();
             match evaluate_entry(
-                entry,
+                row,
                 hash,
                 by_hash,
                 &states,
@@ -66,7 +69,7 @@ fn rescan_entry_states(
                 .copied()
                 .filter(|hash| {
                     matches!(
-                        fold_entry_state(
+                        fold_row_state(
                             &by_hash[hash],
                             *hash,
                             &states,
@@ -209,15 +212,19 @@ fn the_queued_scheduler_folds_as_the_full_rescan_did() {
             .iter()
             .map(|entry| (authority_entry_hash(entry).unwrap(), entry.clone()))
             .collect();
+        let rows: BTreeMap<_, _> = by_hash
+            .iter()
+            .map(|(hash, entry)| (*hash, FoldRow::Open(entry.clone())))
+            .collect();
         for retired in [false, true] {
             let context = FoldContext {
                 pre_handoff_entries: retired.then_some(&no_handoffs),
                 ..storage.context()
             };
             let mut expected_issues = Vec::new();
-            let expected = rescan_entry_states(&by_hash, context, &mut expected_issues);
+            let expected = rescan_entry_states(&rows, context, &mut expected_issues);
             let mut issues = Vec::new();
-            let states = fold_entry_states(&by_hash, context, &mut issues);
+            let states = fold_entry_states(&rows, context, &mut issues);
             assert_eq!(states, expected, "seed {seed} retired {retired}");
             assert_eq!(issues, expected_issues, "seed {seed} retired {retired}");
             retired_runs += usize::from(

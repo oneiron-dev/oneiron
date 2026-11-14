@@ -113,6 +113,12 @@ pub struct AuthorityFold {
     /// Valid entry hashes: a persistent set, shared by a resumed fold's
     /// view and its base (FIX 12330).
     pub valid_entries: ValidEntries,
+    /// The rows that folded as structure only (census L5-22 1a-iii): sealed,
+    /// with their overlay record not open here. They place the log, its
+    /// heads and its sequences, and grant nothing: none is in
+    /// `valid_entries`. When a record opens here, its row folds whole.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) pass_through_entries: BTreeSet<AuthorityEntryHash>,
     /// Fold-derived active/revoked roster.
     pub roster: BTreeMap<AuthorityKey, FoldedDevice>,
     /// Keys a handoff (`ReRoot`) retired. They stay revoked on every branch:

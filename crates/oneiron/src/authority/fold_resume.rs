@@ -137,6 +137,17 @@ impl<'a> RowMeta<'a> {
         }
     }
 
+    /// A row's envelope metadata, whether its record opened here or not.
+    pub(super) fn of_row(hash: Option<AuthorityEntryHash>, row: &'a FoldRow) -> Self {
+        Self {
+            hash,
+            signer: row.signer_key(),
+            seq: row.seq(),
+            parents: row.parent_hashes(),
+            world: row.op().and_then(super::world_privacy::side_world),
+        }
+    }
+
     fn summarized(hash: AuthorityEntryHash, row: &'a RowSummary) -> Self {
         Self {
             hash: Some(hash),
@@ -473,8 +484,9 @@ pub(in crate::authority) fn fold_stored_log(
     let inputs = Inputs::of(posture, pin, peer_consent_roots, observations);
     let capture = FoldCapture::default();
     let (consent, local) = super::fold_engine::own_log_inputs(posture, pin);
+    let fold_rows = super::fold_engine::open_rows(entries);
     let fold = super::fold_engine::fold_authority_log_inner(
-        entries,
+        &fold_rows,
         first_seen_at_secs,
         Some(now_secs),
         peer_consent_roots,

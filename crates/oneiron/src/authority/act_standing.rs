@@ -423,8 +423,9 @@ fn capture_in_txn(
     let observations = authority_local_observations_in_txn(store, txn, &entries)?;
     let capture = FoldCapture::for_image(heads.clone());
     let (consent, local) = super::fold_engine::own_log_inputs(posture, pin);
+    let rows = super::fold_engine::open_rows(&entries);
     super::fold_engine::fold_authority_log_inner(
-        &entries,
+        &rows,
         &BTreeMap::new(),
         None,
         &peers,

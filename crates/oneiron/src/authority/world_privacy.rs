@@ -530,16 +530,16 @@ pub(crate) fn side_world(op: &AuthorityOp) -> Option<EntityId> {
 /// that may not hold a world never receives its key records, so nothing
 /// outside the world may depend on them.
 pub(super) fn side_branch_violations(
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &BTreeMap<AuthorityEntryHash, FoldRow>,
 ) -> BTreeSet<AuthorityEntryHash> {
     by_hash
         .iter()
-        .filter(|(_, entry)| {
-            entry.parent_hashes.iter().any(|parent| {
+        .filter(|(_, row)| {
+            row.parent_hashes().iter().any(|parent| {
                 by_hash
                     .get(parent)
-                    .and_then(|parent| side_world(&parent.op))
-                    .is_some_and(|parent_world| side_world(&entry.op) != Some(parent_world))
+                    .and_then(|parent| parent.op().and_then(side_world))
+                    .is_some_and(|parent_world| row.op().and_then(side_world) != Some(parent_world))
             })
         })
         .map(|(hash, _)| *hash)
@@ -557,7 +557,7 @@ pub(super) fn side_branch_violations(
 /// takes an anchor's door off its own rows.
 pub(super) fn main_log_heads(
     rows: &[super::fold_resume::RowMeta<'_>],
-    valid: &ValidEntries,
+    (valid, pass_through): (&ValidEntries, &BTreeSet<AuthorityEntryHash>),
     anchored: &BTreeSet<AuthorityEntryHash>,
     pinned_anchor: Option<[u8; 32]>,
 ) -> (
@@ -571,7 +571,9 @@ pub(super) fn main_log_heads(
         let Some(hash) = row.hash else {
             continue;
         };
-        if !valid.contains(&hash) || row.world.is_some() {
+        // A row that folded as structure only is a head as any other: the
+        // next row names it, so the log stays one line (census L5-22 1a-iii).
+        if !(valid.contains(&hash) || pass_through.contains(&hash)) || row.world.is_some() {
             continue;
         }
         match unpinned_anchor_of(row.signer, &hash, anchored, pinned_anchor) {

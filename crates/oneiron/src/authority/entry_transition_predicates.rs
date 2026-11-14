@@ -51,7 +51,59 @@ pub(super) fn entry_is_retired(
     hash: AuthorityEntryHash,
     context: FoldContext<'_>,
 ) -> bool {
-    op_is_retired_device_op(&entry.op)
+    retired_outside_handoff(op_is_retired_device_op(&entry.op), hash, context)
+}
+
+/// [`op_is_retired_device_op`] for a stored row: a row that passes through
+/// is one by its kind and its device's public roles, as its op would be.
+pub(super) fn row_is_retired_device_op(row: &FoldRow) -> bool {
+    match row {
+        FoldRow::Open(entry) => op_is_retired_device_op(&entry.op),
+        FoldRow::PassThrough(row) => standing_is_retired_device_op(row.standing()),
+    }
+}
+
+fn standing_is_retired_device_op(standing: &PublicStanding) -> bool {
+    match standing {
+        PublicStanding::EnrollDevice { roles, .. } => *roles != ROLE_AGENT,
+        PublicStanding::RotateKey { .. } => true,
+        _ => false,
+    }
+}
+
+/// Whether a stored row is a re-root, by its op or, when it passes through,
+/// by its kind.
+pub(super) fn row_is_re_root(row: &FoldRow) -> bool {
+    match row {
+        FoldRow::Open(entry) => matches!(entry.op, AuthorityOp::ReRoot { .. }),
+        FoldRow::PassThrough(row) => matches!(row.standing(), PublicStanding::ReRoot { .. }),
+    }
+}
+
+/// [`entry_is_retired`] for a stored row, under the same rule.
+pub(super) fn row_is_retired(
+    row: &FoldRow,
+    hash: AuthorityEntryHash,
+    context: FoldContext<'_>,
+) -> bool {
+    retired_outside_handoff(row_is_retired_device_op(row), hash, context)
+}
+
+/// [`entry_is_retired`] for a row that passes through.
+pub(super) fn public_row_is_retired(
+    row: &AuthorityPublicRow,
+    hash: AuthorityEntryHash,
+    context: FoldContext<'_>,
+) -> bool {
+    retired_outside_handoff(standing_is_retired_device_op(row.standing()), hash, context)
+}
+
+fn retired_outside_handoff(
+    retired_op: bool,
+    hash: AuthorityEntryHash,
+    context: FoldContext<'_>,
+) -> bool {
+    retired_op
         && context
             .pre_handoff_entries
             .is_some_and(|permitted| !permitted.contains(&hash))
@@ -61,21 +113,40 @@ pub(super) fn active_participant_keys(
     state: &FoldState,
     entry: &AuthorityLogEntry,
 ) -> std::result::Result<BTreeSet<AuthorityKey>, AuthorityFoldIssue> {
+    participant_keys(state, &entry.signer, &entry.cosigns).ok_or_else(|| {
+        AuthorityFoldIssue::SignerNotInAncestry(authority_entry_hash(entry).unwrap_or([0; 32]))
+    })
+}
+
+/// [`active_participant_keys`] for a row that passes through: its signer
+/// and co-signers, each live with roles in its parent state.
+pub(super) fn public_participant_keys(
+    state: &FoldState,
+    row: &AuthorityPublicRow,
+) -> std::result::Result<BTreeSet<AuthorityKey>, AuthorityFoldIssue> {
+    let scaffold = row.scaffold();
+    participant_keys(state, &scaffold.signer, &scaffold.cosigns)
+        .ok_or(AuthorityFoldIssue::SignerNotInAncestry(scaffold.hash))
+}
+
+fn participant_keys(
+    state: &FoldState,
+    signer: &AuthoritySignature,
+    cosigns: &[AuthoritySignature],
+) -> Option<BTreeSet<AuthorityKey>> {
     let mut participants = BTreeSet::new();
-    for signature in std::iter::once(&entry.signer).chain(entry.cosigns.iter()) {
+    for signature in std::iter::once(signer).chain(cosigns.iter()) {
         let key = &signature.public_key;
         if state
             .roster
             .get(key)
             .is_none_or(|device| device.revoked || device.roles == 0)
         {
-            return Err(AuthorityFoldIssue::SignerNotInAncestry(
-                authority_entry_hash(entry).unwrap_or([0; 32]),
-            ));
+            return None;
         }
         participants.insert(key.clone());
     }
-    Ok(participants)
+    Some(participants)
 }
 
 pub(super) fn has_authority_consent(

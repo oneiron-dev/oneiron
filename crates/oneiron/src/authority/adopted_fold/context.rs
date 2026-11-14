@@ -215,12 +215,10 @@ fn refold_parent_states(
             continue;
         }
         if let Some(crossed) = crossed {
+            let row = FoldRow::Open(crossed);
             let state = super::super::world_refold::crossed_state(
-                &crossed,
-                crossed
-                    .parent_hashes
-                    .iter()
-                    .map(|parent| states.get(parent)),
+                &row,
+                row.parent_hashes().iter().map(|parent| states.get(parent)),
             )?;
             visiting.remove(&hash);
             states.insert(hash, state);

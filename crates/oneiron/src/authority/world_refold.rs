@@ -102,12 +102,17 @@ pub(super) fn carried_request_kind(
 /// 5649).
 pub(super) fn refold_world_edits(
     states: &mut BTreeMap<AuthorityEntryHash, FoldState>,
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &BTreeMap<AuthorityEntryHash, FoldRow>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     context: FoldContext<'_>,
     issues: &mut Vec<AuthorityFoldIssue>,
 ) {
-    let kind_of = |request: &AuthorityEntryHash| by_hash.get(request).and_then(request_kind);
+    let kind_of = |request: &AuthorityEntryHash| {
+        by_hash
+            .get(request)
+            .and_then(FoldRow::open)
+            .and_then(request_kind)
+    };
     let causal = |hashes: BTreeSet<AuthorityEntryHash>| {
         let mut hashes: Vec<_> = hashes.into_iter().collect();
         hashes.sort_by_key(|hash| (ancestors.get(hash).map_or(0, BTreeSet::len), *hash));
@@ -117,15 +122,15 @@ pub(super) fn refold_world_edits(
         !states.contains_key(hash)
             && by_hash
                 .get(hash)
-                .is_some_and(|entry| side_world(&entry.op).is_none())
+                .is_some_and(|row| row.op().and_then(side_world).is_none())
     };
     // An invalid edit or choice one descends from is crossed like any
     // main-log row.
     let lost = causal(
         by_hash
             .iter()
-            .filter(|(hash, entry)| {
-                refolds(&entry.op, kind_of)
+            .filter(|(hash, row)| {
+                row.op().is_some_and(|op| refolds(op, kind_of))
                     && !states.contains_key(*hash)
                     && ancestors
                         .get(*hash)
@@ -151,27 +156,28 @@ pub(super) fn refold_world_edits(
     let selected: BTreeSet<_> = lost.iter().copied().collect();
     let mut stand_ins = BTreeMap::<AuthorityEntryHash, FoldState>::new();
     for hash in crossed {
-        let entry = &by_hash[&hash];
+        let row = &by_hash[&hash];
         // A root request, cancel or root request's result folded again, with
         // a row folded again above it, folds here on its parents' kept or
         // standing-in states, before any row crossed above it: a cancel or
         // newer request there so finds the request it closes (FIX 5584), and
         // a request recovered here keeps the result recovered after it (FIX
         // 5649). One that does not fold stands for its parents' merge, as
-        // every other crossed row does.
-        if (closes_root_work(&entry.op) || answers_root_work(&entry.op, kind_of))
-            && selected.contains(&hash)
+        // every other crossed row does. Only an open row folds here; a row
+        // that passes through has no op to close or answer root work with.
+        if selected.contains(&hash)
+            && let Some(entry) = row.open()
+            && (closes_root_work(&entry.op) || answers_root_work(&entry.op, kind_of))
         {
-            let parents = parent_states(entry, states, &stand_ins);
+            let parents = parent_states(row, states, &stand_ins);
             if let EntryFold::Ready(state) = fold_entry_state(entry, hash, &parents, context) {
                 keep(states, issues, hash, state);
                 continue;
             }
         }
         if let Some(state) = crossed_state(
-            entry,
-            entry
-                .parent_hashes
+            row,
+            row.parent_hashes()
                 .iter()
                 .map(|parent| states.get(parent).or_else(|| stand_ins.get(parent))),
         ) {
@@ -183,8 +189,13 @@ pub(super) fn refold_world_edits(
         if states.contains_key(&hash) {
             continue;
         }
-        let entry = &by_hash[&hash];
-        let parents = parent_states(entry, states, &stand_ins);
+        let row = &by_hash[&hash];
+        // `lost` holds only rows with an op, so this opens; a row that
+        // passes through is never folded again.
+        let Some(entry) = row.open() else {
+            continue;
+        };
+        let parents = parent_states(row, states, &stand_ins);
         if let EntryFold::Ready(state) = fold_entry_state(entry, hash, &parents, context) {
             keep(states, issues, hash, state);
         }
@@ -194,7 +205,7 @@ pub(super) fn refold_world_edits(
 /// The state a crossed main-log row stands for: its parents' same-vault
 /// merge, bounded by its own vault and signed sequence.
 pub(super) fn crossed_state<'a>(
-    entry: &'a AuthorityLogEntry,
+    row: &FoldRow,
     mut parents: impl Iterator<Item = Option<&'a FoldState>>,
 ) -> Option<FoldState> {
     // Parents of two vaults stand for nothing (Sol P2 round 5, F6).
@@ -204,24 +215,23 @@ pub(super) fn crossed_state<'a>(
                 .map(|state| merge_states(&merged, state))
         })
     });
-    let mut state = merged.filter(|state| entry.vault_id == Some(state.vault_id))?;
+    let mut state = merged.filter(|state| row.vault_id() == Some(state.vault_id))?;
     let seq = state
         .seqs
-        .entry(entry.signer_key().clone())
-        .or_insert(entry.seq);
-    *seq = (*seq).max(entry.seq);
+        .entry(row.signer_key().clone())
+        .or_insert(row.seq());
+    *seq = (*seq).max(row.seq());
     Some(state)
 }
 
 /// The states `entry`'s parents fold to here: each kept, or crossed and
 /// standing for its own parents.
 fn parent_states(
-    entry: &AuthorityLogEntry,
+    row: &FoldRow,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     stand_ins: &BTreeMap<AuthorityEntryHash, FoldState>,
 ) -> BTreeMap<AuthorityEntryHash, FoldState> {
-    entry
-        .parent_hashes
+    row.parent_hashes()
         .iter()
         .filter_map(|parent| {
             states
