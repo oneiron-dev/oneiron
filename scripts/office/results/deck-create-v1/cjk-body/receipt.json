@@ -1,0 +1,177 @@
+{
+  "binding": {
+    "case": "cjk-body",
+    "case_manifest_sha256": "bed43798aebb9b067607d0d0a8eac4e6e21ab926c0190d0f50dc61341df46f5c",
+    "case_set": "deck-create-v1",
+    "source": "474effa8c4e5b91093911eb6489117e0faa20ea7"
+  },
+  "detail": "PDFKit rasterized 1 page(s)",
+  "dialog_dismissals": [],
+  "environment": {
+    "font_account": "owner-console",
+    "font_inventory_sha256": "e14cb7e38f1cbf13de0f2894ce865836b36b960dad36a9d36188148cbcf69637",
+    "font_role": "owner",
+    "harness": "one-2531-v1",
+    "locale": "",
+    "macos": "27.0",
+    "macos_build": "26A428",
+    "observer": "system-events",
+    "pdfkit": "27.0",
+    "powerpoint": "16.113.2",
+    "raster_scale": 2
+  },
+  "fit": [
+    {
+      "block": "j-title",
+      "bound_emu": [
+        7238111,
+        670560
+      ],
+      "detail": "",
+      "frame_emu": [
+        457200,
+        274638,
+        8229600,
+        1143000
+      ],
+      "inner_emu": [
+        8046720,
+        1051560
+      ],
+      "kind": "text",
+      "name": "Title 1",
+      "planned_emu": [
+        457200,
+        274638,
+        8229600,
+        1143000
+      ],
+      "shape_id": 2,
+      "shape_index": 1,
+      "slide": 1,
+      "verdict": "fits"
+    },
+    {
+      "block": "j-one",
+      "bound_emu": [
+        2438400,
+        1097280
+      ],
+      "detail": "",
+      "frame_emu": [
+        457200,
+        1600200,
+        2621280,
+        4525963
+      ],
+      "inner_emu": [
+        2438400,
+        4434523
+      ],
+      "kind": "text",
+      "name": "TextBox 3",
+      "planned_emu": [
+        457200,
+        1600200,
+        2621280,
+        4525963
+      ],
+      "shape_id": 3,
+      "shape_index": 2,
+      "slide": 1,
+      "verdict": "fits"
+    },
+    {
+      "block": "j-two",
+      "bound_emu": [
+        2436813,
+        1097280
+      ],
+      "detail": "",
+      "frame_emu": [
+        3261360,
+        1600200,
+        2621280,
+        4525963
+      ],
+      "inner_emu": [
+        2438400,
+        4434523
+      ],
+      "kind": "text",
+      "name": "TextBox 4",
+      "planned_emu": [
+        3261360,
+        1600200,
+        2621280,
+        4525963
+      ],
+      "shape_id": 4,
+      "shape_index": 3,
+      "slide": 1,
+      "verdict": "fits"
+    },
+    {
+      "block": "j-three",
+      "bound_emu": [
+        2362200,
+        1097280
+      ],
+      "detail": "",
+      "frame_emu": [
+        6065520,
+        1600200,
+        2621280,
+        4525963
+      ],
+      "inner_emu": [
+        2438400,
+        4434523
+      ],
+      "kind": "text",
+      "name": "TextBox 5",
+      "planned_emu": [
+        6065520,
+        1600200,
+        2621280,
+        4525963
+      ],
+      "shape_id": 5,
+      "shape_index": 4,
+      "slide": 1,
+      "verdict": "fits"
+    }
+  ],
+  "fit_script_sha256": "409cea1e7911046e94d195ee62d136e0e1bfd5bddbb64c3cbd27c400daa80aa1",
+  "input": {
+    "bytes": 100553,
+    "sha256": "59469ad3fc70abe152f212cba674434764b1814b2ab0b30cd6cce55bfd88e5f4"
+  },
+  "outputs": {
+    "page-0001.png": {
+      "bytes": 124524,
+      "sha256": "65a543fb16e00b198521a91e27f1ea866bffcdea5e7b9e141f8e091666677b6e"
+    },
+    "reference.pptx": {
+      "bytes": 30636,
+      "sha256": "990c176c5c121be6f2ac98f0b2768b06a7585384722b5718e73f535e2eec5f68"
+    },
+    "render.pdf": {
+      "bytes": 31645,
+      "sha256": "a8221204cc95e255fd98c94ed72260870010dd84a975556c2135f7e1bd35b780"
+    }
+  },
+  "pages": 1,
+  "raster_detail": "pages=1",
+  "saveback_normalized": {
+    "fields": [
+      "dc:creator",
+      "cp:lastModifiedBy"
+    ],
+    "part": "docProps/core.xml",
+    "value": "Oneiron oracle",
+    "written_sha256": "a242c2ba6e919d21f28fafbfd2199a429cd0187ab57916ed1ce216fb7de3ebfa"
+  },
+  "staged_input_sha256": "59469ad3fc70abe152f212cba674434764b1814b2ab0b30cd6cce55bfd88e5f4",
+  "status": "clean"
+}
