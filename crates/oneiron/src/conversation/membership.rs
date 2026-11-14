@@ -48,6 +48,17 @@ pub struct MembershipRow {
 }
 pub use crate::memory::conversation_membership::MembershipWindow;
 
+#[cfg(oneiron_test_support)]
+thread_local! {
+    static LEDGER_ROWS_FOLDED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// rows this thread's whole-ledger scans decoded, for tests/membership_index.rs (L6-16). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn ledger_rows_folded_for_test() -> u64 {
+    LEDGER_ROWS_FOLDED.get()
+}
+
 pub(super) fn revision_in(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -73,6 +84,8 @@ pub(super) fn rows_in(
 ) -> Result<Vec<MembershipRow>> {
     let mut rows = Vec::new();
     for (_, row) in MEMBERSHIP_ROWS.scan_from(store, txn, conversation.as_bytes())? {
+        #[cfg(oneiron_test_support)]
+        LEDGER_ROWS_FOLDED.set(LEDGER_ROWS_FOLDED.get() + 1);
         if row.v != MEMBERSHIP_ROW_VERSION
             || rows
                 .last()
@@ -95,14 +108,31 @@ pub(super) fn append_row(
     conversation: EntityId,
     row: &MembershipRow,
 ) -> Result<()> {
-    let rows = rows_in(&vault.store, txn, conversation)?;
+    let store = &vault.store;
+    // An indexed room reads only its last row; any other room folds its
+    // ledger once and indexes it.
+    if let Some(revision) = membership_index::indexed_revision_in(store, txn, conversation)? {
+        let last = MEMBERSHIP_ROWS
+            .get(store, txn, &(conversation, revision - 1))?
+            .ok_or(Error::CorruptedIndex(
+                "membership revision does not match rows",
+            ))?;
+        if row.at < last.at {
+            return Err(state("membership time cannot rewind"));
+        }
+        MEMBERSHIP_ROWS.put(store, txn, &(conversation, revision), row)?;
+        MEMBERSHIP_SEQ.put(store, txn, &conversation, &(revision + 1))?;
+        return membership_index::record_in(store, txn, conversation, revision, row);
+    }
+    let mut rows = rows_in(store, txn, conversation)?;
     if rows.last().is_some_and(|last| row.at < last.at) {
         return Err(state("membership time cannot rewind"));
     }
     let next_index = rows.len() as u64;
-    MEMBERSHIP_ROWS.put(&vault.store, txn, &(conversation, next_index), row)?;
-    MEMBERSHIP_SEQ.put(&vault.store, txn, &conversation, &(next_index + 1))?;
-    Ok(())
+    MEMBERSHIP_ROWS.put(store, txn, &(conversation, next_index), row)?;
+    MEMBERSHIP_SEQ.put(store, txn, &conversation, &(next_index + 1))?;
+    rows.push(row.clone());
+    membership_index::rebuild_room_in(store, txn, conversation, &rows)
 }
 pub(super) fn members_at_rows(rows: &[MembershipRow], at: u64) -> BTreeSet<EntityId> {
     let mut members = BTreeSet::new();
@@ -119,48 +149,162 @@ pub(super) fn members_at_rows(rows: &[MembershipRow], at: u64) -> BTreeSet<Entit
     }
     members
 }
+pub(super) fn apply_window_row(
+    windows: &mut Vec<MembershipWindow>,
+    row: &MembershipRow,
+) -> Result<()> {
+    match row.action {
+        MembershipAction::Join => {
+            if windows.last().is_some_and(|w| w.to.is_none()) {
+                return Err(Error::CorruptedIndex("duplicate membership join"));
+            }
+            windows.push(MembershipWindow {
+                joined_at: row.at,
+                from: row
+                    .visible_from
+                    .ok_or(Error::CorruptedIndex("membership visibility"))?,
+                to: None,
+            });
+        }
+        MembershipAction::Leave => {
+            let current = windows
+                .last_mut()
+                .filter(|w| w.to.is_none())
+                .ok_or(Error::CorruptedIndex("membership leave without join"))?;
+            current.to = Some(row.at);
+        }
+        MembershipAction::History => {
+            let current = windows
+                .last_mut()
+                .filter(|w| w.to.is_none())
+                .ok_or(Error::CorruptedIndex("history without membership"))?;
+            let from = row
+                .visible_from
+                .ok_or(Error::CorruptedIndex("membership visibility"))?;
+            if from != 0 && from != current.joined_at {
+                return Err(Error::CorruptedIndex("invalid history boundary"));
+            }
+            current.from = from;
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn windows_rows(
     rows: &[MembershipRow],
     person: EntityId,
 ) -> Result<Vec<MembershipWindow>> {
-    let mut windows: Vec<MembershipWindow> = Vec::new();
+    let mut windows = Vec::new();
     for row in rows.iter().filter(|r| r.person == person) {
-        match row.action {
-            MembershipAction::Join => {
-                if windows.last().is_some_and(|w| w.to.is_none()) {
-                    return Err(Error::CorruptedIndex("duplicate membership join"));
-                }
-                windows.push(MembershipWindow {
-                    joined_at: row.at,
-                    from: row
-                        .visible_from
-                        .ok_or(Error::CorruptedIndex("membership visibility"))?,
-                    to: None,
-                });
-            }
-            MembershipAction::Leave => {
-                let current = windows
-                    .last_mut()
-                    .filter(|w| w.to.is_none())
-                    .ok_or(Error::CorruptedIndex("membership leave without join"))?;
-                current.to = Some(row.at);
-            }
-            MembershipAction::History => {
-                let current = windows
-                    .last_mut()
-                    .filter(|w| w.to.is_none())
-                    .ok_or(Error::CorruptedIndex("history without membership"))?;
-                let from = row
-                    .visible_from
-                    .ok_or(Error::CorruptedIndex("membership visibility"))?;
-                if from != 0 && from != current.joined_at {
-                    return Err(Error::CorruptedIndex("invalid history boundary"));
-                }
-                current.from = from;
-            }
-        }
+        apply_window_row(&mut windows, row)?;
     }
     Ok(windows)
+}
+
+pub(super) fn current_join_rows(rows: &[MembershipRow], person: EntityId) -> Option<u64> {
+    let mut current = None;
+    for (index, row) in (0_u64..).zip(rows) {
+        if row.person != person {
+            continue;
+        }
+        match row.action {
+            MembershipAction::Join => current = Some(index),
+            MembershipAction::Leave => current = None,
+            MembershipAction::History => {}
+        }
+    }
+    current
+}
+
+pub(super) fn current_members_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> Result<BTreeSet<EntityId>> {
+    if let Some(entries) = membership_index::entries_in(store, txn, room)? {
+        return Ok(entries
+            .into_iter()
+            .filter(|(_, entry)| entry.current_join.is_some())
+            .map(|(person, _)| person)
+            .collect());
+    }
+    Ok(members_at_rows(&rows_in(store, txn, room)?, u64::MAX))
+}
+
+pub(super) fn is_member_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    person: EntityId,
+) -> Result<bool> {
+    if let Some(entry) = membership_index::person_in(store, txn, room, person)? {
+        return Ok(entry.current_join.is_some());
+    }
+    Ok(members_at_rows(&rows_in(store, txn, room)?, u64::MAX).contains(&person))
+}
+
+pub(super) fn members_at_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    at: u64,
+) -> Result<BTreeSet<EntityId>> {
+    if let Some(entries) = membership_index::entries_in(store, txn, room)? {
+        return Ok(entries
+            .into_iter()
+            .filter(|(_, entry)| {
+                entry
+                    .windows
+                    .iter()
+                    .any(|window| window.joined_at <= at && window.to.is_none_or(|to| at < to))
+            })
+            .map(|(person, _)| person)
+            .collect());
+    }
+    Ok(members_at_rows(&rows_in(store, txn, room)?, at))
+}
+
+pub(super) fn ever_members_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> Result<BTreeSet<EntityId>> {
+    if let Some(entries) = membership_index::entries_in(store, txn, room)? {
+        return Ok(entries
+            .into_iter()
+            .filter(|(_, entry)| !entry.windows.is_empty())
+            .map(|(person, _)| person)
+            .collect());
+    }
+    Ok(rows_in(store, txn, room)?
+        .into_iter()
+        .filter(|row| row.action == MembershipAction::Join)
+        .map(|row| row.person)
+        .collect())
+}
+
+pub(super) fn person_windows_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    person: EntityId,
+) -> Result<Vec<MembershipWindow>> {
+    if let Some(entry) = membership_index::person_in(store, txn, room, person)? {
+        return Ok(entry.windows);
+    }
+    windows_rows(&rows_in(store, txn, room)?, person)
+}
+
+pub(super) fn current_join_of_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    person: EntityId,
+) -> Result<Option<u64>> {
+    if let Some(entry) = membership_index::person_in(store, txn, room, person)? {
+        return Ok(entry.current_join);
+    }
+    Ok(current_join_rows(&rows_in(store, txn, room)?, person))
 }
 impl Vault {
     pub fn membership_ledger(&self, conversation: EntityId) -> Result<Vec<MembershipRow>> {
@@ -169,7 +313,9 @@ impl Vault {
         rows_in(&self.store, &txn, conversation)
     }
     pub fn membership_at(&self, conversation: EntityId, at: u64) -> Result<Vec<EntityId>> {
-        Ok(members_at_rows(&self.membership_ledger(conversation)?, at)
+        // The ledger alone answers: no room body check.
+        let txn = self.store.env.read_txn()?;
+        Ok(members_at_in(&self.store, &txn, conversation, at)?
             .into_iter()
             .collect())
     }
@@ -183,11 +329,19 @@ impl Vault {
         conversation: EntityId,
     ) -> Result<Vec<EntityId>> {
         body::body_in(self, txn, conversation)?;
-        Ok(
-            members_at_rows(&rows_in(&self.store, txn, conversation)?, u64::MAX)
-                .into_iter()
-                .collect(),
-        )
+        Ok(current_members_in(&self.store, txn, conversation)?
+            .into_iter()
+            .collect())
+    }
+    /// [`Self::members_in_txn`] for one person: one index read on an indexed room.
+    pub(crate) fn is_member_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        conversation: EntityId,
+        person: EntityId,
+    ) -> Result<bool> {
+        body::body_in(self, txn, conversation)?;
+        is_member_in(&self.store, txn, conversation, person)
     }
     /// [`Self::members_in_txn`] in the order the room's typed body lists its
     /// members (FIX 10567). The local ledger alone decides who is a member;
@@ -199,7 +353,7 @@ impl Vault {
         conversation: EntityId,
     ) -> Result<Vec<EntityId>> {
         let body = body::body_in(self, txn, conversation)?;
-        let mut ledger = members_at_rows(&rows_in(&self.store, txn, conversation)?, u64::MAX);
+        let mut ledger = current_members_in(&self.store, txn, conversation)?;
         let mut members: Vec<EntityId> = body
             .member_ids
             .into_iter()
@@ -217,11 +371,9 @@ impl Vault {
         at: u64,
     ) -> Result<Vec<EntityId>> {
         body::body_in(self, txn, conversation)?;
-        Ok(
-            members_at_rows(&rows_in(&self.store, txn, conversation)?, at)
-                .into_iter()
-                .collect(),
-        )
+        Ok(members_at_in(&self.store, txn, conversation, at)?
+            .into_iter()
+            .collect())
     }
     /// Everyone `conversation`'s ledger has ever joined, in the caller's
     /// snapshot, whether or not they have left since.
@@ -231,11 +383,7 @@ impl Vault {
         conversation: EntityId,
     ) -> Result<BTreeSet<EntityId>> {
         body::body_in(self, txn, conversation)?;
-        Ok(rows_in(&self.store, txn, conversation)?
-            .into_iter()
-            .filter(|row| row.action == MembershipAction::Join)
-            .map(|row| row.person)
-            .collect())
+        ever_members_in(&self.store, txn, conversation)
     }
     /// Where in `conversation`'s ledger the join that opened `person`'s
     /// current membership sits, in the caller's snapshot; `None` when they
@@ -248,25 +396,15 @@ impl Vault {
         person: EntityId,
     ) -> Result<Option<u64>> {
         body::body_in(self, txn, conversation)?;
-        let mut current = None;
-        for (index, row) in (0_u64..).zip(rows_in(&self.store, txn, conversation)?) {
-            if row.person != person {
-                continue;
-            }
-            match row.action {
-                MembershipAction::Join => current = Some(index),
-                MembershipAction::Leave => current = None,
-                MembershipAction::History => {}
-            }
-        }
-        Ok(current)
+        current_join_of_in(&self.store, txn, conversation, person)
     }
     pub fn windows(
         &self,
         conversation: EntityId,
         person: EntityId,
     ) -> Result<Vec<MembershipWindow>> {
-        windows_rows(&self.membership_ledger(conversation)?, person)
+        let txn = self.store.env.read_txn()?;
+        person_windows_in(&self.store, &txn, conversation, person)
     }
     /// [`Self::windows`] in the caller's snapshot.
     pub(crate) fn windows_in_txn(
@@ -276,7 +414,7 @@ impl Vault {
         person: EntityId,
     ) -> Result<Vec<MembershipWindow>> {
         body::body_in(self, txn, conversation)?;
-        windows_rows(&rows_in(&self.store, txn, conversation)?, person)
+        person_windows_in(&self.store, txn, conversation, person)
     }
     pub fn join_member(
         &self,
@@ -466,8 +604,7 @@ impl Vault {
         authorize(self, txn, actor)?;
         require_kind(self, txn, person, ENTITY_TYPE_PERSON)?;
         let mut body = body::body_in(self, txn, conversation)?;
-        let rows = rows_in(&self.store, txn, conversation)?;
-        let mut members = members_at_rows(&rows, u64::MAX);
+        let mut members = current_members_in(&self.store, txn, conversation)?;
         let visible_from = match action {
             MembershipAction::Join => {
                 if !members.insert(person) {
@@ -498,7 +635,7 @@ impl Vault {
                 None
             }
             MembershipAction::History => {
-                let windows = windows_rows(&rows, person)?;
+                let windows = person_windows_in(&self.store, txn, conversation, person)?;
                 let window = windows
                     .last()
                     .filter(|w| w.to.is_none())
