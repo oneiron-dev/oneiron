@@ -15,8 +15,8 @@ pub use crate::file_secret_marks::SecretSight;
 pub(crate) use crate::file_secret_marks::{KeyPlaces, MemberStep, PlaceHandles};
 pub(crate) use crate::file_secret_marks::{filled, filled_with, masked_copy_withheld};
 pub(crate) use crate::store::file_key_masks::{
-    MASKED_FILE_BAND, MaskedFile, drop_masked_key_in_txn, holds_masked_keys_in_txn,
-    masked_file_in_txn, put_masked_file_in_txn, sighted_bytes_in_txn,
+    MASKED_FILE_BAND, MaskedFile, clear_file_seal_in_txn, drop_masked_key_in_txn,
+    holds_masked_keys_in_txn, masked_file_in_txn, put_masked_file_in_txn, sighted_bytes_in_txn,
 };
 
 impl Vault {

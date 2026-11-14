@@ -24,7 +24,9 @@
 //! reader here reads whole (encrypted, malformed, past the byte floor), is
 //! stored as it is (owner ruling C2): the owner and a granted agent read its
 //! bytes (`reveal::file`), and a masked reader gets
-//! [`SecretError::SealedFileWithheld`], never the raw bytes. A file a masked
+//! [`SecretError::SealedFileWithheld`], never the raw bytes. So is a file the
+//! write door sealed whole, whose mark says so: it read a hit there that no
+//! span places and no value of it holds alone. A file a masked
 //! reader cannot be served is [`SecretError::MaskedCopyWithheld`] with the
 //! scan's reason (FIX 2475).
 
@@ -61,6 +63,22 @@ pub(crate) struct MaskedFile {
     /// has none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) members: Vec<MemberKeys>,
+    /// The write door sealed the file whole (ARCH-0069 #binary-secrets): it
+    /// read a hit in it that no span places and no value of it holds alone.
+    /// A masked reader is served none of it, and no key in it can be
+    /// granted; the owner reads the stored bytes.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(crate) sealed: bool,
+    /// The owner ruled the hit the write door sealed the file whole for no
+    /// secret (L6-03-SEALED-FILE-NO-NOTICE): the seal is cleared, a put of
+    /// these bytes is not sealed again, and a masked reader is served the
+    /// file as its marks leave it, with no rescan for that hit.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(crate) ruled_no_secret: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// The keys in one member of a stored container: its path from the stored
@@ -159,8 +177,9 @@ pub(crate) fn put_masked_file_in_txn(
 }
 
 /// Drops `custody`'s key from the mark of the file `hash` names, in its
-/// stored bytes and in each member, and the mark with its last key: the
-/// owner ruled it no secret.
+/// stored bytes and in each member, and the mark with its last key unless
+/// the file is sealed whole or the owner ruled its seal: the owner ruled
+/// the key no secret.
 pub(crate) fn drop_masked_key_in_txn(
     store: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
@@ -175,11 +194,44 @@ pub(crate) fn drop_masked_key_in_txn(
         member.keys.retain(|key| key.custody != *custody);
     }
     file.members.retain(|member| !member.keys.is_empty());
-    if file.keys.is_empty() && file.members.is_empty() {
+    if file.keys.is_empty() && file.members.is_empty() && !file.sealed && !file.ruled_no_secret {
         MASKED_FILE.delete(store, txn, hash)?;
         return Ok(());
     }
     MASKED_FILE.put(store, txn, hash, &file)
+}
+
+/// Clears the seal of the file `hash` names: the owner ruled the hit the
+/// write door sealed it whole for no secret (L6-03-SEALED-FILE-NO-NOTICE).
+/// Its keys stay marked; a file with no mark left keeps a row that says
+/// so, which a put of the same bytes reads.
+pub(crate) fn clear_file_seal_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    hash: &[u8; 32],
+    at: u64,
+) -> Result<()> {
+    let mut file = masked_file_in_txn(store, txn, hash)?.unwrap_or(MaskedFile {
+        band: MASKED_FILE_BAND,
+        keys: Vec::new(),
+        masked_at: at,
+        members: Vec::new(),
+        sealed: false,
+        ruled_no_secret: false,
+    });
+    file.sealed = false;
+    file.ruled_no_secret = true;
+    MASKED_FILE.put(store, txn, hash, &file)
+}
+
+/// Whether the owner ruled the seal of the file `hash` names no secret
+/// ([`clear_file_seal_in_txn`]).
+pub(crate) fn file_seal_ruled_in_txn(
+    store: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    hash: &[u8; 32],
+) -> Result<bool> {
+    Ok(masked_file_in_txn(store, txn, hash)?.is_some_and(|file| file.ruled_no_secret))
 }
 
 /// `bytes`, read from the store, as `sight` reads them. A file the write
@@ -241,14 +293,22 @@ pub(crate) fn served_bytes_in_txn(
     if sight != SecretSight::Masked {
         return Ok(Some(bytes));
     }
-    let served = match sighted_bytes_in_txn(store, txn, bytes, digest, sight) {
+    let hash = match digest {
+        Some(digest) => *digest,
+        None => *blake3::hash(&bytes).as_bytes(),
+    };
+    let served = match sighted_bytes_in_txn(store, txn, bytes, Some(&hash), sight) {
         Ok(served) => served,
         Err(Error::Secret(
             SecretError::MaskedCopyWithheld { .. } | SecretError::SealedFileWithheld,
         )) => return Ok(None),
         Err(error) => return Err(error),
     };
-    if crate::batch::secret_scan::scan_file_content("", &served).is_some() {
+    // A file whose seal the owner ruled no secret is served as its marks
+    // leave it: the hit the door sealed it for is no secret.
+    if !file_seal_ruled_in_txn(store, txn, &hash)?
+        && crate::batch::secret_scan::scan_file_content("", &served).is_some()
+    {
         return Ok(None);
     }
     Ok(Some(served))
@@ -321,9 +381,18 @@ pub(crate) fn sighted_bytes_in_txn_with_reader(
         }
         return Ok(copy);
     };
+    // A file the write door sealed whole goes to the owner only: no mark
+    // places what it holds (ARCH-0069 #binary-secrets).
+    if file.sealed {
+        return Err(Error::Secret(SecretError::SealedFileWithheld));
+    }
     let handles = file.place_handles(store, txn)?;
     let copy = reader.served_masked_copy(&bytes, &file.places(), &handles, digest)?;
-    if let Some(reason) = reader.write_tree_hit(&copy, None) {
+    // The owner ruled the hit the door sealed this file for no secret: the
+    // copy is not read for it again.
+    if !file.ruled_no_secret
+        && let Some(reason) = reader.write_tree_hit(&copy, None)
+    {
         return Err(masked_copy_withheld(reason));
     }
     Ok(copy)
