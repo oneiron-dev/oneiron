@@ -282,6 +282,25 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
+/// Drops the built-in packs' seed marker, so `vault` reads as a vault
+/// opened before the built-ins were seeded: a send on a built-in channel
+/// then asks for no installed, checked pack (OF-519). Each built-in mail
+/// pack's setup verifies a live connection, which no offline test holds;
+/// `tests/check_in_mail_reply_approve.rs` (P2.5 2k9a) approves an IMAP
+/// reply, whose send digest is read on the `email` channel. Compiled only
+/// under `--cfg oneiron_test_support`; never API.
+///
+/// # Errors
+///
+/// Storage failures.
+#[cfg(oneiron_test_support)]
+pub(crate) fn forget_builtin_pack_seed_in_test(vault: &Vault) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    SEEDED.delete(&vault.store, &mut txn, &())?;
+    txn.commit()?;
+    Ok(())
+}
+
 impl Vault {
     /// Bootstrap never trusts an engine-built connector merely because it is
     /// first-party. The exact embedded source must pass a qualifier before
