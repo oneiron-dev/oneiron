@@ -198,3 +198,127 @@ pub(crate) fn open(
         .map_err(|_| corrupt())?;
     Ok(Some(record))
 }
+
+
+/// The red base of census L5-22 1a-iii commit 6 (branch
+/// opus-e2e-4/authority-overlay-c6-red, never landed): commit 6's three test
+/// doors on commit 5's raw custody primitives, with no ready mark, no
+/// openness epoch and no Open-only hooks.
+#[cfg(test)]
+type HeldOverlayCustody = (
+    Vec<([u8; 32], crate::store::key_custody::CustodySecret)>,
+    Vec<[u8; 32]>,
+);
+
+#[cfg(test)]
+fn held_overlay_custody_for_test(
+    source: &crate::Vault,
+    subject: &EntityId,
+) -> Result<HeldOverlayCustody> {
+    let txn = source.store.env.read_txn()?;
+    let custody = source.store.core.key_custody.local().ok_or_else(corrupt)?;
+    let mut live = Vec::new();
+    let mut retired = Vec::new();
+    for item in custody.erasable_keys_of(ErasablePurpose::AuthorityOverlay, subject.as_bytes())? {
+        if item.incarnation != incarnation(subject) {
+            continue;
+        }
+        let state = custody.erasable_state(&item)?;
+        if state == EntryState::Retired
+            || retirement_in_txn(&source.store, &txn, &item.subject(&custody)?)?.is_some()
+        {
+            retired.push(item.key_ref);
+        } else if state == EntryState::Live {
+            live.push((item.key_ref, custody.read_erasable(&item)?));
+        }
+    }
+    Ok((live, retired))
+}
+
+#[cfg(test)]
+fn raw_install_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    subject: &EntityId,
+    key_ref: &[u8; 32],
+    secret: &crate::store::key_custody::CustodySecret,
+) -> Result<()> {
+    store.core.key_custody.pin_in_txn(store, txn)?;
+    let custody = store.core.key_custody.bind_in_txn(store, txn)?;
+    let item = item(subject, key_ref);
+    custody.install_erasable(&item, secret)?;
+    put_erasable_ref_in_txn(store, txn, &item)
+}
+
+#[cfg(test)]
+fn raw_retire_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    subject: &EntityId,
+    refs: &[[u8; 32]],
+) -> Result<()> {
+    store.core.key_custody.pin_in_txn(store, txn)?;
+    let custody = store.core.key_custody.bind_in_txn(store, txn)?;
+    let mut items =
+        custody.erasable_keys_of(ErasablePurpose::AuthorityOverlay, subject.as_bytes())?;
+    items.extend(refs.iter().map(|key_ref| item(subject, key_ref)));
+    for item in &items {
+        crate::store::key_custody::stage_erasable_retirement_in_txn(store, txn, &custody, item)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn deliver_authority_overlay_custody_for_test(
+    source: &crate::Vault,
+    destination: &crate::Vault,
+    subject: &EntityId,
+) -> Result<()> {
+    let (live, retired) = held_overlay_custody_for_test(source, subject)?;
+    if !retired.is_empty() {
+        destination.with_write_txn_grouped(|txn| {
+            raw_retire_in_txn(&destination.store, txn, subject, &retired)
+        })?;
+        destination.store.finish_erasable_retirements()?;
+        return Ok(());
+    }
+    for (key_ref, secret) in &live {
+        destination.with_write_txn_grouped(|txn| {
+            raw_install_in_txn(&destination.store, txn, subject, key_ref, secret)
+        })?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn deliver_authority_overlay_custody_then_abort_for_test(
+    source: &crate::Vault,
+    destination: &crate::Vault,
+    subject: &EntityId,
+) -> Result<()> {
+    let (live, _) = held_overlay_custody_for_test(source, subject)?;
+    for (key_ref, secret) in &live {
+        let aborted = destination.with_write_txn_grouped(|txn| {
+            raw_install_in_txn(&destination.store, txn, subject, key_ref, secret)?;
+            Err::<(), _>(Error::InvariantViolation(
+                "the writer aborts after the install",
+            ))
+        });
+        match aborted {
+            Err(Error::InvariantViolation("the writer aborts after the install")) => {}
+            Err(err) => return Err(err),
+            Ok(()) => return Err(corrupt()),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn retire_authority_overlay_subject_for_test(
+    vault: &crate::Vault,
+    subject: &EntityId,
+) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| raw_retire_in_txn(&vault.store, txn, subject, &[]))?;
+    vault.store.finish_erasable_retirements()?;
+    Ok(())
+}
