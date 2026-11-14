@@ -2,6 +2,9 @@
 //!
 //! Reads bound facts, routes ready groups and covers all-group corrections.
 //! Mirrors native nomination, routing, attachment, restatement and sharing.
+//! A qualifying observed preference stands beside a matching user_stated
+//! head (#6666): it never attaches to, is judged against or corrects that
+//! head, and the head's write check stays.
 //! A correction binds only inside a judge set, as native's bound correction;
 //! a write outside every set never supersedes, so New carries no target.
 
@@ -12,11 +15,12 @@ use oneiron_remote::OneironClient;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::extraction_observations::{CandidateObservation, Observations};
+use crate::extraction_observations::{CandidateObservation, Observations, PriorObservation};
 use crate::extraction_selection::{
     Error as SelectionError, ExtractionSelectionConfig, ExtractionSelectionPlan,
 };
 
+const USER_STATED: &str = "user_stated";
 const IMPORTED: &str = "imported";
 const PROVISIONAL: &str = "provisional";
 
@@ -95,6 +99,11 @@ pub enum Route {
         /// Indexes the set in plan order.
         set: usize,
     },
+    /// Holds observed beside stated heads, never over them.
+    ObservedBeside {
+        /// Lists the stated heads in native prior order.
+        stated_heads: Vec<String>,
+    },
     /// Writes nothing because the head already represents it.
     AlreadyRepresented {
         /// Names the representing head in lowercase hexadecimal.
@@ -104,13 +113,17 @@ pub enum Route {
     },
 }
 
-/// Records a ready group's route.
+/// Records a ready group's route and excluded stated heads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CandidateRoute {
     /// Names the group representative in original request order.
     pub representative_index: usize,
     /// Lists the group members in original request order.
     pub member_indexes: Vec<usize>,
+    /// Records stated heads excluded from routing, in prior order.
+    pub dropped_stated_heads: Vec<String>,
+    /// Records a merged correction that names an excluded stated head.
+    pub dropped_correction: Option<String>,
     /// Gives the group's route.
     pub choice: Route,
 }
@@ -207,20 +220,35 @@ pub fn route(
             }
         }
     }
+    let mut stated: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    let mut kept: BTreeMap<usize, Vec<PriorMatch>> = BTreeMap::new();
+    for rep in &ready {
+        let heads = observed_stated_heads(observed[rep], &all[rep], &observations.priors);
+        kept.insert(*rep, exclude_stated_matches(&all[rep], &heads));
+        stated.insert(*rep, heads);
+    }
     let ready_obs: Vec<&CandidateObservation> = ready.iter().map(|rep| observed[rep]).collect();
     let components = nominate(&ready_obs, &scores, config.cosine_threshold)?;
-    let (mut sets, in_set) = route_sets(&ready, &ready_obs, observations, &all, components);
+    let (mut sets, in_set) =
+        route_sets(&ready, &ready_obs, observations, &kept, &stated, components);
     let mut routes = Vec::with_capacity(ready.len());
     for (pos, rep) in ready.iter().enumerate() {
         let candidate = observed[rep];
         let group = &selection.groups[groups[rep]];
+        let dropped: Vec<String> = stated[rep]
+            .iter()
+            .map(|at| observations.priors[*at].claim.clone())
+            .collect();
+        let dropped_correction = dropped_correction(group.corrects.as_deref(), &dropped);
         let choice = match in_set[pos] {
             Some(set) => Route::Judge { set },
-            None => write_choice(*rep, candidate, observations, &all[rep]),
+            None => write_choice(*rep, candidate, observations, &kept[rep], &stated[rep]),
         };
         routes.push(CandidateRoute {
             representative_index: *rep,
             member_indexes: group.member_indexes.clone(),
+            dropped_stated_heads: dropped,
+            dropped_correction,
             choice,
         });
     }
@@ -428,6 +456,7 @@ fn route_sets(
     ready_obs: &[&CandidateObservation],
     observations: &Observations,
     kept: &BTreeMap<usize, Vec<PriorMatch>>,
+    stated: &BTreeMap<usize, Vec<usize>>,
     components: Vec<Vec<usize>>,
 ) -> (Vec<JudgeSet>, Vec<Option<usize>>) {
     let mut exact = BTreeSet::new();
@@ -446,10 +475,17 @@ fn route_sets(
             }
         }
         let prior_heads: Vec<String> = ids.into_iter().collect();
-        let remaining: Vec<usize> = members
+        let after_exact: Vec<usize> = members
             .into_iter()
             .filter(|pos| !exact.contains(pos))
             .collect();
+        let remaining = drop_qualifying_members(
+            &after_exact,
+            ready,
+            stated,
+            &prior_heads,
+            &observations.priors,
+        );
         if remaining.is_empty() {
             continue;
         }
@@ -496,6 +532,7 @@ fn write_choice(
     candidate: &CandidateObservation,
     observations: &Observations,
     kept: &[PriorMatch],
+    stated: &[usize],
 ) -> Route {
     if let Some(head) = attachment_head(rep, candidate, observations, kept) {
         let claim = observations.priors[head].claim.clone();
@@ -506,6 +543,9 @@ fn write_choice(
             };
         }
         return Route::Attach { head: claim };
+    }
+    if kept.is_empty() && !stated.is_empty() {
+        return observed_beside(stated, &observations.priors);
     }
     // Native reaches this check with no supersession on every candidate
     // outside a set: a correction never skips it.
@@ -596,6 +636,14 @@ fn corrections(
                 "correction names an unknown prior".to_owned(),
             ));
         }
+        let stated_here = observed_stated_heads(candidate, &all[&rep], &observations.priors);
+        let stated_ids: Vec<String> = stated_here
+            .iter()
+            .map(|at| observations.priors[*at].claim.clone())
+            .collect();
+        if dropped_correction(Some(head), &stated_ids).is_some() {
+            continue;
+        }
         let shared = selection.groups.iter().any(|other| {
             let other_rep = other.representative_index;
             observed[&other_rep].claim != candidate.claim
@@ -612,6 +660,69 @@ fn corrections(
     }
     out.sort_by_key(|entry| observed[&entry.representative_index].claim.as_str());
     Ok(out)
+}
+
+// Observed-beside policy (#6666, canon ARCH-0003): a qualifying observed
+// preference stands beside a matching user_stated head, never over it.
+
+#[must_use]
+fn observed_stated_heads(
+    candidate: &CandidateObservation,
+    matches: &[PriorMatch],
+    priors: &[PriorObservation],
+) -> Vec<usize> {
+    if !candidate.observed {
+        return Vec::new();
+    }
+    matches
+        .iter()
+        .filter(|m| priors[m.prior].source == USER_STATED)
+        .map(|m| m.prior)
+        .collect()
+}
+
+#[must_use]
+fn exclude_stated_matches(matches: &[PriorMatch], stated: &[usize]) -> Vec<PriorMatch> {
+    matches
+        .iter()
+        .filter(|m| !stated.contains(&m.prior))
+        .copied()
+        .collect()
+}
+
+#[must_use]
+fn drop_qualifying_members(
+    component: &[usize],
+    ready: &[usize],
+    stated: &BTreeMap<usize, Vec<usize>>,
+    prior_heads: &[String],
+    priors: &[PriorObservation],
+) -> Vec<usize> {
+    component
+        .iter()
+        .copied()
+        .filter(|pos| {
+            !stated[&ready[*pos]]
+                .iter()
+                .any(|at| prior_heads.contains(&priors[*at].claim))
+        })
+        .collect()
+}
+
+/// Keeps a qualifying preference as its own claim beside the excluded heads.
+fn observed_beside(stated: &[usize], priors: &[PriorObservation]) -> Route {
+    Route::ObservedBeside {
+        stated_heads: stated.iter().map(|at| priors[*at].claim.clone()).collect(),
+    }
+}
+
+#[must_use]
+fn dropped_correction(corrects: Option<&str>, stated_heads: &[String]) -> Option<String> {
+    let head = corrects?;
+    stated_heads
+        .iter()
+        .any(|id| id == head)
+        .then(|| head.to_owned())
 }
 
 fn check_policy_pin(expected: &str, actual: &str) -> Result<(), Error> {

@@ -1,4 +1,4 @@
-//! Checks ordinary routing through the public crate API.
+//! Checks ordinary routing and observed-beside policy through the public crate API.
 
 use oneiron_dreamer::extraction_observations::{
     CandidateObservation, Observations, PriorObservation, ReplayObservation,
@@ -153,6 +153,19 @@ fn assert_case(fixture: &Value, case: &Value) {
             .find(|group| group.representative_index == routed.representative_index)
             .expect("group");
         assert_eq!(routed.member_indexes, group.member_indexes, "{name}");
+        assert_eq!(
+            json!(routed.dropped_stated_heads),
+            *case["dropped_heads"].get(position).unwrap_or(&empty),
+            "{name}"
+        );
+        assert_eq!(
+            json!(routed.dropped_correction),
+            case["dropped_corrections"]
+                .get(position)
+                .cloned()
+                .unwrap_or(Value::Null),
+            "{name}"
+        );
     }
     let expected_sets = case.get("sets").unwrap_or(&empty).as_array().expect("sets");
     assert_eq!(plan.judge_sets.len(), expected_sets.len(), "{name}");
@@ -193,6 +206,19 @@ fn ordinary_routing_matches_native_policy_fixtures() {
         .expect("cases")
         .iter()
         .filter(|case| case["policy"] == "native")
+    {
+        assert_case(&fixture, case);
+    }
+}
+
+#[test]
+fn observed_routing_excludes_only_matching_stated_heads() {
+    let fixture: Value = serde_json::from_str(FIXTURE_JSON).expect("fixture");
+    for case in fixture["cases"]
+        .as_array()
+        .expect("cases")
+        .iter()
+        .filter(|case| case["policy"] == "observed_beside")
     {
         assert_case(&fixture, case);
     }
