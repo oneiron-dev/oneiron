@@ -22,6 +22,15 @@
 //!   units at the quote's upper-bound rate, so never more than he named, and
 //!   the root scope's cap rises by them for good: no hold takes the raise
 //!   back ([`RunFunds`]). The run resumes.
+//! - The advance check (owner ruling RUN-BUDGET-SPENT = B, "you can also
+//!   check it in advance"; Engine ruling RUNBUDGET-ADVANCE-FLOW = A): a root
+//!   launch whose expected spend is above what its hard root scope has left
+//!   asks the owner in the launch's own write ([`queue_forecast_ask_in_txn`]),
+//!   stating the projected spend and the room. The run starts as today. The
+//!   early ask offers `add_funds` (the root's cap rises now, for good) and
+//!   `stay_parked` (the run goes on and holds at zero as usual). The run's
+//!   hold withdraws an early ask still open and asks its own choices in its
+//!   place, so a run has one open ask at a time.
 //! - When the host names a free local chat model that serves the run's
 //!   calls now, the ask also offers `continue_on_local` ([`RunLocalRoute`]).
 //!   That answer resumes the run, and each of its later calls runs on that
@@ -60,6 +69,10 @@ use crate::llm::run_admission::LeaseUnit;
 /// unrelated decision asks out of [`apply_run_budget_answer_in_txn`].
 pub(crate) const RUN_BUDGET_ASK_QUEUE: &str = "models.run_budget_questions";
 const RUN_BUDGET_ASK_QUEUE_VERSION: &str = "1";
+
+/// The queue identity of the early asks a launch's projection makes.
+pub(crate) const RUN_BUDGET_FORECAST_QUEUE: &str = "models.run_budget_forecasts";
+const RUN_BUDGET_FORECAST_QUEUE_VERSION: &str = "1";
 
 /// The overdraft an `overdraft` answer approves when the owner names no cap
 /// (Engine ruling RUNBUDGET-OVERDRAFT, 13 Nov 17:30): the units one more call
@@ -128,7 +141,32 @@ pub struct RunBudgetQuestion {
     /// What an `add_funds` dollar buys now; `None` when the ask does not
     /// offer it.
     pub add_funds_price: Option<FundsPrice>,
+    /// An early ask's projected spend of the run, in its root's unit; `None`
+    /// on a held run's ask.
+    pub projected_units: Option<u64>,
+    /// An early ask's room under the run's root at launch; `None` on a held
+    /// run's ask.
+    pub available_units: Option<u64>,
 }
+
+/// What a root launch's projection asked the owner about: the hard root
+/// scope the run spends under, the launch's expected spend and the room left
+/// at launch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunBudgetForecast {
+    pub scope: SpendScopeId,
+    pub unit: LeaseUnit,
+    pub expected_units: u64,
+    /// The expected spend in millionths of a dollar, when priced.
+    pub expected_usd_micros: Option<u64>,
+    pub available_units: u64,
+    /// Vault clock seconds when the launch asked.
+    pub asked_at: u64,
+}
+
+/// Early asks keyed by the launched run's root attempt.
+const FORECAST: SideTable<AttemptId, RunBudgetForecast, Named> =
+    SideTable::new(&side_table::AGENT_DISPATCH_RUN_BUDGET_FORECAST);
 
 /// The vault's USD quote for one budget unit, as an `add_funds` answer
 /// spends it: `usd_micros` millionths of a dollar per `per_units` units, at
@@ -366,6 +404,185 @@ fn asked_run(ask: &DecisionAsk) -> Option<AttemptId> {
         .and_then(|run| AttemptId::from_bytes(run.as_bytes()).ok())
 }
 
+/// The root attempt an early ask is about; `None` for any other ask.
+fn asked_forecast(ask: &DecisionAsk) -> Option<AttemptId> {
+    if ask.queue_pin.model != RUN_BUDGET_FORECAST_QUEUE {
+        return None;
+    }
+    ask.correlation
+        .and_then(|run| AttemptId::from_bytes(run.as_bytes()).ok())
+}
+
+/// The early ask about the run rooted at `root`, put to the owner role for
+/// `principal`, stating `forecast` and `price`: keyed by the run.
+fn forecast_request(
+    root: AttemptId,
+    principal: EntityId,
+    forecast: &RunBudgetForecast,
+    price: &FundsPrice,
+) -> Result<HumanDecisionRequest> {
+    let options = [RunBudgetChoice::AddFunds, RunBudgetChoice::StayParked]
+        .iter()
+        .map(|choice| choice.token().to_owned())
+        .collect();
+    let dollars = forecast
+        .expected_usd_micros
+        .map(|micros| format!(" (about {})", usd(micros)))
+        .unwrap_or_default();
+    // Fixed machine-lifecycle wording, as the hold's is.
+    let text = format!(
+        "This run is projected to need {} {}{dollars}, and {} are left under its cap. Add \
+         dollars to its budget now, for good (at {}), or let it run and hold it at its cap as \
+         usual?",
+        forecast.expected_units,
+        forecast.unit.as_str(),
+        forecast.available_units,
+        price.stated()
+    );
+    let question = RUN_BUDGET_SPENT.question(
+        &[root.as_bytes().as_slice()],
+        text,
+        AnswerContract::Choice { options },
+    )?;
+    Ok(HumanDecisionRequest {
+        question,
+        principal,
+        evidence: Vec::new(),
+        reason: HumanAskReason::OwnerSelected,
+        prior: None,
+        prior_provider: None,
+        queue_pin: ProviderPin {
+            rung: DecisionRung::Human,
+            model: RUN_BUDGET_FORECAST_QUEUE.to_owned(),
+            version: RUN_BUDGET_FORECAST_QUEUE_VERSION.to_owned(),
+        },
+        to: AskTo::owner(),
+        correlation: Some(EntityId::from_bytes(*root.as_bytes())?),
+    })
+}
+
+/// Queues the early ask about the run rooted at `root`, in its root
+/// launch's write, when `statement` projects the launch past the room its
+/// hard root scope has left. Asked only when the vault has a live owner who
+/// may raise that scope (open, hard, carved from no parent, paid by him or
+/// by no named payer) and the vault's USD quote prices its unit; else the
+/// launch statement alone states the shortfall, as before. `None` when
+/// nothing is asked.
+///
+/// # Errors
+///
+/// Storage errors, or an ask the queue refuses.
+pub(crate) fn queue_forecast_ask_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    root: AttemptId,
+    statement: &super::LaunchStatement,
+) -> Result<Option<u64>> {
+    let (Some(scope_id), Some(available_units)) = (&statement.scope, statement.available_units)
+    else {
+        return Ok(None);
+    };
+    if statement.expected.units <= available_units {
+        return Ok(None);
+    }
+    let Some(principal) = crate::policy_model::owners_in_txn(vault, wtxn)?
+        .into_iter()
+        .next()
+    else {
+        return Ok(None);
+    };
+    let Some(scope) = SCOPE.get(&vault.store, wtxn, &scope_id.0)? else {
+        return Ok(None);
+    };
+    if !super::budget_trap_ask::scope_raisable_by(&scope, principal) {
+        return Ok(None);
+    }
+    let Some(price) = funds_price_in_txn(vault, wtxn, &scope.unit) else {
+        return Ok(None);
+    };
+    let forecast = RunBudgetForecast {
+        scope: scope_id.clone(),
+        unit: scope.unit,
+        expected_units: statement.expected.units,
+        expected_usd_micros: statement.expected.expected_usd_micros,
+        available_units,
+        asked_at: vault.store.clock.now_recorded_at(),
+    };
+    let request = forecast_request(root, principal, &forecast, &price)?;
+    FORECAST.put(&vault.store, wtxn, &root, &forecast)?;
+    vault
+        .queue_decision_ask_in_txn(wtxn, &request, None)
+        .map(Some)
+}
+
+/// Withdraws the early ask about the run rooted at `root` while it is still
+/// open, in the hold's write: the hold asks in its place.
+fn withdraw_forecast_ask_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    root: AttemptId,
+) -> Result<()> {
+    let correlation = Some(EntityId::from_bytes(*root.as_bytes())?);
+    let open = vault
+        .open_queue_asks_in_txn(wtxn, RUN_BUDGET_FORECAST_QUEUE)?
+        .into_iter()
+        .find(|ask| ask.correlation == correlation);
+    if let Some(ask) = open {
+        vault.withdraw_decision_ask_in_txn(wtxn, ask.seq)?;
+    }
+    Ok(())
+}
+
+/// The owner `by`'s `add_funds` answer to the early ask `seq` about the run
+/// rooted at `root`, naming `amount_usd_micros`, in the answer's write: the
+/// whole units it buys raise the hard root scope the launch projected
+/// against, for good, and the amount is recorded under the run. The run is
+/// not held, so nothing resumes. `false` when the owner may no longer raise
+/// that scope.
+fn forecast_add_funds_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    root: AttemptId,
+    by: EntityId,
+    seq: u64,
+    amount_usd_micros: u64,
+) -> Result<bool> {
+    let Some(forecast) = FORECAST.get(&vault.store, wtxn, &root)? else {
+        return Ok(false);
+    };
+    let raisable = SCOPE
+        .get(&vault.store, wtxn, &forecast.scope.0)?
+        .is_some_and(|scope| super::budget_trap_ask::scope_raisable_by(&scope, by));
+    if !raisable {
+        return Ok(false);
+    }
+    let price = funds_price_in_txn(vault, wtxn, &forecast.unit)
+        .ok_or_else(|| invalid("the run's budget unit has no USD price"))?;
+    let units = funds_units(&price, amount_usd_micros)?;
+    let now = vault.store.clock.now_recorded_at();
+    super::budget_trap_ask::raise_scope_cap_in_txn(
+        vault,
+        wtxn,
+        &forecast.scope,
+        by,
+        units,
+        now.saturating_mul(1000),
+    )?;
+    record_funds_in_txn(
+        vault,
+        wtxn,
+        root,
+        RunFundsEntry {
+            usd_micros: amount_usd_micros,
+            units,
+            price,
+            ask: seq,
+            added_at: now,
+        },
+    )?;
+    Ok(true)
+}
+
 /// Whether the owner `owner` may overdraft the run rooted at `root`: a run
 /// with no spend scope, or one whose root scope is open, carved from no
 /// parent, and paid by the owner or by no named payer. Another payer's
@@ -424,6 +641,7 @@ pub(crate) fn queue_run_budget_ask_in_txn(
 ) -> Result<HeldRunAsk> {
     OVERDRAFT.delete(&vault.store, wtxn, &root)?;
     LOCAL_ROUTE.delete(&vault.store, wtxn, &root)?;
+    withdraw_forecast_ask_in_txn(vault, wtxn, root)?;
     let Some(principal) = crate::policy_model::owners_in_txn(vault, wtxn)?
         .into_iter()
         .next()
@@ -507,6 +725,13 @@ pub(crate) fn apply_run_budget_answer_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     ask: &DecisionAsk,
 ) -> Result<bool> {
+    if asked_forecast(ask).is_some() {
+        let add_funds = DecisionAnswer::Choice(RunBudgetChoice::AddFunds.token().to_owned());
+        return match &ask.answer {
+            Some(answer) if answer.answer == add_funds => Err(add_funds_needs_amount()),
+            _ => Ok(false),
+        };
+    }
     let Some(root) = asked_run(ask) else {
         return Ok(false);
     };
@@ -802,6 +1027,29 @@ impl Vault {
                 amount_usd_micros,
             );
         }
+        if let Some(root) = asked_forecast(&asked) {
+            let added = self.with_write_txn_grouped(|txn| {
+                let by = owner.revalidate_in_txn(self, txn)?;
+                let answer = DecisionAnswer::Choice(RunBudgetChoice::AddFunds.token().to_owned());
+                if !self.answer_owner_queue_ask_in_txn(
+                    txn,
+                    RUN_BUDGET_FORECAST_QUEUE,
+                    seq,
+                    by,
+                    answer,
+                )? {
+                    return Ok(None);
+                }
+                forecast_add_funds_in_txn(self, txn, root, by, seq, amount_usd_micros).map(Some)
+            })?;
+            if let Some(added) = added {
+                self.signal_decision_answer(seq);
+                if added {
+                    self.store.notify_attempt_observers();
+                }
+            }
+            return Ok(());
+        }
         if asked_run(&asked).is_none() {
             return Ok(());
         }
@@ -947,7 +1195,35 @@ pub fn run_budget_questions(vault: &Vault) -> Result<Vec<RunBudgetQuestion>> {
             default_overdraft_units: RUN_BUDGET_DEFAULT_OVERDRAFT_UNITS,
             local_model,
             add_funds_price,
+            projected_units: None,
+            available_units: None,
         });
     }
+    for ask in vault.open_queue_asks_in_txn(&txn, RUN_BUDGET_FORECAST_QUEUE)? {
+        let Some(run) = asked_forecast(&ask) else {
+            continue;
+        };
+        let Some(forecast) = FORECAST.get(&vault.store, &txn, &run)? else {
+            continue;
+        };
+        let AnswerContract::Choice { options } = &ask.question.contract else {
+            continue;
+        };
+        questions.push(RunBudgetQuestion {
+            seq: ask.seq,
+            run: crate::entity_id::bytes_to_hex_lower(run.as_bytes()),
+            asked_at: ask.asked_at,
+            choices: options
+                .iter()
+                .filter_map(|token| RunBudgetChoice::of_token(token))
+                .collect(),
+            default_overdraft_units: RUN_BUDGET_DEFAULT_OVERDRAFT_UNITS,
+            local_model: None,
+            add_funds_price: funds_price_in_txn(vault, &txn, &forecast.unit),
+            projected_units: Some(forecast.expected_units),
+            available_units: Some(forecast.available_units),
+        });
+    }
+    questions.sort_by_key(|question| question.seq);
     Ok(questions)
 }

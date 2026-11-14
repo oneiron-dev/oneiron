@@ -180,7 +180,7 @@ fn trap_funds_price_in_txn(
         .and_then(|scope| funds_price_in_txn(vault, txn, &scope.unit)))
 }
 
-fn scope_raisable_by(scope: &SpendScope, owner: EntityId) -> bool {
+pub(super) fn scope_raisable_by(scope: &SpendScope, owner: EntityId) -> bool {
     scope.state == SpendState::Open
         && scope.hard
         && scope.parent.is_none()
@@ -371,7 +371,7 @@ fn approve_trap_overdraft_in_txn(
 /// Raises `scope`'s cap by `cap` as the owner `by`, as his top-up does, and
 /// wakes the parks its new room covers. Nothing moves, and no park wakes, for
 /// a scope he may not raise.
-fn raise_scope_cap_in_txn(
+pub(super) fn raise_scope_cap_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     scope: &SpendScopeId,

@@ -42,6 +42,12 @@ crate::side_table::side_tables! {
     /// deletes it. Key: id16(root attempt).
     AGENT_DISPATCH_RUN_FUNDS: VaultMeta b"agent.dispatch.run_funds.v1\0" Named Engine
         [restore: content] [family: unclassified] [tier: canonical];
+    /// What a root launch's projection asked the owner about (owner ruling RUN-BUDGET-SPENT = B,
+    /// "you can also check it in advance"; Engine ruling RUNBUDGET-ADVANCE-FLOW = A): the hard
+    /// root scope the run spends under, the expected spend and the room left at launch. Read by
+    /// the early ask's add_funds answer and the AI status. Key: id16(root attempt).
+    AGENT_DISPATCH_RUN_BUDGET_FORECAST: VaultMeta b"agent.dispatch.run_budget_forecast.v1\0" Named Engine
+        [restore: content] [family: unclassified] [tier: canonical];
     /// FIX 3694: the owner's applied prompt continuation of one failed agent attempt: the card,
     /// ask and diagnostic it answered, the approving owner and when, the approval's fingerprint
     /// and id, and the successor attempt it enqueued. Key: id16(failed attempt).

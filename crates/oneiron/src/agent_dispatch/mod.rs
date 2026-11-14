@@ -198,7 +198,8 @@ pub use self::planner::{
 pub use self::planner_live::{LivePlanRequest, PlannerSeat, PlannerSkills};
 pub use self::run_budget_ask::{
     FundsPrice, LocalRouteChoice, RUN_BUDGET_DEFAULT_OVERDRAFT_UNITS, RunBudgetChoice,
-    RunBudgetQuestion, RunFunds, RunFundsEntry, RunLocalRoute, RunOverdraft, run_budget_questions,
+    RunBudgetForecast, RunBudgetQuestion, RunFunds, RunFundsEntry, RunLocalRoute, RunOverdraft,
+    run_budget_questions,
 };
 pub(crate) use self::run_budget_ask::{apply_run_budget_answer_in_txn, is_run_budget_ask};
 pub use self::task_type_tree::{
