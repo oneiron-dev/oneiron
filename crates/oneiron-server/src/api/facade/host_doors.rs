@@ -58,6 +58,8 @@ pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 pub(crate) use super::agent_definition_doors::*;
 // The owner's agent grant doors (FIX 5628) too.
 pub(crate) use super::agent_grant_doors::*;
+// The owner's verdict on a plan-doc (plan mode) too.
+pub(crate) use super::plan_doc_doors::*;
 // The Steward doors: member asks, the system-agent grant narrowing and the
 // engine-control receipts (untangle 6.3, 6.6).
 pub(crate) use super::steward_doors::*;
@@ -68,6 +70,7 @@ pub(crate) use super::engine_control_doors::*;
 pub(crate) use super::oauth_authorization_doors::*;
 // The owner's answer to a send that may have gone out (FIX 4747) too.
 pub(crate) use super::uncertain_send_doors::*;
+pub(crate) use super::undo_send_doors::*;
 // The owner's answer to a call a moved agent run replays (FIX 4747) too.
 pub(crate) use super::agent_run_effect_doors::*;
 // The owner's git_push Grant doors (FIX 6867, G1-PUSH) too.
@@ -93,6 +96,7 @@ pub(crate) use super::cleanup_doors::*;
 pub(crate) use super::clustering_doors::*;
 pub(crate) use super::default_facet_doors::*;
 pub(crate) use super::extraction_doors::*;
+pub(crate) use super::hosted_import_doors::*;
 pub(crate) use super::identity_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;

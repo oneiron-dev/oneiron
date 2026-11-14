@@ -5,9 +5,13 @@
 //! linked through the identity key (ARCH-0055 §10). The key is looked up
 //! before anything is minted, over the vault's entities, archived ones
 //! included, and the provisional ones; every hit is a candidate the linker
-//! (the Dreamer) decides on, never a sure link; and a miss mints a
-//! provisional entity under the source turn's facet. A span whose label the
-//! table leaves out is never looked up: a pronoun, which a tagger labels as a
+//! (the Dreamer) decides on, never a sure link. A person's name of two or
+//! more parts that the key misses is looked up by sound next, over the
+//! phonetic postings (ARCH-0024 signal 2); its hits are candidates in the
+//! same way, and two or more are a question the nightly identity re-check
+//! asks, never a merge. A miss of both mints a provisional entity under the
+//! source turn's facet. A span whose label the table leaves out is never
+//! looked up: a pronoun, which a tagger labels as a
 //! reference and not as a name, takes its antecedent's link, so a pronoun
 //! that happens to spell someone's name is never linked to them. A
 //! coreferent name the key misses takes its antecedent's link and never
@@ -44,7 +48,10 @@ use crate::federation::{ScopeAxis, ScopeId};
 use crate::memory::extraction::{
     ContextLink, EncoderInput, EncoderOutput, SpeakerLink, SpeakerTarget,
 };
-use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, TombstoneStoreRead};
+use crate::ports::{
+    EdgeDirection, EdgeStoreRead, EntityStoreRead, RetrievalIndexRead, TombstoneStoreRead,
+};
+use crate::registry::ENTITY_TYPE_PERSON;
 use crate::store::Store;
 use crate::{EntityId, Vault};
 
@@ -476,8 +483,21 @@ pub(crate) fn shares_world_in_txn(
     Linker::new(vault, txn, turn, 0)?.shares_world(txn, id)
 }
 
-/// Links mentions over the identity key. It never compares names itself:
-/// candidates come only from the key's lookups.
+/// The persons a mention of `name` in `turn` sounds like, as the Linker's
+/// phonetic rung finds them, for a re-check that runs outside a save.
+pub(crate) fn sounds_like_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: EntityId,
+    kind: u8,
+    name: &str,
+) -> Result<Vec<EntityId>> {
+    Linker::new(vault, txn, turn, 0)?.sounds_like(txn, kind, name)
+}
+
+/// Links mentions over the identity key, and over the phonetic postings when
+/// the key misses. It never compares names itself: candidates come only
+/// from those lookups.
 struct Linker<'v> {
     vault: &'v Vault,
     turn: EntityId,
@@ -581,10 +601,69 @@ impl<'v> Linker<'v> {
         })
     }
 
-    /// Links a mention by its own name: its candidates, or a provisional
-    /// entity minted for it when there are none.
+    /// The phonetic rung (ARCH-0024 signal 2), for a name the key misses:
+    /// the canonical heads of the live or archived persons whose phonetic
+    /// postings hold the name's whole romaji or kana code, or the Soundex
+    /// code of every one of its parts, each in a world the turn is in. A
+    /// name of one part, and a mention of any other kind, take none. No hit
+    /// is a sure link: two or more are the mention's candidates, and one
+    /// alone is a candidate the nightly re-check asks about beside the
+    /// mention's own provisional entity (OF-123).
+    fn sounds_like(&self, txn: &heed::RoTxn<'_>, kind: u8, mention: &str) -> Result<Vec<EntityId>> {
+        if kind != ENTITY_TYPE_PERSON {
+            return Ok(Vec::new());
+        }
+        let codes = crate::batch::phonetic_codes::linking_codes(mention);
+        let store = &self.vault.store;
+        let mut hits: BTreeSet<EntityId> = store
+            .port_retrieval_phonetic_search(txn, &codes.whole)?
+            .into_iter()
+            .map(|hit| hit.id)
+            .collect();
+        // Each part's code is its own posting; a person must hold them all.
+        let mut every_part: Option<BTreeSet<EntityId>> = None;
+        for code in &codes.every_part {
+            let holders: BTreeSet<EntityId> = store
+                .port_retrieval_phonetic_search(txn, std::slice::from_ref(code))?
+                .into_iter()
+                .map(|hit| hit.id)
+                .collect();
+            let held = match every_part {
+                None => holders,
+                Some(held) => held.intersection(&holders).copied().collect(),
+            };
+            // No person holds every part so far, so the rest add none.
+            if held.is_empty() {
+                every_part = None;
+                break;
+            }
+            every_part = Some(held);
+        }
+        hits.extend(every_part.unwrap_or_default());
+        let mut found = BTreeSet::new();
+        for hit in hits {
+            for head in self.vault.resolve_entity_in_txn(txn, &hit)? {
+                if linkable_in_txn(store, txn, &head, kind)? && self.shares_world(txn, &head)? {
+                    found.insert(head);
+                }
+            }
+        }
+        Ok(found.into_iter().collect())
+    }
+
+    /// Links a mention by its own name: the key's candidates, else the
+    /// phonetic rung's when it finds two or more, or a provisional entity
+    /// minted for it. One person who only sounds like the name is an unsure
+    /// match: the mention mints, and the nightly re-check asks whether it
+    /// is that person or someone new (OF-123).
     fn link(&mut self, txn: &mut heed::RwTxn<'_>, kind: u8, mention: &str) -> Result<MentionLink> {
-        let entities = self.candidates(txn, kind, mention)?;
+        let mut entities = self.candidates(txn, kind, mention)?;
+        if entities.is_empty() {
+            entities = self.sounds_like(txn, kind, mention)?;
+            if entities.len() < 2 {
+                entities.clear();
+            }
+        }
         if !entities.is_empty() {
             return Ok(MentionLink::Candidates { kind, entities });
         }

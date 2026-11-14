@@ -160,4 +160,4 @@ Manifests carry no line numbers: items are located by identity.
 | `driver.py` | Manifest checks 1–8 plus E/F/X: `driver.py checks <root> <stage> <base> <movesdir>`. |
 | `build_conformance.py` | Assembles `../conformance.sh` from `rustlex.py` and `driver.py`; `--check` reports a stale script. |
 | `consumer_complete.py` | Asserts that the file of every cross-module consumer of a moved `pub`/`pub(crate)` item appears in the stage's `## allowed`. |
-| `v2_selftest.py` | Synthetic self-test of the manifest checks, including the freshness check. |
+| `v2_selftest.py` | Synthetic self-test of the manifest checks, including the freshness check. CI runs it through `scripts/ci/test_move_gate_selftest.py`. |

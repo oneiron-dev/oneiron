@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -7,7 +7,7 @@ import { EngineFixture, awaitPublic, type PairedActor } from "./support/engine.t
 import { PublicHttpClient, PublicHttpError } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { ScriptedProviders, openaiStream, openaiText } from "./support/providers.ts";
-import { defineFile, LIMITS, redactor, secretHex } from "./support/run.ts";
+import { defineFile, expect, LIMITS, redactor, secretHex } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
