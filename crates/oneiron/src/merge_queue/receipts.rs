@@ -455,7 +455,7 @@ pub(crate) fn proposal_queue_failure_in_txn(
         check_queue_receipt(&body, QUEUE_COMPLETION_PREDICATE, store, &batch.id)?;
         if failure.is_none() {
             failure = Some(QueueProposalFailure {
-                batch: batch.id.clone(),
+                batch: batch.id,
                 completion,
                 outcome,
                 group,
