@@ -13,12 +13,14 @@ use serde::Serialize;
 pub struct CheckInDecision {
     /// The act class's token.
     pub act_class: String,
-    /// The role's token.
+    /// The role's token; `none` for a closed room's adder who holds no role
+    /// on the vault.
     pub role: String,
     /// The mode's wire token; none when the role acts on its own proof.
     pub mode: Option<String>,
     /// Why the act went: `never_ask`, `sure` (the person's own judgment),
-    /// `own_proof`, or the basis the spent check-in gave (`approved`,
+    /// `own_proof`, `room_owner` (an owner of a closed room adds to it), or
+    /// the basis the spent check-in gave (`approved`,
     /// `proceed_with_undo` or `window_passed`).
     pub basis: String,
     /// The check-in the act spent, 32 hex.

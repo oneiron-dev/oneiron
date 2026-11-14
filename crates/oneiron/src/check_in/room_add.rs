@@ -21,6 +21,15 @@
 //!   the verb, and its add then checks in. That narrows main, where an agent
 //!   added on its room standing alone.
 //!
+//! A closed room (ARCH-0082 #closed-room; P26-SHAPE Q5 = A): any add to it
+//! asks the room's owners, whoever adds ([`closed_room_check_in_in_txn`]).
+//! A person who owns the room adds at once; every other adder (the Admin, a
+//! Deputy, a member, a person with no role on the vault, an agent on its
+//! Grant) waits AlwaysAsk on the one rung [`super::Rung::RoomOwner`], with
+//! no delay window and no undo plan, so an unanswered ask holds. The adder's
+//! call naming the approved ask spends it; an ordinary ask of the same add
+//! is never spent there.
+//!
 //! An agent's add is from now on (canon #agent-room-add): the door refuses
 //! an agent's add that asks for the earlier history ([`agent_add_is_from_now`])
 //! before it judges, so nothing opens. Full history for the newcomer needs
@@ -28,17 +37,23 @@
 //! [ROOM-ADD-FULL-HISTORY-AFFECTED-OK]).
 
 use super::act_class::ActClass;
-use super::asker::{AskGo, AskVerdict, judge_door_act_in_txn};
+use super::asker::{AskGo, AskVerdict, agent_door_grant_in_txn, judge_door_act_in_txn};
 use super::chain::{NoAgentVerdict, VerifiedChain};
 use super::effect::{
     CheckInDecision, DoorAct, DoorCheckIn, person_door_check_in_in_txn, spend_in_txn,
 };
 use super::mode::CheckInMode;
-use super::pending::{OpenPendingCheckIn, open_keyed_pending_check_in_in_txn};
+use super::pending::{
+    OpenPendingCheckIn, consume_pending_check_in_in_txn, open_keyed_pending_check_in_in_txn,
+    open_keyed_room_owner_check_in_in_txn, pending_check_in_in_txn,
+};
 use super::policy::CheckInScope;
+use super::resolve::{CheckInRequest, ResolvedMode, WaitReason, resolve_mode};
 use super::role_preset::RolePreset;
+use super::waits::refuse;
 use crate::EdgeActorClass;
 use crate::entity_id::EntityId;
+use crate::error::Error;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 
 /// The reason an agent's add that asks for the earlier history is refused
@@ -101,10 +116,12 @@ pub(crate) fn agent_add_is_from_now(memory: &Memory<'_>, full_history: bool) -> 
     Ok(())
 }
 
-/// Judges `memory`'s caller's add of someone else, the effect
+/// Judges `memory`'s caller's add of someone else to `room`, the effect
 /// `effect_digest` names, at the door `verb`, in the door's writer `txn`;
-/// with `check_in_ref`, spends that approved ask when the add waits. `None`
-/// for a person with no role on the vault: the add is not judged.
+/// with `check_in_ref`, spends that approved ask when the add waits. Into a
+/// closed room, every add is judged ([`closed_room_check_in_in_txn`]).
+/// Elsewhere `None` for a person with no role on the vault: the add is not
+/// judged.
 ///
 /// # Errors
 ///
@@ -116,12 +133,25 @@ pub(crate) fn room_add_check_in_in_txn(
     memory: &Memory<'_>,
     txn: &mut heed::RwTxn<'_>,
     verb: &str,
+    room: EntityId,
     effect_digest: [u8; 32],
     check_in_ref: Option<&EntityId>,
 ) -> MemoryResult<Option<DoorCheckIn>> {
     let vault = memory.vault();
     let actor = memory.actor();
     let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    if crate::workspace_roster::room_is_closed_in(vault, txn, room)? {
+        return closed_room_check_in_in_txn(
+            memory,
+            txn,
+            verb,
+            room,
+            effect_digest,
+            check_in_ref,
+            now,
+        )
+        .map(Some);
+    }
     if memory.actor_class() != EdgeActorClass::Agent {
         if crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)? {
             return Ok(Some(DoorCheckIn::Go(own_judgment(RolePreset::Owner))));
@@ -172,10 +202,7 @@ pub(crate) fn room_add_check_in_in_txn(
         } => (asker, grant, mode, reason),
         AskVerdict::Absent { why } => return Err(not_granted(verb, why)),
         AskVerdict::Propose { .. } | AskVerdict::Unstated => {
-            return Err(not_granted(
-                verb,
-                "no live owner Grant of the caller gives it the power",
-            ));
+            return Err(not_granted(verb, NO_POWER));
         }
     };
     let door = DoorAct {
@@ -213,6 +240,150 @@ pub(crate) fn room_add_check_in_in_txn(
     )?;
     Ok(Some(DoorCheckIn::Wait(row.id)))
 }
+
+/// The receipt role of an adder with no role on the vault: a person a room
+/// seats who holds no membership grant (ARCH-0082 #closed-room).
+const NO_VAULT_ROLE: &str = "none";
+
+/// Judges an add into the closed `room` (ARCH-0082 #closed-room; P26-SHAPE
+/// Q5 = A), whoever adds, in the door's writer `txn`. A person who owns the
+/// room ([`crate::conversation::room_owners_in`]) adds at once, basis
+/// `room_owner`. Anyone else's add waits AlwaysAsk on the room's owners
+/// alone: an agent on the live owner Grant that lists `verb` (refused
+/// without one, as in an open room), a person under their membership role
+/// (a Guest is refused) or with no role on the vault (the ask records no
+/// grant). With `check_in_ref`, spends the caller's approved ask of this
+/// room for this add.
+///
+/// # Errors
+///
+/// An agent no live owner Grant gives the power, a Guest's add, a
+/// `check_in_ref` that is not the caller's ask of this room's owners for
+/// this add or that is not eligible or already spent; storage errors.
+fn closed_room_check_in_in_txn(
+    memory: &Memory<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    verb: &str,
+    room: EntityId,
+    effect_digest: [u8; 32],
+    check_in_ref: Option<&EntityId>,
+    now: u64,
+) -> MemoryResult<DoorCheckIn> {
+    let vault = memory.vault();
+    let actor = memory.actor();
+    let scope = CheckInScope::default();
+    let (grant_ref, role) = if memory.actor_class() == EdgeActorClass::Agent {
+        let (verdict, role) = judge_door_act_in_txn(memory, txn, verb, ActClass::RoomAdd, &scope)?;
+        match verdict {
+            AskVerdict::Go { .. } | AskVerdict::Wait { .. } => {}
+            AskVerdict::Absent { why } => return Err(not_granted(verb, why)),
+            AskVerdict::Propose { .. } | AskVerdict::Unstated => {
+                return Err(not_granted(verb, NO_POWER));
+            }
+        }
+        let grant = agent_door_grant_in_txn(memory, txn, verb, &scope)?
+            .ok_or_else(|| not_granted(verb, NO_POWER))?;
+        (grant.to_hex(), role.as_str())
+    } else {
+        let (grant, role) = match vault.shared_vault_creation_in_txn(txn)? {
+            Some(creation) => match vault.member_grant_in_txn(txn, creation.vault_id, actor)? {
+                Some((grant, role)) => (Some(grant), Some(RolePreset::of_grant_role(role))),
+                None => (None, None),
+            },
+            None => (None, None),
+        };
+        if crate::conversation::room_owners_in(vault, txn, room)?.contains(&actor) {
+            let role = if crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)? {
+                RolePreset::Owner.as_str()
+            } else {
+                role.map_or(NO_VAULT_ROLE, RolePreset::as_str)
+            };
+            return Ok(DoorCheckIn::Go(closed_room_decision(
+                role,
+                "room_owner",
+                None,
+            )));
+        }
+        if let Some(role) = role {
+            let request = CheckInRequest {
+                act: ActClass::RoomAdd,
+                role,
+                holds_power: true,
+                explicit_mode: None,
+                standing_row: None,
+            };
+            if matches!(
+                resolve_mode(&request),
+                ResolvedMode::Propose | ResolvedMode::Absent
+            ) {
+                return Err(
+                    refuse("the person's role does not hold the power for this act").into(),
+                );
+            }
+        }
+        (
+            grant.as_ref().map(EntityId::to_hex).unwrap_or_default(),
+            role.map_or(NO_VAULT_ROLE, RolePreset::as_str),
+        )
+    };
+    if let Some(id) = check_in_ref {
+        let row = pending_check_in_in_txn(&vault.store, txn, id)?.ok_or(Error::EntityNotFound)?;
+        if row.asker != actor
+            || row.verb != verb
+            || row.act != ActClass::RoomAdd
+            || row.scope != scope
+            || row.room != Some(room)
+        {
+            return Err(refuse(
+                "the check-in is not this adder's ask of the closed room's owners for this add",
+            )
+            .into());
+        }
+        let basis = consume_pending_check_in_in_txn(vault, txn, id, &effect_digest, now)?;
+        return Ok(DoorCheckIn::Go(closed_room_decision(
+            role,
+            basis.as_str(),
+            Some(*id),
+        )));
+    }
+    let (row, _) = open_keyed_room_owner_check_in_in_txn(
+        vault,
+        txn,
+        OpenPendingCheckIn {
+            asker: actor,
+            grant_ref,
+            verb: verb.to_owned(),
+            act: ActClass::RoomAdd,
+            scope,
+            effect_digest,
+            mode: CheckInMode::AlwaysAsk,
+            reason: WaitReason::AlwaysAsk,
+            asker_wait_secs: None,
+            until: None,
+            undo_plan: None,
+            delay_window: None,
+        },
+        room,
+        memory.invocation().map(|invocation| invocation.0),
+        &VerifiedChain::new(&NoAgentVerdict),
+        now,
+    )?;
+    Ok(DoorCheckIn::Wait(row.id))
+}
+
+/// A closed room's add as `role`, mode AlwaysAsk, on `basis`.
+fn closed_room_decision(role: &str, basis: &str, check_in: Option<EntityId>) -> CheckInDecision {
+    CheckInDecision {
+        act_class: ActClass::RoomAdd.as_str().to_owned(),
+        role: role.to_owned(),
+        mode: Some(CheckInMode::AlwaysAsk.as_str().to_owned()),
+        basis: basis.to_owned(),
+        check_in: check_in.as_ref().map(EntityId::to_hex),
+        requester: None,
+    }
+}
+
+const NO_POWER: &str = "no live owner Grant of the caller gives it the power";
 
 /// The live vault owner's own add, which a door has already proved her to
 /// make (`rooms.invite` admits only her): her own judgment, so she is sure

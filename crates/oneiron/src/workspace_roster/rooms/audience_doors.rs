@@ -518,6 +518,7 @@ impl Memory<'_> {
                     self,
                     txn,
                     THREAD_AUDIENCE_ADD_VERB,
+                    thread.binding.room,
                     digest,
                     check_in_ref,
                 )? {

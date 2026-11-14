@@ -8,7 +8,10 @@
 //!   grant), else the principal a companion person was onboarded for;
 //! * rung 3, the next holders up the chain: every other live holder of the
 //!   grantor's role on the vault the asker's grant is a membership of;
-//! * rung 4, the Owner role: the vault's live owners.
+//! * rung 4, the Owner role: the vault's live owners;
+//! * a closed room's ask enters one rung alone, the room's owners: every
+//!   PERSON who owns the room ([`crate::conversation::room_owners_in`]),
+//!   whoever adds (ARCH-0082 #closed-room; P26-SHAPE Q5 = A).
 //!
 //! A rung pins only holders no earlier rung of the same ask pinned, so an
 //! owner who was also the grantor is asked once, and the asker never.
@@ -116,8 +119,10 @@ impl RungResolver for VerifiedChain<'_> {
         pending: &PendingCheckIn,
         rung: Rung,
     ) -> Result<RungMembers> {
-        if rung == Rung::Owner {
-            return owner_members(vault, txn, pending);
+        match rung {
+            Rung::Owner => return owner_members(vault, txn, pending),
+            Rung::RoomOwner => return room_owner_members(vault, txn, pending),
+            Rung::Grantor | Rung::ChainHolders => {}
         }
         let Some(grant) = asker_grant_in_txn(vault, txn, pending)? else {
             return Ok(missing(
@@ -138,6 +143,7 @@ impl RungResolver for VerifiedChain<'_> {
             }),
             Rung::ChainHolders => chain_holder_members(vault, txn, pending, &grant, grantor),
             Rung::Owner => owner_members(vault, txn, pending),
+            Rung::RoomOwner => room_owner_members(vault, txn, pending),
         }
     }
 
@@ -153,6 +159,13 @@ impl RungResolver for VerifiedChain<'_> {
             || holder_of_in_txn(vault, txn, holder.principal)?.as_ref() != Some(holder)
         {
             return Ok(false);
+        }
+        // A closed room's owner answers on owning the room, read live, not
+        // on standing in the vault.
+        if let Some(room) = pending.room {
+            return Ok(holder.kind == HolderKind::Person
+                && crate::conversation::room_owners_in(vault, txn, room)?
+                    .contains(&holder.principal));
         }
         for (role, holds_power) in
             holder_standing_in_txn(vault, txn, pending, holder.principal, now)?
@@ -370,6 +383,30 @@ fn owner_members(
         .collect();
     Ok(if holders.is_empty() {
         missing("no live owner this ask has not already asked")
+    } else {
+        RungMembers::Holders(holders)
+    })
+}
+
+/// A closed room's rung: the room's owners but the asker.
+fn room_owner_members(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    pending: &PendingCheckIn,
+) -> Result<RungMembers> {
+    let Some(room) = pending.room else {
+        return Ok(missing("the ask names no closed room"));
+    };
+    let holders: Vec<RungHolder> = crate::conversation::room_owners_in(vault, txn, room)?
+        .into_iter()
+        .filter(|owner| *owner != pending.asker && !asked_before(pending, *owner))
+        .map(|principal| RungHolder {
+            principal,
+            kind: HolderKind::Person,
+        })
+        .collect();
+    Ok(if holders.is_empty() {
+        missing("no live owner of the closed room but the asker")
     } else {
         RungMembers::Holders(holders)
     })

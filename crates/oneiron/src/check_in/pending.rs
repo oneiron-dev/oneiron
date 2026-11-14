@@ -89,14 +89,17 @@ fn delete_pending_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId
 }
 
 /// The BLAKE3 natural key of an ask: the asker, the verb, the act class,
-/// where the effect sits and the effect's digest (P23-SHAPE Q2 = A). Two
-/// opens with one key are the same saved call.
+/// where the effect sits and the effect's digest (P23-SHAPE Q2 = A), and
+/// the closed room whose owners alone answer it, when it has one. Two opens
+/// with one key are the same saved call; an ordinary ask and a closed
+/// room's ask of the same add are two.
 fn open_key_of(
     asker: EntityId,
     verb: &str,
     act: ActClass,
     scope: &CheckInScope,
     effect_digest: &[u8; 32],
+    room: Option<&EntityId>,
 ) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new_derive_key("oneiron.check_in.open_key.v1");
     hasher.update(asker.as_bytes());
@@ -118,6 +121,10 @@ fn open_key_of(
         }
     }
     hasher.update(effect_digest);
+    if let Some(room) = room {
+        hasher.update(&[1]);
+        hasher.update(room.as_bytes());
+    }
     *hasher.finalize().as_bytes()
 }
 
@@ -133,6 +140,9 @@ pub enum Rung {
     ChainHolders,
     /// Rung 4: the Owner role, where the chain ends.
     Owner,
+    /// A closed room's owners (ARCH-0082 #closed-room): the one rung a
+    /// closed room's ask enters, whoever adds, and where it ends.
+    RoomOwner,
 }
 
 impl Rung {
@@ -142,17 +152,18 @@ impl Rung {
         match self {
             Self::Grantor => 2,
             Self::ChainHolders => 3,
-            Self::Owner => 4,
+            Self::Owner | Self::RoomOwner => 4,
         }
     }
 
-    /// The rung above this one; `None` above the Owner.
+    /// The rung above this one; `None` above the Owner and above a closed
+    /// room's owners.
     #[must_use]
     pub const fn next(self) -> Option<Self> {
         match self {
             Self::Grantor => Some(Self::ChainHolders),
             Self::ChainHolders => Some(Self::Owner),
-            Self::Owner => None,
+            Self::Owner | Self::RoomOwner => None,
         }
     }
 
@@ -163,6 +174,7 @@ impl Rung {
             Self::Grantor => "grantor",
             Self::ChainHolders => "chain_holders",
             Self::Owner => "owner",
+            Self::RoomOwner => "room_owner",
         }
     }
 }
@@ -417,6 +429,12 @@ pub struct PendingCheckIn {
     /// that resends under it is PR 3's.
     #[serde(default)]
     pub invocation: Option<[u8; 16]>,
+    /// The closed room whose owners alone answer this ask (ARCH-0082
+    /// #closed-room; P26-SHAPE Q5 = A): the ask enters only
+    /// [`Rung::RoomOwner`], and only a door adding to that room spends it.
+    /// `None` for every other ask.
+    #[serde(default)]
+    pub room: Option<EntityId>,
 }
 
 impl PendingCheckIn {
@@ -460,6 +478,7 @@ impl PendingCheckIn {
             self.act,
             &self.scope,
             &self.effect_digest,
+            self.room.as_ref(),
         )
     }
 
@@ -564,7 +583,21 @@ pub(crate) fn open_pending_check_in_in_txn(
     chain: &dyn RungResolver,
     now: u64,
 ) -> Result<PendingCheckIn> {
-    validate_open(&request, now)?;
+    open_row_in_txn(vault, txn, request, None, chain, now)
+}
+
+/// [`open_pending_check_in_in_txn`], for the closed `room` when it is
+/// `Some`: the row enters only [`Rung::RoomOwner`], and its grant ref may be
+/// empty, for an adder who holds no grant on the vault.
+fn open_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    request: OpenPendingCheckIn,
+    room: Option<EntityId>,
+    chain: &dyn RungResolver,
+    now: u64,
+) -> Result<PendingCheckIn> {
+    validate_open(&request, room.is_some(), now)?;
     let floor = super::waits::class_wait_in_txn(vault, txn, request.act, &request.scope)?;
     if request
         .asker_wait_secs
@@ -599,6 +632,7 @@ pub(crate) fn open_pending_check_in_in_txn(
         transitions: 0,
         consumed_at: None,
         invocation: None,
+        room,
     };
     let fields = ReceiptFields::new(&row)
         .with("verb", row.verb.clone())
@@ -608,6 +642,10 @@ pub(crate) fn open_pending_check_in_in_txn(
             "effect_digest",
             crate::receipt::hex_lower(&row.effect_digest),
         );
+    let fields = match row.room {
+        Some(room) => fields.with("room", room.to_hex()),
+        None => fields,
+    };
     let asker = row.asker;
     write_check_in_receipt_in_txn(
         &vault.store,
@@ -639,8 +677,17 @@ pub(crate) fn keyed_pending_check_in_in_txn(
     scope: &CheckInScope,
     effect_digest: &[u8; 32],
 ) -> Result<Option<PendingCheckIn>> {
-    let key = open_key_of(asker, verb, act, scope, effect_digest);
-    let Some(id) = OPEN_KEY.get(store, txn, &key)? else {
+    let key = open_key_of(asker, verb, act, scope, effect_digest, None);
+    keyed_row_in_txn(store, txn, &key)
+}
+
+/// The row the natural key `key` names while it answers a repeat.
+fn keyed_row_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &[u8; 32],
+) -> Result<Option<PendingCheckIn>> {
+    let Some(id) = OPEN_KEY.get(store, txn, key)? else {
         return Ok(None);
     };
     Ok(PENDING
@@ -665,18 +712,50 @@ pub(crate) fn open_keyed_pending_check_in_in_txn(
     chain: &dyn RungResolver,
     now: u64,
 ) -> Result<(PendingCheckIn, bool)> {
-    if let Some(row) = keyed_pending_check_in_in_txn(
-        &vault.store,
-        txn,
+    open_keyed_row_in_txn(vault, txn, request, None, invocation, chain, now)
+}
+
+/// [`open_keyed_pending_check_in_in_txn`] for an add into the closed `room`
+/// (ARCH-0082 #closed-room; P26-SHAPE Q5 = A): the row enters only
+/// [`Rung::RoomOwner`], its key names the room, and its grant ref may be
+/// empty, for an adder who holds no grant on the vault.
+///
+/// # Errors
+///
+/// As [`open_pending_check_in_in_txn`].
+pub(crate) fn open_keyed_room_owner_check_in_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    request: OpenPendingCheckIn,
+    room: EntityId,
+    invocation: Option<[u8; 16]>,
+    chain: &dyn RungResolver,
+    now: u64,
+) -> Result<(PendingCheckIn, bool)> {
+    open_keyed_row_in_txn(vault, txn, request, Some(room), invocation, chain, now)
+}
+
+fn open_keyed_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    request: OpenPendingCheckIn,
+    room: Option<EntityId>,
+    invocation: Option<[u8; 16]>,
+    chain: &dyn RungResolver,
+    now: u64,
+) -> Result<(PendingCheckIn, bool)> {
+    let key = open_key_of(
         request.asker,
         &request.verb,
         request.act,
         &request.scope,
         &request.effect_digest,
-    )? {
+        room.as_ref(),
+    );
+    if let Some(row) = keyed_row_in_txn(&vault.store, txn, &key)? {
         return Ok((row, false));
     }
-    let mut row = open_pending_check_in_in_txn(vault, txn, request, chain, now)?;
+    let mut row = open_row_in_txn(vault, txn, request, room, chain, now)?;
     if invocation.is_some() {
         row.invocation = invocation;
         store_pending_in_txn(&vault.store, txn, &row)?;
@@ -685,11 +764,12 @@ pub(crate) fn open_keyed_pending_check_in_in_txn(
     Ok((row, true))
 }
 
-fn validate_open(request: &OpenPendingCheckIn, now: u64) -> Result<()> {
+/// `room_route`: a closed room's ask, whose adder may hold no grant.
+fn validate_open(request: &OpenPendingCheckIn, room_route: bool, now: u64) -> Result<()> {
     if request.mode == CheckInMode::NeverAsk {
         return Err(refuse("a NeverAsk act does not wait"));
     }
-    if request.verb.is_empty() || request.grant_ref.is_empty() {
+    if request.verb.is_empty() || (request.grant_ref.is_empty() && !room_route) {
         return Err(refuse("a pending check-in names its verb and grant"));
     }
     if request.until.is_some_and(|until| until <= now) {

@@ -306,7 +306,7 @@ pub(in crate::workspace_roster) fn admission_check_in_in_txn(
         &request.subject.id(),
         full_history,
     );
-    crate::check_in::room_add_check_in_in_txn(memory, txn, verb, digest, check_in_ref)
+    crate::check_in::room_add_check_in_in_txn(memory, txn, verb, request.room, digest, check_in_ref)
 }
 
 /// Files and decides `request` in the caller's write transaction, so a write

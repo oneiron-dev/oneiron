@@ -20,6 +20,23 @@ const HOME_ROOM: &str = "a project's home room is not closed or opened here";
 const HOME_ROOM_HINT: &str =
     "Close an ordinary room; a home room admits people through its project's leader and board.";
 
+/// Whether `room` is closed, read in `txn`: every add to it asks its owners
+/// (ARCH-0082 #closed-room). A project's home room is never closed here.
+///
+/// # Errors
+///
+/// A room that is no conversation; storage errors.
+pub(crate) fn room_is_closed_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> Result<bool> {
+    if project_room_of(vault, txn, room)?.is_some() {
+        return Ok(false);
+    }
+    Ok(crate::conversation::body_in(vault, txn, room)?.closed)
+}
+
 /// A person closes or opens a room, never an agent: checked before
 /// anything is read.
 fn require_person(caller: WriteActor) -> MemoryResult<()> {
