@@ -65,41 +65,8 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 /// again at the press and again at egress.
 pub(super) const MAX_GMAIL_RAW_MESSAGE_OCTETS: u64 = 35 * 1024 * 1024;
 
-/// One file a drafted reply carries: one exact version of an artifact the
-/// caller reads (fix list row 17645).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct MailReplyAttachment {
-    /// The artifact, 32-hex.
-    pub artifact_ref: String,
-    /// The exact version that sends, 1 or more; never the head.
-    pub version: u64,
-}
-
-/// One file a drafted reply carries, as its reviewer sees it: exactly the
-/// copy that sends (fix list row 17645).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct MailReplyAttachmentView {
-    /// The artifact, 32-hex.
-    pub artifact_ref: String,
-    /// Its exact version.
-    pub version: u64,
-    /// The file's name, as it sends.
-    pub name: String,
-    /// Its media type, as it sends.
-    pub media_type: String,
-    /// `attachment`: a file never shows inline.
-    pub disposition: String,
-    /// The exact copy's size, in bytes.
-    pub size: u64,
-    /// BLAKE3 of the exact copy that sends, 64 lower-hex.
-    pub content_blake3: String,
-    /// BLAKE3 of the stored version, 64 lower-hex. It differs from
-    /// `content_blake3` when the copy that sends is masked, or names its
-    /// default author.
-    pub stored_version_blake3: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::mail_pack::reply::{MailReplyAttachment, MailReplyAttachmentView};
 
 /// What one revision of a drafted reply with files froze, its manifest,
 /// kept sealed beside the draft under the revision's own key

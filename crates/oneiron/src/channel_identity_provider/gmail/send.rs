@@ -408,6 +408,12 @@ impl GmailSendPlan {
         &self.recipients
     }
 
+    /// The plain-text body this plan sends.
+    #[must_use]
+    pub fn body_text(&self) -> &str {
+        &self.body_text
+    }
+
     /// The HTML alternative this plan sends, as the mail HTML gate wrote it.
     #[must_use]
     pub fn body_html(&self) -> Option<&str> {
