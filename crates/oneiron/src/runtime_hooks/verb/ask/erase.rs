@@ -95,6 +95,7 @@ fn retire_used(row: &mut VerbAsk, erased: &ErasedIds, at: u64) {
             message,
             hook_notice,
             receipt,
+            mut reason_codes,
         }) => SavedOutcome::Err {
             code,
             message: if erased.named_in(&message) {
@@ -104,6 +105,10 @@ fn retire_used(row: &mut VerbAsk, erased: &ErasedIds, at: u64) {
             },
             hook_notice,
             receipt,
+            reason_codes: {
+                reason_codes.retain(|reason| !erased.named_in(reason));
+                reason_codes
+            },
         },
     });
 }

@@ -40,6 +40,12 @@ pub(in crate::runtime_hooks::verb) enum SavedOutcome {
         /// The refusal receipt a credential call that ended refused left.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         receipt: Option<String>,
+        /// The error's reason codes, for a paced call's retry: a
+        /// `CHECK_IN_PENDING` keeps the one naming the check-in it waits on
+        /// (2k8g review). Empty on an ask's outcome, and on a row saved
+        /// before.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        reason_codes: Vec<String>,
     },
 }
 
@@ -74,6 +80,7 @@ impl SavedOutcome {
             message: cut(message, MAX_SAVED_VERB_ERROR_BYTES),
             hook_notice,
             receipt: None,
+            reason_codes: Vec::new(),
         }
     }
 }
@@ -96,6 +103,7 @@ pub(super) fn completed(invocation: InvocationId, outcome: &SavedOutcome) -> Res
             message,
             hook_notice,
             receipt,
+            ..
         } => VerbHookStop::CompletedWithError {
             invocation: invocation.to_hex(),
             code: code.clone(),

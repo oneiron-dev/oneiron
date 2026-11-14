@@ -28,8 +28,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::memory::{
-    MEMORY_CODE_INVALID_STATE, MEMORY_CODE_PACED_HOLD, MEMORY_CODE_PENDING_ASK, Memory,
-    MemoryError, MemoryResult,
+    MEMORY_CODE_CHECK_IN_PENDING, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_PACED_HOLD,
+    MEMORY_CODE_PENDING_ASK, Memory, MemoryError, MemoryResult,
 };
 use crate::receipt::CallReceiptInput;
 use crate::receipt::admission::{ADMISSION_INTENT_ACTIVE, refuse_held_intent_in_txn};
@@ -418,20 +418,39 @@ pub(crate) fn land_paced_verb_call_in_txn(
 }
 
 /// What a paced call whose turn ended refused with `error` saves for its
-/// caller's retry of the same invocation, which [`ended_error`] answers.
+/// caller's retry of the same invocation, which [`ended_error`] answers:
+/// its code, its message and its reason codes, so a `CHECK_IN_PENDING`
+/// keeps the one naming its check-in (2k8g review).
 pub(super) fn ended_error_outcome(error: MemoryError, hook_notice: Option<bool>) -> SavedOutcome {
-    SavedOutcome::error(error.code, &error.message, hook_notice)
+    let mut outcome = SavedOutcome::error(error.code, &error.message, hook_notice);
+    if let SavedOutcome::Err { reason_codes, .. } = &mut outcome {
+        *reason_codes = error.reason_codes;
+    }
+    outcome
 }
 
 /// What the retry of a paced call whose turn ended refused answers, from
-/// the `outcome` [`ended_error_outcome`] saved.
+/// the `outcome` [`ended_error_outcome`] saved: a call that waits on a
+/// check-in says how to go on once it is approved.
 pub(super) fn ended_error(outcome: SavedOutcome) -> MemoryError {
     match outcome {
-        SavedOutcome::Err { code, message, .. } => MemoryError::new(
-            &code,
+        SavedOutcome::Err {
+            code,
             message,
-            &["This invocation's paced call ended; call again with a new invocation."],
-        ),
+            reason_codes,
+            ..
+        } => {
+            let suggestion = if code == MEMORY_CODE_CHECK_IN_PENDING {
+                "This invocation's paced call waits on the check-in its reason code names: once a \
+                 holder approves it, call again with a new invocation and check_in_ref set to it."
+            } else {
+                "This invocation's paced call ended; call again with a new invocation."
+            };
+            MemoryError {
+                reason_codes,
+                ..MemoryError::new(&code, message, &[suggestion])
+            }
+        }
         SavedOutcome::Ok { .. } => Error::CorruptedIndex("paced verb call outcome").into(),
     }
 }

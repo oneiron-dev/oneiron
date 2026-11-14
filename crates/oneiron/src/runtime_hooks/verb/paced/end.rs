@@ -166,13 +166,22 @@ pub(super) fn end_erased_in_txn(
             message,
             hook_notice,
             receipt,
-        }) if erased.named_in(&message) => Some(SavedOutcome::Err {
-            code,
-            message: ERASED_ERROR.to_owned(),
-            hook_notice,
-            receipt,
-        }),
-        outcome => outcome,
+            mut reason_codes,
+        }) => {
+            reason_codes.retain(|reason| !erased.named_in(reason));
+            Some(SavedOutcome::Err {
+                code,
+                message: if erased.named_in(&message) {
+                    ERASED_ERROR.to_owned()
+                } else {
+                    message
+                },
+                hook_notice,
+                receipt,
+                reason_codes,
+            })
+        }
+        None => None,
     };
     if row.state != PacedState::Ended {
         row.state = PacedState::Ended;
