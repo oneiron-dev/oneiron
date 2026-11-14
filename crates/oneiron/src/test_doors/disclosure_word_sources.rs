@@ -96,6 +96,19 @@ pub fn mark_tier_a(vault: &Vault, record: &EntityId) -> Result<()> {
     vault.set_disclosure_tier_a(record, vault.store.clock.now_recorded_at())
 }
 
+/// Registers `source` as a dependency of the summary `summary`, as a
+/// re-derivation from an edited predecessor registers each row that
+/// predecessor's text came from beyond the summary's own covers and
+/// MESSAGEs (FIX 10092, `scope_summary::request::editor_sources`).
+///
+/// # Errors
+/// A `source` the vault does not hold, or the write's error.
+pub fn register_editor_source(vault: &Vault, summary: &EntityId, source: &EntityId) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        crate::ports::record_derived_edge_in_txn(&vault.store, txn, summary, source)
+    })
+}
+
 /// Whether the general clamp of an assembly the owner holds with `contact`
 /// (named `counterparty`) present admits the stored `record`.
 ///

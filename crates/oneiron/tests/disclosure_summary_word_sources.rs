@@ -19,6 +19,12 @@
 //! row too (its Tier A, its stamp), not only the records it was written
 //! from (Sol review of #7692).
 //!
+//! A summary re-derived from an edited predecessor keeps each record that
+//! predecessor's text came from as a dependency, beyond its covers. A header
+//! naming the summary serves those words too, so the clamp walks the summary
+//! itself, its dependencies included, not only its row (Sol review round 2
+//! of #7692).
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test disclosure_summary_word_sources`.
 #![cfg(oneiron_test_support)]
@@ -31,7 +37,8 @@ use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::registry::ENTITY_TYPE_SUMMARY;
 use oneiron::test_doors::disclosure_word_sources::{
     clamp_admits_claim_revision_with_contact, clamp_admits_owner_alone, clamp_admits_with_contact,
-    install_shipped_policy_with_ordinary_predicate, mark_tier_a, seed_cleared_contact,
+    install_shipped_policy_with_ordinary_predicate, mark_tier_a, register_editor_source,
+    seed_cleared_contact,
 };
 use oneiron::test_doors::scope_summary::mint_scope_summary;
 use oneiron::{
@@ -144,6 +151,24 @@ fn land_with_reply(fixture: &Fixture) -> TestResult<(EntityId, EntityId)> {
     )?;
     let reply = landed.record.ok_or("as_record lands a reply TURN")?;
     Ok((landed.claim, reply))
+}
+
+/// A record the owner wrote in a conversation of its own, outside every
+/// summary the fixture mints: a row an edited summary's text came from.
+fn side_record(fixture: &Fixture) -> TestResult<EntityId> {
+    let host = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let receipt = host.conversations_create(&ConversationCreateInput {
+        id: None,
+        occurred_start: None,
+        occurred_end: None,
+        learned_at: None,
+        body: json!({}),
+        text: None,
+    })?;
+    let conversation = EntityId::from_hex(&receipt.id)?;
+    let note =
+        host.conversations_records_append(&trunk_record(conversation, None, "the side note"))?;
+    Ok(EntityId::from_hex(&note.id)?)
 }
 
 /// A contact cleared to `clearance`, created in `vault`.
@@ -312,6 +337,38 @@ fn a_merge_header_naming_a_summary_is_refused_once_the_summary_is_tier_a() -> Te
     assert!(
         !clamp_admits_with_contact(vault, contact, COUNTERPARTY, &header)?,
         "the header serves the Tier-A summary's words"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_merge_header_is_refused_once_a_record_its_summary_was_edited_from_is_tier_a() -> TestResult {
+    let fixture = open()?;
+    let vault = &fixture.vault;
+    // The summary was re-derived from an edited predecessor whose text came
+    // from a record outside its covers: that record is its dependency.
+    let note = side_record(&fixture)?;
+    register_editor_source(vault, &fixture.summary, &note)?;
+    let (header, reply) = land_with_reply(&fixture)?;
+    let contact = cleared_contact(vault, Scope::top())?;
+    for id in [&fixture.summary, &reply, &header] {
+        assert!(
+            clamp_admits_with_contact(vault, contact, COUNTERPARTY, id)?,
+            "a contact cleared for every source reads the summary and its copies"
+        );
+    }
+    mark_tier_a(vault, &note)?;
+    assert!(
+        !clamp_admits_with_contact(vault, contact, COUNTERPARTY, &fixture.summary)?,
+        "the summary carries the words of the record it was edited from"
+    );
+    assert!(
+        !clamp_admits_with_contact(vault, contact, COUNTERPARTY, &reply)?,
+        "the reply's landing registered the summary's dependencies as its own"
+    );
+    assert!(
+        !clamp_admits_with_contact(vault, contact, COUNTERPARTY, &header)?,
+        "the header serves the summary's words, the edited-from record's included"
     );
     Ok(())
 }
