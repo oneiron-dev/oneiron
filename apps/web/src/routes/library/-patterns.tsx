@@ -228,7 +228,7 @@ function ColumnDemo() {
         onDictate={() => {}}
         data-specimen="column-write"
       >
-        {composerAddMenu()}
+        <AddMenu />
       </Composer>
       <span className="lib-readout">
         <Verb onClick={() => setMarked(true)}>go to the pinned message</Verb>
@@ -632,10 +632,11 @@ function SplitDemo() {
 
 const PERSONAS: ComposerPersonaKind[] = ['all', 'work', 'personal', 'dream']
 
-/* The `+` of a write box: what can ride along, then the model and the
-   effort the message is answered with. Called as a function, so the
-   write box receives a Composer.Add child it can place inside the box. */
-function composerAddMenu({ onFile, onPointer }: { onFile?: () => void; onPointer?: () => void } = {}) {
+/* The `+` of a write box, as a part of the gallery's own wrapping
+   Composer.Add: what can ride along, then the model and the effort the
+   message is answered with. The write box finds the add inside it and
+   draws it in the box. */
+function AddMenu({ onFile, onPointer }: { onFile?: () => void; onPointer?: () => void }) {
   return (
     <Composer.Add label="Add to the message">
       <Menu.Item icon={<Icon name="clip" />} onClick={onFile}>
@@ -724,7 +725,7 @@ function ComposerDemo() {
             </Composer.Chip>
           ) : null}
         </Composer.Carry>
-        {composerAddMenu({ onFile: () => setChip(true), onPointer: () => setPointer(true) })}
+        <AddMenu onFile={() => setChip(true)} onPointer={() => setPointer(true)} />
       </Composer>
       <span className="lib-readout" data-specimen="composer-log">
         boost {boost ? 'on' : 'off'}
@@ -749,7 +750,7 @@ function ComposerSmallDemo({ tools, text, specimen }: { tools: ComposerTools; te
         onDictate={() => setLog((l) => [...l.slice(-1), 'dictate'])}
         onSend={(sent) => setLog((l) => [...l.slice(-1), `sent “${sent}”`])}
       >
-        {composerAddMenu()}
+        <AddMenu />
       </Composer>
       <span className="lib-readout" data-specimen={`${specimen}-log`}>
         {log.length ? log.join(', ') : 'Nothing sent yet.'}
@@ -1031,7 +1032,7 @@ export function PatternSections() {
             persona={<Composer.Persona initial="o" note="You write as Owen. Saved in Antevon’s vault." aria-label="Owen" />}
             data-specimen="composer-text"
           >
-            {composerAddMenu()}
+            <AddMenu />
           </Composer>
         </Specimen>
         <Specimen name="narrow: the placeholder stays on one line and ends in an ellipsis" wide={1}>

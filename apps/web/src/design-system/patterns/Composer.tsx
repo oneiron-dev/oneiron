@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { createPortal } from 'react-dom'
 import { Icon, type IconName } from '../primitives/Icon'
 import { IconAction } from '../primitives/IconAction'
 import { PrimaryButton } from '../primitives/PrimaryButton'
@@ -11,6 +12,17 @@ import { findBoostWord } from './find-boost-word'
 
 /* The field grows with its text up to this height, then scrolls. */
 const FIELD_MAX_PX = 220
+
+/* Where a Composer.Add draws itself: the box's add slot, found through
+   context, so an add wrapped in the caller's own part lands in the box
+   wherever it sits among the children. `inSlot`: rendered in the slot
+   already (a direct child). */
+interface ComposerAddPlace {
+  inSlot: boolean
+  slot: HTMLElement | null
+}
+
+const ComposerAddPlaceContext = React.createContext<ComposerAddPlace | null>(null)
 
 export interface ComposerSendDetails {
   /* The text held a boost word and the person left the boost on. */
@@ -63,7 +75,7 @@ export interface ComposerProps extends Omit<React.ComponentPropsWithRef<'form'>,
 
 /* The write box. Above the box: the crossing line, then Composer.Carry
    with quoted pointers and attached chips; a Composer.Add among the
-   children sits in the box instead. Default size: the writer's portrait in
+   children, or inside a part of the caller's, sits in the box instead. Default size: the writer's portrait in
    a 24 px gutter, then the box in the messages column (fully rounded
    ends, the sunk tone, a 1 px inset hairline): add, the field (it grows to
    several lines), the tool icons, dictation, and one round filled button
@@ -132,8 +144,22 @@ function ComposerRoot({
   }, [boost])
 
   const parts = React.Children.toArray(children)
+  /* A direct Composer.Add is drawn in the slot from the first render (the
+     server's markup too); one inside a caller's part reaches the slot
+     through context once the slot is mounted. */
   const adds = parts.filter((c) => React.isValidElement(c) && c.type === ComposerAdd)
   const above = parts.filter((c) => !adds.includes(c))
+  const [slot, setSlot] = React.useState<HTMLSpanElement | null>(null)
+  const inSlot = React.useMemo<ComposerAddPlace>(() => ({ inSlot: true, slot }), [slot])
+  const elsewhere = React.useMemo<ComposerAddPlace>(() => ({ inSlot: false, slot }), [slot])
+  /* The inner span holds only what a nested add draws into it, so React's
+     own children and the portal's never share a parent. */
+  const addSlot = (
+    <span className="sl-composer-add-slot">
+      <ComposerAddPlaceContext.Provider value={inSlot}>{adds}</ComposerAddPlaceContext.Provider>
+      <span ref={setSlot} className="sl-composer-add-slot" />
+    </span>
+  )
 
   const send = () => {
     const text = composerSendText(value)
@@ -226,13 +252,13 @@ function ComposerRoot({
       {...props}
     >
       {crossing !== undefined ? <div className="sl-composer-crossing">{crossing}</div> : null}
-      {above}
+      <ComposerAddPlaceContext.Provider value={elsewhere}>{above}</ComposerAddPlaceContext.Provider>
       {!small && persona !== undefined ? <span className="sl-composer-writer">{persona}</span> : null}
       <div className="sl-composer-bar">
-        {tools === 'always' ? adds : null}
+        {tools === 'always' ? addSlot : null}
         {field}
         <span className="sl-composer-tools">
-          {tools === 'on focus' ? adds : null}
+          {tools === 'on focus' ? addSlot : null}
           {actions}
           {onDictate ? (
             <IconAction label="Dictate" tooltipSide="top" className="sl-composer-dictate" onClick={onDictate}>
@@ -265,9 +291,11 @@ export interface ComposerAddProps extends Omit<React.ComponentPropsWithRef<'butt
 }
 
 /* The `+` at the left of the field: a menu of what can ride along with
-   the message. Place it among the Composer's children. */
+   the message. Place it among the Composer's children, directly or inside
+   a part of your own: it draws itself in the box either way. */
 function ComposerAdd({ label = 'Add', open, defaultOpen, onOpenChange, className, children, ...props }: ComposerAddProps) {
-  return (
+  const place = React.useContext(ComposerAddPlaceContext)
+  const menu = (
     <Menu open={open} defaultOpen={defaultOpen} onOpenChange={onOpenChange}>
       <Menu.Trigger asChild>
         <IconAction label={label} tooltipSide="top" className={cx('sl-composer-add', className)} {...props}>
@@ -279,6 +307,8 @@ function ComposerAdd({ label = 'Add', open, defaultOpen, onOpenChange, className
       </Menu.Content>
     </Menu>
   )
+  if (!place || place.inSlot) return menu
+  return place.slot ? createPortal(<ComposerAddPlaceContext.Provider value={{ inSlot: true, slot: place.slot }}>{menu}</ComposerAddPlaceContext.Provider>, place.slot) : null
 }
 
 export interface ComposerCarryProps extends React.ComponentPropsWithRef<'div'> {}
