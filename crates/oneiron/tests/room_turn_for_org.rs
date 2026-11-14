@@ -22,6 +22,7 @@
 #![cfg(feature = "test-support")]
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::access_grant::{
@@ -60,7 +61,7 @@ const ORG: [u8; 16] = [0xB3; 16];
 /// ordinary group room its owner hosts.
 struct HouseRoom {
     vault: Vault,
-    clock: ManualClock,
+    clock: Arc<ManualClock>,
     start: u64,
     owner: EntityId,
     house: EntityId,
