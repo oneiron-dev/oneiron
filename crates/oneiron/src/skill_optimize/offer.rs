@@ -465,6 +465,17 @@ pub fn training_offer_skill_id() -> Result<EntityId> {
     )
 }
 
+/// The offer skill the Coach's pass loads now: the in-force revision of the
+/// skill named `training-offer` that the configured default hub installed
+/// (its current loadable head), as a workflow default is found; else
+/// [`training_offer_skill_id`]. The library skill ships from the first-party
+/// hub at a pinned ref, not from the bootstrap seed (ARCH-0053 #r4b-hubs).
+/// # Errors
+/// A store error, or an id derivation failure.
+pub fn training_offer_skill_in_force(vault: &Vault) -> Result<EntityId> {
+    crate::agent_dispatch::workflow_default(vault, TRAINING_OFFER_SKILL)
+}
+
 /// The shipped eval-authoring skill (ARCH-0053 "Eval authoring", OF-578): the
 /// Coach loads it on its eval-authoring attempt, and each cut and retirement
 /// names the revision that decided it.

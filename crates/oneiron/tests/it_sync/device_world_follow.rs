@@ -161,17 +161,17 @@ fn negotiated_world_windows(client: &mut SyncClient, root: &[u8]) -> Vec<WindowK
     worlds
 }
 
-/// The world windows `frames` ask the home to promote. The embedding setup
-/// window's request (OF-370) goes out whatever the device follows, so it is
-/// not counted.
-fn world_promotion_requests(frames: &[Vec<u8>]) -> Vec<WindowKey> {
+/// The world windows `frames` ask the home to grant as follows
+/// (`FOLLOW_REQUEST`). The embedding setup window's promotion request
+/// (OF-370) goes out whatever the device follows, and is not one.
+fn world_follow_requests(frames: &[Vec<u8>]) -> Vec<WindowKey> {
     let mut keys: Vec<WindowKey> = frames
         .iter()
         .filter(|frame| frame.first() == Some(&TAG_WINDOW_SYNC))
         .filter_map(|frame| {
             let (key, sub_tag, _) =
                 transport::decode_window_sync(&frame[1..]).expect("decode window frame");
-            (sub_tag == window_sub_tags::PROMOTION_REQUEST).then(|| WindowKey::new(key))
+            (sub_tag == window_sub_tags::FOLLOW_REQUEST).then(|| WindowKey::new(key))
         })
         .filter(|key| key.world().is_some())
         .collect();
@@ -268,19 +268,135 @@ fn a_picked_world_syncs_its_full_windows_when_opened() {
         .expect("the owner's pick");
 
     // The home's root arrives after the first frames: the picked world's
-    // window is asked to be promoted, then for its vector.
+    // window is asked as a follow, and its vector waits for the grant.
     let mut client = opened_client(&device);
     let mut frames = client.generate_initial_sync();
     frames.extend(client.handle_server_message(&root).expect("root update"));
     let founder = WindowKey::for_world(at, device.founder);
     assert_eq!(
-        world_promotion_requests(&frames),
+        world_follow_requests(&frames),
         vec![founder.clone()],
         "only the picked world's window is asked in full, not the readable \
          world nobody picked nor the world kept on the owner's machines",
     );
 
-    // The home grants it on this socket with no promotion marker here.
+    assert!(
+        !frames.iter().any(|frame| {
+            frame.first() == Some(&TAG_WINDOW_SYNC)
+                && transport::decode_window_sync(&frame[1..]).is_ok_and(|(key, sub_tag, _)| {
+                    key == founder.as_str() && sub_tag == window_sub_tags::VV_REQUEST
+                })
+        }),
+        "the followed window's vector waits for the home's grant",
+    );
+
+    // The home grants it on this socket with no promotion marker here; the
+    // device asks for its vector then.
+    let grant =
+        transport::encode_window_sync(founder.as_str(), window_sub_tags::PROMOTION_GRANTED, &[])
+            .into_result()
+            .expect("grant frame");
+    let answers = client
+        .handle_server_message(&grant)
+        .expect("the device takes the home's grant for its followed window");
+    assert!(
+        answers.iter().any(|frame| {
+            frame.first() == Some(&TAG_WINDOW_SYNC)
+                && transport::decode_window_sync(&frame[1..]).is_ok_and(|(key, sub_tag, _)| {
+                    key == founder.as_str() && sub_tag == window_sub_tags::VV_REQUEST
+                })
+        }),
+        "the grant asks for the followed window's vector",
+    );
+
+    // The next connect asks for it in its first frames, the root now held.
+    let reconnected = opened_client(&device);
+    assert_eq!(
+        world_follow_requests(&reconnected.generate_initial_sync()),
+        vec![founder],
+        "a reconnect asks again for the followed window",
+    );
+}
+
+/// FOLLOWED-WINDOW-REFUSAL-CLOSES-SOCKET, the device half: the home refuses
+/// a followed window (`FOLLOW_REFUSED`) and keeps the socket. The device asks
+/// nothing more of the window on this socket and takes none of its full
+/// exchange: the window stays unsynced here until the next connection asks
+/// again.
+#[test]
+fn a_refused_follow_leaves_its_window_unsynced() {
+    let device = Device::open();
+    let at = now_secs();
+    let root = root_frame(at, &[device.founder]);
+    let connection = SyncConnection::new(device.manager(), ConnectionConfig::default())
+        .expect("the device's connection");
+    connection
+        .set_followed_worlds([device.founder].into_iter().collect())
+        .expect("the owner's pick");
+    let founder = WindowKey::for_world(at, device.founder);
+    let mut client = opened_client(&device);
+    let mut frames = client.generate_initial_sync();
+    frames.extend(client.handle_server_message(&root).expect("root update"));
+    assert_eq!(
+        world_follow_requests(&frames),
+        vec![founder.clone()],
+        "the picked world's window is asked as a follow",
+    );
+
+    let refusal =
+        transport::encode_window_sync(founder.as_str(), window_sub_tags::FOLLOW_REFUSED, &[])
+            .into_result()
+            .expect("refusal frame");
+    let answers = client
+        .handle_server_message(&refusal)
+        .expect("the device takes the home's refusal");
+    assert!(
+        answers.is_empty(),
+        "the device asks nothing more of a refused window"
+    );
+    let update = client
+        .handle_server_message(&world_update(at, device.founder))
+        .expect_err("a refused followed window takes no full exchange");
+    assert!(
+        update
+            .to_string()
+            .contains("full-window exchange requires causal promotion"),
+        "refused as ungranted: {update}",
+    );
+}
+
+/// FOLLOWED-WINDOW-STALE-THIN-CACHE: an item of a world this device thin
+/// read before it followed the world keeps its thin read rows (`ro:e:`),
+/// which refuse a local edit at the item while the window has no promotion
+/// marker. Once the followed window's full exchange lands here, the rows go,
+/// as a promotion drops them. Before, they stayed until a promotion, a prune
+/// or the world's eviction.
+#[test]
+fn a_followed_window_drops_its_thin_reads_once_it_lands() {
+    let device = Device::open();
+    let at = now_secs();
+    let root = root_frame(at, &[device.founder]);
+    let founder = WindowKey::for_world(at, device.founder);
+    let item = EntityId::now();
+    let thin_rows = [
+        format!("ro:e:{}", item.to_hex()),
+        format!("ri:b:{}", item.to_hex()),
+    ];
+    // The item was thin read before its world was picked.
+    for row in &thin_rows {
+        device
+            .vault
+            .sync_state_put(row, founder.as_str().as_bytes())
+            .expect("the item's thin read row");
+    }
+    let connection = SyncConnection::new(device.manager(), ConnectionConfig::default())
+        .expect("the device's connection");
+    connection
+        .set_followed_worlds([device.founder].into_iter().collect())
+        .expect("the owner's pick");
+    let mut client = opened_client(&device);
+    let _first_frames = client.generate_initial_sync();
+    let _root_requests = client.handle_server_message(&root).expect("root update");
     let grant =
         transport::encode_window_sync(founder.as_str(), window_sub_tags::PROMOTION_GRANTED, &[])
             .into_result()
@@ -288,14 +404,28 @@ fn a_picked_world_syncs_its_full_windows_when_opened() {
     client
         .handle_server_message(&grant)
         .expect("the device takes the home's grant for its followed window");
-
-    // The next connect asks for it in its first frames, the root now held.
-    let reconnected = opened_client(&device);
-    assert_eq!(
-        world_promotion_requests(&reconnected.generate_initial_sync()),
-        vec![founder],
-        "a reconnect asks again for the followed window's promotion",
+    assert!(
+        device
+            .vault
+            .sync_state_get(&thin_rows[0])
+            .expect("read the thin row")
+            .is_some(),
+        "precondition: a grant alone lands nothing of the window",
     );
+
+    client
+        .handle_server_message(&world_update(at, device.founder))
+        .expect("the home's update of the followed window lands");
+    for row in &thin_rows {
+        assert!(
+            device
+                .vault
+                .sync_state_get(row)
+                .expect("read the thin row")
+                .is_none(),
+            "the landed followed window dropped the thin read row {row}",
+        );
+    }
 }
 
 /// The owner picks another world while a negotiation builds its frames and
@@ -333,7 +463,7 @@ fn a_negotiation_follows_the_pick_read_as_it_began() {
         "precondition: the steady loop sees the pick its negotiation began with",
     );
     assert_eq!(
-        world_promotion_requests(&frames),
+        world_follow_requests(&frames),
         vec![founder.clone()],
         "the root's requests ask for the pick the negotiation read as it began",
     );
@@ -349,9 +479,58 @@ fn a_negotiation_follows_the_pick_read_as_it_began() {
         "precondition: the steady loop sees the pick its negotiation began with",
     );
     assert_eq!(
-        world_promotion_requests(&frames),
+        world_follow_requests(&frames),
         vec![founder],
         "the first frames ask for the pick the negotiation read as it began",
+    );
+}
+
+/// FOLLOWED-WINDOW-SET-READ-PER-FRAME: the gate each full-window frame meets
+/// judges a followed window by the set the connection's negotiation follows,
+/// read once as it began, as its frames are, not by a store read per frame.
+/// The owner unpicks the world mid-connection: the steady loop sees the
+/// change and renegotiates, and until then the granted window's gate still
+/// holds. Before, the gate read the live set on every frame.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_full_window_gate_judges_the_pick_its_negotiation_began_with() {
+    use oneiron::test_doors::world_follow;
+
+    let device = Device::open();
+    let at = now_secs();
+    let root = root_frame(at, &[device.founder, device.granted]);
+    let connection = SyncConnection::new(device.manager(), ConnectionConfig::default())
+        .expect("the device's connection");
+    connection
+        .set_followed_worlds([device.founder].into_iter().collect())
+        .expect("the owner's pick");
+    let founder = WindowKey::for_world(at, device.founder);
+    let mut client = opened_client(&device);
+    world_follow::begin_connection_sync(&mut client);
+    let _first_frames = client.generate_initial_sync();
+    let _root_requests = client.handle_server_message(&root).expect("root update");
+    let grant =
+        transport::encode_window_sync(founder.as_str(), window_sub_tags::PROMOTION_GRANTED, &[])
+            .into_result()
+            .expect("grant frame");
+    let _vector_request = client
+        .handle_server_message(&grant)
+        .expect("the device takes the home's grant for its followed window");
+    assert!(
+        world_follow::full_window_exchange_allowed(&client, &founder).expect("the gate"),
+        "precondition: the granted followed window exchanges in full",
+    );
+
+    connection
+        .set_followed_worlds([device.granted].into_iter().collect())
+        .expect("the owner's new pick");
+    assert!(
+        world_follow::follow_set_changed(&client),
+        "precondition: the steady loop sees the new pick and renegotiates",
+    );
+    assert!(
+        world_follow::full_window_exchange_allowed(&client, &founder).expect("the gate"),
+        "until it renegotiates, the gate judges the pick the negotiation began with",
     );
 }
 

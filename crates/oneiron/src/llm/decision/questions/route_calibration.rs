@@ -7,7 +7,7 @@
 
 mod isotonic;
 mod metrics;
-mod receipt_route;
+pub(super) mod receipt_route;
 mod report;
 mod split;
 

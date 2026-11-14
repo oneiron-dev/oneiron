@@ -142,7 +142,7 @@ impl<'a> AdoptedPrefix<'a> {
 /// Whether `row` is a genesis: an opened Genesis op, or a sealed row whose
 /// standing is Genesis. Both read from the envelope, so the root is the same
 /// before and after the row's key arrives.
-fn is_genesis_row(row: &FoldRow) -> bool {
+pub(super) fn is_genesis_row(row: &FoldRow) -> bool {
     match row {
         FoldRow::Open(entry) => matches!(entry.op, AuthorityOp::Genesis { .. }),
         FoldRow::PassThrough(public) => {
@@ -313,6 +313,10 @@ impl Vault {
     /// attested prefix plus the signed incoming tail, not an independent
     /// replay of the whole prefix ([`AdoptedPrefix`]); a covered row the
     /// blobs carry lands as hydration.
+    /// A row the source's own fold never applied, which the door here would
+    /// hold, is left out with each row standing on it (H72), so the history
+    /// of a vault that stored a stranger's row before #1449 imports without
+    /// them.
     pub fn import_signed_authority_history(
         &self,
         blobs: &[Vec<u8>],
@@ -352,6 +356,12 @@ impl Vault {
             let row = decode_carried_authority_fold_row_in_txn(&self.store, txn, bytes, overlays)?;
             decoded.push((row.hash()?, bytes.clone(), row));
         }
+        let carried: BTreeMap<_, _> = decoded
+            .iter()
+            .map(|(hash, _, row)| (*hash, row.clone()))
+            .collect();
+        let never_applied = carried_rows_never_applied_in_txn(&self.store, txn, &carried)?;
+        decoded.retain(|(hash, _, _)| !never_applied.contains(hash));
         let mut merged = history_in_txn(self, txn)?;
         let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
         let (adopted, evidence) = adopted_context_in_txn(&self.store, txn)?;
@@ -453,7 +463,11 @@ impl Vault {
     /// re-signed and no parent is renamed; a move that no longer covers this
     /// vault's frontier is refused, for its signer to sign again. The rows
     /// are marked for the vault's loaded windows in the same write and
-    /// announced once it commits, as an import's are.
+    /// announced once it commits, as an import's are. Then the stale-stamp
+    /// sweep runs, as after an import (H213): a severed pact's worlds carry
+    /// their stamp when this returns. A sweep that fails after the commit
+    /// returns its error while the move stands; the sweep stays owed, and
+    /// the next commit by any writer retries it.
     ///
     /// `delegation` is the leave-notice delegation the move's signer signed
     /// beside it (FIX 7932, [`Self::unsigned_leave_notice_delegation`]): it
@@ -474,6 +488,7 @@ impl Vault {
         entry: &AuthorityLogEntry,
         delegation: Option<&LeaveNoticeDelegation>,
     ) -> Result<EntityId> {
+        let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
         let (id, rows) = self.apply_signed_re_root_in_txn(&mut txn, joins, entry)?;
         if let Some(delegation) = delegation {
@@ -487,6 +502,7 @@ impl Vault {
         self.mark_authority_rows_in_txn(&mut txn, &rows)?;
         txn.commit()?;
         self.note_committed_authority_rows(rows);
+        watch.finish()?;
         Ok(id)
     }
 
@@ -589,7 +605,9 @@ impl Vault {
     /// call (FIX 8527), so no head count refuses and every head stays in the
     /// move's causal past, inside its fence. The join and the move are
     /// marked for the vault's loaded windows in the write and announced once
-    /// it commits.
+    /// it commits. Then the stale-stamp sweep runs, as after an import
+    /// (H213); a sweep that fails after the commit returns its error while
+    /// the move stands, and stays owed for the next commit by any writer.
     pub fn re_root_authority<S>(
         &self,
         new_device: DeviceAuthority,
@@ -602,6 +620,7 @@ impl Vault {
         let signer = RefCell::new(signer);
         let sign = |transcript: &[u8]| (*signer.borrow_mut())(transcript);
         let joiner = FrontierSigner::Callback(&signer_key, &sign);
+        let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
         let (entry, rows) = self.re_root_authority_in_txn(
             &mut txn,
@@ -611,6 +630,7 @@ impl Vault {
         )?;
         txn.commit()?;
         self.note_committed_authority_rows(rows);
+        watch.finish()?;
         Ok(entry)
     }
 

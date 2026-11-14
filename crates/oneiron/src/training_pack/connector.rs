@@ -14,7 +14,7 @@ use crate::llm::run_admission::{CallOutcome, PaidConnector, RunAdmission};
 
 use super::custody::{keep_checkpoint, verify_pin};
 use super::{
-    CandleParityCheck, CheckpointUpload, ComputePin, DetectorProvenance, ExportCheck,
+    CandleParityCheck, CheckpointUpload, ComputePin, DataTimeline, DetectorProvenance, ExportCheck,
     PinnedCheckpoint, ProbeMeasurement, QuestionExportCheck, RUNS, SourcePin,
     TrainingDeclarationPin, TrainingDispatch, TrainingOwner, TrainingPlan, TrainingResult,
     TrainingRun, TrainingState, hash_json, invalid, json_value, run_in_txn,
@@ -45,6 +45,9 @@ pub struct TrainOutput {
     pub probes: Vec<ProbeMeasurement>,
     pub settings: Value,
     pub harness: SourcePin,
+    /// The trainer's own receipt, kept whole. A run that changed its data
+    /// mixture or restarted from an earlier checkpoint reports its data
+    /// timeline in it under [`super::TIMELINE_RECEIPT_KEY`].
     pub receipt: Value,
     pub service_units: u64,
     /// A question head's producer check, which its result requires; a role
@@ -336,6 +339,8 @@ impl Vault {
         output: TrainOutput,
     ) -> Result<(TrainingRun, bool)> {
         let teachers = json_value(&admission.teacher_report())?;
+        // A malformed timeline is refused as the other receipt mismatches are.
+        let timeline = DataTimeline::from_receipt(&output.receipt)?;
         self.with_write_txn_grouped(|txn| {
             let mut run = run_in_txn(self, txn, &output.run)?;
             if admission.run() != run.admission_ref()
@@ -409,6 +414,7 @@ impl Vault {
                 harness: output.harness,
                 teachers,
                 service_units: output.service_units,
+                timeline,
             });
             run.state = TrainingState::Returned;
             if let Some(dispatch) = run.dispatch.as_mut() {

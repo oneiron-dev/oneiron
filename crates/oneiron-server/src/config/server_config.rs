@@ -198,6 +198,12 @@ pub struct SyncServerConfig {
     /// hub or name) adds to it. Empty: every pack organ build is third party; a
     /// seal organ program the host names stays first party.
     pub trusted_organ_builds: std::collections::BTreeSet<String>,
+    /// `--release-payment-credentials-unfenced`, argv only and plain serve
+    /// only: the self-hoster lifts the withholding of payment credentials on
+    /// a host whose runner fence is unproven (L8-60). Off: a credential the
+    /// owner marks as a payment credential is withheld at both value doors
+    /// wherever the organ host proves no filesystem fence.
+    pub release_payment_credentials_unfenced: bool,
     /// The private origins a managed node's egress guard admits, from
     /// `--hosted-private-origin` in managed boot alone (FIX 7657); empty
     /// everywhere else, and no config file, settings file or environment sets it.
@@ -267,6 +273,7 @@ impl Default for SyncServerConfig {
             merge_queue: None,
             agent_failure_healer: None,
             trusted_organ_builds: std::collections::BTreeSet::new(),
+            release_payment_credentials_unfenced: false,
             hosted_private_origins: std::collections::BTreeSet::new(),
         }
     }
@@ -517,6 +524,9 @@ pub struct ServeConfig {
     /// `--trusted-organ-build`, argv only, plain or managed: the organ builds
     /// this server runs as first party, as on [`SyncServerConfig`].
     pub trusted_organ_builds: std::collections::BTreeSet<String>,
+    /// `--release-payment-credentials-unfenced`, argv only, plain serve
+    /// only, as on [`SyncServerConfig`].
+    pub release_payment_credentials_unfenced: bool,
 }
 
 impl Default for ServeConfig {
@@ -611,6 +621,7 @@ impl Default for ServeConfig {
                 .to_owned(),
             shared_model_root: None,
             trusted_organ_builds: server.trusted_organ_builds,
+            release_payment_credentials_unfenced: server.release_payment_credentials_unfenced,
         }
     }
 }
@@ -670,6 +681,7 @@ impl ServeConfig {
             merge_queue: self.merge_queue.clone(),
             agent_failure_healer: self.self_heal.agent_failure_healer.clone(),
             trusted_organ_builds: self.trusted_organ_builds.clone(),
+            release_payment_credentials_unfenced: self.release_payment_credentials_unfenced,
             // Managed boot alone sets it (FIX 7657).
             hosted_private_origins: std::collections::BTreeSet::new(),
         };

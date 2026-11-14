@@ -8,15 +8,8 @@ use crate::edit_roundtrip::EditManifest;
 use crate::entity_id::EntityId;
 use crate::provenance::made_by::MadeBy;
 
-/// What kind of proposal is waiting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PendingProposalKind {
-    /// Paid decisions are retained; no proposed workbook bytes exist yet.
-    NeedsStaging,
-    Edit,
-    Output,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::edit_settle::pending::view::PendingProposalKind;
 
 /// One proposal waiting beside its artifact, as a review surface lists it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

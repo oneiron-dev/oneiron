@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, test } from "bun:test";
 import { dirname, resolve } from "node:path";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
@@ -8,7 +8,7 @@ import { credentialParts, McpClient, PublicHttpClient, PublicHttpError } from ".
 import type { JsonRpcReply, WireReply } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import type { FixtureCatalog } from "./support/fixtures.ts";
-import { BlockedDoor, assertFlowActive, defineFile, redactor, secretHex } from "./support/run.ts";
+import { BlockedDoor, assertFlowActive, defineFile, expect, redactor, secretHex } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
