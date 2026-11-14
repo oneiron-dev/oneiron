@@ -337,7 +337,7 @@ const XML_ENTITIES: Readonly<Record<string, string>> = {
 };
 
 /** SheetJS's `unescapexml` outside CDATA: entities, then `_xHHHH_` escapes. */
-function unescapeEntities(text: string): string {
+export function unescapeEntities(text: string): string {
   return text
     .replace(/&(?:quot|apos|gt|lt|amp|#x?([\da-fA-F]+));/gi, (entity: string, code: string | undefined) =>
       Object.hasOwn(XML_ENTITIES, entity)
