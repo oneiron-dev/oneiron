@@ -30,7 +30,7 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 use super::actions::{append_ruling_receipt_in_txn, gate_ref, live_owner_in_txn};
-use super::ruled_file::{owe_file_ruling_in_txn, ruled_file_digest};
+use super::ruled_file::{mark_places_key_in_txn, owe_file_ruling_in_txn, ruled_file_digest};
 use super::ruled_screen::RuledScreenKey;
 use super::{
     DUE, FOUND, FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard, FoundKeySettled,
@@ -42,7 +42,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::ports::ShortIdStoreRead;
 use crate::registry::ENTITY_TYPE_ASSET;
-use crate::secret_custody::masked_files::{clear_file_seal_in_txn, masked_file_in_txn};
+use crate::secret_custody::masked_files::clear_file_seal_in_txn;
 use crate::secret_custody::reveal::resolve_typed_handle_in_txn;
 use crate::store::Store;
 use crate::vault::{LiveEntityRow, Vault, live_entity_row_in_txn};
@@ -256,9 +256,7 @@ impl Vault {
             // door placed in them would be served there whole: a file that
             // holds one is ruled here alone (FIX
             // SEALED-FILE-RULING-MIXED-FILE-LOCAL).
-            let placed = masked_file_in_txn(&self.store, txn, &hash)?
-                .is_some_and(|file| !file.keys.is_empty() || !file.members.is_empty());
-            if !placed {
+            if !mark_places_key_in_txn(&self.store, txn, &hash)? {
                 owe_file_ruling_in_txn(&self.store, txn, &hash, record, actor, surface)?;
                 self.carry_owed_file_ruling_in_txn(txn, &hash)?;
             }

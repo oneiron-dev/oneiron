@@ -5,9 +5,10 @@
 //! `file_ruling` that names the file by a keyed digest alone. On another
 //! install, which got the bytes by sync and holds no mark of them, the
 //! carried ruling serves the file as written, a put of the same bytes is not
-//! sealed again, and a seal that install made itself is settled. A locked
-//! vault key never refuses the ruling: it stands at once, and its act is
-//! recorded once the key is held again, once.
+//! sealed again, and a seal that install made itself is settled, a seal
+//! made while its vault key was locked too. A locked vault key never
+//! refuses the ruling: it stands at once, and its act is recorded once the
+//! key is held again, once.
 //!
 //! The owner's other install is this vault with the file's notice and mark
 //! moved away (`forget_found_keys_of`, `forget_file_mark_of`), as an install
@@ -26,7 +27,7 @@ use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_AUTHORITY_LOG};
 use oneiron::secret_custody::{FoundKeyAction, FoundKeyCard, SecretSight};
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::found_key_forget::forget_found_keys_of;
-use oneiron::test_doors::sealed_file_forget::forget_file_mark_of;
+use oneiron::test_doors::sealed_file_carry::{forget_file_mark_of, served_masked_file_bytes};
 use oneiron::{EntityId, ErrorKind, TimeRange, Vault, VaultConfig};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -118,6 +119,15 @@ fn masked_read(
     Ok(vault
         .sighted_asset_bytes(stored, SecretSight::Masked)
         .map_err(|error| error.kind()))
+}
+
+/// Drops the vault data key, and with it the screen key.
+fn lock_vault_key(vault: &Vault) -> TestResult {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(vault.lock_vault_key());
+    Ok(())
 }
 
 /// A sealed file of `vault`, and the owner's not a secret on it.
@@ -236,12 +246,22 @@ fn a_carried_ruling_serves_the_file_where_it_arrived_with_no_mark() -> TestResul
         masked_read(&vault, &id)?.is_err(),
         "FIXTURE: bytes with no mark that the scan reads a key in are withheld"
     );
+    assert_eq!(
+        served_masked_file_bytes(&vault, &body)?,
+        None,
+        "FIXTURE: a door that answers with an optional file serves none of them"
+    );
 
     vault.run_pending_owner_work(|| true)?;
     assert_eq!(
         masked_read(&vault, &id)?,
-        Ok(body),
+        Ok(body.clone()),
         "the owner's ruling, carried, serves the file as written there too"
+    );
+    assert_eq!(
+        served_masked_file_bytes(&vault, &body)?,
+        Some(body),
+        "a door that answers with an optional file serves it by the carried ruling too"
     );
     Ok(())
 }
@@ -295,10 +315,7 @@ fn a_ruling_while_the_vault_key_is_locked_stands_and_is_carried_once_at_unlock()
     let (_dir, vault, owner) = open_vault()?;
     let (id, body) = put_sealed_file(&vault)?;
     let card = seal_card(&vault, &owner, &id)?;
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?
-        .block_on(vault.lock_vault_key());
+    lock_vault_key(&vault)?;
 
     vault.rule_found_key_not_a_secret(&owner, ActSurface::ThisInstall, &card.handle)?;
     assert_eq!(
@@ -328,5 +345,31 @@ fn a_ruling_while_the_vault_key_is_locked_stands_and_is_carried_once_at_unlock()
         1,
         "the ruling is carried once"
     );
+    Ok(())
+}
+
+#[test]
+fn a_seal_put_while_the_vault_key_is_locked_after_the_ruling_arrived_is_settled_after_unlock()
+-> TestResult {
+    let (_dir, vault, owner) = open_vault()?;
+    let (id, body) = ruled_file(&vault, &owner)?;
+    as_other_install(&vault, id, &body)?;
+    vault.run_pending_owner_work(|| true)?;
+    lock_vault_key(&vault)?;
+    let again = EntityId::now();
+    put_asset(&vault, &again, &body)?;
+
+    vault.unlock_vault_key()?;
+    assert_eq!(
+        notice_cards(&vault, &owner, &again, true)?.len(),
+        1,
+        "FIXTURE: with the screen key locked, the door tests no digest and seals the bytes"
+    );
+    vault.run_pending_owner_work(|| true)?;
+    assert!(
+        notice_cards(&vault, &owner, &again, true)?.is_empty(),
+        "the first drain after the unlock settles that seal: no open notice is left"
+    );
+    assert_eq!(masked_read(&vault, &again)?, Ok(body));
     Ok(())
 }

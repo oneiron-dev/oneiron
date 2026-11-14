@@ -81,7 +81,8 @@ impl Vault {
     /// secret is read outside every transaction, and only when a request's
     /// kind reads it: with no keystore, slot or secret here each such
     /// request stays pending, and nothing is taken over. A custody revoke,
-    /// a rewrap with no input, or an export secret reads none.
+    /// a rewrap with no input, an export secret or a sealed-file ruling
+    /// reads none.
     ///
     /// Each request is read again and rechecked in its transaction: its
     /// world is live, its owner still a live vault owner, its target's

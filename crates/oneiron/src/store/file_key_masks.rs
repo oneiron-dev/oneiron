@@ -237,14 +237,21 @@ pub(crate) fn forget_masked_file_in_txn(
     Ok(())
 }
 
-/// Whether the owner ruled the seal of the file `hash` names no secret
-/// ([`clear_file_seal_in_txn`]).
-pub(crate) fn file_seal_ruled_in_txn(
-    store: &impl SideTableDbs,
+/// Whether the owner ruled no secret the seal of the file whose BLAKE3 is
+/// `hash`: as its mark here holds it ([`clear_file_seal_in_txn`]), or,
+/// where this install holds no mark of it, as a ruling his act carried
+/// from another install holds it
+/// ([`crate::secret_custody::carried_file_ruling_holds_in_txn`]): the rule
+/// [`sighted_bytes_in_txn`] serves by.
+fn file_seal_ruled_or_carried_in_txn(
+    store: &Store,
     txn: &RoTxn<'_>,
     hash: &[u8; 32],
 ) -> Result<bool> {
-    Ok(masked_file_in_txn(store, txn, hash)?.is_some_and(|file| file.ruled_no_secret))
+    match masked_file_in_txn(store, txn, hash)? {
+        Some(file) => Ok(file.ruled_no_secret),
+        None => crate::secret_custody::carried_file_ruling_holds_in_txn(store, txn, hash),
+    }
 }
 
 /// `bytes`, read from the store, as `sight` reads them. A file the write
@@ -318,8 +325,10 @@ pub(crate) fn served_bytes_in_txn(
         Err(error) => return Err(error),
     };
     // A file whose seal the owner ruled no secret is served as its marks
-    // leave it: the hit the door sealed it for is no secret.
-    if !file_seal_ruled_in_txn(store, txn, &hash)?
+    // leave it: the hit the door sealed it for is no secret. Where this
+    // install holds no mark, the ruling his act carried says so, as it
+    // served the bytes whole above (REVIEW-7912 F1).
+    if !file_seal_ruled_or_carried_in_txn(store, txn, &hash)?
         && crate::batch::secret_scan::scan_file_content("", &served).is_some()
     {
         return Ok(None);

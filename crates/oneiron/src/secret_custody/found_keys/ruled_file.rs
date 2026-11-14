@@ -36,7 +36,8 @@ use crate::authority::{
     ActBy, ActSurface, FILE_RULING_SEEN, FileRulingWork, OwnerAct, OwnerWorkBody, OwnerWorkOutcome,
 };
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
+use crate::secret_custody::masked_files::masked_file_in_txn;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::vault::Vault;
@@ -78,6 +79,19 @@ pub(super) fn ruled_file_digest(key: &RuledScreenKey, hash: &[u8; 32]) -> [u8; 3
     keyed.extend_from_slice(RULED_FILE_DOMAIN);
     keyed.extend_from_slice(hash);
     key.digest(&keyed)
+}
+
+/// Whether the mark of the file whose BLAKE3 is `hash` places a key the
+/// write door found in it, in its bytes or a member's. Another install
+/// holds no mark that says where such a key sits, so a ruling of the file
+/// stays on this install (FIX SEALED-FILE-RULING-MIXED-FILE-LOCAL).
+pub(super) fn mark_places_key_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    hash: &[u8; 32],
+) -> Result<bool> {
+    Ok(masked_file_in_txn(store, txn, hash)?
+        .is_some_and(|file| !file.keys.is_empty() || !file.members.is_empty()))
 }
 
 /// Whether a carried sealed-file ruling holds the file whose BLAKE3 is
@@ -145,9 +159,12 @@ impl Vault {
     /// `txn`, as its owner's own act: the request and its enacted result,
     /// signed by this install, which executes it. The owed row goes with
     /// the carry, so the ruling is carried once; it goes too when the fold
-    /// holds the ruling already, or when its owner is no longer a live
-    /// vault owner. `false`, still owed, while this install holds no screen
-    /// key or cannot carry an act now.
+    /// holds the ruling already, when its owner is no longer a live vault
+    /// owner, or when the file's mark here places a key by now (a put of
+    /// the same bytes marked a value custody learned since the ruling),
+    /// which keeps the ruling on this install (REVIEW-7912 F3). `false`,
+    /// still owed, while this install holds no screen key or cannot carry
+    /// an act now.
     pub(super) fn carry_owed_file_ruling_in_txn(
         &self,
         txn: &mut RwTxn<'_>,
@@ -156,6 +173,10 @@ impl Vault {
         let Some(owed) = OWED.get(&self.store, txn, hash)? else {
             return Ok(false);
         };
+        if mark_places_key_in_txn(&self.store, txn, hash)? {
+            OWED.delete(&self.store, txn, hash)?;
+            return Ok(false);
+        }
         let Some(key) = self.store.ruled_screen.get() else {
             return Ok(false);
         };
@@ -181,16 +202,65 @@ impl Vault {
             answer: None,
         };
         let receipt = self.record_owner_work_with_act_in_txn(txn, act, work)?;
-        if let (Some(request), Some(executor)) = (receipt.request_entry(), receipt.executor) {
-            self.append_owner_work_result_in_txn(
-                txn,
-                request,
-                executor,
-                OwnerWorkOutcome::Enacted { detail: None },
-            )?;
-        }
+        // The carrier executes its own ruling: a request with no executor
+        // is refused with its transaction, so the ruling stays owed
+        // (REVIEW-7912 F6).
+        let (Some(request), Some(executor)) = (receipt.request_entry(), receipt.executor) else {
+            return Err(Error::InvariantViolation(
+                "a carried sealed-file ruling names no executor",
+            ));
+        };
+        self.append_owner_work_result_in_txn(
+            txn,
+            request,
+            executor,
+            OwnerWorkOutcome::Enacted { detail: None },
+        )?;
         OWED.delete(&self.store, txn, hash)?;
         Ok(true)
+    }
+
+    /// What the sealed-file rulings wait on the vault data key for, done as
+    /// this install holds it again, by any unlock: each ruled file's seals
+    /// are due again (a put while the key was locked tested no digest, so
+    /// it sealed bytes a ruling names: REVIEW-7912 F2), and each ruling
+    /// owed is carried.
+    pub(crate) fn resume_file_rulings_at_unlock(&self) {
+        if let Err(error) = self.unsettle_ruled_file_seals() {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "the ruled files' seals were not left due on this install"
+            );
+        }
+        self.carry_owed_file_rulings();
+    }
+
+    /// Leaves the seals of each ruled file this install settled due again,
+    /// so the next drain that holds the screen key settles a seal a put
+    /// made while the key was locked, in one writer transaction; none while
+    /// no ruled file's seals were settled.
+    fn unsettle_ruled_file_seals(&self) -> Result<()> {
+        let settled: Vec<[u8; 32]> = {
+            let txn = self.store.env.read_txn()?;
+            RULED
+                .scan(&self.store, &txn)?
+                .into_iter()
+                .filter(|(_, held)| held.seals_settled)
+                .map(|(digest, _)| digest)
+                .collect()
+        };
+        if settled.is_empty() {
+            return Ok(());
+        }
+        self.with_write_txn(|txn| {
+            let due = RuledFile {
+                seals_settled: false,
+            };
+            for digest in &settled {
+                RULED.put(&self.store, txn, digest, &due)?;
+            }
+            Ok(())
+        })
     }
 
     /// Carries each sealed-file ruling this install owes the owner's other
