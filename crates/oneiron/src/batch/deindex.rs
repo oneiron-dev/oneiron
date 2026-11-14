@@ -386,6 +386,7 @@ pub(crate) fn drop_seeded_actor_row(
     crate::access_grant::reindex_companion_grant(store, wtxn, id, None)?;
     crate::store::identity_hints::reindex_identity_hints(store, wtxn, id, None)?;
     crate::ports::reindex_named_entities(store, wtxn, id, None)?;
+    crate::authority::reindex_mesh_machine_endpoint(store, wtxn, id, None)?;
     store.port_remove_entity_row(wtxn, id)?;
     Ok(())
 }

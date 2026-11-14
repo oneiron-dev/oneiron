@@ -98,6 +98,7 @@ pub(super) fn stage_session_delete(
     crate::access_grant::reindex_companion_grant(view, wtxn, id, None)?;
     crate::store::identity_hints::reindex_identity_hints(view, wtxn, id, None)?;
     crate::ports::reindex_named_entities(view, wtxn, id, None)?;
+    crate::authority::reindex_mesh_machine_endpoint(view, wtxn, id, None)?;
     crate::store::text_index::deindex_text(view, wtxn, id)?;
     crate::vault::entity_revision::remove_entity_revisions(view, wtxn, id)?;
     super::delete_from_phonetic_postings(view, wtxn, id)?;
