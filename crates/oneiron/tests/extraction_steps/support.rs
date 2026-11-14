@@ -63,9 +63,7 @@ pub(crate) fn invoke_bound_step(
     binding: &DreamerAttemptBinding,
     request: Value,
 ) -> MemoryResult<Value> {
-    binding
-        .invoke(AI_STEPS_SUBMIT_VERB, request, None)
-        .map(|answer| answer["value"].clone())
+    binding.invoke(AI_STEPS_SUBMIT_VERB, request, None)
 }
 
 /// Reads one bound extraction step receipt through `binding` for `step_ref`.
@@ -73,9 +71,7 @@ pub(crate) fn invoke_bound_step_receipt(
     binding: &DreamerAttemptBinding,
     step_ref: &str,
 ) -> MemoryResult<Value> {
-    binding
-        .invoke(AI_STEPS_RECEIPT_VERB, json!({"step_key": step_ref}), None)
-        .map(|answer| answer["value"].clone())
+    binding.invoke(AI_STEPS_RECEIPT_VERB, json!({"step_key": step_ref}), None)
 }
 
 /// Binds `admitted` in `vault` and returns the live extraction binding.
