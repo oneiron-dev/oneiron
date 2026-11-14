@@ -151,6 +151,16 @@ fn a_sealed_file_ruling_is_the_owners_own_on_a_zero_seen_by_its_carrier() {
         "a person's act never rules a sealed file"
     );
 
+    let mut by_agent = op.clone();
+    let act = entry_mut(&mut by_agent, "act");
+    *entry_mut(act, "by") = Value::from("agent");
+    *entry_mut(act, "agent") = Value::from(EntityId::now().to_hex());
+    *entry_mut(act, "grant") = Value::from(EntityId::now().to_hex());
+    assert!(
+        decode_op(&by_agent).is_err(),
+        "an agent's act never rules a sealed file, whatever its Grant names"
+    );
+
     let mut seen = op.clone();
     *entry_mut(entry_mut(&mut seen, "act"), "seen") = Value::Binary(vec![5; 32]);
     assert!(decode_op(&seen).is_err(), "a ruling's seen is zero");
