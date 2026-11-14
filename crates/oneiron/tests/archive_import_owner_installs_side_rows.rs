@@ -21,6 +21,11 @@
 //! * `restored_customization_events_keep_their_keys_and_the_next_event_follows_them`:
 //!   two source customization events restore with their sequences, and the
 //!   next event the destination owner writes follows with sequence three.
+//! * `an_inert_copy_never_displaces_the_source_live_setting`: a middle vault
+//!   holds its own backup choice live and, after an owner import, an older
+//!   choice as an inert copy whose tuple files first in its archive. The
+//!   owner's restore of that archive into a fresh vault installs the live
+//!   choice and keeps the copy inert (REVIEW-7771 round 1).
 //!
 //! New report counts are read through `serde_json::to_value` of the SIDE-1
 //! summary, so this file compiles on df2ecf9d4376; an absent field fails its
@@ -495,5 +500,117 @@ fn restored_customization_events_keep_their_keys_and_the_next_event_follows_them
     assert!(
         all[0] != all[1] && all[1] != all[2] && all[0] != all[2],
         "the three events are distinct: {all:?}"
+    );
+}
+
+/// The physical key the archive files a retained tuple under, as
+/// `retained_side_row_key` derives it: BLAKE3 over the domain and the
+/// length-framed table name, source key and source value hash.
+fn retained_tuple_key((table, source_key, source_value): &(String, Vec<u8>, Vec<u8>)) -> [u8; 32] {
+    let value_hash = blake3::hash(source_value);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron.archive.retained_side_row.v1");
+    for part in [
+        table.as_bytes(),
+        source_key.as_slice(),
+        value_hash.as_bytes().as_slice(),
+    ] {
+        hasher.update(&(part.len() as u64).to_le_bytes());
+        hasher.update(part);
+    }
+    *hasher.finalize().as_bytes()
+}
+
+/// The one BACKUP_POLICY tuple of `vault`'s whole archive.
+fn backup_tuple(vault: &oneiron::Vault) -> (String, Vec<u8>, Vec<u8>) {
+    let rows = rows_for(&retained_rows(&export_whole(vault)), "BACKUP_POLICY");
+    assert_eq!(
+        rows.len(),
+        1,
+        "the archive holds one backup tuple: {rows:?}"
+    );
+    rows[0].clone()
+}
+
+#[test]
+fn an_inert_copy_never_displaces_the_source_live_setting() {
+    // The first vault stores the live choice once to read its tuple, then
+    // the first older choice whose tuple files before it.
+    let live = dest_backup_policy();
+    let (_first_dir, first) = open_source_vault();
+    let first_owner = owner_proof(&first);
+    first
+        .set_backup_policy(&first_owner, live)
+        .expect("the first owner stores the live choice");
+    let live_tuple = backup_tuple(&first);
+    let mut older = None;
+    'search: for every_hours in [6, 24] {
+        for keep in 1..=10 {
+            let choice = BackupPolicy {
+                enabled: true,
+                every_hours,
+                keep,
+            };
+            first
+                .set_backup_policy(&first_owner, choice)
+                .expect("the first owner stores an older choice");
+            let tuple = backup_tuple(&first);
+            if retained_tuple_key(&tuple) < retained_tuple_key(&live_tuple) {
+                older = Some((choice, tuple));
+                break 'search;
+            }
+        }
+    }
+    let (older, older_tuple) = older.expect("one of twenty choices files before the live one");
+    let first_archive = export_whole(&first);
+
+    let (_middle_dir, middle) = open_later_vault();
+    let middle_owner = owner_proof(&middle);
+    middle
+        .set_backup_policy(&middle_owner, live)
+        .expect("the middle owner stores the live choice");
+    middle
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&first_archive), &middle_owner)
+        .expect("the middle owner import succeeds");
+    assert_eq!(
+        middle
+            .backup_policy()
+            .expect("read the middle backup choice"),
+        Some(live),
+        "the middle vault keeps its own choice live"
+    );
+    let middle_archive = export_whole(&middle);
+    let middle_tuples = rows_for(&retained_rows(&middle_archive), "BACKUP_POLICY");
+    assert!(
+        middle_tuples.len() == 2
+            && middle_tuples.contains(&live_tuple)
+            && middle_tuples.contains(&older_tuple),
+        "the middle archive holds the live tuple and the older inert copy: {middle_tuples:?}"
+    );
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&middle_archive), &dest_owner)
+        .expect("the owner import succeeds");
+    assert_eq!(
+        dest.backup_policy()
+            .expect("read the destination backup choice"),
+        Some(live),
+        "the source's live choice installs, not the older inert copy {older:?}"
+    );
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "BACKUP_POLICY", "installed_rows"),
+        Some(1),
+        "the owner import installs one backup row: {summary}"
+    );
+    let dest_tuples = rows_for(&retained_rows(&export_whole(&dest)), "BACKUP_POLICY");
+    assert!(
+        dest_tuples.len() == 2
+            && dest_tuples.contains(&live_tuple)
+            && dest_tuples.contains(&older_tuple),
+        "the destination archive holds the live tuple and keeps the older copy inert: {dest_tuples:?}"
     );
 }
