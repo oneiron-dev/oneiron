@@ -118,8 +118,10 @@ fn create_cohorts(vault: &Vault) -> Cohorts {
     let owner = id(0x71, 0);
     put_person(vault, owner);
     let facade = vault.memory(owner, EdgeActorClass::Human);
+    // A membership commit enrolls only into an Active campaign, so each
+    // campaign is launched once it exists.
     let campaign = |name: &str| {
-        facade
+        let created = facade
             .campaign_create(
                 &CreateCampaignRequest {
                     schema_version: CAMPAIGN_SCHEMA_VERSION,
@@ -130,7 +132,14 @@ fn create_cohorts(vault: &Vault) -> Cohorts {
                 },
                 10,
             )
-            .expect("create campaign")
+            .expect("create campaign");
+        facade
+            .campaign_launch(
+                created.campaign_ref,
+                created.definition.definition_version,
+                10,
+            )
+            .expect("launch campaign")
             .campaign_ref
     };
     let campaigns = [campaign("first cohort"), campaign("second cohort")];
