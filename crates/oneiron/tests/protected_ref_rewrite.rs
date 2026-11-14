@@ -62,6 +62,10 @@ const PROTECTED_REF_ASK_QUEUE: &str = "origin.protected_ref_rewrite_or_delete";
 /// Git's own refusal to delete the branch a repository's HEAD names.
 const GIT_DELETE_CURRENT_REFUSAL: &str = "deletion of the current branch prohibited";
 
+/// A symbolic ref whose referent is `main`: git moves or deletes `main` for
+/// any push to it.
+const MAIN_ALIAS_REF: &str = "refs/heads/main-alias";
+
 // ---------------------------------------------------------------------------
 // git helpers
 // ---------------------------------------------------------------------------
@@ -351,6 +355,22 @@ impl TestOrigin {
             &["clone", "--branch=main", "--", &self.url(), "clone"],
         );
         work.join("clone")
+    }
+
+    /// Makes [`MAIN_ALIAS_REF`] a symbolic ref to `main`, as a repository may
+    /// hold one: the owner publishes it at `main`'s tip with a real push, so
+    /// the origin advertises it, then the served store's ref turns symbolic.
+    fn alias_main(&self, source: &Path) {
+        self.push_as_owner();
+        git(
+            source,
+            &["push", &self.url(), &format!("main:{MAIN_ALIAS_REF}")],
+        );
+        git(
+            &self.repo_dir,
+            &["symbolic-ref", MAIN_ALIAS_REF, "refs/heads/main"],
+        );
+        self.reports.lock().expect("reports lock").clear();
     }
 }
 
@@ -691,6 +711,101 @@ fn a_grant_holders_delete_of_the_default_branch_is_refused_and_asks_the_owner() 
         "a delete has no new tip: {state}"
     );
     assert_eq!(state["pusher"], origin.holder.to_hex().as_str());
+}
+
+/// Git moves the ref a symbolic ref names, never the symbolic ref: a Grant
+/// holder's force-push through an alias of the default branch is a rewrite of
+/// the default branch, refused and asked about as one.
+#[test]
+fn a_grant_holders_force_push_through_a_symbolic_ref_to_the_default_branch_is_refused() {
+    let source = tempfile::tempdir().expect("source tempdir");
+    let seed = seed_source_repo(source.path(), "base\n");
+    let origin = TestOrigin::start(source.path());
+    origin.alias_main(source.path());
+    let work = tempfile::tempdir().expect("work tempdir");
+    let clone = origin.clone_main(work.path());
+
+    let rewritten = rewrite_tip(&clone, "history rewritten");
+    origin.push_as_holder();
+    let refspec = format!("main:{MAIN_ALIAS_REF}");
+    let push = git_output(&clone, &["push", "--force", "origin", &refspec]);
+
+    assert!(
+        !push.status.success(),
+        "a force-push through the alias is refused"
+    );
+    let refusals = origin.door_refusals();
+    assert!(
+        refusals.last().is_some_and(|reason| {
+            reason.contains(MAIN_ALIAS_REF) && reason.contains(PROTECTED_REF_REWRITE_OR_DELETE)
+        }),
+        "the door refused the rewrite with its typed reason: {refusals:?}"
+    );
+    assert_eq!(
+        origin.origin_ref("refs/heads/main").as_deref(),
+        Some(seed.as_str()),
+        "main still names the owner's commit"
+    );
+    assert!(
+        !origin.object_present(&rewritten),
+        "refused pre-move: the rewritten commit never left quarantine"
+    );
+    assert!(origin.landed().is_empty(), "nothing moved, nothing landed");
+    let asks = origin.protected_ref_asks();
+    assert_eq!(asks.len(), 1, "the door asked the owner once: {asks:?}");
+    let state = asks[0]
+        .pack_state
+        .as_ref()
+        .expect("the question names the move");
+    assert_eq!(state["ref"], "refs/heads/main", "the move is main's");
+    assert_eq!(state["old_oid"], seed.as_str());
+    assert_eq!(state["new_oid"], rewritten.as_str());
+}
+
+/// A delete through an alias of the default branch deletes the default
+/// branch, past git's own refusal, which looks only at the name pushed: the
+/// door refuses it and asks the owner as for a delete of `main`.
+#[test]
+fn a_grant_holders_delete_through_a_symbolic_ref_to_the_default_branch_is_refused() {
+    let source = tempfile::tempdir().expect("source tempdir");
+    let seed = seed_source_repo(source.path(), "base\n");
+    let origin = TestOrigin::start(source.path());
+    origin.alias_main(source.path());
+    let work = tempfile::tempdir().expect("work tempdir");
+    let clone = origin.clone_main(work.path());
+
+    origin.push_as_holder();
+    let push = git_output(&clone, &["push", "origin", "--delete", MAIN_ALIAS_REF]);
+
+    assert!(
+        !push.status.success(),
+        "a delete through the alias is refused"
+    );
+    let refusals = origin.door_refusals();
+    assert!(
+        refusals.last().is_some_and(|reason| {
+            reason.contains(MAIN_ALIAS_REF) && reason.contains(PROTECTED_REF_REWRITE_OR_DELETE)
+        }),
+        "the door refused the delete with its typed reason: {refusals:?}"
+    );
+    assert_eq!(
+        origin.origin_ref("refs/heads/main").as_deref(),
+        Some(seed.as_str()),
+        "main is still there"
+    );
+    assert!(origin.landed().is_empty(), "nothing moved, nothing landed");
+    let asks = origin.protected_ref_asks();
+    assert_eq!(asks.len(), 1, "the door asked the owner once: {asks:?}");
+    let state = asks[0]
+        .pack_state
+        .as_ref()
+        .expect("the question names the delete");
+    assert_eq!(state["ref"], "refs/heads/main", "the delete is main's");
+    assert_eq!(state["old_oid"], seed.as_str());
+    assert!(
+        state["new_oid"].is_null(),
+        "a delete has no new tip: {state}"
+    );
 }
 
 /// The owner's leave for a delete passes the door and is spent with the
