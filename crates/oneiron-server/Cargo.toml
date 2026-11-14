@@ -313,6 +313,12 @@ name = "note_session_bind_reply"
 path = "tests/note_session_bind_reply.rs"
 required-features = ["oneiron/test-support"]
 
+# The found-key writer's served answers root their server on a `MemoryKeystore` too.
+[[test]]
+name = "found_key_writer_route"
+path = "tests/found_key_writer_route.rs"
+required-features = ["oneiron/test-support"]
+
 # DEL-2's core HTTP delete door roots its server on a `MemoryKeystore` too.
 [[test]]
 name = "delete_authority_served_door"
