@@ -109,6 +109,7 @@ pub use stream::{
     PendingDiaryReview, PendingRoomWake, RoomWakeRead, RouteObservation, StreamConnectionId,
     StreamConnectionState, SubscriptionError, SubscriptionReceipt, SubscriptionScope, WakeEnvelope,
 };
+pub use stream::{HANDED_WAKES_CAP, WakeDelivery};
 mod layout;
 mod layout_store;
 // FIX [LIBTEST-QUARANTINE-CONTEXT-BOARD-SURFACES-TESTS]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate

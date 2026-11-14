@@ -12,11 +12,16 @@ use super::frames::{
     BoardRenderMode, BoardStreamFrame, CarrierCoalesceBuffer, CoalesceOutcome, FrameEnqueueOutcome,
     FrameKind, StreamConnectionId,
 };
-use super::wake::WakeEnvelope;
+use super::wake::{WakeDelivery, WakeEnvelope};
 
 /// Pending wakes of one kind (TASK, review or room) one connection holds
 /// before the oldest of that kind is dropped.
 const PENDING_WAKES_CAP: usize = 256;
+
+/// Envelope ids one connection remembers having handed over, each with its
+/// acknowledgement (RC99): as many as its three kinds of pending wakes hold,
+/// the oldest forgotten first.
+pub const HANDED_WAKES_CAP: usize = 3 * PENDING_WAKES_CAP;
 
 #[derive(Debug)]
 pub struct StreamConnectionState {
@@ -27,9 +32,26 @@ pub struct StreamConnectionState {
     pub last_touched_at: u64,
     pub(super) carrier: CarrierCoalesceBuffer,
     pub(super) wakes: VecDeque<WakeEnvelope>,
+    /// The envelope ids drained to the host, oldest first, each with whether
+    /// the host acknowledged it. Memory only, at most [`HANDED_WAKES_CAP`].
+    pub(super) handed: VecDeque<(String, WakeDelivery)>,
 }
 
 impl StreamConnectionState {
+    /// Records envelope id `event_ref` as handed over. An id already recorded
+    /// keeps its state, because one id names one occurrence. Past
+    /// [`HANDED_WAKES_CAP`] ids the oldest is forgotten.
+    pub(super) fn record_handed(&mut self, event_ref: &str) {
+        if self.handed.iter().any(|(id, _)| id == event_ref) {
+            return;
+        }
+        if self.handed.len() >= HANDED_WAKES_CAP {
+            self.handed.pop_front();
+        }
+        self.handed
+            .push_back((event_ref.to_owned(), WakeDelivery::Handed));
+    }
+
     /// Queues `wake` behind the others. Wakes wait for a host-side adapter
     /// that may never come: past [`PENDING_WAKES_CAP`] wakes of its own kind
     /// the oldest of that kind goes first, so no kind evicts another's wake:
@@ -97,6 +119,7 @@ impl BoardStreamRegistry {
                 last_touched_at: now,
                 carrier: Default::default(),
                 wakes: VecDeque::new(),
+                handed: VecDeque::new(),
             },
         );
         self.attached.notify_one();
