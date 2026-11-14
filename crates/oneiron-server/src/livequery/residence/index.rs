@@ -29,7 +29,8 @@ pub(super) fn index(
         return Err(AppError::invalid_params());
     }
     let page_limit = input.limit.min(budgets.index_page_limit);
-    let (window, selector, doc) = selected_window(server, auth, lane, &input.window, &input.selector)?;
+    let (window, selector, doc) =
+        selected_window(server, auth, lane, &input.window, &input.selector)?;
     let admission = admitted(server, auth, peer, lane, &selector)?;
     let destination = admission.destination();
     let current_vv = doc.oplog_vv().encode();
@@ -467,7 +468,8 @@ fn touch_target<'v>(
     input: &TouchRequest,
 ) -> Result<TouchTarget<'v>, AppError> {
     let id = EntityId::from_hex(&input.entity_id).map_err(|_| AppError::invalid_params())?;
-    let (window, selector, doc) = selected_window(server, auth, lane, &input.window, &input.selector)?;
+    let (window, selector, doc) =
+        selected_window(server, auth, lane, &input.window, &input.selector)?;
     // A stored grant constrains the selector; the actor's live scoped-read
     // floor and the destination machine's world read settings must ALSO
     // admit the exact target. Either denial looks missing.
@@ -620,7 +622,8 @@ pub(super) fn promote(
     let id = oneiron::sync::selector::RepoCopyAliases::read(&server.vault)
         .map_err(|_| AppError::internal_server_error("item aliases unavailable"))?
         .stored(&id);
-    let (window, selector, doc) = selected_window(server, auth, lane, &input.window, &input.selector)?;
+    let (window, selector, doc) =
+        selected_window(server, auth, lane, &input.window, &input.selector)?;
     let admission = admitted(server, auth, peer, lane, &selector)?;
     if !admission
         .allows_item(id)
@@ -695,7 +698,8 @@ pub(super) fn window_vv(
 ) -> Result<Answer, AppError> {
     let input: WindowVvRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
-    let (window, selector, doc) = selected_window(server, auth, lane, &input.window, &input.selector)?;
+    let (window, selector, doc) =
+        selected_window(server, auth, lane, &input.window, &input.selector)?;
     let _admitted = admitted(server, auth, peer, lane, &selector)?;
     Ok((
         json!({

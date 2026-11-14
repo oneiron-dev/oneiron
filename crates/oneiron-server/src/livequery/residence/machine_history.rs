@@ -16,8 +16,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{Answer, AppError, CoreAuth, admitted, bound_selector};
-use crate::server::SyncServer;
 use crate::handler::selector_scope::SelectorLane;
+use crate::server::SyncServer;
 
 /// The target's id in hex and the cursor a page before returned, if any.
 #[derive(Deserialize)]

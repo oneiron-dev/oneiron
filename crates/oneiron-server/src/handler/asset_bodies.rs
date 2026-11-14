@@ -270,7 +270,7 @@ fn followed_windows(server: &SyncServer, state: &ConnState) -> Followed {
                     state.selector_lane.grant_scope(),
                     selector,
                 )
-                    .is_ok()
+                .is_ok()
             });
             // Rebuild held copies under today's grant, pact ceiling and
             // peer world settings. Reauthorizing a selector alone does not

@@ -31,5 +31,14 @@ pub(super) fn search(
     {
         return Err(AppError::invalid_params());
     }
-    pages::search_pages(server, auth, peer, lane, input, budgets, attribution, off_carrier)
+    pages::search_pages(
+        server,
+        auth,
+        peer,
+        lane,
+        input,
+        budgets,
+        attribution,
+        off_carrier,
+    )
 }

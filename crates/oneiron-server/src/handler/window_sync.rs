@@ -842,9 +842,14 @@ pub(super) fn authorize_promoted_window(
     let scope = lane.scope_for(selector).map_err(map_selector_filter_err)?;
     // One admission for the machine this socket proved: the credential, the
     // grant and every carried row's world for that machine (OF-534 G6).
-    let admission =
-        oneiron::sync::residence::ResidenceAdmission::load(&server.vault, proof, peer, scope, selector)
-            .map_err(map_selector_filter_err)?;
+    let admission = oneiron::sync::residence::ResidenceAdmission::load(
+        &server.vault,
+        proof,
+        peer,
+        scope,
+        selector,
+    )
+    .map_err(map_selector_filter_err)?;
     match promotion_covers_full_window_for(
         &server.vault,
         source,

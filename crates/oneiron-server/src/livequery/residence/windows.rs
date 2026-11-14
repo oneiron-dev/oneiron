@@ -44,9 +44,10 @@ pub(super) fn windows(
     if input.limit == 0
         || input.months.is_empty()
         || input.months.len() > MAX_CATALOGUE_MONTHS
-        || input.months.iter().any(|month| {
-            month.len() != 7 || WindowKey::try_new(month.as_str()).is_none()
-        })
+        || input
+            .months
+            .iter()
+            .any(|month| month.len() != 7 || WindowKey::try_new(month.as_str()).is_none())
     {
         return Err(AppError::invalid_params());
     }
@@ -57,7 +58,9 @@ pub(super) fn windows(
     let mut candidates: Vec<WindowKey> = read_window_list(&server.root_doc)
         .into_iter()
         .filter(|key| {
-            key.as_str().get(..7).is_some_and(|month| months.contains(month))
+            key.as_str()
+                .get(..7)
+                .is_some_and(|month| months.contains(month))
                 && input
                     .after
                     .as_deref()

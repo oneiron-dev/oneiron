@@ -4,9 +4,7 @@ use std::ops::ControlFlow;
 
 use super::app_tier::require_bound_app_auth;
 use super::conn_state::{ConnState, WindowSyncMode};
-use super::window_sync::{
-    decode_and_authorize_selector_request, map_selector_filter_err,
-};
+use super::window_sync::{decode_and_authorize_selector_request, map_selector_filter_err};
 use crate::auth::CoreScope;
 use crate::protocol::{self, ProtocolError, window_sub_tags};
 use crate::server::SyncServer;
@@ -77,21 +75,10 @@ pub(super) async fn handle_selector_fetch(
         .scope_for(&decoded.selector)
         .map_err(map_selector_filter_err)?;
     let prepared = match retry {
-        Some(id) => replay_selector_fetch(
-            server.vault.as_ref(),
-            principal,
-            scope,
-            key,
-            &id,
-            request,
-        ),
-        None => prepare_selector_fetch(
-            server.vault.as_ref(),
-            principal,
-            scope,
-            key,
-            request,
-        ),
+        Some(id) => {
+            replay_selector_fetch(server.vault.as_ref(), principal, scope, key, &id, request)
+        }
+        None => prepare_selector_fetch(server.vault.as_ref(), principal, scope, key, request),
     }
     .map_err(map_selector_filter_err)?;
     if let FederationBurstDecision::Defer { request_id, .. } = prepared.decision {

@@ -100,8 +100,7 @@ pub(super) async fn handle_connection(
     else {
         return;
     };
-    if member.is_some()
-        && !super::super::super::member_lane::member_hello_admits(protocol_version)
+    if member.is_some() && !super::super::super::member_lane::member_hello_admits(protocol_version)
     {
         super::super::super::protocol_close::refuse_hello_version(
             &mut transport,
@@ -182,10 +181,9 @@ pub(super) async fn handle_connection(
     // lives (FIX 11785); the relay is the home's, so a peer's carries none
     // (FIX 4748). Nor does the residence RPC lane, which reads RPC frames
     // alone: a leaf-key frame sent there would end its next call.
-    let _leaf_key_socket = (!peer_served
-        && member.is_none()
-        && protocol::carries_leaf_keys(protocol_version))
-    .then(|| LeafKeySocket::register(&server, conn_id, machine, &direct_tx));
+    let _leaf_key_socket =
+        (!peer_served && member.is_none() && protocol::carries_leaf_keys(protocol_version))
+            .then(|| LeafKeySocket::register(&server, conn_id, machine, &direct_tx));
     // A machine of the owner's whose hello listed sealed world updates is
     // offered the home's queue of them (DEC-0005 fix 8); a member lane never.
     conn_state.sealed_world_updates =
@@ -745,54 +743,55 @@ pub(super) async fn handle_connection(
                     Err(refusal)
                 } else {
                     match msg {
-                    SyncMessage::Rpc(payload) => handle_app_message_with_connection(
-                        &server,
-                        &mut conn_state,
-                        protocol::TAG_RPC,
-                        &payload,
-                        &direct_tx,
-                        Some(&mut app_connection),
-                    )
-                    .map(|call| {
-                        if let Some(call) = call {
-                            match call {
-                                super::super::super::app_tier::VerbCall::Residence(call) => {
-                                    conn_state.residence_work.spawn(
-                                        call,
-                                        Arc::clone(&server),
-                                        direct_tx.clone(),
-                                    );
-                                }
-                                call => {
-                                    verb_calls
-                                        .spawn(call.answer(Arc::clone(&server), direct_tx.clone()));
+                        SyncMessage::Rpc(payload) => handle_app_message_with_connection(
+                            &server,
+                            &mut conn_state,
+                            protocol::TAG_RPC,
+                            &payload,
+                            &direct_tx,
+                            Some(&mut app_connection),
+                        )
+                        .map(|call| {
+                            if let Some(call) = call {
+                                match call {
+                                    super::super::super::app_tier::VerbCall::Residence(call) => {
+                                        conn_state.residence_work.spawn(
+                                            call,
+                                            Arc::clone(&server),
+                                            direct_tx.clone(),
+                                        );
+                                    }
+                                    call => {
+                                        verb_calls.spawn(
+                                            call.answer(Arc::clone(&server), direct_tx.clone()),
+                                        );
+                                    }
                                 }
                             }
-                        }
-                    }),
-                    SyncMessage::Sub(payload) => handle_app_message_with_connection(
-                        &server,
-                        &mut conn_state,
-                        protocol::TAG_SUB,
-                        &payload,
-                        &direct_tx,
-                        Some(&mut app_connection),
-                    )
-                    .map(drop),
-                    msg => match handle_sync_message(
-                        &server,
-                        conn_id,
-                        msg,
-                        &direct_tx,
-                        &mut conn_state,
-                        &gone,
-                    )
-                    .await
-                    {
-                        Ok(std::ops::ControlFlow::Break(())) => break,
-                        result => result.map(drop),
-                    },
-                }
+                        }),
+                        SyncMessage::Sub(payload) => handle_app_message_with_connection(
+                            &server,
+                            &mut conn_state,
+                            protocol::TAG_SUB,
+                            &payload,
+                            &direct_tx,
+                            Some(&mut app_connection),
+                        )
+                        .map(drop),
+                        msg => match handle_sync_message(
+                            &server,
+                            conn_id,
+                            msg,
+                            &direct_tx,
+                            &mut conn_state,
+                            &gone,
+                        )
+                        .await
+                        {
+                            Ok(std::ops::ControlFlow::Break(())) => break,
+                            result => result.map(drop),
+                        },
+                    }
                 };
                 if let Err(e) = handle_result {
                     super::super::dispatch_error::close_on(&mut transport, &server, conn_id, &e)

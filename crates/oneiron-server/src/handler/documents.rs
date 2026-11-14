@@ -1,7 +1,5 @@
 //! Per-entity selector admission and scope-filtered document delivery on the sync socket.
-use super::{
-    app_tier::require_bound_app_auth, conn_state::ConnState,
-};
+use super::{app_tier::require_bound_app_auth, conn_state::ConnState};
 use crate::auth::CoreScope;
 use crate::{protocol::ProtocolError, server::SyncServer};
 use oneiron::EntityId;

@@ -466,13 +466,19 @@ pub(super) fn run(
         }
         let budgets = operation_budgets(server)?;
         match request.method.as_str() {
-            "residence.index" => {
-                index(server, auth, peer, lane, request.params, index_cache, budgets)
-            },
+            "residence.index" => index(
+                server,
+                auth,
+                peer,
+                lane,
+                request.params,
+                index_cache,
+                budgets,
+            ),
             "residence.touch" => touch(server, auth, peer, lane, request.params, touch_stage),
             "residence.touch.part" => {
                 touch_part(server, auth, peer, lane, request.params, touch_stage)
-            },
+            }
             "residence.promote" => promote(server, auth, peer, lane, request.params),
             "residence.window.vv" => window_vv(server, auth, peer, lane, request.params),
             "residence.search" => search(

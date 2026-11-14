@@ -45,7 +45,14 @@ pub(super) fn media_vectors(
         if replica.space_id() != input.space {
             continue;
         }
-        if full_sources_match(server, lane.grant_scope(), input.id, &selector, &admission, replica.sources())? {
+        if full_sources_match(
+            server,
+            lane.grant_scope(),
+            input.id,
+            &selector,
+            &admission,
+            replica.sources(),
+        )? {
             selected.push(replica);
         }
     }
@@ -63,12 +70,18 @@ pub(super) fn media_vectors(
     let mut released = Vec::new();
     let mut rows = BTreeSet::new();
     for replica in selected {
-        if full_sources_match(server, lane.grant_scope(), input.id, &selector, &current, replica.sources())?
-            && server
-                .vault
-                .text_media_vector_replicas(&input.id, &input.space)
-                .map_err(unavailable)?
-                .contains(&replica)
+        if full_sources_match(
+            server,
+            lane.grant_scope(),
+            input.id,
+            &selector,
+            &current,
+            replica.sources(),
+        )? && server
+            .vault
+            .text_media_vector_replicas(&input.id, &input.space)
+            .map_err(unavailable)?
+            .contains(&replica)
         {
             rows.extend(replica.sources().iter().map(|(id, _)| *id));
             released.push(replica);
