@@ -10,9 +10,14 @@
 //!   names its own vault, which must be the one named; an owner's sign-in
 //!   names none, so the id the exporting surface gives is confirmed
 //!   against the vault the origin answers for.
+//! - `login` with no credential file signs in first, through the vault's
+//!   own OAuth server as a native app ([`super::hosted_sign_in`]), and
+//!   records that sign-in in OAuth mode, its vault id the one the origin
+//!   answers for.
 //! - `select` selects one recorded vault, or none.
 //! - `logout` forgets one recorded vault, or every one. It never deletes a
-//!   credential file: the surface that wrote it keeps it.
+//!   credential file another surface wrote: that surface keeps it. An OAuth
+//!   sign-in `login` made is revoked at the vault and its file removed.
 //! - `status` reads where the selection stands.
 //!
 //! Each prints the selection's state as one JSON line. It names credential
@@ -25,7 +30,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use super::hosted_selection::{self, HostedAuthMode, HostedVault, Selection};
-use super::recall;
+use super::{hosted_sign_in, recall};
 use crate::cli::{HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSelectArgs, McpAuthMode};
 use crate::commands::credential_file::PairedCredentialFile;
 
@@ -45,11 +50,21 @@ pub fn hosted(command: HostedCommand) -> anyhow::Result<()> {
 
 /// Records the vault `args` name once its origin admits the credential
 /// and, in owner mode, answers for the vault named, and selects it.
-/// Nothing is recorded when it does not.
+/// Nothing is recorded when it does not. In OAuth mode this signs in first
+/// and writes the sign-in beside the selection; a sign-in that is then not
+/// recorded is revoked and removed again.
 fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
     let mut selection = held()?;
     let origin = origin(&args.origin)?;
-    let (auth_mode, file, id) = match args.auth_mode {
+    // The file given names the mode when none is asked; no file signs in.
+    let mode = args.auth_mode.unwrap_or(if args.credential_file.is_some() {
+        McpAuthMode::Slip
+    } else if args.owner_upgrade_headers_file.is_some() {
+        McpAuthMode::Owner
+    } else {
+        McpAuthMode::OAuth
+    });
+    let (auth_mode, file, id) = match mode {
         McpAuthMode::Slip => {
             anyhow::ensure!(
                 args.owner_upgrade_headers_file.is_none(),
@@ -72,7 +87,7 @@ fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
                     file.display()
                 );
             }
-            (HostedAuthMode::Slip, file, own)
+            (HostedAuthMode::Slip, file.to_owned(), Some(own))
         }
         McpAuthMode::Owner => {
             anyhow::ensure!(
@@ -92,12 +107,54 @@ fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
                      issued this sign-in for"
                 )
             })?;
-            (HostedAuthMode::Owner, file, vault_id(named)?)
+            (
+                HostedAuthMode::Owner,
+                file.to_owned(),
+                Some(vault_id(named)?),
+            )
+        }
+        McpAuthMode::OAuth => {
+            anyhow::ensure!(
+                args.credential_file.is_none() && args.owner_upgrade_headers_file.is_none(),
+                "oauth mode signs in here and reads no credential file; drop --credential-file \
+                 and --owner-upgrade-headers-file, or pass the --auth-mode they belong to"
+            );
+            let named = args.vault_id.as_deref().map(vault_id).transpose()?;
+            let file = hosted_selection::oauth_sign_in_file(&origin).ok_or_else(|| {
+                anyhow::anyhow!("there is no per-user oneiron folder (HOME is not set)")
+            })?;
+            hosted_selection::create_user_dir_for(&file)?;
+            hosted_sign_in::sign_in(
+                &origin,
+                &file,
+                Duration::from_secs(args.sign_in_timeout_secs),
+            )?;
+            (HostedAuthMode::OAuth, file, named)
         }
     };
+    let recorded = record(args, &mut selection, origin, auth_mode, &file, id);
+    if recorded.is_err() && auth_mode == HostedAuthMode::OAuth {
+        // Nothing names this sign-in now: it goes, at the vault too.
+        let _ = hosted_sign_in::sign_out(&file);
+    }
+    recorded
+}
+
+/// Records the vault at `origin` reached by `file` in `auth_mode`, once
+/// the origin admits that credential and answers for the vault `id` names
+/// (or, signed in by OAuth with no id named, for the vault it answers), and
+/// selects it.
+fn record(
+    args: &HostedLoginArgs,
+    selection: &mut Selection,
+    origin: String,
+    auth_mode: HostedAuthMode,
+    file: &Path,
+    id: Option<String>,
+) -> anyhow::Result<()> {
     let mut vault = HostedVault {
         origin,
-        vault_id: id,
+        vault_id: id.clone().unwrap_or_default(),
         auth_mode,
         credential_file: std::path::absolute(file)
             .map_err(|error| anyhow::anyhow!("{}: {error}", file.display()))?,
@@ -115,27 +172,33 @@ fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
             );
         }
     };
-    // An owner's sign-in names no vault of its own, so the id the exporting
-    // surface gives is confirmed against the vault the origin answers for
+    // An owner's sign-in and an OAuth sign-in name no vault of their own, so
+    // the id given is confirmed against the vault the origin answers for
     // (FIX 11695): a named mismatch is reported and nothing is recorded, as a
     // slip's own mismatch is. A slip's admission already proves its vault.
-    if auth_mode == HostedAuthMode::Owner {
-        match answered.as_deref() {
-            Some(answer) if answer == vault.vault_id.as_str() => {}
-            Some(answer) => {
+    if auth_mode != HostedAuthMode::Slip {
+        match (answered.as_deref(), id.as_deref()) {
+            (Some(answer), Some(named)) if answer == named => {}
+            (Some(answer), None) => answer.clone_into(&mut vault.vault_id),
+            (Some(answer), Some(named)) => {
                 anyhow::bail!(
-                    "{} answers for vault {answer}, not {}; a credential goes to its own vault \
-                     alone, so nothing was recorded",
-                    vault.origin,
-                    vault.vault_id
+                    "{} answers for vault {answer}, not {named}; a credential goes to its own \
+                     vault alone, so nothing was recorded",
+                    vault.origin
                 );
             }
             // An origin that names no vault (not yet rooted) is recorded as
             // before, with the reason on one line: only a named mismatch
             // stops the login.
-            None => eprintln!(
-                "{} answered no vault id, so the vault {} it was told is recorded unconfirmed",
-                vault.origin, vault.vault_id
+            (None, Some(named)) => eprintln!(
+                "{} answered no vault id, so the vault {named} it was told is recorded \
+                 unconfirmed",
+                vault.origin
+            ),
+            (None, None) => anyhow::bail!(
+                "{} answered no vault id, so nothing was recorded; pass --vault-id with the \
+                 vault this origin serves",
+                vault.origin
             ),
         }
     }
@@ -145,7 +208,7 @@ fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
         .retain(|kept| kept.vault_id != vault.vault_id);
     selection.selected = Some(vault.vault_id.clone());
     selection.vaults.push(vault);
-    hosted_selection::publish(&selection)
+    hosted_selection::publish(selection)
 }
 
 /// Selects the recorded vault `args` names, or none.
@@ -158,19 +221,43 @@ fn select(args: &HostedSelectArgs) -> anyhow::Result<()> {
     hosted_selection::publish(&selection)
 }
 
-/// Forgets the recorded vault `args` names, or every one.
+/// Forgets the recorded vault `args` names, or every one, and then signs
+/// out of each OAuth sign-in among them.
 fn logout(args: &HostedLogoutArgs) -> anyhow::Result<()> {
     let Some(named) = &args.vault_id else {
         // Every sign-in goes, whatever the file held.
-        return hosted_selection::publish(&Selection::default());
+        let gone = hosted_selection::read()
+            .map(|held| held.vaults)
+            .unwrap_or_default();
+        hosted_selection::publish(&Selection::default())?;
+        sign_out(&gone);
+        return Ok(());
     };
     let mut selection = held()?;
     let id = recorded(&selection, named)?;
-    selection.vaults.retain(|vault| vault.vault_id != id);
+    let (gone, kept): (Vec<HostedVault>, Vec<HostedVault>) = std::mem::take(&mut selection.vaults)
+        .into_iter()
+        .partition(|vault| vault.vault_id == id);
+    selection.vaults = kept;
     if selection.selected.as_deref() == Some(id.as_str()) {
         selection.selected = None;
     }
-    hosted_selection::publish(&selection)
+    hosted_selection::publish(&selection)?;
+    sign_out(&gone);
+    Ok(())
+}
+
+/// Revokes and removes each OAuth sign-in `login` made among `vaults`. A
+/// credential file another surface wrote stays: that surface keeps it.
+fn sign_out(vaults: &[HostedVault]) {
+    for vault in vaults
+        .iter()
+        .filter(|vault| vault.auth_mode == HostedAuthMode::OAuth)
+    {
+        if let Err(error) = hosted_sign_in::sign_out(&vault.credential_file) {
+            let _ = writeln!(std::io::stderr().lock(), "{error}");
+        }
+    }
 }
 
 /// Where the selection stands, as one JSON object: its state, the selected

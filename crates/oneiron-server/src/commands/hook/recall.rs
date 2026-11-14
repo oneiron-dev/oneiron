@@ -31,6 +31,9 @@ pub(super) enum RecallAuth<'a> {
     /// The vault's owner, by the upgrade headers the surface he signed in
     /// on wrote (`oneiron mcp --auth-mode owner`).
     Owner(&'a Path),
+    /// An OAuth agent of the vault, by the sign-in `oneiron hosted login`
+    /// wrote (`oneiron mcp --auth-mode oauth`).
+    OAuth(&'a Path),
 }
 
 pub(super) struct Recall<'a> {
@@ -233,6 +236,11 @@ impl Bridge {
                 for name in SLIP_ENV {
                     command.env_remove(name);
                 }
+            }
+            RecallAuth::OAuth(sign_in) => {
+                command
+                    .args(["--auth-mode", "oauth", "--oauth-token-file"])
+                    .arg(sign_in);
             }
         }
         let mut child = command

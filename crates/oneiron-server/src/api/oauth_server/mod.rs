@@ -45,14 +45,15 @@ const MCP_RESOURCE_PATH: &str = "/mcp";
 /// RFC 9728's metadata path.
 const PROTECTED_RESOURCE_METADATA_PATH: &str = "/.well-known/oauth-protected-resource";
 /// RFC 9728 §3.1's resource-specific metadata path for `/mcp`, which answers the same document.
-const PROTECTED_RESOURCE_MCP_METADATA_PATH: &str = "/.well-known/oauth-protected-resource/mcp";
+pub(crate) const PROTECTED_RESOURCE_MCP_METADATA_PATH: &str =
+    "/.well-known/oauth-protected-resource/mcp";
 /// RFC 8414's metadata path for an issuer with no path.
 const AUTHORIZATION_SERVER_METADATA_PATH: &str = "/.well-known/oauth-authorization-server";
-const AUTHORIZE_PATH: &str = "/oauth/authorize";
+pub(crate) const AUTHORIZE_PATH: &str = "/oauth/authorize";
 const AUTHORIZE_STATUS_PATH: &str = "/oauth/authorize/status";
-const TOKEN_PATH: &str = "/oauth/token";
-const REGISTER_PATH: &str = "/oauth/register";
-const REVOKE_PATH: &str = "/oauth/revoke";
+pub(crate) const TOKEN_PATH: &str = "/oauth/token";
+pub(crate) const REGISTER_PATH: &str = "/oauth/register";
+pub(crate) const REVOKE_PATH: &str = "/oauth/revoke";
 
 /// The OAuth routes, mounted beside `/oauth/client/*`. The metadata documents are public and
 /// cacheable; every other reply is private (`no-store`, `no-referrer`, `nosniff`). The router

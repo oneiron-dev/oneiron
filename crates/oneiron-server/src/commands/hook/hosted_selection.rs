@@ -5,7 +5,9 @@
 //! One file, `hosted.json` in the per-user oneiron folder beside `hook.toml`,
 //! holds every hosted vault this user signed in to here and which one is
 //! selected. Each names its origin, its vault id, how a client authenticates
-//! there and the file holding that credential, never a credential value. It
+//! there and the file holding that credential, never a credential value: a
+//! slip or the owner's upgrade headers another surface wrote, or the OAuth
+//! sign-in `oneiron hosted login` made itself, beside this file. It
 //! is written only through [`publish`] (`oneiron hosted login | select |
 //! logout`, which the surface the owner signed in on runs to export his
 //! selection), whole and owner-only, in one rename. A hook only reads it:
@@ -36,6 +38,10 @@ pub(super) enum HostedAuthMode {
     /// The vault's owner, by the upgrade headers the surface he signed in
     /// on wrote for this vault.
     Owner,
+    /// An OAuth agent of the vault, by the sign-in `oneiron hosted login`
+    /// made there as a native app and wrote beside this file.
+    #[serde(rename = "oauth")]
+    OAuth,
 }
 
 /// One hosted vault this user signed in to here: where it answers, which
@@ -49,7 +55,8 @@ pub(super) struct HostedVault {
     pub(super) vault_id: String,
     pub(super) auth_mode: HostedAuthMode,
     /// The absolute path of the file `oneiron mcp` reads the credential
-    /// from: a paired credential (slip), or the owner's upgrade headers.
+    /// from: a paired credential (slip), the owner's upgrade headers, or the
+    /// OAuth sign-in.
     pub(super) credential_file: PathBuf,
     /// When `oneiron hosted login` last saw the origin admit that
     /// credential, in ms since the Unix epoch. A record, never an expiry.
@@ -63,6 +70,7 @@ impl HostedVault {
         match self.auth_mode {
             HostedAuthMode::Slip => RecallAuth::Slip(&self.credential_file),
             HostedAuthMode::Owner => RecallAuth::Owner(&self.credential_file),
+            HostedAuthMode::OAuth => RecallAuth::OAuth(&self.credential_file),
         }
     }
 
@@ -131,6 +139,26 @@ fn selection_file() -> Option<PathBuf> {
     local_servers::user_dir().map(|dir| dir.join(SELECTION_FILE))
 }
 
+/// The file the OAuth sign-in at `origin` is kept in, beside the selection:
+/// one per origin, so signing in there again replaces it.
+pub(super) fn oauth_sign_in_file(origin: &str) -> Option<PathBuf> {
+    let digest = blake3::hash(origin.as_bytes()).to_hex();
+    local_servers::user_dir().map(|dir| dir.join(format!("hosted-oauth-{}.json", &digest[..16])))
+}
+
+/// Creates the per-user folder `path` sits in, owner-only, if it is not
+/// there.
+pub(super) fn create_user_dir_for(path: &std::path::Path) -> anyhow::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
+            .map_err(|error| anyhow::anyhow!("create {}: {error}", dir.display()))?;
+    }
+    Ok(())
+}
+
 /// The selection the file holds, an empty one when there is no file, or
 /// why it could not be read. Only a file no one else can write counts, as
 /// for the pin: a recall sends the credential it names where it says.
@@ -186,12 +214,6 @@ pub(super) fn publish(selection: &Selection) -> anyhow::Result<()> {
             _ => Ok(()),
         };
     }
-    if let Some(dir) = path.parent() {
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)
-            .map_err(|error| anyhow::anyhow!("create {}: {error}", dir.display()))?;
-    }
+    create_user_dir_for(&path)?;
     credential_file::replace(&path, &serde_json::to_vec_pretty(selection)?)
 }

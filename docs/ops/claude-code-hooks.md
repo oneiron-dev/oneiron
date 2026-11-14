@@ -172,10 +172,13 @@ oneiron user-service status
 `oneiron hosted` records the hosted vaults you signed in to on this machine
 and the one selected, in `hosted.json` in your oneiron config folder, beside
 `hook.toml`. The surface you signed in on (the cloud console, the app) runs
-these commands to export its selection; you can run them too. Each prints
-where the selection stands as one JSON line.
+these commands to export its selection; you can run them too. With a terminal
+alone, `login` signs you in itself. Each prints where the selection stands as
+one JSON line.
 
 ```bash
+# Sign in here: the vault's own sign-in, in a browser; you allow it in your inbox.
+oneiron hosted login --origin https://<vault-origin>
 # A paired slip: its own vault id is read from the slip.
 oneiron hosted login --origin https://<vault-origin> --credential-file <file>
 # Your owner sign-in: the surface that wrote the headers file names the vault.
@@ -191,13 +194,28 @@ oneiron hosted status
   default), and then selects it. A slip names its own vault, which must match
   `--vault-id` when you give one. Nothing is recorded when the origin refuses
   or does not answer; the bridge's own refusal is printed on stderr.
+- `login` with no credential file signs in through the hosted vault's own
+  OAuth sign-in, as a native app. It prints a link and opens it in your
+  browser; the page shows a match code, and you allow the request in your
+  Oneiron inbox when the code there is the same. The browser then comes back
+  to a one-time listener on this machine's loopback (`--sign-in-timeout-secs`,
+  600 by default), and `login` keeps the sign-in in
+  `hosted-oauth-<origin hash>.json` beside `hosted.json`, readable by you
+  alone. It asks for the `read` tier, and the vault lists it in your consent
+  registry, where one tap revokes it. Its access token lasts an hour and
+  refreshes on use; the refresh token lasts 30 days from its last use.
+  `oneiron mcp --auth-mode oauth --oauth-token-file <file>` reaches the vault
+  with it, over HTTP. The browser must run on the machine that runs `login`.
+  A vault that serves no OAuth sign-in (no https `oauth_resource_indicator`
+  in its server config) answers 404, and `login` says so.
 - `select` takes a recorded vault id, or its first characters when no other
   recorded id begins with them; `--none` selects none. `logout` forgets one
-  recorded vault, or every one. Neither deletes a credential file: the
-  surface that wrote it keeps it.
+  recorded vault, or every one. Neither deletes a credential file another
+  surface wrote: that surface keeps it. `logout` revokes an OAuth sign-in
+  `login` made at its vault, and removes its file.
 - `status` prints `state` (`not_logged_in`, `no_selection`, `selected` or
   `unavailable`), the selected vault id and every recorded vault: its
-  `origin`, `vault_id`, `auth_mode` (`slip` or `owner`), `credential_file` and
+  `origin`, `vault_id`, `auth_mode` (`slip`, `owner` or `oauth`), `credential_file` and
   `verified_at_ms`, when its origin last admitted the credential (a record,
   never an expiry). It names credential files, never what is in them.
 

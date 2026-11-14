@@ -325,6 +325,12 @@ name = "delete_authority_served_door"
 path = "tests/delete_authority_served_door.rs"
 required-features = ["oneiron/test-support"]
 
+# L1-14's native OAuth sign-in roots its served vault on a `MemoryKeystore`.
+[[test]]
+name = "hosted_native_sign_in"
+path = "tests/hosted_native_sign_in.rs"
+required-features = ["oneiron/test-support"]
+
 # The off-record stretch pack cases serve the owner's root from a `MemoryKeystore` too.
 [[test]]
 name = "off_record_room_context_pack"

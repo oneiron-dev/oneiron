@@ -19,6 +19,7 @@
 mod bind;
 mod hosted_command;
 mod hosted_selection;
+mod hosted_sign_in;
 mod recall;
 
 pub use self::hosted_command::hosted;
