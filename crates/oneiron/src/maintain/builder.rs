@@ -90,6 +90,10 @@ pub struct MaintenanceReport {
     /// Persisted window docs rebuilt through a shallow snapshot (history
     /// carriers dropped).
     pub sweep_windows_compacted: u64,
+    /// Persisted window docs read and scrubbed and left as they are: they
+    /// hold no history and no scrub changed them, so a cut would store what
+    /// they hold (census L6-07). No `fr:w:` is asserted for them again.
+    pub sweep_windows_unchanged: u64,
     /// Windows skipped because they are OPEN in a window registry — a live
     /// doc's next full-snapshot persist would resurrect the carrier.
     pub sweep_windows_deferred_live: u64,
@@ -374,6 +378,7 @@ impl<'a> MaintenanceBuilder<'a> {
             report.sweep_jobs_deferred_signer_unavailable = run.jobs_deferred_signer_unavailable;
             report.sweep_jobs_failed = run.jobs_failed;
             report.sweep_windows_compacted = run.windows_compacted;
+            report.sweep_windows_unchanged = run.windows_unchanged;
             report.sweep_windows_deferred_live = run.windows_deferred_live;
             report.sweep_windows_deferred_raced = run.windows_deferred_raced;
             report.sweep_windows_deferred_unproved = run.windows_deferred_unproved;

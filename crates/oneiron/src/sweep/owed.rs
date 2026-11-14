@@ -205,6 +205,11 @@ fn compact_owed_window(
             run.windows_compacted += 1;
             true
         }
+        // Its stored root is its tip and nothing came since: no cut is owed.
+        Some(Ok(CompactOutcome::Unchanged)) => {
+            run.windows_unchanged += 1;
+            true
+        }
         Some(Ok(CompactOutcome::Empty)) => true,
         None => {
             tracing::warn!("sweep: owed window live or retained — deferred");
