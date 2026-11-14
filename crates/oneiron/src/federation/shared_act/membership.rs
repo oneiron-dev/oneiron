@@ -382,7 +382,8 @@ impl Vault {
     /// the delegates it can no longer parent, the own-device grant a former
     /// Owner held (FIX 3294) and, with `slips`, its slips and, when its
     /// Owner standing ends or it leaves, the owner keys and `human` bindings
-    /// that name it (OWNER-ENROL).
+    /// that name it (OWNER-ENROL); without `slips` such a move is refused
+    /// while any of those is live (REVIEW-7931).
     #[allow(clippy::too_many_arguments)]
     fn move_member_in_txn(
         &self,
@@ -438,11 +439,14 @@ impl Vault {
         // role the member keeps (OWNER-ENROL-TRANSFER-REVOKE = A, as the
         // own-device grant does), and a member who leaves keeps none: an owner
         // root of theirs signs any authority entry, and a binding passes every
-        // owner verb.
-        if let Some(issuer) = slips
-            && (to.is_none() || (from == Role::Owner && to != Some(Role::Owner)))
-        {
-            self.revoke_owner_authority_in_txn(txn, issuer, member)?;
+        // owner verb. Only the vault's live host root signs that revocation,
+        // so a move with no issuer is refused while the member holds either
+        // (REVIEW-7931).
+        if to.is_none() || (from == Role::Owner && to != Some(Role::Owner)) {
+            match slips {
+                Some(issuer) => self.revoke_owner_authority_in_txn(txn, issuer, member)?,
+                None => self.refuse_unrevoked_owner_authority_in_txn(txn, member)?,
+            }
         }
         let mut detach = None;
         if to.is_none() {
