@@ -391,10 +391,11 @@ pub(crate) fn drop_seeded_actor_row(
 }
 #[cfg(test)]
 pub(crate) fn deindex_entity_for_test(
-    store: &Store,
+    vault: &crate::Vault,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    let _ = deindex_entity_without_lexical_query_hint_cascade(store, wtxn, id)?;
+    let write = crate::secret_custody::CustodyWrite::of(vault);
+    let _ = deindex_entity_without_lexical_query_hint_cascade(&write, wtxn, id)?;
     Ok(())
 }
