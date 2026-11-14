@@ -126,10 +126,19 @@ pub enum FeedSource {
     Edges,
     /// TURNs whose words changed with no new version of their own, in commit order.
     Redirty,
+    /// Setting changes, in commit order: the setting primitive's change stream. Its rows are the
+    /// record of every change, so, like the change log's, they are never pruned.
+    Settings,
 }
 
 impl FeedSource {
-    pub const ALL: [Self; 4] = [Self::Changes, Self::Settlements, Self::Edges, Self::Redirty];
+    pub const ALL: [Self; 5] = [
+        Self::Changes,
+        Self::Settlements,
+        Self::Edges,
+        Self::Redirty,
+        Self::Settings,
+    ];
 
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -138,6 +147,7 @@ impl FeedSource {
             Self::Settlements => "settlements",
             Self::Edges => "edges",
             Self::Redirty => "redirty",
+            Self::Settings => "settings",
         }
     }
 
@@ -145,10 +155,10 @@ impl FeedSource {
         Self::ALL.into_iter().find(|source| source.as_str() == name)
     }
 
-    /// Whether a prune takes this source's rows: the change log keeps every row, so its cursors
-    /// never lapse.
+    /// Whether a prune takes this source's rows: the change log and the setting changes keep
+    /// every row, so their cursors never lapse.
     const fn pruned(self) -> bool {
-        !matches!(self, Self::Changes)
+        !matches!(self, Self::Changes | Self::Settings)
     }
 
     const fn tag(self) -> u8 {
@@ -157,6 +167,7 @@ impl FeedSource {
             Self::Settlements => 1,
             Self::Edges => 2,
             Self::Redirty => 3,
+            Self::Settings => 4,
         }
     }
 
@@ -183,6 +194,9 @@ impl FeedSource {
             }
             Self::Edges => edges::edge_head_in_txn(&vault.store, txn)?.map(Position::Edges),
             Self::Redirty => edges::redirty_head_in_txn(&vault.store, txn)?.map(Position::Redirty),
+            Self::Settings => {
+                crate::setting::settings_head_in_txn(&vault.store, txn)?.map(Position::Settings)
+            }
         })
     }
 }
@@ -211,6 +225,8 @@ pub enum FeedOp {
     EdgeAdded,
     EdgeRemoved,
     Redirty,
+    /// A setting row was set or cleared.
+    SettingChange,
 }
 
 impl FeedOp {
@@ -236,6 +252,7 @@ impl FeedOp {
             Self::Settle => FeedEntryKind::Settlement,
             Self::EdgeAdded | Self::EdgeRemoved => FeedEntryKind::Edge,
             Self::Redirty => FeedEntryKind::Redirty,
+            Self::SettingChange => FeedEntryKind::Setting,
         }
     }
 }
@@ -258,6 +275,7 @@ impl FeedPosition {
             ),
             Position::Edges(sequence) => (FeedSource::Edges, sequence.to_be_bytes().to_vec()),
             Position::Redirty(sequence) => (FeedSource::Redirty, sequence.to_be_bytes().to_vec()),
+            Position::Settings(sequence) => (FeedSource::Settings, sequence.to_be_bytes().to_vec()),
         };
         Ok(Self(format!(
             "{}:{}",
@@ -291,6 +309,7 @@ impl FeedPosition {
             )),
             "edges" => Ok((FeedSource::Edges, Position::Edges(sequence()?))),
             "redirty" => Ok((FeedSource::Redirty, Position::Redirty(sequence()?))),
+            "settings" => Ok((FeedSource::Settings, Position::Settings(sequence()?))),
             _ => Err(invalid("unknown feed source")),
         }
     }
@@ -363,6 +382,31 @@ pub struct FeedEntry {
     /// The edge, for an edge entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edge: Option<FeedEdge>,
+    /// The change, for a setting entry. A setting entry is no record's: its `entity` is the
+    /// change's own id and its `entity_type` is [`SETTING_ENTRY_TYPE`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setting: Option<FeedSetting>,
+}
+
+/// The type byte a setting entry carries. No record type has it, so a selector that narrows to
+/// record types takes no setting entry.
+pub const SETTING_ENTRY_TYPE: u8 = u8::MAX;
+
+/// One setting change, as a setting entry names it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FeedSetting {
+    /// Its place in the setting change stream.
+    pub sequence: u64,
+    pub key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<String>,
+    pub scope: crate::setting::SettingScope,
+    pub mode: crate::setting::SettingMode,
+    pub setter: crate::setting::Setter,
+    /// The row's value before, as JSON; null when there was no row.
+    pub prior: serde_json::Value,
+    /// The row's value after, as JSON; null when the change cleared it.
+    pub value: serde_json::Value,
 }
 
 /// One page of a subscription. It moves no cursor: [`Vault::feed_ack`] does, with `through`.
@@ -1390,6 +1434,11 @@ enum Judge {
     Withdrawal,
     /// Its history is gone, so no lane can be shown it.
     Withheld,
+    /// A setting change: shown to a reader of that key at that scope.
+    Setting {
+        key: String,
+        scope: crate::setting::SettingScope,
+    },
 }
 
 /// One fact a source read found, before the subscriber's lane judges it.
@@ -1476,6 +1525,7 @@ fn changes_after_in_txn(
                 recorded_at: change.recorded_at,
                 revision,
                 edge: None,
+                setting: None,
             },
             judge,
         });
@@ -1523,6 +1573,7 @@ fn settlements_after_in_txn(
                 recorded_at: fact.recorded_at,
                 revision: fact.revision,
                 edge: None,
+                setting: None,
             },
             judge: fact.point.map_or(Judge::Withheld, Judge::Read),
         });
@@ -1606,6 +1657,9 @@ fn scan_source_in_txn(
         FeedSource::Settlements => settlements_after_in_txn(vault, txn, after, FEED_READ_MAX_LIMIT),
         FeedSource::Edges => edges::edges_after_in_txn(vault, txn, after, FEED_READ_MAX_LIMIT),
         FeedSource::Redirty => edges::redirty_after_in_txn(vault, txn, after, FEED_READ_MAX_LIMIT),
+        FeedSource::Settings => {
+            setting_changes_after_in_txn(vault, txn, after, FEED_READ_MAX_LIMIT)
+        }
     }
 }
 
@@ -1632,7 +1686,7 @@ fn shown_in_txn(
                 points.push(source);
                 points.push(target);
             }
-            Judge::Withdrawal | Judge::Withheld => {}
+            Judge::Withdrawal | Judge::Withheld | Judge::Setting { .. } => {}
         }
     }
     let withdrawn: Vec<(EntityId, u8)> = candidates
@@ -1663,6 +1717,7 @@ fn shown_in_txn(
             }
             Judge::Withdrawal => (revealed.next().unwrap_or(false), true),
             Judge::Withheld => (false, false),
+            Judge::Setting { key, scope } => (setting_shown_in(reader, txn, &key, &scope)?, true),
         };
         // A row the lane does not show leaves no trace on the page: no count, no marker.
         if visible && taken {
@@ -1687,4 +1742,99 @@ fn takes_predicate(selector: &FeedSelector, entry: &FeedEntry, body: &[u8]) -> b
             .iter()
             .any(|glob| crate::runtime_hooks::glob_match(glob, &claim.predicate))
     })
+}
+
+/// Up to `limit` setting changes after `after`: each judged by its key and scope.
+fn setting_changes_after_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    after: Option<Position>,
+    limit: usize,
+) -> Result<Scanned> {
+    let after = match after {
+        None => None,
+        Some(Position::Settings(sequence)) => Some(sequence),
+        Some(_) => {
+            return Err(Error::CorruptedIndex(
+                "a settings cursor names another source",
+            ));
+        }
+    };
+    let (changes, through) =
+        crate::setting::settings_after_in_txn(&vault.store, txn, after, limit)?;
+    let mut scanned = Scanned {
+        entries: Vec::with_capacity(changes.len()),
+        through: through.map(Position::Settings),
+    };
+    for change in changes {
+        let spec = crate::setting::spec_named(&change.key).ok();
+        let json = |value: &Option<crate::setting::EncodedValue>| {
+            value
+                .as_ref()
+                .zip(spec)
+                .and_then(|(value, spec)| spec.kind.to_json(value))
+                .unwrap_or(serde_json::Value::Null)
+        };
+        scanned.entries.push(Candidate {
+            entry: FeedEntry {
+                position: FeedPosition::of(Position::Settings(change.sequence))?,
+                kind: FeedEntryKind::Setting,
+                op: FeedOp::SettingChange,
+                entity: change.id,
+                entity_type: SETTING_ENTRY_TYPE,
+                actor: change.by,
+                recorded_at: change.at,
+                revision: None,
+                edge: None,
+                setting: Some(FeedSetting {
+                    sequence: change.sequence,
+                    key: change.key.clone(),
+                    item: change.item.clone(),
+                    scope: change.scope.clone(),
+                    mode: change.mode,
+                    setter: change.setter,
+                    prior: json(&change.prior),
+                    value: json(&change.value),
+                }),
+            },
+            judge: Judge::Setting {
+                key: change.key,
+                scope: change.scope,
+            },
+        });
+    }
+    Ok(scanned)
+}
+
+/// Whether `reader` may read the setting `key` at `scope` now: the setting's own read rule.
+fn setting_shown_in(
+    reader: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    key: &str,
+    scope: &crate::setting::SettingScope,
+) -> Result<bool> {
+    let Ok(spec) = crate::setting::spec_named(key) else {
+        return Ok(false);
+    };
+    let actor = live_reader_actor_in(reader, txn)?;
+    let key_owner = reader.actor_key().vault_owner_ref() == Some(actor);
+    let human = reader
+        .actor_key()
+        .actor_class()
+        .is_none_or(|class| class == "human");
+    let owner = key_owner
+        || (human
+            && crate::memory::actor_is_vault_owner_in_txn(
+                reader.vault(),
+                txn,
+                actor,
+                crate::edge::EdgeActorClass::Human,
+            )
+            .unwrap_or(false));
+    let who = if owner {
+        crate::setting::SettingReader::Owner
+    } else {
+        crate::setting::SettingReader::Actor(actor)
+    };
+    crate::setting::reader_reads_key_in_txn(reader.vault(), txn, who, spec, Some(scope))
 }

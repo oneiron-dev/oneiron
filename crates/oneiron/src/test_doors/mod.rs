@@ -89,6 +89,8 @@ pub mod run_hold;
 pub mod run_lifecycle;
 pub mod scope_summary;
 pub mod seat_park_model_step;
+pub mod setting;
+pub mod setting_keys;
 pub mod shared_act_family;
 pub mod skill_gate;
 pub mod skill_hub_restore;

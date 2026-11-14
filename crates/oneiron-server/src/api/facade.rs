@@ -210,6 +210,8 @@ mod secret_grant_doors;
 mod secret_lift_doors;
 mod secret_use_doors;
 mod self_actor_doors;
+// The Setting primitive's verbs (DESIGN 15-setting-primitive, stage 0.1).
+mod setting_catalogue_doors;
 mod setting_doors;
 mod share_doors;
 mod shared_act_doors;

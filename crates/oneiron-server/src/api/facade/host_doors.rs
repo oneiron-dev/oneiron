@@ -179,6 +179,7 @@ pub(crate) use super::weave_admin_doors::{
 pub(crate) use super::inbox_group_doors::*;
 // The inquiry rows (INQUIRE-1 PR 5), likewise.
 pub(crate) use super::inquiry_doors::*;
+pub(crate) use super::setting_catalogue_doors::*;
 pub(crate) use super::web_fetch_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
 pub(crate) use super::graph_ask_doors::*;

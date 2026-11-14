@@ -103,6 +103,7 @@ mod secret_use;
 mod self_actor;
 mod self_model_read;
 mod self_verbs;
+mod setting;
 mod share;
 mod shared;
 mod shared_admin;
@@ -337,6 +338,7 @@ pub use crate::memory::affect::QueryAffect;
 
 pub use self::asset_masked_read::*;
 pub use self::connector_source_rows_read::*;
+pub use self::setting::*;
 pub use self::skill_package_read::*;
 
 pub use self::act_answer::*;

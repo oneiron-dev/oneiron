@@ -16,6 +16,8 @@ pub enum Position {
     Edges(u64),
     /// A redirty feed sequence.
     Redirty(u64),
+    /// A setting change sequence.
+    Settings(u64),
 }
 
 /// What an entry says happened.
@@ -35,6 +37,8 @@ pub enum FeedEntryKind {
     /// A TURN's words changed with no new version of its own: what was derived from them is
     /// due again.
     Redirty,
+    /// A setting row was set or cleared.
+    Setting,
 }
 
 /// Where a new subscription starts.
