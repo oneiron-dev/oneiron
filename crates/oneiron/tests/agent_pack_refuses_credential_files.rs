@@ -242,3 +242,81 @@ fn pack_refuses_a_skill_file_with_a_signature_member() -> TestResult {
     );
     Ok(())
 }
+
+fn tar_with_config_json(member: &[u8]) -> TestResult<Vec<u8>> {
+    let mut header = tar::Header::new_ustar();
+    header.set_path("config.json")?;
+    header.set_size(member.len() as u64);
+    header.set_mode(0o644);
+    header.set_mtime(0);
+    header.set_cksum();
+    let mut builder = tar::Builder::new(Vec::new());
+    builder.append(&header, member)?;
+    let archive = builder.into_inner()?;
+    assert!(
+        std::str::from_utf8(&archive).is_ok(),
+        "a ustar archive of ASCII members is valid UTF-8"
+    );
+    Ok(archive)
+}
+
+#[test]
+fn pack_refuses_a_tar_skill_file_with_an_escaped_credential_key() -> TestResult {
+    assert_clean_pack_exports_exactly()?;
+    let clean_archive = tar_with_config_json(br#"{"name":"yuki"}"#)?;
+    let clean_fixture = fixture(Some(HubFile::new("config.tar", clean_archive)))?;
+    let clean_pack = clean_fixture
+        .vault
+        .memory(clean_fixture.owner, EdgeActorClass::Human)
+        .export_agent_pack(&AgentPackExportRequest {
+            agent_ref: clean_fixture.agent.to_hex(),
+            travel: None,
+        })?;
+    let prefix = format!("skills/{}/", clean_fixture.package.content_hash()?.to_hex());
+    assert_eq!(
+        clean_pack
+            .files
+            .iter()
+            .filter(|file| file.path.starts_with(&prefix))
+            .count(),
+        clean_fixture.package.files.len(),
+        "the clean pack carries every skill file, with no extra skill file"
+    );
+    for want in &clean_fixture.package.files {
+        let path = format!("{prefix}{}", want.path);
+        let carried = clean_pack
+            .files
+            .iter()
+            .find(|file| file.path == path)
+            .expect("clean skill file in pack");
+        let bytes = base64::engine::general_purpose::STANDARD.decode(&carried.content_base64)?;
+        assert_eq!(
+            bytes, want.content,
+            "the pack keeps {} byte-exact",
+            want.path
+        );
+    }
+    let credential_member = r#"{"pass\u0077ord":"vault-private-42"}"#;
+    let credential_archive = tar_with_config_json(credential_member.as_bytes())?;
+    let fixture = fixture(Some(HubFile::new("config.tar", credential_archive)))?;
+    let result = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .export_agent_pack(&AgentPackExportRequest {
+            agent_ref: fixture.agent.to_hex(),
+            travel: None,
+        });
+    assert!(
+        result.is_err(),
+        "an agent pack must refuse a tar skill file holding an escaped credential key"
+    );
+    let error = result
+        .expect_err("credential-bearing skill file is refused")
+        .to_string();
+    assert!(error.contains("config.tar"), "{error}");
+    assert!(
+        !error.contains("vault-private-42"),
+        "the refusal must not disclose the credential"
+    );
+    Ok(())
+}
