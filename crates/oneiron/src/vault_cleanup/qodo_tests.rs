@@ -12,9 +12,13 @@ fn test_config() -> VaultConfig {
     }
 }
 
+/// A vault whose owner chose propose-first: most tests here drive the
+/// proposal flow, and a vault with no stored posture cleans up
+/// automatically.
 fn open() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("regression fixture");
     let vault = Vault::open(dir.path(), test_config()).expect("regression fixture");
+    set_cleanup_posture(&vault, CleanupPosture::ProposeFirst).expect("regression fixture");
     (dir, vault)
 }
 
@@ -88,30 +92,24 @@ impl From<CleanupProposal> for ProposalView {
     }
 }
 
+/// The owner may choose the automatic posture, and a persisted choice holds
+/// across a reopen: the open ARCH-0066 teeth ride the run's digest as a
+/// badge and refuse nothing (L1-30).
 #[test]
-fn open_rollout_blockers_refuse_owner_auto_and_ignore_persisted_auto() {
+fn owner_auto_posture_is_accepted_and_a_persisted_auto_archives() {
     let (dir, vault) = open();
     let id = summary(&vault);
-    assert!(set_cleanup_posture(&vault, CleanupPosture::AutoWithDigest).is_err());
-    vault
-        .with_write_txn(|txn| {
-            vault
-                .store
-                .vault_meta
-                .put(txn, VAULT_CLEANUP_POSTURE_KEY, b"auto_with_digest")?;
-            Ok(())
-        })
-        .expect("regression fixture");
+    set_cleanup_posture(&vault, CleanupPosture::AutoWithDigest).expect("regression fixture");
     drop(vault);
     let vault = Vault::open(dir.path(), test_config()).expect("regression fixture");
     assert_eq!(
         cleanup_posture(&vault).expect("regression fixture"),
-        CleanupPosture::ProposeFirst
+        CleanupPosture::AutoWithDigest
     );
     let report = run_vault_cleanup(&vault, &AttemptId::now()).expect("regression fixture");
-    assert!(report.proposal.is_some());
-    assert!(report.archived.is_empty());
-    assert!(!vault.is_deleted_shell(&id).expect("regression fixture"));
+    assert!(report.proposal.is_none());
+    assert_eq!(report.archived, vec![Some(id)]);
+    assert!(vault.is_deleted_shell(&id).expect("regression fixture"));
 }
 
 // Exact persisted index bytes, not only an identifier that looks live.
@@ -483,7 +481,6 @@ fn retry_of_auto_or_empty_run_never_produces_another_decision() {
             .is_empty()
     );
 
-    rollout::close_blockers_for_test(&vault);
     set_cleanup_posture(&vault, CleanupPosture::AutoWithDigest).expect("regression fixture");
     let auto_attempt = AttemptId::now();
     let auto = run_vault_cleanup(&vault, &auto_attempt).expect("regression fixture");

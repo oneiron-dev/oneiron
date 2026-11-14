@@ -224,6 +224,8 @@ fn archive_accepted_in_txn(
         archived: live_slots(applied.archived.clone()),
         skipped: live_slots(applied.skipped),
         rejected: live_slots(rejected),
+        // The owner's accept is not an automatic run: no teeth badge.
+        integrity_teeth: None,
     };
     put_digest_in_txn(vault, wtxn, &digest)?;
     run_snapshot::record_accept_in_txn(

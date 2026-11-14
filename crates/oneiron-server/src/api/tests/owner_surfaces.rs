@@ -32,13 +32,23 @@ fn hexes(value: &Value) -> Vec<String> {
         .collect()
 }
 
-/// ARCH-0073 propose-first: the cleanup job's proposal waits for the owner,
-/// accepting archives what is still empty, restoring brings the same record
-/// back, and the automatic posture stays refused while its teeth are open.
+/// ARCH-0073 propose-first, the owner's choice: the cleanup job's proposal
+/// waits for the owner, accepting archives what is still empty, restoring
+/// brings the same record back, and the owner may set the automatic posture
+/// back (L1-30: no refusal while the ARCH-0066 teeth are open).
 #[tokio::test]
 async fn cleanup_proposals_wait_for_the_owner_and_archive_stays_restorable() {
     let (_dir, server) = auth_test_server();
     let owner = owner_recipe(&server);
+    let (status, review) = call(
+        &server,
+        "POST",
+        "/v1/owner/cleanup",
+        owner.clone(),
+        Some(&json!({ "posture": "propose_first" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{review}");
     let husk = extraction_person(&server, b"a person nobody mentions again").to_hex();
     let run = oneiron::vault_cleanup::run_vault_cleanup(server.vault(), &AttemptId::now()).unwrap();
     let proposal = run
@@ -140,9 +150,10 @@ async fn cleanup_proposals_wait_for_the_owner_and_archive_stays_restorable() {
     assert!(review["proposals"].as_array().unwrap().is_empty());
     assert!(server.vault().archived_entity(&second).unwrap().is_none());
 
-    // The automatic arm stays off while ARCH-0066's teeth are open; the
-    // retention dial is the owner's.
-    let (status, refused) = call(
+    // The automatic posture is the owner's to set back while ARCH-0066's
+    // teeth are open (L1-30); the retention dial is his too, and setting it
+    // leaves the posture alone.
+    let (status, review) = call(
         &server,
         "POST",
         "/v1/owner/cleanup",
@@ -150,7 +161,8 @@ async fn cleanup_proposals_wait_for_the_owner_and_archive_stays_restorable() {
         Some(&json!({ "posture": "auto_with_digest" })),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(status, StatusCode::OK, "{review}");
+    assert_eq!(review["posture"], "auto_with_digest");
     let (status, review) = call(
         &server,
         "POST",
@@ -160,7 +172,7 @@ async fn cleanup_proposals_wait_for_the_owner_and_archive_stays_restorable() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{review}");
-    assert_eq!(review["posture"], "propose_first");
+    assert_eq!(review["posture"], "auto_with_digest");
     assert_eq!(review["task_retention_days"], 30);
 }
 
@@ -228,6 +240,12 @@ async fn an_archived_attempt_is_in_the_review_and_restores_onto_the_queue() {
         |queue: &AttemptQueue<'_>| queue.list().unwrap().iter().any(|row| row.id == record.id);
     assert!(listed(&queue));
 
+    // The owner chose propose-first: the run waits for his accept.
+    oneiron::vault_cleanup::set_cleanup_posture(
+        server.vault(),
+        oneiron::vault_cleanup::CleanupPosture::ProposeFirst,
+    )
+    .unwrap();
     let run = oneiron::vault_cleanup::run_vault_cleanup(server.vault(), &AttemptId::now()).unwrap();
     let decide = json!({ "proposal": run.proposal.expect("a proposal").to_hex() });
     let (status, accepted) = call(

@@ -587,6 +587,11 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
             )
             .unwrap()
     );
+    oneiron::vault_cleanup::set_cleanup_posture(
+        vault,
+        oneiron::vault_cleanup::CleanupPosture::ProposeFirst,
+    )
+    .unwrap();
     let cleanup_run =
         oneiron::vault_cleanup::run_vault_cleanup(vault, &oneiron::attempt_queue::AttemptId::now())
             .unwrap();

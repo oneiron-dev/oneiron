@@ -1212,8 +1212,10 @@ the settle applies at once (an agent waiting on the name acts on it at once) and
 
 The cleanup job files away husks: a person an extraction minted and never learned anything
 about, a summary with nothing left in it. Its only verb is archive, and an archived record comes
-back whole. While its integrity checks are open (ARCH-0066), the job only proposes: nothing is
-archived until you accept, and the engine refuses the automatic posture.
+back whole. A new vault cleans up automatically: each run takes a snapshot, archives, and lists
+what it archived in one digest, and you can revert the whole run. Each automatic digest carries
+`integrity_teeth`, the state of the two integrity checks (ARCH-0066) when it ran. If you set
+`propose_first`, the job only proposes instead: nothing is archived until you accept.
 
 - `GET /v1/owner/cleanup`: the posture, the done-task retention in days (`0` turns that arm
   off), the open proposals with what accepting would archive, the digests of what was
@@ -1233,8 +1235,9 @@ archived until you accept, and the engine refuses the automatic posture.
   kept, as for a single restore. Asking again returns the first answer with `"repeated": true`.
   A run whose proposal is still open, or one recorded before snapshots, is a 409; an unknown
   run is a 404.
-- `POST /v1/owner/cleanup` with `{"task_retention_days": 30}` or `{"posture": "propose_first"}`.
-  `auto_with_digest` is refused (409) while the integrity checks are open.
+- `POST /v1/owner/cleanup` with `{"task_retention_days": 30}`, `{"posture": "propose_first"}` or
+  `{"posture": "auto_with_digest"}`. A vault where you never set the posture runs
+  `auto_with_digest`.
 
 The per-item `vault.cleanup.review` answer reads each record through the owner's native
 `vault.get` admission and projection in the same snapshot as its eligibility, evidence and
