@@ -121,15 +121,10 @@ impl From<OwnerWorkReceipt> for OwnerWorkView {
     }
 }
 
-/// `vault.roots.requests.cancel`'s input: the root request to cancel, as
-/// the route's body names it.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RootRequestCancelRequest {
-    /// The request's signed authority-log entry, 64 lower-case hex: its
-    /// receipt's `request`.
-    pub request: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::root_requests::{
+    OwnerWorkGetRequest, RootRequestCancelRequest,
+};
 
 /// `vault.roots.requests.cancel`: records the owner's cancel of one root
 /// request through [`Vault::cancel_root_request`], from any surface he is
@@ -215,15 +210,6 @@ impl From<RootChange> for RootChangeView {
 pub struct PendingRootRequestView {
     pub change: RootChangeView,
     pub receipt: OwnerWorkView,
-}
-
-/// `vault.owner_work.get`'s input: one owner work request, by its signed
-/// authority-log entry.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OwnerWorkGetRequest {
-    /// The request's entry, 64 lower-case hex: its receipt's `request`.
-    pub request: String,
 }
 
 /// `vault.roots.requests.create` (FIX 5598): records the owner's root change

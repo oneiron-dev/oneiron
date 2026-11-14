@@ -1,11 +1,12 @@
 //! Typed owner actions over NOTE history. No grant or caller-supplied purge
 //! floor reaches these doors; the engine chooses the retained pin boundary.
 
+use serde::{Deserialize, Serialize};
+
 use crate::consent::AuthenticatedOwner;
 use crate::entity_doc::{PurgeReceipt, TextHistoryErase};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::{EntityId, Vault};
-use serde::{Deserialize, Serialize};
 
 /// `vault.notes.history_purge`'s input: the NOTE whose history the owner
 /// erases.
