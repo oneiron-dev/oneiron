@@ -830,13 +830,15 @@ fn restore_text_in_txn(
     value: &[u8],
     actor: EntityId,
 ) -> Result<()> {
-    if !live_entity_row_in_txn(&vault.store, txn, record)?.is_live() {
-        return Ok(());
-    }
     let text_form = format!("{HANDLE_TEXT_OPEN}{handle}]");
+    // A NOTE's texts first: a pending fork's head, which a key found in the
+    // fork names, has no entity row (NOTE-PROPOSAL-FORK-RULING-KEEPS-HANDLE).
     if crate::note::restore_found_key_text_in_txn(
         vault, txn, *record, field, &text_form, value, actor,
     )? {
+        return Ok(());
+    }
+    if !live_entity_row_in_txn(&vault.store, txn, record)?.is_live() {
         return Ok(());
     }
     let mut fields = match entity_revision::staged_live_index_fields(&vault.store, txn, record)? {
