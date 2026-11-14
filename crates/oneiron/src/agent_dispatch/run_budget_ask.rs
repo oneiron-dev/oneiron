@@ -15,6 +15,13 @@
 //!   its cap, and resumes the run: its meters then run with
 //!   `Overdraft{cap}` ([`AgentDispatcher::run_overdraft_units`]). With no cap
 //!   named, the cap is the units one more call of the run reserves.
+//! - When the vault's USD quote prices the unit of the run's open root
+//!   scope, the ask also offers `add_funds` (owner ruling RUN-BUDGET-SPENT =
+//!   B, 15 Nov 2026: "you can dedicate more money"). The owner names dollars
+//!   at his press ([`Vault::press_run_budget_add_funds`]); they buy whole
+//!   units at the quote's upper-bound rate, so never more than he named, and
+//!   the root scope's cap rises by them for good: no hold takes the raise
+//!   back ([`RunFunds`]). The run resumes.
 //! - When the host names a free local chat model that serves the run's
 //!   calls now, the ask also offers `continue_on_local` ([`RunLocalRoute`]).
 //!   That answer resumes the run, and each of its later calls runs on that
@@ -44,8 +51,10 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
 use super::AgentDispatcher;
+use super::spend_calibration::{UsdPriceTarget, UsdUnitPrice};
 use super::spend_record::{SCOPE, SpendScopeId, SpendState};
 use super::widen_record::invalid;
+use crate::llm::run_admission::LeaseUnit;
 
 /// The queue identity of run-budget asks. Its model string also keeps
 /// unrelated decision asks out of [`apply_run_budget_answer_in_txn`].
@@ -69,6 +78,10 @@ pub enum RunBudgetChoice {
     /// The run resumes on the free local chat model the host named when it
     /// was held, and spends nothing more. Offered only when one was named.
     ContinueOnLocal,
+    /// The owner adds dollars: the run's root scope cap rises for good by the
+    /// whole units they buy at the vault's USD quote, and the run resumes.
+    /// Offered only when the quote prices the scope's unit.
+    AddFunds,
 }
 
 impl RunBudgetChoice {
@@ -79,15 +92,21 @@ impl RunBudgetChoice {
             Self::StayParked => "stay_parked",
             Self::Overdraft => "overdraft",
             Self::ContinueOnLocal => "continue_on_local",
+            Self::AddFunds => "add_funds",
         }
     }
 
     /// The choice an answer token names, if any.
     #[must_use]
     pub fn of_token(token: &str) -> Option<Self> {
-        [Self::StayParked, Self::Overdraft, Self::ContinueOnLocal]
-            .into_iter()
-            .find(|choice| choice.token() == token)
+        [
+            Self::StayParked,
+            Self::Overdraft,
+            Self::ContinueOnLocal,
+            Self::AddFunds,
+        ]
+        .into_iter()
+        .find(|choice| choice.token() == token)
     }
 }
 
@@ -106,6 +125,134 @@ pub struct RunBudgetQuestion {
     /// The free local chat model a `continue_on_local` answer runs the run
     /// on; `None` when the ask does not offer it.
     pub local_model: Option<ModelId>,
+    /// What an `add_funds` dollar buys now; `None` when the ask does not
+    /// offer it.
+    pub add_funds_price: Option<FundsPrice>,
+}
+
+/// The vault's USD quote for one budget unit, as an `add_funds` answer
+/// spends it: `usd_micros` millionths of a dollar per `per_units` units, at
+/// the model's highest catalogue rate (an upper bound).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FundsPrice {
+    pub unit: LeaseUnit,
+    pub usd_micros: u64,
+    pub per_units: u64,
+}
+
+impl FundsPrice {
+    /// The whole units `amount_usd_micros` buys at this price, rounded down
+    /// so they never cost more than the amount. `None` on overflow or a zero
+    /// price.
+    #[must_use]
+    pub fn units_for(&self, amount_usd_micros: u64) -> Option<u64> {
+        (u128::from(amount_usd_micros) * u128::from(self.per_units))
+            .checked_div(u128::from(self.usd_micros))
+            .and_then(|units| u64::try_from(units).ok())
+    }
+
+    /// The price as the ask states it: `$0.000150 per 1000 tokens`.
+    pub(super) fn stated(&self) -> String {
+        format!(
+            "{} per {} {}",
+            usd(self.usd_micros),
+            self.per_units,
+            self.unit.as_str()
+        )
+    }
+}
+
+/// Millionths of a dollar as `$D.DDDDDD`.
+fn usd(micros: u64) -> String {
+    format!("${}.{:06}", micros / 1_000_000, micros % 1_000_000)
+}
+
+/// The vault's USD quote for `unit` on a held run, read in `txn`. `None`
+/// with no quote installed, a quote that fails or knows no price, or a free
+/// rate: dollars never buy units at an unknown or zero price.
+pub(super) fn funds_price_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    unit: &LeaseUnit,
+) -> Option<FundsPrice> {
+    let prices = vault.launch_usd_prices.get()?;
+    let UsdUnitPrice {
+        usd_micros,
+        per_units,
+    } = prices
+        .quote(vault, txn, UsdPriceTarget::HeldRun, unit)
+        .ok()
+        .flatten()?;
+    (usd_micros != 0 && per_units != 0).then(|| FundsPrice {
+        unit: unit.clone(),
+        usd_micros,
+        per_units,
+    })
+}
+
+/// The `add_funds` price of the run rooted at `root`: the quote for its
+/// open root scope's unit. `None` when the run has no open root scope or the
+/// unit has no price.
+fn run_funds_price_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    root: AttemptId,
+) -> Result<Option<FundsPrice>> {
+    let scope = SpendScopeId::for_attempt(&root);
+    Ok(SCOPE
+        .get(&vault.store, txn, &scope.0)?
+        .filter(|scope| scope.state == SpendState::Open)
+        .and_then(|scope| funds_price_in_txn(vault, txn, &scope.unit)))
+}
+
+/// One amount the owner added to a run or a parked try.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunFundsEntry {
+    pub usd_micros: u64,
+    /// The whole units it bought, in `price.unit`.
+    pub units: u64,
+    pub price: FundsPrice,
+    /// The arrival number of the ask whose answer added it.
+    pub ask: u64,
+    /// Vault clock seconds when it was added.
+    pub added_at: u64,
+}
+
+/// Every amount the owner added to a run (or a parked try), oldest first.
+/// A lasting record: no hold deletes it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunFunds {
+    pub entries: Vec<RunFundsEntry>,
+}
+
+/// Added funds keyed by the run's root attempt, or by a parked try.
+const FUNDS: SideTable<AttemptId, RunFunds, Named> =
+    SideTable::new(&side_table::AGENT_DISPATCH_RUN_FUNDS);
+
+/// Appends `entry` to the funds of `key`, in the answer's write.
+pub(super) fn record_funds_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: AttemptId,
+    entry: RunFundsEntry,
+) -> Result<()> {
+    let mut funds = FUNDS.get(&vault.store, wtxn, &key)?.unwrap_or_default();
+    funds.entries.push(entry);
+    FUNDS.put(&vault.store, wtxn, &key, &funds)
+}
+
+/// The whole units `amount_usd_micros` buys at `price`, refusing a zero
+/// amount and an amount too small to buy one unit.
+pub(super) fn funds_units(price: &FundsPrice, amount_usd_micros: u64) -> Result<u64> {
+    if amount_usd_micros == 0 {
+        return Err(invalid("add_funds names an amount above zero"));
+    }
+    price
+        .units_for(amount_usd_micros)
+        .filter(|units| *units > 0)
+        .ok_or_else(|| {
+            invalid("add_funds names an amount that buys no whole unit at the USD price")
+        })
 }
 
 /// The one-off overdraft the owner approved for a held run: its meters run
@@ -150,15 +297,20 @@ const LOCAL_ROUTE: SideTable<AttemptId, RunLocalRoute, Named> =
 
 /// The run-budget ask about the run rooted at `root`, put to the owner role
 /// for `principal`: keyed by the run, so an open ask of the run is that ask.
-/// It offers `continue_on_local` when the host named `local_model`.
+/// It offers `continue_on_local` when the host named `local_model`, and
+/// `add_funds` when `funds` prices the run's root scope.
 fn run_budget_request(
     root: AttemptId,
     principal: EntityId,
     local_model: Option<&ModelId>,
+    funds: Option<&FundsPrice>,
 ) -> Result<HumanDecisionRequest> {
     let mut choices = vec![RunBudgetChoice::StayParked, RunBudgetChoice::Overdraft];
     if local_model.is_some() {
         choices.push(RunBudgetChoice::ContinueOnLocal);
+    }
+    if funds.is_some() {
+        choices.push(RunBudgetChoice::AddFunds);
     }
     let options = choices
         .iter()
@@ -170,13 +322,19 @@ fn run_budget_request(
         "approve a one-off overdraft (by default {RUN_BUDGET_DEFAULT_OVERDRAFT_UNITS} units, one \
          more call)"
     );
-    let text = match local_model {
+    let mut text = match local_model {
         Some(model) => format!(
             "This run is held at its spend cap. Keep it parked, {overdraft}, or continue it on \
              the free local model {model}?"
         ),
         None => format!("This run is held at its spend cap. Keep it parked, or {overdraft}?"),
     };
+    if let Some(price) = funds {
+        text.push_str(&format!(
+            " Or add dollars to its budget for good (at {}).",
+            price.stated()
+        ));
+    }
     let question = RUN_BUDGET_SPENT.question(
         &[root.as_bytes().as_slice()],
         text,
@@ -302,7 +460,8 @@ pub(crate) fn queue_run_budget_ask_in_txn(
             return Ok(HeldRunAsk::ContinuedOnLocal);
         }
     }
-    let request = run_budget_request(root, principal, local_model)?;
+    let funds = run_funds_price_in_txn(vault, wtxn, root)?;
+    let request = run_budget_request(root, principal, local_model, funds.as_ref())?;
     vault
         .queue_decision_ask_in_txn(wtxn, &request, None)
         .map(HeldRunAsk::Asked)
@@ -376,8 +535,15 @@ pub(crate) fn apply_run_budget_answer_in_txn(
         Some(RunBudgetChoice::ContinueOnLocal) => {
             continue_on_local_in_txn(vault, wtxn, root, by, ask.seq, answer.answered_at)
         }
+        Some(RunBudgetChoice::AddFunds) => Err(add_funds_needs_amount()),
         Some(RunBudgetChoice::StayParked) | None => Ok(false),
     }
+}
+
+/// An `add_funds` answer without its dollars: only the owner's press names
+/// them.
+pub(super) fn add_funds_needs_amount() -> crate::Error {
+    invalid("an add_funds answer names its dollars: press it with amount_usd_micros")
 }
 
 /// Whether a settled ask is a run-budget ask: its answer's writer wakes the
@@ -418,12 +584,29 @@ fn approve_overdraft_in_txn(
             approved_at: now,
         },
     )?;
+    raise_root_scope_in_txn(vault, wtxn, root, by, cap_units, now, "run overdraft")?;
+    dispatcher.resume_budget_hold_in_txn(wtxn, root, &by.to_hex(), now)?;
+    Ok(true)
+}
+
+/// Raises the open root scope of the run rooted at `root` by `units`, as the
+/// owner `by`'s grant, and wakes every budget trap the new room covers. A run
+/// with no root scope raises nothing.
+fn raise_root_scope_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    root: AttemptId,
+    by: EntityId,
+    units: u64,
+    now: u64,
+    what: &'static str,
+) -> Result<()> {
     let scope_id = SpendScopeId::for_attempt(&root);
     if let Some(mut scope) = SCOPE.get(&vault.store, wtxn, &scope_id.0)? {
         scope.cap_units = scope
             .cap_units
-            .checked_add(cap_units)
-            .ok_or(crate::Error::ArithmeticOverflow("run overdraft"))?;
+            .checked_add(units)
+            .ok_or(crate::Error::ArithmeticOverflow(what))?;
         let now_ms = now.saturating_mul(1000);
         if let Some(payer) = &mut scope.payer {
             payer.granted_by = Some(by);
@@ -432,6 +615,51 @@ fn approve_overdraft_in_txn(
         SCOPE.put(&vault.store, wtxn, &scope_id.0, &scope)?;
         crate::llm::wake_budget_traps_in_txn(vault, wtxn, &scope_id, now_ms)?;
     }
+    Ok(())
+}
+
+/// The owner `by`'s `add_funds` answer to ask `seq`, naming
+/// `amount_usd_micros`, for the held run rooted at `root`, in the answer's
+/// write: the whole units the amount buys at the vault's USD quote raise the
+/// run's open root scope for good, the amount is recorded, and the run
+/// resumes as `by`. `false` when the run is no longer held, or the owner may
+/// not raise its scope.
+///
+/// # Errors
+///
+/// A zero amount, an amount that buys no whole unit, no USD price for the
+/// scope's unit; storage errors.
+fn add_funds_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    root: AttemptId,
+    by: EntityId,
+    seq: u64,
+    amount_usd_micros: u64,
+    now: u64,
+) -> Result<bool> {
+    let dispatcher = AgentDispatcher::new(vault);
+    if !dispatcher.budget_held_in_txn(wtxn, root)?
+        || !overdraft_open_to_in_txn(vault, wtxn, root, by)?
+    {
+        return Ok(false);
+    }
+    let price = run_funds_price_in_txn(vault, wtxn, root)?
+        .ok_or_else(|| invalid("the run's budget unit has no USD price, or no open root scope"))?;
+    let units = funds_units(&price, amount_usd_micros)?;
+    raise_root_scope_in_txn(vault, wtxn, root, by, units, now, "run add_funds")?;
+    record_funds_in_txn(
+        vault,
+        wtxn,
+        root,
+        RunFundsEntry {
+            usd_micros: amount_usd_micros,
+            units,
+            price,
+            ask: seq,
+            added_at: now,
+        },
+    )?;
     dispatcher.resume_budget_hold_in_txn(wtxn, root, &by.to_hex(), now)?;
     Ok(true)
 }
@@ -487,6 +715,9 @@ impl Vault {
         choice: RunBudgetChoice,
         cap_units: Option<u64>,
     ) -> Result<()> {
+        if choice == RunBudgetChoice::AddFunds {
+            return Err(add_funds_needs_amount());
+        }
         let Some(asked) = self.decision_ask(seq)? else {
             return Ok(());
         };
@@ -527,8 +758,73 @@ impl Vault {
                     seq,
                     self.store.clock.now_recorded_at(),
                 )?,
+                RunBudgetChoice::AddFunds => return Err(add_funds_needs_amount()),
             };
             Ok(Some(resumed))
+        })?;
+        if let Some(resumed) = resumed {
+            self.signal_decision_answer(seq);
+            if resumed {
+                self.store.notify_attempt_observers();
+            }
+        }
+        Ok(())
+    }
+
+    /// The owner's `add_funds` press on a run-budget ask (owner ruling
+    /// RUN-BUDGET-SPENT = B): the dollars he names, `amount_usd_micros`,
+    /// answered and applied in one write, his proof revalidated in it. They
+    /// buy whole units at the vault's USD quote, rounded down, and raise the
+    /// held run's root scope for good; the run resumes. The family's ask about
+    /// a Dreamer try parked at its budget trap takes the same press. Any other
+    /// ask passes unchanged, for the generic answer door. The same answer
+    /// again is a no-op.
+    ///
+    /// # Errors
+    ///
+    /// The owner refusal; an ask that is withdrawn, answered another way, or
+    /// does not offer `add_funds`; a zero amount, or one that buys no whole
+    /// unit; no USD price; storage errors.
+    pub fn press_run_budget_add_funds(
+        &self,
+        owner: &AuthenticatedOwner,
+        seq: u64,
+        amount_usd_micros: u64,
+    ) -> Result<()> {
+        let Some(asked) = self.decision_ask(seq)? else {
+            return Ok(());
+        };
+        if super::is_budget_trap_ask(&asked) {
+            return super::budget_trap_ask::press_budget_trap_add_funds(
+                self,
+                owner,
+                seq,
+                amount_usd_micros,
+            );
+        }
+        if asked_run(&asked).is_none() {
+            return Ok(());
+        }
+        let resumed = self.with_write_txn_grouped(|txn| {
+            let by = owner.revalidate_in_txn(self, txn)?;
+            let ask = self
+                .decision_ask_in_txn(txn, seq)?
+                .ok_or_else(|| invalid("no such decision ask"))?;
+            let root = asked_run(&ask).ok_or_else(|| invalid("not a run-budget ask"))?;
+            let answer = DecisionAnswer::Choice(RunBudgetChoice::AddFunds.token().to_owned());
+            if !self.answer_owner_queue_ask_in_txn(txn, RUN_BUDGET_ASK_QUEUE, seq, by, answer)? {
+                return Ok(None);
+            }
+            add_funds_in_txn(
+                self,
+                txn,
+                root,
+                by,
+                seq,
+                amount_usd_micros,
+                self.store.clock.now_recorded_at(),
+            )
+            .map(Some)
         })?;
         if let Some(resumed) = resumed {
             self.signal_decision_answer(seq);
@@ -574,6 +870,22 @@ impl AgentDispatcher<'_> {
             }
         }
         Ok(None)
+    }
+
+    /// Every amount the owner added to the run `attempt` belongs to (the root
+    /// or any attempt of its run), oldest first. Empty with none added.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn run_funds(&self, attempt: AttemptId) -> Result<Vec<RunFundsEntry>> {
+        let txn = self.vault.store.env.read_txn()?;
+        for key in self.run_keys_in_txn(&txn, attempt)? {
+            if let Some(funds) = FUNDS.get(&self.vault.store, &txn, &key)? {
+                return Ok(funds.entries);
+            }
+        }
+        Ok(Vec::new())
     }
 
     /// The attempts a row keyed by the root of `attempt`'s run may sit under:
@@ -622,6 +934,11 @@ pub fn run_budget_questions(vault: &Vault) -> Result<Vec<RunBudgetQuestion>> {
         } else {
             None
         };
+        let add_funds_price = if choices.contains(&RunBudgetChoice::AddFunds) {
+            run_funds_price_in_txn(vault, &txn, run)?
+        } else {
+            None
+        };
         questions.push(RunBudgetQuestion {
             seq: ask.seq,
             run: crate::entity_id::bytes_to_hex_lower(run.as_bytes()),
@@ -629,6 +946,7 @@ pub fn run_budget_questions(vault: &Vault) -> Result<Vec<RunBudgetQuestion>> {
             choices,
             default_overdraft_units: RUN_BUDGET_DEFAULT_OVERDRAFT_UNITS,
             local_model,
+            add_funds_price,
         });
     }
     Ok(questions)

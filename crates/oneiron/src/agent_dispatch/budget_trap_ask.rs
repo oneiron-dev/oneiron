@@ -19,6 +19,12 @@
 //!   no cap named, the cap is one more call: the units the refused call asked
 //!   of the scope, or the units the resident's share falls short of the share
 //!   the refused call needed.
+//! - `add_funds` (owner ruling RUN-BUDGET-SPENT = B, 15 Nov 2026) is offered
+//!   on a spend scope's park when the vault's USD quote prices the scope's
+//!   unit: the dollars the owner names at his press buy whole units, rounded
+//!   down, and the scope's cap rises by them for good, as his top-up raises a
+//!   cap. A resident's pinned share is not money he adds per try: its own
+//!   door sets it.
 //! - Any wake of the park (that write, the owner's own top-up or share write,
 //!   or his release) withdraws the open ask in the wake's write
 //!   ([`withdraw_budget_trap_ask_in_txn`]). With no answer the try stays
@@ -38,7 +44,10 @@ use crate::llm::decision::{
 use crate::llm::run_admission::ResidentShare;
 use crate::{EntityId, Vault};
 
-use super::run_budget_ask::RunBudgetChoice;
+use super::run_budget_ask::{
+    FundsPrice, RunBudgetChoice, RunFundsEntry, add_funds_needs_amount, funds_price_in_txn,
+    funds_units, record_funds_in_txn,
+};
 use super::spend_record::{SCOPE, SpendScope, SpendScopeId, SpendState};
 use super::widen_record::invalid;
 
@@ -72,24 +81,32 @@ pub struct BudgetTrapQuestion {
     /// the limit reads now.
     pub default_overdraft_units: u64,
     pub limit: BudgetTrapLimit,
+    /// What an `add_funds` dollar buys now; `None` when the ask does not
+    /// offer it.
+    pub add_funds_price: Option<FundsPrice>,
 }
 
 /// The ask about the try `attempt` parked on `wait`, put to the owner role for
 /// `principal`, stating `default_units`: keyed by the try, so an open ask of
-/// the try is that ask.
+/// the try is that ask. It offers `add_funds` when `funds` prices the scope.
 fn budget_trap_request(
     attempt: AttemptId,
     principal: EntityId,
     wait: &DreamerParkWait,
     default_units: u64,
+    funds: Option<&FundsPrice>,
 ) -> Result<HumanDecisionRequest> {
-    let options = [RunBudgetChoice::StayParked, RunBudgetChoice::Overdraft]
+    let mut choices = vec![RunBudgetChoice::StayParked, RunBudgetChoice::Overdraft];
+    if funds.is_some() {
+        choices.push(RunBudgetChoice::AddFunds);
+    }
+    let options = choices
         .iter()
         .map(|choice| choice.token().to_owned())
         .collect();
     // Fixed machine-lifecycle wording, as the run hold's is: the host renders
     // the try and its choices.
-    let text = match wait {
+    let mut text = match wait {
         DreamerParkWait::ResidentShare { .. } => format!(
             "This resident's background work is parked at its pinned share. Keep it parked, or \
              approve an overdraft of its share (by default {default_units} units, one more call)?"
@@ -99,6 +116,12 @@ fn budget_trap_request(
              one-off overdraft (by default {default_units} units, one more call)?"
         ),
     };
+    if let Some(price) = funds {
+        text.push_str(&format!(
+            " Or add dollars to its spend cap for good (at {}).",
+            price.stated()
+        ));
+    }
     let question = RUN_BUDGET_SPENT.question(
         &[attempt.as_bytes().as_slice()],
         text,
@@ -140,6 +163,23 @@ pub(crate) fn is_budget_trap_ask(ask: &DecisionAsk) -> bool {
 /// carved from no parent, paid by the owner or by no named payer. Another
 /// payer's accepted cap is that payer's to raise, and a carved scope's room
 /// is its parent's.
+/// The `add_funds` price of a try parked on `wait`: the quote for the unit
+/// of the spend scope it waits on, while that scope is open. `None` for any
+/// other wait, or a unit with no USD price.
+fn trap_funds_price_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    wait: &DreamerParkWait,
+) -> Result<Option<FundsPrice>> {
+    let DreamerParkWait::Budget { scope, .. } = wait else {
+        return Ok(None);
+    };
+    Ok(SCOPE
+        .get(&vault.store, txn, &scope.0)?
+        .filter(|scope| scope.state == SpendState::Open)
+        .and_then(|scope| funds_price_in_txn(vault, txn, &scope.unit)))
+}
+
 fn scope_raisable_by(scope: &SpendScope, owner: EntityId) -> bool {
     scope.state == SpendState::Open
         && scope.hard
@@ -212,7 +252,8 @@ pub(crate) fn queue_budget_trap_ask_in_txn(
             return Ok(None);
         }
     }
-    let request = budget_trap_request(attempt, principal, wait, default_units)?;
+    let funds = trap_funds_price_in_txn(vault, wtxn, wait)?;
+    let request = budget_trap_request(attempt, principal, wait, default_units, funds.as_ref())?;
     vault
         .queue_decision_ask_in_txn(wtxn, &request, None)
         .map(Some)
@@ -269,6 +310,9 @@ pub(crate) fn apply_budget_trap_answer_in_txn(
     }
     if answer.answer == DecisionAnswer::Choice(RunBudgetChoice::Overdraft.token().to_owned()) {
         approve_trap_overdraft_in_txn(vault, wtxn, attempt, by, None, answer.answered_at)?;
+    }
+    if answer.answer == DecisionAnswer::Choice(RunBudgetChoice::AddFunds.token().to_owned()) {
+        return Err(add_funds_needs_amount());
     }
     Ok(())
 }
@@ -388,8 +432,83 @@ pub(super) fn press_budget_trap_ask(
                 vault.store.clock.now_recorded_at(),
             )?,
             RunBudgetChoice::StayParked | RunBudgetChoice::ContinueOnLocal => false,
+            RunBudgetChoice::AddFunds => return Err(add_funds_needs_amount()),
         };
         Ok(Some(woke))
+    })?;
+    if let Some(woke) = woke {
+        vault.signal_decision_answer(seq);
+        if woke {
+            vault.store.notify_attempt_observers();
+            vault.store.notify_proactivity_changes();
+        }
+    }
+    Ok(())
+}
+
+/// The owner's `add_funds` press on a budget trap ask: the dollars he names,
+/// `amount_usd_micros`, answered and applied in one write, his proof
+/// revalidated in it. They buy whole units at the vault's USD quote, rounded
+/// down; the spend scope the try waits on rises by them for good, the amount
+/// is recorded under the try, and every park the new room covers wakes.
+/// Nothing moves when the try is no longer parked on a spend scope he may
+/// raise. The same answer again is a no-op.
+///
+/// # Errors
+///
+/// The owner refusal; an ask that is withdrawn, answered another way, or does
+/// not offer `add_funds`; a zero amount, or one that buys no whole unit; no
+/// USD price; storage errors.
+pub(super) fn press_budget_trap_add_funds(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    seq: u64,
+    amount_usd_micros: u64,
+) -> Result<()> {
+    let woke = vault.with_write_txn_grouped(|txn| {
+        let by = owner.revalidate_in_txn(vault, txn)?;
+        let ask = vault
+            .decision_ask_in_txn(txn, seq)?
+            .ok_or_else(|| invalid("no such decision ask"))?;
+        let attempt = asked_try(&ask).ok_or_else(|| invalid("not a budget trap ask"))?;
+        let answer = DecisionAnswer::Choice(RunBudgetChoice::AddFunds.token().to_owned());
+        if !vault.answer_owner_queue_ask_in_txn(txn, BUDGET_TRAP_ASK_QUEUE, seq, by, answer)? {
+            return Ok(None);
+        }
+        let Some(wait) = PARKED
+            .get(&vault.store, txn, &attempt)?
+            .and_then(|park| park.wait)
+            .map(|wait| wait.wait)
+        else {
+            return Ok(Some(false));
+        };
+        let DreamerParkWait::Budget { scope, .. } = &wait else {
+            return Ok(Some(false));
+        };
+        let raisable = SCOPE
+            .get(&vault.store, txn, &scope.0)?
+            .is_some_and(|record| scope_raisable_by(&record, by));
+        if !raisable {
+            return Ok(Some(false));
+        }
+        let price = trap_funds_price_in_txn(vault, txn, &wait)?
+            .ok_or_else(|| invalid("the spend scope's budget unit has no USD price"))?;
+        let units = funds_units(&price, amount_usd_micros)?;
+        let now = vault.store.clock.now_recorded_at();
+        let woken = raise_scope_cap_in_txn(vault, txn, scope, by, units, now.saturating_mul(1000))?;
+        record_funds_in_txn(
+            vault,
+            txn,
+            attempt,
+            RunFundsEntry {
+                usd_micros: amount_usd_micros,
+                units,
+                price,
+                ask: seq,
+                added_at: now,
+            },
+        )?;
+        Ok(Some(!woken.is_empty()))
     })?;
     if let Some(woke) = woke {
         vault.signal_decision_answer(seq);
@@ -436,16 +555,23 @@ pub fn budget_trap_questions(vault: &Vault) -> Result<Vec<BudgetTrapQuestion>> {
         let AnswerContract::Choice { options } = &ask.question.contract else {
             continue;
         };
+        let choices: Vec<RunBudgetChoice> = options
+            .iter()
+            .filter_map(|token| RunBudgetChoice::of_token(token))
+            .collect();
+        let add_funds_price = if choices.contains(&RunBudgetChoice::AddFunds) {
+            trap_funds_price_in_txn(vault, &txn, &wait)?
+        } else {
+            None
+        };
         questions.push(BudgetTrapQuestion {
             seq: ask.seq,
             attempt: crate::entity_id::bytes_to_hex_lower(attempt.as_bytes()),
             asked_at: ask.asked_at,
-            choices: options
-                .iter()
-                .filter_map(|token| RunBudgetChoice::of_token(token))
-                .collect(),
+            choices,
             default_overdraft_units,
             limit,
+            add_funds_price,
         });
     }
     Ok(questions)

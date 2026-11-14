@@ -27,7 +27,9 @@ use std::pin::pin;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
-use oneiron::agent_dispatch::{AgentDispatcher, RunBudgetChoice, SpendScopeId};
+use oneiron::agent_dispatch::{
+    AgentDispatcher, LaunchUsdPrices, RunBudgetChoice, SpendScopeId, UsdPriceTarget, UsdUnitPrice,
+};
 use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dreamer_runner::{
@@ -567,6 +569,93 @@ fn a_spend_scope_park_asks_and_the_owners_overdraft_raises_its_cap() -> TestResu
         SCOPE_CAP + asked,
         "the scope's cap rises by the cap the owner named"
     );
+    assert!(
+        open_asks(&vault).is_empty(),
+        "the answered ask leaves the queue"
+    );
+    Ok(())
+}
+
+/// The vault's USD quote for a held run: $3 per million tokens.
+struct HeldRunTokenPrice;
+
+impl LaunchUsdPrices for HeldRunTokenPrice {
+    fn quote(
+        &self,
+        _vault: &Vault,
+        _txn: &heed::RoTxn<'_>,
+        target: UsdPriceTarget<'_>,
+        unit: &LeaseUnit,
+    ) -> oneiron::Result<Option<UsdUnitPrice>> {
+        Ok(
+            (matches!(target, UsdPriceTarget::HeldRun) && *unit == LeaseUnit::tokens()).then_some(
+                UsdUnitPrice {
+                    usd_micros: 3,
+                    per_units: 1_000,
+                },
+            ),
+        )
+    }
+}
+
+/// Owner ruling RUN-BUDGET-SPENT = B ("add $X"): a spend scope's park on a
+/// priced unit also offers `add_funds`. The owner's dollars buy whole units
+/// at the vault's USD quote, rounded down ($0.010001 at $3 per million
+/// tokens is 3,333,666 tokens); the scope's cap rises by them for good, the
+/// amount is recorded under the try, and the park wakes.
+#[test]
+fn a_priced_spend_scope_park_offers_add_funds_and_the_owners_dollars_raise_its_cap() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    assert!(vault.install_launch_usd_prices(Arc::new(HeldRunTokenPrice)));
+    let owner = owner_proof(&vault);
+    let dispatcher = AgentDispatcher::new(&vault);
+    let scope = SpendScopeId::launch("owen-funds-scope")?;
+    dispatcher
+        .open_root_spend_scope(
+            scope.clone(),
+            DeclaredMaximum {
+                units: SCOPE_CAP,
+                unit: LeaseUnit::tokens(),
+            },
+            Some(MaximumShown { at_ms: 10_000 }),
+            10,
+        )
+        .expect("the root scope opens");
+    let spend = llm::StepSpendScope::read_before_guards(&vault, scope.clone())?;
+    let guard = dispatcher.guard_for_scope(&scope)?;
+    let backend = AdmittingBackend::new(EntityId::now(), None);
+
+    let row = leased_try(&vault, "scope-add-funds", 1)?;
+    let trap = trapped_step(&vault, &row, &backend, &guard, Some(spend), false);
+    let ask = the_ask_of(&vault, &row);
+    let AnswerContract::Choice { options } = &ask.question.contract else {
+        return Err("the trap ask is a choice".into());
+    };
+    assert_eq!(
+        options,
+        &vec![
+            "stay_parked".to_owned(),
+            "overdraft".to_owned(),
+            "add_funds".to_owned()
+        ],
+        "a priced scope's park offers add_funds"
+    );
+    assert_still_parked(&vault, &row, "with no answer")?;
+
+    vault.press_run_budget_add_funds(&owner, ask.seq, 10_001)?;
+    assert_woken(&vault, &row, &trap, "the owner's added dollars")?;
+    let raised = dispatcher
+        .read_spend_scope(&scope)?
+        .expect("the scope stays on record");
+    assert_eq!(
+        raised.cap_units,
+        SCOPE_CAP + 3_333_666,
+        "the dollars buy whole units at the quote, rounded down"
+    );
+    let funds = dispatcher.run_funds(row.id)?;
+    assert_eq!(funds.len(), 1, "one amount on record: {funds:?}");
+    assert_eq!(funds[0].usd_micros, 10_001);
+    assert_eq!(funds[0].units, 3_333_666);
     assert!(
         open_asks(&vault).is_empty(),
         "the answered ask leaves the queue"
