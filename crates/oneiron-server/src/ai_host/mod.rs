@@ -90,6 +90,8 @@ mod turn_wake;
 mod turns;
 pub(crate) mod waves;
 mod weave_lens;
+#[cfg(oneiron_test_support)]
+pub(crate) mod workflow_park_door;
 mod workflows;
 
 mod handle;

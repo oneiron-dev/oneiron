@@ -77,17 +77,20 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        oneiron::task_verb::sdk::validate_input(verb, &input)?;
-        match &self.backend {
-            Backend::Remote(client) => client.call_as(verb, &input, invocation),
-            Backend::Embedded(client) => {
-                let result = client.invoke_as(verb, input, invocation)?;
-                serde_json::from_value(result).map_err(|error| {
-                    crate::error::transport_error(format!(
-                        "the embedded SDK answered {verb} with a body this verb could not decode: {error}"
-                    ))
-                })
-            }
+        // A Dreamer attempt's call takes its facet's own input, which the
+        // binding decodes and checks in the engine.
+        if !matches!(self.backend, Backend::DreamerAttempt(_)) {
+            oneiron::task_verb::sdk::validate_input(verb, &input)?;
         }
+        let result = match &self.backend {
+            Backend::Remote(client) => return client.call_as(verb, &input, invocation),
+            Backend::Embedded(client) => client.invoke_as(verb, input, invocation)?,
+            Backend::DreamerAttempt(binding) => binding.invoke(verb, input, Some(invocation))?,
+        };
+        serde_json::from_value(result).map_err(|error| {
+            crate::error::transport_error(format!(
+                "the embedded SDK answered {verb} with a body this verb could not decode: {error}"
+            ))
+        })
     }
 }

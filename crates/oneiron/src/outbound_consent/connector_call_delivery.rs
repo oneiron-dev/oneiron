@@ -21,8 +21,8 @@ impl Vault {
     /// prepare and execute. It takes no new arguments. A call past its
     /// expiry deadline settles as expired instead. Once the call is
     /// delivered or refused its row keeps that outcome, without the tool's
-    /// reply, until [`Self::ack_connector_call_delivery`]; a resume of a
-    /// settled row answers that receipt again and sends nothing.
+    /// reply, until [`Self::ack_connector_call_delivery_keeping_caller`]; a
+    /// resume of a settled row answers that receipt again and sends nothing.
     pub fn resume_connector_call<H: ConnectorCallHost>(
         &self,
         call_ref: &EntityId,
@@ -66,25 +66,6 @@ impl Vault {
                 )
             },
         )))
-    }
-
-    /// Drops a settled call's row once the wait reply that carries its
-    /// outcome has committed; `true` when it dropped one. A held or
-    /// retryable row stays for its next resume, and a row that keeps a
-    /// connector's questions stays for its caller's polls (FIX 3837).
-    pub fn ack_connector_call_delivery(
-        &self,
-        call_ref: &EntityId,
-    ) -> Result<bool, IntentLedgerError> {
-        Ok(
-            self.with_write_txn(|txn| match PENDING_CALLS.get(&self.store, txn, call_ref)? {
-                Some(pending) if pending.settled.is_some() && pending.input.is_none() => {
-                    delete_pending_call_in_txn(&self.store, txn, call_ref)
-                }
-                _ => Ok(false),
-            })?,
-        )
-        .inspect(|_| self.finish_connector_resume_retirements_after_commit())
     }
 
     /// One connector call's state by its ref, for the caller-bound status
@@ -153,10 +134,12 @@ impl Vault {
             }))
     }
 
-    /// [`Self::ack_connector_call_delivery`], keeping who called the call
-    /// and what it calls in the same commit, so its caller, or the owner,
-    /// can still read its status by ref (FIX 2279). `true` when it dropped
-    /// the held row.
+    /// Drops a settled call's row once the wait reply that carries its
+    /// outcome has committed, keeping who called the call and what it calls
+    /// in the same commit, so its caller, or the owner, can still read its
+    /// status by ref (FIX 2279). `true` when it dropped the held row. A held
+    /// or retryable row stays for its next resume, and a row that keeps a
+    /// connector's questions stays for its caller's polls (FIX 3837).
     ///
     /// # Errors
     ///

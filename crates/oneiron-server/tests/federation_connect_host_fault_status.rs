@@ -2,20 +2,21 @@
 
 #![cfg(unix)]
 
+#[path = "support/engine_stack.rs"]
+mod engine_stack;
+
 use axum::{
     Router,
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
+use engine_stack::run_on_engine_stack;
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
-use oneiron_server::{
-    ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
-};
+use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::{Value, json};
 use std::fs::{self, DirBuilder, Permissions};
-use std::future::Future;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -238,32 +239,9 @@ impl Drop for ReadOnlyDirectory {
     }
 }
 
-fn on_engine_threads<F, Fut>(test: F)
-where
-    F: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = ()>,
-{
-    let run = std::thread::Builder::new()
-        .name("connect-host-fault-status".into())
-        .stack_size(ENGINE_THREAD_STACK_BYTES)
-        .spawn(move || {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_stack_size(ENGINE_THREAD_STACK_BYTES)
-                .enable_all()
-                .build()
-                .expect("engine-sized test runtime")
-                .block_on(test());
-        })
-        .expect("spawn engine-sized test thread");
-    if let Err(panic) = run.join() {
-        std::panic::resume_unwind(panic);
-    }
-}
-
 #[test]
 fn connect_host_fault_answers_internal_not_bad_request() {
-    on_engine_threads(host_fault_status);
+    run_on_engine_stack("connect-host-fault-status", host_fault_status);
 }
 
 async fn host_fault_status() {
@@ -304,7 +282,7 @@ async fn host_fault_status() {
 
 #[test]
 fn connect_invalid_peer_signature_stays_bad_request() {
-    on_engine_threads(invalid_peer_signature_status);
+    run_on_engine_stack("connect-host-fault-status", invalid_peer_signature_status);
 }
 
 async fn invalid_peer_signature_status() {
