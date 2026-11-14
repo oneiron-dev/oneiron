@@ -182,13 +182,13 @@ impl Operation<'_> {
         )?;
         self.schemes
             .check(operation.get("security").or(self.schemes.default.as_ref()))
-            .map_err(&fail)?;
+            .map_err(fail)?;
 
         let mut input = InputSchema::default();
         let mut idempotency_header = None;
         let mut query = Vec::new();
         let mut path_names = BTreeSet::new();
-        for parameter in self.parameters().map_err(&fail)? {
+        for parameter in self.parameters().map_err(fail)? {
             let Parameter {
                 name: argument,
                 location,
@@ -198,10 +198,10 @@ impl Operation<'_> {
             match location.as_str() {
                 "path" => {
                     path_names.insert(argument.clone());
-                    input.add(&argument, schema, true).map_err(&fail)?;
+                    input.add(&argument, schema, true).map_err(fail)?;
                 }
                 "query" => {
-                    input.add(&argument, schema, required).map_err(&fail)?;
+                    input.add(&argument, schema, required).map_err(fail)?;
                     query.push(argument);
                 }
                 "header" if argument.eq_ignore_ascii_case("idempotency-key") => {
@@ -224,7 +224,7 @@ impl Operation<'_> {
                             "header parameter {argument} needs an object schema"
                         )));
                     }
-                    input.add(&argument, schema, required).map_err(&fail)?;
+                    input.add(&argument, schema, required).map_err(fail)?;
                 }
                 other => {
                     return Err(fail(format!(
@@ -234,12 +234,12 @@ impl Operation<'_> {
                 }
             }
         }
-        check_path_template(self.path, &path_names).map_err(&fail)?;
+        check_path_template(self.path, &path_names).map_err(fail)?;
         let json_body = match operation.get("requestBody") {
             None => false,
             Some(body) => {
-                let (schema, required) = self.request_body(body).map_err(&fail)?;
-                input.add(BODY_ARGUMENT, schema, required).map_err(&fail)?;
+                let (schema, required) = self.request_body(body).map_err(fail)?;
+                input.add(BODY_ARGUMENT, schema, required).map_err(fail)?;
                 true
             }
         };
