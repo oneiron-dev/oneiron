@@ -21,7 +21,12 @@ pub(super) fn same_fitted_neighbors(
     let (Some(neighbors), Some(unit)) = (neighbors, context.sources.first()) else {
         return Ok(false);
     };
-    let eligible = eligible_sources(lane.vault(), txn, neighbors)?;
+    let eligible = eligible_sources(
+        lane.vault(),
+        txn,
+        lane.reads_stored_bodies_in(txn)?,
+        neighbors,
+    )?;
     let Some((kept, omitted)) = fit_neighbors(lane, txn, unit, eligible)? else {
         return Ok(false);
     };
@@ -29,16 +34,18 @@ pub(super) fn same_fitted_neighbors(
     Ok(omitted == context.omitted && kept.iter().map(|source| source.id).eq(shown))
 }
 
-/// Each of `neighbors` that may inform an answer.
+/// Each of `neighbors` that may inform an answer, as an asker that
+/// `reads_stored` bodies or not is shown it ([`source`]).
 pub(super) fn eligible_sources(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    reads_stored: bool,
     neighbors: Vec<(EntityId, u8, Vec<u8>)>,
 ) -> Result<Vec<GraphContextSource>> {
     let mut sources = Vec::with_capacity(neighbors.len());
     for (id, kind, body) in neighbors {
         if source_eligible(vault, txn, &id, kind)? {
-            sources.push(source(id, kind, body));
+            sources.push(source(reads_stored, id, kind, body)?);
         }
     }
     Ok(sources)
