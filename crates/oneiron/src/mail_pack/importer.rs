@@ -44,31 +44,8 @@ use crate::{EntityId, Result, Vault};
 /// Seconds in the month a "recent months" setting counts.
 pub(super) const MONTH_SECONDS: u64 = 30 * 86_400;
 
-/// How much one step reads from the provider. The host sets its cadence;
-/// these bound one step so many sources share a host fairly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct MailSyncBudget {
-    /// Change feed pages.
-    pub history_pages: u32,
-    /// Newest-first listing pages.
-    pub list_pages: u32,
-    /// Bodies filled in.
-    pub bodies: u32,
-    /// Opened attachments fetched.
-    pub attachments: u32,
-}
-
-impl Default for MailSyncBudget {
-    fn default() -> Self {
-        Self {
-            history_pages: 10,
-            list_pages: 2,
-            bodies: 50,
-            attachments: 10,
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::mail_pack::importer::MailSyncBudget;
 
 /// What one step did.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]

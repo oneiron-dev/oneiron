@@ -19,43 +19,11 @@ use crate::error::ClaimError;
 use crate::registry::ENTITY_TYPE_CONVERSATION;
 use crate::workspace_roster::join_consent::person_of_actor_in_txn;
 use crate::write_envelope::WriteActor;
-use serde::{Deserialize, Serialize};
 
-/// `vault.rooms.pins.pin` and `vault.rooms.pins.unpin`'s input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomPinRequest {
-    /// The room whose shared pins change.
-    pub room: EntityId,
-    /// The record the pin names.
-    pub target: EntityId,
-}
-
-/// `vault.rooms.pins.pin`'s reply: the room's record for the target. A
-/// target pinned already keeps its first record, which this returns.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomPinReply {
-    pub room: EntityId,
-    pub pin: RoomPin,
-}
-
-/// `vault.rooms.pins.unpin`'s reply. It says nothing about whether the
-/// target was pinned.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomUnpinReply {
-    pub room: EntityId,
-}
-
-/// `vault.rooms.pins.policy.set`'s input, and its reply with the stored
-/// policy.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomPinPolicySet {
-    pub room: EntityId,
-    pub policy: RoomPinPolicy,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::rooms::pins::{
+    RoomPinPolicySet, RoomPinReply, RoomPinRequest, RoomUnpinReply,
+};
 
 fn lacks(reason: &'static str) -> Error {
     Error::Claim(ClaimError::ActorLacksClaimAuthority { reason })

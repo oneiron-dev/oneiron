@@ -303,6 +303,12 @@ pub struct RoomPage {
     pub next_after: Option<String>,
     /// The room Scope this page was read inside (ARCH-0067 §8).
     pub scope: crate::federation::Scope,
+    /// Who made each row, keyed by the `actor` it names, as this reader may
+    /// name them (FIX [UI-GATE-PREVIEW] phase 3): one entry per actor on the
+    /// page, `unknown` for one the reader cannot name. `vault.rooms.messages`
+    /// fills it; a page read for another door leaves it empty.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub actors: std::collections::BTreeMap<String, crate::context_board::ActorAttribution>,
 }
 
 /// A room TURN is an ordinary record, not a claim, so it lives in base
