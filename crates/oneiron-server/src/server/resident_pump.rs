@@ -900,6 +900,22 @@ pub(super) fn reap_agent_run_leases(server: &SyncServer) {
     }
 }
 
+/// One handed-over spend reconcile pass (FIX 4889), on the housekeeping tick
+/// before the agent run reaper: each run this machine holds custody of and
+/// that ended elsewhere settles its scope here
+/// ([`Vault::reconcile_handed_over_spend`]).
+pub(super) fn reconcile_handed_over_spend(server: &SyncServer) {
+    match server.vault().reconcile_handed_over_spend() {
+        Ok(0) => {}
+        Ok(settled) => {
+            tracing::info!(settled, "spend custody reconcile settled runs");
+        }
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "spend custody reconcile failed");
+        }
+    }
+}
+
 /// Whether a run stopped on a model call no provider answered (FIX 3194):
 /// its own step's, which the run makes again once it resumes, or a host
 /// door's, after which it goes on from its next step. Either parks it.

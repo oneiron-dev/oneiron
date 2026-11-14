@@ -731,6 +731,32 @@ impl AgentDispatcher<'_> {
         }))
     }
 
+    /// Folds what the other machines spent of a handed-over run into the scope
+    /// `attempt` spends under here (FIX 4889): the custody machine's one
+    /// counter. `None` when the run spends unmetered here or its scope is not
+    /// open. It adds `units` to `spent_units` with no room check, no parent
+    /// walk and no receipts, as those units were spent on another machine
+    /// already; the parent is charged once, when the scope settles.
+    pub(crate) fn fold_handed_over_spend_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        attempt: AttemptId,
+        units: u64,
+    ) -> Result<Option<SpendScope>> {
+        let Some(id) = self.scope_for_attempt_in_txn(txn, attempt)? else {
+            return Ok(None);
+        };
+        let mut scope = SCOPE
+            .get(&self.vault.store, txn, &id.0)?
+            .ok_or_else(|| invalid("spend scope is missing"))?;
+        if scope.state != SpendState::Open {
+            return Ok(None);
+        }
+        scope.spent_units = scope.spent_units.saturating_add(units);
+        SCOPE.put(&self.vault.store, txn, &scope.scope.0, &scope)?;
+        Ok(Some(scope))
+    }
+
     /// [`Self::settle_child_in_txn`] in its own transaction.
     pub fn settle_child(&self, child: &AttemptId, now: u64) -> Result<Option<SpendSettlement>> {
         let mut txn = self.vault.store.env.write_txn()?;

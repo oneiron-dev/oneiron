@@ -29,7 +29,9 @@
 //! agree. The take reserves only what the launch reserved less what the
 //! other machines spent of it, as the run TASK's spend carry records it
 //! (FIX 4889), and waits when nothing is left; the machine whose tree
-//! funded the launch keeps the one counter (canon ARCH-0026:242).
+//! funded the launch keeps the one counter (canon ARCH-0026:242). A
+//! take-back on the custody machine keeps the run's scope and folds the
+//! other machines' shares into it (FIX 4889).
 //!
 //! The same pass renews this machine's own lease on each run with a try
 //! pending in its queue (`own_agent_run_lease_renewal`): a parked or queued
@@ -563,8 +565,9 @@ fn world_readable_here_in(vault: &Vault, txn: &heed::RoTxn<'_>, world: &str) -> 
 /// queue (a root's, or a child's that outlived its root), read in `txn`,
 /// each with its newest such try's id and state. A pending child under a
 /// run's TASK is no try of it here (REVIEW-6638): the take never keeps it as
-/// the run's try, and it renews nothing.
-fn local_agent_run_tries_in(
+/// the run's try, and it renews nothing. The custody reconcile reads it too
+/// (FIX 4889).
+pub(super) fn local_agent_run_tries_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<BTreeMap<EntityId, (AttemptId, AttemptState)>> {
@@ -602,7 +605,8 @@ fn take_expired_agent_run(
 /// that commits only when the try is a run of the agent run pump's here and
 /// this machine can fund it; then the lease moves here at the next
 /// generation with a fresh hold, and the TASK names a re-created or
-/// successor try as its live one. A kept try is named by its own claim.
+/// successor try as its live one. A kept try is named by its own claim. What
+/// the take folded into the kept scope lands on the TASK's carry (FIX 4889).
 fn take_expired_agent_run_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -623,7 +627,7 @@ fn take_expired_agent_run_in_txn(
         return Ok(AgentRunTake::Waits(RUN_TASK_UNREADABLE));
     };
     let queue = AttemptQueue::new(vault);
-    let (try_id, resume) = match run.local {
+    let (try_id, resume, folded) = match run.local {
         LocalTry::Wait(reason) => return Ok(AgentRunTake::Waits(reason)),
         LocalTry::Keep(id) => {
             let queued = queue.get_in_txn(&*wtxn, id)?.is_some_and(|row| {
@@ -632,7 +636,7 @@ fn take_expired_agent_run_in_txn(
             if !queued {
                 return Ok(AgentRunTake::Waits(LOCAL_TRY_CHANGED));
             }
-            (id, AgentRunResume::QueuedHere)
+            (id, AgentRunResume::QueuedHere, 0)
         }
         LocalTry::Recreate | LocalTry::Succeed(_) => {
             let Some(input) = frozen_dispatch_input(&body.queue_payload) else {
@@ -674,24 +678,24 @@ fn take_expired_agent_run_in_txn(
             if !super::agent_run::agent_pump_claims_in(vault, &savepoint, &record)? {
                 return Ok(AgentRunTake::Waits(NOT_THE_AGENT_PUMPS));
             }
-            let spent_elsewhere = body
-                .spend
-                .as_ref()
-                .map_or(0, |carry| carry.spent_elsewhere(node_id));
-            if !AgentDispatcher::new(vault).reserve_handed_over_launch_in_txn(
+            let folded = match AgentDispatcher::new(vault).reserve_handed_over_launch_in_txn(
                 &mut savepoint,
                 record.id,
                 &input,
-                spent_elsewhere,
+                body.spend.as_ref(),
+                node_id,
                 now,
             )? {
-                return Ok(AgentRunTake::Waits(LAUNCH_UNFUNDED_HERE));
-            }
+                super::spend_custody::HandedOverLaunchReserve::Unfunded => {
+                    return Ok(AgentRunTake::Waits(LAUNCH_UNFUNDED_HERE));
+                }
+                super::spend_custody::HandedOverLaunchReserve::Reserved { folded } => folded,
+            };
             savepoint.commit()?;
             // The transaction's owner re-arms the deadline watch after its
             // commit, as a dispatch's enqueue does.
             crate::batch::queue_proactivity_change(vault, wtxn);
-            (record.id, resume)
+            (record.id, resume, folded)
         }
     };
     let lease = AgentRunExecutorLease {
@@ -703,6 +707,11 @@ fn take_expired_agent_run_in_txn(
         body.executor = lease;
         if resume != AgentRunResume::QueuedHere {
             body.live_attempt_ref = bytes_to_hex_lower(try_id.as_bytes());
+        }
+        if folded != 0
+            && let Some(carry) = body.spend.as_mut()
+        {
+            carry.custody_folded_units = carry.custody_folded_units.saturating_add(folded);
         }
         Ok(())
     })?;

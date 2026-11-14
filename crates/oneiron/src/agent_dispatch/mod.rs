@@ -107,6 +107,7 @@ pub(crate) use scope::project_descends_from_in_txn;
 mod skill_default;
 pub(crate) use skill_default::workflow_default;
 mod spend_calibration;
+mod spend_custody;
 #[cfg(feature = "sync")]
 pub(crate) mod spend_handoff;
 mod spend_lease;
