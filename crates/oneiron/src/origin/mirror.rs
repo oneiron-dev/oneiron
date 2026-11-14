@@ -266,21 +266,6 @@ impl Vault {
         TARGETS.delete(&self.store, txn, &repo_id)
     }
 
-    /// Pushes a served repository to its mirror now, due or not, as the
-    /// owner asked. Returns the run it recorded.
-    pub fn push_served_origin_mirror(&self, repo_name: &str) -> Result<OriginMirrorRun> {
-        let repo_id = self.served_mirror_repo_id(repo_name)?;
-        let target = {
-            let txn = self.store.env.read_txn()?;
-            TARGETS.get(&self.store, &txn, &repo_id)?
-        }
-        .ok_or(Error::EntityNotFound)?;
-        require_whole_ref_strategy(repo_name, &target)?;
-        self.require_mirror_pusher(repo_name)?;
-        self.run_mirror_target(repo_id, &target, MirrorTrigger::PushNow(None))
-            .ok_or(Error::ConcurrentWrite("the mirror changed before its push"))
-    }
-
     /// Pushes now as the caller's owner proof, rechecked when its run is written.
     ///
     /// The push checks in first (2k9b; P25-SHAPE Q1 = A): it goes on the
