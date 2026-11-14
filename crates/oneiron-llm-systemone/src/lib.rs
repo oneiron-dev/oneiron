@@ -6,6 +6,7 @@
 //! adds the key from the vault for one call at a time).
 
 use oneiron::code_run::model_call::native_seat_read_digests;
+use oneiron::llm::LabelReadFailure;
 use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionImage, DecisionRung, ImageBox, ProviderPin,
@@ -30,6 +31,12 @@ pub const MAX_RESPONSE_BYTES: usize = 65_536;
 pub const MAX_IMAGE_EDGE: u32 = 1_568;
 /// The wire's opt-in for images and Box questions, sent with every request that has one.
 const IMAGES_HEADER: &str = "TypeSafe-Danger-Zone-Images";
+/// The body key that carries the call's time left to a server that takes a
+/// native budget: whole milliseconds, rounded down (Engine ruling L9-19-WIRE).
+pub const NATIVE_BUDGET_KEY: &str = "budget_ms";
+/// The top-level `stop` a server's reply names when its read stopped at its
+/// token cap before an answer (Engine ruling L9-19-WIRE).
+pub const TOKEN_CAP_STOP: &str = "token_cap";
 
 /// One request as the seat built it, for a transport to send as it is: the
 /// transport adds only the credential.
@@ -82,6 +89,9 @@ pub struct SystemOneSeat {
     transport: Box<dyn SystemOneTransport>,
     endpoint: String,
     pin: ProviderPin,
+    /// The seat's server takes a native budget: each body carries the call's
+    /// time left as [`NATIVE_BUDGET_KEY`].
+    native_budget: bool,
 }
 
 impl SystemOneSeat {
@@ -146,7 +156,19 @@ impl SystemOneSeat {
                 model,
                 version,
             },
+            native_budget: false,
         })
+    }
+
+    /// Whether the seat's server takes a native budget: the binding's
+    /// `native_budget` row, the codec row ARCH-0036 #system-one-codec names.
+    /// A server that takes one gets each call's time left as
+    /// [`NATIVE_BUDGET_KEY`]; any other gets the body as before, never a key
+    /// it may refuse.
+    #[must_use]
+    pub fn with_native_budget(mut self, native_budget: bool) -> Self {
+        self.native_budget = native_budget;
+        self
     }
 
     /// The transport's own checks before a measurement starts, with no I/O.
@@ -201,6 +223,11 @@ impl SystemOneSeat {
         if !assets.is_empty() {
             body["assets"] = Value::Object(assets);
         }
+        if self.native_budget {
+            // Rounded down, so the server never gets more time than the call has left.
+            body[NATIVE_BUDGET_KEY] =
+                json!(u64::try_from(time_left.as_millis()).unwrap_or(u64::MAX));
+        }
         let mut headers = vec![("content-type".to_owned(), "application/json".to_owned())];
         if images {
             headers.push((IMAGES_HEADER.to_ascii_lowercase(), "true".to_owned()));
@@ -243,6 +270,9 @@ impl SystemOneSeat {
             }
             if response.body.len() > MAX_RESPONSE_BYTES {
                 return Err(FatalLlmError::InvalidRequest.into());
+            }
+            if stopped_at_token_cap(&response.body) {
+                return Err(token_cap());
             }
             let wire: Response = serde_json::from_slice(&response.body)
                 .map_err(|_| FatalLlmError::InvalidRequest)?;
@@ -368,6 +398,26 @@ struct Response {
 struct WireUsage {
     input_tokens: u64,
     output_tokens: u64,
+}
+
+/// A reply's top-level stop, read from every server before its answers.
+#[derive(Deserialize)]
+struct ReplyStop {
+    stop: Option<String>,
+}
+
+/// Whether the reply says its server stopped at its token cap before an
+/// answer. Such a read is the cap, as the house read's is: the ladder steps
+/// up past it (Engine ruling L2-31-ROUTE), never fails the call on it.
+fn stopped_at_token_cap(body: &[u8]) -> bool {
+    serde_json::from_slice::<ReplyStop>(body)
+        .is_ok_and(|reply| reply.stop.as_deref() == Some(TOKEN_CAP_STOP))
+}
+
+/// The error a read its server stopped at its token cap answers: the house
+/// read's own.
+fn token_cap() -> oneiron::LlmError {
+    FatalLlmError::LabelRead(LabelReadFailure::TokenCap).into()
 }
 
 fn build_question(request: &SeatRequest) -> Value {
