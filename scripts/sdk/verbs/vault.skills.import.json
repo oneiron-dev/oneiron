@@ -1,7 +1,7 @@
 {
   "name": "vault.skills.import",
   "description": "The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask.",
-  "input": "HubImportRequest",
+  "input": "HubSkillImportRequest",
   "output": "crate::task_verb::sdk::HubSkillImported",
   "call": "crate::task_verb::sdk::hub_skill_import_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.import\")?, &input)?",
   "host_door": true,

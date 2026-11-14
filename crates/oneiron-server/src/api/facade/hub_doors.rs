@@ -86,7 +86,7 @@ pub(crate) async fn vault_skill_hubs_get(
 pub(crate) async fn vault_skill_hubs_publishers_admit(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
-    input: SkillPublisherRequest,
+    input: SkillPublisherAdmitRequest,
 ) -> Listed<SkillPublisherAdmission> {
     owner_call(
         server,
@@ -213,7 +213,7 @@ pub(crate) async fn vault_packs_get(
 pub(crate) async fn vault_skills_import(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
-    input: HubImportRequest,
+    input: HubSkillImportRequest,
 ) -> Listed<HubSkillImported> {
     owner_call(server, auth, "vault.skills.import", move |server, owner| {
         let answer = sdk::hub_skill_import_as_owner(server.vault(), owner, &input)?;

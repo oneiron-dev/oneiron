@@ -63,6 +63,8 @@ pub use local_dir::LocalDirEndpointSkillHubAdapter;
 pub(crate) use package_codec::remove_hub_package_in_txn;
 pub use package_codec::{decode_hub_package, encode_hub_package};
 pub use publisher::ForeignSkillPublisher;
+// The publisher admission door's effect is this Grant (2k8d).
+pub(crate) use publisher::skill_publisher_grant;
 pub(crate) use ref_sync::{RefFetch, pinned_tracking};
 pub(crate) use refinement_admission::{
     RefinementAdmissionProof, skill_refinement_origin_in_txn, validate_refinement_admission,

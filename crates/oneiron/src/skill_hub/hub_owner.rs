@@ -191,6 +191,23 @@ impl Vault {
         pin: HubPin,
         publisher: &str,
     ) -> Result<EntityId> {
+        self.import_skill_from_hub_ref_applying(owner, hub, folder, pin, publisher, None)
+            .map(|(entity, _)| entity)
+    }
+
+    /// [`Self::import_skill_from_hub_ref`] with the decision it ran on: the
+    /// owner's own proof, and with `applied` another asker's approved
+    /// check-in for this exact import, spent in the import's commit writer
+    /// (ROLES-CHECKIN 2k8; P25-SHAPE Q1 = A).
+    pub(crate) fn import_skill_from_hub_ref_applying(
+        &self,
+        owner: &AuthenticatedOwner,
+        hub: EntityId,
+        folder: &str,
+        pin: HubPin,
+        publisher: &str,
+        applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> Result<(EntityId, crate::check_in::CheckInDecision)> {
         let publisher = self.admit_skill_publisher(owner, publisher, hub)?;
         let source = HubRef::new(hub, folder, pin)?;
         let at = self.now_recorded_at();
@@ -199,15 +216,8 @@ impl Vault {
         let fit = self.chosen_skill_fit(&caller)?;
         let fetch = self.hub_ref_fetch(&pinned_tracking(source.clone())?, None)?;
         let osv = Some(super::osv::hub_advisory_query(fetch.kind()));
-        self.import_marketplace_skill_with_query(
-            &fetch,
-            &source,
-            &publisher,
-            &*fit,
-            osv,
-            occurred,
-            at,
-            &mut super::SkillImportRows::default(),
+        self.import_marketplace_skill_applying(
+            &fetch, &source, &publisher, &*fit, osv, occurred, at, applied,
         )
     }
 

@@ -2,8 +2,9 @@
 //! Fetch, scanning, admission and hook authority stay in the existing hub engine.
 use serde::{Deserialize, Serialize};
 
+use crate::check_in::{AppliedCheckIn, CheckInDecision};
 use crate::consent::{AuthenticatedOwner, ConsentReceipt};
-use crate::memory::{Memory, MemoryResult};
+use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::runtime_hooks::HookGrant;
 use crate::skill_hub::pack_catalog::{PackHookBinding, PackHookQualification, PackInstallReceipt};
 use crate::skill_hub::{
@@ -82,11 +83,30 @@ pub struct SkillPublisherRequest {
     pub identity: String,
 }
 
+/// `vault.skill_hubs.publishers.admit`'s request: the publisher and its one
+/// hub, as [`SkillPublisherRequest`], and an approved check-in the owner
+/// applies.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SkillPublisherAdmitRequest {
+    pub hub: EntityId,
+    pub identity: String,
+    /// Another asker's approved check-in for this exact admission, 32 hex:
+    /// the owner applies it on their own proof, and the admission's writer
+    /// spends it (ROLES-CHECKIN 2k8). Omitted: the owner's own admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SkillPublisherAdmission {
     pub hub: EntityId,
     pub identity: String,
     pub grant_ref: String,
+    /// The decision the admission ran on: the owner's own proof, naming the
+    /// asker's approved check-in it applied (ROLES-CHECKIN 2k8).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -112,6 +132,21 @@ pub struct HubImportRequest {
     pub publisher: String,
 }
 
+/// `vault.skills.import`'s request: the pinned source and its publisher, as
+/// [`HubImportRequest`], and an approved check-in the owner applies.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HubSkillImportRequest {
+    pub hub_ref: HubRef,
+    pub publisher: String,
+    /// Another asker's approved check-in for this exact import, 32 hex: the
+    /// owner applies it on their own proof, and the import's commit writer
+    /// spends it (ROLES-CHECKIN 2k8). It needs a commit or content_hash pin,
+    /// so the ask names the exact bytes. Omitted: the owner's own import.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HubPackRequest {
@@ -127,6 +162,10 @@ pub struct HubSkillRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HubSkillImported {
     pub entity: EntityId,
+    /// The decision the import ran on: the owner's own proof, naming the
+    /// asker's approved check-in it applied (ROLES-CHECKIN 2k8).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
@@ -310,17 +349,60 @@ pub fn skill_hub_get_as_owner(
     Ok(vault.skill_hub_record(&input.hub)?)
 }
 
+/// `vault.skill_hubs.publishers.admit`: the admission widens the publisher's
+/// grant (ARCH-0082 #act-table "Widen another's grant"). The owner's own
+/// admission goes on their own proof, never gated, and the answer records
+/// that decision (`check_in`). With `check_in_ref` the owner applies another
+/// asker's approved check-in for this exact admission: the mint's writer
+/// spends it after the hub is read there, so a refusal leaves it eligible
+/// and admits no one (ROLES-CHECKIN 2k8; Engine RULING P25-SHAPE Q1 = A).
+///
+/// # Errors
+///
+/// `BAD_REQUEST` for a malformed `check_in_ref`; no such hub; the mint's
+/// refusals; a check-in that is not an approved ask for this admission.
 pub fn skill_publisher_admit_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
-    input: &SkillPublisherRequest,
+    input: &SkillPublisherAdmitRequest,
 ) -> MemoryResult<SkillPublisherAdmission> {
-    let publisher = vault.admit_skill_publisher(owner, &input.identity, input.hub)?;
+    let applied = match super::shared::check_in_ref(input.check_in_ref.as_deref())? {
+        Some(id) => Some(AppliedCheckIn {
+            id,
+            verb: "vault.skill_hubs.publishers.admit",
+            effect_digest: skill_publisher_admit_effect_digest(input)?,
+        }),
+        None => None,
+    };
+    let (publisher, decision) = vault.admit_skill_publisher_applying(
+        owner,
+        &input.identity,
+        input.hub,
+        applied.as_ref(),
+    )?;
     Ok(SkillPublisherAdmission {
         hub: input.hub,
         identity: publisher.identity().to_owned(),
         grant_ref: publisher.grant_ref().to_owned(),
+        check_in: decision,
     })
+}
+
+/// The digest of the owner's publisher admission `request`: the effect an
+/// asker's `vault.check_in.open` names for
+/// `vault.skill_hubs.publishers.admit`, and the one the admission spends
+/// (2k8; P25-SHAPE Q1 = A). It is
+/// [`crate::check_in::standing_grant_effect_digest`] over the one Grant the
+/// admission mints: the publisher's offer from that hub.
+///
+/// # Errors
+///
+/// An identity the admission would refuse as malformed.
+pub fn skill_publisher_admit_effect_digest(
+    request: &SkillPublisherAdmitRequest,
+) -> MemoryResult<[u8; 32]> {
+    let bound = crate::skill_hub::skill_publisher_grant(&request.identity, request.hub)?;
+    Ok(crate::check_in::standing_grant_effect_digest(&bound))
 }
 
 pub fn skill_publisher_revoke_as_owner(
@@ -381,20 +463,78 @@ pub fn hub_pack_get_as_owner(
     Ok(vault.installed_pack(&input.name)?)
 }
 
+/// `vault.skills.import`: the import admits its publisher and lands the
+/// skill behind the owner's fit (the verb's act, "Widen another's grant",
+/// ARCH-0082 #act-table). The owner's own import goes on their own proof,
+/// never gated, and the answer records that decision (`check_in`). With
+/// `check_in_ref` the owner applies another asker's approved check-in for
+/// this exact import: the source must be pinned to a commit or a content
+/// hash, so the ask names the bytes, and the import's commit writer spends
+/// it after every check of the commit, so a refusal leaves it eligible
+/// (ROLES-CHECKIN 2k8; Engine RULING P25-SHAPE Q1 = A).
+///
+/// # Errors
+///
+/// `BAD_REQUEST` for a malformed `check_in_ref`, or one on a source pinned
+/// by tag, semver or nothing; the import's refusals; a check-in that is not
+/// an approved ask for this import.
 pub fn hub_skill_import_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
-    input: &HubImportRequest,
+    input: &HubSkillImportRequest,
 ) -> MemoryResult<HubSkillImported> {
+    let applied = match super::shared::check_in_ref(input.check_in_ref.as_deref())? {
+        Some(id) => {
+            if !matches!(
+                input.hub_ref.pin,
+                crate::skill_hub::HubPin::Commit(_) | crate::skill_hub::HubPin::ContentHash(_)
+            ) {
+                return Err(MemoryError::bad_request(
+                    "check_in_ref needs a commit or content_hash pin, so the ask names the exact bytes",
+                ));
+            }
+            Some(AppliedCheckIn {
+                id,
+                verb: "vault.skills.import",
+                effect_digest: hub_skill_import_effect_digest(input)?,
+            })
+        }
+        None => None,
+    };
+    let (entity, decision) = vault.import_skill_from_hub_ref_applying(
+        owner,
+        input.hub_ref.hub_id,
+        &input.hub_ref.ref_string,
+        input.hub_ref.pin.clone(),
+        &input.publisher,
+        applied.as_ref(),
+    )?;
     Ok(HubSkillImported {
-        entity: vault.import_skill_from_hub_ref(
-            owner,
-            input.hub_ref.hub_id,
-            &input.hub_ref.ref_string,
-            input.hub_ref.pin.clone(),
-            &input.publisher,
-        )?,
+        entity,
+        check_in: Some(decision),
     })
+}
+
+/// The digest of the owner's hub skill import `request`: the effect an
+/// asker's `vault.check_in.open` names for `vault.skills.import`, and the
+/// one the import spends (2k8; P25-SHAPE Q1 = A). BLAKE3, key derived from
+/// `oneiron check_in hub skill import v1`, over the request's MessagePack
+/// encoding with field names, without its `check_in_ref`: the hub ref with
+/// its pin, and the publisher.
+///
+/// # Errors
+///
+/// The request does not encode.
+pub fn hub_skill_import_effect_digest(request: &HubSkillImportRequest) -> MemoryResult<[u8; 32]> {
+    let import = HubSkillImportRequest {
+        check_in_ref: None,
+        ..request.clone()
+    };
+    let encoded = rmp_serde::to_vec_named(&import)
+        .map_err(|_| crate::error::Error::InvariantViolation("hub skill import encode"))?;
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in hub skill import v1");
+    hasher.update(&encoded);
+    Ok(*hasher.finalize().as_bytes())
 }
 
 pub fn hub_skill_sync_as_owner(

@@ -328,6 +328,48 @@ impl Vault {
         )?;
         self.with_write_txn_grouped(|txn| self.commit_fitted_skill_in_txn(txn, &fitted, None, rows))
     }
+
+    /// [`Self::import_marketplace_skill_with_query`] as the owner's import
+    /// door, an act on its verb's "Widen another's grant" row (ARCH-0082
+    /// #act-table): the commit's writer records the decision the import ran
+    /// on, the owner's own proof, and with `applied` spends another asker's
+    /// approved check-in for this exact import after every check of the
+    /// commit, so a refused fit or commit leaves it eligible (ROLES-CHECKIN
+    /// 2k8; P25-SHAPE Q1 = A).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the marketplace import plus the check-in the owner applies"
+    )]
+    pub(super) fn import_marketplace_skill_applying<A: SkillHubAdapter>(
+        &self,
+        adapter: &A,
+        source: &HubRef,
+        publisher: &ForeignSkillPublisher,
+        fit: &dyn MarketplaceFitEvaluator,
+        advisories: Option<&dyn super::osv::OsvQuery>,
+        occurred: TimeRange,
+        learned_at: u64,
+        applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> Result<(EntityId, crate::check_in::CheckInDecision)> {
+        let fitted = self.fit_marketplace_skill(
+            adapter, source, publisher, fit, advisories, occurred, learned_at,
+        )?;
+        self.with_write_txn_grouped(|txn| {
+            let entity = self.commit_fitted_skill_in_txn(
+                txn,
+                &fitted,
+                None,
+                &mut super::SkillImportRows::default(),
+            )?;
+            let decision = crate::check_in::owner_act_decision_in_txn(
+                self,
+                txn,
+                crate::check_in::ActClass::GrantWiden,
+                applied,
+            )?;
+            Ok((entity, decision))
+        })
+    }
     pub(super) fn write_hub_import_receipt_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,

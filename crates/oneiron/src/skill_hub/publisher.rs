@@ -28,7 +28,7 @@ impl ForeignSkillPublisher {
 }
 /// The one Grant that admits `identity` to offer from `hub`; its digest is
 /// the publisher's grant ref.
-pub(super) fn skill_publisher_grant(identity: &str, hub: EntityId) -> Result<GrantBound> {
+pub(crate) fn skill_publisher_grant(identity: &str, hub: EntityId) -> Result<GrantBound> {
     let actor = ActorBound::new(identity)?.with_actor_class("foreign-publisher")?;
     GrantBound::action(
         actor,
@@ -118,17 +118,42 @@ impl Vault {
         identity: &str,
         hub: EntityId,
     ) -> Result<ForeignSkillPublisher> {
-        let txn = self.store.env.read_txn()?;
-        self.hub_record_in_txn(&txn, &hub)?;
-        drop(txn);
+        self.admit_skill_publisher_applying(owner, identity, hub, None)
+            .map(|(publisher, _)| publisher)
+    }
+
+    /// [`Self::admit_skill_publisher`] with the decision it ran on. The
+    /// admission widens the publisher's grant: it is the owner's own act on
+    /// their own proof, and with `applied` they apply another asker's
+    /// approved check-in for this exact admission, spent in the mint's
+    /// writer after the hub is read there (ROLES-CHECKIN 2k8; P25-SHAPE Q1 =
+    /// A).
+    pub(crate) fn admit_skill_publisher_applying(
+        &self,
+        owner: &AuthenticatedOwner,
+        identity: &str,
+        hub: EntityId,
+        applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> Result<(
+        ForeignSkillPublisher,
+        Option<crate::check_in::CheckInDecision>,
+    )> {
         let bound = skill_publisher_grant(identity, hub)?;
         let grant_ref = bound.digest().to_hex();
-        self.create_standing_grant(owner, bound)?;
-        Ok(ForeignSkillPublisher {
-            identity: identity.to_owned(),
-            hub,
-            grant_ref,
-        })
+        let receipt = self.with_write_txn_grouped(|wtxn| {
+            self.hub_record_in_txn(wtxn, &hub)?;
+            crate::consent::lifecycle::create_standing_grant_with_decision_in_txn(
+                self, wtxn, owner, bound, applied,
+            )
+        })?;
+        Ok((
+            ForeignSkillPublisher {
+                identity: identity.to_owned(),
+                hub,
+                grant_ref,
+            },
+            receipt.check_in,
+        ))
     }
     /// Withdraws exactly the offer-only grant minted for this publisher and hub.
     /// Bound hooks recheck the same grant before they run.
