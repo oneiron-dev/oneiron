@@ -898,20 +898,22 @@ impl Masker {
     }
 
     /// The handle the recovery phrase `phrase`, which the plan places, takes:
-    /// that of the record that holds it, or a new one's.
-    fn place_phrase(&mut self, phrase: &[u8]) -> Result<String> {
+    /// that of the record that holds it, or a new one's, whose key records
+    /// how the record wrote the phrase (`held`).
+    fn place_phrase(&mut self, phrase: &[u8], held: HeldForm) -> Result<String> {
         match self.known_whole(phrase) {
             Some(handle) => {
                 self.placed_known = true;
                 Ok(handle)
             }
-            None => self.handle(phrase, super::REASON_MNEMONIC),
+            None => self.handle_held(phrase, super::REASON_MNEMONIC, held),
         }
     }
 
     /// `part` replaced whole by the handle of `phrase`, which the plan places.
     fn place_whole(&mut self, part: &mut Value, phrase: &[u8]) -> Result<()> {
-        let handle = self.place_phrase(phrase)?;
+        let held = split_phrase::whole_phrase_form(part, phrase);
+        let handle = self.place_phrase(phrase, held)?;
         wipe::wipe_value(part);
         *part = Value::from(handle);
         Ok(())
@@ -942,9 +944,21 @@ impl Masker {
         let Some(placement) = text.placement(&spans) else {
             return Ok(false);
         };
+        // Each key records how the array wrote its phrase, so a restore
+        // puts back the array or the items (FIX
+        // SEALED-PHRASE-ARRAY-RESTORE-AS-TEXT).
         let mut handles = Vec::with_capacity(phrases.len());
-        for (phrase, _) in &phrases {
-            handles.push(self.place_phrase(phrase)?);
+        for (phrase, span) in &phrases {
+            let held = if placement.is_whole() {
+                split_phrase::whole_phrase_form(value, phrase)
+            } else {
+                text.covered_run(span)
+                    .and_then(|run| items.get(run))
+                    .map_or(HeldForm::Raw, |run| {
+                        split_phrase::run_phrase_form(run, phrase)
+                    })
+            };
+            handles.push(self.place_phrase(phrase, held)?);
         }
         let written = text.written(items, &placement, &handles);
         wipe::wipe_value(value);
@@ -1001,7 +1015,15 @@ impl Masker {
                 // A run of the part's items holds it alone: the run takes
                 // the handle, the other items stay as written.
                 Some(Some(run)) => {
-                    let handle = self.place_phrase(&phrase)?;
+                    let held = match &*part {
+                        Value::Array(items) => {
+                            items.get(run.clone()).map_or(HeldForm::Raw, |run| {
+                                split_phrase::run_phrase_form(run, &phrase)
+                            })
+                        }
+                        _ => HeldForm::Raw,
+                    };
+                    let handle = self.place_phrase(&phrase, held)?;
                     if let Value::Array(items) = part {
                         for mut taken in items.splice(run, [Value::from(handle)]) {
                             wipe::wipe_value(&mut taken);

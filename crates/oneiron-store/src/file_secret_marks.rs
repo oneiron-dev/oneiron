@@ -5,6 +5,8 @@ use rmpv::Value;
 
 use oneiron_contracts::error::{Error, GateError, Result, SecretError};
 
+use crate::batch::secret_scan::mask::wipe::wipe_value;
+
 /// The byte a key's span reads as in a masked copy. A run of it is the
 /// door's own mask shape (`********`), never secret material.
 pub const FILLER: u8 = b'*';
@@ -122,8 +124,8 @@ pub struct KeySpan {
 /// (FIX 11882).
 pub const HANDLE_TEXT_OPEN: &str = "[secret ";
 
-/// How a custody record holds the value a found key stands for, so a
-/// restore puts back the value as it was written (FIX
+/// How a custody record holds the value a found key stands for, and how the
+/// record wrote it, so a restore puts back the value as it was written (FIX
 /// SEALED-VALUE-RESTORE-KEEPS-ENCODED-TEXT).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -140,10 +142,24 @@ pub enum HeldForm {
     /// sealed whole out of a JSON body: custody holds it as the body wrote
     /// it, so a revealed value reads as JSON (FIX SEAL-WHOLE-VALUE-HELD-RAW).
     Json,
+    /// A recovery phrase, its words one space apart, that the record wrote
+    /// one word per string item of an array: the handle stands for that
+    /// array whole. Custody holds the phrase, so a later write of it is
+    /// known (FIX SEALED-PHRASE-ARRAY-RESTORE-AS-TEXT).
+    PhraseWords,
+    /// A recovery phrase, its words one space apart, that the record wrote
+    /// one word per string item of a run of an array's items: the handle is
+    /// one item that stands for that run.
+    PhraseWordRun,
+    /// A recovery phrase, its words one space apart, that the record wrote
+    /// as an array of its byte values: the handle stands for that array
+    /// whole.
+    PhraseByteValues,
 }
 
 impl HeldForm {
-    /// Whether the value is held as its own bytes.
+    /// Whether the key records no more than the value's own bytes: a
+    /// restore puts them back as a text or a byte string.
     #[must_use]
     pub const fn is_raw(&self) -> bool {
         matches!(self, Self::Raw)
@@ -153,7 +169,8 @@ impl HeldForm {
 /// [`unmasked_body`] over one decoded value: whether anything changed. The
 /// claim-restore proof recomputes a restored claim body with it (FIX 11882).
 /// `held` says how custody holds `value`: a handle standing for a whole
-/// encoded value takes back that value, not its encoding.
+/// encoded value takes back that value, not its encoding, and a handle item
+/// standing for a run of a phrase's word items takes back those items.
 pub fn unmask_value(
     tree: &mut Value,
     handle: &str,
@@ -179,6 +196,20 @@ pub fn unmask_value(
     let mut changed = false;
     match tree {
         Value::Array(items) => {
+            if held == HeldForm::PhraseWordRun && items.iter().any(|item| is_handle(item, handle)) {
+                let mut words = phrase_items(value, held)?.unwrap_or_default();
+                let mut spliced = Vec::with_capacity(items.len() + words.len());
+                for item in std::mem::take(items) {
+                    if is_handle(&item, handle) {
+                        spliced.extend(words.iter().cloned());
+                    } else {
+                        spliced.push(item);
+                    }
+                }
+                words.iter_mut().for_each(wipe_value);
+                *items = spliced;
+                changed = true;
+            }
             for item in items {
                 changed |= unmask_value(item, handle, text_form, value, held)?;
             }
@@ -194,10 +225,29 @@ pub fn unmask_value(
     Ok(changed)
 }
 
+/// Whether `item` is the string `handle` whole.
+fn is_handle(item: &Value, handle: &str) -> bool {
+    item.as_str() == Some(handle)
+}
+
+/// The items `phrase`, a recovery phrase custody holds as `held`, was
+/// written as: its words, one string each, or its byte values; `None` for a
+/// form that writes no phrase over an array's items. The mask records such
+/// a form only when these items are the ones it replaced.
+pub fn phrase_items(phrase: &[u8], held: HeldForm) -> Result<Option<Vec<Value>>> {
+    Ok(match held {
+        HeldForm::PhraseWords | HeldForm::PhraseWordRun => {
+            Some(as_text(phrase)?.split(' ').map(Value::from).collect())
+        }
+        HeldForm::PhraseByteValues => Some(phrase.iter().copied().map(Value::from).collect()),
+        HeldForm::Raw | HeldForm::Encoded | HeldForm::Json => None,
+    })
+}
+
 /// One string of a body with the value back: the whole of it when it is the
-/// handle a credential field or a value sealed whole keeps (the decoded
-/// value when custody holds its encoding or its JSON text), each span's
-/// text form within it otherwise.
+/// handle a credential field, a value sealed whole or a phrase's array keeps
+/// (the decoded value when custody holds its encoding or its JSON text, the
+/// array's items for a phrase), each span's text form within it otherwise.
 fn unmasked_text(
     text: &str,
     handle: &str,
@@ -209,7 +259,12 @@ fn unmasked_text(
         return Ok(Some(match held {
             HeldForm::Encoded => decoded_whole(value)?,
             HeldForm::Json => json_whole(value)?,
-            HeldForm::Raw => match std::str::from_utf8(value) {
+            HeldForm::PhraseWords | HeldForm::PhraseByteValues => {
+                Value::Array(phrase_items(value, held)?.unwrap_or_default())
+            }
+            // A run's handle is an item of its array, which `unmask_value`
+            // splices; anywhere else it takes the phrase back as text.
+            HeldForm::Raw | HeldForm::PhraseWordRun => match std::str::from_utf8(value) {
                 Ok(value) => Value::from(value),
                 Err(_) => Value::Binary(value.to_vec()),
             },
