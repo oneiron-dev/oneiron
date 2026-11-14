@@ -271,6 +271,11 @@ pub struct Vault {
     /// them, and then every tier that needs isolation is refused.
     pub(crate) sandbox_backends:
         std::sync::OnceLock<std::sync::Arc<dyn crate::code_sandbox::microvm::SandboxBackends>>,
+    /// The local model this vault composes task briefs with (L8-07,
+    /// [`Vault::install_task_brief_model`]); none until the host installs
+    /// one, and then a one-liner create is refused. In memory only.
+    pub(crate) task_brief_model:
+        std::sync::OnceLock<std::sync::Arc<dyn crate::task_verb::TaskBriefModel>>,
     /// The result bodies this handle's readers hold, which the body
     /// collector leaves alone (OF-597).
     pub(crate) result_body_pins: crate::store::result_body_pins::ResultBodyPins,
