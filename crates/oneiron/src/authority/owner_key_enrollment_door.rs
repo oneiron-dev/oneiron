@@ -362,23 +362,81 @@ impl Vault {
     /// included. Empty before any enrollment.
     pub fn enrolled_owner_keys(&self) -> Result<Vec<EnrolledOwnerKey>> {
         let txn = self.store.env.read_txn()?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        self.enrolled_owner_keys_in_txn(&txn)
+    }
+
+    /// [`Self::enrolled_owner_keys`] in the caller's transaction.
+    fn enrolled_owner_keys_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<EnrolledOwnerKey>> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         let managed = CheckpointPosture::from(self.privacy_posture()) == CheckpointPosture::Managed;
         let mut keys = BTreeMap::new();
         let mut stored = BTreeSet::new();
-        for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, &txn)? {
+        for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, txn)? {
             let entry = decode_authority_log_entry_body(&body)?;
             let hash = authority_entry_hash(&entry)?;
             stored.insert(hash);
             keep_enrolled(&mut keys, &fold, managed, hash, &entry);
         }
-        if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, &txn)?
+        if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, txn)?
         {
             for (hash, entry) in evidence.carried_past(&stored) {
                 keep_enrolled(&mut keys, &fold, managed, *hash, entry);
             }
         }
         Ok(keys.into_values().collect())
+    }
+
+    /// Ends the owner authority `person` holds on this vault's log, in the
+    /// transaction of the membership move that ends their standing
+    /// (OWNER-ENROL): under `issuer`, a `RevokeDevice` for each live owner
+    /// key whose enrolment names them, which ends any binding on that key,
+    /// then a `RevokeActor` for each other live `human` binding that names
+    /// them, the host root's binding of its embedded owner among them. The
+    /// root key itself stays: only its binding ends. Each entry must count,
+    /// or the move commits nothing. A person with neither writes no entry.
+    ///
+    /// # Errors
+    /// The log's: an `issuer` that is not this vault's live host root, or an
+    /// entry the fold does not count.
+    pub(crate) fn revoke_owner_authority_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        person: EntityId,
+    ) -> Result<()> {
+        let root = issuer.public_key();
+        let keys: Vec<AuthorityKey> = self
+            .enrolled_owner_keys_in_txn(txn)?
+            .into_iter()
+            .filter(|key| key.live && key.owner == person)
+            .map(|key| AuthorityKey::Ed25519(key.public_key))
+            .filter(|key| *key != root)
+            .collect();
+        for revoked_key in keys {
+            self.append_slip_op_in_txn(txn, issuer, AuthorityOp::RevokeDevice { revoked_key })?;
+        }
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let bindings: Vec<(AuthorityKey, u64)> = fold
+            .actor_bindings
+            .iter()
+            .filter(|(_, binding)| {
+                binding.status == ActorBindingStatus::Active
+                    && binding.actor_ref == person
+                    && binding.actor_class == ACTOR_CLASS_HUMAN
+            })
+            .map(|(key, binding)| (key.clone(), binding.epoch))
+            .collect();
+        for (authority_key, epoch) in bindings {
+            self.append_slip_op_in_txn(
+                txn,
+                issuer,
+                AuthorityOp::RevokeActor {
+                    authority_key,
+                    epoch,
+                },
+            )?;
+        }
+        Ok(())
     }
 }
 

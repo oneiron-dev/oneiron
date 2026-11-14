@@ -380,7 +380,9 @@ impl Vault {
     }
     /// Move `member` from `from` to `to` (`None` leaves the vault), dropping
     /// the delegates it can no longer parent, the own-device grant a former
-    /// Owner held (FIX 3294) and, with `slips`, its slips.
+    /// Owner held (FIX 3294) and, with `slips`, its slips and, when its
+    /// Owner standing ends or it leaves, the owner keys and `human` bindings
+    /// that name it (OWNER-ENROL).
     #[allow(clippy::too_many_arguments)]
     fn move_member_in_txn(
         &self,
@@ -432,6 +434,16 @@ impl Vault {
             }
             _ => Vec::new(),
         };
+        // Owner authority on the log retires with Owner standing, whatever
+        // role the member keeps (OWNER-ENROL-TRANSFER-REVOKE = A, as the
+        // own-device grant does), and a member who leaves keeps none: an owner
+        // root of theirs signs any authority entry, and a binding passes every
+        // owner verb.
+        if let Some(issuer) = slips
+            && (to.is_none() || (from == Role::Owner && to != Some(Role::Owner)))
+        {
+            self.revoke_owner_authority_in_txn(txn, issuer, member)?;
+        }
         let mut detach = None;
         if to.is_none() {
             // A genuine leave: the departure is built here, after the
