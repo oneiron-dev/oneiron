@@ -12,11 +12,14 @@
 //! connection its deadline (FIX 8213); a chat turn and a role call keep the
 //! vault's wait row. Chat and the role door answer a rate limit and a timeout
 //! with those codes on every call, deadline or not (RULING
-//! CHAT-ROLE-DEADLINE-CODES = A).
+//! CHAT-ROLE-DEADLINE-CODES = A). No line of a raw stream waits for room in
+//! its client's queue past the deadline, so a client that stopped reading
+//! never holds the model's stream beyond it (review round 1 of #7831).
 //!
 //! Red on main: the raw doors read no deadline and run every call open. A
 //! call whose offer rests past its deadline waits the rest out, and a send
-//! that never answers holds the call past the test's bound. The chat and role
+//! that never answers holds the call, and a stalled model's stream, past the
+//! test's bound. The chat and role
 //! doors refuse `deadline_ms` as an unknown field, and answer a rate limit on
 //! the wait row as `turn_not_admitted`/`turn_failed` (chat) or a bad request
 //! (role door).
@@ -52,8 +55,8 @@ use fake_llm::{FakeLlm, Reply};
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole};
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, LlmMessage, LlmMessageRole,
-    LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
-    VaultConfig,
+    LlmRequest, LlmStreamEvent, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
+    TierPrecedence, Vault, VaultConfig,
 };
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::ai_host::AiHost;
@@ -88,6 +91,12 @@ const LONG_DEADLINE_MS: u64 = 15_000;
 
 /// Test (3): the deadline that cuts a send still out.
 const CUT_DEADLINE_MS: u64 = 1_500;
+
+/// Test (5): how many deltas the model sends before it stalls, one call
+/// each. The raw stream queues 8 lines for its client, so the counts run
+/// from a queue with room left at the deadline, through one just full, to
+/// one full with a line still waiting for room.
+const STALL_DELTA_COUNTS: [usize; 10] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 32];
 
 /// The fake model's limit refusal, naming `secs` until it is back.
 fn limited(secs: u64) -> Reply {
@@ -376,10 +385,19 @@ impl Served {
         }
     }
 
+    /// The owner's `POST /v1/llm/{verb}` with `deadline_ms`, answered but
+    /// not read: its body is the caller's to read, or to leave unread.
+    async fn open(&self, verb: &str, deadline_ms: Option<u64>) -> axum::response::Response {
+        let request = self.owner_request(&format!("/v1/llm/{verb}"), &body(deadline_ms), false);
+        self.app
+            .clone()
+            .oneshot(request)
+            .await
+            .expect("owner call response")
+    }
+
     /// The owner's `POST path` with `body`, read whole within `bound`: `None`
-    /// when it has not ended by then. A `loopback` call comes from this
-    /// device's loopback, as a chat turn must: it binds its sitting to the
-    /// caller's machine.
+    /// when it has not ended by then.
     async fn post(
         &self,
         path: &str,
@@ -387,20 +405,7 @@ impl Served {
         loopback: bool,
         bound: Duration,
     ) -> Option<Answered> {
-        let mut request = Request::post(path)
-            .header(
-                "authorization",
-                format!("Bearer {}", self.root.to_token().expect("root token")),
-            )
-            .header("x-oneiron-binding", self.owner_binding())
-            .header("content-type", "application/json")
-            .body(Body::from(body.to_string()))
-            .expect("owner call request");
-        if loopback {
-            request.extensions_mut().insert(axum::extract::ConnectInfo(
-                std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 40_000)),
-            ));
-        }
+        let request = self.owner_request(path, &body, loopback);
         let app = self.app.clone();
         let sent = Instant::now();
         let (status, bytes) = tokio::time::timeout(bound, async move {
@@ -428,6 +433,27 @@ impl Served {
             text,
             took,
         })
+    }
+
+    /// The owner's `POST path` with `body`, on the host-root credential. A
+    /// `loopback` call comes from this device's loopback, as a chat turn
+    /// must: it binds its sitting to the caller's machine.
+    fn owner_request(&self, path: &str, body: &Value, loopback: bool) -> Request<Body> {
+        let mut request = Request::post(path)
+            .header(
+                "authorization",
+                format!("Bearer {}", self.root.to_token().expect("root token")),
+            )
+            .header("x-oneiron-binding", self.owner_binding())
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("owner call request");
+        if loopback {
+            request.extensions_mut().insert(axum::extract::ConnectInfo(
+                std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 40_000)),
+            ));
+        }
+        request
     }
 }
 
@@ -614,6 +640,64 @@ fn a_raw_call_with_no_deadline_stays_open_past_the_wait_row() {
             answered.took >= Duration::from_secs(wait_row),
             "the call waited past the {wait_row} s wait row, got {answered:?}"
         );
+        served.host.shutdown().await;
+    });
+}
+
+/// Test (5), review round 1 of #7831: a raw stream whose client stopped
+/// reading lets go of the model at its deadline. The model sends some
+/// deltas, then stalls with its stream open, and the caller reads nothing.
+/// Whether the stream's queue to the caller still has room at the deadline,
+/// is just full, or is full with a line still waiting for room, the call
+/// drops the model's stream there, not before, and the caller's body then
+/// ends with what was queued and no finished reply.
+#[test]
+fn a_raw_stream_whose_client_stopped_reading_lets_go_of_the_model_at_its_deadline() {
+    run_on_engine_stack("caller-deadline-stalled-reader", || async {
+        let script = STALL_DELTA_COUNTS
+            .iter()
+            .map(|&count| Reply::Stalled {
+                deltas: (0..count).map(|n| format!("delta {n} ")).collect(),
+            })
+            .collect();
+        let served = served(script, Reply::text(SERVED)).await;
+        for count in STALL_DELTA_COUNTS {
+            let sent = Instant::now();
+            let response = served.open("stream", Some(CUT_DEADLINE_MS)).await;
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "{count} deltas: the stream starts"
+            );
+            tokio::time::timeout(ANSWER_BOUND, served.fake.stall_dropped())
+                .await
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "{count} deltas: the call lets go of the stalled model at its \
+                         {CUT_DEADLINE_MS} ms deadline while its client reads nothing"
+                    )
+                });
+            let held = sent.elapsed();
+            assert!(
+                held >= Duration::from_millis(CUT_DEADLINE_MS),
+                "{count} deltas: the model's stream is kept until the deadline, held {held:?}"
+            );
+            let bytes =
+                tokio::time::timeout(ANSWER_BOUND, to_bytes(response.into_body(), 1024 * 1024))
+                    .await
+                    .unwrap_or_else(|_| {
+                        panic!("{count} deltas: the body ends once the call let go")
+                    })
+                    .expect("stream body");
+            let text = String::from_utf8_lossy(&bytes);
+            assert!(
+                !text.lines().any(|line| matches!(
+                    serde_json::from_str::<LlmStreamEvent>(line),
+                    Ok(LlmStreamEvent::Done { .. })
+                )),
+                "{count} deltas: the stalled reply never finished, got {text}"
+            );
+        }
         served.host.shutdown().await;
     });
 }
