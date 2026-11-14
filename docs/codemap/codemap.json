@@ -53409,15 +53409,27 @@
      "notable": [
       "CanAnswer",
       "CanEffectAnswer",
-      "CanEffectVerdict"
+      "CanEffectVerdict",
+      "CanVerbAnswer",
+      "CanVerbGate"
      ],
      "path": "src/memory/can.rs",
-     "purpose": "`can`: the read-only preflight of an ask, or the dated preflight of one effect (C2:207, FIX 22102)",
+     "purpose": "`can`: the read-only preflight of an ask, the dated preflight of one effect (C2:207, FIX 22102), or one…",
      "surface": {
       "crate-vis": 3,
-      "enum": 2,
+      "enum": 3,
       "fn": 1,
-      "struct": 1
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/can_verb.rs",
+     "purpose": "`can({verb})`: one verb's gate for one actor (FIX [UI-GATE-PREVIEW]; GENUI-WIRE-GAPS section 4 item 1…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -72216,7 +72228,7 @@
      "path": "src/runtime_hooks/verb/storage/session_ask.rs",
      "purpose": "Session-owned typed asks in the keep: open, read, answer and rollback",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -90216,13 +90228,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/ask_record/word_admission.rs",
      "purpose": "Single answer admission path for authenticated actors and bearer-bound friends",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -91164,7 +91176,7 @@
      "path": "src/task_verb/lifecycle_facade.rs",
      "purpose": "TASK lifecycle door: progress, results, cancellation, and settlement",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 7
      }
     },
@@ -95898,13 +95910,15 @@
       "CanEffect",
       "CanEffectRequest",
       "CanOutboundSchedule",
-      "CanRequest"
+      "CanRequest",
+      "CanVerb",
+      "CanVerbRequest"
      ],
      "path": "src/verbs/can.rs",
-     "purpose": "`can`'s typed input: the read-only preflight of an ask, or the dated preflight of one effect (C2:207, FIX…",
+     "purpose": "`can`'s typed input: the read-only preflight of an ask, the dated preflight of one effect (C2:207, FIX…",
      "surface": {
       "enum": 2,
-      "struct": 3
+      "struct": 5
      }
     },
     {
@@ -99322,7 +99336,7 @@
      "path": "src/workspace_roster/join_door.rs",
      "purpose": "The room join and consent doors (OF-531)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 6,
       "struct": 3
      }
@@ -100478,7 +100492,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 51,
+      "crate-vis": 52,
       "enum": 2,
       "fn": 6,
       "re-export": 23,
@@ -100630,7 +100644,7 @@
      "path": "src/workspace_roster/rooms/pins.rs",
      "purpose": "A room's shared pins (ROOM-SCOPED-PINS; owner 12 Nov 00:04, ROOM-PIN-WRITERS = A; Engine ruling…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "fn": 3,
       "struct": 4
      }
@@ -102214,6 +102228,14 @@
      "notable": [],
      "path": "tests/campaign_opt_out_line.rs",
      "purpose": "Every campaign email carries a plain opt-out line (L3-02)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/can_verb_gate.rs",
+     "purpose": "`can({verb})`: one verb's gate for one actor (FIX [UI-GATE-PREVIEW] phases 1 and 2; GENUI-WIRE-GAPS section…",
      "surface": {}
     },
     {
@@ -106417,7 +106439,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 405,
+     "files": 406,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -107161,8 +107183,8 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7519,
-   "test_files": 1240
+   "source_files": 7520,
+   "test_files": 1241
   },
   "oneiron-agent-runtime": {
    "files": [
