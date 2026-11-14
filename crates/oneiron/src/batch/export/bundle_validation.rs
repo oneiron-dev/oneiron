@@ -183,6 +183,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
                     imports.next(&ExportImportOmission {
                         entity_id: row.id.clone(),
                         reason,
+                        skill_source: None,
                     });
                 }
                 Some(EntityOmission::Refused(reason)) => {
@@ -587,7 +588,11 @@ impl OmissionLedger {
         let imports = self
             .archive_only
             .into_iter()
-            .map(|(entity_id, reason)| ExportImportOmission { entity_id, reason })
+            .map(|(entity_id, reason)| ExportImportOmission {
+                entity_id,
+                reason,
+                skill_source: None,
+            })
             .collect();
         self.bundle_omissions
             .sort_by(|a, b| a.entity_id.cmp(&b.entity_id));

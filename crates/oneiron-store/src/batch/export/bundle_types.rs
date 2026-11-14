@@ -33,6 +33,24 @@ pub enum BundleOmissionReason {
 pub struct ExportImportOmission {
     pub entity_id: String,
     pub reason: ImportOmissionReason,
+    /// The package a [`ImportOmissionReason::RedactedSkillSource`] omission
+    /// names, so the owner can reinstall that exact package; `None` for
+    /// every other reason, and then not written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill_source: Option<OmittedSkillSource>,
+}
+
+/// The skill package a whole-vault import left out
+/// ([`ImportOmissionReason::RedactedSkillSource`]), as its archived SKILL
+/// record names it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OmittedSkillSource {
+    pub skill_id: String,
+    pub version: String,
+    /// The canonical skill-tree SHA-256 (`canonical_skill_tree_hash`), in
+    /// hex; `None` when the archived record carries none.
+    pub content_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +89,12 @@ pub enum ImportOmissionReason {
     /// source vault, and the import never passes a signed write off as an
     /// unsigned one (FIX 3497).
     MachineSignedClaimNotRestored,
+    /// A skill whose source tree an export without secrets redacted: the
+    /// archive holds no tree to restore it from, so the destination that
+    /// does not hold the skill leaves out its SKILL row, its source carriers
+    /// and the claims about it, and the omission names the package
+    /// (RULING RESTORE-REDACTED-HUB-SKILL, 14 Nov 2026).
+    RedactedSkillSource,
 }
 
 /// Foundations not stored as vault-owned source. Never fabricate PACK.md/code.
