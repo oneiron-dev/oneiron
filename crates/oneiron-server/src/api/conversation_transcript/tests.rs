@@ -134,9 +134,9 @@ async fn a_loopback_reader_reads_an_imported_session_in_order() {
         said,
         [
             ("user", "Repot the basil.", STARTED),
-            ("companion", "The basil is repotted.", STARTED + 20),
+            ("counterparty", "The basil is repotted.", STARTED + 20),
             ("user", "Water the basil too.", STARTED + 60),
-            ("companion", "The basil is watered.", STARTED + 90),
+            ("counterparty", "The basil is watered.", STARTED + 90),
         ]
     );
     assert_eq!(page["next"], Value::Null);

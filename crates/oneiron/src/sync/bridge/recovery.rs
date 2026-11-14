@@ -54,6 +54,36 @@ pub(crate) fn preflight_validated_canonical_recovery(
     preflight
 }
 
+/// Leaves out of `snapshot` each AUTHORITY_LOG row its source's own fold
+/// never applied and the door here would hold (H72), with the peer origin
+/// naming it: the rows `carried_rows_never_applied_in_txn` names. The
+/// preflight, the replay and the comparison all read the artifact without
+/// them, so a window a vault captured with a stranger's row it stored before
+/// #1449 recovers here without that row instead of refusing whole.
+pub(crate) fn omit_authority_rows_never_applied_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    snapshot: &mut CanonicalSnapshot,
+) -> Result<()> {
+    let carried =
+        AuthorityBeside::of_rows(snapshot.entity_blobs.iter().map(|entity| &entity.blob[..]))
+            .rows()?;
+    let mut omitted = HashSet::new();
+    for hash in crate::authority::carried_rows_never_applied_in_txn(&vault.store, txn, &carried)? {
+        omitted.insert(*crate::authority::authority_log_entity_id_from_hash(&hash)?.as_bytes());
+    }
+    if omitted.is_empty() {
+        return Ok(());
+    }
+    snapshot
+        .entity_blobs
+        .retain(|entity| !omitted.contains(&entity.id));
+    snapshot
+        .peer_origins
+        .retain(|origin| !omitted.contains(&origin.id));
+    Ok(())
+}
+
 /// The preflight's speculative work in `txn`, which its caller drops.
 fn preflight_in_txn(
     vault: &Vault,

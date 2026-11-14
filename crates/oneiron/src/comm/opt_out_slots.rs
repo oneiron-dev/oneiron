@@ -4,10 +4,11 @@
 
 use std::collections::BTreeSet;
 
-use super::claims::{CommResult, PREDICATE_COMM_OPT_OUT};
+use super::claims::{CommClaim, CommResult, PREDICATE_COMM_OPT_OUT};
+use super::consent::{OPT_OUT_CLEAR_APPROVED, parties_opt_out_subjects_in_txn};
 use super::parties::active_comm_party_key_in_txn;
-use super::projection_writes::matching_claims_in_txn;
-use super::records::{CommEventKind, CommRecord, put_comm_record_in_txn};
+use super::projection_writes::{claim_transition_boundary, matching_claims_in_txn};
+use super::records::{CommEventKind, CommRecord, comm_records_in_txn, put_comm_record_in_txn};
 use crate::Vault;
 use crate::counterparty_contact::normalize_channel_class;
 use crate::entity_id::EntityId;
@@ -88,6 +89,97 @@ pub(super) fn pending_clear_request_at(
 /// and the projector's gate consume both decide by this rule.
 pub(super) fn stop_supersedes_clear_request(stop_at: u64, request_at: u64) -> bool {
     stop_at >= request_at
+}
+
+/// The transition on `subject`'s `channel_class` slot that answers a STOP
+/// that occurred at `stop_at`, given the slot's `history`: the latest
+/// boundary after the STOP that answers it, or `None` when nothing after it
+/// does.
+///
+/// A head on the slot closes in two ways. An approved clear closes it at its
+/// ruling, or at the head's start when that came later, and writes its
+/// receipt in the same transaction. The projector closes a late STOP's own
+/// head at the boundary that answered it: a later head's start or a clear's
+/// close. A later head's start answers the STOP: that head carries the
+/// opt-out on.
+///
+/// A clear's close answers the STOP only when its receipt is here and the
+/// clear was requested after the STOP. A clear requested at or before it is
+/// stale against it (`stop_supersedes_clear_request`), and the approval
+/// refuses such a clear when the STOP is already here (FIX 22384). A STOP
+/// that reaches this replica only after the ruling (a delayed webhook, a
+/// peer's copy by sync that its peer had not projected) is judged by the
+/// same rule (COMM-STOP-LATE-ARRIVAL). A copy its peer had projected mints
+/// nothing here (`peer_stop_projection_in_txn`).
+/// A receipt that names no request was written before receipts did; its
+/// close answers, as it did then.
+///
+/// A close that neither a receipt nor a later head's start explains answers
+/// nothing: restrictive wins. Sync imports a closed head and its clear's
+/// receipt as separate rows, so a STOP projected between the two cannot tell
+/// which request the clear judged, and it stands. When the clear was in fact
+/// requested after it, the STOP's opt-out outlives that clear, and a fresh
+/// clear lifts it. The receipts are read only when some boundary falls after
+/// the STOP.
+pub(super) fn stop_answering_boundary_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    history: &[(EntityId, CommClaim)],
+    subject: EntityId,
+    channel_class: &str,
+    stop_at: u64,
+) -> CommResult<Option<u64>> {
+    let later: Vec<(&CommClaim, u64)> = history
+        .iter()
+        .filter_map(|(_, claim)| claim_transition_boundary(claim).map(|at| (claim, at)))
+        .filter(|(_, at)| *at > stop_at)
+        .collect();
+    if later.is_empty() {
+        return Ok(None);
+    }
+    // When each approved clear on this slot that answers the STOP was ruled:
+    // the clears requested after the STOP, and those whose receipt names no
+    // request.
+    let mut answering_rulings = Vec::new();
+    for (_, record) in comm_records_in_txn(vault, rtxn)? {
+        let CommRecord::Receipt {
+            party_ref,
+            channel_class: receipt_channel,
+            occurred_at,
+            outcome,
+            requested_at,
+            ..
+        } = record
+        else {
+            continue;
+        };
+        if outcome != OPT_OUT_CLEAR_APPROVED
+            || normalize_channel_class(&receipt_channel) != channel_class
+            || requested_at
+                .is_some_and(|requested_at| stop_supersedes_clear_request(stop_at, requested_at))
+        {
+            continue;
+        }
+        // The clear retracted the heads on its party and the party's
+        // redirect shells.
+        let subjects = parties_opt_out_subjects_in_txn(&vault.store, rtxn, [party_ref].into())?;
+        if subjects.contains(&subject) {
+            answering_rulings.push(occurred_at);
+        }
+    }
+    Ok(later
+        .into_iter()
+        .filter(|(claim, at)| {
+            claim.is_standing()
+                || history
+                    .iter()
+                    .any(|(_, other)| other.valid_from == Some(*at))
+                || answering_rulings
+                    .iter()
+                    .any(|ruled_at| (*ruled_at).max(claim.valid_from.unwrap_or(0)) == *at)
+        })
+        .map(|(_, at)| at)
+        .max())
 }
 
 /// Whether `record` is an inbound STOP on one of `subjects` for the

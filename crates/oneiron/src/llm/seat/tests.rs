@@ -67,6 +67,7 @@ fn register(vault: &Vault, name: &str, locality: ModelLocality, facet: &str) -> 
         scores: BTreeMap::new(),
         fetched_at: BTreeMap::new(),
         tokens_per_o200k: None,
+        answer_tokens_per_o200k: None,
         stale_since: None,
         source_rows: None,
     })?;

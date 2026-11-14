@@ -95,28 +95,8 @@ pub(crate) fn withheld_worlds_in(
     Ok(withheld)
 }
 
-/// The owner's recipient choice for a world, when it is a limit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RecipientChoice {
-    /// One machine he named.
-    OneMachine,
-    /// Every machine he marked his.
-    MyMachines,
-}
-
-/// Why a destination is not one the owner's choice admits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RecipientWhy {
-    /// No live machine proof names it.
-    Unproved,
-    /// It is a machine the owner did not mark his.
-    NotMine,
-    /// It is his, but not the machine he named.
-    WrongMachine,
-    /// He named different machines at once, so no machine reads the world
-    /// until he picks again.
-    Contended,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::settings::destination::{RecipientChoice, RecipientWhy};
 
 /// The owner's world recipient choice keeping a world from a destination
 /// (L11-B (B)): named as his choice, and content-free, so a refusal that

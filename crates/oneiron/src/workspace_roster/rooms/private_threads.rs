@@ -36,30 +36,10 @@ use crate::scan_check::{EngineScan, ScanCount};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use std::collections::BTreeMap;
 
-/// `vault.rooms.private_threads`'s input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomPrivateThreadsRequest {
-    /// The room, 32-hex.
-    pub room_ref: String,
-}
-
-/// That one private thread of a room exists: these five facts, nothing
-/// else of it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PrivateThreadMetadata {
-    /// The thread's root TURN, 32-hex.
-    pub id: String,
-    /// Who opened it, 32-hex; null once this vault erased them.
-    pub creator: Option<String>,
-    /// The root's own time, Unix seconds.
-    pub created_at: u64,
-    /// The time of its newest turn or audience TURN, Unix seconds.
-    pub last_active_at: u64,
-    /// How many are in its audience now.
-    pub member_count: usize,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::rooms::private_threads::{
+    PrivateThreadMetadata, RoomPrivateThreadsRequest,
+};
 
 /// One private root as the room's history finds it.
 struct FoundRoot {

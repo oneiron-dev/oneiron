@@ -9,8 +9,6 @@
 //! current `$state` under the caller's own read. Backing refs are never
 //! rebuilt from a returned tree.
 
-use serde::{Deserialize, Serialize};
-
 use super::{
     GeneratedUiAgentCallback, GeneratedUiValidatedAction, LensReadHandle, LensRenderFrame,
 };
@@ -21,7 +19,6 @@ use crate::lens::generated_ui::{
     GeneratedLens, GeneratedUiActionDeclaration, GeneratedUiActionEvent, GeneratedUiCard,
     GeneratedUiRender, GeneratedUiStateSnapshot, GeneratedUiSurfaceCapabilities,
 };
-use crate::lens::wire_ids::LensRenderId;
 use crate::memory::{Memory, MemoryResult};
 
 /// One host-rendered lens: the frame its reads minted backing refs on, and
@@ -33,20 +30,8 @@ pub struct HostedLensRender {
     pub card: GeneratedUiCard,
 }
 
-/// What a hosted lens render answers: the card's id, the exact render its
-/// host lowered (and, on a server, holds the frame of), and the lens tree.
-/// It carries no frame.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct LensFrameCard {
-    /// The card an event names, and the path a server takes its events at
-    /// (`POST /v1/core/lens-frames/{card_id}/events`).
-    pub card_id: LensRenderId,
-    /// The surface-lowered render: its nodes, action manifest, `$state` and
-    /// lifecycle, exactly as its host holds it.
-    pub render: GeneratedUiRender,
-    /// The authored lens tree.
-    pub lens: GeneratedLens,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::lens::mediation::hosted_render::LensFrameCard;
 
 impl HostedLensRender {
     /// A read-only card of `tree`, with no actions and no `$state`.

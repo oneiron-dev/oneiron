@@ -20,6 +20,7 @@ mod campaign_surface_oracle;
 mod code_mode_compaction;
 mod core_discover;
 mod dreamer_binding;
+mod dreamer_host_wording;
 mod dreamer_live;
 #[path = "../support/fake_llm.rs"]
 mod fake_llm;

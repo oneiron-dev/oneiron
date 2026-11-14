@@ -489,7 +489,7 @@ impl Vault {
                     left.agents.push(*id);
                     continue;
                 }
-                let mut on = existing.clone();
+                let mut on = existing;
                 on.enabled = true;
                 on.version = tree_pause_version("resume", version, pause);
                 self.update_agent_definition_as_owner_in_txn(

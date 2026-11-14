@@ -84,25 +84,8 @@ struct HookLineage {
     chain: Vec<LineageLink>,
 }
 
-/// Why a check was raised.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum HookCheckReason {
-    /// The same hook fired again inside its own causal chain.
-    Cycle,
-    /// The chain reached [`MAX_LINEAGE_DEPTH`].
-    Depth,
-}
-
-impl HookCheckReason {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Cycle => "cycle",
-            Self::Depth => "depth",
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::runtime_hooks::lineage::HookCheckReason;
 
 /// An "is everything okay" check for the owner, with the chain shown.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

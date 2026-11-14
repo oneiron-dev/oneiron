@@ -70,8 +70,8 @@ const ARTIFACT_ADMISSIONS: SideTable<
     crate::side_table::LegacyJson,
 > = SideTable::new(&side_table::ARTIFACT_PUBLISH_ADMISSION);
 
-const ARTIFACT_CHANNEL_PUBLISHED: u8 = 0;
-const ARTIFACT_CHANNEL_PREVIEW: u8 = 1;
+#[doc(hidden)]
+use oneiron_verb_wire::artifact_hosting::{ARTIFACT_CHANNEL_PREVIEW, ARTIFACT_CHANNEL_PUBLISHED};
 
 /// One channel pointer, keyed by `channel(1) ++ artifact_len(u16 be) ++ artifact`
 /// exactly as `artifact_pointer_key` used to spell it.

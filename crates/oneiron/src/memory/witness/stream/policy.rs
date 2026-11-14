@@ -7,22 +7,7 @@ use crate::side_table::{self, Named, SideTable};
 /// Vault default message-streaming policy. Key: `()`.
 const POLICY: SideTable<(), MessageStreamPolicy, Named> =
     SideTable::new(&side_table::MESSAGE_STREAM_POLICY);
-impl MessageWriteMode {
-    pub(super) fn validate(self) -> MessageStreamResult<()> {
-        if matches!(
-            self,
-            Self::Streamed {
-                cadence: StreamCadence::PerWindow { chars: 0 },
-                ..
-            }
-        ) {
-            return Err(MessageStreamError::InvalidRequest(
-                "window must be positive",
-            ));
-        }
-        Ok(())
-    }
-}
+
 impl MessageStreamPolicy {
     fn validate(&self) -> MessageStreamResult<()> {
         if self.idle_timeout_ms == 0 {

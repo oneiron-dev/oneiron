@@ -1,7 +1,7 @@
 {
   "name": "vault.shared.propose_delete",
   "description": "Starts a shared vault's delete_vault act, returned as a typed pending act.",
-  "input": "crate::task_verb::sdk::SharedVaultRequest",
+  "input": "crate::task_verb::sdk::SharedDeleteProposeRequest",
   "output": "crate::federation::PendingAuthorityAct",
   "call": "crate::task_verb::sdk::propose_shared_delete(memory.vault(), &memory.embedded_owner(\"vault.shared.propose_delete\")?, input)?",
   "host_door": true,
