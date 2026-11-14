@@ -10,7 +10,8 @@
 //! locality: the engine refuses a third-party one before any call, and its
 //! refusal names the binding to fix. The call is one admitted request of the
 //! role, metered on the caller's own lease, and refused whole when its route
-//! or the rung that answered runs at a third party.
+//! runs at a third party. It is sent only to the seat's offers on the device
+//! or the owner's own server, never to an owner's fallback at a third party.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
@@ -173,12 +174,19 @@ pub(crate) fn draft_call(
 }
 
 /// Sends one draft `call` on `ladder`, metered on `run`, and answers with
-/// the reply's text.
+/// the reply's text. The call goes only to the ladder's offers on the
+/// device or on the owner's own server ([`OfferLadder::kept_on_host`]), so
+/// no rung and no owner's quota fallback at a third party is ever sent the
+/// prompt (review #7821 P1): the check of the rung that answered stays as
+/// an invariant, not as the egress control.
 pub(crate) async fn send_draft(
     ladder: &OfferLadder,
     run: &RunAdmission,
     call: LlmRequest,
 ) -> MemoryResult<String> {
+    let ladder = ladder.kept_on_host().ok_or_else(|| {
+        refused("no offer of the local reasoner seat runs on the device or the owner's own server")
+    })?;
     let wait_budget = ladder.cooling_wait_budget(DRAFT_TIME_LIMIT);
     let answered = tokio::time::timeout(
         DRAFT_TIME_LIMIT,
@@ -194,8 +202,8 @@ pub(crate) async fn send_draft(
     .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()));
     let (response, binding) =
         answered.map_err(|error| refused(&format!("the local reasoner call failed: {error}")))?;
-    // A fallback rung that answered from a third party is not a local
-    // draft: its reply is dropped.
+    // No rung at a third party is on the ladder sent, so this holds; were
+    // one to answer, its reply would not be a local draft and is dropped.
     if binding.rung.locality == ModelLocality::ThirdParty {
         return Err(refused(
             "a third-party rung answered the local reasoner call; its draft is dropped",
