@@ -83,8 +83,10 @@ const MAX_MESSAGES: u32 = 5_000;
 const PROGRESS_EVERY: u64 = 100;
 /// The read buffer.
 const READ_BUFFER_BYTES: usize = 1 << 20;
-/// The most refusal reasons one report lists.
-const MAX_REASONS: usize = 20;
+#[doc(hidden)]
+use oneiron_verb_wire::mail_pack::mbox_import::MAX_REASONS;
+#[doc(hidden)]
+pub use oneiron_verb_wire::mail_pack::mbox_import::MailMboxImportRequest;
 
 /// Where one file's import stands.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -103,25 +105,6 @@ struct MboxImportProgress {
     read: u64,
     landed: u64,
     updated_at: u64,
-}
-
-/// `vault.mail.sources.import_mbox`'s input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct MailMboxImportRequest {
-    /// The mailbox source, 32-hex.
-    pub source_ref: String,
-    /// The mbox file, or a Google Takeout `.zip` holding mbox files, on this
-    /// device: an absolute path.
-    pub path: String,
-    /// The messages this call reads; 500 when absent, at most 5,000.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub messages: Option<u32>,
-    /// The most entries a `.zip` may declare; past it the archive is refused
-    /// before its entry list is read, and the refusal names this field.
-    /// 262,144 when absent: the owner raises it to import a larger archive.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub archive_max_entries: Option<u64>,
 }
 
 /// What one import call did.
