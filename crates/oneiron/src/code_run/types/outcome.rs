@@ -138,6 +138,10 @@ impl FoldAnswer {
 pub struct SelfStoredReply {
     pub kind: SelfStoredReplyKind,
     pub output: serde_json::Value,
+    /// A wait set's settled children's type feedback, kept typed beside the
+    /// card and never inside the stored body, so its own release check
+    /// judges it (FIX 10389/10390); empty for every other kind.
+    pub program_steps: Vec<crate::code_run::ProgramStepFeedback>,
 }
 
 /// Which typed reply a [`SelfStoredReply`] spilled (FIX449): the exact
@@ -149,6 +153,8 @@ pub enum SelfStoredReplyKind {
     TaskAskWorldPrivacy,
     /// A wait-set reply with no program feedback to release separately.
     TaskWaitSet,
+    /// A wait-set reply whose program feedback stays typed beside its card.
+    TaskWaitSetWithFeedback,
     /// A direct team start's native receipt, not reply content.
     TeamStartReceipt,
 }

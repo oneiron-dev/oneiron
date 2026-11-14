@@ -4,22 +4,38 @@
 
 use super::*;
 
+/// What a pre-record spill stands for: the run's own result, or the view a
+/// verb hook left the caller in its place.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Shown {
+    /// The run's own result: a spilled body binds to the next auto name, as
+    /// before, and its card carries that name.
+    Result,
+    /// A verb hook's view stands in the result's place: a spilled body is
+    /// published and captured for the replay row, never bound to a name, and
+    /// its card carries no `name`, so no read gives the real result back.
+    View,
+}
+
 impl RecordingJsHost<'_, '_> {
     /// A verb's, a callable skill's, a fold's or the leader's answer too
     /// large for one reply, stored whole as a body of the run as it is
     /// encoded. The guest and the replay row get its handle
     /// (`result_handle_json`), never the answer; nothing is refused for size.
     /// Typed large replies and direct native team-start receipts spill
-    /// pre-record below (FIX449), same card the guest's spill gets.
+    /// pre-record below (FIX449), same card the guest's spill gets. With
+    /// `Shown::View` every spill below stores record-only: published and
+    /// captured for the replay row, never bound to a name.
     pub(super) fn store_large_answer(
         &mut self,
         seq: u64,
         mut outcome: SelfDispatchOutcome,
+        shown: Shown,
     ) -> Result<SelfDispatchOutcome> {
         if let SelfDispatchOutcome::AgentVerb(answer) = &mut outcome
             && let Some(output) = answer.stored_output.take()
         {
-            answer.output = self.import_write_answer(output);
+            answer.output = self.import_write_answer(output, shown);
             return Ok(outcome);
         }
         // Typed replies use the guest's sweeping sink and full result card.
@@ -30,7 +46,7 @@ impl RecordingJsHost<'_, '_> {
                 | SelfDispatchOutcome::TaskWaitSet(_)
                 | SelfDispatchOutcome::Team(_)
         ) {
-            return self.store_large_typed_reply(outcome);
+            return self.store_large_typed_reply(outcome, shown);
         }
         let answer = match &mut outcome {
             SelfDispatchOutcome::AgentVerb(answer) => &mut answer.output,
@@ -44,9 +60,12 @@ impl RecordingJsHost<'_, '_> {
                     return Ok(outcome);
                 }
                 let sources = answer.word_sources();
-                let card = self.store_sourced_answer(seq, &sources, |sink| {
-                    sink.write(answer.json.as_bytes())
-                })?;
+                let card = self.store_sourced_answer(
+                    seq,
+                    &sources,
+                    |sink| sink.write(answer.json.as_bytes()),
+                    shown,
+                )?;
                 answer.json = card.to_string();
                 return Ok(outcome);
             }
@@ -54,7 +73,8 @@ impl RecordingJsHost<'_, '_> {
                 if json.len() <= RESULT_REPLY_INLINE_BYTES {
                     return Ok(outcome);
                 }
-                let card = self.store_answer(seq, |sink| sink.write(json.as_bytes()))?;
+                let card =
+                    self.store_sourced_answer(seq, &[], |sink| sink.write(json.as_bytes()), shown)?;
                 *json = card.to_string();
                 return Ok(outcome);
             }
@@ -67,7 +87,7 @@ impl RecordingJsHost<'_, '_> {
         if size.0 <= RESULT_REPLY_INLINE_BYTES {
             return Ok(outcome);
         }
-        *answer = self.store_answer(seq, |sink| write_json(sink, &*answer))?;
+        *answer = self.store_sourced_answer(seq, &[], |sink| write_json(sink, &*answer), shown)?;
         Ok(outcome)
     }
 
@@ -108,11 +128,15 @@ impl RecordingJsHost<'_, '_> {
     }
 
     /// Registers the write receipt's already-published body as this run's result.
-    fn import_write_answer(&mut self, output: CodeRunRawOutput) -> serde_json::Value {
-        let name = self.next_auto_name();
-        self.bind(name.clone(), output.handle.clone(), output.path.clone());
+    /// With `Shown::View` the body stays record-only: captured for the replay
+    /// row, never bound to a name, and its card carries no `name`.
+    fn import_write_answer(&mut self, output: CodeRunRawOutput, shown: Shown) -> serde_json::Value {
         let mut card = result_handle_json(self.run_id, &output);
-        card["name"] = json!(name);
+        if shown == Shown::Result {
+            let name = self.next_auto_name();
+            self.bind(name.clone(), output.handle.clone(), output.path.clone());
+            card["name"] = json!(name);
+        }
         if !self
             .results
             .iter()
@@ -125,22 +149,25 @@ impl RecordingJsHost<'_, '_> {
     }
 
     /// A typed reply too large for one message (FIX449): the inference
-    /// defaults, a settled ask, a world-privacy answer, a wait set without
-    /// program feedback, or a direct team's native receipt, spilled through
-    /// the sweeping result sink and tainted card with facets, never
-    /// `store_answer`. Under the inline size, or with no
-    /// result store, the original outcome stays inline, unchanged.
+    /// defaults, a settled ask, a world-privacy answer, a wait set, or a
+    /// direct team's native receipt, spilled through the sweeping result sink
+    /// and tainted card with facets, never `store_answer`. Under the inline
+    /// size, or with no result store, the original outcome stays inline,
+    /// unchanged. With `Shown::View` the spill is record-only: published and
+    /// captured, never bound. A wait set's program feedback stays typed
+    /// beside its card for its own release (FIX 10389/10390).
     fn store_large_typed_reply(
         &mut self,
         outcome: SelfDispatchOutcome,
+        shown: Shown,
     ) -> Result<SelfDispatchOutcome> {
         use crate::code_run::{SelfStoredReply, SelfStoredReplyKind};
         use crate::task_verb::{TaskAskStatus, TaskAskWait};
         // No store: inline, as `fit_reply` sends it (a storageless large
         // inference replace must not become `Failed` or leave a gap).
-        if self.storage.is_none() {
+        let Some(storage) = self.storage else {
             return Ok(outcome);
-        }
+        };
         // The EXACT guest body `reply_body` would emit for the outcome, so a
         // pre-record spill happens exactly when the guest's spill would. JSON
         // only: the guest consumes JSON, and the `TaskAskWait` JSON is already
@@ -158,9 +185,19 @@ impl RecordingJsHost<'_, '_> {
                 SelfStoredReplyKind::TaskAskWorldPrivacy,
                 json!({"output": TaskAskWait::WorldPrivacyReady(request.clone())}),
             ),
-            // Nonempty feedback stays typed for its independent release projection.
-            SelfDispatchOutcome::TaskWaitSet(result) if result.program_steps.is_empty() => {
-                (SelfStoredReplyKind::TaskWaitSet, json!({"output": result}))
+            // The feedback stays typed beside the card for its own release
+            // (FIX 10389/10390): the stored body holds the findings alone.
+            SelfDispatchOutcome::TaskWaitSet(result) => {
+                if result.program_steps.is_empty() {
+                    (SelfStoredReplyKind::TaskWaitSet, json!({"output": result}))
+                } else {
+                    let mut findings = result.clone();
+                    findings.program_steps = Vec::new();
+                    (
+                        SelfStoredReplyKind::TaskWaitSetWithFeedback,
+                        json!({"output": findings}),
+                    )
+                }
             }
             SelfDispatchOutcome::Team(result)
                 if result.source_rows.is_some()
@@ -193,20 +230,39 @@ impl RecordingJsHost<'_, '_> {
             &body
         };
         let card = if let SelfDispatchOutcome::Team(result) = &outcome {
-            let storage = self.storage.expect("result store checked above");
             let mut sink = storage.code_run_output_sink()?;
             write_json(&mut sink, stored)?;
-            Some(
-                self.bind_stored_sourced(storage, sink, None, &[], result.source_rows.clone())?
-                    .1,
-            )
+            if shown == Shown::View {
+                // As `store_reply`: a stored body stands for the reply (FIX 3608).
+                self.held_delivery.clear();
+                let output =
+                    self.publish_stored_sourced(storage, sink, &[], result.source_rows.clone())?;
+                Some(result_card(storage, self.run_id, &output, None)?)
+            } else {
+                Some(
+                    self.bind_stored_sourced(storage, sink, None, &[], result.source_rows.clone())?
+                        .1,
+                )
+            }
+        } else if shown == Shown::View {
+            // As `store_reply`: a stored body stands for the reply (FIX 3608).
+            self.held_delivery.clear();
+            let mut sink = storage.code_run_output_sink()?;
+            write_json(&mut sink, stored)?;
+            let output = self.publish_stored_sourced(storage, sink, &[], self.result_rows())?;
+            Some(result_card(storage, self.run_id, &output, None)?)
         } else {
             self.store_reply(stored)?
+        };
+        let program_steps = match &outcome {
+            SelfDispatchOutcome::TaskWaitSet(result) => result.program_steps.clone(),
+            _ => Vec::new(),
         };
         match card {
             Some(card) => Ok(SelfDispatchOutcome::StoredReply(SelfStoredReply {
                 kind,
                 output: card,
+                program_steps,
             })),
             None => Ok(outcome),
         }
@@ -222,17 +278,20 @@ impl RecordingJsHost<'_, '_> {
         seq: u64,
         write: impl FnOnce(&mut BodySink) -> Result<()>,
     ) -> Result<serde_json::Value> {
-        self.store_sourced_answer(seq, &[], write)
+        self.store_sourced_answer(seq, &[], write, Shown::Result)
     }
 
     /// [`Self::store_answer`] for an answer that copies the words of records
     /// `sources`: its body is published as a dependent of each of them, so
-    /// a withdrawal of one reaches it (FIX 18924).
+    /// a withdrawal of one reaches it (FIX 18924). With `Shown::View` the
+    /// body stays record-only: published and captured, never bound to a
+    /// name, and its card carries no `name`.
     fn store_sourced_answer(
         &mut self,
         seq: u64,
         sources: &[EntityId],
         write: impl FnOnce(&mut BodySink) -> Result<()>,
+        shown: Shown,
     ) -> Result<serde_json::Value> {
         // The card stands for the answer: no skill body it holds reaches the
         // guest (FIX 3608).
@@ -247,10 +306,12 @@ impl RecordingJsHost<'_, '_> {
             Ok(output) => output,
             Err(unavailable) => return Ok(unavailable),
         };
-        let name = self.next_auto_name();
-        self.bind(name.clone(), output.handle.clone(), output.path.clone());
         let mut card = result_handle_json(self.run_id, &output);
-        card["name"] = json!(name);
+        if shown == Shown::Result {
+            let name = self.next_auto_name();
+            self.bind(name.clone(), output.handle.clone(), output.path.clone());
+            card["name"] = json!(name);
+        }
         self.captured.push(output);
         Ok(card)
     }
@@ -525,7 +586,7 @@ impl RecordingJsHost<'_, '_> {
         }
         // The post chain reads the answer as the guest gets it: a large one
         // by its handle.
-        let outcome = self.store_large_answer(seq, outcome)?;
+        let outcome = self.store_large_answer(seq, outcome, Shown::Result)?;
         let rewritten = hooked.as_ref().and_then(|hooked| hooked.1.clone());
         match hooked {
             Some(hooked) => Ok((
@@ -730,16 +791,24 @@ impl RecordingJsHost<'_, '_> {
                     .dispatch_for_executor_run(site, call.clone())
             }
         };
+        // A verb hook's view of this call's result, taken whatever came of
+        // the call: the guest reads it, the row keeps the outcome and whether
+        // a view was served (the view's own read rows stay unwitnessed).
+        let view = self.gated_write.take_hook_view();
         if dispatched.is_ok()
             && let Some(reply) = reply_publisher
                 .as_ref()
                 .and_then(|publisher| publisher.take())
         {
-            self.bind(
-                reply.name,
-                reply.output.handle.clone(),
-                reply.output.path.clone(),
-            );
+            // The caller is shown the view; a bound name would read the real
+            // result back.
+            if view.is_none() {
+                self.bind(
+                    reply.name,
+                    reply.output.handle.clone(),
+                    reply.output.path.clone(),
+                );
+            }
             if !self
                 .results
                 .iter()
@@ -749,10 +818,6 @@ impl RecordingJsHost<'_, '_> {
                 self.captured.push(reply.output);
             }
         }
-        // A verb hook's view of this call's result, taken whatever came of
-        // the call: the guest reads it, the row keeps the outcome and whether
-        // a view was served (the view's own read rows stay unwitnessed).
-        let view = self.gated_write.take_hook_view();
         // The skill bodies its producer witnessed, held while the guest's
         // reply may still carry them whole (FIX 3608).
         let given = dispatched.as_ref().ok().map(|(outcome, _)| outcome);
@@ -760,9 +825,14 @@ impl RecordingJsHost<'_, '_> {
         // The seats this call's spawn resolved, taken whatever came of it:
         // its row keeps them, a failure's included (FIX 9180).
         let seats = self.gated_write.take_spawn_seats();
+        let shown = if view.is_some() {
+            Shown::View
+        } else {
+            Shown::Result
+        };
         let (outcome, rewritten) = match dispatched.and_then(|(outcome, rewritten)| {
             self.capture_task_refusal_output(seq, &outcome);
-            self.store_large_answer(seq, outcome)
+            self.store_large_answer(seq, outcome, shown)
                 .map(|outcome| (outcome, rewritten))
         }) {
             Ok(answered) => answered,
