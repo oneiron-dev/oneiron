@@ -199,6 +199,22 @@ class BenchSelectionTest(unittest.TestCase):
         )
         self.assertNotIn("bench", [e["name"] for e in nightly_report.plan(METADATA, bench=False)["selections"]])
 
+    def test_the_bench_selection_leaves_a_package_with_no_tested_target_out_as_the_others_do(self) -> None:
+        metadata = json.loads(json.dumps(METADATA))
+        metadata["workspace_members"].append("oneiron-py 0.1.0")
+        metadata["packages"].append(
+            {"id": "oneiron-py 0.1.0", "name": "oneiron-py", "targets": [target("oneiron_py", "cdylib", test=False)]}
+        )
+        chosen = nightly_report.plan(metadata, shard_files=1, bench=True)
+        self.assertEqual(
+            [nightly_report.selection_args(chosen, entry)[:5] for entry in chosen["selections"]],
+            [
+                ["--workspace", "--exclude", "oneiron-bench", "--exclude", "oneiron-py"],
+                ["--workspace", "--exclude", "oneiron-py", "--bin", "oneiron-bench"],
+                ["--workspace", "--exclude", "oneiron-bench", "--exclude", "oneiron-py"],
+            ],
+        )
+
     def test_a_failed_bin_drops_the_bench_selection(self) -> None:
         chosen = nightly_report.plan(METADATA, bench=True)
         self.assertFalse(
