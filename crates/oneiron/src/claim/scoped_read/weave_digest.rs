@@ -62,15 +62,17 @@ pub use settings::{
 };
 use wire::{WireDigest, WireSchedule, report_sources, source_key};
 
-const SCHEDULE_PREFIX: &[u8] = b"weave:schedule:v1:";
+#[doc(hidden)]
+use oneiron_verb_wire::claim::scoped_read::weave_digest::SCHEDULE_PREFIX;
+#[doc(hidden)]
+pub use oneiron_verb_wire::claim::scoped_read::weave_digest::{
+    WEAVE_DIGEST_NOTIFICATION_PRODUCER, WeaveScheduleHold,
+};
+
 const DIGEST_PREFIX: &[u8] = b"weave:digest:v1:";
 const SOURCE_PREFIX: &[u8] = b"weave:digest_source:v1:";
 /// Each reader's newest live lens render, as [`KeptLiveLens`] keeps it.
 const LIVE_PREFIX: &[u8] = b"weave:live:v1:";
-/// The producer of a weave digest's inbox NOTIFICATION; `source.result` is
-/// the digest's period, its `scheduled_for` second.
-pub const WEAVE_DIGEST_NOTIFICATION_PRODUCER: &str = "weave.digest";
-
 fn invalid() -> Error {
     Error::InvalidConfig("invalid weave digest row".into())
 }
@@ -209,16 +211,6 @@ pub struct StoredWeaveDigest {
     pub lens: Option<WeaveLensRender>,
     /// Why the generate step left this period with no render.
     pub lens_refused: Option<WeaveLensRefusal>,
-}
-
-/// Why the timer left a schedule row: until when, and the refusal that held
-/// it. An owner's due notice holds its row with no refusal.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WeaveScheduleHold {
-    pub until: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub because: Option<String>,
 }
 
 /// One saved period's row in `txn`, copied out.
