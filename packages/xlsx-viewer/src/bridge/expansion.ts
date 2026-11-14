@@ -542,7 +542,8 @@ const NO_CELL: CellTag = { from: Number.POSITIVE_INFINITY, address: undefined };
  * that text into rows at each `</row>`, trims a row, takes its cells from just
  * after the row's first `>` that no `/` precedes, and cuts them at each `<c`.
  * A cell is read as `<c ` and its text trimmed: its address comes from its
- * start tag, up to its first `>`, and its formula from the text after that.
+ * start tag, up to its first `>`, and its formula from the text after that,
+ * so a formula tag before that `>` is not read.
  * A row's first cell whose text starts with `<` is dropped. So a `<c` that
  * stands before a row's first such `>` starts no cell, and the cell after
  * that `>` takes its address from the text there. The walk cuts the text at
@@ -580,13 +581,15 @@ function checkFormulas(part: string, budget: PreviewBudget): number {
   let opensCell = false;
   /** The current stretch's cell start tag, once a formula needs it. */
   let cell: CellTag | undefined;
+  /** The cell start tag whose address has passed `safeCellAddress`. */
+  let checked: CellTag | undefined;
   /**
-   * The current cell's first formula start tag that waits for an end tag:
-   * SheetJS pairs it with the first end tag after it, and reads the master's
-   * attributes from the whole element.
+   * The first formula start tag in the current cell's text that waits for an
+   * end tag: SheetJS pairs it with the first end tag after it, and reads the
+   * master's attributes from the whole element.
    */
   let open: { readonly tagStart: number; readonly textStart: number } | undefined;
-  /** Whether the current cell's first fallback-only tag has been seen: SheetJS reads no other. */
+  /** Whether the first fallback-only tag in the current cell's text has been seen: SheetJS reads no other. */
   let fallbackSeen = false;
   /** Where the current row's cells start: after its first `>` that no `/` precedes. */
   const cellsStart = (): number => {
@@ -604,10 +607,7 @@ function checkFormulas(part: string, budget: PreviewBudget): number {
     const from = cellsStart();
     return from < to && text.slice(from, to).trim().length > 0;
   };
-  /**
-   * The start tag SheetJS reads for the current stretch's cell. The address
-   * is refused unless it decodes to safe integers.
-   */
+  /** The start tag SheetJS reads for the current stretch's cell. */
   const cellTag = (): CellTag => {
     if (cell !== undefined) {
       return cell;
@@ -630,18 +630,27 @@ function checkFormulas(part: string, budget: PreviewBudget): number {
       return (cell = NO_CELL);
     }
     const address = sheetJsAttributes(`<c ${text.slice(start, end + 1)}`).get("r") || undefined;
-    if (address !== undefined && !safeCellAddress(address)) {
-      throw new WorkbookBudgetError("sheetCells", "a shared formula's cell address lies past every sheet's cells");
-    }
     return (cell = { from: end + 1, address });
   };
-  /** The address SheetJS reads for the cell of the formula tag at `at`: `null` when it reads no cell's formula there. */
+  /** Whether SheetJS reads the formula tag at `at` as the current stretch's cell's: in the cell's text after its start tag. */
+  const inCellText = (at: number): boolean => cellsStart() <= at && at >= cellTag().from;
+  /**
+   * The address SheetJS reads for the cell of the formula tag at `at`: `null`
+   * when it reads no cell's formula there. The address is refused unless it
+   * decodes to safe integers.
+   */
   const addressAt = (at: number): { readonly address: string | undefined } | null => {
-    if (cellsStart() > at) {
+    if (!inCellText(at)) {
       return null;
     }
     const tag = cellTag();
-    return at < tag.from ? null : tag;
+    if (tag !== checked) {
+      if (tag.address !== undefined && !safeCellAddress(tag.address)) {
+        throw new WorkbookBudgetError("sheetCells", "a shared formula's cell address lies past every sheet's cells");
+      }
+      checked = tag;
+    }
+    return tag;
   };
   const follow = (indexes: readonly string[], at: number): void => {
     const seen = addressAt(at);
@@ -667,7 +676,9 @@ function checkFormulas(part: string, budget: PreviewBudget): number {
   for (const match of text.matchAll(FORMULA_SCAN)) {
     const end = match.index + match[0].length;
     if (match[3] !== undefined) {
-      if (!fallbackSeen) {
+      // A formula tag inside the cell's start tag is not read (an attribute
+      // value may hold one).
+      if (!fallbackSeen && inCellText(match.index)) {
         fallbackSeen = true;
         const indexes = attributeValues(match[3], "si");
         if (indexes.length > 0) {
@@ -675,11 +686,13 @@ function checkFormulas(part: string, budget: PreviewBudget): number {
         }
       }
     } else if (match[1] !== undefined) {
-      const indexes = attributeValues(match[1], "si");
-      if (indexes.length > 0) {
-        follow(indexes, match.index);
+      if (inCellText(match.index)) {
+        const indexes = attributeValues(match[1], "si");
+        if (indexes.length > 0) {
+          follow(indexes, match.index);
+        }
+        open ??= { tagStart: match.index, textStart: end };
       }
-      open ??= { tagStart: match.index, textStart: end };
     } else if (match[2] !== undefined) {
       if (open !== undefined) {
         const element = text.slice(open.tagStart, end);

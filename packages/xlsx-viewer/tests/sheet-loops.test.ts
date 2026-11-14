@@ -111,6 +111,18 @@ describe("xlsx preview: the loops SheetJS runs over what a read gathers are boun
     expect(() => checkSheetExpansion(partTexts(near), line, true)).not.toThrow();
   });
 
+  it("reads a formula from a cell's text after its start tag, where SheetJS reads it", () => {
+    // `<f>` in an attribute value ends the cell's start tag there, and SheetJS
+    // reads the master and its 50 followers from the text after it.
+    const opener = text(fanOutSheet(100, 50, undefined, {}, ` z="<f>"`));
+    expect(sheetJsFormulaChars(opener)).toBeGreaterThan(5_000);
+    refusedWith("sheetTextChars", () => checkSheetExpansion(partTexts(opener), TEXT_LINE, true));
+    // The same with a fallback-only tag: SheetJS reads the follower after it.
+    const fallback = text(fanOutSheet(100, 50, `<fz si="0"/>`, {}, ` z="<fz/>"`));
+    expect(sheetJsFormulaChars(fallback)).toBeGreaterThan(5_000);
+    refusedWith("sheetTextChars", () => checkSheetExpansion(partTexts(fallback), TEXT_LINE, true));
+  });
+
   it("counts a part after a UTF-16 byte-order mark as SheetJS parses it: written back as UTF-8", () => {
     // Š is C5 A0 in UTF-8, and SheetJS's attribute pattern reads A0, a
     // no-break space, as the space before `si`: 50 followers.

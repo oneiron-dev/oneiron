@@ -124,13 +124,15 @@ export const HUGE_ROW_HYPERLINK_SHEET = worksheet(
  * names the master with `followerTag`: the standard self-closing formula by
  * default, or a tag SheetJS's fallback formula reader also takes. The master's
  * start tag names its index with `master.index` (`si="0"` by default), and its
- * text ends with `master.tail`.
+ * text ends with `master.tail`. Every cell's start tag ends with
+ * `cellAttributes`.
  */
 export function fanOutSheet(
   masterLength: number,
   followers: number,
   followerTag = `<f t="shared" si="0"/>`,
   master: { readonly index?: string; readonly tail?: string } = {},
+  cellAttributes = "",
 ): string {
   const { index = `si="0"`, tail = "" } = master;
   // References, so each follower gets its own shifted copy, not the master's
@@ -138,10 +140,10 @@ export function fanOutSheet(
   const references = masterLength - tail.length;
   const masterText = "A1+".repeat(Math.floor(references / 3)).padEnd(references, "1") + tail;
   const rows = [
-    `<row r="1"><c r="A1"><f t="shared" ref="A1:A${followers + 1}" ${index}>${masterText}</f><v>1</v></c></row>`,
+    `<row r="1"><c r="A1"${cellAttributes}><f t="shared" ref="A1:A${followers + 1}" ${index}>${masterText}</f><v>1</v></c></row>`,
   ];
   for (let row = 2; row <= followers + 1; row += 1) {
-    rows.push(`<row r="${row}"><c r="A${row}">${followerTag}<v>1</v></c></row>`);
+    rows.push(`<row r="${row}"><c r="A${row}"${cellAttributes}>${followerTag}<v>1</v></c></row>`);
   }
   return worksheet(rows.join(""));
 }
