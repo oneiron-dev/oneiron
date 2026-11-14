@@ -58,6 +58,8 @@ pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 pub(crate) use super::agent_definition_doors::*;
 // The owner's agent grant doors (FIX 5628) too.
 pub(crate) use super::agent_grant_doors::*;
+// The owner's world access of an agent too.
+pub(crate) use super::agent_world_access_doors::*;
 // The owner's verdict on a plan-doc (plan mode) too.
 pub(crate) use super::plan_doc_doors::*;
 // The Steward doors: member asks, the system-agent grant narrowing and the

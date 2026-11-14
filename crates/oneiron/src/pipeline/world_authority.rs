@@ -75,7 +75,7 @@ pub(super) fn resolve_active_world_authority(
 ///
 /// ```text
 /// allowed = intersection(all in-force, active, approved, user-stated ALLOWED-SET rows)
-/// default = newest in-force active self-authored DEFAULT-SUBSET by (valid_from, learned_at, entity_id)
+/// default = newest in-force active self-authored or owner-stated DEFAULT-SUBSET by (valid_from, learned_at, entity_id)
 /// active  = explicit per-turn selection if present, else default
 /// require default ⊆ allowed
 /// require active  ⊆ allowed
@@ -88,8 +88,10 @@ pub(super) fn resolve_active_world_authority(
 /// narrows nor widens. Intersection is what makes the owner tier monotone —
 /// writing another ALLOWED-SET row can only remove members — and an agent
 /// cannot reach a wider read by adding rows of its own, because only
-/// user-stated approved rows are folded at all. A malformed value on a row
-/// that DID qualify fails the read closed rather than being skipped.
+/// user-stated approved rows are folded at all. The owner's writer
+/// (`vault.agents.worlds.set`) therefore supersedes the grant in force before
+/// it writes a wider one. A malformed value on a row that DID qualify fails
+/// the read closed rather than being skipped.
 pub(crate) fn resolve_world_authority(
     store: &Store,
     rtxn: &RoTxn<'_>,
@@ -109,13 +111,77 @@ fn resolve_world_authority_admitting(
     admit: &RowAdmission<'_>,
 ) -> Result<ResolvedWorldAuthority> {
     let rows = world_access_rows(store, rtxn, &selection.agent_ref, at, admit)?;
+    let FoldedWorldAccess {
+        allowed_set,
+        allowed_claim_ids,
+        default_subset,
+        default_claim_id,
+        ..
+    } = fold_world_access(&rows)?;
+    if !default_subset.is_subset_of(&allowed_set) {
+        return Err(Error::InvalidConfig(format!(
+            "stored {PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET} row exceeds the owner-granted \
+             {PREDICATE_WORLD_ACCESS_ALLOWED_SET}"
+        )));
+    }
 
+    let active_set = match selection.selected.as_ref() {
+        Some(selected) => selected.clone(),
+        None => default_subset.clone(),
+    };
+    if !active_set.is_subset_of(&allowed_set) {
+        return Err(Error::InvalidConfig(format!(
+            "requested world selection is outside the owner-granted \
+             {PREDICATE_WORLD_ACCESS_ALLOWED_SET}"
+        )));
+    }
+
+    Ok(ResolvedWorldAuthority {
+        allowed_set,
+        default_subset,
+        active_set,
+        allowed_claim_ids,
+        default_claim_id,
+    })
+}
+
+/// The tiers one agent's in-force rows fold to, before the subset checks.
+pub(crate) struct FoldedWorldAccess {
+    /// The owner grant: the meet of every qualifying ALLOWED-SET row, empty
+    /// with none.
+    pub(crate) allowed_set: WorldAuthoritySet,
+    /// The ALLOWED-SET rows folded into `allowed_set`.
+    pub(crate) allowed_claim_ids: Vec<EntityId>,
+    /// The newest default, empty with none.
+    pub(crate) default_subset: WorldAuthoritySet,
+    /// The DEFAULT-SUBSET row `default_subset` was read from.
+    pub(crate) default_claim_id: Option<EntityId>,
+    /// Every DEFAULT-SUBSET row in force, the newest among them.
+    pub(crate) default_claim_ids: Vec<EntityId>,
+}
+
+/// The tiers `agent`'s in-force rows fold to at `at`, every row admitted and
+/// no subset check made. The owner's writer reads what it replaces through
+/// it, so a stored default its grant no longer covers never blocks the
+/// owner's own repair.
+pub(crate) fn folded_world_access(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    agent: &EntityId,
+    at: u64,
+) -> Result<FoldedWorldAccess> {
+    fold_world_access(&world_access_rows(store, rtxn, agent, at, &|_, _| {
+        Ok(true)
+    })?)
+}
+
+/// Folds in-force rows into the allowed and default tiers.
+fn fold_world_access(rows: &[WorldAccessRow]) -> Result<FoldedWorldAccess> {
     let mut folded_allowed: Option<WorldAuthoritySet> = None;
     let mut held_allowed: Option<WorldAuthoritySet> = None;
     let mut allowed_claim_ids = Vec::new();
-    for row in &rows {
-        if row.body.predicate != PREDICATE_WORLD_ACCESS_ALLOWED_SET
-            || !owner_granted_allowed_row(&row.body)
+    for row in rows {
+        if row.body.predicate != PREDICATE_WORLD_ACCESS_ALLOWED_SET || !owner_stated_row(&row.body)
         {
             continue;
         }
@@ -144,10 +210,12 @@ fn resolve_world_authority_admitting(
 
     let mut newest_default: Option<(&WorldAccessRow, WorldAuthoritySet)> = None;
     let mut newest_settled_default: Option<(&WorldAccessRow, WorldAuthoritySet)> = None;
-    for row in &rows {
+    let mut default_claim_ids = Vec::new();
+    for row in rows {
         if row.body.predicate != PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET {
             continue;
         }
+        default_claim_ids.push(row.id);
         // Closed rows were removed before this loop. Every remaining default
         // must decode, even when a newer active row wins precedence.
         let subset = decode_world_access_claim_value(&row.body)?;
@@ -170,30 +238,12 @@ fn resolve_world_authority_admitting(
         Some((row, subset)) => (subset, Some(row.id)),
         None => (WorldAuthoritySet::default(), None),
     };
-    if !default_subset.is_subset_of(&allowed_set) {
-        return Err(Error::InvalidConfig(format!(
-            "stored {PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET} row exceeds the owner-granted \
-             {PREDICATE_WORLD_ACCESS_ALLOWED_SET}"
-        )));
-    }
-
-    let active_set = match selection.selected.as_ref() {
-        Some(selected) => selected.clone(),
-        None => default_subset.clone(),
-    };
-    if !active_set.is_subset_of(&allowed_set) {
-        return Err(Error::InvalidConfig(format!(
-            "requested world selection is outside the owner-granted \
-             {PREDICATE_WORLD_ACCESS_ALLOWED_SET}"
-        )));
-    }
-
-    Ok(ResolvedWorldAuthority {
+    Ok(FoldedWorldAccess {
         allowed_set,
-        default_subset,
-        active_set,
         allowed_claim_ids,
+        default_subset,
         default_claim_id,
+        default_claim_ids,
     })
 }
 
@@ -248,7 +298,7 @@ impl WorldGrantIndex {
         })
     }
 
-    fn governs(&self, store: &Store, rtxn: &RoTxn<'_>, actor: EntityId) -> Result<bool> {
+    pub(crate) fn governs(&self, store: &Store, rtxn: &RoTxn<'_>, actor: EntityId) -> Result<bool> {
         if let Some(governed) = &self.governed {
             return Ok(governed.contains(&actor));
         }
@@ -274,7 +324,7 @@ fn grant_subject(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Optio
     let ClaimSubject::Entity(subject) = body.subject else {
         return Ok(None);
     };
-    if body.predicate != PREDICATE_WORLD_ACCESS_ALLOWED_SET || !owner_granted_allowed_row(&body) {
+    if body.predicate != PREDICATE_WORLD_ACCESS_ALLOWED_SET || !owner_stated_row(&body) {
         return Ok(None);
     }
     Ok(Some(subject))
@@ -395,11 +445,13 @@ fn newer_default(
     current.is_none_or(|(prior, _)| default_row_precedence(row) > default_row_precedence(prior))
 }
 
-/// The owner tier's extra bar on top of [`claim_surfaceable`]: a grant counts
-/// only when the OWNER stated it and it carries explicit approval. An
-/// agent-authored `auto` row under the same predicate is ignored, so authoring
-/// one is not a self-widen path.
-fn owner_granted_allowed_row(body: &ClaimBody) -> bool {
+/// The owner's bar on top of [`claim_surfaceable`]: a grant counts only when
+/// the OWNER stated it and it carries explicit approval. An agent-authored
+/// `auto` row under the same predicate is ignored, so authoring one is not a
+/// self-widen path. A default the owner stated (`vault.agents.worlds.set`)
+/// passes the same bar beside the agent's own (ARCH-0067: "owner-set or
+/// agent-proposed"); a default never widens past the grant either way.
+fn owner_stated_row(body: &ClaimBody) -> bool {
     body.approval == ClaimApprovalStatus::Approved && body.source == Some(ClaimSource::UserStated)
 }
 
@@ -419,10 +471,12 @@ fn world_access_row_in_force(body: &ClaimBody, at: u64) -> bool {
 /// `at`), rows about another subject, and rows under any other predicate are
 /// skipped here, BEFORE any value decode: the resolver only ever decodes rows
 /// it would honour. Defaults also require the subject's envelope-stamped writer
-/// identity. Another writer's row cannot win precedence or cause a value-decode
-/// refusal, even when its value is malformed.
+/// identity, or the owner's statement ([`owner_stated_row`]). Another writer's
+/// row cannot win precedence or cause a value-decode refusal, even when its
+/// value is malformed.
 ///
-/// Every row read here was written on this node: both tiers are local
+/// Every row read here was written on this node, or restored from this
+/// vault's own checkpoint (RULING L2-53-CHECKPOINT = B): both tiers are local
 /// authority, so no sync door ships them and replay drops them (RULING
 /// L2-53-CEILING; `sync::local_claims::world_access_claim`).
 fn world_access_rows(
@@ -458,6 +512,7 @@ fn world_access_rows(
             }
             if body.predicate == PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
                 && session_claim_producer(&body) != Some(*agent_ref)
+                && !owner_stated_row(&body)
             {
                 return Ok(());
             }

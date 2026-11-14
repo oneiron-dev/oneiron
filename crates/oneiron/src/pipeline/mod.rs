@@ -32,7 +32,8 @@ mod types;
 pub use oneiron_store::vector_refinement::VectorRefinement;
 mod world_authority;
 pub(crate) use world_authority::{
-    ResolvedWorldScope, WorldGrantIndex, reading_default, resolve_world_authority,
+    FoldedWorldAccess, ResolvedWorldScope, WorldGrantIndex, folded_world_access, reading_default,
+    resolve_world_authority,
 };
 
 pub use self::builder::PipelineBuilder;
