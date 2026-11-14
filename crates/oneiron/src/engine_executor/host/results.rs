@@ -250,17 +250,17 @@ impl RecordingJsHost<'_, '_> {
         self.bind_stored_sourced(storage, sink, name, inherit, input_rows)
     }
 
-    /// Binds a native value whose producer supplied its actual source rows.
-    /// All publishing, masking, marks, names and occurrence allocation stay
-    /// on the ordinary stored-result path.
-    pub(super) fn bind_stored_sourced(
+    /// Publishes the body `sink` wrote as a stored value of the run, as a
+    /// dependent of `input_rows` and with the marks of `inherit`, and captures
+    /// it for the record: the publish half of [`Self::bind_stored_sourced`],
+    /// with no name and no bind. A record-only spill cards it with no name.
+    pub(super) fn publish_stored_sourced(
         &mut self,
         storage: &ExecutorStorage<'_>,
         mut sink: BodySink,
-        name: Option<String>,
         inherit: &[(EntityId, CodeRunRawOutput)],
         input_rows: Option<Vec<EntityId>>,
-    ) -> Result<(CodeRunRawOutput, serde_json::Value)> {
+    ) -> Result<CodeRunRawOutput> {
         // The sweep's tail goes through first, so the path names the digest
         // the body is published under (FIX 5399b).
         sink.finalize_sweep()?;
@@ -300,6 +300,21 @@ impl RecordingJsHost<'_, '_> {
         {
             self.captured.push(output.clone());
         }
+        Ok(output)
+    }
+
+    /// Binds a native value whose producer supplied its actual source rows.
+    /// All publishing, masking, marks, names and occurrence allocation stay
+    /// on the ordinary stored-result path.
+    pub(super) fn bind_stored_sourced(
+        &mut self,
+        storage: &ExecutorStorage<'_>,
+        sink: BodySink,
+        name: Option<String>,
+        inherit: &[(EntityId, CodeRunRawOutput)],
+        input_rows: Option<Vec<EntityId>>,
+    ) -> Result<(CodeRunRawOutput, serde_json::Value)> {
+        let output = self.publish_stored_sourced(storage, sink, inherit, input_rows)?;
         let name = name.unwrap_or_else(|| self.next_auto_name());
         self.bind(name.clone(), output.handle.clone(), output.path.clone());
         let card = result_card(storage, self.run_id, &output, Some(name.as_str()))?;

@@ -146,6 +146,22 @@ pub struct SelfDispatchResponse {
 }
 
 impl SelfDispatchResponse {
+    /// What the caller is shown for `body`: a verb hook's view when one
+    /// stands, else the result's own body. The card a host stores for a
+    /// large reply stands for this body (ARCH-0080 Redact).
+    #[must_use]
+    pub fn shown_body(&self, body: serde_json::Value) -> serde_json::Value {
+        self.view.clone().unwrap_or(body)
+    }
+
+    /// `body` with THIS response's budget envelope attached under
+    /// [`GUEST_BUDGET_RESPONSE_KEY`], with no hook's view swapped in. The
+    /// caller passes what the caller is shown ([`Self::shown_body`]).
+    #[must_use]
+    pub fn with_budget(&self, body: serde_json::Value) -> serde_json::Value {
+        guest_response_with_budget(body, self.budget.as_ref())
+    }
+
     /// Serializes a guest-facing response body with THIS response's budget
     /// envelope attached under [`GUEST_BUDGET_RESPONSE_KEY`]. Runtimes use
     /// this instead of composing the envelope by hand, so the AC "every
@@ -153,7 +169,7 @@ impl SelfDispatchResponse {
     /// stands in for `body`.
     #[must_use]
     pub fn guest_json(&self, body: serde_json::Value) -> serde_json::Value {
-        guest_response_with_budget(self.view.clone().unwrap_or(body), self.budget.as_ref())
+        self.with_budget(self.shown_body(body))
     }
 }
 
