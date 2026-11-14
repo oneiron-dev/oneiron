@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "macOS menu-bar voice recorder that lands segments in an embedded Oneiron vault"
 repository.workspace = true
-homepage.workspace = true
 publish = false
 
 [lib]
