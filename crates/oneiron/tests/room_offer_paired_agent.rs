@@ -305,6 +305,7 @@ fn a_paired_agent_on_a_rooted_vault_files_its_offer_card_and_the_host_admits_it_
             part: ConsentPart::Admission,
             grant: true,
             spend_scope: None,
+            check_in_ref: None,
         })
         .expect_err("an unrelated agent does not answer the room's admission");
     assert!(
