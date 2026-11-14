@@ -187,6 +187,7 @@ impl Fixture {
                 assets,
                 names: NAMES,
                 limits: GraphicLimits::default(),
+                fit_evidence: &FitEvidence::default(),
             },
         )
     }

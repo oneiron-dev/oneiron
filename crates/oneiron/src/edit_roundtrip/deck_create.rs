@@ -33,7 +33,9 @@ pub(crate) use store::outline_pins;
 use oneiron_docedit::design_plan::{
     AssetBinding, Brief, CompileError, Fallback, KeptBrief, MediaType, Outcome, compile_with_fonts,
 };
-use oneiron_docedit::emit::{EmitInputs, StoredAsset, check_template, emit};
+use oneiron_docedit::emit::{
+    EmitInputs, FitEvidence, StoredAsset, Unverified, check_template, emit,
+};
 use oneiron_docedit::fonts::FontBook;
 use oneiron_docedit::graphic::{AssetRecord, GraphicLimits, Origin};
 use oneiron_docedit::retained_opc::Package;
@@ -423,6 +425,7 @@ impl crate::Vault {
                 assets: &stored,
                 names: request.names,
                 limits: request.graphics.unwrap_or_else(GraphicLimits::default),
+                fit_evidence: FitEvidence::stored(),
             },
         )?;
         let now = self.now_recorded_at();
@@ -516,11 +519,12 @@ impl crate::Vault {
                 write_set: candidate.report.write_set.clone(),
                 omitted: candidate.report.omitted.clone(),
                 fit_unverified: candidate.fit.as_ref().err().map_or_else(Vec::new, |fit| {
-                    fit.units
-                        .iter()
-                        .map(|unit| (unit.slide.clone(), unit.block.clone(), unit.shape))
-                        .collect()
+                    fit.units.iter().map(unverified_row).collect()
                 }),
+                fit_overflows: candidate.fit.as_ref().err().map_or_else(Vec::new, |fit| {
+                    fit.overflows.iter().map(unverified_row).collect()
+                }),
+                fit_receipt: candidate.fit_receipt,
                 estimates: plan
                     .slides()
                     .iter()
@@ -563,6 +567,11 @@ impl crate::Vault {
         let txn = self.store.env.read_txn()?;
         CREATIONS.get(&self.store, &txn, &artifact)
     }
+}
+
+/// A unit as the creation record keeps it: `(slide, block, shape)`.
+fn unverified_row(unit: &Unverified) -> (String, String, u32) {
+    (unit.slide.clone(), unit.block.clone(), unit.shape)
 }
 
 fn kept_brief(kept: &KeptOutline) -> KeptBrief<'_> {

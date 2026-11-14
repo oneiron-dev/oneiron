@@ -2,7 +2,9 @@
 //!
 //! Creation status: "Text, tables and charts return FitUnverified. Nothing certifies fit." The oracle runs once per case set to create golden outputs; CI uses the stored ones, so no always-on machine is required. This module is the engine half of that pass: evidence tooling run by the `deck-create-cases` binary and read back by the receipt pin test. It replays [`emit`](super::emit) once per case and pins what came out; it never changes what `emit` returns.
 
-use super::{Candidate, Content, Destination, EmitInputs, FitTrace, Names, StoredAsset, emit};
+use super::{
+    Candidate, Content, Destination, EmitInputs, FitEvidence, FitTrace, Names, StoredAsset, emit,
+};
 use crate::design_plan::{AssetBinding, KeptBrief, Outcome};
 use crate::graphic::GraphicLimits;
 use crate::ooxml::XmlTree;
@@ -199,7 +201,7 @@ pub struct FitUnit {
     pub planned_emu: [i64; 4],
 }
 
-/// Emit one case's candidate: compile its brief against the case set's template, emit with the case set's names, and read every fit-unverified unit back from the candidate's own slide XML.
+/// Emit one case's candidate with no fit evidence, so every unit geometry leaves undecided is one PowerPoint owes a row: compile its brief against the case set's template, emit with the case set's names, and read every fit-unverified unit back from the candidate's own slide XML.
 pub fn case_candidate(
     repo: &Path,
     loaded: &LoadedCaseSet,
@@ -208,10 +210,26 @@ pub fn case_candidate(
     let id = case.id.as_str();
     let brief = repo.join(&case.brief);
     let bytes = std::fs::read(&brief).map_err(|error| format!("{}: {error}", brief.display()))?;
+    let candidate = emit_brief(loaded, id, &bytes, &FitEvidence::default())?;
+    let units = fit_units(id, &candidate)?;
+    Ok(CaseCandidate {
+        id: case.id.clone(),
+        candidate,
+        units,
+    })
+}
+
+/// Compile `brief` (a case's brief bytes, as is or changed) against the case set's template and emit it with the case set's names, certifying fit from `evidence`.
+pub fn emit_brief(
+    loaded: &LoadedCaseSet,
+    id: &str,
+    brief: &[u8],
+    evidence: &FitEvidence,
+) -> Result<Candidate, String> {
     let kept = KeptBrief {
         version: loaded.set.brief_version.as_str(),
-        content_hash: *blake3::hash(&bytes).as_bytes(),
-        bytes: &bytes,
+        content_hash: *blake3::hash(brief).as_bytes(),
+        bytes: brief,
     };
     let resources = Resources::measuring();
     let template = Package::open(&loaded.template_bytes, case_limits(), &resources)
@@ -255,14 +273,9 @@ pub fn case_candidate(
         assets: &assets,
         names,
         limits: GraphicLimits::default(),
+        fit_evidence: evidence,
     };
-    let candidate = emit(&plan, &inputs).map_err(|error| format!("{id}: {error}"))?;
-    let units = fit_units(id, &candidate)?;
-    Ok(CaseCandidate {
-        id: case.id.clone(),
-        candidate,
-        units,
-    })
+    emit(&plan, &inputs).map_err(|error| format!("{id}: {error}"))
 }
 
 /// The candidate's fit-unverified units, read back from its slide parts and cross-checked against its fit report.
