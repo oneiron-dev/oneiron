@@ -22,8 +22,10 @@ use oneiron_docedit::live::{ExportKey, NodeBinding, NodeId};
 use serde::{Deserialize, Serialize};
 
 use super::codec::{RECORD, settlement_key_parts};
-use super::receipts::{already_settled, settlement_receipt_record};
+use super::organ_wait::OrganWait;
+use super::receipts::settlement_receipt_record;
 use super::records::{SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleSelectOutcome};
+use super::ref_state::{RefMove, move_ref_in_txn};
 use crate::Vault;
 use crate::blob_artifact::{
     BLOB_ARTIFACT_RUN_REF_MAX_BYTES, BlobBodyFile, BlobContent, CalcEngineStamp,
@@ -311,7 +313,7 @@ impl Vault {
             read_rows,
             delta_receipt,
         )?;
-        self.put_pending(artifact_id, &row, None, reader)
+        self.put_pending(artifact_id, &row, None, reader, None)
     }
 
     /// [`Self::retain_edit_proposal`] in the caller's own write transaction, for a
@@ -375,7 +377,7 @@ impl Vault {
             read_rows,
             delta_receipt,
         )?;
-        self.put_pending_in_txn(wtxn, artifact_id, &row, None)
+        self.put_pending_in_txn(wtxn, artifact_id, &row, None, None)
     }
 
     /// The lane a retention in the caller's own transaction admits `made_by` through
@@ -436,6 +438,7 @@ impl Vault {
             false,
             read_rows,
             delta_receipt,
+            None,
         )
     }
 
@@ -491,6 +494,7 @@ impl Vault {
             false,
             read_rows,
             delta_receipt,
+            None,
         )
     }
 
@@ -520,6 +524,7 @@ impl Vault {
             true,
             &[],
             delta_receipt,
+            None,
         )
     }
 
@@ -547,12 +552,15 @@ impl Vault {
             false,
             &[],
             delta_receipt,
+            None,
         )
     }
 
     /// Retains `output`, whose bytes are `content`, as a waiting proposal.
+    /// `held` is the organ call landing its own output at a redrive
+    /// ([`Self::propose_held_organ_output`]).
     #[expect(clippy::too_many_arguments)]
-    fn propose_output(
+    pub(super) fn propose_output(
         &self,
         artifact_id: &EntityId,
         output: &NativeOutput,
@@ -564,6 +572,7 @@ impl Vault {
         authorize_content_write: bool,
         read_rows: &[EntityId],
         delta_receipt: Option<&str>,
+        held: Option<&OrganWait>,
     ) -> Result<PendingProposalView> {
         let body = self
             .get_blob_artifact(artifact_id)?
@@ -615,7 +624,7 @@ impl Vault {
                 actor,
             )
         } else {
-            self.put_pending(artifact_id, &row, staged.as_ref(), reader)
+            self.put_pending(artifact_id, &row, staged.as_ref(), reader, held)
         }
     }
 
@@ -798,9 +807,7 @@ impl Vault {
         let key = settlement_key_parts(artifact_id, &row.proposal_ref);
         let record = self.with_write_txn_grouped(|wtxn| {
             let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
-            if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
-                return Err(already_settled(&existing));
-            }
+            move_ref_in_txn(&self.store, wtxn, &key, RefMove::Settle)?;
             let mut record = output_record(
                 row,
                 SettleOutcomeKind::Discarded,
@@ -825,6 +832,7 @@ impl Vault {
         row: &PendingRow,
         staged: Option<&StagedPendingBody>,
         reader: Option<MadeByReader<'_>>,
+        held: Option<&OrganWait>,
     ) -> Result<PendingProposalView> {
         let lane =
             admission::retention_lane(artifact_id, row.made_by.as_ref(), row.retained_by, reader)?;
@@ -834,7 +842,7 @@ impl Vault {
             if let (Some(lane), Some(made_by)) = (&lane, &row.made_by) {
                 admission::admit_made_by_in_txn(self, wtxn, lane, made_by, row.retained_by)?;
             }
-            self.put_pending_in_txn(wtxn, artifact_id, row, staged)
+            self.put_pending_in_txn(wtxn, artifact_id, row, staged, held)
         })
     }
 
@@ -862,27 +870,23 @@ impl Vault {
         })
     }
 
-    /// Holds `row` beside its artifact in `wtxn`: a settled ref, or one already
-    /// waiting, is refused. An output staged to its body file (`staged`) is
-    /// named here, its descriptor committing with the row (FIX 20812). The
-    /// view is the row as it is kept.
+    /// Holds `row` beside its artifact in `wtxn`: a settled ref, one already
+    /// waiting, or one an organ call holds is refused, unless `held` is that
+    /// call landing its own output, whose hold ends here (FIX 22386). An
+    /// output staged to its body file (`staged`) is named here, its
+    /// descriptor committing with the row (FIX 20812). The view is the row as
+    /// it is kept.
     fn put_pending_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         artifact_id: &EntityId,
         row: &PendingRow,
         staged: Option<&StagedPendingBody>,
+        held: Option<&OrganWait>,
     ) -> Result<PendingProposalView> {
         validate_pending_ref(&row.proposal_ref)?;
         let key = settlement_key_parts(artifact_id, &row.proposal_ref);
-        if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
-            return Err(already_settled(&existing));
-        }
-        if PENDING.contains(&self.store, wtxn, &key)? {
-            return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
-                "a proposal already waits under this ref",
-            )));
-        }
+        move_ref_in_txn(&self.store, wtxn, &key, RefMove::LandProposal { held })?;
         if super::artifact_retention_deleted_in_txn(&self.store, wtxn, artifact_id)? {
             return Err(Error::EntityNotFound);
         }

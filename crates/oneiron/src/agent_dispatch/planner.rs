@@ -54,42 +54,8 @@ pub(crate) use self::budget_resolution::resolved_budget_ask;
 pub use self::measured::{MeasuredRate, PatternCandidate};
 pub use self::receipt::SpawnPlanReceipt;
 
-/// One rung of the planner ladder. Cheap rungs handle the easy cases; the
-/// strong rung is reserved for xhigh/max care or big plans.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum PlannerRung {
-    /// A cheap classifier: the deterministic floor plus, at most, a local
-    /// model sorting the need.
-    CheapClassifier,
-    /// A small thinking model weighs the top shapes.
-    SmallThinking,
-    /// A strong model plans (xhigh/max care, or a big plan).
-    Strong,
-}
-
-impl PlannerRung {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::CheapClassifier => "cheap_classifier",
-            Self::SmallThinking => "small_thinking",
-            Self::Strong => "strong",
-        }
-    }
-
-    /// The decision-ladder rung this planner rung rides.
-    #[must_use]
-    pub const fn decision_rung(self) -> DecisionRung {
-        match self {
-            Self::CheapClassifier => DecisionRung::Local,
-            Self::SmallThinking => DecisionRung::Escalation,
-            Self::Strong => DecisionRung::Big,
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::agent_dispatch::planner::{PlannerRung, SkillRevisionRef};
 
 /// One seat the planner may run agents on: a model, the description the
 /// vault holds for it, and the AGENT_DEF that runs on it with that
@@ -174,13 +140,6 @@ impl CostEnvelope {
             .spendable()
             .is_none_or(|most| self.expected_spend_units <= most)
     }
-}
-
-/// One skill revision a plan read or ran.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SkillRevisionRef {
-    pub skill: EntityId,
-    pub version: String,
 }
 
 /// Everything one plan reads, gathered from the vault by the live service.

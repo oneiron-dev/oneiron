@@ -2,7 +2,11 @@
 mod capture;
 #[path = "../builder_effort.rs"]
 mod effort;
+#[path = "../builder_eval.rs"]
+mod eval;
 mod terminal;
+
+pub use self::eval::{BlendWeightsSource, RetrievalEvalSpec};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -136,6 +140,8 @@ pub struct PipelineBuilder<'a> {
     /// overlay `VaultMeta` while it is off record, and under the same route's
     /// refusal once it is not. Retrieval SCORING is untouched by this field.
     pub(super) session: Option<&'a crate::off_record::SessionRetrievalTelemetry<'a>>,
+    /// Eval mode ([`Self::eval_spec`]): pinned clock and weights, no nondeterminism, no writes.
+    pub(super) eval: bool,
 }
 
 impl<'a> PipelineBuilder<'a> {
@@ -212,6 +218,7 @@ impl<'a> PipelineBuilder<'a> {
             skip_vector_rescore: false,
             no_match_floors: None,
             session: None,
+            eval: false,
         }
     }
 
