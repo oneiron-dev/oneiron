@@ -11108,7 +11108,7 @@
      "path": "src/booking/emergency_reschedule/state.rs",
      "purpose": "Emergency reschedule state and home-authority reads",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -26671,7 +26671,7 @@
      "path": "src/context_pack/retained_copies.rs",
      "purpose": "Retained courtesy copies stay out of shared retrieval (BIZ-LEGAL-0004 B2, Docs Q09)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -29174,7 +29174,7 @@
      "path": "src/disclosure/disclosable_set.rs",
      "purpose": "The ILDF2 room rule (ONE-1592, ratified 2026-09-23): `disclosable_set = public ∪ (∩ clearances of all…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 5,
       "re-export": 1,
       "struct": 1
@@ -29326,7 +29326,7 @@
      "path": "src/disclosure/vault_context.rs",
      "purpose": "vault_meta scope/tier-A rows, Vault impl, and agent-visible assembly block",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 13,
       "struct": 2
      }
@@ -71093,7 +71093,7 @@
      "path": "src/scope_summary/word_sources.rs",
      "purpose": "Where the words of one stored revision came from",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -75432,7 +75432,7 @@
      "path": "src/skill_hub/pack_catalog/builtin.rs",
      "purpose": "Engine-embedded connector source and local first-open installation",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 3,
       "struct": 1
      }
@@ -90525,6 +90525,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/builtin_pack_seed.rs",
+     "purpose": "Door for `tests/booking_feed_move_held.rs`: an emergency's apology goes out on `email`, a channel a built-in…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/callable_skill.rs",
      "purpose": "Doors for the callable-skill integration tests",
      "surface": {
@@ -90797,6 +90807,16 @@
       "fn": 5,
       "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/disclosure_word_sources.rs",
+     "purpose": "Doors for `tests/disclosure_summary_word_sources.rs` (census L5-13): the general disclosure clamp, as a…",
+     "surface": {
+      "fn": 7
      }
     },
     {
@@ -91121,7 +91141,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 101,
+      "mod": 103,
       "re-export": 1
      }
     },
@@ -99638,6 +99658,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/booking_feed_move_held.rs",
+     "purpose": "A calendar feed's move of a booking waits while an emergency delivery for that booking is pending (FIX 22385…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -99651,6 +99679,14 @@
      "notable": [],
      "path": "tests/build_cache.rs",
      "purpose": "Public cache boundary: real vaults and BLOB_ARTIFACT versions only",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/calendar_google_owed_full_listing.rs",
+     "purpose": "A connector pull that leaves a change owed makes the next pull list the calendar whole, on every transport…",
      "surface": {}
     },
     {
@@ -100337,6 +100373,14 @@
      "notable": [],
      "path": "tests/disclosure_claim_facet.rs",
      "purpose": "The owner's disclosure doors store their claim heads ([DISCLOSURE-SCOPE-CLAIM-FACET]…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/disclosure_summary_word_sources.rs",
+     "purpose": "The general disclosure clamp follows a summary's words to their sources (census L5-13; ILDF2 P7, one-1592…",
      "surface": {}
     },
     {
@@ -104767,7 +104811,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 104,
+     "files": 106,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104944,8 +104988,8 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7567,
-   "test_files": 1284
+   "source_files": 7569,
+   "test_files": 1287
   },
   "oneiron-agent-runtime": {
    "files": [
