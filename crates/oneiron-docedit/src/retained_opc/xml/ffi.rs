@@ -2,6 +2,10 @@
 //! builds its bundled library otherwise. Keep every unsafe operation here or
 //! at a callback with a local SAFETY proof.
 use std::ffi::{c_char, c_int, c_long, c_void};
+
+// Nothing calls into `expat-sys`: it only finds or builds the Expat that the block below links.
+// This names it for Cargo's `unused_dependencies` lint (Rust 1.100).
+use expat_sys as _;
 pub(super) type Parser = *mut c_void;
 #[link(name = "expat")]
 unsafe extern "C" {
