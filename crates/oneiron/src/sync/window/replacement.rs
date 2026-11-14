@@ -55,7 +55,7 @@ use super::egress::{
 };
 use super::tombstones::apply_tombstone_to_indexed_window_doc;
 use super::{
-    forward_rematerialize, persist_window_doc_in_txn, reverse_rematerialize,
+    forward_rematerialize_detached, persist_window_doc_in_txn, reverse_rematerialize,
     write_window_svf_in_txn,
 };
 use crate::Vault;
@@ -287,7 +287,9 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     // Select only this snapshot's still-chosen values before that scrub.
     let positions = positions.and_then(|positions| positions.select_replacement(&candidate));
     reverse_rematerialize(vault, &candidate, key)?;
-    forward_rematerialize(vault, &candidate, materializer, key)?;
+    // The candidate is not registered yet, so no import reaches it: no
+    // live-window turn under the registry lock (FIX 12128).
+    forward_rematerialize_detached(vault, &candidate, materializer, key)?;
 
     let state = export_scrubbed_window_snapshot(vault, key, &candidate)?;
     // The candidate is final once its snapshot is cut: the forward pass and the export scrubs can

@@ -166,9 +166,46 @@ pub(crate) fn forward_recovery(
     }
 }
 
+/// [`forward_rematerialize`] of a document no other thread reaches yet: a
+/// replacement's candidate, forwarded under the registry lock before it is
+/// registered, so no import lands in it mid-pass. It takes no live-window
+/// turn, since the turn's holder may take the registry lock (FIX 12128).
+pub(crate) fn forward_rematerialize_detached(
+    vault: &Vault,
+    doc: &LoroDoc,
+    materializer: &Materializer,
+    window_key: &WindowKey,
+) -> Result<u32> {
+    forward_pass(
+        vault,
+        doc,
+        materializer,
+        window_key,
+        None,
+        MarkerScope::Window,
+    )
+}
+
 /// One rematerialization in one go, as every window open runs it: the pass
-/// order and the materializer lock held throughout.
+/// order and the materializer lock held throughout, inside the live-window
+/// turn.
 fn forward_with_recovery(
+    vault: &Vault,
+    doc: &LoroDoc,
+    materializer: &Materializer,
+    window_key: &WindowKey,
+    trusted: Option<&crate::recovery::CanonicalSnapshot>,
+    scope: MarkerScope,
+) -> Result<u32> {
+    // No peer import lands in the doc from the tombstone index's build to the
+    // pass's end (L7-45): the index reads a case-shifted key from a snapshot.
+    let _turn = materializer.enter_live_window();
+    forward_pass(vault, doc, materializer, window_key, trusted, scope)
+}
+
+/// [`forward_with_recovery`]'s pass, for a caller that holds the turn or
+/// forwards a document no import reaches.
+fn forward_pass(
     vault: &Vault,
     doc: &LoroDoc,
     materializer: &Materializer,
@@ -179,9 +216,6 @@ fn forward_with_recovery(
     // The rows this pass writes came from the doc: the live mirror must not
     // rewrite a carrier with them.
     let _import = crate::sync::manager::import_scope();
-    // No peer import lands in the doc from the tombstone index's build to the
-    // pass's end (L7-45): the index reads a case-shifted key from a snapshot.
-    let _turn = materializer.enter_live_window();
     let (tombstones, native_documents) = open(vault, doc, window_key, trusted)?;
     #[cfg(oneiron_test_support)]
     run_index_built_hook();

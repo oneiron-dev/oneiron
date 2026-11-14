@@ -215,6 +215,10 @@ impl WindowManager {
             let Some(window) = self.window(&key) else {
                 continue;
             };
+            // The live-window turn first (L7-45): the reverse pass builds a
+            // tombstone index over the shared doc, so no peer import lands in
+            // it until this window's mirror is done.
+            let _turn = self.materializer.enter_live_window();
             let _guard = self.materializer.lock();
             self.mirror_into_window(&key, &window.doc, rows, edited);
             // FIX 853: a MESSAGE row that lands after its document's head
@@ -339,6 +343,8 @@ impl WindowManager {
             let Some(window) = window else {
                 continue;
             };
+            // The turn before the lock, as above (L7-45).
+            let _turn = self.materializer.enter_live_window();
             let _guard = self.materializer.lock();
             self.mirror_into_window(&key, &window.doc, &none, &none);
         }

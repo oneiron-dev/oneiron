@@ -38,17 +38,23 @@
 //!   transition and never waits; opens and unloads of other windows never
 //!   wait on it. The registry mutex covers only lookups, the fast path,
 //!   registration and removal.
-//! - Lock order: **registry lock → live-window turn → materializer lock**
-//!   (the turn, [`Materializer::enter_live_window`], serializes a peer import
-//!   into a live window with an indexed pass over one, L7-45; an import holds
-//!   it only around `doc.import`, so it never waits on the registry lock).
+//! - Lock order: **live-window turn → materializer lock**, and nothing waits
+//!   for the turn while it holds the registry lock (the turn,
+//!   [`Materializer::enter_live_window`], serializes a peer import into a
+//!   live window with an indexed pass over one, L7-45). A fast-path open runs
+//!   its retry pass after it drops the registry lock, and a replacement
+//!   forwards its candidate, which no import reaches before it is
+//!   registered, without the turn. The turn's holder may take the registry
+//!   lock: Observer B's NOTE scrub lists the live windows under the
+//!   materializer lock (FIX 12128).
 //!   The registry lock before the materializer lock: a cold open takes the
 //!   materializer lock for step-5 forward remat, and an unload for its
-//!   persist, without the registry lock.
-//!   Observer callbacks take ONLY the materializer lock and never the
-//!   registry lock, so observer traffic cannot deadlock against
-//!   open/unload. Code built on the manager must never acquire the registry
-//!   lock while holding the materializer lock.
+//!   persist, without the registry lock. Two holders break that order and
+//!   can deadlock against each other: a replacement forwards its candidate
+//!   under the registry lock, and that NOTE scrub takes the registry lock
+//!   under the materializer lock (FIX 25183). Every other observer callback
+//!   takes only the materializer lock. Code built on the manager must never
+//!   acquire the registry lock while holding the materializer lock.
 
 mod document_api;
 mod live_mirror;
@@ -279,16 +285,19 @@ impl WindowManager {
         }
         if let Some(existing) = registry.get(key) {
             let existing = Arc::clone(existing);
-            // A resident SKILL may have arrived before its actor. Observer B
-            // kept its entity-scoped replay marker; an already-loaded window
-            // must retry it too, not only the cold-open recovery path.
-            if !super::quarantine::pending_remat_entities(&self.vault, key.as_str())?.is_empty() {
-                forward_rematerialize(&self.vault, &existing.doc, &self.materializer, key)?;
-            }
             #[cfg(test)]
             self.maybe_pause_handle_issue();
             self.track_issued_handle(key, &existing);
             drop(registry);
+            // A resident SKILL may have arrived before its actor. Observer B
+            // kept its entity-scoped replay marker; an already-loaded window
+            // must retry it too, not only the cold-open recovery path. The
+            // pass runs with the registry lock down: it waits for the
+            // live-window turn, whose holder may take the registry lock
+            // (Observer B's NOTE scrub, FIX 12128).
+            if !super::quarantine::pending_remat_entities(&self.vault, key.as_str())?.is_empty() {
+                forward_rematerialize(&self.vault, &existing.doc, &self.materializer, key)?;
+            }
             return Ok((existing, false));
         }
         let opening = self

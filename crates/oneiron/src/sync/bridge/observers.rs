@@ -177,9 +177,12 @@ impl Materializer {
     ///
     /// Re-entrant on the holding thread: Observer callbacks run inside the
     /// import that holds the turn, and a nested pass shares it. Lock order:
-    /// registry lock, then this turn, then [`Self::lock`]. Never take it while
-    /// holding the materializer lock, and never take the registry lock while
-    /// holding it (Observer callbacks never take the registry lock).
+    /// this turn, then [`Self::lock`]; never take it while holding the
+    /// materializer lock. Never wait for it while holding the window
+    /// registry lock either: the turn's holder may take that lock (Observer
+    /// B's NOTE scrub, FIX 12128), so a window open retries its pass after
+    /// the registry lock is down, and a replacement forwards its unregistered
+    /// candidate without the turn ([`crate::sync::window::forward_rematerialize_detached`]).
     pub(crate) fn enter_live_window(&self) -> LiveWindowTurn<'_> {
         let turns = &self.live_window_turns;
         let this_thread = std::thread::current().id();
