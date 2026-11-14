@@ -181,7 +181,10 @@ async fn core_context_pack_owner_absent_happy_path_clamps_to_scope() {
     let party = seed_text_turn(&server, "hanami party planning needle17");
     // A base-world claim leaves capacity for the other-world claim under the
     // context pack's non-base-world claim fraction.
-    let base_claim = seed_disclosure_claim_in_world(
+    // Unstamped: this reader names no room, so it is homed in an unnamed
+    // vault, where a stamped claim never reads (DEC-0006 #home-clearance).
+    // The world clearance is what this test exercises.
+    let base_claim = seed_unstamped_claim_in_world(
         &server,
         party,
         "party details needle17",
@@ -189,7 +192,7 @@ async fn core_context_pack_owner_absent_happy_path_clamps_to_scope() {
     );
     let diary_world = seeded_test_entity_id(0x1517_00f1);
     let diary =
-        seed_disclosure_claim_in_world(&server, party, "private diary entry needle17", diary_world);
+        seed_unstamped_claim_in_world(&server, party, "private diary entry needle17", diary_world);
     seed_disclosure_scope(
         &server,
         contact_principal,
@@ -367,7 +370,10 @@ async fn core_context_pack_n9_scope_smuggling_members_are_ignored() {
     let contact_id = seeded_test_entity_id(0x1517_0022);
     seed_counterparty_contact(&server, contact_id, identity_ref, "kenji@example.com");
     let party = seed_text_turn(&server, "party event needle21");
-    let base_claim = seed_disclosure_claim_in_world(
+    // Unstamped: this reader names no room, so it is homed in an unnamed
+    // vault, where a stamped claim never reads (DEC-0006 #home-clearance).
+    // The world clearance is what this test exercises.
+    let base_claim = seed_unstamped_claim_in_world(
         &server,
         party,
         "party details needle21",
@@ -375,7 +381,7 @@ async fn core_context_pack_n9_scope_smuggling_members_are_ignored() {
     );
     let diary_world = seeded_test_entity_id(0x1517_00f2);
     let diary =
-        seed_disclosure_claim_in_world(&server, party, "private diary needle21", diary_world);
+        seed_unstamped_claim_in_world(&server, party, "private diary needle21", diary_world);
     seed_disclosure_scope(&server, contact_id, disclosure_base_world_clearance());
 
     let clean = json!({
