@@ -63,7 +63,7 @@ pub(super) fn admit_federated_authority_log(
     let hash = authority_entry_hash(&entry)?;
     // This door reads the op, so it keeps the whole entry and wraps it as an
     // open row for the row-taking fold and standing checks.
-    let row = FoldRow::Open(entry.clone());
+    let row = FoldRow::Open(entry);
     let local = crate::authority::preflight_authority_rows_beside_in_txn(
         &vault.store,
         vault.privacy_posture(),

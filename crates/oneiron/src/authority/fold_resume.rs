@@ -544,10 +544,7 @@ impl FoldBase {
         // folds the whole log instead, which judges the row as structure.
         let mut open = BTreeMap::new();
         for (hash, row) in tail {
-            let Some(entry) = row.open() else {
-                return None;
-            };
-            open.insert(*hash, entry);
+            open.insert(*hash, row.open()?);
         }
         let once = &self.once;
         let settlement = &once.settlement;
