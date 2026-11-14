@@ -27,19 +27,25 @@ use crate::edit_distance::delta::{
 };
 use crate::entity_id::EntityId;
 use crate::learning::TypeRef;
-use crate::memory::{MemoryError, MemoryResult};
+use crate::memory::MemoryResult;
 use crate::skill_attribution::{
     AttemptOutcome, AttributionJudgment, AttributionVerdict, DeviationCause, EditHunk,
     FollowedState, HunkVerdict, OutcomeEvidence, PositiveFinding, PositiveSkillProposal,
-    SkillEditProposal, UnclearAttribution, attribution_judgments, pending_edit_proposals,
-    pending_positive_proposals, read_attribution_cursor, record_attribution_evidence,
-    retire_positive_proposal, run_attribution_projector, run_positive_attribution_pass,
-    unclear_attributions,
+    UnclearAttribution, attribution_judgments, pending_edit_proposals, pending_positive_proposals,
+    read_attribution_cursor, record_attribution_evidence, retire_positive_proposal,
+    run_attribution_projector, run_positive_attribution_pass, unclear_attributions,
 };
 
-fn invalid(message: &'static str) -> MemoryError {
-    MemoryError::bad_request(message)
-}
+#[doc(hidden)]
+use oneiron_verb_wire::verbs::skill_attribution::invalid;
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::skill_attribution::{
+    AmendmentDeltaView, AmendmentEvidenceView, AttributionEvidenceReceipt, AttributionListRequest,
+    AttributionProjectRequest, AttributionProposalsView, OpsSummaryView, PositiveProposalView,
+    PositiveRetireReceipt, PositiveRetireRequest, PreferenceProposalView, ProposalAmendmentCause,
+    ProposalArtifactView, ProposalDeltaReadRequest, ProposalOpSpanView, ProposalReplacement,
+    SettledHunkView, SkillEditProposalView,
+};
 
 /// One attribution label, spelled as the engine's pinned token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -79,15 +85,6 @@ impl From<AttributionVerdict> for AttributionLabel {
     }
 }
 
-/// Why the decider amended, spelled as the engine's pinned token.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ProposalAmendmentCause {
-    ProposalWrong,
-    ExternalChange,
-    DeciderPreference,
-}
-
 impl From<ProposalAmendmentCause> for AmendmentCause {
     fn from(cause: ProposalAmendmentCause) -> Self {
         match cause {
@@ -106,15 +103,6 @@ impl From<AmendmentCause> for ProposalAmendmentCause {
             AmendmentCause::DeciderPreference => Self::DeciderPreference,
         }
     }
-}
-
-/// One exact replacement the owner made: `before` must occur exactly once in
-/// the text as it stands when this operation applies.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProposalReplacement {
-    pub before: String,
-    pub after: String,
 }
 
 /// The owner's label for one changed hunk, in replacement order.
@@ -179,25 +167,6 @@ pub struct ProposalDeltaSettleRequest {
     /// The claimed percentage vector, validated before anything persists.
     #[serde(default)]
     pub shares: Option<Vec<ProposalShareClaim>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct AmendmentDeltaView {
-    pub proposed_ref: String,
-    pub final_ref: String,
-    pub source: String,
-    pub d_norm: f32,
-    pub ops_summary: OpsSummaryView,
-    pub engine_ver: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct OpsSummaryView {
-    pub ins: u32,
-    pub del: u32,
-    pub kept: u32,
-    pub moved: u32,
-    pub approx: bool,
 }
 
 impl From<OpsSummary> for OpsSummaryView {
@@ -286,17 +255,6 @@ impl From<AmendmentJudgment> for AmendmentJudgmentView {
             on_judge_model,
         }
     }
-}
-
-/// One changed hunk as settled: the recorded replacement, its measured edit
-/// mass, and the actor the recorded op attributes to when a span lines up.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SettledHunkView {
-    pub before: String,
-    pub after: String,
-    pub edit_mass: f64,
-    pub actor: Option<EntityId>,
-    pub trust: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -500,50 +458,6 @@ pub fn skill_attribution_settle_as_owner(
     })
 }
 
-/// Read one settlement by its receipt, with its artifact when the receipt
-/// names one (or `artifact_ref` names it directly).
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProposalDeltaReadRequest {
-    pub receipt_id: String,
-    #[serde(default)]
-    pub artifact_ref: Option<EntityId>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ProposalOpSpanView {
-    pub actor: Option<EntityId>,
-    pub trust: String,
-    /// `None` when the retained document no longer holds that version.
-    pub before_text: Option<String>,
-    pub after_text: Option<String>,
-    pub lamport: u32,
-    pub timestamp: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ProposalArtifactView {
-    pub artifact_ref: EntityId,
-    /// `None` when the retained document no longer holds that end.
-    pub proposed_text: Option<String>,
-    pub final_text: Option<String>,
-    pub source_turn_ref: Option<EntityId>,
-    pub spans: Vec<ProposalOpSpanView>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct AmendmentEvidenceView {
-    pub receipt_id: String,
-    pub actor: EntityId,
-    pub skill: Option<EntityId>,
-    pub attempt_receipt: Option<String>,
-    pub scope: String,
-    pub cause: Option<ProposalAmendmentCause>,
-    pub followed_skill: Option<bool>,
-    pub skill_covered_step: Option<bool>,
-    pub at: u64,
-}
-
 impl From<AmendmentEvidence> for AmendmentEvidenceView {
     fn from(evidence: AmendmentEvidence) -> Self {
         Self {
@@ -558,15 +472,6 @@ impl From<AmendmentEvidence> for AmendmentEvidenceView {
             at: evidence.at,
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct PreferenceProposalView {
-    pub receipt_id: String,
-    pub scope: String,
-    pub evidence_receipts: Vec<String>,
-    pub share: f32,
-    pub at: u64,
 }
 
 impl From<PreferenceProposal> for PreferenceProposalView {
@@ -730,11 +635,6 @@ pub struct AttributionEvidenceRequest {
     pub at: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct AttributionEvidenceReceipt {
-    pub sequence: u64,
-}
-
 pub fn skill_attribution_evidence_record_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -780,36 +680,6 @@ impl From<AttributionJudgment> for AttemptJudgmentView {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SkillEditProposalView {
-    pub judgment_sequence: u64,
-    pub skill: EntityId,
-    pub evidence_receipts: Vec<String>,
-    pub at: u64,
-}
-
-impl From<SkillEditProposal> for SkillEditProposalView {
-    fn from(proposal: SkillEditProposal) -> Self {
-        Self {
-            judgment_sequence: proposal.judgment_sequence,
-            skill: proposal.skill,
-            evidence_receipts: proposal.evidence_receipts,
-            at: proposal.at,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct PositiveProposalView {
-    pub evidence_sequence: u64,
-    pub skill: EntityId,
-    pub actor: EntityId,
-    pub finding: String,
-    pub reason: Option<String>,
-    pub evidence_receipts: Vec<String>,
-    pub at: u64,
-}
-
 impl From<PositiveSkillProposal> for PositiveProposalView {
     fn from(proposal: PositiveSkillProposal) -> Self {
         let (finding, reason) = match proposal.finding {
@@ -828,15 +698,6 @@ impl From<PositiveSkillProposal> for PositiveProposalView {
             at: proposal.at,
         }
     }
-}
-
-/// Run one attribution pass. Absent `since_cursor`, the persisted cursor
-/// admits only what is new.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AttributionProjectRequest {
-    #[serde(default)]
-    pub since_cursor: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -870,10 +731,6 @@ pub fn skill_attribution_project_as_owner(
     })
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AttributionListRequest {}
-
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AttributionJudgmentsView {
     pub cursor: u64,
@@ -905,13 +762,6 @@ pub fn skill_attribution_judgments_as_owner(
     })
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct AttributionProposalsView {
-    pub edit_proposals: Vec<SkillEditProposalView>,
-    pub preference_proposals: Vec<PreferenceProposalView>,
-    pub positive_proposals: Vec<PositiveProposalView>,
-}
-
 pub fn skill_attribution_proposals_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -932,17 +782,6 @@ pub fn skill_attribution_proposals_as_owner(
             .map(Into::into)
             .collect(),
     })
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PositiveRetireRequest {
-    pub evidence_sequence: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct PositiveRetireReceipt {
-    pub retired: bool,
 }
 
 pub fn skill_attribution_positive_retire_as_owner(

@@ -18,11 +18,11 @@ pub mod mailbox_cursor;
 pub mod mailbox_skipped;
 pub(crate) mod member_mail;
 mod shared_validate;
-pub mod sheets;
 mod slack_adapter;
 mod slack_personas;
 mod slack_validate;
 pub mod stalwart;
+pub mod workspace_connector;
 // FIX [LIBTEST-QUARANTINE-CHANNEL-IDENTITY-PROVIDER-TESTS]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
