@@ -2,9 +2,10 @@
  * Reads one crafted package in its own process, through one door (`sheet`,
  * the default: sheet S1; or `outline`), and prints one JSON line: the answer
  * (the refusal's budget line, or how many rows or sheets the read gave), how
- * long the read took, and the most resident memory the child held. The test that starts it bounds its time, and a
- * watch on its own thread ({@link ./memory-watch.ts}) bounds its memory, so a
- * read that never ends fails that test instead of stopping the runner.
+ * long the read took, and the most resident memory the child held. The test
+ * that starts it bounds its time, and a watch on its own thread
+ * ({@link ./memory-watch.ts}) bounds its memory, so a read that never ends
+ * fails that test instead of stopping the runner.
  */
 import { WorkbookBudgetError } from "../src/bridge/budget";
 import { readSheet, readWorkbookOutline } from "../src/bridge/parse";

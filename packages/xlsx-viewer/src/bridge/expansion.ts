@@ -22,7 +22,8 @@
  *
  * The counts are upper bounds of what SheetJS reads, never less: the part is
  * read the ways SheetJS decodes it (each byte as the one character of its
- * value, and UTF-16 after a byte-order mark), each attribute's name and value
+ * value; after a UTF-16 byte-order mark, the decoded text written back as
+ * UTF-8, which SheetJS then parses as bytes), each attribute's name and value
  * cut as SheetJS's `parsexmltag` cuts them, a hyperlink tag also after
  * SheetJS's lenient UTF-8 decode, each hyperlink counted on its own even where
  * ranges overlap, an address SheetJS's loop cannot step past counted as no
@@ -33,7 +34,13 @@
  * SheetJS reads its attributes, and its text as SheetJS keeps it (decoded,
  * unescaped, without `_xlfn.`). A follower is charged for the longest copy
  * the masters filed so far under its index can make at its cell, from where
- * their references lie relative to their cells.
+ * their references lie relative to their cells. Formulas are read only in the
+ * text SheetJS reads cells from (its first `sheetData` element), and each
+ * cell's address from the start tag SheetJS reads for it: a row's first cell
+ * starts after the row's first `>` that no `/` precedes, wherever a `<c`
+ * stands before it. A master text that holds a CDATA marker is charged at a
+ * length bound of SheetJS's unescape, which copies such a text once per two
+ * characters before an unfinished section, without building it.
  *
  * A cell that holds a formula naming a shared index is refused unless its
  * address decodes to a column and a row that are safe integers: SheetJS shifts
@@ -206,14 +213,23 @@ function byteText(bytes: Uint8Array): string {
   return out;
 }
 
-/** The part as the strings SheetJS may parse it as (`cc2str`). */
+/**
+ * The part as the strings SheetJS may parse it as (`cc2str`): the bytes as
+ * characters, and after a UTF-16 byte-order mark the decoded text written
+ * back as UTF-8 bytes (`utf8write`). SheetJS matches tags and attributes on
+ * those bytes, so a character whose UTF-8 form holds byte A0 (the no-break
+ * space, which `\s` matches) parts attributes there and not in the decoded
+ * text. An unpaired surrogate becomes U+FFFD in both of SheetJS's decodes.
+ */
 export function partTexts(bytes: Uint8Array): string[] {
   const texts = [byteText(bytes)];
+  const rewritten = (encoding: "utf-16le" | "utf-16be") =>
+    byteText(new TextEncoder().encode(new TextDecoder(encoding).decode(bytes.subarray(2))));
   if (bytes[0] === 0xff && bytes[1] === 0xfe) {
-    texts.push(new TextDecoder("utf-16le").decode(bytes.subarray(2)));
+    texts.push(rewritten("utf-16le"));
   }
   if ((bytes[0] === 0xfe && bytes[1] === 0xff) || (bytes[1] === 0xfe && bytes[2] === 0xff)) {
-    texts.push(new TextDecoder("utf-16be").decode(bytes.subarray(2)));
+    texts.push(rewritten("utf-16be"));
   }
   return texts;
 }
@@ -331,32 +347,52 @@ function unescapeEntities(text: string): string {
     .replace(/_x([\da-fA-F]{4})_/gi, (_, code: string) => String.fromCharCode(Number.parseInt(code, 16)));
 }
 
-/** SheetJS's `unescapexml` (`raw_unescapexml`), its recursion over CDATA sections written as a loop. */
-function unescapeXml(text: string): string {
-  let out = "";
-  let rest = text;
+const CDATA_OPEN = "<![CDATA[";
+const CDATA_CLOSE = "]]>";
+
+/**
+ * An upper bound of the length of SheetJS's `unescapexml` of `text`, without
+ * building it. SheetJS (`raw_unescapexml`) cuts the text at its first
+ * `<![CDATA[` and its first `]]>`, keeps what lies between, and unescapes the
+ * rest again from just after that `]]>`, or from two characters on when there
+ * is none. So a text whose CDATA section never ends is copied once per two
+ * characters before its marker, and its length grows with the square of the
+ * text's. Unescaping outside CDATA never lengthens a stretch. Each search
+ * resumes where the last one stopped, so the walk is linear.
+ */
+function unescapedLengthBound(text: string): number {
+  let total = 0;
+  let from = 0;
+  let open = text.indexOf(CDATA_OPEN);
+  let close = text.indexOf(CDATA_CLOSE);
   for (;;) {
-    const open = rest.indexOf("<![CDATA[");
-    if (open === -1) {
-      return out + unescapeEntities(rest);
+    if (open !== -1 && open < from) {
+      open = text.indexOf(CDATA_OPEN, from);
     }
-    const close = rest.indexOf("]]>");
-    out += unescapeEntities(rest.slice(0, open)) + rest.slice(open + 9, close);
-    rest = rest.slice(close + 3);
+    if (open === -1) {
+      return total + (text.length - from);
+    }
+    if (close !== -1 && close < from) {
+      close = text.indexOf(CDATA_CLOSE, from);
+    }
+    // The stretch before the marker, unescaped, then `slice(open + 9, close)`,
+    // where a missing close (-1) cuts one character off the end.
+    total += open - from + Math.max(0, (close === -1 ? text.length - 1 : close) - (open + CDATA_OPEN.length));
+    from = close === -1 ? from + 2 : close + CDATA_CLOSE.length;
   }
 }
 
 /**
- * The shared formula text SheetJS keeps for a master, from the element's text
- * as this walk reads it: decoded as UTF-8 (the browser's lenient decode, and
- * the decode Node and Bun run) when the text is the part's bytes, then
- * unescaped, with every `_xlfn.` dropped.
+ * A master's text as SheetJS keeps it, from the element's text in the part's
+ * bytes: decoded as UTF-8 (the browser's lenient decode, and the decode Node
+ * and Bun run), then unescaped, with every `_xlfn.` dropped. A decoded text
+ * that holds a CDATA marker gives the length bound of its unescape instead.
  */
-function masterTexts(text: string, byteForm: boolean): string[] {
-  const decoded = byteForm
-    ? [lenientUtf8(text), new TextDecoder().decode(Uint8Array.from(text, (char) => char.charCodeAt(0)))]
-    : [text];
-  return decoded.map((form) => unescapeXml(form).replace(/_xlfn\./g, ""));
+function masterTexts(text: string): (string | number)[] {
+  const decoded = [lenientUtf8(text), new TextDecoder().decode(Uint8Array.from(text, (char) => char.charCodeAt(0)))];
+  return decoded.map((form) =>
+    form.includes(CDATA_OPEN) ? unescapedLengthBound(form) : unescapeEntities(form).replace(/_xlfn\./g, ""),
+  );
 }
 
 /**
@@ -383,8 +419,13 @@ interface CopyBound {
 /** Where SheetJS places a cell: its address, or none when SheetJS counts cells to place it. */
 type Placement = { readonly column: number; readonly row: number } | undefined;
 
-/** The bound of one master: its text and where SheetJS places its cell (`decode_range(..).s`). */
-function masterBound(texts: readonly string[], master: Placement): CopyBound {
+/**
+ * The bound of one master: its texts and where SheetJS places its cell
+ * (`decode_range(..).s`). A text given as a length bound (CDATA) is charged as
+ * that many characters, every two of them a reference whose parts reach their
+ * ceilings: a reference is at least two characters.
+ */
+function masterBound(texts: readonly (string | number)[], master: Placement): CopyBound {
   const bound: CopyBound = {
     kept: 0,
     columns: 0,
@@ -395,6 +436,13 @@ function masterBound(texts: readonly string[], master: Placement): CopyBound {
     placed: master !== undefined,
   };
   for (const text of texts) {
+    if (typeof text === "number") {
+      bound.kept = Math.max(bound.kept, text);
+      bound.columns = Math.max(bound.columns, Math.floor(text / 2));
+      bound.rows = Math.max(bound.rows, Math.floor(text / 2));
+      bound.placed = false;
+      continue;
+    }
     let shifted = 0;
     let columns = 0;
     let rows = 0;
@@ -454,10 +502,51 @@ function copyLength(bound: CopyBound, follower: Placement): number {
   return bound.kept + bound.columns * columnPart + bound.rows * rowPart;
 }
 
+/** SheetJS's `sheetData` element (`str_match_xml_ns`): its first start tag, then the first end tag after it. */
+const SHEET_DATA_START = /<(?:\w+:)?sheetData\b[^<>]*>/g;
+const SHEET_DATA_END = /<\/(?:\w+:)?sheetData>/g;
+/** White space at a place, as `String.prototype.trim` drops it. */
+const SPACE_AT = /\s*/y;
+
+/** The text SheetJS reads a sheet's cells from (`parse_ws_xml_data`), or none when it reads no cells. */
+function sheetDataText(part: string): string | undefined {
+  SHEET_DATA_START.lastIndex = 0;
+  if (SHEET_DATA_START.exec(part) === null) {
+    return undefined;
+  }
+  const from = SHEET_DATA_START.lastIndex;
+  SHEET_DATA_END.lastIndex = from;
+  const end = SHEET_DATA_END.exec(part);
+  return end === null ? undefined : part.slice(from, end.index);
+}
+
 /**
- * Walks a part's formulas as SheetJS reads a sheet's cells, refusing one
+ * The start tag SheetJS reads for the cell of a stretch: formulas at or after
+ * `from` lie in the cell's text, and `address` is its `r`, or none when
+ * SheetJS counts cells to place it.
+ */
+interface CellTag {
+  readonly from: number;
+  readonly address: string | undefined;
+}
+
+/** A stretch whose formulas SheetJS never reads as a cell's. */
+const NO_CELL: CellTag = { from: Number.POSITIVE_INFINITY, address: undefined };
+
+/**
+ * Walks a sheet part's formulas as SheetJS reads its cells, refusing one
  * whose shared formula copies cross `budget.sheetTextChars` and returning the
  * steps SheetJS's array-formula scan takes over it.
+ *
+ * SheetJS reads cells only from the part's first `sheetData` element. It cuts
+ * that text into rows at each `</row>`, trims a row, takes its cells from just
+ * after the row's first `>` that no `/` precedes, and cuts them at each `<c`.
+ * A cell is read as `<c ` and its text trimmed: its address comes from its
+ * start tag, up to its first `>`, and its formula from the text after that.
+ * A row's first cell whose text starts with `<` is dropped. So a `<c` that
+ * stands before a row's first such `>` starts no cell, and the cell after
+ * that `>` takes its address from the text there. The walk cuts the text at
+ * the same tags into stretches, each holding at most one cell.
  *
  * Shared formulas, in document order as SheetJS reads them: a master is
  * filed under its index when its element closes, and a follower takes what
@@ -467,11 +556,14 @@ function copyLength(bound: CopyBound, follower: Placement): number {
  * Array formulas: with formula text kept, SheetJS checks every cell against
  * every array range filed before it (`arrayf`), and files one for each cell
  * whose formula element holds `t="array"`. So each closed element holding
- * it counts a range, and each cell counts the ranges filed by then. A row
- * also counts as a cell when text other than a tag follows its start tag,
- * which SheetJS reads as a cell.
+ * it counts a range, and each stretch that may hold a cell counts the ranges
+ * filed by its end.
  */
-function checkFormulas(text: string, byteForm: boolean, budget: PreviewBudget): number {
+function checkFormulas(part: string, budget: PreviewBudget): number {
+  const text = sheetDataText(part);
+  if (text === undefined) {
+    return 0;
+  }
   /** What the masters filed so far under each index can copy, by the index SheetJS files them under. */
   const masters = new Map<string, CopyBound>();
   /** Characters the followers seen so far copy. */
@@ -479,14 +571,15 @@ function checkFormulas(text: string, byteForm: boolean, budget: PreviewBudget): 
   /** Array ranges filed so far, and the steps of SheetJS's scan over them. */
   let ranges = 0;
   let steps = 0;
-  /** Where the current cell's text starts: SheetJS reads the cell's address from there to its first `>`. */
-  let cellStart = 0;
-  /** Where the current row's text starts, and whether a cell of it has started. */
+  /** Where the current row's text starts, and where its cells start once found. */
   let rowStart = 0;
-  let rowCells = false;
-  /** Whether the current cell's addresses have been checked, and the address SheetJS reads for it once they have. */
-  let addressChecked = false;
-  let address: string | undefined;
+  let rowCells: number | undefined;
+  /** The current stretch: where its opening tag stands and ends, and whether that tag is a `<c`. */
+  let stretchAt = 0;
+  let stretchStart = 0;
+  let opensCell = false;
+  /** The current stretch's cell start tag, once a formula needs it. */
+  let cell: CellTag | undefined;
   /**
    * The current cell's first formula start tag that waits for an end tag:
    * SheetJS pairs it with the first end tag after it, and reads the master's
@@ -495,35 +588,68 @@ function checkFormulas(text: string, byteForm: boolean, budget: PreviewBudget): 
   let open: { readonly tagStart: number; readonly textStart: number } | undefined;
   /** Whether the current cell's first fallback-only tag has been seen: SheetJS reads no other. */
   let fallbackSeen = false;
-  /** Whether the text from `from` to `to` holds a row's start tag followed by text other than a tag. */
-  const rowTextCell = (from: number, to: number): boolean => {
-    const end = text.indexOf(">", from);
-    return end !== -1 && end < to && text.slice(end + 1, to).trim().length > 0;
+  /** Where the current row's cells start: after its first `>` that no `/` precedes. */
+  const cellsStart = (): number => {
+    if (rowCells === undefined) {
+      let at = text.indexOf(">", rowStart);
+      while (at !== -1 && text.charCodeAt(at - 1) === 47) {
+        at = text.indexOf(">", at + 1);
+      }
+      rowCells = at === -1 ? Number.POSITIVE_INFINITY : at + 1;
+    }
+    return rowCells;
+  };
+  /** Whether the current row's first cell, before `to`, holds text. */
+  const rowTextBefore = (to: number): boolean => {
+    const from = cellsStart();
+    return from < to && text.slice(from, to).trim().length > 0;
   };
   /**
-   * Refuses the current cell when an address it may carry, up to `end`, is
-   * not safe integers, and gives the address SheetJS reads from its start
-   * tag (`r`), or none when SheetJS counts cells to place it.
+   * The start tag SheetJS reads for the current stretch's cell. The address
+   * is refused unless it decodes to safe integers.
    */
-  const checkAddress = (end: number): string | undefined => {
-    if (addressChecked) {
-      return address;
+  const cellTag = (): CellTag => {
+    if (cell !== undefined) {
+      return cell;
     }
-    addressChecked = true;
-    for (const candidate of attributeValues(` ${text.slice(cellStart, end)}`, "r")) {
-      if (!safeCellAddress(candidate)) {
-        throw new WorkbookBudgetError("sheetCells", "a shared formula's cell address lies past every sheet's cells");
-      }
+    // A `<c` after the row's cells start opens a cell; else the row's first
+    // cell starts where its cells do.
+    const rowFirst = !(opensCell && cellsStart() <= stretchAt);
+    SPACE_AT.lastIndex = rowFirst ? cellsStart() : stretchStart;
+    SPACE_AT.exec(text);
+    const start = SPACE_AT.lastIndex;
+    if (start >= text.length) {
+      return (cell = NO_CELL);
     }
-    const tagEnd = text.indexOf(">", cellStart);
-    const startTag = tagEnd === -1 ? "" : text.slice(cellStart, tagEnd + 1);
-    address = (startTag.includes("<") ? undefined : sheetJsAttributes(`<c ${startTag}`).get("r")) || undefined;
-    return address;
+    if (text.charCodeAt(start) === 60) {
+      // `<c >`, with no address; dropped when it is the row's first cell.
+      return (cell = rowFirst ? NO_CELL : { from: start, address: undefined });
+    }
+    const end = text.indexOf(">", start);
+    if (end === -1) {
+      return (cell = NO_CELL);
+    }
+    const address = sheetJsAttributes(`<c ${text.slice(start, end + 1)}`).get("r") || undefined;
+    if (address !== undefined && !safeCellAddress(address)) {
+      throw new WorkbookBudgetError("sheetCells", "a shared formula's cell address lies past every sheet's cells");
+    }
+    return (cell = { from: end + 1, address });
   };
-  const follow = (indexes: readonly string[], end: number): void => {
-    const cell = checkAddress(end);
+  /** The address SheetJS reads for the cell of the formula tag at `at`: `null` when it reads no cell's formula there. */
+  const addressAt = (at: number): { readonly address: string | undefined } | null => {
+    if (cellsStart() > at) {
+      return null;
+    }
+    const tag = cellTag();
+    return at < tag.from ? null : tag;
+  };
+  const follow = (indexes: readonly string[], at: number): void => {
+    const seen = addressAt(at);
+    if (seen === null) {
+      return;
+    }
     // SheetJS shifts a follower's copy to `decode_cell` of its address.
-    const follower = cell === undefined ? undefined : decodeCell(cell);
+    const follower = seen.address === undefined ? undefined : decodeCell(seen.address);
     let most = 0;
     for (const index of indexes) {
       for (const key of [index, String(Number.parseInt(index, 10))]) {
@@ -545,13 +671,13 @@ function checkFormulas(text: string, byteForm: boolean, budget: PreviewBudget): 
         fallbackSeen = true;
         const indexes = attributeValues(match[3], "si");
         if (indexes.length > 0) {
-          follow(indexes, end);
+          follow(indexes, match.index);
         }
       }
     } else if (match[1] !== undefined) {
       const indexes = attributeValues(match[1], "si");
       if (indexes.length > 0) {
-        follow(indexes, end);
+        follow(indexes, match.index);
       }
       open ??= { tagStart: match.index, textStart: end };
     } else if (match[2] !== undefined) {
@@ -561,11 +687,11 @@ function checkFormulas(text: string, byteForm: boolean, budget: PreviewBudget): 
           ranges += 1;
         }
         const indexes = attributeValues(element, "si");
-        if (indexes.length > 0) {
+        const seen = indexes.length > 0 ? addressAt(open.tagStart) : null;
+        if (seen !== null) {
           // SheetJS shifts from the start of `decode_range` of the master's address.
-          const cell = checkAddress(open.textStart);
-          const master = cell === undefined ? undefined : decodeCell(cell.split(":")[0]!);
-          const bound = masterBound(masterTexts(text.slice(open.textStart, match.index), byteForm), master);
+          const master = seen.address === undefined ? undefined : decodeCell(seen.address.split(":")[0]!);
+          const bound = masterBound(masterTexts(text.slice(open.textStart, match.index)), master);
           for (const index of indexes) {
             const key = String(Number.parseInt(index, 10));
             masters.set(key, joinBounds(masters.get(key), bound));
@@ -574,31 +700,30 @@ function checkFormulas(text: string, byteForm: boolean, budget: PreviewBudget): 
       }
       open = undefined;
     } else {
-      if (match[0].startsWith("</")) {
-        if (!rowCells && rowTextCell(rowStart, match.index)) {
-          steps += ranges;
-        }
-        rowStart = end;
-        rowCells = false;
-      } else {
-        if (!rowCells && rowTextCell(rowStart, match.index)) {
-          steps += ranges;
-        }
-        rowCells = true;
-        // The cell before this one is checked against every range filed by its end.
+      // The stretch this tag ends is checked against every range filed by its
+      // end: a cell when a `<c` opened it, the row's first cell when it holds
+      // text after the row's start tag.
+      if (opensCell || rowTextBefore(match.index)) {
         steps += ranges;
       }
-      cellStart = end;
-      addressChecked = false;
-      address = undefined;
+      if (match[0].startsWith("</")) {
+        rowStart = end;
+        rowCells = undefined;
+        opensCell = false;
+      } else {
+        opensCell = true;
+      }
+      stretchAt = match.index;
+      stretchStart = end;
+      cell = undefined;
       open = undefined;
       fallbackSeen = false;
     }
   }
-  if (!rowCells && rowTextCell(rowStart, text.length)) {
+  if (opensCell || rowTextBefore(text.length)) {
     steps += ranges;
   }
-  return steps + ranges;
+  return steps;
 }
 
 /**
@@ -606,18 +731,18 @@ function checkFormulas(text: string, byteForm: boolean, budget: PreviewBudget): 
  * `budget`, and returns the steps SheetJS's array-formula scan would take over
  * it (the most over the part's texts), which the read charges against
  * `budget.loopSteps`. `texts` is the part as SheetJS may decode it
- * ({@link partTexts}), the bytes as characters first. `formulaText` says
- * whether the read keeps formula text, without which SheetJS copies no shared
- * formula and scans no array range. A part SheetJS would read with its binary
- * reader is refused before this check (`package-read.ts`).
+ * ({@link partTexts}). `formulaText` says whether the read keeps formula text,
+ * without which SheetJS copies no shared formula and scans no array range. A
+ * part SheetJS would read with its binary reader is refused before this check
+ * (`package-read.ts`).
  */
 export function checkSheetExpansion(texts: readonly string[], budget: PreviewBudget, formulaText: boolean): number {
   let steps = 0;
-  texts.forEach((text, index) => {
+  for (const text of texts) {
     checkHyperlinks(text, budget);
     if (formulaText) {
-      steps = Math.max(steps, checkFormulas(text, index === 0, budget));
+      steps = Math.max(steps, checkFormulas(text, budget));
     }
-  });
+  }
   return steps;
 }

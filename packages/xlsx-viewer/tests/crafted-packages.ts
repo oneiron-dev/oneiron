@@ -258,7 +258,8 @@ export type CraftedKind =
   | "array-range-checks"
   | "stacked-comments"
   | "threaded-comments-people"
-  | "far-shifted-copies";
+  | "far-shifted-copies"
+  | "unfinished-cdata-master";
 
 /** The crafted package of `kind`; its sheet is S1. */
 export function craftedPackage(kind: CraftedKind): Uint8Array {
@@ -325,6 +326,8 @@ export function craftedPackage(kind: CraftedKind): Uint8Array {
       return threadedCommentsPackage(100_000, 300_000);
     case "far-shifted-copies":
       return sheetsPackage([text(farShiftedCopiesSheet(1_000))]);
+    case "unfinished-cdata-master":
+      return sheetsPackage([text(unfinishedCdataSheet(40_000, 600_000))]);
     case "repeated-sheet-name": {
       // 5,000 listed sheets, all named S1 and all pointing at one sheet part
       // of 100,000 cells: SheetJS reads S1 by name, without case, and so
@@ -563,4 +566,61 @@ export function spilledFormulasSheet(): string {
     rows.push(`<row r="${row}">${cells.join("")}</row>`);
   }
   return worksheet(rows.join(""));
+}
+
+/**
+ * A 100-character shared master at A1 and 10 followers, each in a row of its
+ * own. Without row tags, SheetJS reads each follower's `<c r="A1">` as its
+ * row's tag and the cell from the text after it, whose `r` is a 12-letter
+ * column and a 16-digit row: each copy is about 9 times its master. With row
+ * tags, each follower's address is its own, one row below the master.
+ */
+export function rowTagCellsSheet(rowTags: boolean): string {
+  const master = "A1+".repeat(33) + "1";
+  const rows = [`<row r="1"><c r="A1"><f t="shared" ref="A1:A11" si="0">${master}</f><v>1</v></c></row>`];
+  for (let k = 0; k < 10; k += 1) {
+    const cell = `X r="ZZZZZZZZZZZ900000000000000${k}"><f t="shared" si="0"/><v>1</v></c>`;
+    rows.push(rowTags ? `<row r="${k + 2}"><c r="A${k + 2}">${cell}</row>` : `<c r="A1">${cell}</row>`);
+  }
+  return worksheet(rows.join(""));
+}
+
+/** `xml` as UTF-16LE after a byte-order mark. */
+export function utf16le(xml: string): Uint8Array {
+  const bytes = new Uint8Array(2 + 2 * xml.length);
+  bytes[0] = 0xff;
+  bytes[1] = 0xfe;
+  for (let i = 0; i < xml.length; i += 1) {
+    const code = xml.charCodeAt(i);
+    bytes[2 + 2 * i] = code & 0xff;
+    bytes[3 + 2 * i] = code >> 8;
+  }
+  return bytes;
+}
+
+/**
+ * A shared master at A1 whose text is `before` characters, a CDATA marker
+ * that no `]]>` ends, and `after` characters of `A1+`, and one follower at
+ * A2. SheetJS's unescape copies the text after the marker once per two
+ * characters before it.
+ */
+export function unfinishedCdataSheet(before: number, after: number): string {
+  const master = "x".repeat(before) + "<![CDATA[" + "A1+".repeat(Math.floor(after / 3));
+  return worksheet(
+    `<row r="1"><c r="A1"><f t="shared" ref="A1:A2" si="0">${master}</f><v>1</v></c></row>` +
+      `<row r="2"><c r="A2"><f t="shared" si="0"/><v>1</v></c></row>`,
+  );
+}
+
+/** The characters of formula text SheetJS itself gives sheet S1 of a package of `sheet`, read with formula text. */
+export function sheetJsFormulaChars(sheet: Uint8Array): number {
+  const wb = XLSX.read(sheetsPackage([sheet]), { type: "array", cellFormula: true });
+  let chars = 0;
+  for (const [address, value] of Object.entries(wb.Sheets.S1 ?? {})) {
+    const formula = (value as XLSX.CellObject).f;
+    if (!address.startsWith("!") && typeof formula === "string") {
+      chars += formula.length;
+    }
+  }
+  return chars;
 }
