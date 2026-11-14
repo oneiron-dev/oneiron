@@ -64,10 +64,6 @@ pub enum SameBytesHold {
     /// A shared vault's record whose writer is not the caller, or does not resolve: it needs
     /// that owner's veto window.
     AnotherOwnersRecord,
-    /// A customer hold names it. A GDPR request keeps it and erases the rest; its refusal and
-    /// reason are in that hold's log, and where Oneiron hosts the bytes it is use-limited
-    /// (OF-470 C5, C6).
-    LegalHold,
     /// A shared vault with two or more Owners: every erase waits out the vault's `erase`
     /// veto window, the caller's own records included (ARCH-0043).
     VetoWindow,
@@ -94,10 +90,11 @@ pub enum SameBytesOutcome {
 /// order. Empty rows without the same-bytes flag.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntityEraseOutcome {
-    /// When a GDPR request keeps the confirmed record under a customer hold, it is not erased:
-    /// `reason` is the [`SameBytesHold`] code `privacy_erase_kept` and `receipt_ref` is `None`.
-    /// In a shared vault with two or more Owners the confirmed record is not erased either:
-    /// `reason` is `veto_window`, and [`Self::first_act`] names the `erase` act it waits on.
+    /// A legal hold never keeps the confirmed record (LEGAL-HOLD-USE = B,
+    /// ARCH-0038 #legal-hold-clone-ruling). In a shared vault with two or more
+    /// Owners an owner's erase does not erase it at once: `reason` is
+    /// `veto_window`, `receipt_ref` is `None`, and [`Self::first_act`] names
+    /// the `erase` act it waits on.
     pub first: DeleteReceipt,
     /// The confirmed record's own `erase` act; execute it with
     /// [`Memory::execute_completed_entity_erase`] once its window runs out.
@@ -122,9 +119,8 @@ impl Memory<'_> {
     /// holder's classification are read in one snapshot before anything is
     /// destroyed. A failure on the confirmed record returns the error and
     /// erases nothing else; a later row's failure never hides an earlier
-    /// completed erase. Under a GDPR request every record a legal hold names,
-    /// the confirmed one included, is kept and shows why, and the rest is
-    /// erased (OF-470 C5).
+    /// completed erase. A GDPR request erases every match, the confirmed one
+    /// included (LEGAL-HOLD-USE = B, ARCH-0038 #legal-hold-clone-ruling).
     ///
     /// In a shared vault with two or more live Owners nothing is erased at
     /// once unless the reason is a GDPR request: the confirmed record and
@@ -527,9 +523,9 @@ impl Memory<'_> {
         ))
     }
 
-    /// Of the records a GDPR request names, the ones a customer hold keeps (C5). Each one's
-    /// refusal and reason go to its hold's log, and where Oneiron hosts the bytes it is kept
-    /// under a use limit (C6).
+    /// Of the records a GDPR request names, the ones a legal hold keeps: none
+    /// any more (LEGAL-HOLD-USE = B, ARCH-0038 #legal-hold-clone-ruling). A
+    /// GDPR request erases every match.
     fn keep_legally_held(
         &self,
         records: &[EntityId],
@@ -542,11 +538,8 @@ impl Memory<'_> {
         };
         let actor = HoldActor::new(kind, Some(self.actor.to_hex()));
         Ok(self.vault.with_write_txn_grouped(|txn| {
-            let (_, kept) = legal_hold::split_privacy_erase_in_txn(store, txn, records, &actor)?;
-            Ok(kept
-                .into_iter()
-                .map(|record| (record, SameBytesHold::LegalHold))
-                .collect())
+            let _ = legal_hold::split_privacy_erase_in_txn(store, txn, records, &actor)?;
+            Ok(BTreeMap::new())
         })?)
     }
 
@@ -752,7 +745,6 @@ impl SameBytesHold {
     fn code(&self) -> &'static str {
         match self {
             Self::AnotherOwnersRecord => "another_owners_record",
-            Self::LegalHold => "privacy_erase_kept",
             Self::VetoWindow => "veto_window",
         }
     }

@@ -345,16 +345,14 @@ struct ReceiptCarrier {
     receipt: ReceiptRecord,
 }
 
-/// The tokens a legal hold keeps through what names them: a held
+/// The tokens a cooperative restriction keeps through what names them: a held
 /// reference-refusal receipt (FIX 11040), read from every RECEIPT_RECORD a
-/// standing legal hold keeps, and a held record's document, read from the
-/// token-use index (FIX 11965). A vault that keeps no hold row holds none. A
-/// carrier that does not decode names no token.
+/// restriction keeps, and a held record's document, read from the token-use
+/// index (FIX 11965). No legal hold keeps a token any more (LEGAL-HOLD-USE =
+/// B, ARCH-0038 #legal-hold-clone-ruling). A carrier that does not decode
+/// names no token.
 fn held_tokens_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<BTreeSet<EntityId>> {
     let mut held = BTreeSet::new();
-    if crate::store::legal_hold::holds_in_txn(&vault.store, txn)?.is_empty() {
-        return Ok(held);
-    }
     held.extend(uses::tokens_of_held_documents_in_txn(&vault.store, txn)?);
     let mut records = Vec::new();
     for id in vault
@@ -364,7 +362,8 @@ fn held_tokens_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<BTreeSet<EntityI
         records.push(id?);
     }
     for id in records {
-        if !crate::store::legal_hold::held_in_txn(&vault.store, txn, id.as_bytes())? {
+        if !crate::store::legal_hold::cooperative_restriction_active_in_txn(&vault.store, txn, &id)?
+        {
             continue;
         }
         let Some(row) = vault.store.port_entity_record(txn, &id)? else {

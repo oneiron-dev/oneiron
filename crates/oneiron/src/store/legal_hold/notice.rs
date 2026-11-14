@@ -23,11 +23,10 @@ pub(super) fn held_refusal() -> Error {
 }
 
 /// Whether `hold` keeps a record a hosted privacy erasure kept for its own
-/// purpose only (C6, FIX 8849): every hold that keeps vault data, a standing
-/// customer hold. A host order keeps none, whatever its own terms say: those
-/// terms stay the order's data and bind its clone.
-pub(super) fn restricts_use(hold: &LegalHold) -> bool {
-    hold.keeps_vault_data()
+/// purpose only: none any more (LEGAL-HOLD-USE = B, ARCH-0038
+/// #legal-hold-clone-ruling). No legal hold use-limits a vault record.
+pub(super) fn restricts_use(_hold: &LegalHold) -> bool {
+    false
 }
 
 /// The standing holds on `record` that keep it for their purpose only: its

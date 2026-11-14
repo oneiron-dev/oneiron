@@ -139,15 +139,15 @@ impl RetentionContext {
         let Some(named) = named_in_txn(store, txn)? else {
             return Ok(None);
         };
+        // No legal hold keeps a body key (LEGAL-HOLD-USE = B, ARCH-0038
+        // #legal-hold-clone-ruling).
         Ok(Some(Self {
             named,
             owed: ERASE_PENDING
                 .scan_keys(store, txn, &[])?
                 .into_iter()
                 .collect(),
-            hold: crate::store::legal_hold::holds_in_txn(store, txn)?
-                .iter()
-                .any(crate::deletion::LegalHold::keeps_vault_data),
+            hold: false,
         }))
     }
 }
@@ -197,11 +197,9 @@ pub(super) fn retention_ready_in_txn(
     if store.core.key_custody.local().is_none() || !snapshots_see_last_commit(store, txn)? {
         return Ok(false);
     }
-    if store.core.key_custody.body_leased(instance)
-        || crate::store::legal_hold::holds_in_txn(store, txn)?
-            .iter()
-            .any(crate::deletion::LegalHold::keeps_vault_data)
-    {
+    // No legal hold keeps a body key (LEGAL-HOLD-USE = B, ARCH-0038
+    // #legal-hold-clone-ruling).
+    if store.core.key_custody.body_leased(instance) {
         return Ok(false);
     }
     Ok(!kept.contains(instance))

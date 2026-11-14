@@ -13,7 +13,7 @@ use super::orcb;
 use super::types::GateDecisionId;
 use crate::error::Result;
 use crate::side_table::{self, SideKey, SideTableDecl};
-use crate::store::{Store, legal_hold};
+use crate::store::Store;
 
 /// One gate-decision key partition: a claim's, or (`None`) the claim-free
 /// one.
@@ -93,18 +93,9 @@ impl Store {
     ///
     /// Storage errors.
     pub(in crate::store) fn held_gate_rows_in_txn(&self, txn: &RoTxn<'_>) -> Result<HeldGateRows> {
+        // No legal hold keeps a gate partition (LEGAL-HOLD-USE = B, ARCH-0038
+        // #legal-hold-clone-ruling): a leave keeps no gate rows.
         let mut held = HeldGateRows::default();
-        // Only a hold that keeps vault data (a standing customer hold) keeps
-        // gate rows through a leave; a host order's clone is the host's.
-        for hold in legal_hold::holds_in_txn(self, txn)? {
-            if hold.keeps_vault_data() {
-                held.partitions.extend(
-                    hold.targets
-                        .iter()
-                        .map(|target| target.id().map(|id| *id.as_bytes())),
-                );
-            }
-        }
         if held.partitions.is_empty() {
             return Ok(held);
         }

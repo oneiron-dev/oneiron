@@ -2,11 +2,14 @@
 //! that stuff is for cloud only + we mention in ToS").
 //!
 //! Every deployment: the owner places a customer hold naming records or
-//! gate-decision partitions; every byte-destroying path refuses a held
-//! record whoever acts ([`crate::store`]'s `reject_legal_holds_in_txn`); the
-//! owner lifts the hold only through the one "Lift the hold and erase?"
-//! confirm; every hold event is logged, ids only, for the hold's life plus
-//! 24 months.
+//! gate-decision partitions, with a sealed copy of exactly its scope written
+//! to the install's hold store outside the vault. A hold never refuses an
+//! erase, a delete or a backup expiry (LEGAL-HOLD-USE = B, ARCH-0038
+//! #legal-hold-clone-ruling): deletes and erases work fully, including the
+//! ordinary backup and key-retirement paths, and the sealed copy outlives
+//! them. GDPR Art. 17 does not erase the legal copy while its lawful hold
+//! runs; it still erases the user's vault fully. Every hold event is logged,
+//! ids only, for the hold's life plus 24 months.
 //!
 //! Only where Oneiron hosts the bytes (posture `Hosted` or `Relay`): host
 //! orders only Oneiron places and lifts, through host-only doors no owner,
@@ -14,9 +17,8 @@
 //! through one permitted view; silence under a secrecy order. A host order
 //! keeps nothing in the vault: what it covers is preserved as its clone in
 //! the host's separate legal-hold store (LEGAL-HOLD-USE = B as a clone, owner
-//! 2026-11-05). A customer hold keeps the held part of a privacy erase, with
-//! a use limit on it for that hold's purpose only (FIX 8849). Everywhere,
-//! "erase confirmed" stands apart from "erase completed" (C4, row 04).
+//! 2026-11-05). Everywhere, "erase confirmed" stands apart from "erase
+//! completed" (C4, row 04).
 
 pub(super) mod clone;
 mod confirmation;
@@ -103,10 +105,9 @@ impl Vault {
 
     /// Places the owner's hold on `targets`: a customer hold, logged as
     /// placed, with a sealed copy of exactly its scope written to the
-    /// install's hold store outside the vault. Deletes of what it names
-    /// then fail for agents, timers, members and the owner alike, and every
-    /// other verb keeps working, but on a record a hosted privacy erasure
-    /// kept, which serves only the hold's purpose (C6, FIX 8849).
+    /// install's hold store outside the vault. A hold never refuses an erase,
+    /// a delete or a backup expiry (LEGAL-HOLD-USE = B, ARCH-0038
+    /// #legal-hold-clone-ruling), and the sealed copy outlives them.
     ///
     /// # Errors
     /// The owner proof no longer holds, `matter_ref` is not an opaque id, a

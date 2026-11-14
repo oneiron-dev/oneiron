@@ -1,16 +1,18 @@
 //! The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold).
 //!
-//! A hold is a typed row naming records or gate-decision partitions. The
-//! target index beside a standing customer hold is what every
-//! byte-destroying path reads, inside the transaction that destroys
-//! ([`Store::reject_legal_holds_in_txn`]). Several holds may name one
-//! record; each lifts on its own.
+//! A hold is a typed row naming records or gate-decision partitions. No hold
+//! keeps anything in the vault any more (LEGAL-HOLD-USE = B, owner
+//! 2026-11-05; ARCH-0038 #legal-hold-clone-ruling): every hold writes a
+//! sealed copy of its scope to a hold store outside the vault
+//! (`deletion::legal_hold::clone`), and deletes, erases, scrubs, compaction,
+//! backup expiry and key retirement run as they would without it. A hold is
+//! not an in-place retention pin or an erase-completion gate.
 //!
-//! A host order indexes nothing here (LEGAL-HOLD-USE = B as a clone, owner
-//! 2026-11-05): what it covers is copied into the host's separate
-//! legal-hold store (`deletion::legal_hold::clone`), so it refuses, defers
-//! and use-limits nothing in the vault, and keeps no backup or body key
-//! ([`LegalHold::keeps_vault_data`]).
+//! The target index beside a hold stays empty for every new write
+//! ([`put_hold_in_txn`]); every byte-destroying path still reads it inside
+//! the transaction that destroys ([`Store::reject_legal_holds_in_txn`]), and
+//! only a cooperative restriction refuses now. Several holds may name one
+//! record; each lifts on its own.
 //!
 //! Customer holds, their log, confirmed-erase links and use limits are
 //! canonical rows a restore keeps live. Host-order holds and their log sit
@@ -241,8 +243,10 @@ impl LegalHoldRefusals {
     }
 }
 
-/// The ids of the holds that keep `key` in the vault: the standing customer
-/// holds on it. A host order keeps nothing here ([`LegalHold::keeps_vault_data`]).
+/// The ids of the holds that keep `key` in the vault: none any more. No hold
+/// indexes its targets here (LEGAL-HOLD-USE = B, ARCH-0038
+/// #legal-hold-clone-ruling), so new writes leave the index empty; an update
+/// drops any row an older write left.
 fn standing_on_in_txn(
     dbs: &impl SideTableDbs,
     txn: &RoTxn<'_>,
@@ -302,32 +306,19 @@ fn standing_row_in_txn(
     Ok(hold)
 }
 
-/// Writes `hold`, keeping its target index exact: a hold that keeps its
-/// records in the vault (a standing customer hold) indexes every target it
-/// names; a lifted one, or any host order, none.
+/// Writes `hold`. No hold indexes its targets (LEGAL-HOLD-USE = B, ARCH-0038
+/// #legal-hold-clone-ruling): an update drops every index row an older write
+/// left for the hold's previous targets.
 pub(crate) fn put_hold_in_txn(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
     hold: &LegalHold,
 ) -> Result<()> {
-    let (rows, targets) = (rows_of(hold.kind), TARGETS);
-    let keys = |hold: &LegalHold| -> BTreeSet<HeldKey> {
-        if hold.keeps_vault_data() {
-            hold.targets.iter().map(held_key).collect()
-        } else {
-            BTreeSet::new()
+    let rows = rows_of(hold.kind);
+    if let Some(old) = rows.get(dbs, txn, &hold.hold_id)? {
+        for target in &old.targets {
+            TARGETS.delete(dbs, txn, &(held_key(target), hold.hold_id))?;
         }
-    };
-    let before = rows
-        .get(dbs, txn, &hold.hold_id)?
-        .map(|old| keys(&old))
-        .unwrap_or_default();
-    let after = keys(hold);
-    for key in before.difference(&after) {
-        targets.delete(dbs, txn, &(*key, hold.hold_id))?;
-    }
-    for key in after.difference(&before) {
-        targets.put(dbs, txn, &(*key, hold.hold_id), &())?;
     }
     rows.put(dbs, txn, &hold.hold_id, hold)
 }
@@ -335,12 +326,11 @@ pub(crate) fn put_hold_in_txn(
 impl Store {
     /// THE legal-hold check (C7). Every byte-destroying path calls it inside
     /// the transaction that destroys, for every id it destroys, whoever acts:
-    /// agent, timer, member or owner. An id a standing customer hold keeps
-    /// fails with the named refusal [`crate::deletion::LEGAL_HOLD_REFUSAL`]
-    /// (WILL-PLAN L01 row 01). A host order refuses nothing: its clone in
-    /// the host's legal-hold store keeps what it covers. The owner lifts a customer hold only
-    /// through `Vault::confirm_lift_legal_hold_and_erase`. The refusal is
-    /// queued for the hold log, since the refusing transaction rolls back.
+    /// agent, timer, member or owner. No legal hold refuses any more
+    /// (LEGAL-HOLD-USE = B, ARCH-0038 #legal-hold-clone-ruling): every hold
+    /// keeps its sealed copy outside the vault, and erases, deletes and
+    /// backup expiry run as they would without it. Only a cooperative
+    /// restriction refuses now, with absence (`EntityNotFound`).
     pub(crate) fn reject_legal_holds_in_txn(
         &self,
         txn: &RoTxn<'_>,

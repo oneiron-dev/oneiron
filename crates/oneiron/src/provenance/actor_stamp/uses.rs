@@ -105,8 +105,9 @@ pub(crate) fn erase_actor_stamp_uses_in_txn(
 }
 
 /// The tokens a held record's document names (FIX 11965): the rows of each
-/// record a standing legal hold names. A vault that keeps no hold row holds
-/// none.
+/// record a standing legal hold names that a cooperative restriction also
+/// keeps. No legal hold keeps a token any more (LEGAL-HOLD-USE = B, ARCH-0038
+/// #legal-hold-clone-ruling).
 ///
 /// # Errors
 ///
@@ -121,7 +122,7 @@ pub(super) fn tokens_of_held_documents_in_txn(
         .collect();
     let mut tokens = BTreeSet::new();
     for record in records {
-        if !crate::store::legal_hold::held_in_txn(store, txn, record.as_bytes())? {
+        if !crate::store::legal_hold::cooperative_restriction_active_in_txn(store, txn, &record)? {
             continue;
         }
         let uses = ACTOR_STAMP_TOKEN_USE.scan_keys(store, txn, record.as_bytes())?;
