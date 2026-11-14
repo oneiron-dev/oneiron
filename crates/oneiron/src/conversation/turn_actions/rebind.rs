@@ -8,37 +8,15 @@
 //! keeps everything else it was asked with, and its standing is judged
 //! again on the new slip whenever it is judged.
 
-use serde::{Deserialize, Serialize};
-
-use super::{TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt, TurnActionAuthority};
+use super::{TURN_ACTION_ATTEMPT_KIND, TurnActionAttempt, TurnActionAuthority};
 use crate::Error;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 
-/// Names the queued turn action to rebind.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TurnActionRebindRequest {
-    /// 32-hex id of the queued attempt, as its receipt named it.
-    pub attempt_id: String,
-}
-
-/// A rebound turn action: the attempt, the turn it acts on, and both slips.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct TurnActionRebindReceipt {
-    pub action: TurnAction,
-    /// 32-hex id of the assistant TURN acted on.
-    pub turn_id: String,
-    /// 32-hex id of the queued attempt.
-    pub attempt_id: String,
-    /// 64-hex id of the slip the action stood on before: its predecessor.
-    pub predecessor_slip: String,
-    /// 64-hex id of the slip it stands on now: the one this request was
-    /// admitted on.
-    pub successor_slip: String,
-    /// A live owner of this vault asked the action: owner work.
-    pub owner_work: bool,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::conversation::turn_actions::rebind::{
+    TurnActionRebindReceipt, TurnActionRebindRequest,
+};
 
 /// A 32-hex attempt id.
 fn attempt_id(hex: &str) -> MemoryResult<AttemptId> {

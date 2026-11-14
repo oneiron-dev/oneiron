@@ -75,8 +75,8 @@ pub(crate) use wake::{
 pub(crate) use walk::derived_travel_in;
 pub(crate) use walk::{
     ExportAudience, ExportJudge, ExportMet, LineagePass, ReplicationScope,
-    export_verdicts::ExportVerdicts, lineage_held_in, read_audience_in, readable_with_read_in,
-    withheld_by_lineage_in, withheld_from_replication_in,
+    export_verdicts::ExportVerdicts, read_audience_in, readable_with_read_in,
+    withheld_from_replication_in,
 };
 
 /// Each row a source landing is about to stamp with the source-audience
@@ -147,21 +147,8 @@ pub(crate) struct SourceAudiencePolicy {
     pub(crate) revision: u64,
 }
 
-/// What one change to a policy's readers did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SourceAudienceOp {
-    /// A source's readers were set (connect, or a group's members edited).
-    ReaderAdded,
-    ReaderRemoved,
-    /// A thread was shared with a person by an explicit act.
-    Shared,
-    /// A thread's share with a person was withdrawn.
-    Unshared,
-    /// A source was stood open to the vault, or closed again.
-    Opened,
-    Closed,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::source_audience::{SourceAudienceEventView, SourceAudienceOp};
 
 /// One change to a policy's readers, kept as its receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -774,22 +761,6 @@ pub(crate) fn threads_shared_with_in(
         }
     }
     Ok(shared)
-}
-
-/// One change to a policy's readers, as its receipt list shows it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SourceAudienceEventView {
-    pub revision: u64,
-    pub op: SourceAudienceOp,
-    /// The person the change names, 32-hex; absent for an open or a close,
-    /// or once that person was erased.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub person_ref: Option<String>,
-    /// Who made the change, 32-hex; absent once that actor was erased.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub by_ref: Option<String>,
-    pub at: u64,
 }
 
 /// Every change to `policy`'s readers, oldest first.
