@@ -24,6 +24,7 @@ pub mod code_reply_healer;
 pub mod code_run_answer;
 pub mod code_run_write_identity;
 pub mod code_view_fork;
+pub mod comm_thread_member_claim_reads;
 pub mod connector_key_suspend;
 pub mod consolidation;
 pub mod credit_decay_fit;
@@ -42,6 +43,8 @@ pub mod free_time_handoff;
 pub mod grant_roles;
 pub mod graph_ask_centre;
 #[cfg(feature = "sync")]
+pub mod guest_turn_counterparty;
+#[cfg(feature = "sync")]
 pub mod home_handoff_retire;
 #[cfg(feature = "sync")]
 pub mod home_sections;
@@ -54,6 +57,7 @@ pub mod learning_claim_value;
 pub mod learning_setting_sourced;
 pub mod lifted_text;
 pub mod live_run_claim_put;
+pub mod mail_counterparty;
 pub mod mail_landing;
 pub mod membership;
 pub mod meso_extraction_width;
@@ -62,6 +66,7 @@ pub mod nightly;
 pub mod note_bm25f_repair;
 pub mod off_record_shell;
 pub mod outbound_grant_index;
+pub mod own_device_message_replay;
 pub mod pad_offer_invalidation;
 pub mod park_typed_wait;
 pub mod provenance_body_checkpoint;

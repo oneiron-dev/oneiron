@@ -198,8 +198,6 @@ pub use crate::memory::witness::stream::types::StreamCadence;
 pub use crate::memory::witness::stream::types::StreamFinality;
 pub use crate::memory::witness::stream::types::StreamFinalityReason;
 pub use crate::memory::witness::stream::types::StreamSyncVisibility;
-pub use crate::memory::witness::types::WitnessAuthor;
-pub use crate::memory::witness::types::WitnessMessage;
 pub use crate::memory::witness::wake_outcome::TurnProgramWakeOutcome;
 pub use crate::memory::witness::wake_outcome::UnpersistedWakeReason;
 pub use oneiron_base::request_limits::DEFAULT_CALL_MODE_DEADLINE;

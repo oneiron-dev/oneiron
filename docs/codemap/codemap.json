@@ -729,7 +729,7 @@
      "surface": {
       "crate-vis": 24,
       "mod": 1,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -754,6 +754,23 @@
      "surface": {
       "fn": 4,
       "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgentOptionalMemorySetRequest",
+      "AgentOptionalMemoryState",
+      "OptionalMemoryChoice",
+      "OptionalMemoryView"
+     ],
+     "path": "src/agent_def/optional_memory_set.rs",
+     "purpose": "`vault.agents.optional_memory.set` (census L9-32; Engine rulings L9-32-PICK-WRITER, 07:43, and…",
+     "surface": {
+      "enum": 2,
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -7936,7 +7953,7 @@
      "path": "src/batch/export/credential_filter.rs",
      "purpose": "Core half of `batch::export::credential_filter`: its store-layer items live in…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 10,
       "fn": 9
      }
     },
@@ -22364,7 +22381,7 @@
      "path": "src/comm/mod.rs",
      "purpose": "Communication standing-state claims and the ARCH-0035 projector",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "re-export": 6
      }
     },
@@ -22481,7 +22498,7 @@
      "path": "src/comm/thread_membership.rs",
      "purpose": "Alias-aware communication membership",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -31049,7 +31066,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/resources/slices.rs",
@@ -31849,13 +31866,23 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/turn_text.rs",
      "purpose": "The read-only text of one TURN as a consolidation branch sees it",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/turn_text/attribution.rs",
+     "purpose": "Who a projected MESSAGE's words are attributed to (FIX 15412): the `AuthoredBy` binding its author bucket…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -54823,7 +54850,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 39,
       "mod": 41,
       "re-export": 72
      }
@@ -57272,7 +57299,17 @@
      "path": "src/memory/witness/codec.rs",
      "purpose": "Turn-speaker and message-envelope codec plus session alias formatting",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/foreign_speech.rs",
+     "purpose": "Foreign speech (FIX 15412): a TURN brought in from outside this vault, whose words neither this vault's own…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -57292,7 +57329,7 @@
      "path": "src/memory/witness/mod.rs",
      "purpose": "Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 13,
       "re-export": 5
      }
     },
@@ -57463,7 +57500,17 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/source_attribution.rs",
+     "purpose": "Source attribution of imported speech (FIX 15412): the PERSON a trusted importer names as the speaker of an…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/memory/witness/stream/admission.rs",
@@ -57756,6 +57803,7 @@
      "path": "src/memory/witness/types.rs",
      "purpose": "Witness DTOs: author enum, message/turn inputs, turn receipt",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 2,
       "struct": 4
@@ -57768,7 +57816,7 @@
      "path": "src/memory/witness/validation.rs",
      "purpose": "Idempotency validators: turn/message existence, parent/actor binding, order collision axes",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -67182,7 +67230,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ReactionSignal",
@@ -79058,10 +79106,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/store/agent_definition_codec/optional_memory.rs",
-     "purpose": "The AGENT_DEF memory profile's `optional_memory` sub-map codec (ZERO-RETRIEVAL = A): the pinned-key encode…",
+     "purpose": "The AGENT_DEF body's `optional_memory` sub-map codec (ZERO-RETRIEVAL = A): the pinned-key encode and the…",
      "surface": {
       "const": 2,
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -91742,6 +91790,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/comm_thread_member_claim_reads.rs",
+     "purpose": "Door for `tests/comm_thread_member_claim_reads.rs` (L6-23, ARCH-0057 membership-history scans): the claim…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/connector_key_suspend.rs",
      "purpose": "Door for `tests/connector_key_suspend_admission.rs` (FIX 22392): the shared suspend writer, as a budget…",
      "surface": {
@@ -91957,6 +92015,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/guest_turn_counterparty.rs",
+     "purpose": "Doors for `tests/guest_turn_counterparty.rs` (fix list row 15412, slice 3b): admit one peer TURN row through…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ErasableKeyState"
      ],
@@ -92068,6 +92136,19 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LandedSpeakers"
+     ],
+     "path": "src/test_doors/mail_counterparty.rs",
+     "purpose": "Doors for `tests/mail_counterparty_author.rs` and `tests/mail_sender_person.rs` (fix list row 15412): land…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -92110,7 +92191,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 88,
+      "mod": 92,
       "re-export": 1
      }
     },
@@ -92172,6 +92253,16 @@
      "purpose": "Doors for `tests/outbound_grant_index.rs` (census L3-28A): the by-id and by-principal reads of standing…",
      "surface": {
       "fn": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/own_device_message_replay.rs",
+     "purpose": "Doors for `tests/own_device_counterparty_replay.rs` (fix list row 15412, review #7537 P1): the own-device…",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -100982,6 +101073,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/agent_optional_memory_set.rs",
+     "purpose": "The owner sets the optional recall an agent takes as a reader (census L9-32)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/agent_pair_default_grant.rs",
      "purpose": "Pairing a named agent mints its default read Grant, and revoking an agent's last Grant narrows its read…",
      "surface": {}
@@ -101474,6 +101573,14 @@
      "notable": [],
      "path": "tests/code_view_edit.rs",
      "purpose": "Row 6 WORKING-VIEW-EDIT, ruled CODECUSTODY-VIEW = A and CODECUSTODY-VIEW-BUILD Q1 = A, Q2 = A, Q3 = A…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/comm_thread_member_claim_reads.rs",
+     "purpose": "L6-23 (ARCH-0057 membership-history scans: \"cache per-slot membership heads in the projector index\")",
      "surface": {}
     },
     {
@@ -102090,6 +102197,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/guest_turn_counterparty.rs",
+     "purpose": "Fix list row 15412, slice 3b: a federation peer's conversational TURN speaks as a counterparty here",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/held_window_erasure_drain.rs",
      "purpose": "A window that sync traffic holds a frame at a time is still compacted by the erasure sweep (census L9-41…",
      "surface": {}
@@ -102196,6 +102311,14 @@
      "notable": [],
      "path": "tests/image_ocr_unconfigured.rs",
      "purpose": "Own test binary (ruling T0F-P12R-REDS id 10 = A): the image-text recognizer is process-global, so a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/imported_speech_counterparty.rs",
+     "purpose": "Fix list row 15412, slice 3a: words brought in from outside that neither the vault's owner nor its companion…",
      "surface": {}
     },
     {
@@ -102964,8 +103087,24 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/mail_counterparty_author.rs",
+     "purpose": "Fix list row 15412: received mail speaks as a counterparty",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/mail_late_address_headers.rs",
      "purpose": "Fix list row 20852: an IMAP or mbox landing reads From, Reply-To, To and Cc from the message's whole header…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/mail_sender_person.rs",
+     "purpose": "Fix list row 15412, slice 2: a received mail MESSAGE names the PERSON its source says sent it",
      "surface": {}
     },
     {
@@ -103110,6 +103249,14 @@
      "notable": [],
      "path": "tests/outbound_undo_send.rs",
      "purpose": "DEC-0006 #undo-send (owner ruling REV-8 = B, 2026-10-09): \"undo send is a great idea, yeah. like email has…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/own_device_counterparty_replay.rs",
+     "purpose": "Fix list row 15412, review #7537 P1: received mail lands its MESSAGE under author `counterparty`, and an own…",
      "surface": {}
     },
     {
@@ -103888,6 +104035,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/serving_scoped_credentials.rs",
+     "purpose": "Serving keeps the owner's current view while an admitted agent receives the scoped export's typed Nulled…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/shared_act_family_actor_erase.rs",
      "purpose": "A hard erase of a person keeps a shared vault's governance scaffold and drops its attribution…",
      "surface": {}
@@ -104540,7 +104695,7 @@
      "purpose": "Affect facade: VAD annotations, claim VAD, triggers and coping outcomes"
     },
     "agent_def": {
-     "files": 31,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105030,7 +105185,7 @@
      "purpose": "FIX 12569: each vault's own small draft model (I5-DRAFTER = A), retrained at night on the vault's own…"
     },
     "dreamer_consolidation": {
-     "files": 171,
+     "files": 172,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105443,7 +105598,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 406,
+     "files": 408,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -106010,7 +106165,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 91,
+     "files": 95,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -106185,10 +106340,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 276,
+   "over_bar": 278,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7527,
-   "test_files": 1247
+   "source_files": 7535,
+   "test_files": 1255
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -108750,7 +108905,7 @@
      "path": "src/beam/model_scaffold.rs",
      "purpose": "Shared measured answerer scaffold",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -108781,6 +108936,16 @@
      "purpose": "Paired no-memory rows (ARCH-0042 scour:G12, ZERO-RETRIEVAL = A)",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/model_scaffold/pick_argument.rs",
+     "purpose": "`beam measure --picks-for` (census L9-32; Engine ruling L9-32-PICK-WRITER, Sat 14 Nov 07:43): the argument…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -110181,6 +110346,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/beam_picks_for_cli.rs",
+     "purpose": "`oneiron-bench beam measure --picks-for` (census L9-32; Engine ruling L9-32-PICK-WRITER, Sat 14 Nov 07:43)…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/cleanup_retrieval.rs",
      "purpose": "ANN recall corpus `ann_seed42.v1` (source: ec9cbdec92e7dbcc865b9958dd1ff8652714d6c7). rand 0.8.8 StdRng seed…",
      "surface": {}
@@ -110204,7 +110377,7 @@
    ],
    "modules": {
     "beam": {
-     "files": 42,
+     "files": 43,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -110311,8 +110484,8 @@
    },
    "over_bar": 2,
    "purpose": "oneiron-bench — benchmark harness drivers",
-   "source_files": 160,
-   "test_files": 19
+   "source_files": 161,
+   "test_files": 20
   },
   "oneiron-broker": {
    "files": [
@@ -128236,7 +128409,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ParkFault",
@@ -128247,7 +128420,7 @@
      "purpose": "Door for `tests/workflow_park_save_retry.rs` ([WORKFLOW-PARK-FAIL-RETRYABLE]): a workflow step's leaf…",
      "surface": {
       "enum": 1,
-      "fn": 2,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -130076,7 +130249,7 @@
      "path": "src/api/facade/agent_definition_doors.rs",
      "purpose": "Custom definitions, saved workflows and workspace onboarding, with the caller's own proof",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -157359,7 +157532,7 @@
      "path": "src/witness_message_body.rs",
      "purpose": "Canonical MESSAGE body vocabulary, encoding, and structural validation",
      "surface": {
-      "const": 5,
+      "const": 6,
       "enum": 2,
       "fn": 8,
       "struct": 2
@@ -160258,7 +160431,7 @@
      "path": "src/lib.rs",
      "purpose": "`oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09…",
      "surface": {
-      "mod": 14,
+      "mod": 15,
       "re-export": 7
      }
     },
@@ -160279,6 +160452,72 @@
       "fn": 13,
       "struct": 3
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EngineVault",
+      "SeedReport"
+     ],
+     "path": "src/model/engine.rs",
+     "purpose": "The engine side of the reference-model test: one real vault that takes each generated [`Step`] through the…",
+     "surface": {
+      "const": 1,
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Step"
+     ],
+     "path": "src/model/generator.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Actor",
+      "Aud",
+      "Claim",
+      "ClaimKey",
+      "Ent",
+      "Entity",
+      "Observed",
+      "Outcome",
+      "QKey",
+      "Question",
+      "Status",
+      "Universe",
+      "VaultModel",
+      "Violation"
+     ],
+     "path": "src/model/mod.rs",
+     "purpose": "A reference model of the vault and seeded step sequences checked against the engine (Fable's verdict 52…",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 27,
+      "mod": 2,
+      "struct": 11,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/model/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -160475,6 +160714,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/model_seq.rs",
+     "purpose": "The engine ends every step of a seeded sequence where the reference model does (F3.12 step 1; Fable's…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/pending_door.rs",
      "purpose": "A test that waits on a product door runs nightly without failing it until its deadline; past the deadline…",
      "surface": {}
@@ -160568,6 +160815,13 @@
      "layout": "file",
      "purpose": "The test lint: no sleeps, no wall clock, no network and no real model in tests (Fable's verdict, sections 3…"
     },
+    "model": {
+     "files": 4,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "A reference model of the vault and seeded step sequences checked against the engine (Fable's verdict 52…"
+    },
     "pending_door": {
      "files": 1,
      "impl_vault": false,
@@ -160606,8 +160860,8 @@
    },
    "over_bar": 3,
    "purpose": "`oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09…",
-   "source_files": 25,
-   "test_files": 10
+   "source_files": 28,
+   "test_files": 12
   },
   "oneiron-uniffi": {
    "files": [
