@@ -27,8 +27,11 @@ fn session_witness_lands_in_the_overlay_and_never_in_base() {
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, "in-room utterance")],
                 occurred_at: 900,
+                thread_audience: None,
+                assertions: Default::default(),
             },
             Some("the room's summary"),
+            None,
         )
         .expect("session witness");
 
@@ -86,7 +89,10 @@ fn session_witness_receipt_carries_session_local_short_ids() {
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, "alias probe")],
                 occurred_at: 910,
+                thread_audience: None,
+                assertions: Default::default(),
             },
+            None,
             None,
         )
         .expect("session witness");
@@ -138,7 +144,10 @@ fn post_flip_session_witness_lands_in_base_under_a_fresh_shell() {
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, "off-record turn")],
                 occurred_at: 930,
+                thread_audience: None,
+                assertions: Default::default(),
             },
+            None,
             None,
         )
         .expect("pre-flip witness");
@@ -153,7 +162,10 @@ fn post_flip_session_witness_lands_in_base_under_a_fresh_shell() {
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, "on-record turn")],
                 occurred_at: 931,
+                thread_audience: None,
+                assertions: Default::default(),
             },
+            None,
             None,
         )
         .expect("post-flip witness");
@@ -208,6 +220,8 @@ fn replay_owned_base_witness_race_is_an_exact_no_op() {
         turn_ref: Some(turn_id.to_hex()),
         messages: vec![message],
         occurred_at: 970,
+        thread_audience: None,
+        assertions: Default::default(),
     };
 
     let winning = std::cell::RefCell::new(None);
@@ -291,6 +305,8 @@ fn a_stale_base_route_session_witness_commits_no_base_rows() {
                     "overtaken by the flip",
                 )],
                 occurred_at: 950,
+                thread_audience: None,
+                assertions: Default::default(),
             },
             Some(&route),
         )
@@ -361,10 +377,8 @@ fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
             calls.fetch_add(1, AtomicOrdering::Relaxed);
         };
         let dir = tempfile::tempdir().expect("tempdir");
-        let config = VaultConfig {
-            retrieval_telemetry_capture: true,
-            ..VaultConfig::default()
-        };
+        let mut config = VaultConfig::device();
+        config.retrieval_telemetry_capture = true;
         let vault = crate::Vault::open(dir.path(), config).expect("open vault");
         let proof = crate::test_util::embedded_owner_proof(&vault);
         let (session, actor) = session_witness_fixture(&vault, "sess-lock-order", 0x57);
@@ -381,7 +395,10 @@ fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
                         turn_ref: None,
                         messages: vec![witness_message(0, WitnessAuthor::User, "lockorderneedle")],
                         occurred_at: 960 + round as u64,
+                        thread_audience: None,
+                        assertions: Default::default(),
                     },
+                    None,
                     None,
                 )
                 .is_ok();
@@ -526,7 +543,10 @@ fn a_failed_session_witness_does_not_burn_the_room_shell_claim() {
                 turn_ref: None,
                 messages: vec![malformed],
                 occurred_at: 970,
+                thread_audience: None,
+                assertions: Default::default(),
             },
+            None,
             None,
         )
         .expect_err("a malformed message id refuses the witness");
@@ -540,7 +560,10 @@ fn a_failed_session_witness_does_not_burn_the_room_shell_claim() {
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, "lands for real")],
                 occurred_at: 971,
+                thread_audience: None,
+                assertions: Default::default(),
             },
+            None,
             None,
         )
         .expect("the next witness succeeds");
@@ -601,16 +624,18 @@ fn an_in_transaction_failure_releases_the_room_shell_claim() {
         turn_ref: None,
         messages: vec![witness_message(0, WitnessAuthor::User, &content)],
         occurred_at: at,
+        thread_audience: None,
+        assertions: Default::default(),
     };
     let refused = facade
-        .witness_into_session(&session, &turn("x".repeat(256 * 1024), 980), None)
+        .witness_into_session(&session, &turn("x".repeat(256 * 1024), 980), None, None)
         .expect_err("a turn larger than the whole room budget is refused");
     // The room's hard byte budget is state, not request shape: the overlay-full
     // family takes the refresh-and-retry code, not the BAD_REQUEST default.
     assert_eq!(refused.code, MEMORY_CODE_INVALID_STATE);
 
     facade
-        .witness_into_session(&session, &turn("small enough".to_owned(), 981), None)
+        .witness_into_session(&session, &turn("small enough".to_owned(), 981), None, None)
         .expect("the next witness succeeds");
 
     let shell = session.overlay_conversation_shell().expect("room shell");
@@ -663,7 +688,10 @@ fn session_witness_turn_carries_the_mint_contract() {
                     witness_message(1, WitnessAuthor::Companion, "companion row"),
                 ],
                 occurred_at: 940,
+                thread_audience: None,
+                assertions: Default::default(),
             },
+            None,
             None,
         )
         .expect_err("a mixed non-system overlay witness is a bad request");
@@ -677,7 +705,10 @@ fn session_witness_turn_carries_the_mint_contract() {
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::System, "tooling row")],
                 occurred_at: 941,
+                thread_audience: None,
+                assertions: Default::default(),
             },
+            None,
             None,
         )
         .expect_err("an all-system overlay witness is a bad request");
@@ -700,7 +731,10 @@ fn session_witness_turn_carries_the_mint_contract() {
                     witness_message(1, WitnessAuthor::System, "permitted interleave"),
                 ],
                 occurred_at: 942,
+                thread_audience: None,
+                assertions: Default::default(),
             },
+            None,
             None,
         )
         .expect("the room still witnesses after the refused calls");
@@ -783,7 +817,10 @@ fn promoted_session_turn_lands_with_speaker_and_conversation_binding() {
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, "publish this turn")],
                 occurred_at: 950,
+                thread_audience: None,
+                assertions: Default::default(),
             },
+            None,
             None,
         )
         .expect("overlay witness");

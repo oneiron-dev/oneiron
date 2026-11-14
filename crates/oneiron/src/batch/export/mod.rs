@@ -99,8 +99,6 @@ pub use bundle_types::*;
 pub(crate) use bundle_validation::OmissionLedger;
 #[cfg(oneiron_test_support)]
 pub(crate) use bundle_validation::reserved_claim_import;
-// FIX [LIBTEST-QUARANTINE-BATCH-EXPORT-BUNDLE-TESTS]: the lib test target's type check fails here (27 errors: E0599 x15, E0308 x11, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod bundle_tests;
 

@@ -18,8 +18,6 @@ mod seeded_upgrade;
 mod self_grant;
 mod session_recall;
 mod session_union_reads;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-SESSION-WITNESS]: the lib test target's type check fails here (28 errors: E0063 x14, E0061 x13, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 mod session_witness;
 mod shared_effects;
 mod support;
