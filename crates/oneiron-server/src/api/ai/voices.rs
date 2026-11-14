@@ -570,12 +570,13 @@ async fn delete_at_vendor(
     }
 }
 
-/// The voice bank is the owner's: an owner-grade caller, admitted as the
-/// owner by the shared host-owner admission before any bank read, write or
-/// vendor call (FIX 8131). A self-hosted root or the dev mode acts as the
-/// owner; a hosted operator's root is refused with the support-grant
-/// refusal, and a managed vault's attested owner or a verified slip keeps
-/// its own key.
+/// The voice bank is the owner's: the owner door proves the caller is the
+/// vault's owner before any bank read, write or vendor call (FIX 8131). A
+/// self-hosted root or the dev mode acts as the owner; a hosted operator's
+/// root is refused with the support-grant refusal; a managed vault's
+/// attested owner passes while he is its live owner. A full-scope slip
+/// someone else holds is a scope, not ownership, and is refused
+/// (OWNER-GRADE-IS-NOT-OWNERSHIP).
 fn owner_only(server: &SyncServer, auth: &CoreAuth) -> Result<(), Response> {
     if !auth.is_owner_grade() {
         return Err(refusal(
@@ -584,8 +585,8 @@ fn owner_only(server: &SyncServer, auth: &CoreAuth) -> Result<(), Response> {
             "the voice bank is the owner's",
         ));
     }
-    crate::api::host_action::require_host_owner_act(server, auth)
-        .map(|_| ())
+    crate::api::owner_routes::owner(auth, server)
+        .map(drop)
         .map_err(IntoResponse::into_response)
 }
 

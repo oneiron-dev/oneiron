@@ -190,7 +190,11 @@ pub(crate) async fn write_core_batch(
     input: CoreBatchWriteInput,
     door: &'static str,
 ) -> MemoryResult<CoreBatchWriteReceipt> {
-    let commit = if auth.is_owner_grade() {
+    // Only the vault's owner commits as the owner: a self-hosted root or the
+    // dev mode acting as him, or a slip the owner door proves is his own. A
+    // full-scope slip another holder carries is a scope, not ownership, so
+    // its batch commits below owner (OWNER-GRADE-IS-NOT-OWNERSHIP).
+    let commit = if crate::api::owner_routes::owner(auth, server).is_ok() {
         CoreBatchCommit::Owner
     } else {
         CoreBatchCommit::BelowOwner

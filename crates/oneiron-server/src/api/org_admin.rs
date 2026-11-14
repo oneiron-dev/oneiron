@@ -52,7 +52,10 @@ pub(super) async fn configure(
     parts: Parts,
     Json(policy): Json<OrgAdminPolicy>,
 ) -> Result<Json<serde_json::Value>, EnvelopedApiError> {
-    super::scoped_auth::check_request_owner_act(&parts, &server)?;
+    let auth = super::scoped_auth::check_request_owner_act(&parts, &server)?;
+    // Fixing who administers an organization is the vault owner's act: a
+    // full-scope slip someone else holds is refused (OWNER-GRADE-IS-NOT-OWNERSHIP).
+    super::owner_routes::owner(&auth, &server)?;
     if policy.org_ref() != id(&org)? {
         return Err(ApiError::bad_request("setup organization mismatch", Some("org_ref")).into());
     }
