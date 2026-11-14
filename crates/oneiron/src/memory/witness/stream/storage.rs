@@ -63,6 +63,12 @@ pub(super) struct Seed {
     pub generation: EntityId,
     pub actor: EntityId,
     pub actor_class: u8,
+    /// The sitting its opener answered in (L10-33): the terminal witnesses
+    /// the reply's TURN into it, as the turn it answers was, so one sitting
+    /// holds both and a chat window takes the agent's own words. `None` for
+    /// an opener bound to no sitting, and for a seed stored before the field.
+    #[serde(default)]
+    pub session_key: Option<crate::session_lifecycle::SessionKey>,
     pub conversation: EntityId,
     pub turn: EntityId,
     pub author: WitnessAuthor,

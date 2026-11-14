@@ -8,7 +8,8 @@
 //! it (FIX 4933); it is never admitted again over a rendered transcript.
 //! Under a row on `auto` (FIX 6029, the default) a breakpoint whose prefix
 //! is cold leaves the flight to the cheap writer as the agent, over the
-//! retained ledger. The flight spends on
+//! retained ledger; under a row on the retained turns (L10-33) every flight
+//! does. The flight spends on
 //! its own guard on the chat actor's budget line and bills the payer the
 //! turn resolved: each call takes its own permit and settles once, and
 //! filing settles nothing. It runs off the answer's path, queued with every
@@ -27,7 +28,6 @@ use oneiron::compaction::{
 };
 use oneiron::engine_executor::CompactionSpawn;
 use oneiron::llm::run_admission::PayerPerson;
-use oneiron::llm::{SelfCompactionDefault, SelfCompactionSource};
 use oneiron::{
     BudgetExhaustionPolicy, CompactionOwnership, EdgeActorClass, EntityId, LlmRequest,
     MemoryProfile, Vault, WriteActor,
@@ -38,17 +38,15 @@ use crate::ai_host::AiHandle;
 use crate::models::{AnsweringRung, OfferLadder, RoleCall, RoleRefusal};
 
 /// `chat_compaction_entry`: a chat answer compacts as its agent only for an
-/// agent whose engine-owned profile names `self`, under a row that reads
-/// the live context: one that selects the live fork, or `auto` (FIX 6029),
-/// which forks the warm prefix or writes on the cheap writer. A row on the
-/// retained turns and every other agent keep the chat path as it was.
-fn chat_compaction_entry(profile: &MemoryProfile, row: &SelfCompactionDefault) -> bool {
-    profile.compaction == CompactionOwnership::Engine
-        && profile.writes_as_self()
-        && matches!(
-            row.source,
-            SelfCompactionSource::Auto | SelfCompactionSource::LiveFork
-        )
+/// agent whose engine-owned profile names `self`, under every self row, as
+/// the executor's runs do (L10-33): `live_fork` forks the live context,
+/// `auto` (FIX 6029) forks the warm prefix or writes on the cheap writer,
+/// and the retained turns write on the cheap writer as the agent. The row
+/// says how the history is cut, never whether the agent writes in its own
+/// voice (canon #own-voice-default). Every other agent keeps the chat path
+/// as it was.
+fn chat_compaction_entry(profile: &MemoryProfile) -> bool {
+    profile.compaction == CompactionOwnership::Engine && profile.writes_as_self()
 }
 
 /// A self agent that compacts its chat as itself.
@@ -139,13 +137,13 @@ impl LiveAdmission for AnswerAdmission {
 
 impl AiHandle {
     /// The self mode `agent` answers chat in (FIX 4465 D), when its
-    /// definition's profile names `self` and the vault's row reads the live
-    /// context, on `live_fork` or `auto` (FIX 6029). A definition that
-    /// carries no profile names `self` on the host's window (FIX 7744), while
-    /// this host's writer compaction is live. `None` keeps the chat path as
-    /// it was. A host whose writer
-    /// factory is off still reads the agent's log this way; its breakpoint
-    /// names why no flight runs.
+    /// definition's profile names `self`, whatever the vault's row reads
+    /// (L10-33): the flight reads the row when it freezes, and names one
+    /// that cannot be read. A definition that carries no profile names
+    /// `self` on the host's window (FIX 7744), while this host's writer
+    /// compaction is live. `None` keeps the chat path as it was. A host
+    /// whose writer factory is off still reads the agent's log this way; its
+    /// breakpoint names why no flight runs.
     pub(crate) fn chat_self_mode(&self, vault: &Vault, agent: EntityId) -> Option<ChatSelfMode> {
         let definition = vault.get_agent_definition(&agent).ok().flatten()?;
         let profile = match definition.memory_profile.clone() {
@@ -155,12 +153,7 @@ impl AiHandle {
                 _ => return None,
             },
         };
-        let row = vault
-            .purpose_default_table()
-            .ok()?
-            .self_compaction()
-            .clone();
-        if !chat_compaction_entry(&profile, &row) {
+        if !chat_compaction_entry(&profile) {
             return None;
         }
         let house = match self.writer_compaction.get() {

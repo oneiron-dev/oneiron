@@ -33,9 +33,11 @@
 //! evidence and never hydrated; only the gaps between them and the turns
 //! after the last one are read raw. The raw-history cap, the threshold's
 //! count and the window are taken from those raw turns as before. The plan
-//! judges its summaries in its own snapshot; the raw pins, the window and
-//! the SESSION are read in the log's snapshot after it. Grant time is
-//! persisted before each one (FIX 6188).
+//! judges its summaries in its own snapshot, and no snapshot is held across
+//! it: its transcript readers open their own. The log's one snapshot after
+//! it judges them again, and the raw pins, the window and the SESSION are
+//! read in it; a summary that landed or stopped standing in between makes
+//! the plan again. Grant time is persisted before each one (FIX 6188).
 //!
 //! A turn action reads only the raw turns it is answered from (FIX 5032,
 //! [`action_selection`]): its TARGET turn, the user turn before it and the
@@ -48,10 +50,12 @@ use super::ConversationTurnSpan;
 use super::window::{ChatLogWindow, pin, window};
 use crate::compaction::driver::ConversationBinding;
 use crate::conversation::{TurnActionAttempt, TurnActionContext};
-use crate::memory::{Memory, RoomTurnHandle, TranscriptTurn, WitnessAuthor};
+use crate::memory::{
+    Memory, RoomTurnHandle, TRANSCRIPT_READ_ATTEMPTS, TranscriptTurn, WitnessAuthor,
+};
 use crate::tokenizer::count_context_pack_tokens;
 use crate::{EntityId, Error};
-use oneiron_contracts::memory::MemoryResult;
+use oneiron_contracts::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
 
 mod action_selection;
 mod read_plan;
@@ -247,15 +251,36 @@ fn read_log(
     // turn's ceilings, resolved before any snapshot: the room resolver opens
     // its own. The plan's evidence and words, and the raw pins, are read
     // under it.
-    let scoped = vault.scoped_read(memory.read_key()?);
-    // FIX 6188: grant time is persisted before the snapshot, never inside it,
-    // so a grant that has expired is judged expired for these reads.
-    scoped.persist_grant_clock()?;
-    let txn = vault.store.env.read_txn().map_err(Error::from)?;
-    // FIX 5032: the summaries that stand, judged in this one snapshot that
-    // the raw pins, the window and the SESSION are read in too, and the raw
-    // turns read.
-    let plan = plan_chat_log(memory, &scoped, &txn, conversation, cut)?;
+    let key = memory.read_key()?;
+    let mut attempts = 0;
+    let (plan, scoped, txn) = loop {
+        // FIX 5032: the summaries that stand, and the raw turns read. No
+        // snapshot is held across the plan: its transcript readers open
+        // their own.
+        let plan = plan_chat_log(memory, &vault.scoped_read(key.clone()), conversation, cut)?;
+        // A fresh lane for the log's one snapshot, so no verdict cached
+        // under the plan's snapshots is reused in it. FIX 6188: grant time is
+        // persisted before the snapshot, never inside it, so a grant that has
+        // expired is judged expired for these reads.
+        let scoped = vault.scoped_read(key.clone());
+        scoped.persist_grant_clock()?;
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        // FIX 5032: the summaries that stand are judged again in this
+        // snapshot, which the raw pins, the window and the SESSION are read
+        // in too. A summary that landed or stopped standing since the plan
+        // makes the plan again.
+        if plan.stands_in(&scoped, &txn, conversation)? {
+            break (plan, scoped, txn);
+        }
+        attempts += 1;
+        if attempts == TRANSCRIPT_READ_ATTEMPTS {
+            return Err(MemoryError::new(
+                MEMORY_CODE_INVALID_STATE,
+                "the conversation's summaries kept changing while its chat log was read",
+                &["Read the chat log again."],
+            ));
+        }
+    };
     // The lines, summaries in place, then the raw cap. `raws` holds each raw
     // turn read, in order.
     let mut raws: Vec<&ReadTurn> = Vec::new();
