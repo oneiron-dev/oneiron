@@ -9,3 +9,4 @@ pub use crate::research_budget::RsiSpendPurpose;
 pub use crate::research_budget::RsiTopUp;
 
 pub mod rsi;
+pub mod rsi_doors;

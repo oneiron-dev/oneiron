@@ -266,7 +266,7 @@ pub(crate) fn artifact_file_response(
     code_policy: &'static str,
 ) -> Result<Response, EnvelopedApiError> {
     let cache_control = if file.serve_tier == oneiron::artifact_hosting::ArtifactServeTier::Public {
-        artifact_cache_control(file.selector, file.export)
+        artifact_cache_control(file.selector, file.export, &file.path)
     } else {
         "private, no-store"
     };
@@ -358,9 +358,19 @@ fn passive_blob_media_type(media_type: &str) -> Option<&'static str> {
     }
 }
 
+/// The cache lifetime of a public artifact reply for the file at `path`.
+///
+/// A pinned code bundle's bytes never change under its fork hash, so its
+/// scripts, styles, images and fonts cache for a year. Its documents
+/// revalidate on every load, as a channel's do: the ETag makes that a 304,
+/// and the 304 carries the current CSP. So a policy change, an unpublish or
+/// a narrowed tier reaches a browser that already holds the page, where a
+/// year-long immutable copy kept the old one (ARCH-0050
+/// #artifact-origin-open, census L4-26).
 pub(crate) fn artifact_cache_control(
     selector: oneiron::ArtifactSnapshotSelector,
     export: oneiron::artifact_hosting::ArtifactExportRef,
+    path: &str,
 ) -> &'static str {
     match (selector, export) {
         (
@@ -369,9 +379,22 @@ pub(crate) fn artifact_cache_control(
         ) => BLOB_POINTER_CACHE_CONTROL,
         (oneiron::ArtifactSnapshotSelector::BlobVersion(_), _) => BLOB_IMMUTABLE_CACHE_CONTROL,
         (oneiron::ArtifactSnapshotSelector::Channel(_), _) => ARTIFACT_POINTER_CACHE_CONTROL,
+        (oneiron::ArtifactSnapshotSelector::ForkHash(_), _) if opens_as_document(path) => {
+            ARTIFACT_POINTER_CACHE_CONTROL
+        }
         (oneiron::ArtifactSnapshotSelector::ForkHash(_), _) => ARTIFACT_IMMUTABLE_CACHE_CONTROL,
         _ => ARTIFACT_POINTER_CACHE_CONTROL,
     }
+}
+
+/// Whether a code bundle's file at `path` opens as a document that runs
+/// under its CSP: an HTML page, or an SVG image opened on its own. A CSP on
+/// any other reply governs nothing.
+fn opens_as_document(path: &str) -> bool {
+    matches!(
+        artifact_content_type(path),
+        "text/html; charset=utf-8" | "image/svg+xml"
+    )
 }
 
 pub(crate) fn request_etag_matches(headers: &HeaderMap, etag: &str) -> bool {
