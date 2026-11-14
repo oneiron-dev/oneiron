@@ -19,6 +19,11 @@
 //! member holds either (REVIEW-7931); red before that refusal (the removal ran
 //! unsigned and left the key live):
 //! `a_removal_no_host_root_signs_is_refused_while_the_owner_holds_an_owner_key`.
+//! An Owner whose standing returns is bound again: the embedded owner, whom
+//! the host root binds, hands ownership on and gets it back, and the host
+//! root binds them again in the handover that returns it (REVIEW-7931 round
+//! 2). Red before it (they stayed unbound, and their owner key enrolment was
+//! refused): `the_embedded_owner_whose_standing_returns_is_bound_again`.
 //!
 //! Part 2: an added Owner's first owner key binds them as `human` in the
 //! enrolment's transaction, signed by the enrolment's predecessor, on a
@@ -365,5 +370,47 @@ fn a_removal_no_host_root_signs_is_refused_while_the_owner_holds_an_owner_key() 
     assert!(
         shared.passes_owner_verbs(shared.co_owner),
         "nothing moved: the Owner keeps their binding"
+    );
+}
+
+/// The embedded owner hands ownership to a new Owner and stays as Admin,
+/// which revokes the host root's binding of them; the new Owner hands it
+/// back. The host root binds the embedded owner again in that handover, at a
+/// new epoch above the revoked one, and their owner verbs pass.
+#[test]
+fn the_embedded_owner_whose_standing_returns_is_bound_again() {
+    let shared = shared();
+    let successor = person(&shared.vault);
+    let owner_proof = proof(&shared.vault, shared.owner);
+    let away = shared
+        .vault
+        .propose_transfer_ownership(&owner_proof, SHARED, successor, Some(Role::Admin))
+        .expect("the owner starts transfer_ownership");
+    shared
+        .vault
+        .execute_completed_shared_act(&owner_proof, &away.id, Some(&shared.issuer))
+        .expect("the transfer runs at once");
+    assert!(
+        !shared.passes_owner_verbs(shared.owner),
+        "precondition: the former Owner, now an Admin, passes no owner verb"
+    );
+
+    let successor_proof = proof(&shared.vault, successor);
+    let back = shared
+        .vault
+        .propose_transfer_ownership(&successor_proof, SHARED, shared.owner, Some(Role::Admin))
+        .expect("the new Owner starts the transfer back");
+    shared
+        .vault
+        .execute_completed_shared_act(&successor_proof, &back.id, Some(&shared.issuer))
+        .expect("the transfer back runs at once");
+
+    assert!(
+        shared.passes_owner_verbs(shared.owner),
+        "the embedded owner whose Owner standing returned passes owner verbs again"
+    );
+    assert!(
+        !shared.passes_owner_verbs(successor),
+        "the Owner who handed it back passes none"
     );
 }

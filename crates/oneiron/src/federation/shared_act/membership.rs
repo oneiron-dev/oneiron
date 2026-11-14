@@ -475,6 +475,9 @@ impl Vault {
     }
 
     /// Add one Owner without moving or revoking any existing Owner's grants.
+    /// The embedded owner added back is bound again under `slips`
+    /// ([`Vault::restore_embedded_owner_binding_in_txn`]).
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn add_owner_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -482,11 +485,14 @@ impl Vault {
         owners: &BTreeSet<EntityId>,
         starter: EntityId,
         owner: EntityId,
+        slips: Option<&HostSlipIssuer>,
         now: u64,
     ) -> Result<MemberMove> {
         self.check_add_owner_in_txn(txn, owners, starter, owner)?;
+        let grants = self.set_member_role_in_txn(txn, vault_id, owner, Role::Owner, now)?;
+        self.restore_embedded_owner_binding_in_txn(txn, slips, owner)?;
         Ok(MemberMove {
-            grants: self.set_member_role_in_txn(txn, vault_id, owner, Role::Owner, now)?,
+            grants,
             retired_own_device: Vec::new(),
             revoked_slips: Vec::new(),
             detach: None,
@@ -514,6 +520,7 @@ impl Vault {
         let mut grants = Vec::new();
         if let Some(gainer) = gainer {
             grants.extend(self.set_member_role_in_txn(txn, vault_id, gainer, Role::Owner, now)?);
+            self.restore_embedded_owner_binding_in_txn(txn, slips, gainer)?;
         }
         let mut moved = self.move_member_in_txn(
             txn,
@@ -931,6 +938,7 @@ impl Vault {
         let id = self.store.clock.entity_id()?.to_hex();
         let mut grants =
             self.set_member_role_in_txn(&mut txn, vault_id, claimant, Role::Owner, now)?;
+        self.restore_embedded_owner_binding_in_txn(&mut txn, Some(issuer), claimant)?;
         let mut moved = self.move_member_in_txn(
             &mut txn,
             vault_id,
