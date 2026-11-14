@@ -15,11 +15,14 @@ use super::super::{
     Effect, SharedActExecutionReceipt, SharedVaultChange, check_vault, decode, encode, invalid,
     key, non_root,
 };
-use crate::authority::{CapabilitySlip, HostSlipIssuer, PairingLink, PendingInvitationLink};
+use crate::authority::{
+    CapabilitySlip, ConnectOffer, HostSlipIssuer, PairingLink, PendingInvitationLink,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::federation::{FederationGrantRole as Role, OrgAdminPower, SharedVaultWrite};
+use crate::inquiry::InquiryJoinOffer;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 use std::collections::BTreeSet;
@@ -465,6 +468,42 @@ impl Vault {
         self.change_shared_membership(invitee, vault_id, None, |txn, actor, now| {
             self.accept_shared_invitation_in_txn(txn, actor, vault_id, invitation_id, now)
         })
+    }
+
+    /// [`Self::accept_shared_invitation`] with the member's inquiry edge, in
+    /// the same writer (federation.md #inquiry-first-build: "the edge is
+    /// created at joining"; Engine ruling L7-04-COMPANY-HALF = A): after the
+    /// seat, the company's half of the edge that `edge` offers, approved by
+    /// the seat the invitation gives and signed by this vault's host
+    /// `issuer` ([`Self::prepare_inquiry_edge_for_join`] on the member's
+    /// vault makes the offer). One refusal rolls back all of it: no seat
+    /// without the company's half, and no company half without the seat.
+    /// Answers the receipt and the company host's counter, which the member's
+    /// vault applies on its edge; the counter carries the pact's scope
+    /// opening key and is never written to the receipt or a log. A seat
+    /// accepted without an offer takes its edge later through
+    /// [`Self::attach_inquiry_edge_to_seat`] (L7-04-NO-PERSONAL-VAULT = A).
+    pub fn accept_shared_invitation_with_inquiry_edge(
+        &self,
+        invitee: &AuthenticatedOwner,
+        vault_id: u64,
+        invitation_id: &str,
+        issuer: &HostSlipIssuer,
+        edge: &InquiryJoinOffer,
+    ) -> Result<(SharedActExecutionReceipt, ConnectOffer)> {
+        invitee.require_invitation_acceptor(invitation_id)?;
+        let mut counter = None;
+        let receipt =
+            self.change_shared_membership(invitee, vault_id, None, |txn, actor, now| {
+                let effect =
+                    self.accept_shared_invitation_in_txn(txn, actor, vault_id, invitation_id, now)?;
+                counter = Some(self.join_inquiry_edge_in_txn(txn, issuer, vault_id, actor, edge)?);
+                Ok(effect)
+            })?;
+        let counter = counter.ok_or(crate::error::Error::InvariantViolation(
+            "accepted membership did not join its offered inquiry edge",
+        ))?;
+        Ok((receipt, counter))
     }
 
     /// Accepts the invitee's invitation and mints their regular credential in

@@ -898,6 +898,26 @@ impl Vault {
         name: &str,
         now: u64,
     ) -> Result<EntityId> {
+        let id = EntityId::now();
+        self.put_world_in_txn(txn, id, name, now, |vault, txn| {
+            owner.revalidate_as_vault_owner_in_txn(vault, txn).map(drop)
+        })?;
+        Ok(id)
+    }
+
+    /// Writes the WORLD `id` named `name` in the caller's transaction, once
+    /// `approve` holds there: the writer of [`Self::create_world_in_txn`],
+    /// for a door whose approval is not an owner proof (a member seat's
+    /// inquiry edge, whose WORLD id the Connect pact fixes). An id that
+    /// names any row, live or deleted, refuses.
+    pub(crate) fn put_world_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        name: &str,
+        now: u64,
+        approve: impl FnOnce(&Self, &heed::RoTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
         #[derive(Serialize)]
         struct WorldBody<'a> {
             name: &'a str,
@@ -907,8 +927,15 @@ impl Vault {
         }
         let body = rmp_serde::to_vec_named(&WorldBody { name })
             .map_err(|_| invalid("world encoding failed"))?;
-        let id = EntityId::now();
-        owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        approve(self, &**txn)?;
+        if !matches!(
+            live_entity_row_in_txn(&self.store, txn, &id)?,
+            LiveEntityRow::Absent
+        ) || crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, txn, &id)?
+            .deleted
+        {
+            return Err(invalid("that world id already names a row"));
+        }
         for (_, existing) in self.shape_bodies_in_txn(txn, ENTITY_TYPE_WORLD)? {
             if world_name(&existing).as_deref() == Some(name) {
                 return Err(invalid("a live world already carries that name"));
@@ -926,7 +953,7 @@ impl Vault {
                 &body,
             )
             .apply(txn)?;
-        Ok(id)
+        Ok(())
     }
 
     /// Creates a facet named `name` that `person` wears, as `owner`: a mask

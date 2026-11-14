@@ -408,6 +408,7 @@ pub use slip_vault::{
     ConnectOffer, ConnectRescopeOffer, ConnectWindow, GuestDocumentContext, GuestDocumentEnvelope,
     HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT, HostSlipIssuer, ScopeOpeningKey,
 };
+pub(crate) use slip_vault::{ConnectOfferTerms, fresh_pact_id};
 pub use step_up::{
     EnrolledPasskey, EnrolledTotp, PasskeyAssertion, PasskeyDescriptor, PasskeyRegistration,
     STEP_UP_CHALLENGE_STALE, STEP_UP_CHALLENGE_TTL_SECS, STEP_UP_NO_PASSKEY, STEP_UP_NOT_HOLDER,

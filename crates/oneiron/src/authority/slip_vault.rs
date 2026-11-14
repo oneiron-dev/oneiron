@@ -15,6 +15,7 @@ pub use connect_lifecycle::{
 mod courtesy;
 mod host_root;
 pub use connect::{ConnectOffer, ScopeOpeningKey};
+pub(crate) use connect::{ConnectOfferTerms, fresh_pact_id};
 mod issuer_custody;
 mod issuer_seed;
 pub use issuer_seed::{HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT, HostSlipIssuer};

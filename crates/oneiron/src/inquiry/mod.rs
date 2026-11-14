@@ -54,7 +54,8 @@ mod terms;
 pub(crate) use edge::drop_inquiry_scope_links_in_txn;
 pub use edge::{
     INQUIRY_STATEMENT_PREDICATE, InquiryEdge, InquiryEdgeReciprocalGrant, InquiryEdgeRequest,
-    InquiryScopeItem, InquiryTermsChange, InquiryTermsChangeOutcome, InquiryTermsChanged,
+    InquiryJoinOffer, InquiryJoinPrepared, InquiryScopeItem, InquiryTermsChange,
+    InquiryTermsChangeOutcome, InquiryTermsChanged,
 };
 
 pub(crate) use holder::InquiryAnswerHolder;
