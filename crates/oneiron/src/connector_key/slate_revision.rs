@@ -86,17 +86,8 @@ pub struct ConnectorSlateRevisionOffer {
     pub cause: SlateRevisionCause,
 }
 
-/// The owner's answer that holds a scope revision's offer back (ED-05).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ConnectorRevisionDeferral {
-    /// Ask again after the next backoff step.
-    NotNow,
-    /// Stop offering until he unpins it.
-    ManualPinned,
-    /// Offer again once earned.
-    Unpin,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::connector_key::slate_revision::ConnectorRevisionDeferral;
 
 /// An accepted revision: the stamped slate, its cause, and any grant its
 /// acceptance minted.

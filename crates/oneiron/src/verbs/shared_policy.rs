@@ -31,20 +31,10 @@ pub struct SharedActPolicyProposeRequest {
     pub expected_policy_hash: String,
 }
 
-/// A shared-act policy change, by the id its proposal answered.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SharedActPolicyChangeRequest {
-    pub change_id: String,
-}
-
-/// `vault.shared.policy.answer`'s input: the caller's yes or no.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SharedActPolicyAnswerRequest {
-    pub change_id: String,
-    pub approve: bool,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::shared_policy::{
+    SharedActPolicyAnswerRequest, SharedActPolicyChangeRequest,
+};
 
 /// `vault.shared.policy.get`: every shared-act policy row of the vault.
 pub fn read_shared_act_policies(

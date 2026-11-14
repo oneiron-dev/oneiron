@@ -52,7 +52,7 @@ pub(super) use crate::write_envelope::communication_record::MAX_SEND_REF_BYTES;
 
 pub(super) use crate::write_envelope::communication_record::OPT_OUT_CLEAR_REASON;
 
-const OPT_OUT_CLEAR_APPROVED: &str = "comm_opt_out_clear_approved";
+pub(super) const OPT_OUT_CLEAR_APPROVED: &str = "comm_opt_out_clear_approved";
 
 /// Counts active claims by the full `(predicate, party, channel_class)` key.
 pub fn count_active_comm_claims(
@@ -279,6 +279,10 @@ pub fn approve_pending_opt_out_clear(
             occurred_at: ruled_at,
             outcome: OPT_OUT_CLEAR_APPROVED.to_owned(),
             actor_ref: actor.entity_ref(),
+            // The request the ruling judged: a STOP that occurred at or after
+            // it and reaches this replica only after the ruling still stands
+            // (`stop_answering_boundary_in_txn`).
+            requested_at: Some(oldest_request),
         };
         let receipt_id = vault.store.clock.entity_id()?;
         put_comm_record_in_txn(vault, wtxn, receipt_id, &receipt)?;
@@ -429,6 +433,41 @@ pub(crate) fn standing_opt_out_heads_in_txn(
     party_ref: EntityId,
 ) -> CommResult<Vec<StandingOptOutHead>> {
     let subjects = opt_out_subjects_in_txn(vault, rtxn, party_ref)?;
+    standing_opt_out_heads_on_subjects_in_txn(vault, rtxn, &subjects)
+}
+
+/// Every standing `comm.opt_out` head for a key no active party answers: the
+/// heads on each PERSON that carries exactly `party_key`, whatever its
+/// lifecycle, and on the redirect shells around each.
+///
+/// That is the subject set the send gate reads for the key
+/// (`campaign::claims::do_not_contact_subjects_in_txn`, then
+/// [`parties_opt_out_subjects_in_txn`]). A PERSON merged into a different key
+/// leaves its own key with no active party, yet the STOP it said before the
+/// merge still holds that key's sends, so the contact fold reads it here (F06
+/// R4-F1). Restrictive only: a head read here can add an opt-out to a contact,
+/// never clear one.
+pub(crate) fn standing_opt_out_heads_for_party_key_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    party_key: &str,
+) -> CommResult<Vec<StandingOptOutHead>> {
+    let persons =
+        crate::campaign::claims::do_not_contact_subjects_in_txn(&vault.store, rtxn, party_key)?;
+    if persons.is_empty() {
+        return Ok(Vec::new());
+    }
+    let subjects =
+        parties_opt_out_subjects_in_txn(&vault.store, rtxn, persons.into_iter().collect())?;
+    standing_opt_out_heads_on_subjects_in_txn(vault, rtxn, &subjects)
+}
+
+/// The standing `comm.opt_out` heads on `subjects`, unfiltered.
+fn standing_opt_out_heads_on_subjects_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    subjects: &BTreeSet<EntityId>,
+) -> CommResult<Vec<StandingOptOutHead>> {
     let mut heads = Vec::new();
     let claim_ids = subjects
         .iter()

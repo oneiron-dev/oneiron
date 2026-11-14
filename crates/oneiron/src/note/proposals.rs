@@ -17,18 +17,10 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::store::note_body::NoteActor;
 
-/// What an actor's erase does with a fork it opened that no one decided.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PendingNoteForkErase {
-    /// The fork goes, with its snapshot and its place in a bundle.
-    Delete,
-    /// The fork stays and names no one, as a decided fork does.
-    Keep,
-}
-
-/// A fork no one decided is still review work a reviewer could land, so an
-/// erase of the actor who opened it deletes it (FIX 3520).
-pub const ACTOR_ERASE_PENDING_NOTE_FORK: PendingNoteForkErase = PendingNoteForkErase::Delete;
+#[doc(hidden)]
+pub use oneiron_verb_wire::note::proposals::{
+    ACTOR_ERASE_PENDING_NOTE_FORK, NoteVerdict, PendingNoteForkErase,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteFork {
@@ -47,12 +39,6 @@ pub struct NoteFork {
     #[serde(with = "crate::entity_id::serde_hex::optional")]
     pub proposal: Option<EntityId>,
     pub decided: bool,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum NoteVerdict {
-    Merge,
-    Switch,
-    Reject,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteLandingReceipt {

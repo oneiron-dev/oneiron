@@ -28,9 +28,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/launcher/unix_rights/receive.rs` | src | m | 1 crate-vis | — | A brokered receive on a native Unix socket (FIX 6185) |
 | `src/launcher/unix_rights/task.rs` | src | s | 5 crate-vis | — | The task that made a brokered call, and the descriptor table the launcher copies from (FIX 6185) |
 | `src/launcher/unix_rights/wait.rs` | src | s | 6 crate-vis | — | The wait of a brokered call on its socket, and the send that waits (FIX 6185) |
-| `src/lib.rs` | src | m | 8 struct · 2 enum · 12 fn · 1 type · 1 mod · 8 re-export | ContainerRuntime, Error, FenceConfig, FenceProof, GuestLimits, GuestSeccomp, GuestSession, GuestSpec +2 | Container sessions with an engine-owned Linux Landlock/seccomp fence |
-| `src/linux.rs` | src | m | 3 fn · 14 crate-vis | — | Linux UAPI used on both sides of the seccomp listener |
+| `src/lib.rs` | src | m | 8 struct · 2 enum · 12 fn · 1 type · 1 mod · 9 re-export | ContainerRuntime, Error, FenceConfig, FenceProof, GuestLimits, GuestSeccomp, GuestSession, GuestSpec +2 | Container sessions with an engine-owned Linux Landlock/seccomp fence |
+| `src/linux.rs` | src | m | 3 fn · 19 crate-vis | — | Linux UAPI used on both sides of the seccomp listener |
 | `src/relay_protocol.rs` | src | s | 1 struct · 2 enum · 3 fn | RelayAnswer, RelayReply, RelayRequest | Bounded host/guest network transport over the no-NIC VM's private vsock |
+| `src/runner_fence.rs` | src | m | 2 struct · 1 enum · 8 fn | RunnerFence, RunnerFenceMechanism, RunnerFenceOutcome | The runner fence (canon `#runner-fence`): every runner the daemon starts on the host (a BYO seat's CLI, a… |
 | `src/socket_lifetime.rs` | src | s | 3 crate-vis | — | The launcher's inventory of the socket inodes its guest still holds (FIX 5978) |
 | `src/supervisor.rs` | src | m | 1 struct · 1 fn · 1 re-export · 6 crate-vis | NativeFenceGuard | Host custody of the seccomp listener and all network transports |
 | `src/supervisor/control.rs` | src | s | 5 crate-vis | — | The supervisor's copy of a stream socket's guest end (FIX 6788) |
@@ -44,3 +45,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/stream_relay.rs` | src | m | 2 crate-vis | — | A guest stream's relay to its remote, and its relay to the host's DNS (FIX 6301) |
 | `src/transport.rs` | src | s | 1 struct · 1 trait · 1 fn | SessionLease, SessionTransport | A selected backend's private duplex transport and lifetime custody |
 | `src/wire.rs` | src | s | 13 crate-vis | — | Private, bounded launcher/supervisor protocol |
+| `tests/runner_fence.rs` | test | m | — | — | The runner fence (canon `#runner-fence`, row L8-27): a runner the daemon starts cannot read or write the… |

@@ -5,7 +5,9 @@
 //! host in step with the vault's installed packs, so a pack installed, updated or removed since, or a
 //! build the vault came to hold since, reaches the host without a restart.
 //! The seal installs through its worker, whose grant names the seal's asks
-//! and fetch origins.
+//! and fetch origins. The image organ installs at boot from the program the
+//! host names (`ONEIRON_IMAGE_ORGAN`, a managed vault's `--image-organ`;
+//! L4-15), first party, and no pack build replaces it.
 //!
 //! A pack build's tier is its verified provenance alone (FIX 7644): first
 //! party when the operator listed its blake3 (`--trusted-organ-build`), else
@@ -15,7 +17,7 @@
 //! not that they are reviewed repo code (ARCH-0075).
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(feature = "mesh")]
 use std::sync::Arc;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -25,6 +27,7 @@ use oneiron::skill_hub::pack_catalog::PackInstallReceipt;
 use oneiron::skill_hub::pack_catalog::{PackOrgan, PackOrganBuild, host_platform};
 #[cfg(feature = "mesh")]
 use oneiron_organ_host::MeshCancel;
+use oneiron_organ_host::image::{IMAGE_ORGAN, image_spec};
 use oneiron_organ_host::seal::SEAL_ORGAN;
 use oneiron_organ_host::{HostError, OrganSpec, OrganTier, filesystem_confined, pack_spec};
 
@@ -34,6 +37,10 @@ use super::SyncServer;
 /// ([`SyncServer::with_organ_dir`]): `ONEIRON_ORGAN_DIR`, else
 /// `oneiron-organs` under the OS temp directory.
 const ORGAN_DIR_ENV: &str = "ONEIRON_ORGAN_DIR";
+
+/// The image organ's program a self-hosted server installs at boot, an
+/// absolute path (L4-15).
+const IMAGE_ORGAN_ENV: &str = "ONEIRON_IMAGE_ORGAN";
 
 /// One pass over the pack organs at a time: the boot install and the
 /// listener's tick never install the same organ twice over each other.
@@ -126,6 +133,34 @@ impl SyncServer {
         }
     }
 
+    /// Installs the image organ from `program`, the build the host names,
+    /// as first party (L4-15): `vault.artifacts.image.edit` runs on it, and
+    /// no pack's image build replaces it ([`Self::install_pack_organs`]).
+    pub(crate) fn install_image_organ(&self, program: &Path) {
+        self.organs.install(image_spec(program));
+        tracing::info!(organ = IMAGE_ORGAN, program = %program.display(), "image organ installed");
+    }
+
+    /// [`Self::install_image_organ`] from a self-hosted server's
+    /// environment (`ONEIRON_IMAGE_ORGAN`). Unset installs none; a relative
+    /// path installs none and says so.
+    pub(crate) fn install_image_organ_from_env(&self) {
+        let Some(program) = std::env::var_os(IMAGE_ORGAN_ENV)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+        else {
+            return;
+        };
+        if program.is_relative() {
+            tracing::warn!(
+                program = %program.display(),
+                "{IMAGE_ORGAN_ENV} is not an absolute path: no image organ is installed"
+            );
+            return;
+        }
+        self.install_image_organ(&program);
+    }
+
     /// Brings the host in step with the vault's Active packs: every organ a
     /// pack carries a build of for this platform is installed, the first
     /// pack to name an organ winning; one whose pack now carries another
@@ -161,6 +196,15 @@ impl SyncServer {
             }
             let name = entry.organ.name.as_str();
             if name == SEAL_ORGAN || carried.contains(name) {
+                continue;
+            }
+            // An organ the host names by its program (the image organ's) is
+            // installed unpinned and stays as named.
+            if self
+                .organs
+                .spec(name)
+                .is_some_and(|spec| spec.program_hash.is_none())
+            {
                 continue;
             }
             let Some(build) = entry.organ.build(&platform) else {
@@ -205,7 +249,8 @@ impl SyncServer {
         for (name, _) in self.organs.installed() {
             // A pass installs every pack build pinned, whatever its tier,
             // and this host pins no other organ but the seal, which follows
-            // its own worker: a pinned install here is a pack's.
+            // its own worker: a pinned install here is a pack's. An organ the
+            // host names by its program is unpinned, and stays.
             let pack_organ = self
                 .organs
                 .spec(&name)
