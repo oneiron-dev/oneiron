@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7513 | 1233 | 274 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7514 | 1236 | 274 |
 | [oneiron-agent-runtime](codemap/oneiron-agent-runtime.md) | `oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1) | 22 | 10 | 1 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 68 | 1 | 0 |
@@ -56,7 +56,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-py](codemap/oneiron-py.md) | `oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1) | 5 | 0 | 0 |
 | [oneiron-remote](codemap/oneiron-remote.md) | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) | 25 | 9 | 0 |
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 21 | 5 | 0 |
-| [oneiron-ruler](codemap/oneiron-ruler.md) | The retrieval ruler of the oneiron engine (RESEARCH-0651 Tier 0) | 5 | 3 | 1 |
+| [oneiron-ruler](codemap/oneiron-ruler.md) | The retrieval ruler of the oneiron engine (RESEARCH-0651 Tier 0) | 10 | 5 | 1 |
 | [oneiron-run-budget](codemap/oneiron-run-budget.md) | Run budget declarations and paid-job maximum state of the oneiron engine | 4 | 0 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-sdk-build](codemap/oneiron-sdk-build.md) | The SDK's generated outputs, produced at build time (untangle slice 4.3, SLICE4-RULED S4-2 G1) | 1 | 0 | 0 |
@@ -184,7 +184,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `hnsw` | dir | 12 | L | — | HNSW graph index over the persisted neighbor graph |
 | `host_memory` | file | 1 | s | — | The process-wide physical-memory admission line |
 | `host_net_floor` | file | 1 | s | yes | The host floor guests' network work charges (FIX 5978, FIX 5979, FIX 6299, FIX 6304) |
-| `housekeeping` | dir | 9 | m | yes | The engine's housekeeping pass: every sweep the engine relies on, run when due |
+| `housekeeping` | dir | 10 | m | yes | The engine's housekeeping pass: every sweep the engine relies on, run when due |
 | `human_task` | dir | 8 | m | — | Human-assigned TASK follow-up and the identity-bound human response signal (ONE-1708) |
 | `identity` | file | 1 | s | — | Device identity for REDACTION_AUDIT origin attestation (ONE-1140) and this install's machine identity (world… |
 | `identity_redirect` | file+dir | 2 | m | yes | ARCH-0055 redirect projection: the rebuildable `shell id -> head set` table and the read-time… |
@@ -835,10 +835,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
+| `axes` | file | 1 | s | The scorecard axis values one campaign judges (RESEARCH-0651 Tier 0) |
+| `bootstrap` | file | 1 | s | The paired bootstrap over per-query differences (RESEARCH-0651 Tier 0) |
 | `longmemeval` | file | 1 | m | The LongMemEval-S converter: public questions in, one pack slice out |
 | `metrics` | file | 1 | s | The pure graded metrics behind the retrieval scorecard (RESEARCH-0651 Tier 0) |
 | `pack` | file | 1 | L | The `oneiron.retrieval_pack.v1` pack format: one manifest per slice, plus an optional little-endian f32… |
+| `proposal` | file | 1 | m | Write-once proposal records: the held_out Promote, the sealed check, the owner's stamp (RESEARCH-0651 Tier 0) |
+| `ruler_paths` | file | 1 | s | The ruler paths: commits that touch them cannot be judged by the ruler (RESEARCH-0651 Tier 0) |
 | `scorecard` | file | 1 | m | The `oneiron.retrieval_scorecard.v1` scorecard: one retrieval run, graded (RESEARCH-0651 Tier 0) |
+| `sealed` | file | 1 | s | The sealed-once markers: one sealed run per experiment (RESEARCH-0651 Tier 0) |
 
 ## oneiron-run-budget
 
