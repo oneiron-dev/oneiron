@@ -3,17 +3,19 @@
 //! a remote origin. Metadata lands first and the text after it;
 //! `changes.list` supersedes a changed file's text and retracts a removed
 //! file's note; a token Drive no longer knows starts the feed again; a
-//! Google Doc exports as Markdown; and every call is charged within the
-//! provider's per-user quota first. The wire here is a fake Drive that
-//! records each call.
+//! Google Doc exports as Markdown; every call is charged within the
+//! provider's per-user quota first; and one source's steps run one at a
+//! time. The wire here is a fake Drive that records each call.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::mpsc;
+use std::time::Duration;
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::note::{
-    DriveChange, DriveChangesPage, DriveFileMeta, DriveOrigin, DriveQuota, DriveStepBudget,
-    DriveWire, FolderFileState, FolderSource, NameOnlyReason,
+    DRIVE_WIRE_RATE_LIMITED, DriveChange, DriveChangesPage, DriveFileMeta, DriveOrigin, DriveQuota,
+    DriveStepBudget, DriveWire, FolderFileState, FolderSource, NameOnlyReason,
 };
 use oneiron::registry::ENTITY_TYPE_NOTE;
 use oneiron::store::GateDecisionId;
@@ -32,6 +34,16 @@ struct FakeDrive {
     forgotten: RefCell<Option<String>>,
     calls: RefCell<Vec<String>>,
     quota: Option<DriveQuota>,
+    /// Holds each start read until the test lets it go.
+    gate: Option<StartGate>,
+}
+
+/// A start read held until the test lets it go: it says it began, waits,
+/// then answers (Drive's rate limit, or the start token).
+struct StartGate {
+    began: mpsc::Sender<()>,
+    go: mpsc::Receiver<()>,
+    rate_limited: bool,
 }
 
 impl FakeDrive {
@@ -85,6 +97,15 @@ impl DriveWire for FakeDrive {
     fn start_page_token(&self, _origin: &DriveOrigin) -> Result<String> {
         let starts = self.calls().iter().filter(|call| *call == "start").count();
         self.record("start".to_owned());
+        if let Some(gate) = &self.gate {
+            let _began = gate.began.send(());
+            let _go = gate.go.recv_timeout(Duration::from_secs(30));
+            if gate.rate_limited {
+                return Err(oneiron::Error::InvalidConfig(
+                    DRIVE_WIRE_RATE_LIMITED.to_owned(),
+                ));
+            }
+        }
         Ok(format!("t{starts}"))
     }
 
@@ -449,4 +470,91 @@ fn a_step_out_of_quota_rests_with_no_provider_call() {
         "a resting source makes no provider call"
     );
     assert!(resting.quota_paused_until.is_some(), "{resting:?}");
+}
+
+/// The owner's rescan steps the Drive source while the host's step of it is
+/// under way, and Drive answers the host's step that its rate is spent. The
+/// second step waits for the first, makes no call while the source rests,
+/// and leaves the rest standing; without the wait it starts from the state
+/// before the rest and, ending last, writes its own over it.
+#[test]
+fn a_concurrent_step_keeps_the_rest_a_rate_limit_answer_set() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let (vault, owner) = owned_vault(&temp);
+    let source = attach(&vault, &owner, &["mdB2"]);
+    let (first_began, first_begins) = mpsc::channel();
+    let (first_go, first_goes) = mpsc::channel();
+    let (second_began, second_begins) = mpsc::channel();
+    let (second_go, second_goes) = mpsc::channel();
+    let (vault, folder) = (&vault, source.folder.as_str());
+    let (first_owner, second_owner) = (owner.clone(), owner.clone());
+    std::thread::scope(|scope| {
+        let first = scope.spawn(move || {
+            let drive = FakeDrive {
+                gate: Some(StartGate {
+                    began: first_began,
+                    go: first_goes,
+                    rate_limited: true,
+                }),
+                ..FakeDrive::default()
+            };
+            vault
+                .drive_sync_step(&first_owner, folder, &drive, DriveStepBudget::default())
+                .map_err(|error| error.to_string())
+        });
+        first_begins
+            .recv_timeout(Duration::from_secs(60))
+            .expect("the first step reads its start");
+        let second = scope.spawn(move || {
+            let drive = FakeDrive {
+                gate: Some(StartGate {
+                    began: second_began,
+                    go: second_goes,
+                    rate_limited: false,
+                }),
+                ..FakeDrive::default()
+            };
+            drive.put(
+                "mdB2",
+                "Plan.md",
+                "text/markdown",
+                1_700_000_100,
+                "# Plan\n",
+            );
+            let report = vault
+                .drive_sync_step(&second_owner, folder, &drive, DriveStepBudget::default())
+                .map_err(|error| error.to_string());
+            (report, drive.calls())
+        });
+        // Without the wait, the second step reads its start while the first
+        // is under way; with it, it waits for the first to end.
+        let _second_began = second_begins.recv_timeout(Duration::from_secs(3));
+        first_go.send(()).expect("let the first step go");
+        let first = first
+            .join()
+            .expect("the first step ends")
+            .expect("the first step pauses");
+        let _second_go = second_go.send(());
+        let (second, second_calls) = second.join().expect("the second step ends");
+        let second = second.expect("the second step pauses");
+
+        let until = first
+            .quota_paused_until
+            .expect("the rate-limited step rests the source");
+        assert_eq!(
+            second_calls,
+            Vec::<String>::new(),
+            "the second step makes no call while the source rests: {second:?}"
+        );
+        let after = FakeDrive::default();
+        let resting = vault
+            .drive_sync_step(&owner, folder, &after, DriveStepBudget::default())
+            .expect("a step after both");
+        assert_eq!(
+            after.calls(),
+            Vec::<String>::new(),
+            "the rest the first step set stands after the second ends"
+        );
+        assert_eq!(resting.quota_paused_until, Some(until), "{resting:?}");
+    });
 }

@@ -38,7 +38,9 @@ use super::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::provider_quota::{ProviderQuotaWindow, RATE_LIMIT_REST_SECS, minute_ceiling};
+use crate::provider_quota::{
+    ProviderQuotaWindow, RATE_LIMIT_REST_SECS, SourceSteps, minute_ceiling,
+};
 use crate::{EntityId, Vault};
 
 /// What a wire answers for its provider's rate-limit answer (Drive's 429,
@@ -198,7 +200,8 @@ pub struct DriveQuota {
     pub units_per_minute: u32,
     /// A listing call (`changes.list`).
     pub list: u32,
-    /// A metadata read (`files.get`, the start token).
+    /// A metadata read (`files.get`, the start token, and the credential
+    /// check a wire makes before its first call, Drive's `about`).
     pub get: u32,
     /// A content read (a download or an export).
     pub content: u32,
@@ -367,10 +370,17 @@ fn utf8_text(bytes: Vec<u8>) -> Option<String> {
         .filter(|text| !text.contains('\0'))
 }
 
+/// The Drive sources, by folder, with a step under way in this process:
+/// the host's rescan and the owner's `vault.files.sources.rescan` each wait
+/// for the one under way.
+static DRIVE_SOURCE_STEPS: SourceSteps<String> = SourceSteps::new();
+
 /// A step's wire, charged within its provider's quota: every call is
-/// charged before it is made, against the source's windows. Once a call
-/// does not fit, or the provider answered that it is rate-limited, the
-/// source rests and every later call is refused with no provider call.
+/// charged before it is made, against the source's windows, and the step's
+/// first call with the credential check its wire makes before it (Drive's
+/// `about`, a metadata read). Once a call does not fit, or the provider
+/// answered that it is rate-limited, the source rests and every later call
+/// is refused with no provider call.
 struct MeteredDriveWire<'w> {
     inner: &'w dyn DriveWire,
     quota: Option<DriveQuota>,
@@ -378,6 +388,8 @@ struct MeteredDriveWire<'w> {
     /// Whether the change feed reads now: it may spend the whole minute,
     /// the copy only its share of it.
     live: Cell<bool>,
+    /// Whether a call was charged yet, and with it the credential check.
+    charged: Cell<bool>,
 }
 
 impl<'w> MeteredDriveWire<'w> {
@@ -387,6 +399,7 @@ impl<'w> MeteredDriveWire<'w> {
             inner,
             window: Cell::new(window),
             live: Cell::new(true),
+            charged: Cell::new(false),
         }
     }
 
@@ -409,15 +422,17 @@ impl<'w> MeteredDriveWire<'w> {
             return Err(refused(DRIVE_WIRE_RESTING));
         }
         window.roll(now);
-        if let Some(quota) = &self.quota
-            && let Err(until) = window.charge(
-                u64::from(quota.of(call)),
+        if let Some(quota) = &self.quota {
+            let check = if self.charged.get() { 0 } else { quota.get };
+            if let Err(until) = window.charge(
+                u64::from(quota.of(call)) + u64::from(check),
                 minute_ceiling(quota.units_per_minute, self.live.get()),
                 None,
-            )
-        {
-            return Err(self.rest(window, until));
+            ) {
+                return Err(self.rest(window, until));
+            }
         }
+        self.charged.set(true);
         self.window.set(window);
         let answer = read(self.inner);
         if matches!(&answer, Err(Error::InvalidConfig(code)) if code == DRIVE_WIRE_RATE_LIMITED) {
@@ -601,6 +616,8 @@ impl Vault {
         wire: &dyn DriveWire,
         budget: DriveStepBudget,
     ) -> Result<DriveStepReport> {
+        // Each step reads the windows and the feed's token the last one left.
+        let _stepping = DRIVE_SOURCE_STEPS.wait_for(folder.to_owned());
         let source = self
             .folder_source(folder)?
             .ok_or_else(|| invalid("the folder is not attached"))?;

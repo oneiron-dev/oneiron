@@ -24,9 +24,6 @@
 //! audience binding ([`super::landing`]). Imported mail wakes no agent: it is
 //! evidence, not a message to anyone.
 
-use std::collections::BTreeSet;
-use std::sync::{Condvar, Mutex, PoisonError};
-
 use serde::{Deserialize, Serialize};
 
 use super::landing::{LandOutcome, Landing};
@@ -50,6 +47,7 @@ use super::wire::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};
+use crate::provider_quota::SourceSteps;
 use crate::{EntityId, Result, Vault};
 
 /// Seconds in the month a "recent months" setting counts.
@@ -145,44 +143,10 @@ pub(super) fn copies(headers: &MailHeaders, newer_than: Option<u64>) -> bool {
         && newer_than.is_none_or(|cutoff| headers.received_at >= cutoff)
 }
 
-/// The mailbox sources with a step under way in this process.
-static STEPPING_SOURCES: Mutex<BTreeSet<EntityId>> = Mutex::new(BTreeSet::new());
-/// Woken each time a step ends.
-static STEP_ENDED: Condvar = Condvar::new();
-
-/// One source's step under way: the source's next step, from the host or
-/// the owner's `vault.mail.sources.sync`, waits for it to end, so no step
-/// writes over the quota windows (a rest included) or the progress another
-/// step left.
-pub(super) struct SourceStepGuard {
-    source: EntityId,
-}
-
-impl SourceStepGuard {
-    /// Waits until no step of `source` is under way, then holds it.
-    pub(super) fn wait_for(source: EntityId) -> Self {
-        let mut stepping = STEPPING_SOURCES
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        while stepping.contains(&source) {
-            stepping = STEP_ENDED
-                .wait(stepping)
-                .unwrap_or_else(PoisonError::into_inner);
-        }
-        stepping.insert(source);
-        Self { source }
-    }
-}
-
-impl Drop for SourceStepGuard {
-    fn drop(&mut self) {
-        STEPPING_SOURCES
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&self.source);
-        STEP_ENDED.notify_all();
-    }
-}
+/// The mailbox sources with a step under way in this process: the host's
+/// steps, the owner's `vault.mail.sources.sync` and a push channel's act
+/// each wait for the one under way.
+pub(super) static MAIL_SOURCE_STEPS: SourceSteps<EntityId> = SourceSteps::new();
 
 /// The digest of a change-feed page's first changes
 /// ([`MailHistoryApplied::digest`]).
@@ -870,7 +834,7 @@ impl Vault {
         budget: MailSyncBudget,
     ) -> MemoryResult<MailSyncReport> {
         // Each step reads the windows and the progress the last one left.
-        let _stepping = SourceStepGuard::wait_for(source_ref);
+        let _stepping = MAIL_SOURCE_STEPS.wait_for(source_ref);
         let (row, window) = {
             let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
             require_pack_active_in(self, &txn)?;

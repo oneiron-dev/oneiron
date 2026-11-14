@@ -9,7 +9,11 @@
 //! source until its window opens; a provider's rate-limit answer rests it
 //! [`RATE_LIMIT_REST_SECS`]. The change feed may spend the whole minute; the
 //! copy spends at most [`COPY_SHARE_PERCENT`] of it, so new changes still
-//! read while a big copy runs.
+//! read while a big copy runs. One source's steps run one at a time
+//! ([`SourceSteps`]), so each reads the windows the last one left.
+
+use std::collections::BTreeSet;
+use std::sync::{Condvar, Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +28,58 @@ pub(crate) const RATE_LIMIT_REST_SECS: u64 = 60;
 /// stays for the change feed (RESEARCH-1393 #backfill plans at 75%, to leave
 /// room for live sync and retries).
 const COPY_SHARE_PERCENT: u64 = 75;
+
+/// The sources of one kind with a step under way in this process: a
+/// source's next step, the host's or the owner's own, waits for the one
+/// under way to end, so no step writes over the windows (a rest included)
+/// or the progress another step left.
+pub(crate) struct SourceSteps<K> {
+    stepping: Mutex<BTreeSet<K>>,
+    ended: Condvar,
+}
+
+impl<K: Ord + Clone> SourceSteps<K> {
+    pub(crate) const fn new() -> Self {
+        Self {
+            stepping: Mutex::new(BTreeSet::new()),
+            ended: Condvar::new(),
+        }
+    }
+
+    /// Waits until no step of `source` is under way, then holds it until
+    /// the answer drops.
+    pub(crate) fn wait_for(&self, source: K) -> SourceStep<'_, K> {
+        let mut stepping = self.stepping.lock().unwrap_or_else(PoisonError::into_inner);
+        while stepping.contains(&source) {
+            stepping = self
+                .ended
+                .wait(stepping)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        stepping.insert(source.clone());
+        SourceStep {
+            steps: self,
+            source,
+        }
+    }
+}
+
+/// One source's step under way, held until it drops.
+pub(crate) struct SourceStep<'s, K: Ord> {
+    steps: &'s SourceSteps<K>,
+    source: K,
+}
+
+impl<K: Ord> Drop for SourceStep<'_, K> {
+    fn drop(&mut self) {
+        self.steps
+            .stepping
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&self.source);
+        self.steps.ended.notify_all();
+    }
+}
 
 /// The units of a minute of `units_per_minute` a call may bring the window
 /// to: the whole minute for the change feed (`live`), the copy's share
