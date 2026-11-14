@@ -25915,9 +25915,11 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
+      "ActorAttribution",
+      "ActorAttributionKind",
       "People",
       "PeoplePrefix",
       "PeopleView",
@@ -25929,9 +25931,9 @@
      "surface": {
       "const": 1,
       "crate-vis": 6,
-      "enum": 1,
-      "fn": 17,
-      "struct": 4
+      "enum": 2,
+      "fn": 20,
+      "struct": 5
      }
     },
     {
@@ -34505,7 +34507,7 @@
      "purpose": "Background identity checks (OF-123; owner ruling: ask rule B)",
      "surface": {
       "const": 4,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 4,
       "fn": 2,
       "re-export": 2,
@@ -55757,7 +55759,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "GrantAskReceipt",
@@ -55777,7 +55779,7 @@
      "purpose": "PEOPLE verbs (owner ruling, ARCH-0067): `vault.people.list`, `vault.people.get`, `self.message` and…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 3,
       "struct": 10
@@ -89615,8 +89617,8 @@
      "path": "src/tagging/mod.rs",
      "purpose": "The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036…",
      "surface": {
-      "crate-vis": 12,
-      "re-export": 10
+      "crate-vis": 13,
+      "re-export": 11
      }
     },
     {
@@ -89758,13 +89760,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/role.rs",
+     "purpose": "The role rung (ARCH-0024 signal 3): a mention that names a person by their relationship to the speaker, `my…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/tagging/save.rs",
      "purpose": "Save mode: a checked answer becomes the turn's tag set (ARCH-0036, serving the tagger)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -89828,6 +89840,17 @@
       "crate-vis": 3,
       "enum": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/vector.rs",
+     "purpose": "The vector rung (ARCH-0024 signal 4): when the key, sound or role rungs leave a person mention two or more…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3
      }
     },
     {
@@ -92975,7 +92998,7 @@
      "path": "src/test_doors/identity_recheck.rs",
      "purpose": "The nightly identity re-check, one page, run from a test, and the open identity asks after it (census item…",
      "surface": {
-      "fn": 1
+      "fn": 3
      }
     },
     {
@@ -102257,6 +102280,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/change_actor_attribution.rs",
+     "purpose": "Who made a change, on the reads the app shows changes from (FIX [UI-GATE-PREVIEW] phase 3; GENUI-WIRE-GAPS…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -102893,11 +102924,11 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/entity_linker_cascade.rs",
-     "purpose": "The entity linker's phonetic rung (census item 12; ARCH-0024 signal 2)",
+     "purpose": "The entity linker's phonetic, role and vector rungs (census item 12; ARCH-0024 signals 2, 3 and 4)",
      "surface": {}
     },
     {
@@ -104212,6 +104243,14 @@
      "notable": [],
      "path": "tests/owner_supersedes_own_agent_claim.rs",
      "purpose": "The owner's upsert supersedes a claim of the owner's own agent in one act…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pack_hook_owner_floor.rs",
+     "purpose": "[PACK-HOOK-BIND-CRITICALITY-FLOOR]: the owner's own pack-hook writes land on a vault with the shipped manifest",
      "surface": {}
     },
     {
@@ -106975,7 +107014,7 @@
      "purpose": "CRDT sync layer for Oneiron"
     },
     "tagging": {
-     "files": 25,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -107199,10 +107238,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 274,
+   "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7521,
-   "test_files": 1242
+   "source_files": 7523,
+   "test_files": 1244
   },
   "oneiron-agent-runtime": {
    "files": [
