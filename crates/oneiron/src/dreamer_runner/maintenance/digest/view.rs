@@ -22,13 +22,8 @@ use super::{
 };
 use crate::{EntityId, Result, Vault};
 
-/// A delivered digest's locator from an inbox notification's `source.result`.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DigestReadRequest {
-    /// The stable digest locator, as 64 hex.
-    pub id: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_runner::maintenance::digest::view::DigestReadRequest;
 
 /// A delivered digest as one viewer reads it (FIX 6411): the stored
 /// digest's locator and lines, less each proposal whose words come from a

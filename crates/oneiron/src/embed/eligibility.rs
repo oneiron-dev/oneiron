@@ -38,14 +38,11 @@ pub(super) fn embeddable_payload_in(
     body: &[u8],
 ) -> Result<Option<(PendingEmbeddingPayload, Vec<EntityId>)>> {
     if entity_type == ENTITY_TYPE_TURN {
-        let Some(members) = crate::tagging::turn_members_in_txn(vault, store, txn, id, false)?
+        let Some(members) = crate::tagging::turn_members_in_txn(vault, store, txn, id, true)?
         else {
             return Ok(None);
         };
-        let messages: Vec<(EntityId, String)> = members
-            .into_iter()
-            .filter_map(|(message, text, _)| Some((message, text?)))
-            .collect();
+        let messages = released_turn_words(members);
         let Some(text) = joined_turn_text(&messages) else {
             return Ok(None);
         };
@@ -69,19 +66,37 @@ pub(super) fn embeddable_payload_in(
 /// ARCH-0004 makes the turn, not the message, the embedding unit: a short
 /// message ("ok", "thanks") embeds poorly alone, and the turn is the run of
 /// messages one speaker sent before the other answered.
+///
+/// The text goes to the embedder, so it holds only the words a release door
+/// gives ([`released_turn_words`]).
 pub(crate) fn turn_text_in_txn(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<Option<String>> {
-    let Some(messages) = crate::tagging::turn_messages_in_txn(vault, txn, turn)? else {
+    let Some(members) = crate::tagging::turn_members_in_txn(vault, &vault.store, txn, turn, true)?
+    else {
         return Ok(None);
     };
-    let messages = messages
+    Ok(joined_turn_text(&released_turn_words(members)))
+}
+
+/// The words of a turn's `members`, each read with the body it is read from,
+/// that a door releasing them gives (ARCH-0069 #readers-followups-open, the
+/// embedding worker's TURN egress): a message stored with the scan off whose
+/// body or words the write door now refuses gives none, as every other
+/// release door of a turn's text gives it none.
+fn released_turn_words(
+    members: Vec<(EntityId, Option<String>, Vec<u8>)>,
+) -> Vec<(EntityId, String)> {
+    members
         .into_iter()
-        .map(|message| Ok((EntityId::from_hex(&message.id)?, message.text)))
-        .collect::<Result<Vec<_>>>()?;
-    Ok(joined_turn_text(&messages))
+        .filter_map(|(message, text, body)| {
+            let text = text?;
+            crate::vault::entity_revision::message_words_released(&text, &body)
+                .then_some((message, text))
+        })
+        .collect()
 }
 
 /// A turn's text from its `messages`, one per line, or `None` when they hold

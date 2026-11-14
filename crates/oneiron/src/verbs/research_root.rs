@@ -101,7 +101,7 @@ pub fn research_create_root(
             requester: QueuedRequester::of_memory(memory),
             now: vault.now_recorded_at(),
         },
-        |txn| admit_creator_in_txn(memory, txn),
+        |txn| admit_owner_or_granted_in_txn(memory, txn, CREATE_ROOT_VERB),
     )?;
     let (status, enqueued) = match outcome {
         AgentDispatchOutcome::Dispatched(status) => (status, true),
@@ -127,8 +127,12 @@ pub fn research_create_root(
 }
 
 /// The vault owner, or an agent one live Grant from a live owner names and
-/// lists [`CREATE_ROOT_VERB`] for, in `txn`.
-fn admit_creator_in_txn(memory: &Memory<'_>, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
+/// lists `verb` for, in `txn`.
+pub(super) fn admit_owner_or_granted_in_txn(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    verb: &str,
+) -> MemoryResult<()> {
     let vault = memory.vault();
     if crate::memory::actor_is_vault_owner_in_txn(vault, txn, memory.actor(), memory.actor_class())?
     {
@@ -136,6 +140,7 @@ fn admit_creator_in_txn(memory: &Memory<'_>, txn: &heed::RoTxn<'_>) -> MemoryRes
     }
     if memory.actor_class() != EdgeActorClass::Agent {
         return Err(refused(
+            verb,
             "the caller is neither the vault owner nor an agent",
         ));
     }
@@ -144,22 +149,23 @@ fn admit_creator_in_txn(memory: &Memory<'_>, txn: &heed::RoTxn<'_>) -> MemoryRes
         txn,
         memory.actor(),
         EdgeActorClass::Agent,
-        CREATE_ROOT_VERB,
+        verb,
     )? {
         Ok(standing) if standing.grant.is_some() => Ok(()),
-        Err(NoStanding::PactStandingLapsed) => Err(refused(PACT_STANDING_LAPSED)),
+        Err(NoStanding::PactStandingLapsed) => Err(refused(verb, PACT_STANDING_LAPSED)),
         Ok(_) | Err(NoStanding::NotStanding) => Err(refused(
+            verb,
             "no live Grant from a live owner names this agent and lists the verb",
         )),
     }
 }
 
-/// The verb's refusal of a caller it does not admit.
-fn refused(why: &str) -> MemoryError {
+/// `verb`'s refusal of a caller it does not admit.
+fn refused(verb: &str, why: &str) -> MemoryError {
     MemoryError::new(
         MEMORY_CODE_FORBIDDEN,
         format!(
-            "{CREATE_ROOT_VERB} takes the vault owner's own proof or an agent's own Grant that lists it: {why}"
+            "{verb} takes the vault owner's own proof or an agent's own Grant that lists it: {why}"
         ),
         &["Call as the owner, or have the owner grant this agent the verb by name."],
     )

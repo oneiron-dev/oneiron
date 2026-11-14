@@ -1,8 +1,8 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, test } from "bun:test";
 import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
 import { EngineFixture, type PairedActor, awaitPublic } from "./support/engine.ts";
 import { loadFixtures, ownerBaseClaimScope, requireAsset } from "./support/fixtures.ts";
-import { defineFile, redactor, secretHex } from "./support/run.ts";
+import { defineFile, expect, redactor, secretHex } from "./support/run.ts";
 import { McpRpcError, PublicHttpError, PublicHttpClient, CliError, CliClient, McpClient, credentialParts, type SdkDriverResult, type WireReply } from "./support/clients.ts";
 import { randomUUID } from "node:crypto";
 import { ScriptedProviders, openaiText } from "./support/providers.ts";
