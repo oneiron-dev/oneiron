@@ -310,6 +310,7 @@ export {
   type NoteRect,
 } from './lib/info-note'
 export { rovingMoveForKey, rovingTarget, setRovingStop, type RovingMove, type RovingItem } from './lib/roving-focus'
+export { accessibleName, accessibleRole, isTextField } from './lib/accessible-name'
 export { placeFloating, anchorInViewport, type Side, type Align, type Placement, type PlacementOptions } from './lib/placement'
 export { bayerThreshold, easeOutQuart, develop, BAYER_8X8 } from './lib/dither'
 export { useResolvedScheme, resolveScheme, type Scheme } from './lib/scheme'
