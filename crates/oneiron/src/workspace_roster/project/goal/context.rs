@@ -9,7 +9,6 @@ use super::proposals::{
     ProjectGoalProposalStatus, ProjectGoalProposalView, project_goal_base_in_txn,
     project_goal_proposals_in_txn,
 };
-use crate::attempt_queue::AttemptId;
 use crate::genui::ProjectGoalDraft;
 use crate::skill_optimize::{ProjectGoalRevisionProposal, project_goal_revision_proposals_in_txn};
 use crate::{EntityId, Result, Vault};
@@ -38,10 +37,11 @@ pub struct ProjectGoalInterviewContext {
     #[serde(default)]
     pub interview_thread: Option<EntityId>,
     /// The last intake run that loaded the goal-intake skill: the attempt a
-    /// host completes the interview with. `None` before one loaded it. An
-    /// attempt id grants no read.
+    /// host completes the interview with, in the id form the completion's
+    /// `attempt_ref` takes. `None` before one loaded it. An attempt id grants
+    /// no read.
     #[serde(default)]
-    pub attempt_ref: Option<AttemptId>,
+    pub attempt_ref: Option<EntityId>,
 }
 
 impl Vault {
@@ -97,7 +97,10 @@ impl Vault {
                 .as_ref()
                 .filter(|row| row.task.is_some())
                 .map(|row| row.thread),
-            attempt_ref: interview.and_then(|row| row.attempt),
+            attempt_ref: interview
+                .and_then(|row| row.attempt)
+                .map(|attempt| EntityId::from_bytes(*attempt.as_bytes()))
+                .transpose()?,
         })
     }
 }

@@ -157,7 +157,10 @@ impl Interview {
             .project_goal_interview_context(self.project, true)?;
         Ok(ProjectGoalInterviewContextView {
             thread: context.interview_thread,
-            attempt: context.attempt_ref,
+            attempt: context
+                .attempt_ref
+                .map(|attempt| AttemptId::from_bytes(attempt.as_bytes()))
+                .transpose()?,
         })
     }
 }
