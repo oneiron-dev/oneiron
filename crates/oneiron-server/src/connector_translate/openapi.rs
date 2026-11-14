@@ -244,9 +244,7 @@ impl Operation<'_> {
             }
         };
         let input_schema = input.into_schema();
-        if serde_json::to_vec(&input_schema)
-            .map(|bytes| bytes.len())
-            .unwrap_or(usize::MAX)
+        if serde_json::to_vec(&input_schema).map_or(usize::MAX, |bytes| bytes.len())
             > MAX_SCHEMA_BYTES
         {
             return Err(fail("its input schema is over 64 KiB".to_owned()));
