@@ -14,8 +14,8 @@ use loro::{ExportMode, LoroDoc, VersionVector};
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole};
 use oneiron::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use oneiron::federation::{
-    FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
-    SharedVaultPreset,
+    FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope, ScopeAxis,
+    ScopeId, SharedVaultPreset,
 };
 use oneiron::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD,
@@ -118,6 +118,12 @@ enum WindowFixture {
     PortableWorld,
 }
 
+#[derive(Default)]
+struct FixtureOptions {
+    empty_world_windows: usize,
+    bound_grant_to_world: bool,
+}
+
 struct Fixture {
     task: tokio::task::JoinHandle<()>,
     url: String,
@@ -193,6 +199,10 @@ fn public_world_claim(subject: EntityId, world: EntityId, value: &str) -> ClaimB
 }
 
 async fn fixture(shape: WindowFixture) -> Fixture {
+    fixture_with_options(shape, FixtureOptions::default()).await
+}
+
+async fn fixture_with_options(shape: WindowFixture, options: FixtureOptions) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
     vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
@@ -218,13 +228,30 @@ async fn fixture(shape: WindowFixture) -> Fixture {
         )
         .unwrap();
     let member = person(&vault, "yuki");
+    let world = matches!(shape, WindowFixture::PortableWorld).then(EntityId::now);
+    if let Some(world) = world {
+        vault
+            .put_entity(
+                &world,
+                ENTITY_TYPE_WORLD,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &rmp_serde::to_vec_named(&json!({"title": "Portable world"})).unwrap(),
+            )
+            .unwrap();
+    }
     let grant_id = EntityId::now();
-    let grant = FederationGrant::new(
+    let mut grant = FederationGrant::new(
         FederationGrantScope::vault(42),
         member,
         FederationGrantRole::Member,
         FederationGrantPreset::Member,
     );
+    if options.bound_grant_to_world {
+        grant.authority_scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(
+            world.expect("world-bounded fixture"),
+        )]));
+    }
     put_selector_test_federation_grant(&vault, &grant_id, &grant, vault.now_recorded_at()).unwrap();
     let caller = mint(
         &vault,
@@ -242,18 +269,8 @@ async fn fixture(shape: WindowFixture) -> Fixture {
     let other_at = other_window.start_timestamp().unwrap() + 86_400;
     let item = EntityId::now();
     let other_item = EntityId::now();
-    let world = matches!(shape, WindowFixture::PortableWorld).then(EntityId::now);
     let window = world.map_or_else(|| month.clone(), |id| WindowKey::for_world(at, id));
     if let Some(world) = world {
-        vault
-            .put_entity(
-                &world,
-                ENTITY_TYPE_WORLD,
-                TimeRange { start: 1, end: 1 },
-                1,
-                &rmp_serde::to_vec_named(&json!({"title": "Portable world"})).unwrap(),
-            )
-            .unwrap();
         let claim = public_world_claim(member, world, "before");
         vault
             .put_entity(
@@ -300,6 +317,12 @@ async fn fixture(shape: WindowFixture) -> Fixture {
         let doc = create_window_doc("home", key);
         reverse_rematerialize(&vault, &doc, key).unwrap();
         persist_window_snapshot(&vault, key, &doc).unwrap();
+    }
+    for _ in 0..options.empty_world_windows {
+        let key = WindowKey::for_world(at, EntityId::now());
+        let doc = create_window_doc("home", &key);
+        assert_eq!(reverse_rematerialize(&vault, &doc, &key).unwrap(), 0);
+        persist_window_snapshot(&vault, &key, &doc).unwrap();
     }
     let selector = SyncSelector::new(
         grant_id,
@@ -1108,5 +1131,178 @@ fn a_member_residence_update_after_a_world_privacy_change_is_refused() {
             "window": fx.window.as_str(), "selector": encoded_selector(&fx.selector), "limit": 16
         })).await;
         assert_eq!(answer["items"], json!([]));
+    });
+}
+
+#[test]
+fn the_catalogue_never_names_a_window_it_does_not_list() {
+    run_on_engine_stack(|| async {
+        let fx = fixture_with_options(
+            WindowFixture::Selected,
+            FixtureOptions {
+                empty_world_windows: 260,
+                ..Default::default()
+            },
+        )
+        .await;
+        let mut socket = bound_member(&fx, transport::PROTOCOL_VERSION).await;
+        let mut after = None::<String>;
+        let mut pages = Vec::new();
+        let mut request_id = 2;
+        loop {
+            let page = rpc(
+                &mut socket,
+                request_id,
+                "residence.windows",
+                json!({
+                    "selector": encoded_selector(&fx.selector),
+                    "months": ["2026-03"], "limit": 16, "after": after
+                }),
+            )
+            .await;
+            let next = page["next"].as_str().map(str::to_owned);
+            if let Some(next) = next.as_deref() {
+                assert!(
+                    page["windows"].as_array().unwrap().contains(&json!(next)),
+                    "a catalogue continuation must name a window listed on its page"
+                );
+                assert!(
+                    after.as_deref().is_none_or(|previous| next > previous),
+                    "a catalogue continuation must advance"
+                );
+            }
+            pages.push(page);
+            let Some(next) = next else {
+                break;
+            };
+            after = Some(next);
+            request_id += 1;
+        }
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0]["windows"], json!(["2026-03"]));
+        assert!(pages[0]["next"].is_null());
+    });
+}
+
+#[test]
+fn a_member_grant_bounded_to_a_world_writes_in_that_world() {
+    run_on_engine_stack(|| async {
+        let fx = fixture_with_options(
+            WindowFixture::PortableWorld,
+            FixtureOptions {
+                bound_grant_to_world: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let world = fx.world.unwrap();
+        assert_eq!(
+            fx.grant.authority_scope.worlds,
+            ScopeAxis::Some(BTreeSet::from([ScopeId(world)]))
+        );
+        assert_eq!(fx.caller.slip.claims.scope, fx.grant.authority_scope);
+        let original = fx.vault.get_raw(&fx.item).unwrap().unwrap();
+        let mut socket = bound_member(&fx, transport::RESIDENCE_PROTOCOL_VERSION).await;
+        let index = rpc(
+            &mut socket,
+            2,
+            "residence.index",
+            json!({
+                "window": fx.window.as_str(),
+                "selector": encoded_selector(&fx.selector), "limit": 16
+            }),
+        )
+        .await;
+        assert!(
+            index["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["entity_id"] == fx.item.to_hex())
+        );
+        send_window(
+            &mut socket,
+            &fx.window,
+            window_sub_tags::PROMOTION_REQUEST,
+            &encode_sync_selector(&fx.selector).unwrap(),
+        )
+        .await;
+        let granted = next_member_binary(&mut socket).await;
+        assert_eq!(granted[0], transport::TAG_WINDOW_SYNC);
+        let (key, tag, payload) = transport::decode_window_sync(&granted[1..]).unwrap();
+        assert_eq!(key, fx.window.as_str());
+        assert_eq!(tag, window_sub_tags::PROMOTION_GRANTED);
+        assert!(payload.is_empty());
+
+        let persisted = load_window_from_state(&fx.vault, "home", &fx.window).unwrap();
+        let peer = persisted.fork();
+        let before_edit = peer.oplog_vv();
+        let changed = public_world_claim(fx.member, world, "written by bounded member");
+        let mut raw = original[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        raw.extend_from_slice(&encode_claim_body(&changed).unwrap());
+        assert_ne!(raw, original);
+        peer.get_map("entities")
+            .insert(&fx.item.to_hex(), raw.as_slice())
+            .unwrap();
+        peer.commit();
+        let update = peer.export(ExportMode::updates(&before_edit)).unwrap();
+        assert!(!update.is_empty());
+        let envelope = transport::WindowPadEnvelope {
+            kind: transport::WindowPadKind::ResidenceUpdate,
+            form: transport::WindowPadForm::PadFree,
+            queue_seq: Some(1),
+            payload: update,
+            refs: Vec::new(),
+            sidecar: None,
+        };
+        for frame in envelope
+            .encode_frames(fx.window.as_str(), window_sub_tags::RESIDENCE_UPDATE)
+            .unwrap()
+        {
+            send_binary(&mut socket, frame).await;
+        }
+        let ack = next_member_binary(&mut socket).await;
+        assert_eq!(ack[0], transport::TAG_WINDOW_SYNC);
+        let (key, tag, payload) = transport::decode_window_sync(&ack[1..]).unwrap();
+        assert_eq!(key, fx.window.as_str());
+        assert_eq!(tag, window_sub_tags::RESIDENCE_ACK);
+        let receipt = transport::WindowPadReceipt::decode(payload).unwrap();
+        assert_eq!(receipt.binding, envelope.binding());
+        assert_eq!(receipt.readiness, transport::WindowPadReadiness::PadFree);
+        let landed = load_window_from_state(&fx.vault, "home", &fx.window).unwrap();
+        let Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(bytes))) =
+            landed.get_map("entities").get(&fx.item.to_hex())
+        else {
+            panic!("the accepted update must persist the claim's bytes");
+        };
+        assert_eq!(bytes.as_slice(), raw.as_slice());
+
+        send_rpc(&mut socket, 3, "ping", json!({"after": "accepted write"})).await;
+        let ping_frame = next_member_binary(&mut socket).await;
+        assert_eq!(ping_frame[0], transport::TAG_RPC);
+        let ping_reply: Envelope<Value> = rmp_serde::from_slice(&ping_frame[1..]).unwrap();
+        assert_eq!(ping_reply.kind, "ping");
+        assert_eq!(ping_reply.id, 3);
+        assert_eq!(ping_reply.seq, 0);
+        assert!(ping_reply.last);
+        assert_eq!(ping_reply.payload, json!({"after": "accepted write"}));
+        let mut control = bound_member(&fx, transport::RESIDENCE_PROTOCOL_VERSION).await;
+        let answer = rpc(
+            &mut control,
+            2,
+            "residence.index",
+            json!({
+                "window": fx.window.as_str(),
+                "selector": encoded_selector(&fx.selector), "limit": 16
+            }),
+        )
+        .await;
+        assert!(
+            answer["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["entity_id"] == fx.item.to_hex())
+        );
     });
 }
