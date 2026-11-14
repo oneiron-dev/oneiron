@@ -12,6 +12,7 @@ mod receipts;
 mod replay_context;
 mod reply;
 mod results;
+pub(super) mod resume_preflight;
 mod skill_delivery;
 mod type_feedback;
 

@@ -91,6 +91,12 @@ impl CodeRunBridgeCall {
     pub(crate) fn recorded_outcome(&self) -> Result<SelfDispatchOutcome> {
         decode_self_dispatch_outcome(&self.outcome)
     }
+
+    /// The canonical request `call` meets this row by (L8-23): the call
+    /// stamped as the row was, encoded as the strict match encodes it.
+    pub(crate) fn replay_request_value(&self, call: SelfCall) -> Result<rmpv::Value> {
+        self_call_request_value(&call.with_bridge_stamp(self.seq, self.started_at_ms))
+    }
 }
 
 /// Cursor that replays bridge calls from a stored record without invoking live host effects.

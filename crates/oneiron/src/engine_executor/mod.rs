@@ -79,6 +79,10 @@ pub use self::types::{
     JsResultCall, JsResultRef, JsResultTarget, ParkedWait, SelfDispatchResponse, StoreReceiptInput,
     StoreReceiptTree, guest_response_with_budget,
 };
+// L8-23: what a resumed pending step's walk met, on its outcome and its hold.
+pub use self::host::resume_preflight::{
+    ChangedStep, ResumePreflightReport, ResumeVerdict, UnreachedStep,
+};
 
 pub(crate) use self::host::executor_declarations_block;
 #[cfg(oneiron_test_support)]
