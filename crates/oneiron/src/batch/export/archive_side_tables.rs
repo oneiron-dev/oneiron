@@ -1534,7 +1534,7 @@ fn msgpack(
     })
 }
 
-fn byte_values(items: &[rmpv::Value]) -> Option<Vec<u8>> {
+pub(super) fn byte_values(items: &[rmpv::Value]) -> Option<Vec<u8>> {
     items
         .iter()
         .map(|item| item.as_u64().and_then(|value| u8::try_from(value).ok()))

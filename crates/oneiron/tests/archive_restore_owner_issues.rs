@@ -37,6 +37,16 @@
 //!   source trees of the seeded built-in setup skills; the owner's restore
 //!   into another freshly seeded vault keeps that vault's own seeds, counts
 //!   them unchanged and restores the one PERSON row.
+//! * `owner_restore_drops_an_archived_approve_once`: the source owner
+//!   approves one publisher report's text once. The destination sets the
+//!   same publisher route and holds no consent of its own: the restored
+//!   report waits on its owner (`NeedsApproval`) with no disclosure basis,
+//!   so no archived approval sends its text (REVIEW-7706/7771 round 1).
+//! * `owner_restore_keeps_a_tainted_report_omitted`: one of two filed
+//!   reports is marked secret-tainted (`mark_artifact_tainted`), so every
+//!   export, with secrets or without, nulls its body whole. The owner's
+//!   restore of either archive keeps that ISSUE omitted and restores the
+//!   other report and both PERSON rows (REVIEW-7593 round 2).
 //!
 //! Public doors only; neutral fixtures (`owen`, `yuki`, `owen@example.com`);
 //! vaults in tempdirs. Each destination opens at least one wall-clock second
@@ -57,6 +67,7 @@ use oneiron::feedback::{
 use oneiron::outbound::OutboundExecutionOutcome;
 use oneiron::policy_model::SecretScanMode;
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::secret_lease::SecretTaintRef;
 use oneiron::store::GateDecisionId;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use rmpv::Value;
@@ -830,5 +841,161 @@ fn owner_restore_of_a_fresh_archive_without_secrets_refuses_nothing() {
     assert!(
         receipt.unchanged_entities >= 1,
         "the destination's own seeds count as unchanged: {receipt:?}"
+    );
+}
+
+#[test]
+fn owner_restore_keeps_a_tainted_report_omitted() {
+    let (_source_dir, source) = open_source_vault();
+    let owner = source
+        .ensure_embedded_owner_actor()
+        .expect("embedded owner");
+    let owen = EntityId::now();
+    let yuki = EntityId::now();
+    put_person(&source, &owen, "owen");
+    put_person(&source, &yuki, "yuki");
+    let mut issues = Vec::new();
+    for (subject, note) in [
+        (&owen, "The summary of owen names the wrong team."),
+        (&yuki, "The summary of yuki names the wrong city."),
+    ] {
+        let receipt = source
+            .memory(owner, EdgeActorClass::Human)
+            .report(ReportRequest {
+                subject_ref: subject.to_hex(),
+                category: IssueCategory::SkillDefect,
+                kind: ReportKind::Problem,
+                note: Some(note.to_owned()),
+                evidence_refs: Vec::new(),
+                why: None,
+                proposal: None,
+            })
+            .expect("the problem report lands");
+        issues.push(EntityId::from_hex(&receipt.issue_ref).expect("issue id"));
+    }
+    let (tainted, clean) = (issues[0], issues[1]);
+    source
+        .mark_artifact_tainted(
+            &tainted,
+            &[SecretTaintRef {
+                secret_ref: "owen-api-key".to_owned(),
+                generation: 1,
+            }],
+        )
+        .expect("the source marks the first report tainted");
+
+    for with_secrets in [true, false] {
+        let archive = source
+            .export_whole_vault(with_secrets)
+            .expect("whole-vault export")
+            .bytes()
+            .to_vec();
+        let (_dest_dir, dest) = open_later_vault();
+        let dest_owner = owner_proof(&dest);
+        let receipt = match dest
+            .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        {
+            Ok(receipt) => receipt,
+            Err(error) => panic!(
+                "the owner's archive (secrets {with_secrets}) holding one tainted report must still restore: {error:?}"
+            ),
+        };
+        assert!(
+            dest.report_issue(&tainted)
+                .expect("read the tainted report")
+                .is_none(),
+            "the report whose body the export nulled stays omitted (secrets {with_secrets})"
+        );
+        let restored = dest
+            .report_issue(&clean)
+            .expect("read the clean report")
+            .expect("the owner's restore brings the clean report back");
+        assert_eq!(
+            restored.origin,
+            ReportIssueOrigin::OwnerArchiveRestore,
+            "the clean report is marked as an owner archive restore (secrets {with_secrets})"
+        );
+        assert!(
+            receipt.omitted_entities >= 1,
+            "the receipt counts the omitted report: {receipt:?}"
+        );
+        for (id, name) in [(&owen, "owen"), (&yuki, "yuki")] {
+            assert_eq!(
+                dest.get_entity_type(id).expect("read the restored person"),
+                Some(ENTITY_TYPE_PERSON),
+                "the owner's restore still brings {name} back (secrets {with_secrets})"
+            );
+        }
+    }
+}
+
+#[test]
+fn owner_restore_drops_an_archived_approve_once() {
+    let (_source_dir, source) = open_source_vault();
+    let owner = source
+        .ensure_embedded_owner_actor()
+        .expect("embedded owner");
+    let proof = owner_proof(&source);
+    let owen = EntityId::now();
+    put_person(&source, &owen, "owen");
+    let route = ReportRoute::Publisher {
+        publisher_ref: "owen@example.com".to_owned(),
+    };
+    source
+        .set_report_route(&proof, &owen.to_hex(), route.clone())
+        .expect("the source owner sets the publisher route");
+    let receipt = source
+        .memory(owner, EdgeActorClass::Human)
+        .report(ReportRequest {
+            subject_ref: owen.to_hex(),
+            category: IssueCategory::SkillDefect,
+            kind: ReportKind::Problem,
+            note: Some("The summary of owen names the wrong city.".to_owned()),
+            evidence_refs: Vec::new(),
+            why: Some("The city matters for owen's record.".to_owned()),
+            proposal: None,
+        })
+        .expect("the report with text lands");
+    let issue = EntityId::from_hex(&receipt.issue_ref).expect("issue id");
+    let approved = source
+        .decide_report_disclosure(&proof, &issue, ReportDisclosureChoice::ApproveOnce)
+        .expect("the source owner approves the text once");
+    assert_eq!(
+        approved.disclosure,
+        ReportDisclosure::Approved,
+        "the source approval lands"
+    );
+    assert!(
+        approved.disclosure_basis.is_some(),
+        "the source approval carries its approve-once basis"
+    );
+    let archive = export_whole(&source);
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    dest.set_report_route(&dest_owner, &owen.to_hex(), route.clone())
+        .expect("the destination owner sets the same publisher route before the import");
+    if let Err(error) =
+        dest.import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+    {
+        panic!("the owner's whole archive holding an approved ISSUE row must restore: {error:?}");
+    }
+
+    let restored = dest
+        .report_issue(&issue)
+        .expect("read the restored report")
+        .expect("the owner's restore brings the approved report back");
+    assert_eq!(
+        restored.route, route,
+        "the same publisher route is recomputed on the destination"
+    );
+    assert_eq!(
+        restored.disclosure,
+        ReportDisclosure::NeedsApproval,
+        "an archived approve-once is no consent here: the text waits on this owner"
+    );
+    assert_eq!(
+        restored.disclosure_basis, None,
+        "the restored report carries no archived disclosure basis"
     );
 }

@@ -119,6 +119,8 @@ pub(crate) enum ArchivedSideGroup {
     SendReceipts,
     /// Team receipt history.
     Team,
+    /// Customer hold protection and its supporting history.
+    LegalHold,
 }
 
 /// Selects only the tables with a landing group; every other envelope stays retained-only.
@@ -184,6 +186,14 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::SEND_RECEIPT_ATTEMPT_AUDIT.name => Some(Group::SendReceipts),
         name if name == side_table::SEND_RECEIPT_SUMMARY.name => Some(Group::SendReceipts),
         name if name == side_table::TEAM_RECEIPT.name => Some(Group::Team),
+        name if name == side_table::LEGAL_HOLD_ROW.name
+            || name == side_table::LEGAL_HOLD_TARGET.name
+            || name == side_table::LEGAL_HOLD_USE_LIMIT.name
+            || name == side_table::LEGAL_HOLD_ERASE_LINK.name
+            || name == side_table::LEGAL_HOLD_EVENT.name =>
+        {
+            Some(Group::LegalHold)
+        }
         _ => None,
     }
 }
@@ -307,6 +317,11 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::Team => {
             crate::team::receipt::land_archived_team_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::LegalHold => {
+            crate::store::legal_hold::archive::land_archived_legal_hold_rows_in_txn(
+                vault, txn, permit, rows,
+            )
         }
     }?;
     refresh.record(group, &outcomes);

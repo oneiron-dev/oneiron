@@ -21,6 +21,18 @@
 //! * `an_actor_erase_drops_the_retained_copies_that_name_the_actor`: erasing
 //!   an actor drops the retained CALL_RECEIPT copy naming that actor and keeps the
 //!   backup copy.
+//! * `an_actor_erase_drops_a_sealed_gate_decision_copy_naming_the_actor`:
+//!   two sealed Gate decisions, one naming actor x and one naming actor y,
+//!   are re-imported into their own vault, so the inert copies share its
+//!   still-held key. Erasing x through the ledger's and the retained table's
+//!   scrubs leaves one tuple for x's decision (the resealed live row) and
+//!   keeps y's (REVIEW-7706 round 1).
+//! * `a_short_binary_credential_withholds_its_retained_row`: a retained
+//!   BACKUP_POLICY value that is one short MessagePack binary holding a
+//!   GitHub token, or a byte array or extension holding it, is withheld; the
+//!   same shapes holding plain bytes are not (REVIEW-7706 round 1). The
+//!   archive tree writes a payload of 64 bytes or fewer inline as hex, which
+//!   the document pass cannot read.
 //!
 //! Count model: minting the standing grant also appends its gate receipt, a
 //! plain claim-free GATE_DECISION_LEDGER row the secret scan keeps (ids and
@@ -186,6 +198,8 @@ fn decode_retained_envelope(
             "source_value" => {
                 value = Some(tree_bytes(&pair[1], zip).expect("source_value are bytes"));
             }
+            // Whether the exporting vault held the tuple live; no part of the tuple.
+            "source_live" => {}
             other => panic!("unknown retained envelope member {other}: {tree}"),
         }
     }
@@ -653,5 +667,121 @@ fn an_actor_erase_drops_the_retained_copies_that_name_the_actor() {
     assert!(
         after.iter().any(|(table, _, _)| table == "BACKUP_POLICY"),
         "the erase keeps the backup copy: {after:?}"
+    );
+}
+
+/// `value` as one MessagePack value's bytes.
+fn msgpack_bytes(value: &rmpv::Value) -> Vec<u8> {
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, value).expect("encode the value");
+    out
+}
+
+#[test]
+fn a_short_binary_credential_withholds_its_retained_row() {
+    use oneiron::test_doors::archive_side_catalogue::retained_row_withholds_credential;
+    // A GitHub token shape: ghp_ and 36 letters and digits, 40 bytes in all,
+    // under the archive tree's 64-byte inline limit.
+    let token = format!("ghp_{}", "aB3dE5fG7hJ9kL1mN2pQ4rS6tU8vW0xY2zA4");
+    assert_eq!(token.len(), 40, "the token shape is 40 bytes");
+    let plain = b"plain retained bytes with no credential in".to_vec();
+    let shapes = |bytes: &[u8]| {
+        [
+            ("binary", rmpv::Value::Binary(bytes.to_vec())),
+            (
+                "byte array",
+                rmpv::Value::Array(bytes.iter().map(|byte| rmpv::Value::from(*byte)).collect()),
+            ),
+            ("extension", rmpv::Value::Ext(7, bytes.to_vec())),
+            (
+                "binary in a map",
+                rmpv::Value::Map(vec![(
+                    rmpv::Value::from("note"),
+                    rmpv::Value::Binary(bytes.to_vec()),
+                )]),
+            ),
+        ]
+    };
+    for (shape, value) in shapes(token.as_bytes()) {
+        assert!(
+            retained_row_withholds_credential("BACKUP_POLICY", &[], &msgpack_bytes(&value))
+                .expect("the envelope encodes"),
+            "a retained row whose {shape} payload holds a token is withheld"
+        );
+    }
+    for (shape, value) in shapes(&plain) {
+        assert!(
+            !retained_row_withholds_credential("BACKUP_POLICY", &[], &msgpack_bytes(&value))
+                .expect("the envelope encodes"),
+            "a retained row whose {shape} payload holds plain bytes travels"
+        );
+    }
+}
+
+/// Whether `haystack` holds `needle`.
+fn holds_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
+#[test]
+fn an_actor_erase_drops_a_sealed_gate_decision_copy_naming_the_actor() {
+    use oneiron::test_doors::archive_side_catalogue::append_sealed_gate_decision_naming;
+
+    let (_dir, vault) = open_source_vault();
+    let x = EntityId::now();
+    let y = EntityId::now();
+    let x_decision = hex_to_bytes(
+        &append_sealed_gate_decision_naming(&vault, &x).expect("the decision naming x lands"),
+    );
+    let y_decision = hex_to_bytes(
+        &append_sealed_gate_decision_naming(&vault, &y).expect("the decision naming y lands"),
+    );
+    let archive = export_whole(&vault);
+    let gate = rows_for(&retained_rows(&archive), "GATE_DECISION_LEDGER");
+    let x_row = gate
+        .iter()
+        .find(|(_, key, _)| *key == x_decision)
+        .expect("the archive carries the decision naming x");
+    assert!(
+        !holds_bytes(&x_row.2, x.as_bytes()) && !holds_bytes(&x_row.2, x.to_hex().as_bytes()),
+        "the decision naming x is sealed: its bytes name x neither raw nor in hex"
+    );
+    vault
+        .import_whole_vault_archive_from(Cursor::new(&archive))
+        .expect("the vault re-imports its own archive");
+
+    let ran = oneiron::test_doors::inquiry::erase_actor_in_tables_in_order(
+        &vault,
+        &x,
+        &["GATE_DECISION_LEDGER", "ARCHIVE_RETAINED_SIDE_ROW"],
+    )
+    .expect("the erase runs");
+    assert_eq!(ran, 2, "both tables register an actor scrub");
+
+    let after = rows_for(
+        &retained_rows(&export_whole(&vault)),
+        "GATE_DECISION_LEDGER",
+    );
+    let tuples_of = |decision: &[u8]| {
+        after
+            .iter()
+            .filter(|(_, key, _)| key.as_slice() == decision)
+            .count()
+    };
+    assert_eq!(
+        tuples_of(&x_decision),
+        1,
+        "only the resealed live decision remains for x; the sealed copy naming x is gone: {after:?}"
+    );
+    assert!(
+        after.iter().all(|row| row != x_row),
+        "the copy naming x no longer travels: {after:?}"
+    );
+    assert_eq!(
+        tuples_of(&y_decision),
+        1,
+        "the decision naming y stays, live and its identical copy as one tuple: {after:?}"
     );
 }

@@ -29,6 +29,14 @@
 //!   source team Solo receipt, made through the public team record door,
 //!   restore live; the team reports one installed row and the free-time
 //!   table reports one installed row per source receipt.
+//! * `a_consumed_check_in_receipt_restores_as_history`: a check-in the
+//!   holder approved and the act then spent writes the receipts opened,
+//!   answered and consumed; the owner's restore installs all three with none
+//!   held back (REVIEW-7799 round 1: main's `consumed` outcome).
+//! * `rotation_receipts_of_either_body_form_restore_as_history`: a rotation
+//!   receipt body with its cause (`provider_refresh`) and one written before
+//!   causes were recorded (no `cause` key) both install, with none held back
+//!   (REVIEW-7799 round 1: main's six-key receipt body).
 //!
 //! New report counts are read through `serde_json::to_value` of the SIDE-1
 //! summary, so this file compiles on 7b24852131b3; an absent field fails its
@@ -36,6 +44,8 @@
 //! `cargo test --locked -p oneiron --all-features --test
 //! archive_import_owner_installs_side_receipts`.
 
+#[path = "check_in/fixture.rs"]
+mod check_in_fixture;
 #[path = "archive_import_retained_side_rows.rs"]
 mod retained_side_rows;
 
@@ -1076,4 +1086,129 @@ fn restored_free_time_and_team_receipts_install_as_history()
         dest_sheet.receipts
     );
     Ok(())
+}
+
+#[test]
+fn a_consumed_check_in_receipt_restores_as_history() {
+    use check_in_fixture::{DIGEST, Fixture, people, request};
+    use oneiron::check_in::{ActClass, EligibleBasis, HolderAnswer, Rung};
+    use oneiron::test_doors::check_in::{FixedChain, answer, consume, open};
+
+    let fx = Fixture::open();
+    let (holder, holder_proof) = fx.person();
+    let chain = FixedChain::default().with(Rung::Owner, people(&[holder]));
+    let id = open(&fx.vault, request(EntityId::now(), ActClass::Spawn), &chain)
+        .expect("the check-in opens")
+        .id;
+    answer(
+        &fx.vault,
+        &holder_proof,
+        &id,
+        &DIGEST,
+        HolderAnswer::Approve,
+    )
+    .expect("the holder approves");
+    assert_eq!(
+        consume(&fx.vault, &id, &DIGEST).expect("the approved act runs"),
+        EligibleBasis::Approved
+    );
+    let source_outcomes = fx.outcomes(&id);
+    assert_eq!(
+        source_outcomes.last().map(String::as_str),
+        Some("consumed"),
+        "the spent check-in's last receipt is consumed: {source_outcomes:?}"
+    );
+    let archive = export_whole(&fx.vault);
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        held_back_for_table(&summary, "CHECK_IN_RECEIPT"),
+        None,
+        "the owner import holds back no check-in receipt: {summary}"
+    );
+    assert_eq!(
+        table_count(&summary, "CHECK_IN_RECEIPT", "installed_rows"),
+        Some(source_outcomes.len() as u64),
+        "the owner import installs every check-in receipt: {summary}"
+    );
+    let mut query = ReceiptQuery::new(100);
+    query.kinds = [ReceiptKind::CheckIn].into();
+    query.job_ref = Some(id.to_hex());
+    let mut restored = dest.receipts(query).expect("read the restored receipts");
+    restored.sort_by_key(|receipt| receipt.receipt_id.clone());
+    assert_eq!(
+        restored
+            .into_iter()
+            .map(|receipt| receipt.outcome)
+            .collect::<Vec<_>>(),
+        source_outcomes,
+        "the destination holds the source check-in history, consumed included"
+    );
+}
+
+/// A rotation receipt body as a writer stores it: the canonical keys in
+/// order, with `cause` last when the writer recorded one.
+fn rotation_receipt_body(rotated_at: u64, cause: Option<&str>) -> Vec<u8> {
+    let mut entries = vec![
+        (
+            rmpv::Value::from("secret_ref"),
+            rmpv::Value::from("mail-relay"),
+        ),
+        (
+            rmpv::Value::from("from_generation"),
+            rmpv::Value::from(1_u64),
+        ),
+        (rmpv::Value::from("to_generation"), rmpv::Value::from(2_u64)),
+        (
+            rmpv::Value::from("rotated_at"),
+            rmpv::Value::from(rotated_at),
+        ),
+        (rmpv::Value::from("kind"), rmpv::Value::from("rotated")),
+    ];
+    if let Some(cause) = cause {
+        entries.push((rmpv::Value::from("cause"), rmpv::Value::from(cause)));
+    }
+    let mut body = Vec::new();
+    rmpv::encode::write_value(&mut body, &rmpv::Value::Map(entries)).expect("encode the body");
+    body
+}
+
+#[test]
+fn rotation_receipts_of_either_body_form_restore_as_history() {
+    use oneiron::test_doors::archive_side_catalogue::put_secret_rotation_receipt_body;
+
+    let (_source_dir, source) = open_source_vault();
+    for (rotated_at, cause) in [(100, None), (200, Some("provider_refresh"))] {
+        put_secret_rotation_receipt_body(
+            &source,
+            EntityId::now(),
+            &rotation_receipt_body(rotated_at, cause),
+        )
+        .expect("the source stores the rotation receipt");
+    }
+    let archive = export_whole(&source);
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        held_back_for_table(&summary, "SECRET_ROTATION_RECEIPT"),
+        None,
+        "the owner import holds back neither rotation receipt: {summary}"
+    );
+    assert_eq!(
+        table_count(&summary, "SECRET_ROTATION_RECEIPT", "installed_rows"),
+        Some(2),
+        "the owner import installs both rotation receipts: {summary}"
+    );
 }
