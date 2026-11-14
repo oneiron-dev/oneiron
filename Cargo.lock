@@ -9109,10 +9109,14 @@ dependencies = [
 name = "oneiron-verb-wire"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "blake3",
  "ed25519-dalek 2.2.0",
+ "encoding_rs",
+ "half",
  "heed",
  "image",
+ "lopdf",
  "loro",
  "oneiron-authority",
  "oneiron-base",
@@ -9131,14 +9135,17 @@ dependencies = [
  "oneiron-run-budget",
  "oneiron-skill-attribution",
  "oneiron-store",
+ "oneiron-vault-contract",
  "oneiron-wake-contract",
  "oneiron-web-fetch",
+ "oneiron-xlsx-formula",
  "rmp-serde",
  "rmpv",
  "schemars 0.8.22",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "zeroize",
 ]
 
 [[package]]
