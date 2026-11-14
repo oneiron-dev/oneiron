@@ -125,10 +125,19 @@ impl<'v> ResidenceAdmission<'v> {
     /// Storage errors.
     pub fn allows_item(&self, id: EntityId) -> Result<bool> {
         let txn = self.vault.store.env.read_txn()?;
+        self.allows_item_in(&txn, id)
+    }
+
+    /// [`Self::allows_item`] in the caller's transaction, for a prediction
+    /// walk that already holds one.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn allows_item_in(&self, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<bool> {
         // FIX 7608 slice 4: a marked repo item's copy id is judged as its source.
-        let id =
-            crate::sync::selector::secret_projection::stored_item_in_txn(&self.vault, &txn, id)?;
-        self.context.allows_item(&txn, &id)
+        let id = crate::sync::selector::secret_projection::stored_item_in_txn(self.vault, txn, id)?;
+        self.context.allows_item(txn, &id)
     }
 
     /// Where the row of the admitted item `id` sits, for the copy the

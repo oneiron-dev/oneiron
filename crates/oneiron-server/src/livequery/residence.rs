@@ -19,6 +19,7 @@ mod pad_custody;
 mod pad_objects;
 mod pad_refill;
 mod pages;
+mod predict;
 mod search;
 mod work;
 pub(crate) use work::{ResidenceWorkCall, ResidenceWorkState};
@@ -461,6 +462,8 @@ pub(super) fn run(
             "residence.touch.part" => touch_part(server, auth, peer, request.params, touch_stage),
             "residence.promote" => promote(server, auth, peer, request.params),
             "residence.window.vv" => window_vv(server, auth, peer, request.params),
+            "residence.predict" => predict::predict(server, auth, peer, request.params),
+            "residence.predicted_set" => predict::predicted_set(server, auth, peer, request.params),
             "residence.search" => search(
                 server,
                 auth,

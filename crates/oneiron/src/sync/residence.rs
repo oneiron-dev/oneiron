@@ -26,6 +26,7 @@ mod kit_fetch;
 mod machine_history;
 mod pad_custody;
 mod policy;
+mod predict;
 mod prune;
 mod publication_access;
 mod recall_scope;
@@ -125,6 +126,9 @@ pub use policy::{
 pub(crate) use policy::{
     device_world_pick_in, set_device_sync_preference_in_txn, set_device_world_pick_in_txn,
 };
+pub use predict::PredictedResidenceAnswer;
+#[cfg(oneiron_test_support)]
+pub(crate) use predict::WithholdingNodes;
 pub(crate) use prune::checkpoint_read_cache_keys;
 pub(crate) use prune::demote_resident_window;
 pub(crate) use prune::erase_item_caches_in_txn;
