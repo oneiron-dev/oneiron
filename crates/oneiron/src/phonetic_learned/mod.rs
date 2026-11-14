@@ -25,8 +25,11 @@ pub use oneiron_store::batch::phonetic_codes::NAMES_PER_ENTITY_CAP;
 /// The widest vector a phonetic embedder may return (Symphonym v7 returns 128).
 pub const PHONETIC_VECTOR_MAX_DIMENSIONS: usize = 1024;
 
+/// The key of one learned vector: the entity and its name's BLAKE3-16.
+pub(crate) type LearnedVectorKey = (EntityId, [u8; 16]);
+
 /// One learned phonetic vector per entity name. Key: id16 + name BLAKE3-16.
-pub(crate) const LEARNED_VECTOR: SideTable<(EntityId, [u8; 16]), LearnedVectorRow, Raw> =
+pub(crate) const LEARNED_VECTOR: SideTable<LearnedVectorKey, LearnedVectorRow, Raw> =
     SideTable::new(&side_table::PHONETIC_LEARNED_VECTOR);
 
 /// Host-bound model of the learned rung: names in, one vector per name out.
