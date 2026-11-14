@@ -415,7 +415,7 @@ mod removed_carriers {
                     &WindowKey::new(window),
                     &snapshot,
                     &doc_version_vector(doc),
-                    true,
+                    false,
                 )
             })
             .unwrap();

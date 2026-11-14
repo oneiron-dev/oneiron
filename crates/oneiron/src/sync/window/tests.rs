@@ -951,7 +951,7 @@ fn prune_spares_updates_persisted_after_the_merge() {
     let vv = doc_version_vector(&window.doc);
     vault
         .with_write_txn(|wtxn| {
-            persist_window_doc_in_txn(&vault, wtxn, &key, &state, &vv, true)?;
+            persist_window_doc_in_txn(&vault, wtxn, &key, &state, &vv, false)?;
             prune_subsumed_window_updates_in_txn(&vault, wtxn, &key, &merged)
         })
         .unwrap();

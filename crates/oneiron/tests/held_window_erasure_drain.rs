@@ -26,6 +26,8 @@ use std::time::Duration;
 
 use loro::json::{JsonOpContent, MapOp};
 use loro::{ContainerID, ContainerType, ExportMode, LoroDoc, LoroValue, ValueOrContainer};
+use oneiron::deletion::LegalHoldTarget;
+use oneiron::store::GateDecisionId;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::types::WindowKey;
@@ -53,6 +55,17 @@ fn config() -> VaultConfig {
 fn open_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), config()).unwrap();
+    prepare_host_vault(dir, vault)
+}
+
+/// [`open_vault`] for an owned vault, whose owner can place a legal hold.
+fn open_owned_vault() -> (tempfile::TempDir, Arc<Vault>) {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open_owned(dir.path(), config()).unwrap();
+    prepare_host_vault(dir, vault)
+}
+
+fn prepare_host_vault(dir: tempfile::TempDir, vault: Vault) -> (tempfile::TempDir, Arc<Vault>) {
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
     vault.prepare_install_signing().unwrap();
     for key in vault.sync_state_keys_with_prefix("lm:w:1970-01:").unwrap() {
@@ -149,7 +162,7 @@ fn carries_erased_row(vault: &Vault, erased: &EntityId) -> bool {
             op.container == entities
                 && matches!(
                     &op.content,
-                    JsonOpContent::Map(MapOp::Insert { key, .. }) if key.to_string() == hex
+                    JsonOpContent::Map(MapOp::Insert { key, .. }) if key.as_str() == hex
                 )
         })
 }
@@ -338,5 +351,57 @@ fn a_late_reput_of_an_erased_row_owes_its_window_a_compaction() {
     assert!(
         !carries_erased_row(&vault, &erased),
         "the stored window still carries the re-put"
+    );
+}
+
+/// A legal hold on a row the held window carries keeps the window as it is
+/// (OF-470): the pass neither pins nor cuts it, so the holder's next persist
+/// stores the window's history whole, and the erasure obligation waits for
+/// the hold. At cdf9cc5b4fe2 the pass pinned the window before the cut's own
+/// hold check refused, and that persist stored a history-free snapshot, which
+/// dropped the held row's history as a cut would.
+#[test]
+fn a_held_window_a_legal_hold_keeps_is_neither_pinned_nor_cut() {
+    let (_dir, vault) = open_owned_vault();
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
+    let owner = vault
+        .authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())
+        .unwrap();
+    let held = EntityId::now();
+    vault
+        .batch()
+        .put(
+            &held,
+            1,
+            TimeRange {
+                start: LEARNED,
+                end: LEARNED,
+            },
+            LEARNED,
+            b"held-row-body",
+        )
+        .commit()
+        .unwrap();
+    vault
+        .place_legal_hold(&owner, vec![LegalHoldTarget::Record(held)], None)
+        .unwrap();
+    let HeldWindow {
+        window, sweep_key, ..
+    } = window_with_obligation(&vault);
+    assert!(
+        window.doc.get_map("entities").get(&held.to_hex()).is_some(),
+        "fixture: the window carries the held row"
+    );
+
+    let report = vault.maintain().run_hard_erase_sweep().run().unwrap();
+    window.persist_state(&vault).unwrap();
+
+    assert!(
+        !persisted_snapshot(&vault).is_shallow(),
+        "the held window was pinned or cut: {report:?}"
+    );
+    assert!(
+        obligation_queued(&vault, &sweep_key),
+        "the erasure obligation waits for the hold"
     );
 }

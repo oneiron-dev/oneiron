@@ -353,10 +353,13 @@ pub(super) fn compact_registered_window(
 /// window's are ([`compact_window_with`]); the holder keeps its window and
 /// sees no error.
 ///
+/// A window a legal hold keeps (OF-470) is neither pinned nor cut: the pin
+/// would make every later persist of the holder's doc history-free, which
+/// drops the held rows' history as a cut would ([`window_kept_by_legal_hold`]).
 /// A write that lands between the read and the compaction write defers the
 /// cut as raced; it is tried again, up to [`HELD_WINDOW_TRIES`] times in all.
-/// A legal hold, an unproved cut or a window that holds no history settles
-/// as on a closed window. The pin is never lifted.
+/// A hold placed after the pin, an unproved cut or a window that holds no
+/// history settles as on a closed window. The pin is never lifted.
 #[cfg(feature = "sync")]
 fn compact_held_window(
     vault: &Vault,
@@ -365,6 +368,9 @@ fn compact_held_window(
     withdrawn: &mut WithdrawnSweep,
     full_carriers: bool,
 ) -> Result<CompactOutcome> {
+    if window_kept_by_legal_hold(vault, key)? {
+        return Ok(CompactOutcome::HeldDefer);
+    }
     crate::sync::window::require_history_free_window(vault, key)?;
     let mut tries = 1;
     loop {
@@ -373,6 +379,58 @@ fn compact_held_window(
             return Ok(outcome);
         }
         tries += 1;
+    }
+}
+
+/// Whether a legal hold keeps window `key` as it is (OF-470, FIX 3061): a hold
+/// on a row its persisted state carries, live or tombstoned, or on such a
+/// pad's world, judged on the rows [`compact_window_with`] judges in its write
+/// transaction. A window with no persisted state carries none. A missing
+/// indexed hold row keeps the window too, as the cut treats it.
+#[cfg(feature = "sync")]
+fn window_kept_by_legal_hold(vault: &Vault, key: &crate::sync::types::WindowKey) -> Result<bool> {
+    use crate::ports::WindowAddress;
+    use crate::sync::loro_support::{doc_from_snapshot, import_doc};
+    use crate::sync::schema::create_window_doc;
+
+    let window = key.to_string();
+    let address = WindowAddress::new(&window);
+    // One read txn for the rows, dropped before any Loro work.
+    let (snapshot_bytes, update_rows) = {
+        let rtxn = vault.store.env.read_txn()?;
+        let snapshot = vault
+            .store
+            .port_window_doc_with_raw(&rtxn, address, |raw| Ok(raw.to_vec()))?;
+        let rows = vault
+            .store
+            .port_window_updates(&rtxn, address, |_, bytes| bytes.to_vec())?
+            .collect::<Result<Vec<_>>>()?;
+        (snapshot, rows)
+    };
+    if snapshot_bytes.is_none() && update_rows.is_empty() {
+        return Ok(false);
+    }
+    let doc = match &snapshot_bytes {
+        Some(bytes) => doc_from_snapshot(bytes)?,
+        None => create_window_doc("local", key),
+    };
+    for bytes in &update_rows {
+        import_doc(&doc, bytes)?;
+    }
+    let carried = crate::sync::carrier_holds::CarrierInventory::of_window(&doc);
+    let rtxn = vault.store.env.read_txn()?;
+    match carried.reject_held_in_txn(
+        &vault.store,
+        &rtxn,
+        &crate::store::legal_hold::HoldActor::TIMER,
+    ) {
+        Ok(()) => Ok(false),
+        Err(refused) if super::holds::refused_by_hold(&refused) => Ok(true),
+        Err(Error::CorruptedIndex("legal hold target")) => {
+            tracing::warn!("sweep: indexed legal hold row missing — held window kept unpinned");
+            Ok(true)
+        }
+        Err(err) => Err(err),
     }
 }
 
