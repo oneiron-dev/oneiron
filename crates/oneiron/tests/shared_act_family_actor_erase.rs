@@ -106,6 +106,13 @@ fn assert_resolves_to_nothing(vault: &Vault, person: EntityId) {
     );
 }
 
+/// `text` with each character written as a JSON `\u` escape.
+fn json_escaped(text: &str) -> String {
+    text.chars()
+        .map(|digit| format!("\\u{:04X}", u32::from(digit)))
+        .collect()
+}
+
 #[test]
 fn an_erased_stewards_receipt_keeps_its_scaffold_without_their_identity() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -272,6 +279,55 @@ fn an_unreadable_plan_does_not_stop_a_hard_erase() {
         String::from_utf8(payload(naming.id.as_str())).expect("the plan's text"),
         r#"{"v":1,"owner":"erased","note":1}"#,
         "the unreadable plan holds the erased marker where it named the candidate"
+    );
+    assert_eq!(
+        rows_naming(&vault, candidate).expect("rows"),
+        Vec::<String>::new(),
+        "no shared-act row holds the erased id"
+    );
+    assert_resolves_to_nothing(&vault, candidate);
+}
+
+/// Round 2 of #7759's review: a JSON reader decodes `\u0061` as `a`, so a
+/// plan whose owner spells the person's hex with one escaped digit names
+/// them, though its bytes hold no run of their hex. At ff2c621387db the
+/// erase kept that plan as stored, and a key spelled in escapes kept them
+/// too. Now each JSON string and key that decodes to the person holds the
+/// erased marker.
+#[test]
+fn an_unreadable_plan_that_escapes_the_persons_hex_holds_the_marker() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (vault, owner) = vault_and_owner(dir.path());
+    let candidate = person(&vault);
+    share(&vault, owner, None);
+    let hex = candidate.to_hex();
+    let (first, rest) = hex.split_at(1);
+    let escaped = format!(
+        r#"{{"v":1,"owner":"{}{rest}","{}":1}}"#,
+        json_escaped(first),
+        json_escaped(&hex)
+    );
+    let act = vault
+        .start_authority_act(
+            &proof(&vault, owner),
+            SHARED,
+            "add_owner",
+            escaped.into_bytes(),
+        )
+        .expect("the Owner stores an add_owner act with an escaped plan");
+
+    hard_erase(&vault, candidate);
+
+    let payload = vault
+        .pending_authority_act(act.id.as_str())
+        .expect("the read")
+        .expect("the act stays as scaffold")
+        .payload;
+    let plan: serde_json::Value = serde_json::from_slice(&payload).expect("the plan stays JSON");
+    assert_eq!(
+        plan,
+        serde_json::json!({ "v": 1, "owner": ERASED, ERASED: 1 }),
+        "each string and key that decoded to the candidate holds the erased marker"
     );
     assert_eq!(
         rows_naming(&vault, candidate).expect("rows"),
