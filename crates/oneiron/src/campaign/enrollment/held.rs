@@ -10,7 +10,7 @@ use crate::attempt_queue::{
 };
 use crate::consent::{AuthenticatedOwner, ConsentReceipt};
 use crate::entity_id::EntityId;
-use crate::gate::CampaignLegFacts;
+use crate::gate::{CampaignLegFacts, GateReasonCode};
 use crate::llm::decision::{AskTo, HumanDecisionRequest};
 use crate::model_decision::{
     AnswerContract, DecisionClass, DecisionQuestion, DecisionRung, HumanAskReason, ProviderPin,
@@ -151,6 +151,22 @@ fn queue_held_owner_ask_in_txn(
         facts.step_ref,
         held.frozen_event_ref,
     ];
+    // ARCH-0059 #copy-review: a copy-review hold states the campaign's
+    // review mode and the judge's reason class, so the owner sees what holds it.
+    let copy_review = if held
+        .gate_reason_codes
+        .iter()
+        .any(|code| code == GateReasonCode::PendingCampaignCopyReview.as_str())
+    {
+        super::copy_review::copy_review_ask_state_in_txn(
+            &vault.store,
+            txn,
+            facts.campaign_ref,
+            facts.payload_digest,
+        )?
+    } else {
+        None
+    };
     let state = serde_json::json!({
         "call_ref": crate::entity_id::bytes_to_hex_lower(call_ref.as_bytes()),
         "consequence": crate::entity_id::bytes_to_hex_lower(&key.0),
@@ -168,6 +184,7 @@ fn queue_held_owner_ask_in_txn(
         "envelope_hash": crate::entity_id::bytes_to_hex_lower(&held.envelope_hash),
         "gate_reason_codes": &held.gate_reason_codes,
         "gate_receipt_reasons": &held.gate_receipt_reasons,
+        "copy_review": copy_review,
     });
     let text = serde_json::to_string(&state)
         .map_err(|_| IntentLedgerError::InvalidRecord("campaign held ask"))?;

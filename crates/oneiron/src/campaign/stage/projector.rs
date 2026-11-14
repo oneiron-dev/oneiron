@@ -173,7 +173,7 @@ fn require_current_stage_head(
 /// disagree about stage, evidence, and basis — so it is rejected here for the
 /// same reason CA-01's transition door rejects it. Decoding runs through CA-01's
 /// decoder; this module defines no second stage wire shape.
-pub(super) fn live_stage_head_in(
+pub(crate) fn live_stage_head_in(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     party_ref: &EntityId,

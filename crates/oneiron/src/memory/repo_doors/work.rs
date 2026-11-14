@@ -100,6 +100,23 @@ pub(super) fn repo_ref_pin(vault: &Vault, repo_ref: &RepoRef, git_ref: &str) -> 
     wire.resolve_commit(&repo, named.as_str()).ok()
 }
 
+/// `repo_ref` pinned at `commit`: the same repository at that revision. A
+/// current-folder capture has no revision and stays as it is.
+fn repo_ref_at_commit(repo_ref: &RepoRef, commit: &str) -> RepoRef {
+    match repo_ref {
+        RepoRef::LocalFolder { path, .. } => RepoRef::LocalFolder {
+            path: path.clone(),
+            commit: commit.to_owned(),
+        },
+        RepoRef::GitHubAtCommit { owner, repo, .. } => RepoRef::GitHubAtCommit {
+            owner: owner.clone(),
+            repo: repo.clone(),
+            commit: commit.to_owned(),
+        },
+        RepoRef::LocalCapture { .. } => repo_ref.clone(),
+    }
+}
+
 /// The proven object store of a local folder pointer; `None` for a remote
 /// pointer or a folder that does not prove.
 pub(super) fn open_local_repo(vault: &Vault, repo_ref: &RepoRef) -> Option<GitWireRepo> {
@@ -389,9 +406,11 @@ impl Memory<'_> {
                 )
             })
             .collect();
+        // The capture names the commit it is of: the queue's green, which
+        // moves past the registered commit once the queue lands a batch.
         let snapshot = CodebaseSnapshot::new(
             selected_repo.to_hex(),
-            membership.repo_ref.clone(),
+            repo_ref_at_commit(&membership.repo_ref, &queue.green),
             Some(queue.green.clone()),
             entries,
         )?;

@@ -4,6 +4,7 @@
 //! exact members and policy frontier; settlement keeps their inverse handles.
 
 mod actor_erase;
+mod changes;
 mod receipts;
 mod restore_group;
 mod revert;
@@ -12,6 +13,12 @@ mod snapshot;
 mod topology;
 
 pub(crate) use actor_erase::erase_run_review_actor_in_txn;
+pub use changes::{RunChanges, RunChangesRequest};
+#[cfg(oneiron_test_support)]
+pub(crate) use changes::{journal_changes, journal_row_sizes};
+pub(crate) use changes::{
+    record_run_claim_in_txn, record_run_deletion_in_txn, record_run_topology_in_txn,
+};
 pub(crate) use receipts::run_settlement_receipts;
 
 use crate::consent::AuthenticatedOwner;
@@ -52,23 +59,38 @@ pub enum RunReviewChange {
 }
 
 impl RunReviewChange {
-    fn change(&self) -> &str {
+    /// The change's ref, which names it in a review, a settlement and a
+    /// revert selection: the row the change wrote (its claim, provenance
+    /// claim, fork, topology event or effect receipt). A deletion wrote no
+    /// row of its own, so its ref is its kind and the entity it removed,
+    /// `delete:<entity>` or `erase:<entity>`: a run that wrote a claim and
+    /// then deleted it, or deleted and then erased one entity, keeps each
+    /// change apart.
+    fn change(&self) -> String {
         match self {
-            Self::Claim { claim_ref } => claim_ref,
-            Self::Edge { provenance_ref } => provenance_ref,
-            Self::Note { fork_ref, .. } => fork_ref,
-            Self::Topology { event_ref } => event_ref,
-            Self::ExternalEffect { receipt_ref } => receipt_ref,
-            Self::Delete { entity_ref } | Self::Erase { entity_ref } => entity_ref,
+            Self::Claim { claim_ref } => claim_ref.clone(),
+            Self::Edge { provenance_ref } => provenance_ref.clone(),
+            Self::Note { fork_ref, .. } => fork_ref.clone(),
+            Self::Topology { event_ref } => event_ref.clone(),
+            Self::ExternalEffect { receipt_ref } => receipt_ref.clone(),
+            Self::Delete { entity_ref } => format!("delete:{entity_ref}"),
+            Self::Erase { entity_ref } => format!("erase:{entity_ref}"),
         }
     }
 
     fn rows(&self) -> MemoryResult<Vec<EntityId>> {
-        match self {
-            Self::ExternalEffect { .. } => Ok(Vec::new()),
-            Self::Note { note_ref, .. } => Ok(vec![EntityId::from_hex(note_ref)?]),
-            _ => Ok(vec![EntityId::from_hex(self.change())?]),
-        }
+        let row = match self {
+            Self::ExternalEffect { .. } => return Ok(Vec::new()),
+            Self::Claim { claim_ref: row }
+            | Self::Edge {
+                provenance_ref: row,
+            }
+            | Self::Note { note_ref: row, .. }
+            | Self::Topology { event_ref: row }
+            | Self::Delete { entity_ref: row }
+            | Self::Erase { entity_ref: row } => row,
+        };
+        Ok(vec![EntityId::from_hex(row)?])
     }
 }
 
@@ -81,43 +103,12 @@ pub struct RunReviewRequest {
     pub changes: Vec<RunReviewChange>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RunChangeVerdict {
-    Landed,
-    Rejected,
-    Waiting,
-    LetGo,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RunChangeOutcome {
-    pub change: String,
-    pub verdict: RunChangeVerdict,
-    pub receipt: Option<String>,
-}
-
-/// Derived text with its source refs. It is never persisted as a memory row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RunReviewExplainer {
-    pub text: String,
-    pub read_refs: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RunReview {
-    pub run_id: String,
-    pub review_id: String,
-    pub changes: Vec<RunChangeOutcome>,
-    pub explainer: RunReviewExplainer,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RunSettleDecision {
-    Approve,
-    Reject,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::run_review::{
+    RevertRunOutcome, RevertRunRequest, RunAnsweredBy, RunChangeOutcome, RunChangeVerdict,
+    RunCompensation, RunNotUndone, RunNotUndoneReason, RunReview, RunReviewExplainer,
+    RunSettleDecision, RunSettlement, RunSettlementKind, RunSettlementReason, RunSettlementRequest,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -125,84 +116,6 @@ pub struct RunSettleRequest {
     pub review: RunReviewRequest,
     pub review_id: String,
     pub decision: RunSettleDecision,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(untagged)]
-pub enum RunAnsweredBy {
-    Word { word_ref: String },
-    Row { row: String },
-    Grant { grant: String },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum RunSettlementKind {
-    ProposalOutcome,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RunSettlementReason {
-    OwnerApproved,
-    OwnerRejected,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RunSettlement {
-    pub kind: RunSettlementKind,
-    pub run_id: String,
-    pub receipt: String,
-    pub changes: Vec<RunChangeOutcome>,
-    pub verdict: RunChangeVerdict,
-    pub answered_by: RunAnsweredBy,
-    pub reason: RunSettlementReason,
-    pub summary: String,
-    pub revert_handle: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RunSettlementRequest {
-    pub run_id: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RevertRunRequest {
-    /// The job id or the settlement's run: handle.
-    pub run_id: String,
-    /// Absent means all; a present list selects exact change refs, even one.
-    #[serde(default)]
-    pub changes: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RunCompensation {
-    pub change: String,
-    pub receipt: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RunNotUndoneReason {
-    OneWay,
-    BackupOnly,
-    Dependent,
-    NotSelected,
-    NotLanded,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RunNotUndone {
-    pub change: String,
-    pub reason: RunNotUndoneReason,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RevertRunOutcome {
-    pub run_id: String,
-    pub compensated: Vec<RunCompensation>,
-    pub not_undone: Vec<RunNotUndone>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

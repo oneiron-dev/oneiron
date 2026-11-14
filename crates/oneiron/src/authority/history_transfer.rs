@@ -19,7 +19,7 @@ pub(super) fn history_in_txn(
 ) -> Result<BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>> {
     let mut history = BTreeMap::new();
     for (id, bytes) in authority_log_rows_in_txn(&vault.store, txn)? {
-        let entry = decode_authority_log_entry_body(&bytes)?;
+        let entry = decode_stored_authority_log_body(&bytes)?;
         let hash = authority_entry_hash(&entry)?;
         if authority_log_entity_id_from_hash(&hash)? != id {
             return Err(Error::CorruptedIndex("authority history key"));
@@ -400,7 +400,11 @@ impl Vault {
     /// re-signed and no parent is renamed; a move that no longer covers this
     /// vault's frontier is refused, for its signer to sign again. The rows
     /// are marked for the vault's loaded windows in the same write and
-    /// announced once it commits, as an import's are.
+    /// announced once it commits, as an import's are. Then the stale-stamp
+    /// sweep runs, as after an import (H213): a severed pact's worlds carry
+    /// their stamp when this returns. A sweep that fails after the commit
+    /// returns its error while the move stands; the sweep stays owed, and
+    /// the next commit by any writer retries it.
     ///
     /// `delegation` is the leave-notice delegation the move's signer signed
     /// beside it (FIX 7932, [`Self::unsigned_leave_notice_delegation`]): it
@@ -421,6 +425,7 @@ impl Vault {
         entry: &AuthorityLogEntry,
         delegation: Option<&LeaveNoticeDelegation>,
     ) -> Result<EntityId> {
+        let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
         let (id, rows) = self.apply_signed_re_root_in_txn(&mut txn, joins, entry)?;
         if let Some(delegation) = delegation {
@@ -434,6 +439,7 @@ impl Vault {
         self.mark_authority_rows_in_txn(&mut txn, &rows)?;
         txn.commit()?;
         self.note_committed_authority_rows(rows);
+        watch.finish()?;
         Ok(id)
     }
 
@@ -536,7 +542,9 @@ impl Vault {
     /// call (FIX 8527), so no head count refuses and every head stays in the
     /// move's causal past, inside its fence. The join and the move are
     /// marked for the vault's loaded windows in the write and announced once
-    /// it commits.
+    /// it commits. Then the stale-stamp sweep runs, as after an import
+    /// (H213); a sweep that fails after the commit returns its error while
+    /// the move stands, and stays owed for the next commit by any writer.
     pub fn re_root_authority<S>(
         &self,
         new_device: DeviceAuthority,
@@ -549,6 +557,7 @@ impl Vault {
         let signer = RefCell::new(signer);
         let sign = |transcript: &[u8]| (*signer.borrow_mut())(transcript);
         let joiner = FrontierSigner::Callback(&signer_key, &sign);
+        let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
         let (entry, rows) = self.re_root_authority_in_txn(
             &mut txn,
@@ -558,6 +567,7 @@ impl Vault {
         )?;
         txn.commit()?;
         self.note_committed_authority_rows(rows);
+        watch.finish()?;
         Ok(entry)
     }
 

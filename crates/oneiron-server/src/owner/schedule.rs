@@ -642,14 +642,16 @@ mod tests {
         let host = |config: &crate::config::ServeConfig| {
             OwnerHost::from_config(config, config.vault_config())
         };
-        // OwnerHost.every is gone (#3229, ee03f1dcb4d): the schedule reads as
-        // the `[backup]` fallback policy, enabled and every_hours (rule D).
         assert!(!host(&config).fallback.enabled, "the schedule is opt-in");
         config.backup.enabled = true;
         let on = host(&config).fallback;
         assert!(on.enabled);
         assert_eq!(on.every_hours, 24);
+        // Ruled refusal removed (#3229, WILL-PLAN L14 row 12: one backup
+        // schedule on every posture): a hosted node follows `[backup]` too.
         config.privacy_posture = oneiron::HostingPrivacyPosture::Hosted;
-        assert!(!host(&config).fallback.enabled);
+        let hosted = host(&config).fallback;
+        assert!(hosted.enabled);
+        assert_eq!(hosted.every_hours, 24);
     }
 }

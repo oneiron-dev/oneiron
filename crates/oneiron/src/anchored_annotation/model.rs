@@ -32,6 +32,12 @@ pub const ANNOTATION_LOCATOR_RANGE_MAX_BYTES: usize = 64;
 /// its anchor, origin and drift versions all hold this one value.
 pub const CODE_ANCHOR_VERSION: u64 = 0;
 
+/// The anchor version of every plan-doc thread (plan mode's markup). A
+/// plan-doc NOTE keeps no numbered version chain: the anchor's body names
+/// the text frontier its span was read at, and each read follows the span's
+/// characters from there to the head.
+pub const PLAN_DOC_ANCHOR_VERSION: u64 = 0;
+
 pub(super) const FORMAT_XLSX: &str = "xlsx";
 
 pub(super) const FORMAT_DOCX: &str = "docx";
@@ -403,11 +409,13 @@ fn is_lower_hex(text: &str, len: usize) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Anchor {
-    /// The blob or code artifact this anchor lands on.
+    /// The blob or code artifact, or the plan-doc NOTE, this anchor lands
+    /// on.
     pub artifact_id: EntityId,
     /// The artifact version the locator resolves against. For a code
     /// artifact the locator's commit and file hash pin the bytes, and the
-    /// version is [`CODE_ANCHOR_VERSION`].
+    /// version is [`CODE_ANCHOR_VERSION`]. For a plan-doc the body's frontier
+    /// pins the text, and the version is [`PLAN_DOC_ANCHOR_VERSION`].
     pub version: u64,
     /// The format-typed position within that version.
     pub locator: Locator,

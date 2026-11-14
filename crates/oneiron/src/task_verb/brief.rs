@@ -24,34 +24,22 @@ use crate::llm::decision::Reversibility;
 use crate::llm::decision::questions::OutcomeBinding;
 use crate::llm::decision::questions::QuestionCriteria;
 use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::note::PlanDocState;
 
 use super::ask_types::{TaskAskDefault, TaskAskTarget};
 use super::consts::TASK_BRIEF_SCHEMA;
 use super::consult_payload::ConsultPayloadRef;
 use super::verb_kind::TaskAssignee;
 
-/// Domain of [`brief_digest`].
-const BRIEF_DIGEST_DOMAIN: &[u8] = b"oneiron.tasks.brief.digest.v1";
-/// Domain of a pin's digest over the row it names.
-const PIN_DIGEST_DOMAIN: &[u8] = b"oneiron.tasks.brief.pin.v1";
-/// What a workflow handle starts with, before its record's 32 hex.
-const WORKFLOW_HANDLE_PREFIX: &str = "workflow:";
-/// The typed record slots of a brief (OF-063): each must resolve under the
-/// writer's own read. The type ref is not among them: it names a node of the
-/// team's type tree, not a record.
-const BRIEF_RECORD_SLOTS: &[&str] = &[
-    "/context/pack/pack_ref",
-    "/context/read_first/*/target",
-    "/success/criteria/yes_if_all/*/evidence_ref",
-    "/success/criteria/no_if_any/*/evidence_ref",
-    "/success/criteria/not_a_reason_to_say_no/*/evidence_ref",
-    "/constraints/policy_refs/*",
-    "/constraints/budget_ref",
-    "/settled/*",
-    "/project_ref",
-    "/escalation/question_ref/claim",
-    "/escalation/question_ref/turn",
-];
+#[doc(hidden)]
+use oneiron_verb_wire::task_verb::brief::{
+    BRIEF_DIGEST_DOMAIN, BRIEF_RECORD_SLOTS, PIN_DIGEST_DOMAIN, WORKFLOW_HANDLE_PREFIX,
+    require_text,
+};
+#[doc(hidden)]
+pub use oneiron_verb_wire::task_verb::brief::{
+    BriefConstraints, BriefIntent, Care, Criterion, EscalationTrigger, SpawnPins, TypeRef,
+};
 
 /// Fixed-width byte strings travel as lowercase hex on every wire.
 pub(crate) fn decode_hex<const N: usize>(text: &str) -> Option<[u8; N]> {
@@ -113,66 +101,6 @@ pub(crate) mod hex32 {
                 .transpose()
         }
     }
-}
-
-/// The learned type a task instantiates: a node and the tree version it was
-/// read at (ARCH-0079). Required: a missing type is invalid, never untyped.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TypeRef {
-    pub node_id: EntityId,
-    pub tree_version: u64,
-}
-
-/// How much care the work needs; inferred by the planner when absent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Care {
-    Light,
-    Medium,
-    High,
-    Xhigh,
-    Max,
-}
-
-/// The task's intent: canon's `need`, apart from any prompt, and its `care`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BriefIntent {
-    pub need: String,
-    #[serde(default)]
-    pub care: Option<Care>,
-}
-
-/// Spawn seeds a caller may pin; unset is planned.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SpawnPins {
-    #[serde(default)]
-    pub model: Option<String>,
-    #[serde(default)]
-    pub width: Option<u16>,
-    #[serde(default)]
-    pub pattern: Option<String>,
-    #[serde(default)]
-    pub budget: Option<u64>,
-}
-
-/// Constraints the work runs under. The refs describe policy and budget
-/// rows; holding one authorizes nothing.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BriefConstraints {
-    #[serde(default)]
-    pub notes: Vec<String>,
-    #[serde(default)]
-    pub policy_refs: Vec<EntityId>,
-    #[serde(default)]
-    pub budget_ref: Option<EntityId>,
-    #[serde(default)]
-    pub deadline: Option<u64>,
-    #[serde(default)]
-    pub pins: SpawnPins,
 }
 
 /// A context pack pinned by digest: a pack ref promises no immutability, so
@@ -277,15 +205,6 @@ impl WorkflowBinding {
     }
 }
 
-/// One criterion of the done-means question.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Criterion {
-    pub text: String,
-    #[serde(default)]
-    pub evidence_ref: Option<EntityId>,
-}
-
 /// Done means: one typed question, judged by the same criteria triple a
 /// typed question carries (OF-506): yes if all of these, no if any of these,
 /// and the lines that are never a reason to say no, each criterion with its
@@ -333,35 +252,6 @@ impl DoneMeans {
             .filter_map(|criterion| criterion.evidence_ref)
             .filter(|id| seen.insert(*id))
             .collect()
-    }
-}
-
-/// What makes the work ask up.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum EscalationTrigger {
-    Blocked,
-    CriteriaUnmet,
-    ScopeWiden,
-    SpendOver,
-    Deadline,
-    BriefRevised,
-    RetryRequested,
-}
-
-impl EscalationTrigger {
-    /// Stable wire token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Blocked => "blocked",
-            Self::CriteriaUnmet => "criteria_unmet",
-            Self::ScopeWiden => "scope_widen",
-            Self::SpendOver => "spend_over",
-            Self::Deadline => "deadline",
-            Self::BriefRevised => "brief_revised",
-            Self::RetryRequested => "retry_requested",
-        }
     }
 }
 
@@ -486,12 +376,17 @@ pub fn brief_digest(brief: &QueueTaskBrief) -> [u8; 32] {
 }
 
 /// The digest a pin carries: of the named row exactly as this vault stores it
-/// now. `None` when the row is absent.
+/// now, or, for a plan-doc, its revision, the hash of its text (plan mode),
+/// so a run from a plan carries the revision the owner approved. `None` when
+/// the row is absent.
 pub(super) fn pin_digest_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     target: EntityId,
 ) -> MemoryResult<Option<[u8; 32]>> {
+    if let Some((revision, _)) = crate::note::plan_doc_pin_in_txn(vault, txn, target)? {
+        return Ok(Some(revision));
+    }
     let Some(raw) = vault.get_raw_in(txn, &target)? else {
         return Ok(None);
     };
@@ -519,15 +414,6 @@ fn require_entity(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> MemoryR
     } else {
         Err(MemoryError::from(Error::EntityNotFound))
     }
-}
-
-fn require_text(text: &str, what: &str) -> MemoryResult<()> {
-    if text.trim().is_empty() {
-        return Err(MemoryError::bad_request(format!(
-            "task brief {what} must not be blank"
-        )));
-    }
-    Ok(())
 }
 
 impl QueueTaskBrief {
@@ -697,6 +583,78 @@ impl QueueTaskBrief {
 }
 
 impl Memory<'_> {
+    /// Plan mode's admission of a TASK for `assignee` under `brief` (Engine
+    /// ruling Fri 13 Nov 03:05, RUN = A and SETTING = A). Refuses a brief that
+    /// pins a plan-doc the owner has not approved at the pinned revision: an
+    /// agent's run starts from a plan only once the owner approved the text
+    /// it pins. Refuses a TASK for an agent whose plan mode is `required`
+    /// unless its brief pins such an approved plan; a brief-less create
+    /// (`brief` `None`) pins none. The vault owner's own TASK is never
+    /// refused.
+    pub(super) fn require_plan_admission_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        assignee: Option<TaskAssignee>,
+        brief: Option<&QueueTaskBrief>,
+    ) -> MemoryResult<()> {
+        let vault = self.vault();
+        if crate::memory::actor_is_vault_owner_in_txn(vault, txn, self.actor(), self.actor_class())?
+        {
+            return Ok(());
+        }
+        let mut pins_approved_plan = false;
+        for pin in brief
+            .into_iter()
+            .flat_map(|brief| &brief.context.read_first)
+        {
+            match crate::note::plan_doc_pin_in_txn(vault, txn, pin.target)? {
+                None => {}
+                Some((revision, PlanDocState::Approved)) if revision == pin.digest => {
+                    pins_approved_plan = true;
+                }
+                Some(_) => {
+                    return Err(super::highway::invalid_state(
+                        "gate.plan_not_approved: the brief pins a plan-doc the owner has not approved at the pinned revision",
+                        "Ask the owner to approve the plan (vault.plans.approve), then pin the revision approved.",
+                    ));
+                }
+            }
+        }
+        if !pins_approved_plan && let Some(TaskAssignee::AgentDef { agent_def_ref }) = assignee {
+            crate::agent_def::refuse_unplanned_run_in_txn(&vault.store, txn, agent_def_ref)?;
+        }
+        Ok(())
+    }
+
+    /// [`Self::require_plan_admission_in`] in the writer that settles a parked
+    /// post, brief revision or brief-less create: a yes that is not the
+    /// owner's (an agent's take, another approver's approval) lands nothing
+    /// from a plan the owner has not approved at the pinned revision, though
+    /// it was approved when the proposal parked, and no unplanned run of an
+    /// agent whose plan mode turned `required` since. The owner's approval, or
+    /// a door that records no approver (the owner's tray), is the owner's act
+    /// and is never refused.
+    pub(super) fn require_settled_plan_admission_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        assignee: Option<TaskAssignee>,
+        brief: Option<&QueueTaskBrief>,
+        approver: Option<crate::WriteActor>,
+    ) -> MemoryResult<()> {
+        let Some(approver) = approver else {
+            return Ok(());
+        };
+        if crate::memory::actor_is_vault_owner_in_txn(
+            self.vault(),
+            txn,
+            approver.entity_ref(),
+            approver.actor_class(),
+        )? {
+            return Ok(());
+        }
+        self.require_plan_admission_in(txn, assignee, brief)
+    }
+
     /// Pins one read-first handle for a brief: the row's digest as this vault
     /// holds it now. A composer pins what it read; settlement refuses a pin
     /// whose row has moved since.

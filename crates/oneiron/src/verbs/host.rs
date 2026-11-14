@@ -132,7 +132,7 @@ pub fn put_pack_embedded(
         return put_local_pack_as_agent(memory, input);
     }
     Ok(memory
-        .put_pack_as_embedded_owner(input.into_files()?)?
+        .put_pack_as_embedded_owner("vault.packs.put", input.into_files()?)?
         .into())
 }
 

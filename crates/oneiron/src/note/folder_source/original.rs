@@ -9,8 +9,6 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
-
 use super::super::import::NOTES_IMPORT_SOURCE;
 use super::{FILES, file_key};
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body};
@@ -42,17 +40,8 @@ impl OriginalBytes {
     }
 }
 
-/// A kept original: the version of its file's blob artifact that holds the
-/// bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct FileOriginal {
-    /// The file's blob artifact, one per file across its versions.
-    pub artifact: EntityId,
-    /// The version that holds these bytes.
-    pub version: u64,
-    /// The bytes' blake3 hash, lower hex.
-    pub content_hash: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::note::folder_source::original::FileOriginal;
 
 impl Vault {
     /// The blob artifact that keeps the originals of the file at `path`
