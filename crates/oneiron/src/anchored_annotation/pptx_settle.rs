@@ -78,6 +78,7 @@ impl crate::Vault {
                             locator,
                             drift: None,
                             body: None,
+                            sub_session: None,
                         };
                         let id = self.write_thread_head_in_txn(
                             txn,
@@ -142,6 +143,7 @@ impl crate::Vault {
                             locator: thread.anchor.locator.clone(),
                             drift: thread.drift,
                             body: thread.anchor.body.clone(),
+                            sub_session: thread.sub_session_id,
                         };
                         let id = self.write_thread_head_in_txn(
                             txn,

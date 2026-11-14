@@ -212,6 +212,10 @@ pub const TASK_ASK_FORWARD_RESULT: &[u8] = b"oneiron.tasks.ask.forward_result.v1
 /// of one vault holds its own, and one post must name one TASK on all of them.
 pub const TASK_POST: &[u8] = b"oneiron.tasks.post.v1";
 
+/// The SESSION an approved plan's run hangs off its approving turn, derived
+/// from the run TASK's id, so a revision approved again keeps one session.
+pub const PLAN_RUN_SESSION: &[u8] = b"oneiron.plans.run_session.v1";
+
 /// The TASK a settled create proposal names (`task_verb::proposal_create`).
 /// Parts: the proposal claim id.
 pub const TASK_SETTLE: &[u8] = b"oneiron.tasks.settle.v1";
@@ -469,7 +473,7 @@ pub const RESIDENT_MESSAGE_ASK: &[u8] = b"oneiron.agent_dispatch.resident_messag
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 71] = [
+pub(crate) const ALL: [&[u8]; 72] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -504,6 +508,7 @@ pub(crate) const ALL: [&[u8]; 71] = [
     TASK_ASK_FORWARD_INTENT,
     TASK_ASK_FORWARD_RESULT,
     TASK_POST,
+    PLAN_RUN_SESSION,
     TASK_SETTLE,
     COMM_CONNECTOR_SEND_EVENT,
     OUTBOUND_RECEIPT_RECORD,

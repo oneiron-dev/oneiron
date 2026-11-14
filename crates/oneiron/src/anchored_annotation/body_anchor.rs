@@ -559,6 +559,7 @@ fn plan_thread(
                         pinned_version: pinned,
                     }),
                     body: None,
+                    sub_session: thread.sub_session_id,
                 },
                 Effect::Detached(at),
             )
@@ -620,6 +621,7 @@ fn plan_thread(
                     locator,
                     drift: None,
                     body: Some(moved),
+                    sub_session: thread.sub_session_id,
                 },
                 effect,
             )

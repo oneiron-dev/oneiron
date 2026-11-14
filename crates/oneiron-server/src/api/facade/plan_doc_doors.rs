@@ -10,10 +10,11 @@ use super::shared_act_doors::as_person_naming;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
-/// An answered plan-doc names its NOTE, and the run an approval landed.
+/// An answered plan-doc names its NOTE, the run an approval landed and the run's sub-session.
 fn settled_plan_rows(settled: &PlanDocSettlementView) -> Vec<EntityId> {
     std::iter::once(settled.plan_ref)
         .chain(settled.run_task_ref)
+        .chain(settled.sub_session_id)
         .collect()
 }
 
