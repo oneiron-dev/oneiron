@@ -74,6 +74,12 @@ pub(super) fn empty_directory(dir: BorrowedFd<'_>, root: bool) -> std::io::Resul
                 Mode::empty(),
             )?;
             empty_directory(child.as_fd(), false)?;
+            #[cfg(test)]
+            BEFORE_CHILD_DIRECTORY_UNLINK.with(|slot| {
+                if let Some(callback) = slot.borrow_mut().as_mut() {
+                    callback(name.as_c_str());
+                }
+            });
             unlinkat(dir, name.as_c_str(), AtFlags::REMOVEDIR)?;
         } else {
             unlinkat(dir, name.as_c_str(), AtFlags::empty())?;
@@ -90,6 +96,26 @@ pub(super) fn empty_directory(dir: BorrowedFd<'_>, root: bool) -> std::io::Resul
     #[cfg(test)]
     if root {
         AFTER_ROOT_ENTRY_REMOVED.with(|slot| slot.borrow_mut().take());
+        BEFORE_CHILD_DIRECTORY_UNLINK.with(|slot| slot.borrow_mut().take());
     }
     Ok(())
 }
+
+#[cfg(test)]
+type ChildDirectoryCallback = Box<dyn FnMut(&std::ffi::CStr)>;
+
+#[cfg(test)]
+thread_local! {
+    static BEFORE_CHILD_DIRECTORY_UNLINK: std::cell::RefCell<Option<ChildDirectoryCallback>> =
+        std::cell::RefCell::new(None);
+}
+
+/// Runs `callback` with each directory's name inside the next removal on
+/// this thread, once that directory is emptied and before it is unlinked.
+#[cfg(test)]
+pub(crate) fn arm_before_child_directory_unlink(callback: impl FnMut(&std::ffi::CStr) + 'static) {
+    BEFORE_CHILD_DIRECTORY_UNLINK.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
+#[cfg(test)]
+mod tests;
