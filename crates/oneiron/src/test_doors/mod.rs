@@ -28,6 +28,7 @@ pub mod comm_late_stop;
 pub mod comm_thread_member_claim_reads;
 pub mod connector_key_suspend;
 pub mod consent_graduation_demotion;
+pub mod consent_graduation_ramp_rows;
 pub mod consolidation;
 pub mod credit_decay_fit;
 pub mod dag_append;
