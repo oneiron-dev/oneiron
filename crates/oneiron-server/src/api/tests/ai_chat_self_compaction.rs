@@ -208,13 +208,43 @@ fn seen_report(fake: &FakeLlm) -> Vec<String> {
         .collect()
 }
 
+/// The rows stored as the conversation's children, unread by any lane:
+/// each one's entity type and how many rows are part of it, so a report
+/// tells a turn never listed from a turn whose page was not admitted.
+fn stored_children(vault: &oneiron::Vault, conversation: &oneiron::EntityId) -> String {
+    let edges = match vault.edges_in(conversation) {
+        Ok(edges) => edges,
+        Err(error) => return format!("children unread: {error:?}"),
+    };
+    let children: Vec<String> = edges
+        .iter()
+        .filter(|edge| edge.kind == oneiron::EdgeKind::ChildOf)
+        .map(|edge| {
+            let entity_type = vault.get_entity_type(&edge.target).ok().flatten();
+            let parts = vault.edges_in(&edge.target).map(|parts| {
+                parts
+                    .iter()
+                    .filter(|part| part.kind == oneiron::EdgeKind::PartOf)
+                    .count()
+            });
+            format!("type={entity_type:?} parts={parts:?}")
+        })
+        .collect();
+    format!(
+        "{} inbound edges, children [{}]",
+        edges.len(),
+        children.join(", ")
+    )
+}
+
 /// The chat log the turns' own reader, the owner, reads now, as a self
-/// turn reads it before its user turn, and the transcript under it, for a
-/// failure's report.
+/// turn reads it before its user turn, the transcript under it, and the
+/// rows stored under the conversation, for a failure's report.
 fn log_report(server: &SyncServer, owner: oneiron::EntityId, conversation: &str) -> String {
     let Ok(id) = oneiron::EntityId::from_hex(conversation) else {
         return format!("conversation ref {conversation} names no id");
     };
+    let stored = stored_children(server.vault(), &id);
     let reader = server.vault().memory(owner, oneiron::EdgeActorClass::Human);
     let history_lines = server.ai.chat_settings().history_turns;
     let log = match oneiron::compaction::read_chat_log(&reader, id, 1, history_lines) {
@@ -253,7 +283,7 @@ fn log_report(server: &SyncServer, owner: oneiron::EntityId, conversation: &str)
             .join(" "),
         Err(error) => format!("transcript refused: {error:?}"),
     };
-    format!("{log}; transcript: {transcript}")
+    format!("{log}; transcript: {transcript}; stored: {stored}")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
