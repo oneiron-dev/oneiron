@@ -21,11 +21,10 @@
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-#[path = "check_in/erase_fixture.rs"]
-mod erase_fixture;
+#[path = "check_in/owner_apply_fixture.rs"]
+mod owner_apply_fixture;
 
-use erase_fixture::{approved, owner_erase, proof, rooted, spent};
-use oneiron::check_in::text_history_erase_effect_digest;
+use oneiron::check_in::{ActClass, text_history_erase_effect_digest};
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
 use oneiron::note::TakeTarget;
 use oneiron::registry::ENTITY_TYPE_PERSON;
@@ -33,6 +32,7 @@ use oneiron::verbs::{
     NoteHistoryPurgeOutcome, NoteHistoryPurgeRequest, purge_note_history_as_owner,
 };
 use oneiron::{EdgeActorClass, EntityId, TimeRange};
+use owner_apply_fixture::{approved, owner_decision, proof, rooted, spent};
 
 const SHARED: u64 = 44;
 const HISTORY_PURGE: &str = "vault.notes.history_purge";
@@ -67,13 +67,20 @@ fn the_owner_applies_an_approved_history_purge_once() {
     let own = purge(note(), None).expect("the owner purges on their own proof");
     assert_eq!(
         decision(own),
-        Some(owner_erase(None, None)),
+        Some(owner_decision(ActClass::Erase, None, None)),
         "the Owner's own purge records their own proof"
     );
 
     let target = note();
     let digest = text_history_erase_effect_digest(&target, None);
-    let (asked, asker) = approved(&vault, owner, &owner_proof, HISTORY_PURGE, &digest);
+    let (asked, asker) = approved(
+        &vault,
+        owner,
+        &owner_proof,
+        HISTORY_PURGE,
+        ActClass::Erase,
+        &digest,
+    );
     let other_note = purge(note(), Some(asked));
     assert!(
         other_note.is_err(),
@@ -84,7 +91,7 @@ fn the_owner_applies_an_approved_history_purge_once() {
     let applied = purge(target, Some(asked)).expect("the owner applies the approved purge");
     assert_eq!(
         decision(applied),
-        Some(owner_erase(Some(asked), Some(asker))),
+        Some(owner_decision(ActClass::Erase, Some(asked), Some(asker))),
         "the outcome names the check-in it applied and its asker"
     );
     assert!(spent(&vault, &asked), "the purge spent the check-in");
@@ -154,7 +161,7 @@ fn a_history_purge_held_by_the_veto_window_records_its_decision_on_its_act() {
             panic!("two Owners: the purge waits on its act: {erased:?}")
         }
     };
-    assert_eq!(check_in, Some(owner_erase(None, None)));
+    assert_eq!(check_in, Some(owner_decision(ActClass::Erase, None, None)));
     let act = vault
         .pending_authority_act(&act_id)
         .expect("read the act")

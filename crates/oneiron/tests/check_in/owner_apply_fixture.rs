@@ -1,7 +1,8 @@
-//! The erase doors' check-in tests' shared fixture (P2.5 2k2:
-//! `check_in_erase_effects.rs`, `check_in_history_erase_effects.rs`): a
-//! rooted vault, the decision of an Owner's erase, and an agent's approved
-//! ask opened through the check-in test doors.
+//! The Owner doors' apply-shape check-in tests' shared fixture (P2.5 2k2:
+//! `check_in_erase_effects.rs`, `check_in_history_erase_effects.rs`; 2k3:
+//! `check_in_key_recovery_effects.rs`): a rooted vault, the decision of an
+//! Owner's own act, and an agent's approved ask opened through the check-in
+//! test doors.
 
 use std::sync::Arc;
 
@@ -38,14 +39,15 @@ pub(crate) fn rooted() -> (tempfile::TempDir, Vault, EntityId, AuthenticatedOwne
     (dir, vault, owner, owner_proof)
 }
 
-/// The decision of an Owner's erase on their own proof, applying
+/// The decision of an Owner's own `act` on their own proof, applying
 /// `check_in` asked by `requester` when given.
-pub(crate) fn owner_erase(
+pub(crate) fn owner_decision(
+    act: ActClass,
     check_in: Option<EntityId>,
     requester: Option<EntityId>,
 ) -> CheckInDecision {
     CheckInDecision {
-        act_class: "erase".to_owned(),
+        act_class: act.as_str().to_owned(),
         role: "owner".to_owned(),
         mode: None,
         basis: "own_proof".to_owned(),
@@ -54,13 +56,14 @@ pub(crate) fn owner_erase(
     }
 }
 
-/// An agent's ask for `verb`'s erase over `digest`, on a chain whose Owner
+/// An agent's ask for `verb`'s `act` over `digest`, on a chain whose Owner
 /// rung is `owner`, approved by the owner: its id and its asker.
 pub(crate) fn approved(
     vault: &Vault,
     owner: EntityId,
     owner_proof: &AuthenticatedOwner,
     verb: &str,
+    act: ActClass,
     digest: &[u8; 32],
 ) -> (EntityId, EntityId) {
     let asker = EntityId::now();
@@ -75,7 +78,7 @@ pub(crate) fn approved(
         asker,
         grant_ref: "grant:deputy".to_owned(),
         verb: verb.to_owned(),
-        act: ActClass::Erase,
+        act,
         scope: CheckInScope::default(),
         effect_digest: *digest,
         mode: CheckInMode::AlwaysAsk,

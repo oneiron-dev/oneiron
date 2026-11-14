@@ -24,12 +24,11 @@
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-#[path = "check_in/erase_fixture.rs"]
-mod erase_fixture;
+#[path = "check_in/owner_apply_fixture.rs"]
+mod owner_apply_fixture;
 
-use erase_fixture::{approved, owner_erase, rooted, spent};
 use oneiron::check_in::{
-    legal_hold_erase_effect_digest, outbound_call_request_erase_effect_digest,
+    ActClass, legal_hold_erase_effect_digest, outbound_call_request_erase_effect_digest,
 };
 use oneiron::deletion::LegalHoldTarget;
 use oneiron::memory::BlobArtifactInput;
@@ -39,6 +38,7 @@ use oneiron::verbs::{
     lift_legal_hold_and_erase_as, place_legal_hold_as,
 };
 use oneiron::{EdgeActorClass, EntityId};
+use owner_apply_fixture::{approved, owner_decision, rooted, spent};
 
 const OUTBOUND_ERASE: &str = "vault.outbound_calls.request.erase";
 const LIFT_AND_ERASE: &str = "vault.legal_holds.lift_and_erase";
@@ -63,12 +63,19 @@ fn the_owner_applies_an_approved_outbound_request_erase_once() {
     assert!(!own.erased, "no row here: nothing to erase");
     assert_eq!(
         own.check_in,
-        Some(owner_erase(None, None)),
+        Some(owner_decision(ActClass::Erase, None, None)),
         "the Owner's own erase records their own proof"
     );
 
     let digest = outbound_call_request_erase_effect_digest(&attempt, 7);
-    let (asked, asker) = approved(&vault, owner, &owner_proof, OUTBOUND_ERASE, &digest);
+    let (asked, asker) = approved(
+        &vault,
+        owner,
+        &owner_proof,
+        OUTBOUND_ERASE,
+        ActClass::Erase,
+        &digest,
+    );
     let other_call = erase(8, Some(asked));
     assert!(
         other_call.is_err(),
@@ -79,7 +86,7 @@ fn the_owner_applies_an_approved_outbound_request_erase_once() {
     let applied = erase(7, Some(asked)).expect("the owner applies the approved erase");
     assert_eq!(
         applied.check_in,
-        Some(owner_erase(Some(asked), Some(asker))),
+        Some(owner_decision(ActClass::Erase, Some(asked), Some(asker))),
         "the answer names the check-in it applied and its asker"
     );
     assert!(
@@ -134,13 +141,20 @@ fn the_owner_applies_an_approved_lift_and_erase_on_the_state_shown() {
     assert!(ran(&own), "the owner's confirm erases: {own:?}");
     assert_eq!(
         own.check_in,
-        Some(owner_erase(None, None)),
+        Some(owner_decision(ActClass::Erase, None, None)),
         "the Owner's own confirm records their own proof"
     );
 
     let record = artifact();
     let digest = legal_hold_erase_effect_digest(&[record], false);
-    let (asked, asker) = approved(&vault, owner, &owner_proof, LIFT_AND_ERASE, &digest);
+    let (asked, asker) = approved(
+        &vault,
+        owner,
+        &owner_proof,
+        LIFT_AND_ERASE,
+        ActClass::Erase,
+        &digest,
+    );
     // A hold placed after the state was read: the confirm changes nothing.
     let stale_shown = vault
         .lift_and_erase_shown_state(&owner_proof, &[record], false)
@@ -176,7 +190,7 @@ fn the_owner_applies_an_approved_lift_and_erase_on_the_state_shown() {
     assert_eq!(applied.holds, vec![hold.hold_id], "it lifts the hold");
     assert_eq!(
         applied.check_in,
-        Some(owner_erase(Some(asked), Some(asker))),
+        Some(owner_decision(ActClass::Erase, Some(asked), Some(asker))),
         "the answer names the check-in it applied and its asker"
     );
     assert!(
