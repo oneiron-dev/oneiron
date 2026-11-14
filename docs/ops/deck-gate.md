@@ -326,6 +326,10 @@ cd <workspace>/deck-gate && fleet run --who deck-gate --goal "deck-create-v1 Off
 nothing. The pass opens each candidate serially in the pinned PowerPoint,
 measures every unit between `open` and `pdf`, and writes `run.json`. These
 candidates are the emitter's own output, so the one pass opens everything.
+An interrupted pass resumes: it keeps each case's existing `receipt.json`, but
+only when that receipt is this run's own (the same candidate SHA-256, binding,
+`deck_fit.applescript` and environment). Otherwise it refuses before taking
+the Office lock; give a new `--results` directory.
 
 ### 3. Commit the receipts
 

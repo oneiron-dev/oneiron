@@ -171,6 +171,44 @@ def cmd_plan(args) -> int:
     return 1 if problems else 0
 
 
+def binding(manifest: dict, entry: dict) -> dict:
+    """What a receipt of this run is bound to: the case set, the case, the case manifest and the source."""
+    return {'case_set': manifest['case_set'], 'case': entry['id'],
+            'case_manifest_sha256': manifest['case_manifest']['sha256'], 'source': manifest['source']}
+
+
+def foreign_receipts(manifest: dict, results: Path, environment: dict) -> list[str]:
+    """The pass keeps a case's existing receipt.json, so an interrupted pass resumes; each such receipt must be this
+    run's own: the same candidate bytes, binding, fit script and environment. One line per receipt that is not."""
+    fit_script = oracle_mod.digest(oracle_mod.FIT_SCRIPT) if oracle_mod.FIT_SCRIPT.exists() else None
+    problems = []
+    for entry in manifest['candidates']:
+        path = results / entry['id'] / 'receipt.json'
+        if not path.exists():
+            continue
+        try:
+            receipt = json.loads(path.read_text())
+        except (OSError, ValueError) as exc:
+            problems.append(f"{entry['id']}: {path} does not read: {exc}")
+            continue
+        if not isinstance(receipt, dict):
+            problems.append(f"{entry['id']}: {path} is not a receipt object")
+            continue
+        held = receipt.get('input')
+        if not isinstance(held, dict) or held.get('sha256') != entry['sha256']:
+            problems.append(f"{entry['id']}: the receipt opened another candidate, not {entry['sha256'][:12]}")
+        staged = receipt.get('staged_input_sha256')
+        if staged is not None and staged != entry['sha256']:
+            problems.append(f"{entry['id']}: the receipt staged another candidate")
+        if receipt.get('binding') != binding(manifest, entry):
+            problems.append(f"{entry['id']}: the receipt is bound to another run: {receipt.get('binding')!r}")
+        if receipt.get('fit_script_sha256') != fit_script:
+            problems.append(f"{entry['id']}: the receipt was measured by another deck_fit.applescript")
+        if receipt.get('environment') != environment:
+            problems.append(f"{entry['id']}: the receipt was taken in another environment")
+    return problems
+
+
 def write_run_json(run: Path, manifest: dict, results: Path, environment: dict,
                    started: float, finished: float, stopped: str | None):
     """run.json from each receipt.json, read back; the clean and fit totals beside it."""
@@ -237,6 +275,13 @@ def cmd_office(args) -> int:
               file=sys.stderr)
         return 2
     results = (args.results or run / 'office-results').resolve()
+    foreign = foreign_receipts(manifest, results, environment)
+    if foreign:
+        print(f'REFUSED: {results} holds receipts that are not this run\'s; give a new --results directory '
+              'or remove those case directories', file=sys.stderr)
+        for problem in foreign:
+            print(f'  {problem}', file=sys.stderr)
+        return 2
     results.mkdir(parents=True, exist_ok=True)
     account, inventory, rows = oracle_mod.font_inventory()
     (results / 'font-inventory.json').write_text(json.dumps(
@@ -254,9 +299,7 @@ def cmd_office(args) -> int:
                 stopped = deck_gate.run_one(
                     run / entry['file'], results / entry['id'], observer, timeout, custody, dialogs,
                     fit=entry['units'],
-                    binding={'case_set': manifest['case_set'], 'case': entry['id'],
-                             'case_manifest_sha256': manifest['case_manifest']['sha256'],
-                             'source': manifest['source']})
+                    binding=binding(manifest, entry))
                 if stopped:
                     break
         finally:

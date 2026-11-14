@@ -142,5 +142,78 @@ class GateContracts(unittest.TestCase):
             self.assertFalse(lock.exists(), "no lock is taken on refusal")
 
 
+ENVIRONMENT = {"powerpoint": "16.113.2", "macos": "27.0", "font_role": "owner", "font_inventory_sha256": "e" * 64}
+
+
+def own_receipt(manifest: dict) -> dict:
+    """A receipt this run's Office pass would write for its one candidate."""
+    entry = manifest["candidates"][0]
+    bound = {"case_set": manifest["case_set"], "case": entry["id"],
+             "case_manifest_sha256": manifest["case_manifest"]["sha256"], "source": manifest["source"]}
+    return {"status": "clean", "input": {"sha256": entry["sha256"], "bytes": entry["bytes"]},
+            "staged_input_sha256": entry["sha256"], "binding": bound,
+            "fit_script_sha256": gate.oracle_mod.digest(gate.oracle_mod.FIT_SCRIPT),
+            "environment": dict(ENVIRONMENT), "fit": []}
+
+
+def write_receipt(results: Path, receipt: dict) -> None:
+    case = results / "board-review"
+    case.mkdir(parents=True, exist_ok=True)
+    (case / "receipt.json").write_text(json.dumps(receipt))
+
+
+class ResumeContracts(unittest.TestCase):
+    """The pass keeps an existing receipt.json so an interrupted pass resumes (the pipeline's P1 on #7846: a reused
+    results directory must never lend another run's measurements to this run's candidates)."""
+
+    def test_foreign_receipts_accepts_this_runs_receipt_and_names_each_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = fake_run(Path(tmp))
+            manifest = gate.load_run(run)
+            results = Path(tmp) / "results"
+            self.assertEqual(gate.foreign_receipts(manifest, results, ENVIRONMENT), [])
+            write_receipt(results, own_receipt(manifest))
+            self.assertEqual(gate.foreign_receipts(manifest, results, ENVIRONMENT), [])
+            for key, value in (("input", {"sha256": "a" * 64}), ("staged_input_sha256", "a" * 64),
+                               ("binding", {**own_receipt(manifest)["binding"], "source": "d" * 40}),
+                               ("fit_script_sha256", "b" * 64),
+                               ("environment", {**ENVIRONMENT, "powerpoint": "16.114"})):
+                write_receipt(results, {**own_receipt(manifest), key: value})
+                problems = gate.foreign_receipts(manifest, results, ENVIRONMENT)
+                self.assertEqual(len(problems), 1, (key, problems))
+                self.assertTrue(problems[0].startswith("board-review: "), problems)
+
+    def test_office_refuses_a_results_directory_from_another_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run = fake_run(root)
+            manifest = gate.load_run(run)
+            results = root / "results"
+            write_receipt(results, {**own_receipt(manifest), "input": {"sha256": "a" * 64}})
+            args = argparse.Namespace(run=run, results=results, observer=None, timeout=None)
+            stderr = io.StringIO()
+            oracle = gate.oracle_mod
+            with mock.patch.object(gate.sys, "platform", "darwin"), \
+                 mock.patch.object(oracle, "APP", root), \
+                 mock.patch.object(oracle, "observer_status", return_value=None), \
+                 mock.patch.object(oracle, "env_pin", return_value=dict(ENVIRONMENT)), \
+                 mock.patch.object(oracle, "environment_mismatch", return_value=None), \
+                 mock.patch.object(oracle, "app_pid", return_value=None), \
+                 mock.patch.object(oracle, "presentations", return_value=[]), \
+                 mock.patch.object(oracle, "font_inventory", return_value=("test", "f" * 64, [])), \
+                 mock.patch.object(oracle, "quit_if_empty", return_value=None), \
+                 mock.patch.object(gate.deck_session, "take_lock") as take_lock, \
+                 mock.patch.object(gate.deck_session, "release_lock", return_value=None), \
+                 mock.patch.object(gate.deck_gate, "run_one", return_value=None) as run_one, \
+                 contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
+                code = gate.cmd_office(args)
+            self.assertEqual(code, 2)
+            self.assertIn("not this run's", stderr.getvalue())
+            self.assertIn("board-review", stderr.getvalue())
+            take_lock.assert_not_called()
+            run_one.assert_not_called()
+            self.assertFalse((results / "run.json").exists(), "no run.json from another run's receipts")
+
+
 if __name__ == "__main__":
     unittest.main()
