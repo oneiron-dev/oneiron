@@ -124218,7 +124218,7 @@
      "path": "src/facade_types/index.rs",
      "purpose": "Every struct, enum and alias of the engine crates, with each file's imports, and the heuristic resolver that…",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -124319,7 +124319,7 @@
      "path": "src/generate/emit_core.rs",
      "purpose": "The Rust core outputs: `run_verb_catalog.rs` (`run_catalog`), `core_verb_names.rs` (untangle slice 5.0a…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -124444,6 +124444,16 @@
      "purpose": "The UniFFI verb surface (`facade_generated.rs`, one `export_facade!` arm per facade row) and its generated…",
      "surface": {
       "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/generate/wire_inputs.rs",
+     "purpose": "Lib split W3-GEN: the verb rows whose input checks and input schemas `oneiron-verb-wire` emits, and each…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -124582,7 +124592,7 @@
      "purpose": "The facade's wire types, read from the Rust serde types every facade row names"
     },
     "generate": {
-     "files": 15,
+     "files": 16,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -124619,7 +124629,7 @@
    },
    "over_bar": 15,
    "purpose": "The SDK generator: writes every generated SDK output of the verb table (`scripts/sdk/verbs/`), the Rust…",
-   "source_files": 37,
+   "source_files": 38,
    "test_files": 0
   },
   "oneiron-seal": {
@@ -161160,6 +161170,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "build.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/access_grant/mod.rs",
      "purpose": "—",
      "surface": {
@@ -166631,7 +166649,7 @@
      "path": "src/lib.rs",
      "purpose": "The wire types of the engine's public verbs below `oneiron` (lib split, stage A): every request, response…",
      "surface": {
-      "mod": 114
+      "mod": 115
      }
     },
     {
@@ -172982,6 +173000,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/verb_input.rs",
+     "purpose": "The input checks and input schemas of the verb rows whose input type this crate holds (lib split W3-GEN)…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ActAnswer",
       "DetailsOnDevice",
@@ -176205,6 +176233,13 @@
      "layout": "dir",
      "purpose": "Moved from `crates/oneiron/src/vault_shape/mod.rs` (lib split W1: wire types below the lib)"
     },
+    "verb_input": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The input checks and input schemas of the verb rows whose input type this crate holds (lib split W3-GEN)…"
+    },
     "verbs": {
      "files": 111,
      "impl_vault": false,
@@ -176236,7 +176271,7 @@
    },
    "over_bar": 0,
    "purpose": "The wire types of the engine's public verbs below `oneiron` (lib split, stage A): every request, response…",
-   "source_files": 966,
+   "source_files": 968,
    "test_files": 0
   },
   "oneiron-vm-outbox": {

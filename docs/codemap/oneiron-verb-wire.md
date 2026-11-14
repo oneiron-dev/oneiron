@@ -11,6 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
+| `build.rs` | src | s | — | — | — |
 | `src/access_grant/mod.rs` | src | s | 1 mod · 2 re-export | — | — |
 | `src/access_grant/request.rs` | src | s | 1 enum | AccessRequestStatus | Moved from `crates/oneiron/src/access_grant/request.rs` (lib split W1: wire types below the lib) |
 | `src/actor_claims/candidate.rs` | src | s | 3 struct | CraftCandidateView, CraftCandidatesRequest, CraftCandidatesView | Moved from `crates/oneiron/src/actor_claims/candidate.rs` (lib split W1: wire types below the lib) |
@@ -398,7 +399,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/record_ref.rs` | src | s | 2 struct · 2 re-export | RecordLinksRequest, ResolveRecordRefRequest | Moved from `crates/oneiron/src/lens/record_ref.rs` (lib split W2: wire types below the lib) |
 | `src/lens/sdk.rs` | src | s | 2 struct | LensDefaultRequest, LensDossierSource | Moved from `crates/oneiron/src/lens/sdk.rs` (lib split W2: wire types below the lib) |
 | `src/lens/selection.rs` | src | s | 6 struct | LensResultSetActionRequest, LensResultSetActionResult, LensSelectRequest, LensSelectedSpan, LensSelectionRange, LensSelectionResolveRequest | Moved from `crates/oneiron/src/lens/selection.rs` (lib split W2: wire types below the lib) |
-| `src/lib.rs` | src | s | 114 mod | — | The wire types of the engine's public verbs below `oneiron` (lib split, stage A): every request, response… |
+| `src/lib.rs` | src | s | 115 mod | — | The wire types of the engine's public verbs below `oneiron` (lib split, stage A): every request, response… |
 | `src/linear_sync/facade_types.rs` | src | s | 8 struct · 1 enum · 1 fn | LinearLinkView, LinearMappingEdit, LinearMappingEditReceipt, LinearMappingOp, LinearMappingRequest, LinearMappingView, LinearProvenanceEntry, LinearProvenancePage +1 | Moved from `crates/oneiron/src/linear_sync/facade_types.rs` (lib split W1: wire types below the lib) |
 | `src/linear_sync/mirror_event.rs` | src | s | 1 struct · 1 enum · 3 fn | EventDirection, LinearMirrorEvent | Moved from `crates/oneiron/src/linear_sync/mirror_event.rs` (lib split W1: wire types below the lib) |
 | `src/linear_sync/mod.rs` | src | s | 4 mod · 13 re-export | — | — |
@@ -830,6 +831,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault_shape/seed.rs` | src | s | 1 fn | — | Moved from `crates/oneiron/src/vault_shape/seed.rs` (lib split W1: wire types below the lib) |
 | `src/vault_shape/shared_setup.rs` | src | s | 2 struct | ShapeLearningOutcome, ShapeLearningSetting | Moved from `crates/oneiron/src/vault_shape/shared_setup.rs` (lib split W1: wire types below the lib) |
 | `src/vault_shape/skill.rs` | src | s | 1 enum · 1 fn | ShapeSkillSource | Moved from `crates/oneiron/src/vault_shape/skill.rs` (lib split W1: wire types below the lib) |
+| `src/verb_input.rs` | src | s | 1 fn | — | The input checks and input schemas of the verb rows whose input type this crate holds (lib split W3-GEN)… |
 | `src/verbs/act_answer.rs` | src | s | 3 struct · 1 enum · 1 fn | ActAnswer, DetailsOnDevice, NarrowedQuestion, NarrowedQuestions | Moved from `crates/oneiron/src/verbs/act_answer.rs` (lib split W3: wire types below the lib) |
 | `src/verbs/agent_grant.rs` | src | s | 9 struct · 1 enum | AgentGrantFromSlipOutcome, AgentGrantFromSlipRequest, AgentGrantMintRequest, AgentGrantMinted, AgentGrantRevokeRequest, AgentGrantRevoked, AgentGrantView, BaseAgentList +2 | Moved from `crates/oneiron/src/verbs/agent_grant.rs` (lib split W3: wire types below the lib) |
 | `src/verbs/agent_run_effect.rs` | src | s | 2 struct | AgentRunEffectAnswer, AgentRunEffectAnswered | Moved from `crates/oneiron/src/verbs/agent_run_effect.rs` (lib split W3: wire types below the lib) |
