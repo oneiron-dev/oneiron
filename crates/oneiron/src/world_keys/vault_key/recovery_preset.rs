@@ -13,11 +13,18 @@
 //! its own install. The data-key kit and the world kit need two pieces, so
 //! they stay too.
 //!
-//! The wraps the key carries are what a fresh device can open, so the preset
-//! needs no field in a sealed artifact's key header: the carried wrap set
-//! enforces it. A sheet, piece or capsule handed out before a change still
-//! opens the artifacts sealed before it, as the data key does not rotate.
-//! The preset governs what the vault carries from then on.
+//! A sealed artifact's key header carries the wraps a fresh device can open
+//! and names the preset in force when it was sealed, bound to the artifact
+//! by its manifest. Under "Nobody but me" the header carries no password,
+//! passkey or escrow wrap, and a presented escrow capsule opens nothing, as
+//! the data key does not rotate: a capsule kept from before the change would
+//! otherwise open what was sealed after it. A sheet, piece or capsule handed
+//! out before a change still opens the artifacts sealed before it.
+//!
+//! The sheet reaches the owner before the write that removes the old wraps
+//! ([`Vault::set_recovery_preset_as`]), so a failed hand-over leaves the old
+//! ways in place, and a mirror rewrite that fails after the commit is
+//! answered as pending, never as an error that drops the sheet.
 
 use super::*;
 use crate::config::VaultDataKeyCustody;
@@ -45,17 +52,7 @@ const SHEET_ADDED: &str = "the printed sheet is issued by the recovery preset, n
 const WORLD_KIT_LABEL: &str = "the world kit's escrow wrap is written by confirming a kit";
 const SHEET_MALFORMED: &str = "a recovery sheet's code is 56 letters and digits";
 const SHEET_TYPO: &str = "the recovery sheet's code has a typo: its check does not match";
-
-/// Which ways may restore the vault data key: the owner's recovery preset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RecoveryPreset {
-    /// Every wrap kind may be added (PQC-KIT A, the default).
-    Standard,
-    /// "Nobody but me": the printed sheet alone restores the vault. No
-    /// password, passkey or escrow wrap, and nobody else holds a piece.
-    NobodyButMe,
-}
+const PRESET_RACED: &str = "the recovery preset changed while the sheet was drawn: set it again";
 
 /// Who writes an escrow wrap, typed by the writing path and never read from
 /// its label: the world kit's confirm, or any other recipient.
@@ -207,6 +204,23 @@ fn sheet_check(secret: &[u8; SHEET_SECRET_LEN]) -> [u8; SHEET_CHECK_LEN] {
     check
 }
 
+/// Step 3 of a preset change's [`WrapTransition`], for an answer that hands
+/// over a secret: a mirror rewrite that fails after the commit is logged and
+/// answered as pending, since an error would drop the committed change and
+/// its secret. The next sealed open repairs the mirror.
+fn finish_or_pending(transition: WrapTransition<'_>) -> bool {
+    match transition.finish() {
+        Ok(()) => false,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a recovery preset change committed; its page-seal mirror is pending"
+            );
+            true
+        }
+    }
+}
+
 /// What setting the recovery preset did.
 #[derive(Debug)]
 pub struct RecoveryPresetChange {
@@ -222,6 +236,10 @@ pub struct RecoveryPresetChange {
     pub removed: Vec<VaultKeyWrapInfo>,
     /// The receipt of each escrow recipient the change retired.
     pub retired: Vec<EscrowRetirement>,
+    /// The change committed but the sealed vault's page-seal mirror rewrite
+    /// failed after it: the change stands, and the next sealed open repairs
+    /// the mirror.
+    pub mirror_pending: bool,
 }
 
 impl Vault {
@@ -237,38 +255,27 @@ impl Vault {
     /// Sets the owner's recovery preset, rechecked in the transaction that
     /// stores it. Entering "Nobody but me" needs the held key and an
     /// owner-held key custody: a host-managed or supervisor-delivered key is
-    /// the host's to recover, which the preset rules out. In one write it
-    /// issues the printed sheet, removes the password and passkey wraps, and
-    /// retires every escrow recipient but the world kit's, each with its
-    /// receipt; the answer carries the sheet, once. Leaving it changes no
-    /// wrap; any other wrap is added through the ordinary doors after. The
-    /// preset already in force changes nothing.
+    /// the host's to recover, which the preset rules out. It draws the
+    /// printed sheet and hands it to `keep_sheet` before any write: the
+    /// caller keeps it durably (a synced file, an answer), and a failed keep
+    /// changes nothing. Then, in one write, it adds the sheet's wrap, removes
+    /// the password and passkey wraps, and retires every escrow recipient but
+    /// the world kit's, each with its receipt; the answer carries the sheet
+    /// too. Leaving it changes no wrap; any other wrap is added through the
+    /// ordinary doors after. The preset already in force changes nothing and
+    /// draws no sheet. A mirror rewrite that fails after the commit is
+    /// answered as `mirror_pending`.
     pub fn set_recovery_preset_as(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         preset: RecoveryPreset,
+        keep_sheet: impl FnOnce(&RecoverySheet) -> Result<()>,
     ) -> Result<RecoveryPresetChange> {
         let issue = match preset {
-            RecoveryPreset::Standard => None,
-            RecoveryPreset::NobodyButMe => {
-                if !matches!(self.data_key_custody(), VaultDataKeyCustody::OwnerHeldLocal) {
-                    return Err(refused(PRESET_CUSTODY));
-                }
-                let key = self
-                    .held_vault_key()
-                    .ok_or_else(|| refused("unlock the vault key first"))?;
-                let vault_id = *self.vault_id().as_bytes();
-                let commitment = key.commitment(&vault_id);
-                let sheet = RecoverySheet::generate()?;
-                let envelope = seal_wrap(
-                    &vault_id,
-                    &commitment,
-                    &VaultKeyWrapKind::Sheet,
-                    &WrapSecret::Kek(sheet.kek(&vault_id)),
-                    &key,
-                )?;
-                Some((sheet, commitment, envelope))
+            RecoveryPreset::NobodyButMe if self.recovery_preset()? != preset => {
+                Some(self.draw_recovery_sheet(keep_sheet)?)
             }
+            RecoveryPreset::NobodyButMe | RecoveryPreset::Standard => None,
         };
         let transition = self.begin_wrap_transition()?;
         let mut change = self.with_write_txn(|txn| {
@@ -282,11 +289,15 @@ impl Vault {
                 sheet: None,
                 removed: Vec::new(),
                 retired: Vec::new(),
+                mirror_pending: false,
             };
             if state.recovery == preset {
                 return Ok(change);
             }
-            if let Some((_, commitment, envelope)) = &issue {
+            if preset == RecoveryPreset::NobodyButMe {
+                let Some((_, commitment, envelope)) = &issue else {
+                    return Err(refused(PRESET_RACED));
+                };
                 if state.commitment != *commitment {
                     return Err(refused("this handle holds another vault key"));
                 }
@@ -297,11 +308,38 @@ impl Vault {
             STATE.put(&self.store, txn, &(), &state)?;
             Ok(change)
         })?;
-        transition.finish()?;
+        change.mirror_pending = finish_or_pending(transition);
         if change.previous != change.preset {
             change.sheet = issue.map(|(sheet, _, _)| sheet);
         }
         Ok(change)
+    }
+
+    /// Draws a printed sheet for the held key, its wrap sealed, and hands it
+    /// to `keep_sheet` before any write. The sheet, the commitment of the key
+    /// it opens and its wrap's envelope.
+    fn draw_recovery_sheet(
+        &self,
+        keep_sheet: impl FnOnce(&RecoverySheet) -> Result<()>,
+    ) -> Result<(RecoverySheet, [u8; 32], Vec<u8>)> {
+        if !matches!(self.data_key_custody(), VaultDataKeyCustody::OwnerHeldLocal) {
+            return Err(refused(PRESET_CUSTODY));
+        }
+        let key = self
+            .held_vault_key()
+            .ok_or_else(|| refused("unlock the vault key first"))?;
+        let vault_id = *self.vault_id().as_bytes();
+        let commitment = key.commitment(&vault_id);
+        let sheet = RecoverySheet::generate()?;
+        let envelope = seal_wrap(
+            &vault_id,
+            &commitment,
+            &VaultKeyWrapKind::Sheet,
+            &WrapSecret::Kek(sheet.kek(&vault_id)),
+            &key,
+        )?;
+        keep_sheet(&sheet)?;
+        Ok((sheet, commitment, envelope))
     }
 
     /// Unlocks the vault data key with the printed recovery sheet.
