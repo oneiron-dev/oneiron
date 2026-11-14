@@ -8,27 +8,14 @@ use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
 };
 use crate::{EntityId, Result, Vault};
-use serde::{Deserialize, Serialize};
 
 // The citation vocabulary is the claim's own (FIX 904); promotion names it
 // from there, as its writers and the Gate's reference read always have.
 pub use crate::claim::{CursorSpan, EvidenceKind, EvidenceRef};
 pub(crate) use crate::claim::{public_evidence_refs, public_evidence_value};
 
-/// Why a visible source does not corroborate a generated claim. These are
-/// evidence decisions, never an outbound authorization or a consent grant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PromotionEvidenceReason {
-    Missing,
-    NotEvidence,
-    NotSurfaceable,
-    UnvettedGenerated,
-    UnvettedTaint,
-    GeneratedOrigin,
-    PendingCriticalConfirmation,
-    UnsupportedTurnRole,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_promotion::admission::PromotionEvidenceReason;
 
 /// The exact decision the promotion writer uses, in the caller's snapshot.
 pub(crate) fn evidence_ref_refusal_in_txn(

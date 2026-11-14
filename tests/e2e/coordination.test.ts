@@ -4220,15 +4220,39 @@ type MuseLoop08AuditRow = FacadeResult<"vault.authority.audit">["rows"][number];
 type MuseLoop08ErrorBody = { error: { code: string; message: string } };
 type MuseLoop08ActorReceipt = { actor_ref?: string | null };
 
+// Unfiltered, vault.claims.list also lists retracted rows (canon: ClaimListFilter's lifecycle is optional);
+// `lifecycle: "active"` reads the active set only.
 async function museLoop08Claims(
   client: PublicHttpClient,
   subjectRef: string,
   predicate: string,
+  lifecycle?: "active",
 ): Promise<MuseLoop08ClaimRow[]> {
   const page = await client.call("vault.claims.list", {
-    subject_ref: subjectRef, predicate, limit: 10,
+    subject_ref: subjectRef, predicate, limit: 10, ...(lifecycle ? { lifecycle } : {}),
   } satisfies FacadeInput<"vault.claims.list">);
   return page.value;
+}
+
+// A revert retracts the claim in place: the unfiltered list still holds its row, which reads "retracted".
+async function museLoop08Lifecycle(
+  client: PublicHttpClient,
+  subjectRef: string,
+  predicate: string,
+  claimRef: string,
+): Promise<MuseLoop08ClaimRow["lifecycle"] | undefined> {
+  const rows = await museLoop08Claims(client, subjectRef, predicate);
+  return rows.find((row) => row.claim_ref === claimRef)?.lifecycle;
+}
+
+// A typed call whose refusal names its wire reason (HTTP status, code, message), not a bare status.
+async function museLoop08WithWireReason<T>(label: string, call: Promise<T>): Promise<T> {
+  try { return await call; } catch (error) {
+    if (error instanceof PublicHttpError) {
+      throw new Error(`${label}: HTTP ${error.reply.status} ${error.error?.code ?? "no-code"}: ${(error.error?.message ?? "").slice(0, 300)}`);
+    }
+    throw error;
+  }
 }
 
 async function museLoop08PendingRefs(client: PublicHttpClient): Promise<Set<string>> {
@@ -4276,7 +4300,7 @@ async function museLoop08AuditRows(client: PublicHttpClient): Promise<MuseLoop08
 // Doors used: vault.structural.put + pairActor (agent), vault.conversations.create,
 // vault.claims.seed (agent proposes), vault.claims.list / vault.writes.pending
 // (second-door reads), vault.runs.review / settle / settlement (owner decides),
-// vault.revert_run (owner subset, then all), vault.claims.upsert (later edit),
+// vault.revert_run (owner subset, then all), vault.claims.upsert (the owner's later edit supersedes beta),
 // vault.claims.history + vault.receipts + engine.awaitReceipt (undo readbacks),
 // facade raw routes for wrong actors, vault.authority.audit + /v1/core/slips/revoke
 // for the revoked-credential leg, engine.restart().
@@ -4290,10 +4314,6 @@ async function museLoop08AuditRows(client: PublicHttpClient): Promise<MuseLoop08
 // discovery and cross-kind undo stay unproved: canon says only the owner
 // reviewing *named* changes and reverting all or some is built in part, and
 // this case exercises claims only.
-// DEFECT (red since E2E job 6, Wed 11 Nov 2026; FIX row
-// OWNER-APPROVAL-CRITICALITY-FLOOR, as in MUSE-LOOP-01): the owner's
-// vault.runs.settle of the agent's proposed claims is refused 403 on the
-// fallback criticality floor.
 suite.test(test, "MUSE-LOOP-08", "Owner settles agent-proposed claims, undoes a chosen subset then the rest where unblocked, and reports the blocked change (P-LOOP-030 subset)", async () => {
   const engine = await EngineFixture.start({ id: "MUSE-LOOP-08", profile });
   try {
@@ -4340,6 +4360,9 @@ suite.test(test, "MUSE-LOOP-08", "Owner settles agent-proposed claims, undoes a 
     // An agent paired without write scope cannot propose through the seed door.
     const readerSeed = { claims: [{ predicate: readerPredicate, subject_ref: subjectRef, value: readerValue, confidence: 1, source: "generated", scope, evidence_turn_refs: [evidenceTurn], occurred_at: occurred }] } satisfies FacadeInput<"vault.claims.seed">;
     const readerRefused = await reader.client.raw<MuseLoop08ErrorBody>("POST", "/v1/core/facade/vault.claims.seed", readerSeed);
+    expect(readerRefused.status).toBe(403);
+    expect(readerRefused.body.error.code).toBe("FORBIDDEN");
+    expect(await museLoop08Claims(owner, subjectRef, readerPredicate)).toHaveLength(0);
 
     // The agent proposes three independent claims; the seed door forces Proposed.
     const seeded = await proposer.client.call("vault.claims.seed", { claims: [
@@ -4352,6 +4375,7 @@ suite.test(test, "MUSE-LOOP-08", "Owner settles agent-proposed claims, undoes a 
       expect(outcome.outcome).toBe("landed");
       if (outcome.outcome !== "landed") throw new Error("Agent seed claim was refused");
       const receipt = (await engine.awaitReceipt(outcome.receipt_ref)) as MuseLoop08ActorReceipt | undefined;
+      expect(receipt?.actor_ref).toBe(proposer.principalRef);
     }
     const alphaRowsBefore = await museLoop08Claims(owner, subjectRef, alphaPredicate);
     const betaRowsBefore = await museLoop08Claims(owner, subjectRef, betaPredicate);
@@ -4380,7 +4404,10 @@ suite.test(test, "MUSE-LOOP-08", "Owner settles agent-proposed claims, undoes a 
       changes: claimRefs.map((claimRef) => ({ kind: "claim" as const, claim_ref: claimRef })),
     };
     const agentReview = await proposer.client.raw<MuseLoop08ErrorBody>("POST", "/v1/core/facade/vault.runs.review", reviewInput);
+    expect(agentReview.status).toBe(403);
+    expect(agentReview.body.error.code).toBe("FORBIDDEN");
     const pendingAfterAgentReview = await museLoop08PendingRefs(owner);
+    for (const claimRef of claimRefs) expect(pendingAfterAgentReview.has(claimRef)).toBe(true);
 
     // The owner reviews the named set and approves it; the settlement is read back.
     const review = await owner.call("vault.runs.review", reviewInput);
@@ -4436,7 +4463,8 @@ suite.test(test, "MUSE-LOOP-08", "Owner settles agent-proposed claims, undoes a 
     if (!alphaComp) throw new Error("Selective revert did not compensate the chosen change");
     expect(alphaComp.receipt.length).toBeGreaterThan(0);
     await engine.awaitReceipt(alphaComp.receipt);
-    expect(await museLoop08Claims(owner, subjectRef, alphaPredicate)).toHaveLength(0);
+    expect(await museLoop08Lifecycle(owner, subjectRef, alphaPredicate, alphaRow.claim_ref)).toBe("retracted");
+    expect(await museLoop08Claims(owner, subjectRef, alphaPredicate, "active")).toHaveLength(0);
     expect((await museLoop08Claims(owner, subjectRef, betaPredicate))[0]?.value).toBe(betaValueOne);
     expect((await museLoop08Claims(owner, subjectRef, gammaPredicate))[0]?.value).toBe(gammaValue);
     const alphaHistory = await owner.call("vault.claims.history", {
@@ -4449,17 +4477,21 @@ suite.test(test, "MUSE-LOOP-08", "Owner settles agent-proposed claims, undoes a 
     } satisfies FacadeInput<"vault.runs.settlement">);
     expect(settlementAfterRestart.receipt).toBe(settlement.receipt);
     expect(settlementAfterRestart.revert_handle).toBe(settlement.revert_handle);
-    expect(await museLoop08Claims(owner, subjectRef, alphaPredicate)).toHaveLength(0);
+    expect(await museLoop08Lifecycle(owner, subjectRef, alphaPredicate, alphaRow.claim_ref)).toBe("retracted");
+    expect(await museLoop08Claims(owner, subjectRef, alphaPredicate, "active")).toHaveLength(0);
     expect((await museLoop08Claims(owner, subjectRef, betaPredicate))[0]?.value).toBe(betaValueOne);
     expect((await museLoop08Claims(owner, subjectRef, gammaPredicate))[0]?.value).toBe(gammaValue);
 
-    // A later owner edit rests on beta, then undo-all is asked for.
-    const betaEdit = await owner.call("vault.claims.upsert", {
+    // A later owner edit rests on beta, then undo-all is asked for. The owner's upsert over
+    // their own agent's claim supersedes it in one act (lead ruling 12:19 Fri 13 Nov, #7385).
+    const betaEdit = await museLoop08WithWireReason("the owner's later edit of beta", owner.call("vault.claims.upsert", {
       predicate: betaPredicate, subject_ref: subjectRef, value: betaValueTwo,
       confidence: 1, source: "user_stated", scope, occurred_at: occurred + 60,
-    } satisfies FacadeInput<"vault.claims.upsert">);
+    } satisfies FacadeInput<"vault.claims.upsert">));
+    expect(betaEdit.approval).toBe("auto");
     await engine.awaitReceipt(betaEdit.receipt_ref);
-    expect((await museLoop08Claims(owner, subjectRef, betaPredicate)).some((row) => row.value === betaValueTwo)).toBe(true);
+    expect(await museLoop08Lifecycle(owner, subjectRef, betaPredicate, betaRow.claim_ref)).toBe("superseded");
+    expect((await museLoop08Claims(owner, subjectRef, betaPredicate, "active")).map((row) => row.value)).toEqual([betaValueTwo]);
     const rest = await owner.call("vault.revert_run", {
       run_id: settlement.run_id,
     } satisfies FacadeInput<"vault.revert_run">);
@@ -4475,9 +4507,11 @@ suite.test(test, "MUSE-LOOP-08", "Owner settles agent-proposed claims, undoes a 
       const inNotUndone = rest.not_undone.some((row) => row.change === changeId);
       expect(inCompensated !== inNotUndone).toBe(true);
     }
-    expect(await museLoop08Claims(owner, subjectRef, gammaPredicate)).toHaveLength(0);
+    expect(await museLoop08Lifecycle(owner, subjectRef, gammaPredicate, gammaRow.claim_ref)).toBe("retracted");
+    expect(await museLoop08Claims(owner, subjectRef, gammaPredicate, "active")).toHaveLength(0);
     expect((await museLoop08Claims(owner, subjectRef, betaPredicate)).some((row) => row.value === betaValueTwo)).toBe(true);
-    expect(await museLoop08Claims(owner, subjectRef, alphaPredicate)).toHaveLength(0);
+    expect(await museLoop08Lifecycle(owner, subjectRef, alphaPredicate, alphaRow.claim_ref)).toBe("retracted");
+    expect(await museLoop08Claims(owner, subjectRef, alphaPredicate, "active")).toHaveLength(0);
 
     // The owner revokes the proposer's slip; its next write use is refused.
     const auditAfterPairings = await museLoop08AuditRows(owner);
@@ -4485,14 +4519,20 @@ suite.test(test, "MUSE-LOOP-08", "Owner settles agent-proposed claims, undoes a 
     const mintedIds = auditAfterPairings
       .filter((row) => !beforeHashes.has(row.entry_hash) && row.source_op === "slip_mint" && row.holder_ref === proposer.principalRef && typeof row.subject_ref === "string" && /^[a-f0-9]{64}$/.test(row.subject_ref))
       .map((row) => row.subject_ref as string);
+    expect(mintedIds.length).toBeGreaterThan(0);
     for (const slipId of mintedIds) {
       const revoked = await owner.request<{ revoked: boolean }>("POST", "/v1/core/slips/revoke", {
         slip_id: Array.from(Buffer.from(slipId, "hex")),
       });
+      expect(revoked.status).toBe(200);
+      expect(revoked.body.revoked).toBe(true);
     }
     const auditFinal = await museLoop08AuditRows(owner);
     const deadSeed = { claims: [{ predicate: deadPredicate, subject_ref: subjectRef, value: deadValue, confidence: 1, source: "generated", scope, evidence_turn_refs: [evidenceTurn], occurred_at: occurred + 120 }] } satisfies FacadeInput<"vault.claims.seed">;
     const dead = await proposer.client.raw<MuseLoop08ErrorBody>("POST", "/v1/core/facade/vault.claims.seed", deadSeed);
+    expect(dead.status).toBe(401);
+    expect(dead.body.error.code).toBe("UNAUTHORIZED");
+    expect(await museLoop08Claims(owner, subjectRef, deadPredicate)).toHaveLength(0);
 
     await engine.artifacts.json("muse-loop08-outcome.json", {
       runId, claimRefs,

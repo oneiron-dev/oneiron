@@ -20,22 +20,10 @@ use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 
-/// A purpose for one new source group, given before any case.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FamilyDecision {
-    pub group: String,
-    pub purpose: FamilyPurpose,
-}
-
-/// One candidate kept as a case, with the slice it was drawn for.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CaseDecision {
-    pub candidate: String,
-    #[serde(default)]
-    pub stratum: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::eval_set::authoring::apply::{
+    CaseDecision, EvalAuthoringSkip, FamilyDecision,
+};
 
 /// One cohort to cut for a seat.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -231,14 +219,6 @@ fn cut_cohorts_listing(
         }
     }
     Ok(())
-}
-
-/// One decision a door or the inventory did not let through.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct EvalAuthoringSkip {
-    /// The group, candidate, cut or cohort it named.
-    pub item: String,
-    pub reason: String,
 }
 
 /// What one applied plan did.
