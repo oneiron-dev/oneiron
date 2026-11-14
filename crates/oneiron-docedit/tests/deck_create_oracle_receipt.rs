@@ -338,3 +338,39 @@ fn the_stored_run_names_this_case_set() {
     want.sort_unstable();
     assert_eq!(held, want, "run.json candidates");
 }
+
+/// Engine RULING L4-20-OFFICE-ACCOUNT (14 Nov 11:22): oneiron is public, so the committed results name no account, person or host: run.json names the seat's machine class, and each saved-back deck's author fields read as the oracle.
+#[test]
+fn the_stored_results_name_no_person_or_host() {
+    let root = repo();
+    let loaded = oracle_cases::load(&root).expect("load deck-create-v1");
+    let results = root.join(oracle_cases::STORED_RESULTS);
+    let run = read_json(&results.join("run.json"));
+    assert_eq!(
+        run.get("seat").and_then(Value::as_str),
+        Some("mac-mini"),
+        "run.json seat"
+    );
+    for case in &loaded.set.cases {
+        let id = case.id.as_str();
+        let path = results.join(id).join("reference.pptx");
+        let bytes =
+            std::fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+            .unwrap_or_else(|error| panic!("{id}: reference.pptx: {error}"));
+        let mut core = String::new();
+        let mut part = archive
+            .by_name("docProps/core.xml")
+            .unwrap_or_else(|error| panic!("{id}: docProps/core.xml: {error}"));
+        std::io::Read::read_to_string(&mut part, &mut core).expect("docProps/core.xml is text");
+        for tag in ["dc:creator", "cp:lastModifiedBy"] {
+            let Some((_, rest)) = core.split_once(&format!("<{tag}>")) else {
+                continue;
+            };
+            let (value, _) = rest
+                .split_once(&format!("</{tag}>"))
+                .unwrap_or_else(|| panic!("{id}: {tag} is not closed"));
+            assert_eq!(value, "Oneiron oracle", "{id}: reference.pptx {tag}");
+        }
+    }
+}

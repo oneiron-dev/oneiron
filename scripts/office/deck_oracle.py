@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import platform
 import pwd
+import re
 import shutil
 import subprocess
 import sys
@@ -39,6 +40,37 @@ FIT_SCRIPT = ROOT / 'deck_fit.applescript'
 # a measured frame may differ from the planned one by this much (0.5 pt).
 FIT_EPS_EMU = 635
 FIT_SLACK_EMU = 6350
+
+
+ORACLE_AUTHOR = 'Oneiron oracle'
+CORE_AUTHOR_TAGS = (b'dc:creator', b'cp:lastModifiedBy')
+
+
+def normalize_authors(path: Path) -> bool:
+    """Rewrite the author fields of docProps/core.xml to ORACLE_AUTHOR, every other part
+    byte-exact. PowerPoint's save-back writes the Office user's full name into
+    cp:lastModifiedBy (vel, 15 Nov), and committed results name no person (Engine
+    RULING L4-20-OFFICE-ACCOUNT). True when the package changed."""
+    with zipfile.ZipFile(path) as source:
+        parts = [(item, source.read(item.filename)) for item in source.infolist()]
+    changed = False
+    for index, (item, part) in enumerate(parts):
+        if item.filename != 'docProps/core.xml':
+            continue
+        fixed = part
+        for tag in CORE_AUTHOR_TAGS:
+            fixed = re.sub(rb'(<' + tag + rb'(?:\s[^>]*)?>).*?(</' + tag + rb'>)',
+                           rb'\g<1>' + ORACLE_AUTHOR.encode() + rb'\g<2>', fixed, flags=re.S)
+        if fixed != part:
+            parts[index] = (item, fixed)
+            changed = True
+    if changed:
+        aside = path.with_name(path.name + '.part')
+        with zipfile.ZipFile(aside, 'w') as target:
+            for item, part in parts:
+                target.writestr(item, part)
+        os.replace(aside, path)
+    return changed
 
 
 def has_header(path: Path, header: bytes) -> bool:
@@ -868,6 +900,13 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
                     shutil.copy2(target, output / target.name)
                 else:
                     shutil.move(str(target), output / target.name)
+                if action == 'saveback' and binding is not None:
+                    # A bound (committed) result: the hash below is of the normalized bytes.
+                    written = digest(output / target.name)
+                    if normalize_authors(output / target.name):
+                        receipt['saveback_normalized'] = {
+                            'part': 'docProps/core.xml', 'fields': ['dc:creator', 'cp:lastModifiedBy'],
+                            'value': ORACLE_AUTHOR, 'written_sha256': written}
                 receipt['outputs'][target.name] = {'sha256': digest(output / target.name),
                                                    'bytes': (output / target.name).stat().st_size}
                 if expired(action + ' postprocessing'):

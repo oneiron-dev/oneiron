@@ -26,7 +26,6 @@ import json
 import os
 from pathlib import Path
 import signal
-import socket
 import subprocess
 import sys
 import time
@@ -42,6 +41,9 @@ OFFICE_SCHEMA = 'oneiron.deck-create-office/1'
 CASE_SET = 'deck-create-v1'
 LOCK = deck_session.LOCK
 UNIT_KINDS = ('text', 'table', 'chart')
+# The seat run.json names: the machine class whose OS and Office build environment.json pins (the pass refuses
+# any other). Never the host name, which carries the account name (Engine RULING L4-20-OFFICE-ACCOUNT).
+SEAT = 'mac-mini'
 
 
 def load_run(run: Path) -> dict:
@@ -197,7 +199,7 @@ def write_run_json(run: Path, manifest: dict, results: Path, environment: dict,
     (results / 'run.json').write_text(json.dumps(
         {'schema': OFFICE_SCHEMA, 'case_set': manifest['case_set'], 'run': run.name,
          'source': manifest['source'], 'case_manifest_sha256': manifest['case_manifest']['sha256'],
-         'seat': socket.gethostname().split('.')[0], 'account_role': environment['font_role'],
+         'seat': SEAT, 'account_role': environment['font_role'],
          'environment': environment, 'font_inventory_sha256': environment['font_inventory_sha256'],
          'started_at': started, 'finished_at': finished, 'stopped': stopped,
          'candidates': candidates}, indent=2) + '\n')
