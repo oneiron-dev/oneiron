@@ -672,6 +672,13 @@ impl Vault {
         // they index are in: each family's records, then indexes, then heads.
         let (restored_side_rows, unchanged_side_rows) =
             super::archive_side_tables::restore_side_rows_in_txn(&self.store, &mut wtxn, &archive)?;
+        // SIDE-1: the retained rows land inert in the same write transaction, for all three
+        // doors alike: no branch on actor, owner or freshness.
+        let retained_side_rows = super::archive_retained_side_rows::retain_side_rows_in_txn(
+            &self.store,
+            &mut wtxn,
+            &archive,
+        )?;
         // FIX 1162: every imported agent gets its model PERSON in this same
         // writer, once the bundle's own PERSON and anchor rows are in.
         super::agent_person_import::ensure_imported_agent_persons_in_txn(
@@ -732,6 +739,7 @@ impl Vault {
             embedding_setup,
             restored_side_rows,
             unchanged_side_rows,
+            retained_side_rows,
         })
     }
 }

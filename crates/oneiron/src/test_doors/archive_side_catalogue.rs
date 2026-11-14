@@ -1,0 +1,89 @@
+//! Doors for `tests/archive_side_catalogue_coverage.rs`: the whole-vault
+//! archive's coverage of the canonical side-table catalogue (SIDE-1).
+
+use crate::batch::export::archive_side_dispositions::ArchiveSideDisposition;
+use crate::batch::export::archive_side_dispositions::{
+    OTHER_ARCHIVE_SECTION_TABLES, SIDE_TABLE_DISPOSITIONS,
+};
+use crate::side_table::StorageTier;
+
+/// Every canonical side-table declaration with the archive classes covering
+/// it: `family` (an `ArchiveSideFamily` carries it), `other_section`
+/// (another archive section carries it), `retained` (the archive carries
+/// its rows as inert copies) or `omitted` (the manifest declares it
+/// omitted). In catalogue order. Production code never calls this; the
+/// catalogue guard test does.
+#[must_use]
+pub fn canonical_archive_side_coverage() -> Vec<(&'static str, Vec<&'static str>)> {
+    let families: Vec<&'static str> =
+        crate::batch::export::archive_side_family_table_names().collect();
+    let mut seen = std::collections::BTreeSet::new();
+    for name in &families {
+        assert!(
+            seen.insert(*name),
+            "no archive family table repeats: {name}"
+        );
+        assert!(
+            crate::side_table::declared()
+                .any(|decl| decl.name == *name && decl.tier == StorageTier::Canonical),
+            "an archive family names an existing canonical table: {name}"
+        );
+    }
+    crate::side_table::declared()
+        .filter(|decl| decl.tier == StorageTier::Canonical)
+        .map(|decl| {
+            let mut classes = Vec::new();
+            if families.contains(&decl.name) {
+                classes.push("family");
+            }
+            if OTHER_ARCHIVE_SECTION_TABLES
+                .iter()
+                .any(|(name, _)| *name == decl.name)
+            {
+                classes.push("other_section");
+            }
+            if let Some(class) = disposition_class(decl.name) {
+                classes.push(class);
+            }
+            (decl.name, classes)
+        })
+        .collect()
+}
+
+/// The archive class of the disposition `SIDE_TABLE_DISPOSITIONS` gives
+/// `name`: `retained` or `omitted`. `None` when no disposition names it.
+fn disposition_class(name: &str) -> Option<&'static str> {
+    SIDE_TABLE_DISPOSITIONS
+        .iter()
+        .find(|(known, _)| *known == name)
+        .map(|(_, disposition)| match disposition {
+            ArchiveSideDisposition::Retained => "retained",
+            ArchiveSideDisposition::Omitted(_) => "omitted",
+        })
+}
+
+/// Every name the disposition consts decide, with its class: each
+/// `SIDE_TABLE_DISPOSITIONS` name as `retained` or `omitted`, then each
+/// `OTHER_ARCHIVE_SECTION_TABLES` name as `other_section`. The catalogue
+/// guard test checks each names a canonical declaration.
+#[must_use]
+pub fn archive_side_disposition_names() -> Vec<(&'static str, &'static str)> {
+    let mut names: Vec<(&'static str, &'static str)> = SIDE_TABLE_DISPOSITIONS
+        .iter()
+        .map(|(name, disposition)| {
+            (
+                *name,
+                match disposition {
+                    ArchiveSideDisposition::Retained => "retained",
+                    ArchiveSideDisposition::Omitted(_) => "omitted",
+                },
+            )
+        })
+        .collect();
+    names.extend(
+        OTHER_ARCHIVE_SECTION_TABLES
+            .iter()
+            .map(|(name, _)| (*name, "other_section")),
+    );
+    names
+}

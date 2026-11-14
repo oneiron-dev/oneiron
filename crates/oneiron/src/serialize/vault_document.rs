@@ -21,15 +21,16 @@ use super::credential_nulling::{null_document_credentials, null_document_member}
 use super::export_value::{ExportBody, ExportBodyFile, ExportValue, attaches_as_file};
 use crate::Vault;
 use crate::batch::export::{
-    ArchiveRecordKind, ArchiveSecretCustody, ArchiveSideWithheld, ArchiveSideWithheldReason,
-    ExportAdapterDescriptor, ExportCut, ExportDerivationEnvelope, ExportDeterminism,
-    ExportDiaryHold, ExportDiaryRead, ExportEdge, ExportEmbeddingSetup, ExportEntity,
-    ExportEpochFloor, ExportManifest, ExportPack, ExportPackSource, ExportReaderFold,
-    ExportResultBody, ExportRowBirth, ExportRun, ExportRunBinding, ExportRunOutput,
-    ExportSkillBundle, ExportSnapshotBody, ExportSnapshotEntity, ExportSnapshotEntityBody,
-    ExportSnapshotRun, ExportSourceVault, FileSpool, OmissionLedger, RecordSpool, SideRowBytes,
-    VAULT_ARCHIVE_FORMAT, VAULT_OKF_FORMAT, WHOLE_VAULT_DOCUMENT_VERSION,
-    WholeVaultDocumentManifest, WholeVaultExportReceipt, archive_slot_rows,
+    ArchiveRecordKind, ArchiveSecretCustody, ArchiveSideFamily, ArchiveSideTableOmission,
+    ArchiveSideWithheld, ArchiveSideWithheldReason, ExportAdapterDescriptor, ExportCut,
+    ExportDerivationEnvelope, ExportDeterminism, ExportDiaryHold, ExportDiaryRead, ExportEdge,
+    ExportEmbeddingSetup, ExportEntity, ExportEpochFloor, ExportManifest, ExportPack,
+    ExportPackSource, ExportReaderFold, ExportResultBody, ExportRowBirth, ExportRun,
+    ExportRunBinding, ExportRunOutput, ExportSkillBundle, ExportSnapshotBody, ExportSnapshotEntity,
+    ExportSnapshotEntityBody, ExportSnapshotRun, ExportSourceVault, FileSpool, OmissionLedger,
+    RecordSpool, SideRowBytes, VAULT_ARCHIVE_FORMAT, VAULT_OKF_FORMAT,
+    WHOLE_VAULT_DOCUMENT_VERSION, WholeVaultDocumentManifest, WholeVaultExportReceipt,
+    archive_slot_rows,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -55,6 +56,9 @@ pub(crate) struct DocumentTail {
     pub(crate) fold_only_secrets: Vec<EntityId>,
     /// OF-370: the vault's embedding setup, when this export carries it.
     pub(crate) embedding_setup: Option<ExportEmbeddingSetup>,
+    /// SIDE-1: the omitted side tables this whole-vault export declares, with their reasons and
+    /// row counts; empty outside a whole-vault export.
+    pub(crate) side_table_omissions: Vec<ArchiveSideTableOmission>,
     /// The rows this export is derived from, as a host lists them beside it
     /// (DEC-0005): each row the snapshot read past its locality, the ones it
     /// carries, counts or folds into another section among them.
@@ -428,8 +432,19 @@ impl<'v> DocumentWriter<'v> {
     /// pass at its depth; one the pass would change, one in its table's own
     /// binary codec the release scan reads a credential in, or one that does
     /// not read back through its table, is held out and named in the
-    /// manifest. A long binary value goes beside the document as a file.
+    /// manifest. A long binary value goes beside the document as a file. A
+    /// retained row whose source key or value reads as a credential is held
+    /// out before encoding, in every archive.
     pub(crate) fn side_row(&mut self, raw: SideRowBytes) -> Result<()> {
+        if raw.family == ArchiveSideFamily::RetainedSideRow
+            && crate::batch::export::archive_retained_side_rows::retained_side_row_withholds_credential(
+                &raw,
+            )
+        {
+            self.side_withheld
+                .push(raw.withheld(ArchiveSideWithheldReason::Credential));
+            return Ok(());
+        }
         let Some((row, files)) = raw.portable()? else {
             self.side_withheld
                 .push(raw.withheld(ArchiveSideWithheldReason::NotPortable));
@@ -584,6 +599,7 @@ impl<'v> DocumentWriter<'v> {
             fold_only_secrets: Vec::new(),
             embedding_setup_withheld,
             side_rows_withheld: self.side_withheld,
+            side_table_omissions: tail.side_table_omissions,
         };
         // The manifest's strings go through the same pass, at its depth. The
         // member and file lists are added after: paths, counts and digests.
