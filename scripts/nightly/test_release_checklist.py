@@ -217,6 +217,26 @@ class ThreeNightsTest(ChecklistCase):
         _, states, text = self.run_checklist(history=[*GREEN_HISTORY, *future])
         self.assertEqual(states[1], "MET", text)
 
+    def test_a_night_after_today_is_left_out_of_the_counts(self) -> None:
+        tonight = [cargo_line(TODAY, skipped=1, pending=1), e2e_line(TODAY)]
+        future = [cargo_line("2026-11-21"), e2e_line("2026-11-21")]
+        _, states, text = self.run_checklist(history=[*GREEN_HISTORY, *tonight, *future])
+        self.assertEqual(states[2], "NOT MET", text)
+        self.assertIn(f"NIGHTLY {TODAY} skipped: 1", self.condition_text(text, 2))
+        self.assertEqual(states[6], "NOT MET", text)
+        self.assertIn(f"NIGHTLY {TODAY} pending: 1", self.condition_text(text, 6))
+        self.assertNotIn("2026-11-21", text)
+
+    def test_a_summary_or_a_run_after_today_is_left_out(self) -> None:
+        later = {**GREEN_SUMMARY, "date": "2026-11-21"}
+        store = {**GREEN_STORE, STEMMA: {"outcome": "pass", "date": "2026-11-21"}}
+        _, states, text = self.run_checklist(summary_json=later, store=store)
+        self.assertEqual(states[4], "UNKNOWN", text)
+        self.assertIn(f"the summary is of night 2026-11-21, after {TODAY}", text)
+        self.assertEqual(states[7], "UNKNOWN", text)
+        self.assertIn(f"{STEMMA}: last run on 2026-11-21, after {TODAY}", text)
+        self.assertIn("results store: 0 of 2 test(s) failed at their last run", text)
+
     def test_events_log_prefixes_and_summary_echoes_are_read(self) -> None:
         history = [
             f"11-20 06:01 ## NIGHTLY SUMMARY {line}"
@@ -348,6 +368,18 @@ class PendingDoorTest(ChecklistCase):
     def test_the_last_nights_pending_count_is_read(self) -> None:
         _, states, text = self.run_checklist(history=[*GREEN_HISTORY, cargo_line("2026-11-19", pending=230)])
         self.assertEqual(states[6], "NOT MET", text)
+
+    def test_a_night_whose_pending_door_tool_did_not_run_is_unknown(self) -> None:
+        unrun = cargo_line("2026-11-19").replace(" pending=0 expired=0", " pending=? expired=?")
+        _, states, text = self.run_checklist(history=[*GREEN_HISTORY, unrun])
+        self.assertEqual(states[6], "UNKNOWN", text)
+        self.assertIn("NIGHTLY 2026-11-19: pending=?, not a count", self.condition_text(text, 6))
+        self.assertIn("NIGHTLY 2026-11-19: expired=?, not a count", self.condition_text(text, 6))
+
+    def test_no_history_leaves_the_pending_door_list_unknown(self) -> None:
+        _, states, text = self.run_checklist(history=None)
+        self.assertEqual(states[6], "UNKNOWN", text)
+        self.assertIn("no NIGHTLY line", self.condition_text(text, 6))
 
     def test_no_register_is_unknown_and_the_environment_names_one(self) -> None:
         _, states, text = self.run_checklist(register=False)

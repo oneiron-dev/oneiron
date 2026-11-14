@@ -25,7 +25,8 @@ Usage:
   --register       the NO-DOOR register (JSONL); default
                    $ONEIRON_TESTKIT_NO_DOOR_REGISTER, as for
                    oneiron-testkit-pending-door
-  --today          the date to report (default: today, Japan time)
+  --today          the date to report (default: today, Japan time); a night,
+                   summary or results-store run dated after it is left out
 
 Exit: 0 every condition met, 1 any condition not met or unknown, 2 an input
 given cannot be read.
@@ -140,6 +141,32 @@ def last_night(nights: dict[str, dict[str, dict]] | None, kind: str) -> tuple[st
     return None
 
 
+def night_counts(
+    nights: dict[str, dict[str, dict]] | None, kind: str, keys: tuple[str, ...]
+) -> tuple[list[tuple[str, int]], list[str]]:
+    """The last night of a kind: its counts, and one line for each count it lacks.
+
+    A field that is not a number (nightly_report.py writes `pending=?` when the
+    pending-door tool did not run) is a count the night lacks.
+    """
+    found = last_night(nights, kind)
+    if found is None:
+        return [], [f"no {kind} line"]
+    night, entry = found
+    counts, lacking = [], []
+    for key in keys:
+        value = entry["fields"].get(key, "")
+        if value.isdigit():
+            counts.append((f"{kind} {night} {key}", int(value)))
+        else:
+            lacking.append(f"{kind} {night}: {key}={value}, not a count" if value else f"{kind} {night}: no {key}=")
+    return counts, lacking
+
+
+def run_is_after(inputs: Inputs, run: dict) -> bool:
+    return str(run.get("date", "")) > inputs.today
+
+
 def read_json(path: str, what: str) -> dict:
     try:
         value = json.loads(Path(path).read_text())
@@ -229,7 +256,7 @@ def git(tree: Path, *args: str) -> str:
 def three_nights_green(inputs: Inputs) -> tuple[str, list[str]]:
     if inputs.nights is None:
         return UNKNOWN, ["no --history given"]
-    dates = sorted(night for night in inputs.nights if night <= inputs.today)[-NIGHTS_NEEDED:]
+    dates = sorted(inputs.nights)[-NIGHTS_NEEDED:]
     evidence = []
     green = len(dates) == NIGHTS_NEEDED
     if not green:
@@ -244,9 +271,10 @@ def three_nights_green(inputs: Inputs) -> tuple[str, list[str]]:
             evidence.append(f"{night} {kind}: {entry['state']} head={entry['fields'].get('head', '?')}")
             green = green and entry["state"] == "GREEN"
     if inputs.store is not None:
-        failed = sum(1 for value in inputs.store.values() if isinstance(value, dict) and value.get("outcome") == "fail")
+        runs = [run for run in inputs.store.values() if isinstance(run, dict) and not run_is_after(inputs, run)]
+        failed = sum(1 for run in runs if run.get("outcome") == "fail")
         evidence.append(
-            f"results store: {failed} of {len(inputs.store)} test(s) failed at their last run"
+            f"results store: {failed} of {len(runs)} test(s) failed at their last run"
             " (a night runs its own shards only)"
         )
     return (MET if green else NOT_MET), evidence
@@ -263,17 +291,9 @@ def nothing_left_out(inputs: Inputs) -> tuple[str, list[str]]:
     ]
     missing = []
     for kind, keys in ((CARGO_NIGHT, CARGO_NIGHT_COUNTS), (E2E_NIGHT, E2E_NIGHT_COUNTS)):
-        found = last_night(inputs.nights, kind)
-        if found is None:
-            missing.append(f"no {kind} line")
-            continue
-        night, entry = found
-        for key in keys:
-            value = entry["fields"].get(key, "")
-            if value.isdigit():
-                counts.append((f"{kind} {night} {key}", int(value)))
-            else:
-                missing.append(f"{kind} {night}: no {key}=")
+        found, lacking = night_counts(inputs.nights, kind, keys)
+        counts += found
+        missing += lacking
     evidence = [f"{name}: {count}" for name, count in counts] + missing
     if any(count for _, count in counts):
         return NOT_MET, evidence
@@ -301,6 +321,8 @@ def quality(_inputs: Inputs) -> tuple[str, list[str]]:
 def budgets_in_band(inputs: Inputs) -> tuple[str, list[str]]:
     if inputs.summary is None:
         return UNKNOWN, ["no --summary given"]
+    if run_is_after(inputs, inputs.summary):
+        return UNKNOWN, [f"the summary is of night {inputs.summary.get('date')}, after {inputs.today}"]
     budget = inputs.summary.get("budget")
     if not isinstance(budget, dict):
         return UNKNOWN, ["the summary has no budget report"]
@@ -362,13 +384,10 @@ def pending_door_empty(inputs: Inputs) -> tuple[str, list[str]]:
         ]
         if len(expired) > EXPIRED_ROWS_SHOWN:
             evidence.append(f"... and {len(expired) - EXPIRED_ROWS_SHOWN} more past their deadline")
-    found = last_night(inputs.nights, CARGO_NIGHT)
-    if found is not None:
-        night, entry = found
-        for key in ("pending", "expired"):
-            value = entry["fields"].get(key, "")
-            if value.isdigit():
-                counts.append((f"{CARGO_NIGHT} {night} {key}", int(value)))
+    found, lacking = night_counts(inputs.nights, CARGO_NIGHT, ("pending", "expired"))
+    counts += found
+    evidence += lacking
+    missing = missing or bool(lacking)
     evidence = [f"{name}: {count}" for name, count in counts] + evidence
     if any(count for _, count in counts):
         return NOT_MET, evidence
@@ -391,6 +410,10 @@ def office_fixed(inputs: Inputs) -> tuple[str, list[str]]:
             evidence.append(f"{key}: {where} (fixed by {fixed_by})")
             outcomes.append("absent")
             continue
+        if run_is_after(inputs, last):
+            evidence.append(f"{key}: last run on {last.get('date')}, after {inputs.today} (fixed by {fixed_by})")
+            outcomes.append("absent")
+            continue
         evidence.append(f"{key}: {last.get('outcome', '?')} on {last.get('date', '?')} (fixed by {fixed_by})")
         outcomes.append(str(last.get("outcome")))
     if "fail" in outcomes:
@@ -405,16 +428,19 @@ def load(args: argparse.Namespace) -> Inputs:
     tree = Path(args.tree)
     if not (tree / "Cargo.toml").is_file():
         raise InputError(f"tree {tree}: no Cargo.toml")
+    today = args.today or datetime.now(JAPAN).date().isoformat()
     nights = None
     if args.history:
         try:
             nights = read_history(Path(args.history).read_text(errors="replace"))
         except OSError as error:
             raise InputError(f"history {args.history}: {error}") from error
+        # Every condition reads the nights up to the reported date only.
+        nights = {night: kinds for night, kinds in nights.items() if night <= today}
     register_path = args.register or os.environ.get(REGISTER_ENV, "")
     return Inputs(
         tree=tree,
-        today=args.today or datetime.now(JAPAN).date().isoformat(),
+        today=today,
         nights=nights,
         summary=read_json(args.summary, "summary") if args.summary else None,
         store=read_json(args.results_store, "results store") if args.results_store else None,
