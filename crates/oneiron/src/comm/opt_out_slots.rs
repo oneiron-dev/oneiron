@@ -108,7 +108,9 @@ pub(super) fn stop_supersedes_clear_request(stop_at: u64, request_at: u64) -> bo
 /// stale against it (`stop_supersedes_clear_request`), and the approval
 /// refuses such a clear when the STOP is already here (FIX 22384). A STOP
 /// that reaches this replica only after the ruling (a delayed webhook, a
-/// peer's copy by sync) is judged by the same rule (COMM-STOP-LATE-ARRIVAL).
+/// peer's copy by sync that its peer had not projected) is judged by the
+/// same rule (COMM-STOP-LATE-ARRIVAL). A copy its peer had projected mints
+/// nothing here (`peer_stop_projection_in_txn`).
 /// A receipt that names no request was written before receipts did; its
 /// close answers, as it did then.
 ///

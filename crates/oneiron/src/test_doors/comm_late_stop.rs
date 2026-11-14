@@ -1,7 +1,7 @@
 //! Door for `tests/comm_late_stop_after_clear.rs` (COMM-STOP-LATE-ARRIVAL):
 //! a STOP that arrives as a peer's copy its peer already projected, a clear's
-//! receipt that sync has not imported yet, and whether a STOP still holds
-//! sends on this replica.
+//! receipt that sync has not imported yet, an opt-out head closed through the
+//! generic claim door, and whether a STOP still holds sends on this replica.
 
 use crate::Vault;
 use crate::comm::CommResult;
@@ -59,4 +59,20 @@ pub fn deliver_withheld_clear_receipts(
     channel_class: &str,
 ) -> CommResult<usize> {
     crate::comm::deliver_withheld_clear_receipts(vault, party, channel_class)
+}
+
+/// Retracts each standing opt-out head on `party`'s `channel_class` slot
+/// through the generic claim door (`Vault::retract_claim`), which writes no
+/// clear receipt. Answers how many it retracted.
+///
+/// # Errors
+///
+/// Unknown party; a refused retract; storage errors.
+pub fn retract_standing_opt_outs(
+    vault: &Vault,
+    party: &str,
+    channel_class: &str,
+    at: u64,
+) -> CommResult<usize> {
+    crate::comm::retract_standing_opt_outs(vault, party, channel_class, at)
 }

@@ -738,7 +738,7 @@ fn apply_projector_rule_in_txn(
                 )?;
                 // The slot moved after this STOP: its opt-out closes where the
                 // move answered it, unless the move was a clear requested at
-                // or after the STOP (restrictive wins, whatever the order of
+                // or before the STOP (restrictive wins, whatever the order of
                 // arrival).
                 let answered_at = stop_answering_boundary_in_txn(
                     vault,

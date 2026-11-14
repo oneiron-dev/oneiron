@@ -102,7 +102,7 @@ pub(crate) use self::stop_hold::{
 #[cfg(oneiron_test_support)]
 pub(crate) use self::stop_hold::{
     deliver_withheld_clear_receipts, mark_recorded_stop_peer_projected, recorded_stop_holds,
-    withhold_clear_receipts,
+    retract_standing_opt_outs, withhold_clear_receipts,
 };
 
 use std::cell::{Cell, RefCell};

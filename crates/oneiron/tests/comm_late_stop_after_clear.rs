@@ -9,6 +9,12 @@
 //! rows. A late STOP that finds the closed head here before the receipt
 //! stands: no receipt says the clear answers it (review round 1).
 //!
+//! A peer's copy of a STOP its peer already projected mints nothing here. It
+//! holds sends until the peer's state arrives, and any move of its slot after
+//! it settles it: nothing here says whether the peer minted the STOP's own
+//! opt-out or folded the STOP into a head that already stood. Waiting for an
+//! opt-out the peer never minted would hold sends for good (review round 2).
+//!
 //! The vault is unseeded, as in `comm_unprojected_stop_clear.rs`, so the
 //! unseeded opener needs the test-support feature. The peer and in-flight
 //! receipt legs reach crate-private doors, so they also need
@@ -93,26 +99,47 @@ fn late_stop_before_the_request_is_cleared_by_the_approval() {
 
 #[cfg(oneiron_test_support)]
 #[test]
-fn peer_late_stop_after_the_request_keeps_holding() {
+fn peer_stop_folded_into_a_retracted_head_stops_holding() {
     use oneiron::test_doors::comm_late_stop::{
-        mark_recorded_stop_peer_projected, recorded_stop_holds,
+        mark_recorded_stop_peer_projected, recorded_stop_holds, retract_standing_opt_outs,
     };
 
     let (_directory, vault) = open_vault();
-    clear_an_opt_out_requested_at_20_and_approved_at_40(&vault);
-    // A peer recorded and projected STOP@30 after this replica's clear; the
-    // STOP row has arrived here, its peer's opt-out for it has not.
-    record_comm_inbound_stop(&vault, PARTY, CHANNEL, 30).expect("record STOP@30 late");
+    record_comm_inbound_stop(&vault, PARTY, CHANNEL, 10).expect("record STOP@10");
+    run_comm_projector(&vault).expect("project STOP@10");
+    // A peer projected STOP@15 while STOP@10's head stood there, so it minted
+    // no opt-out of STOP@15's own. The STOP row has arrived here.
+    record_comm_inbound_stop(&vault, PARTY, CHANNEL, 15).expect("record STOP@15");
     let stop =
-        mark_recorded_stop_peer_projected(&vault, PARTY, CHANNEL, 30).expect("peer's STOP@30");
-    assert!(recorded_stop_holds(&vault, &stop).expect("read the hold"));
-
-    run_comm_projector(&vault).expect("run the pass over the peer's STOP@30");
-
+        mark_recorded_stop_peer_projected(&vault, PARTY, CHANNEL, 15).expect("peer's STOP@15");
+    run_comm_projector(&vault).expect("run the pass while STOP@10's head stands");
     assert!(
         recorded_stop_holds(&vault, &stop).expect("read the hold"),
-        "the clear requested at 20 does not answer the peer's STOP@30: it holds until the \
-         peer's opt-out arrives"
+        "STOP@10's head started before the peer's STOP@15: no move after it is here yet"
+    );
+
+    // The owner retracts that head at 40 through the generic claim door: no
+    // clear request, no receipt.
+    assert_eq!(
+        retract_standing_opt_outs(&vault, PARTY, CHANNEL, 40).expect("retract STOP@10's head"),
+        1
+    );
+    assert_eq!(
+        standing_opt_outs(&vault),
+        0,
+        "the retract at 40 closes STOP@10's head"
+    );
+    run_comm_projector(&vault).expect("run the pass over the closed head");
+
+    assert!(
+        !recorded_stop_holds(&vault, &stop).expect("read the hold"),
+        "the retract at 40 moved the slot after the peer's STOP@15, and no opt-out of the \
+         peer's own is coming: the STOP holds sends no more"
+    );
+    assert_eq!(
+        standing_opt_outs(&vault),
+        0,
+        "nothing is minted here for the peer's STOP@15"
     );
 }
 

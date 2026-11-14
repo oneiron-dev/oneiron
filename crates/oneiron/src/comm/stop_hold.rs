@@ -31,8 +31,9 @@ use super::consent::{
     OPT_OUT_REASON_STOP, claim_body_in_txn, parties_opt_out_subjects_in_txn, standing_opt_out_head,
     subject_claim_ids_in_txn,
 };
-use super::opt_out_slots::stop_answering_boundary_in_txn;
-use super::projection_writes::{matching_claims_in_txn, projected_comm_claim_id};
+use super::projection_writes::{
+    latest_claim_transition_boundary, matching_claims_in_txn, projected_comm_claim_id,
+};
 use super::records::{CommEventKind, CommRecord, decode_comm_record};
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -143,6 +144,16 @@ pub(crate) fn send_stop_reason_in_txn(
 /// that answers it, arrives with the peer's state, and a copy minted here
 /// first could stand against a clear the peer's human already made. An older
 /// head standing here is no answer: its clear may be in flight (R1-F1).
+///
+/// Any move of the slot after the STOP settles it here, a clear requested
+/// before the STOP included. Nothing here says whether the peer minted the
+/// STOP's own opt-out or folded the STOP into a head that already stood
+/// there. When the peer minted one, it arrives with the peer's state and
+/// holds sends as a standing head. A peer that folded the STOP in never
+/// mints one, and waiting for it would hold sends here for good, with no
+/// head a clear could find (COMM-STOP-LATE-ARRIVAL review round 2). The
+/// replica that projects a STOP judges a clear's close by its request
+/// (`stop_answering_boundary_in_txn`).
 pub(super) fn peer_stop_projection_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -170,17 +181,8 @@ pub(super) fn peer_stop_projection_in_txn(
     if let Some((_, claim)) = history.iter().find(|(id, _)| *id == own) {
         return Ok(Some(claim.is_standing()));
     }
-    // A clear requested at or after the STOP does not answer it; the peer's
-    // own opt-out for it is still on its way.
-    let answered_later = stop_answering_boundary_in_txn(
-        vault,
-        rtxn,
-        &history,
-        event.party_ref,
-        channel,
-        event.occurred_at,
-    )?
-    .is_some();
+    let answered_later = latest_claim_transition_boundary(&history)
+        .is_some_and(|boundary| event.occurred_at < boundary);
     Ok(answered_later.then_some(false))
 }
 
@@ -305,4 +307,35 @@ pub(crate) fn deliver_withheld_clear_receipts(
         WITHHELD_CLEAR_RECEIPT_OUTCOME,
         super::consent::OPT_OUT_CLEAR_APPROVED,
     )
+}
+
+/// Test door: retracts each standing opt-out head on `party`'s
+/// `channel_class` slot through the generic claim door, as an owner's
+/// `vault.claims.retract` does: no clear request and no receipt. Answers how
+/// many it retracted.
+#[cfg(oneiron_test_support)]
+pub(crate) fn retract_standing_opt_outs(
+    vault: &Vault,
+    party: &str,
+    channel_class: &str,
+    at: u64,
+) -> CommResult<usize> {
+    let party_ref = super::parties::resolve_party(vault, party)?.ok_or(CommError::InvalidRecord)?;
+    let channel = crate::counterparty_contact::normalize_channel_class(channel_class);
+    let standing = {
+        let rtxn = vault.store.env.read_txn()?;
+        matching_claims_in_txn(
+            vault,
+            &rtxn,
+            party_ref,
+            PREDICATE_COMM_OPT_OUT,
+            Some(channel.as_str()),
+            None,
+            true,
+        )?
+    };
+    for (claim_id, _) in &standing {
+        vault.retract_claim(claim_id, at)?;
+    }
+    Ok(standing.len())
 }
