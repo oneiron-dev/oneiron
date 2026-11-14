@@ -9,7 +9,8 @@
 //! value stays as written where the text rules place it next to another
 //! span, on the ruling install and on the others: a key beside it is masked
 //! on its own, and a word the rules read around it is no hit once the ruled
-//! value is filled.
+//! value is filled. RULING 11:28 (RULED-SCREEN-MERGED-SPAN-SCOPE = A): a
+//! ruled value written inside a longer token stays masked with that token.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test found_key_ruled_screen`.
 
@@ -291,5 +292,25 @@ fn a_ruled_value_inside_an_assigned_word_stays_text_where_only_its_carried_revok
         "a ruled value inside a word the rules read around it stays as written where only \
          the ruling's revoke reached"
     );
+    Ok(())
+}
+
+#[test]
+fn a_ruled_value_inside_a_longer_token_stays_masked_on_every_install() -> TestResult {
+    for screen_only in [false, true] {
+        let (_dir, vault, owner) = open_vault()?;
+        let id = ruled_record(&vault, &owner, screen_only)?;
+        // The provider rule reads the token with its label whole, and so does
+        // the credential rule: no rule places the ruled value alone there.
+        let body = notes_body(&format!("deploy, token={TOKEN}_v2"));
+        put(&vault, &id, 2, &body)
+            .unwrap_or_else(|error| panic!("the record, written again, lands: {error:?}"));
+        let notes = stored_notes(&vault, &id)?;
+        assert!(
+            notes.starts_with("deploy, token=[secret sc") && !notes.contains(TOKEN),
+            "a longer token that holds the ruled value is masked whole (screen only: \
+             {screen_only}): {notes}"
+        );
+    }
     Ok(())
 }

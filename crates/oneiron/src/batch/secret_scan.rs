@@ -301,6 +301,22 @@ pub(crate) fn ruled_screen_candidates(bytes: &[u8]) -> Vec<Zeroizing<Vec<u8>>> {
     candidates
 }
 
+/// Whether `span` of `bytes` starts and ends at token boundaries: no token
+/// byte (an ASCII letter or digit, `_` or `-`) runs on past an end of it
+/// that is one. A value the owner ruled, written inside a longer token
+/// (`<ruled>xyz`), is part of that token, which the door's rules read whole:
+/// it is no place of the ruled value there, so neither the door's scan nor
+/// the mask leaves it as written (L6-03-RULED-SCREEN-MERGED-SPAN).
+pub(crate) fn at_token_boundaries(bytes: &[u8], span: &std::ops::Range<usize>) -> bool {
+    let token = |at: Option<usize>| {
+        at.and_then(|at| bytes.get(at))
+            .is_some_and(|&byte| provider_tokens::token_char(char::from(byte)))
+    };
+    let runs_on_before = token(Some(span.start)) && token(span.start.checked_sub(1));
+    let runs_on_after = token(span.end.checked_sub(1)) && token(Some(span.end));
+    !runs_on_before && !runs_on_after
+}
+
 /// Each text and byte member of `value`, map keys included, at any depth.
 fn member_texts(value: &rmpv::Value, out: &mut Vec<Zeroizing<Vec<u8>>>) {
     match value {

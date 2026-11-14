@@ -8,7 +8,7 @@ use std::ops::Range;
 use zeroize::Zeroizing;
 
 use super::super::container::{MAX_FILE_KEYS, REASON_OVER_BUDGET};
-use super::super::{REASON_MNEMONIC, secret_scan_error, write_payload_hit};
+use super::super::{REASON_MNEMONIC, at_token_boundaries, secret_scan_error, write_payload_hit};
 use super::body::reads_as_text;
 use super::split_phrase;
 use super::text_log::{TextLog, TextSpans};
@@ -78,11 +78,12 @@ impl Masker {
             }
         }
         // A kept value's own span is left out before the spans merge, so it
-        // never joins a key next to it.
+        // never joins a key next to it; not one inside a longer token.
         spans.retain(|(span, _)| {
-            !leaf
-                .get(span.clone())
-                .is_some_and(|value| self.is_kept(value))
+            !(at_token_boundaries(leaf, span)
+                && leaf
+                    .get(span.clone())
+                    .is_some_and(|value| self.is_kept(value)))
         });
         for (span, reason) in merged(spans) {
             if known

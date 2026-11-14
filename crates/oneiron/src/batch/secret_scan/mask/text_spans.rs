@@ -4,7 +4,9 @@
 pub(crate) use oneiron_store::batch::secret_scan::mask::text_spans::*;
 
 use super::super::shapes;
-use super::super::{REASON_MNEMONIC, REASON_PRIVATE_KEY, provider_token_spans};
+use super::super::{
+    REASON_MNEMONIC, REASON_PRIVATE_KEY, at_token_boundaries, provider_token_spans,
+};
 use super::{REASON_BLOCKLIST, REASON_SENSITIVE_ENV};
 use crate::file_secret_marks::FILLER;
 use std::ops::Range;
@@ -25,7 +27,8 @@ pub(super) fn secret_spans(text: &str) -> Vec<(Range<usize>, &'static str)> {
 /// read around it, is then placed on its own, and the kept value stays as
 /// written (`password=<kept>/[secret sc12]`). A value that is only part of a
 /// span, such as the head of a longer token, is no rule's span alone: it is
-/// not filled, and the span is masked whole.
+/// not filled, and the span is masked whole. Nor is a rule's span inside a
+/// longer token, such as a blocklist entry ([`at_token_boundaries`]).
 pub(super) fn secret_spans_kept(
     text: &str,
     kept: impl Fn(&[u8]) -> bool,
@@ -34,7 +37,10 @@ pub(super) fn secret_spans_kept(
     let kept_spans: Vec<Range<usize>> = placed
         .iter()
         .map(|(span, _)| span.clone())
-        .filter(|span| text.as_bytes().get(span.clone()).is_some_and(&kept))
+        .filter(|span| {
+            at_token_boundaries(text.as_bytes(), span)
+                && text.as_bytes().get(span.clone()).is_some_and(&kept)
+        })
         .collect();
     if kept_spans.is_empty() {
         return merged(placed);

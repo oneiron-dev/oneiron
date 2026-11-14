@@ -521,6 +521,8 @@ impl KeptValues {
     /// text member of the body, such as a credential field's value. One whose
     /// bytes, or one of their spellings, the screen holds is the ruled value
     /// for this scan, and every spelling of it is filled as a held value's is.
+    /// A place inside a longer token is left as written: the rules read that
+    /// token whole, and it is no ruled value (L6-03-RULED-SCREEN-MERGED-SPAN).
     pub(crate) fn screened(&self, record: &EntityId, bytes: &[u8]) -> Option<Vec<u8>> {
         let mut found: Vec<Zeroizing<Vec<u8>>> = Vec::new();
         if self.screens.contains_key(record) {
@@ -539,7 +541,9 @@ impl KeptValues {
             .unwrap_or_default();
         let mut copy = None::<Vec<u8>>;
         for value in held.iter().chain(&found).filter(|value| !value.is_empty()) {
-            for span in super::known_values::occurrences(bytes, value) {
+            for span in super::known_values::occurrences(bytes, value)
+                .filter(|span| crate::batch::secret_scan::at_token_boundaries(bytes, span))
+            {
                 copy.get_or_insert_with(|| bytes.to_vec())[span].fill(b'*');
             }
         }
