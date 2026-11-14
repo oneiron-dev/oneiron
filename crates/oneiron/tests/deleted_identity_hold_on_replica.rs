@@ -335,10 +335,15 @@ fn generic_head(
     .expect("claim body")
 }
 
-/// Puts `body` at a fresh id through the public generic claim door.
+/// Puts `body` at a fresh id through the public generic claim door, in the
+/// vault default facet, where the engine's own identity heads live.
+/// `ClaimBody::new` stamps the subject's own facet, and a CHANNEL_IDENTITY
+/// has none, so the birth would stop at `InvalidFacet` before any gate.
 fn put_generic(vault: &Vault, body: &ClaimBody) -> Result<EntityId, oneiron::Error> {
+    let mut body = body.clone();
+    body.scope_facet = vault.default_facet()?;
     let id = EntityId::now();
-    vault.put_claim(&id, body, TimeRange { start: T0, end: T0 }, T0)?;
+    vault.put_claim(&id, &body, TimeRange { start: T0, end: T0 }, T0)?;
     Ok(id)
 }
 
