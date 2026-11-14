@@ -12,7 +12,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::codec::settlement_key_parts;
-use super::pending::validate_pending_ref;
+use super::pending::{OutputBase, validate_pending_ref};
 use super::ref_state::{RefMove, move_ref_in_txn};
 use super::{MadeByReader, NativeOutput, PendingProposalView, SettleConsent};
 use crate::Vault;
@@ -202,6 +202,27 @@ impl Vault {
         retained_at: u64,
         read_rows: &[EntityId],
     ) -> Result<PendingProposalView> {
+        self.propose_held_organ_output_made_against(wait, output, retained_at, None, read_rows)
+    }
+
+    /// [`Self::propose_held_organ_output`] of a file made from
+    /// `made_against`, the version (and its content hash) of the held
+    /// artifact the call read: the proposal is pinned to that version, so a
+    /// head that moved while the call was held keeps the file as a fork of
+    /// the version it was made from (review of #7368). `None` pins it to the
+    /// head.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::propose_held_organ_output`]'s errors.
+    pub fn propose_held_organ_output_made_against(
+        &self,
+        wait: &OrganWait,
+        output: &NativeOutput,
+        retained_at: u64,
+        made_against: Option<(u64, [u8; 32])>,
+        read_rows: &[EntityId],
+    ) -> Result<PendingProposalView> {
         let own = output.run_ref == wait.run_ref
             || output
                 .run_ref
@@ -220,7 +241,7 @@ impl Vault {
             Some(self.organ_landing_reader(wait.submitter)?),
             (wait.held_by, retained_at),
             None,
-            None,
+            made_against.map_or(OutputBase::Head, OutputBase::MadeAgainst),
             false,
             read_rows,
             None,
