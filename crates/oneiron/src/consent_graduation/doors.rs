@@ -13,6 +13,12 @@ use crate::error::{Error, GateError, Result};
 use crate::identity_topology::ProposalOutcome;
 use crate::vault::Vault;
 
+/// The grant target an Admin's or Delegate's Owner-minted `policy.change`
+/// grant names for the power to demote another actor's graduated ramp scope
+/// through [`Vault::demote_scope_to_propose`]: one target for every scope, at
+/// vault scope, as the other holder doors name theirs (FIX 8177).
+pub const RAMP_DEMOTE_GRANT_TARGET: &str = "consent-graduation:demote";
+
 /// A cold-mail offer needs both an OF-399 streak and live CID-5 reputation.
 /// This filter is on the general offer list as well as the native-mail pack
 /// read path: a poor-reputation identity must not surface a second offer door.
@@ -210,14 +216,21 @@ impl Vault {
         })
     }
 
-    /// The owner demotes a scope back to the propose lane: revokes its
-    /// standing grant if one is live, appends the demotion receipt, and zeroes
-    /// the clean streak.
+    /// The owner, or a policy holder, demotes a scope back to the propose
+    /// lane: revokes its standing grant if one is live, appends the demotion
+    /// receipt, and zeroes the clean streak.
     ///
-    /// The grant is the owner's, so taking it away is the owner's act, proved
-    /// and rechecked in the write's transaction. The scope's own actor steps
-    /// back through [`crate::memory::Memory::demote_own_ramp_scope`] instead.
-    /// Either way the act is said out loud, which is the unconditional receipt
+    /// Demotion narrows, so the owner is not its only author (ARCH-0082
+    /// `#changing`: "Tighten or loosen a row for an act you hold: a policy
+    /// holder ..., own proof, lands at once"). The proof is the vault owner's,
+    /// or the person proof of a policy holder: a live Owner, or an Admin or
+    /// Delegate whose Owner-minted `policy.change` grant names
+    /// [`RAMP_DEMOTE_GRANT_TARGET`]. Both are found again in the write's
+    /// transaction, and a role label alone demotes nothing. The scope's own
+    /// actor, or the agent whose run spawned it, steps it back through
+    /// [`crate::memory::Memory::demote_own_ramp_scope`] instead.
+    /// Re-graduation stays the owner's tap ([`Vault::accept_graduation_offer`]).
+    /// Every way the act is said out loud, which is the unconditional receipt
     /// (oracle `ms06_self_demotion_is_receipted_never_silent`): a scope with no
     /// live grant still records the act, so a demotion is never inferred from
     /// an absence.
@@ -226,8 +239,9 @@ impl Vault {
     ///
     /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the scope tuple is unbuildable,
     /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated) when the proof no
-    /// longer holds here or names a person who is not this vault's owner,
-    /// plus storage failures.
+    /// longer holds here, or names a person who is neither this vault's owner
+    /// nor a policy holder over [`RAMP_DEMOTE_GRANT_TARGET`], plus storage
+    /// failures.
     pub fn demote_scope_to_propose(
         &self,
         owner: &AuthenticatedOwner,
@@ -237,7 +251,11 @@ impl Vault {
         let at = self.store.clock.now_recorded_at();
         self.with_write_txn_grouped(|wtxn| {
             scope.validate()?;
-            owner.revalidate_as_vault_owner_in_txn(self, &*wtxn)?;
+            if let Err(refusal) = owner.revalidate_as_vault_owner_in_txn(self, &*wtxn)
+                && !holds_ramp_demote_power_in_txn(self, &*wtxn, owner)?
+            {
+                return Err(refusal);
+            }
             append_demotion_in_txn(self, wtxn, scope, reason, at)
         })
     }
@@ -314,17 +332,75 @@ impl Vault {
     }
 }
 
+/// Whether `proof` is a policy holder's own person proof over
+/// [`RAMP_DEMOTE_GRANT_TARGET`] now, in `txn`: the person proof still holds,
+/// and its person is a live Owner or an Admin or Delegate whose Owner-minted
+/// `policy.change` grant names the target (FIX 8177's holder check). A proof
+/// that no longer holds is no holder.
+fn holds_ramp_demote_power_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    proof: &AuthenticatedOwner,
+) -> Result<bool> {
+    let Ok(actor) = proof.revalidate_person_in_txn(vault, txn) else {
+        return Ok(false);
+    };
+    crate::policy_model::holds_vault_policy_power_in_txn(
+        vault,
+        txn,
+        actor,
+        RAMP_DEMOTE_GRANT_TARGET,
+        crate::unix_seconds_now(),
+    )
+}
+
+/// Whether the agent `parent` spawned the actor `child` names: `child` is an
+/// agent id whose pin binds the attempt whose spawn minted it as an
+/// attenuated fork (FIX 9559), and that attempt dispatched `parent`. The
+/// step the Gate's delegation-chain read takes (`gate::definition_ceiling`),
+/// one level up. An unpinned id, or an attempt row that is gone, names no
+/// parent.
+fn spawned_by_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    child: &str,
+    parent: crate::entity_id::EntityId,
+) -> Result<bool> {
+    let Ok(child) = crate::entity_id::EntityId::from_hex(child) else {
+        return Ok(false);
+    };
+    let Some(attempt) = crate::agent_def::delegation_parent_in_txn(&vault.store, txn, &child)?
+    else {
+        return Ok(false);
+    };
+    let Some(row) =
+        crate::attempt_queue::AttemptQueue::from_store(&vault.store).get_in_txn(txn, attempt)?
+    else {
+        return Ok(false);
+    };
+    Ok(crate::agent_dispatch::record_dispatch_input(&row)
+        .and_then(|input| input.target.agent_definition_ref().ok())
+        == Some(parent))
+}
+
 impl crate::memory::Memory<'_> {
-    /// The scope's own actor steps back to the propose lane on its own
-    /// judgment ([`DemotionReason::AgentJudgment`]), receipted like any
-    /// demotion. Reducing one's own authority needs no owner proof; reducing
-    /// another actor's does, so the scope must name this facade's actor.
+    /// The scope's own actor, or the agent that spawned it, steps the scope
+    /// back to the propose lane on its own judgment
+    /// ([`DemotionReason::AgentJudgment`]), receipted like any demotion.
+    /// Narrowing one's own authority, or a child's, needs no owner proof
+    /// (ARCH-0082 `#changing`: "Tighten a child's row ...: the parent or
+    /// grantor, nothing. Narrowing is delegation."). The child is the
+    /// attenuated fork the dispatcher minted for this actor's run and pinned
+    /// to it (FIX 9559), read from the engine's own pin, never from a
+    /// caller-supplied body; direct children only. Any other actor's scope
+    /// is the owner's or a policy holder's to demote
+    /// ([`Vault::demote_scope_to_propose`]).
     ///
     /// # Errors
     ///
-    /// `forbidden` when the scope belongs to another actor or the actor binding
-    /// fails, plus the scope and storage errors of
-    /// [`Vault::demote_scope_to_propose`].
+    /// `forbidden` when the scope belongs to an actor that is neither this one
+    /// nor its spawned child, or the actor binding fails, plus the scope and
+    /// storage errors of [`Vault::demote_scope_to_propose`].
     pub fn demote_own_ramp_scope(
         &self,
         scope: &RampScope,
@@ -334,11 +410,13 @@ impl crate::memory::Memory<'_> {
         // Giving up one's own grant requires the actor binding, not a content-write grant.
         vault.write_txn_door(crate::store::Callback::Audited, |wtxn| {
             scope.validate()?;
-            if scope.actor != self.actor().to_hex() {
+            if scope.actor != self.actor().to_hex()
+                && !spawned_by_in_txn(vault, wtxn, &scope.actor, self.actor())?
+            {
                 return Err(oneiron_contracts::memory::MemoryError::new(
                     oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN,
-                    "an actor demotes only its own ramp scope",
-                    &["Ask the owner to demote another actor's scope."],
+                    "an actor demotes only its own ramp scope or its spawned child's",
+                    &["Ask the owner or a policy holder to demote another actor's scope."],
                 ));
             }
             crate::memory::verify_actor_binding_in_txn(
