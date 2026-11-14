@@ -9,14 +9,15 @@ use std::process::Stdio;
 use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
-use oneiron::llm::CacheIdentity;
 use oneiron::llm::manifest::ModelRole;
+use oneiron::llm::{CacheIdentity, WorkerMode};
 use oneiron_driver::RunningWorker as _;
 
+use super::HOST;
 use super::launch_manifest::LaunchRecord;
 use super::launcher::HealthRoute;
 use super::process::ProcessWorker;
-use super::{HOST, Hosted};
+use crate::config::models::WorkerListen;
 use crate::models::{ModelRuntime, OfferLadder};
 
 /// A stub worker process in a supervisor's custody, as a launched worker's
@@ -51,19 +52,42 @@ impl SocketStub {
 
 /// Records a launch serving HTTP on `socket`, whose supervised child is
 /// `child`'s, as hosted worker `worker_id`'s current launch. False when no
-/// hosted `listen = "unix"` row has that id.
+/// hosted row with that id has a `listen = "unix"` launch.
+///
+/// The row's artifacts are absent, so its supervisor parks and never makes
+/// a launch ready, and a parked supervisor fails every call before the
+/// reranker reads the slot (`OfferLadder::hold_worker`). The recorded stub
+/// stands for a ready launch, so the row is released from the supervisor's
+/// lease as an external row is. The slot stays the one the reranker's route
+/// captured when the runtime was built: the call still sends on `socket`
+/// alone, checked against `child`.
 #[must_use]
 pub fn record_socket_launch(worker_id: &str, socket: &Path, child: &SocketStub) -> bool {
     let Some(host) = HOST.get() else {
         return false;
     };
-    let slot = host
-        .lock()
-        .get(worker_id)
-        .and_then(Hosted::socket_slot)
-        .map(Arc::clone);
-    let Some(slot) = slot else {
-        return false;
+    let slot = {
+        let mut workers = host.lock();
+        let Some(hosted) = workers.get_mut(worker_id) else {
+            return false;
+        };
+        // The launch's own listen, not `Hosted::socket_slot`: that asks for a
+        // managed row, and an earlier call may have released this one.
+        let listens_on_socket = hosted
+            .row
+            .launch
+            .as_ref()
+            .is_some_and(|launch| launch.listen == WorkerListen::Unix);
+        let Some(slot) = hosted
+            .slot
+            .as_ref()
+            .filter(|_| listens_on_socket)
+            .map(Arc::clone)
+        else {
+            return false;
+        };
+        hosted.row.mode = WorkerMode::External;
+        slot
     };
     *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(LaunchRecord {
         manifest_sha256: String::new(),
