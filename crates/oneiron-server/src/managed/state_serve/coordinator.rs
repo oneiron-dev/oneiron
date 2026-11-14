@@ -562,6 +562,7 @@ async fn serve_with_handles(
                 config.vault_path.clone(),
                 admitted(),
             )
+            .with_archive_entry_cap(config.import.archive_entry_cap())
             .spawn(Arc::clone(&sync_server)),
         );
     }

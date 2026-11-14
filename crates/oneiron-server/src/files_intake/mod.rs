@@ -46,6 +46,11 @@ pub(crate) enum ImportWarning {
     /// (FIX 7779): their ledger rows name none, and a later rescan tries
     /// again.
     OriginalsUnkept { files: usize, first_error: String },
+    /// An archive entry the archive pre-check skipped, never read: a path
+    /// that would leave the import folder, a symbolic link, or a device
+    /// file, FIFO or socket (ARCH-0027 #archive-precheck). The rest of the
+    /// archive imports.
+    ArchiveEntrySkipped { name: String, reason: &'static str },
 }
 
 /// Whether the open file has another name (a hard link). A walk passes over
