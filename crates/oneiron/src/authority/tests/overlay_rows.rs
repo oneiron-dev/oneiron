@@ -11,7 +11,9 @@ use crate::store::authority_overlay_custody::{
 };
 #[cfg(feature = "sync")]
 use crate::sync::authority_overlay_custody::{
-    answer_offer, offer_overlay_page, run_round_for_test, run_round_then_abort_for_test,
+    ErasedSubject, OverlayAnswer, OverlayKeySession, OverlayOffer, answer_offer,
+    apply_overlay_answer, offer_overlay_page, receive_keys, run_round_for_test,
+    run_round_then_abort_for_test,
 };
 use crate::{OpenOptions, Vault, VaultConfig, VaultStorageId};
 
@@ -620,4 +622,281 @@ fn a_key_an_aborted_writer_installed_opens_nothing_until_a_delivery_commits() {
     assert!(!fold.pass_through_entries.contains(&mint_row));
     assert!(fold.slips.mints.contains_key(&slip_id));
     assert!(other.capability_slip_id_is_live(&slip_id).unwrap());
+}
+
+#[test]
+#[cfg(feature = "sync")]
+fn a_held_key_session_closes_when_its_machine_offers_again() {
+    let machine_dir = tempfile::tempdir().unwrap();
+    let machine = Vault::open(machine_dir.path(), VaultConfig::default()).unwrap();
+    let machine_id = EntityId::now();
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let root = machine.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims.clone();
+    let slip_id = [97; 32];
+    claims.slip_id = slip_id;
+    claims.records = BTreeSet::from(["record:d".to_owned()]);
+    let slip = machine.mint_capability_slip(&issuer, claims).unwrap();
+    let mint_row = machine.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
+    let id = authority_log_entity_id_from_hash(&mint_row).unwrap();
+    let entry = machine.get_authority_log_entry(&id).unwrap().unwrap();
+    let _subject = authority_overlay_subject(&entry.op).unwrap();
+
+    let (history, overlays) = machine
+        .export_signed_authority_history_with_overlays()
+        .unwrap();
+    let home_dir = tempfile::tempdir().unwrap();
+    let home = Vault::open(home_dir.path(), VaultConfig::default()).unwrap();
+    let home_id = EntityId::now();
+    home.import_signed_authority_history(&history, &overlays)
+        .unwrap();
+
+    let (offer, session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
+    assert_eq!(offer.ready.len(), 1);
+    let (subject, key_ref) = offer.ready.iter().next().copied().unwrap();
+    let answer = answer_offer(&home, &home_id, &machine_id, &offer).unwrap();
+    assert!(answer.session.is_some());
+    assert!(answer.wanted.contains(&(subject, key_ref)));
+    let sent =
+        apply_overlay_answer(&machine, &machine_id, &home_id, &offer, &session, answer).unwrap();
+    assert_eq!(sent.len(), 1);
+
+    let offer2 = OverlayOffer {
+        digest: [0; 32],
+        owed: false,
+        after: None,
+        through: None,
+        ready: BTreeSet::new(),
+        erased: BTreeMap::new(),
+        session: offer_overlay_page(&machine, &machine_id, &home_id, None)
+            .unwrap()
+            .0
+            .session,
+    };
+    let answer2 = answer_offer(&home, &home_id, &machine_id, &offer2).unwrap();
+    assert!(answer2.session.is_none());
+    assert!(
+        receive_keys(&home, &home_id, &machine_id, sent).is_err(),
+        "a batch sealed to the session the machine's next offer replaced must not install"
+    );
+    let fold = home.authority_fold().unwrap();
+    assert!(fold.pass_through_entries.contains(&mint_row));
+    assert!(!fold.valid_entries.contains(&mint_row));
+}
+
+#[test]
+#[cfg(feature = "sync")]
+fn an_offer_whose_session_key_does_not_import_retires_nothing() {
+    let home_dir = tempfile::tempdir().unwrap();
+    let home = Vault::open(home_dir.path(), VaultConfig::default()).unwrap();
+    let home_id = EntityId::now();
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let root = home.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims.clone();
+    let slip_id = [98; 32];
+    claims.slip_id = slip_id;
+    claims.records = BTreeSet::from(["record:d".to_owned()]);
+    let slip = home.mint_capability_slip(&issuer, claims).unwrap();
+    let mint_row = home.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
+    let id = authority_log_entity_id_from_hash(&mint_row).unwrap();
+    let entry = home.get_authority_log_entry(&id).unwrap().unwrap();
+    let _subject = authority_overlay_subject(&entry.op).unwrap();
+
+    let machine_id = EntityId::now();
+    let ready = offer_overlay_page(&home, &home_id, &machine_id, None)
+        .unwrap()
+        .0
+        .ready;
+    assert_eq!(ready.len(), 1);
+    let (subject, key_ref) = ready.iter().next().copied().unwrap();
+    assert!(
+        home.authority_fold()
+            .unwrap()
+            .valid_entries
+            .contains(&mint_row)
+    );
+    let offer = OverlayOffer {
+        digest: [0; 32],
+        owed: false,
+        after: None,
+        through: None,
+        ready: BTreeSet::new(),
+        erased: BTreeMap::from([(
+            subject,
+            ErasedSubject {
+                refs: BTreeSet::from([key_ref]),
+                destroyed: BTreeSet::new(),
+            },
+        )]),
+        session: OverlayKeySession {
+            ephemeral: vec![0u8; 3],
+            nonce: [7; 32],
+        },
+    };
+    assert!(answer_offer(&home, &home_id, &machine_id, &offer).is_err());
+    assert!(
+        home.authority_fold()
+            .unwrap()
+            .valid_entries
+            .contains(&mint_row),
+        "an offer refused for its session key must leave its subject's rows open"
+    );
+    assert!(
+        offer_overlay_page(&home, &home_id, &machine_id, None)
+            .unwrap()
+            .0
+            .ready
+            .contains(&(subject, key_ref))
+    );
+}
+
+#[test]
+#[cfg(feature = "sync")]
+fn an_offer_naming_a_subject_erased_with_no_key_is_refused_and_retires_nothing() {
+    let home_dir = tempfile::tempdir().unwrap();
+    let home = Vault::open(home_dir.path(), VaultConfig::default()).unwrap();
+    let home_id = EntityId::now();
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let root = home.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims.clone();
+    let slip_id = [99; 32];
+    claims.slip_id = slip_id;
+    claims.records = BTreeSet::from(["record:d".to_owned()]);
+    let slip = home.mint_capability_slip(&issuer, claims).unwrap();
+    let mint_row = home.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
+    let id = authority_log_entity_id_from_hash(&mint_row).unwrap();
+    let entry = home.get_authority_log_entry(&id).unwrap().unwrap();
+    let _subject = authority_overlay_subject(&entry.op).unwrap();
+
+    let machine_id = EntityId::now();
+    let inventory_offer = offer_overlay_page(&home, &home_id, &machine_id, None)
+        .unwrap()
+        .0;
+    assert_eq!(inventory_offer.ready.len(), 1);
+    let (subject, _key_ref) = inventory_offer.ready.iter().next().copied().unwrap();
+    assert!(
+        home.authority_fold()
+            .unwrap()
+            .valid_entries
+            .contains(&mint_row)
+    );
+    let offer = OverlayOffer {
+        digest: [0; 32],
+        owed: false,
+        after: None,
+        through: None,
+        ready: BTreeSet::new(),
+        erased: BTreeMap::from([(subject, ErasedSubject::default())]),
+        session: inventory_offer.session,
+    };
+    assert!(
+        answer_offer(&home, &home_id, &machine_id, &offer).is_err(),
+        "an offer naming a subject erased with no key must be refused"
+    );
+    assert!(
+        home.authority_fold()
+            .unwrap()
+            .valid_entries
+            .contains(&mint_row)
+    );
+}
+
+#[test]
+#[cfg(feature = "sync")]
+fn an_answer_naming_a_subject_erased_with_no_key_seals_nothing() {
+    let machine_dir = tempfile::tempdir().unwrap();
+    let machine = Vault::open(machine_dir.path(), VaultConfig::default()).unwrap();
+    let machine_id = EntityId::now();
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let root = machine.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims.clone();
+    let slip_id = [100; 32];
+    claims.slip_id = slip_id;
+    claims.records = BTreeSet::from(["record:d".to_owned()]);
+    let slip = machine.mint_capability_slip(&issuer, claims).unwrap();
+    let mint_row = machine.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
+    let id = authority_log_entity_id_from_hash(&mint_row).unwrap();
+    let entry = machine.get_authority_log_entry(&id).unwrap().unwrap();
+    let _subject = authority_overlay_subject(&entry.op).unwrap();
+
+    let home_id = EntityId::now();
+    let (offer, session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
+    assert_eq!(offer.ready.len(), 1);
+    let (subject, key_ref) = offer.ready.iter().next().copied().unwrap();
+    let answer = OverlayAnswer {
+        same: false,
+        through: None,
+        erased: BTreeMap::from([(subject, ErasedSubject::default())]),
+        keys: Vec::new(),
+        wanted: BTreeSet::from([(subject, key_ref)]),
+        session: Some(
+            offer_overlay_page(&machine, &machine_id, &home_id, None)
+                .unwrap()
+                .0
+                .session,
+        ),
+    };
+    assert!(
+        apply_overlay_answer(&machine, &machine_id, &home_id, &offer, &session, answer).is_err(),
+        "an answer naming a subject erased with no key must be refused before a key is sealed"
+    );
+    assert!(
+        machine
+            .authority_fold()
+            .unwrap()
+            .valid_entries
+            .contains(&mint_row)
+    );
+}
+
+#[test]
+#[cfg(feature = "sync")]
+fn a_wanted_key_of_a_subject_the_answer_names_erased_is_retired_not_sent() {
+    let machine_dir = tempfile::tempdir().unwrap();
+    let machine = Vault::open(machine_dir.path(), VaultConfig::default()).unwrap();
+    let machine_id = EntityId::now();
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let root = machine.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims.clone();
+    let slip_id = [101; 32];
+    claims.slip_id = slip_id;
+    claims.records = BTreeSet::from(["record:d".to_owned()]);
+    let slip = machine.mint_capability_slip(&issuer, claims).unwrap();
+    let mint_row = machine.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
+    let id = authority_log_entity_id_from_hash(&mint_row).unwrap();
+    let entry = machine.get_authority_log_entry(&id).unwrap().unwrap();
+    let _subject = authority_overlay_subject(&entry.op).unwrap();
+
+    let home_id = EntityId::now();
+    let (offer, session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
+    assert_eq!(offer.ready.len(), 1);
+    let (subject, key_ref) = offer.ready.iter().next().copied().unwrap();
+    let answer = OverlayAnswer {
+        same: false,
+        through: None,
+        erased: BTreeMap::from([(
+            subject,
+            ErasedSubject {
+                refs: BTreeSet::from([key_ref]),
+                destroyed: BTreeSet::new(),
+            },
+        )]),
+        keys: Vec::new(),
+        wanted: BTreeSet::from([(subject, key_ref)]),
+        session: Some(
+            offer_overlay_page(&machine, &machine_id, &home_id, None)
+                .unwrap()
+                .0
+                .session,
+        ),
+    };
+    let sent =
+        apply_overlay_answer(&machine, &machine_id, &home_id, &offer, &session, answer).unwrap();
+    assert!(
+        sent.is_empty(),
+        "a key of a subject the answer names erased must not be sent"
+    );
+    let fold = machine.authority_fold().unwrap();
+    assert!(fold.pass_through_entries.contains(&mint_row));
+    assert!(!fold.valid_entries.contains(&mint_row));
 }
