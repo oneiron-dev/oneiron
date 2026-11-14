@@ -287,8 +287,8 @@ A declared run's paid keys must sit at T0, so its teacher calls go out this way.
 A streamed chat call to a `key_secret` provider goes through the broker as
 the provider's event request; the broker strips each form of the key from
 the events as they pass, and the call keeps its permit and digest binding.
-A Gemini provider's chat still answers whole replies only. Its media calls
-go through the same broker (§10).
+A Gemini model streams this way too when its entry declares `streaming`. Its
+media calls go through the same broker (§10).
 
 A self-hosted `serve` takes `--settings-file <path>` too: a TOML file in its
 config file's schema, read as one more config file over `--config` and under
@@ -2026,9 +2026,9 @@ Gemini file's one redirect is followed only under the API's own origin.
 
 A `gemini` provider is Google's Gemini API, its origin as `base_url` and its
 key in `key_env` or `key_secret` (sent as `x-goog-api-key`). Its chat rungs send
-`models/{model}:generateContent`, streamed as `streamGenerateContent` on a direct key
-when the model declares it; a `key_secret` chat goes through the credential broker as
-a whole reply, like its media calls do. A configured `max_output_tokens` is sent as
+`models/{model}:generateContent`, streamed as `streamGenerateContent?alt=sse` when the
+model declares `streaming`; a `key_secret` chat, whole or streamed, goes through the
+credential broker, like its media calls do. A configured `max_output_tokens` is sent as
 `generationConfig.maxOutputTokens` on both paths. It also serves the image and video
 seats. An image is `models/{model}:generateContent` asked for image
 output: the instruction and each reference image go inline, a `size`

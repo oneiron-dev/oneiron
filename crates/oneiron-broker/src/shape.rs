@@ -137,6 +137,12 @@ pub enum Shape {
     /// [`Self::OpenAiChatUnversioned`] asking for server-sent events (FIX
     /// 15702), as [`Self::OpenAiChatStream`].
     OpenAiChatUnversionedStream,
+    /// [`Self::GeminiGenerate`] asking for server-sent events (census L6-29):
+    /// `POST …/v1beta/models/{model}:streamGenerateContent?alt=sse`, JSON,
+    /// the model in the path, `x-goog-api-key`. Gemini asks for events by
+    /// that endpoint and its fixed query, not by a body flag, and the events
+    /// are relayed as they come.
+    GeminiGenerateStream,
 }
 
 struct Row {
@@ -397,6 +403,19 @@ const GEMINI_GENERATE: Row = Row {
     )
 };
 
+/// [`GEMINI_GENERATE`]'s event request: its own endpoint and the one query
+/// `alt=sse`, which the path must end in.
+const GEMINI_GENERATE_STREAM: Row = Row {
+    query: Some("alt=sse"),
+    streams: true,
+    ..gemini(
+        "POST",
+        &["v1beta", "models", "{model}:streamGenerateContent"],
+        Body::Json,
+        Selector::Path,
+    )
+};
+
 const GEMINI_PREDICT: Row = Row {
     streams: true,
     ..gemini(
@@ -566,13 +585,13 @@ impl Shape {
             Self::AnthropicMessagesStream => &ANTHROPIC_MESSAGES_STREAM,
             Self::OpenAiChatStream => &OPENAI_CHAT_STREAM,
             Self::OpenAiChatUnversionedStream => &OPENAI_CHAT_UNVERSIONED_STREAM,
+            Self::GeminiGenerateStream => &GEMINI_GENERATE_STREAM,
         }
     }
 
     /// Whether the shape relays a provider's server-sent events (FIX
-    /// 15702): its request asks for them with a top-level `stream: true`,
-    /// and each batch of its reply is sent on as soon as it is cleared of
-    /// the key, not gathered first.
+    /// 15702): its request asks for them, and each batch of its reply is
+    /// sent on as soon as it is cleared of the key, not gathered first.
     #[must_use]
     pub const fn relays_events(self) -> bool {
         matches!(
@@ -580,7 +599,15 @@ impl Shape {
             Self::AnthropicMessagesStream
                 | Self::OpenAiChatStream
                 | Self::OpenAiChatUnversionedStream
+                | Self::GeminiGenerateStream
         )
+    }
+
+    /// Whether the shape's request asks for events with its body's top-level
+    /// `stream: true`, as OpenAI chat and Anthropic Messages do. Gemini's
+    /// asks by its endpoint and its fixed query instead, which its row binds.
+    const fn asks_events_in_body(self) -> bool {
+        self.relays_events() && !matches!(self, Self::GeminiGenerateStream)
     }
 
     /// The shape of the same endpoint for a request that asks for
@@ -591,6 +618,7 @@ impl Shape {
             Self::AnthropicMessages => Some(Self::AnthropicMessagesStream),
             Self::OpenAiChat => Some(Self::OpenAiChatStream),
             Self::OpenAiChatUnversioned => Some(Self::OpenAiChatUnversionedStream),
+            Self::GeminiGenerate => Some(Self::GeminiGenerateStream),
             _ => None,
         }
     }
@@ -727,8 +755,9 @@ impl Shape {
             _ => return Err(Refusal::Body),
         };
         // An event-relaying shape carries exactly the request that asks for
-        // events, so its reply is the stream it is framed for.
-        if self.relays_events()
+        // events, so its reply is the stream it is framed for. Gemini's row
+        // binds that by its endpoint and query.
+        if self.asks_events_in_body()
             && json_member(body, "stream")? != Some(serde_json::Value::Bool(true))
         {
             return Err(Refusal::Body);
