@@ -20,7 +20,7 @@
 //! Call it from a blocking context: `reqwest::blocking` owns its own runtime.
 
 use std::cell::Cell;
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use base64::Engine as _;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
@@ -411,53 +411,7 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         let Some(listed) = self.get(source, &format!("{GMAIL_USER_URL}/history"), &params)? else {
             return Ok(MailHistoryRead::Expired);
         };
-        let mut changes = Vec::new();
-        // A label record names the labels it changed, not where the message
-        // stands now: each such message is named once, after the page's
-        // additions and deletions, for the importer to read again.
-        let mut relabeled = BTreeSet::new();
-        for record in array(&listed, "history") {
-            for added in array(record, "messagesAdded") {
-                let Some(message) = added.get("message") else {
-                    continue;
-                };
-                changes.push(MailHistoryChange::Added(MailMessageRef {
-                    provider_id: plain_id(message.get("id"))?,
-                    thread_id: text_of(message.get("threadId")),
-                }));
-            }
-            for deleted in array(record, "messagesDeleted") {
-                let Some(message) = deleted.get("message") else {
-                    continue;
-                };
-                changes.push(MailHistoryChange::Deleted {
-                    provider_id: plain_id(message.get("id"))?,
-                });
-            }
-            for changed in array(record, "labelsAdded")
-                .iter()
-                .chain(array(record, "labelsRemoved"))
-            {
-                let Some(message) = changed.get("message") else {
-                    continue;
-                };
-                relabeled.insert(plain_id(message.get("id"))?);
-            }
-        }
-        changes.extend(
-            relabeled
-                .into_iter()
-                .map(|provider_id| MailHistoryChange::Relabeled { provider_id }),
-        );
-        let reached = listed
-            .get("historyId")
-            .and_then(id_text)
-            .unwrap_or_else(|| anchor.to_owned());
-        Ok(MailHistoryRead::Page(MailHistoryPage {
-            changes,
-            next_page: text_of(listed.get("nextPageToken")),
-            anchor: reached,
-        }))
+        gmail_history_page(&listed, anchor).map(MailHistoryRead::Page)
     }
 
     fn attachment(
@@ -937,6 +891,69 @@ fn trash_or_spam(labels: &[String]) -> bool {
     labels
         .iter()
         .any(|label| label == "TRASH" || label == "SPAM")
+}
+
+/// The changes one page of a Gmail `history.list` answer gives, read from
+/// `anchor`: additions and deletions in the order of their records, then
+/// each message a label record names, once.
+///
+/// A label record names the labels it changed, not where the message stands
+/// now, so the importer reads each such message again. Each carries the id
+/// of the page's last label record that names it (Gmail lists records oldest
+/// first): read again after a later label change to it, the page differs
+/// from the one read before (REVIEW-7782, REVIEW-7785 round 2).
+///
+/// # Errors
+///
+/// [`crate::Error::InvalidConfig`] when a record names a message whose id is
+/// not letters and digits only.
+pub fn gmail_history_page(listed: &Value, anchor: &str) -> Result<MailHistoryPage> {
+    let mut changes = Vec::new();
+    let mut relabeled = BTreeMap::new();
+    for record in array(listed, "history") {
+        for added in array(record, "messagesAdded") {
+            let Some(message) = added.get("message") else {
+                continue;
+            };
+            changes.push(MailHistoryChange::Added(MailMessageRef {
+                provider_id: plain_id(message.get("id"))?,
+                thread_id: text_of(message.get("threadId")),
+            }));
+        }
+        for deleted in array(record, "messagesDeleted") {
+            let Some(message) = deleted.get("message") else {
+                continue;
+            };
+            changes.push(MailHistoryChange::Deleted {
+                provider_id: plain_id(message.get("id"))?,
+            });
+        }
+        let history_id = record.get("id").and_then(id_text).unwrap_or_default();
+        for changed in array(record, "labelsAdded")
+            .iter()
+            .chain(array(record, "labelsRemoved"))
+        {
+            let Some(message) = changed.get("message") else {
+                continue;
+            };
+            relabeled.insert(plain_id(message.get("id"))?, history_id.clone());
+        }
+    }
+    changes.extend(relabeled.into_iter().map(|(provider_id, history_id)| {
+        MailHistoryChange::Relabeled {
+            provider_id,
+            history_id,
+        }
+    }));
+    let reached = listed
+        .get("historyId")
+        .and_then(id_text)
+        .unwrap_or_else(|| anchor.to_owned());
+    Ok(MailHistoryPage {
+        changes,
+        next_page: text_of(listed.get("nextPageToken")),
+        anchor: reached,
+    })
 }
 
 /// A Gmail id or count that is a string or a number (`historyId`,

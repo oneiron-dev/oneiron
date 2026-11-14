@@ -32,7 +32,9 @@ A step that runs out stops there. What landed stays, and the step answers
 `quota_paused_until` with no error. A step that stops part-way through a
 change-feed page keeps how far it got; the next step reads the page again and
 goes on after the changes already applied, a message the copy setting skips
-included. `vault.mail.sources.sync_status` shows the
+included. A message whose labels changed again meanwhile (a later Gmail label
+record names it) makes the page read again differ from the one begun, and the
+step applies that page from its start. `vault.mail.sources.sync_status` shows the
 same time, and its `last_error` stays empty. Until that time the host's pass
 skips the source, and a step of it makes no Gmail call.
 
