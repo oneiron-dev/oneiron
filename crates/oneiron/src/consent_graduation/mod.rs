@@ -87,6 +87,7 @@ mod scope;
 mod state;
 mod storage;
 
+pub use self::doors::RAMP_DEMOTE_GRANT_TARGET;
 pub use self::receipts::{is_ramp_demotion_receipt, is_ramp_outcome_receipt};
 pub use self::scope::{DEFAULT_GRADUATION_STREAK_FLOOR, RampScope, op_kind_is_ramp_eligible};
 pub use self::state::{DemotionReason, RampState, ScopeOutcomeStats};
