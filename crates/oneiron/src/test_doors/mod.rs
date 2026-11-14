@@ -24,6 +24,7 @@ pub mod code_reply_healer;
 pub mod code_run_answer;
 pub mod code_run_write_identity;
 pub mod code_view_fork;
+pub mod comm_late_stop;
 pub mod comm_thread_member_claim_reads;
 pub mod connector_key_suspend;
 pub mod consolidation;
@@ -42,6 +43,7 @@ pub mod free_time_cycle_writer;
 pub mod free_time_handoff;
 pub mod grant_roles;
 pub mod graph_ask_centre;
+pub mod history_import_rows;
 #[cfg(feature = "sync")]
 pub mod guest_turn_counterparty;
 #[cfg(feature = "sync")]
@@ -61,18 +63,21 @@ pub mod mail_counterparty;
 pub mod mail_landing;
 pub mod membership;
 pub mod meso_extraction_width;
+pub mod microsoft_token;
 pub mod model_binding_proposer;
 pub mod nightly;
 pub mod note_bm25f_repair;
 pub mod off_record_shell;
 pub mod outbound_grant_index;
 pub mod own_device_message_replay;
+pub mod pack_encode_work;
 pub mod pad_offer_invalidation;
 pub mod park_typed_wait;
 pub mod provenance_body_checkpoint;
 pub mod re_root_stale_sweep;
 pub mod repo_base_manifest;
 pub mod repo_secret_marks;
+pub mod research_continuation;
 pub mod resident_wake_hold;
 pub mod retrieval_policy_default_floor;
 pub mod room_turn_backfill;
@@ -99,6 +104,7 @@ pub mod uncertain_send_questions;
 pub mod untangle_regressions;
 pub mod verb_hook_ask;
 pub mod wake_d1_park_release;
+pub mod workspace_token;
 #[cfg(feature = "sync")]
 pub mod world_follow;
 #[cfg(feature = "sync")]
