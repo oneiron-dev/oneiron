@@ -65,6 +65,14 @@ const NOT_COUNTED: &str = "this install's fold does not count the key enrollment
 /// them: the enrollment does not land without it. Nothing was written.
 const BINDING_NOT_COUNTED: &str = "this install's fold does not count the binding of the enrolled \
                                    key to its owner; nothing was written";
+/// A membership move no issuer signs would leave owner authority live: the
+/// member holds an owner key or a `human` binding the move must revoke, and
+/// only the vault's live host root signs that (REVIEW-7931). Authority;
+/// nothing moved.
+const OWNER_AUTHORITY_NEEDS_HOST: &str = "the member holds an owner key or owner binding that \
+                                          this move must revoke, and this install holds no \
+                                          live host root to sign it; run the move on the \
+                                          vault's host";
 
 /// What a device hands its enrollment (CALLS "FIX 4920 enrollment API
 /// shape"): the machine that holds the key in its keystore, the key's
@@ -527,6 +535,36 @@ impl Vault {
                     epoch,
                 },
             )?;
+        }
+        Ok(())
+    }
+
+    /// Refuses a membership move no issuer signs while `person` holds owner
+    /// authority on this vault's log that the move must end: a live owner key
+    /// whose enrolment names them, or a live `human` binding that names them.
+    /// Only the vault's live host root signs their revocation
+    /// ([`Self::revoke_owner_authority_in_txn`]), so such a move runs on the
+    /// vault's host; a person with neither moves on any install (REVIEW-7931).
+    ///
+    /// # Errors
+    /// An authority refusal when they hold either; the log's read errors.
+    pub(crate) fn refuse_unrevoked_owner_authority_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+    ) -> Result<()> {
+        let holds_key = self
+            .enrolled_owner_keys_in_txn(txn)?
+            .iter()
+            .any(|key| key.live && key.owner == person);
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let holds_binding = fold.actor_bindings.values().any(|binding| {
+            binding.status == ActorBindingStatus::Active
+                && binding.actor_ref == person
+                && binding.actor_class == ACTOR_CLASS_HUMAN
+        });
+        if holds_key || holds_binding {
+            return Err(authority_refused(OWNER_AUTHORITY_NEEDS_HOST));
         }
         Ok(())
     }
