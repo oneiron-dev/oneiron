@@ -342,6 +342,15 @@ pub(crate) async fn execute_context_pack(
     if let Some(vector) = req.query_vector.as_deref() {
         builder = builder.search_vector(vector, candidate_limit);
     }
+    if let Some(phonetic) = req.phonetic_vector.as_ref() {
+        builder = builder.search_phonetic_vector(
+            &phonetic.model_id,
+            &phonetic.vector,
+            phonetic
+                .limit
+                .unwrap_or(oneiron::phonetic_learned::PHONETIC_VECTOR_DEFAULT_LIMIT),
+        );
+    }
     for seed in &media {
         builder = builder.search_media(
             &seed.space,

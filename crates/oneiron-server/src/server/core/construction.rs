@@ -409,6 +409,7 @@ impl SyncServer {
             hyde_host: Arc::new(crate::server::recall_hyde::HydeHost::new(hyde_queue_wait)),
             extraction_egress: None,
             tagger_egress: None,
+            phonetic_embedder: None,
             owner_host: None,
             feedback: None,
             feedback_triage: crate::config::FeedbackTriageConfig::default(),

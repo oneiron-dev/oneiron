@@ -260,6 +260,25 @@ impl ContextPackQueryAffect {
     }
 }
 
+/// The caller's vector of a name from the learned phonetic rung's model
+/// (CROSS-ARCH-0013 `#ladder` rung 2), searched against the names that model
+/// embedded. The vector is the caller's, as phonetic codes are.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+#[schema(example = json!({"model_id": "symphonym-v7", "vector": [0.12, -0.4, 0.33, 0.05]}))]
+pub(crate) struct ContextPackPhoneticVector {
+    /// The model's id, as the server's `[phonetic_embedder]` names it.
+    #[serde(alias = "modelId")]
+    #[schema(example = "symphonym-v7")]
+    pub(super) model_id: String,
+    /// The vector, of the model's width: another width is refused.
+    pub(super) vector: Vec<f32>,
+    /// Candidates the learned list takes: 200 unless set, at most 1000.
+    #[serde(default)]
+    #[schema(example = 200)]
+    pub(super) limit: Option<usize>,
+}
+
 /// Context-pack request on the canonical core route.
 #[derive(Debug, Deserialize, ToSchema)]
 #[schema(example = json!({
@@ -324,6 +343,11 @@ pub(crate) struct CoreContextPackRequest {
     /// and `query_vector`.
     #[serde(default)]
     pub(super) media: Option<ContextPackMediaQuery>,
+    /// Optional vector of a name from the learned phonetic model, searched
+    /// as one more list of the phonetic channel. It seeds the pack on its
+    /// own, as `media` does.
+    #[serde(default, alias = "phoneticVector")]
+    pub(super) phonetic_vector: Option<ContextPackPhoneticVector>,
     /// Optional affect the query is asked in (OF-423): emotion congruence
     /// ranks a candidate by how near its own valence, arousal and dominance
     /// sit.

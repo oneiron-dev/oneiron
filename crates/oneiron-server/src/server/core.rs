@@ -289,6 +289,9 @@ pub struct SyncServer {
     pub(crate) extraction_egress: Option<Arc<dyn oneiron::llm::ExtractionEgressPredicate>>,
     /// Host-native permission for each actual tagger POST, separate from LLM requests.
     pub(crate) tagger_egress: Option<Arc<dyn oneiron::llm::TaggerEgressPredicate>>,
+    /// The learned phonetic rung's model (`[phonetic_embedder]`), filled by
+    /// the media backfill's passes. `None` binds none.
+    pub(super) phonetic_embedder: Option<Arc<super::phonetic_embedding::PhoneticEndpoint>>,
     /// The vault's path, backup plan and schedule, set by `serve`. `None`
     /// on a server built without a known vault path.
     pub(crate) owner_host: Option<Arc<crate::owner::schedule::OwnerHost>>,
@@ -365,8 +368,8 @@ const _: fn(&SyncServer) = |server| {
         #[cfg(unix)] organs,
         #[cfg(unix)] organ_dir,
         run_receipts, ai, pattern_launch_runner, rerank_runtime, hyde_host, extraction_egress,
-        tagger_egress, owner_host, feedback, feedback_triage, feedback_flood, artifact_port,
-        api_addr, artifact_socket,
+        tagger_egress, phonetic_embedder, owner_host, feedback, feedback_triage, feedback_flood,
+        artifact_port, api_addr, artifact_socket,
         #[cfg(test)] booking_test_now_secs,
         #[cfg(test)] booking_test_clock_from,
     }

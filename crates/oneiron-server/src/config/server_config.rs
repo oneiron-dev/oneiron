@@ -458,6 +458,10 @@ pub struct ServeConfig {
     /// The `[linear]` section: the Linear mirror and its webhook's tracker
     /// mapping, absent until the config file names it.
     pub linear: Option<LinearConfig>,
+    /// The `[phonetic_embedder]` section: the model behind the learned
+    /// phonetic rung, absent until the config file names it. Absent means
+    /// no model: names keep their codes alone.
+    pub phonetic_embedder: Option<super::PhoneticEmbedderConfig>,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
     /// Operator-only enterprise/advanced checkpoint selection capability.
@@ -593,6 +597,7 @@ impl Default for ServeConfig {
             channel_endpoints: server.channel_endpoints.clone(),
             apns: server.apns.clone(),
             linear: None,
+            phonetic_embedder: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,

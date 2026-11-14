@@ -117,10 +117,12 @@ fn validated_inputs(
         .into_borrowed(&server.vault)
         .map_err(|_| ApiError::internal_server_error("context-pack reader return failed"))?;
     let query = non_empty_query(req.query.as_deref());
-    // A media query seeds the pack on its own; a vector beside it is still
-    // checked.
+    // A media query or a phonetic vector seeds the pack on its own; a query
+    // vector beside it is still checked.
     validate_core_query_seeds(
-        query.or(req.media.as_ref().map(|_| "media")),
+        query
+            .or(req.media.as_ref().map(|_| "media"))
+            .or(req.phonetic_vector.as_ref().map(|_| "phonetic_vector")),
         req.query_vector.as_deref(),
     )?;
     let media = req

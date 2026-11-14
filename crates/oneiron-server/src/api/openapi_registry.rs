@@ -355,6 +355,7 @@ use utoipa::OpenApi;
         ContextPackBudgetControls,
         ContextPackReaderControls,
         super::ContextPackMediaQuery,
+        super::ContextPackPhoneticVector,
         super::ContextPackQueryAffect,
         super::ContextPackTypeRef,
         ContextBoardMemoriesControls,

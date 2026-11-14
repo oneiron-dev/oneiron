@@ -47,6 +47,7 @@ pub(crate) fn settings_schema_keys(section: Option<&str>) -> Option<&'static [&'
         "channel_endpoints" => struct_fields::<crate::config::ChannelEndpointsConfig>(),
         "apns" => struct_fields::<crate::config::ApnsConfig>(),
         "linear" => struct_fields::<super::LinearConfig>(),
+        "phonetic_embedder" => struct_fields::<crate::config::PhoneticEmbedderConfig>(),
         _ => return None,
     };
     (!keys.is_empty()).then_some(keys)
@@ -150,6 +151,9 @@ pub(super) fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> 
     config.apns.validate()?;
     if let Some(linear) = &config.linear {
         linear.validate()?;
+    }
+    if let Some(phonetic_embedder) = &config.phonetic_embedder {
+        phonetic_embedder.validate()?;
     }
     crate::conversation_training::validate_outbox_dir(
         config.publisher_training_outbox_dir.as_deref(),
