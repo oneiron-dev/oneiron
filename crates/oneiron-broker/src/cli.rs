@@ -30,7 +30,6 @@ enum Mode {
 }
 
 /// The binary's entry point.
-#[must_use]
 pub fn main() -> ExitCode {
     match run(std::env::args_os().skip(1).collect()) {
         Ok(()) => ExitCode::SUCCESS,
