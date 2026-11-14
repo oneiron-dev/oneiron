@@ -225,10 +225,13 @@ impl BookingPageLens {
         let mut root = Self::root(model)?;
         // Shape checks prevent an internal identifier or URL from being emitted
         // as an action argument. They do not resolve or authorize credentials.
+        // A personal link's actions carry the personal token, so its page
+        // keeps the recipient's lock (BK-PERSONAL-LINKS).
         if !page_token
             .0
             .strip_prefix("bkp_")
             .is_some_and(|value| opaque_hex(value, 32))
+            && !crate::booking::is_personal_link_token(&page_token.0)
         {
             return Err(Error::InvalidConfig(
                 "public booking page token shape".to_owned(),

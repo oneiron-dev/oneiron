@@ -79,16 +79,16 @@ async fn execute(
     // A request that books only a published page (an anonymous visitor, a
     // credential caller, a stale owner sign-in: FIX 5327) never reaches the
     // owner's own page resolver below.
-    let (public_authority, listed) = if transport.requires_publication {
-        let (page_ref, publication, rows) =
-            public::resolve_public_booking_page_listing(server, page_token)?;
+    let (public_authority, listed, personal_link) = if transport.requires_publication {
+        let (page_ref, publication, rows, personal_link) =
+            public::resolve_public_booking_capability_listing(server, page_token)?;
         let authority = oneiron::booking::publication::PublicBookingAuthority {
             page_ref,
             publication,
         };
-        (Some(authority), Some(rows))
+        (Some(authority), Some(rows), personal_link)
     } else {
-        (None, None)
+        (None, None, None)
     };
     let page_ref = match &public_authority {
         Some(authority) => authority.page_ref,
@@ -99,6 +99,11 @@ async fn execute(
     }
     let anonymous = transport.credential.is_none();
     validate_operation_shape(&request, anonymous)?;
+    // A personal link books its recipient alone, on every transport that
+    // presents it (BK-PERSONAL-LINKS).
+    if let Some(link) = &personal_link {
+        public::check_personal_link_recipient(link, &request)?;
+    }
     if anonymous {
         validate::validate_anonymous_intake_count(&request)?;
     } else {

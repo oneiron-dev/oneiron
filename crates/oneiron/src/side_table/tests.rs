@@ -347,6 +347,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "BLOB_ARTIFACT_VERSION_CLAIM",
         "BOARD_HISTORY_FOLDED",
         "BOOKING_EVENT_TYPE_CONFIG_SHORTCUT",
+        "BOOKING_PERSONAL_LINK",
         "BOOKING_PUBLICATION_WRITE_STAGE",
         "BOOKING_PUBLIC_PAGE_TOKEN_INDEX",
         "BOOKING_TOKEN",
