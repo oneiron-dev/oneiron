@@ -1797,8 +1797,11 @@ static int  mdb_env_write_meta(MDB_txn *txn);
 static void mdb_env_close_active(MDB_env *env, int excl);
 
 static MDB_node *mdb_node_search(MDB_cursor *mc, MDB_val *key, int *exactp);
-static int  mdb_node_add(MDB_cursor *mc, indx_t indx,
+static int  mdb_node_add_at(int pf_line, MDB_cursor *mc, indx_t indx,
 			    MDB_val *key, MDB_val *data, pgno_t pgno, unsigned int flags);
+/* OPUS-TESTKIT probe (lane branch only, never a PR): each caller passes its line. */
+#define mdb_node_add(mc, indx, key, data, pgno, flags) \
+	mdb_node_add_at(__LINE__, (mc), (indx), (key), (data), (pgno), (flags))
 static void mdb_node_del(MDB_cursor *mc, int ksize);
 static void mdb_node_shrink(MDB_page *mp, indx_t indx);
 static int	mdb_node_move(MDB_cursor *csrc, MDB_cursor *cdst, int fromleft);
@@ -6158,6 +6161,167 @@ mdb_env_envflags(MDB_env *env)
 # error "Persistent DB flags & env flags overlap, but both go in mm_flags"
 #endif
 
+/* OPUS-TESTKIT probe (lane branch only, never a PR), row TRAP-REGISTER-WAIT-PAGE-FULL:
+ * a registry of open envs by data-file (dev, ino), printing "## LMDB-TWICE" when one
+ * process holds two MDB_envs on one file, and a page report at mdb_node_add's "full:".
+ */
+#define MDB_PF_SLOTS 256
+static pthread_mutex_t mdb_pf_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct {
+	MDB_env *env;
+	unsigned long long dev, ino;
+	unsigned int flags;
+} mdb_pf_envs[MDB_PF_SLOTS];
+
+static void
+mdb_pf_write(const char *buf, int len)
+{
+	ssize_t w;
+	if (len <= 0)
+		return;
+	if (len > 4095)
+		len = 4095;
+	w = write(2, buf, (size_t)len);
+	(void)w;
+}
+
+static void
+mdb_pf_env_register(MDB_env *env, unsigned int flags)
+{
+	struct stat st;
+	char buf[1024];
+	int i, len, slot = -1;
+
+	if (fstat(env->me_fd, &st) != 0)
+		return;
+	pthread_mutex_lock(&mdb_pf_lock);
+	for (i = 0; i < MDB_PF_SLOTS; i++) {
+		if (!mdb_pf_envs[i].env) {
+			if (slot < 0)
+				slot = i;
+			continue;
+		}
+		if (mdb_pf_envs[i].dev == (unsigned long long)st.st_dev &&
+			mdb_pf_envs[i].ino == (unsigned long long)st.st_ino) {
+			len = snprintf(buf, sizeof(buf),
+				"## LMDB-TWICE open env=%p flags=0x%x other=%p other_flags=0x%x dev=%llu ino=%llu path=%s\n",
+				(void *)env, flags, (void *)mdb_pf_envs[i].env, mdb_pf_envs[i].flags,
+				(unsigned long long)st.st_dev, (unsigned long long)st.st_ino,
+				env->me_path ? env->me_path : "?");
+			mdb_pf_write(buf, len < (int)sizeof(buf) ? len : (int)sizeof(buf) - 1);
+		}
+	}
+	if (slot >= 0) {
+		mdb_pf_envs[slot].env = env;
+		mdb_pf_envs[slot].dev = (unsigned long long)st.st_dev;
+		mdb_pf_envs[slot].ino = (unsigned long long)st.st_ino;
+		mdb_pf_envs[slot].flags = flags;
+	} else {
+		len = snprintf(buf, sizeof(buf), "## LMDB-REGISTRY-FULL env=%p\n", (void *)env);
+		mdb_pf_write(buf, len < (int)sizeof(buf) ? len : (int)sizeof(buf) - 1);
+	}
+	pthread_mutex_unlock(&mdb_pf_lock);
+}
+
+static void
+mdb_pf_env_unregister(MDB_env *env)
+{
+	char buf[512];
+	int i, j, len;
+
+	pthread_mutex_lock(&mdb_pf_lock);
+	for (i = 0; i < MDB_PF_SLOTS; i++) {
+		if (mdb_pf_envs[i].env != env)
+			continue;
+		for (j = 0; j < MDB_PF_SLOTS; j++) {
+			if (j != i && mdb_pf_envs[j].env &&
+				mdb_pf_envs[j].dev == mdb_pf_envs[i].dev &&
+				mdb_pf_envs[j].ino == mdb_pf_envs[i].ino) {
+				len = snprintf(buf, sizeof(buf),
+					"## LMDB-TWICE close env=%p flags=0x%x other=%p other_flags=0x%x ino=%llu\n",
+					(void *)env, mdb_pf_envs[i].flags, (void *)mdb_pf_envs[j].env,
+					mdb_pf_envs[j].flags, mdb_pf_envs[i].ino);
+				mdb_pf_write(buf, len < (int)sizeof(buf) ? len : (int)sizeof(buf) - 1);
+			}
+		}
+		mdb_pf_envs[i].env = NULL;
+	}
+	pthread_mutex_unlock(&mdb_pf_lock);
+}
+
+/* mdb_node_add found no room: the caller's line, the page's own accounting (a walk of
+ * its nodes: offset:size:ksize:flags, their size sum vs the used span) and the cursor stack.
+ */
+static void
+mdb_pf_page_full(int line, MDB_cursor *mc, MDB_page *mp, indx_t indx, MDB_val *key,
+	MDB_val *data, unsigned int flags, size_t node_size, ssize_t room)
+{
+	char buf[4096];
+	int len, i;
+	unsigned int nkeys = NUMKEYS(mp), minoff = 0xffff, maxend = 0, bad = 0;
+	size_t sum = 0, sz;
+	pgno_t pg, q;
+	MDB_node *node;
+	MDB_page *p;
+	MDB_env *env = mc->mc_txn->mt_env;
+
+	COPY_PGNO(pg, MP_PGNO(mp));
+	len = snprintf(buf, sizeof(buf),
+		"## LMDB-PAGE-FULL line=%d pgno=%llu pflags=0x%x numkeys=%u lower=%u upper=%u room=%ld"
+		" node_size=%lu ksize=%lu dsize=%lu nflags=0x%x indx=%u dbi=%u dbflags=0x%x snum=%u top=%u"
+		" txnid=%llu txnflags=0x%x nested=%d psize=%u pagespace=%d nodemax=%u esum=%u env=%p\n",
+		line, (unsigned long long)pg, (unsigned)MP_FLAGS(mp), nkeys, (unsigned)MP_LOWER(mp),
+		(unsigned)MP_UPPER(mp), (long)room, (unsigned long)node_size,
+		key ? (unsigned long)key->mv_size : 0UL, data ? (unsigned long)data->mv_size : 0UL,
+		flags, (unsigned)indx, (unsigned)mc->mc_dbi, mc->mc_db ? (unsigned)mc->mc_db->md_flags : 0U,
+		(unsigned)mc->mc_snum, (unsigned)mc->mc_top, (unsigned long long)mc->mc_txn->mt_txnid,
+		(unsigned)mc->mc_txn->mt_flags, mc->mc_txn->mt_parent != NULL, (unsigned)env->me_psize,
+		env->me_pagespace, (unsigned)env->me_nodemax, (unsigned)env->me_esumsize, (void *)env);
+	mdb_pf_write(buf, len < (int)sizeof(buf) ? len : (int)sizeof(buf) - 1);
+
+	len = snprintf(buf, sizeof(buf), "## LMDB-PAGE-WALK pgno=%llu nodes", (unsigned long long)pg);
+	if (!IS_LEAF2(mp)) {
+		for (i = 0; i < (int)nkeys; i++) {
+			node = NODEPTR(mp, i);
+			sz = NODESIZE + EVEN(NODEKSZ(node));
+			if (IS_LEAF(mp))
+				sz += F_ISSET(node->mn_flags, F_BIGDATA) ? sizeof(MDB_ovpage) : EVEN(NODEDSZ(node));
+			sum += sz;
+			if (MP_PTRS(mp)[i] < minoff)
+				minoff = MP_PTRS(mp)[i];
+			if (MP_PTRS(mp)[i] + sz > maxend)
+				maxend = MP_PTRS(mp)[i] + sz;
+			if (MP_PTRS(mp)[i] < MP_UPPER(mp))
+				bad |= 1;
+			if (MP_PTRS(mp)[i] + sz > (size_t)env->me_pagespace)
+				bad |= 2;
+			if (i < 48 && len > 0 && len < (int)sizeof(buf) - 400)
+				len += snprintf(buf + len, sizeof(buf) - len, " %u:%lu:%u:%x",
+					(unsigned)MP_PTRS(mp)[i], (unsigned long)sz,
+					(unsigned)NODEKSZ(node), (unsigned)node->mn_flags);
+		}
+	}
+	if (len > 0 && len < (int)sizeof(buf) - 200)
+		len += snprintf(buf + len, sizeof(buf) - len,
+			" sum=%lu span=%ld minoff=%u maxend=%u bad=%u\n", (unsigned long)sum,
+			(long)env->me_pagespace - (long)MP_UPPER(mp), minoff, maxend, bad);
+	mdb_pf_write(buf, len < (int)sizeof(buf) ? len : (int)sizeof(buf) - 1);
+
+	len = snprintf(buf, sizeof(buf), "## LMDB-PAGE-STACK");
+	for (i = 0; i < (int)mc->mc_snum && i < CURSOR_STACK; i++) {
+		p = mc->mc_pg[i];
+		if (!p || len <= 0 || len >= (int)sizeof(buf) - 200)
+			break;
+		COPY_PGNO(q, MP_PGNO(p));
+		len += snprintf(buf + len, sizeof(buf) - len, " %d:%llu:%x:%u:%u:%u:%u", i,
+			(unsigned long long)q, (unsigned)MP_FLAGS(p), (unsigned)NUMKEYS(p),
+			(unsigned)mc->mc_ki[i], (unsigned)MP_LOWER(p), (unsigned)MP_UPPER(p));
+	}
+	if (len > 0 && len < (int)sizeof(buf) - 2)
+		len += snprintf(buf + len, sizeof(buf) - len, "\n");
+	mdb_pf_write(buf, len < (int)sizeof(buf) ? len : (int)sizeof(buf) - 1);
+}
+
 int ESECT
 mdb_env_open(MDB_env *env, const char *path, unsigned int flags, mdb_mode_t mode)
 {
@@ -6331,6 +6495,8 @@ mdb_env_open(MDB_env *env, const char *path, unsigned int flags, mdb_mode_t mode
 		}
 	}
 
+	if (rc == MDB_SUCCESS)
+		mdb_pf_env_register(env, flags);
 leave:
 	MDB_TRACE(("%p, %s, %u, %04o", env, path, flags & (CHANGEABLE|CHANGELESS), mode));
 	if (rc) {
@@ -6348,6 +6514,7 @@ mdb_env_close_active(MDB_env *env, int excl)
 
 	if (!(env->me_flags & MDB_ENV_ACTIVE))
 		return;
+	mdb_pf_env_unregister(env);
 
 	/* Doing this here since me_dbxs may not exist during mdb_env_close */
 	if (env->me_dbxs) {
@@ -9206,7 +9373,7 @@ mdb_branch_size(MDB_env *env, MDB_val *key)
  * </ul>
  */
 static int
-mdb_node_add(MDB_cursor *mc, indx_t indx,
+mdb_node_add_at(int pf_line, MDB_cursor *mc, indx_t indx,
     MDB_val *key, MDB_val *data, pgno_t pgno, unsigned int flags)
 {
 	unsigned int	 i;
@@ -9326,6 +9493,7 @@ full:
 		mdb_dbg_pgno(mp), NUMKEYS(mp)));
 	DPRINTF(("upper-lower = %u - %u = %"Z"d", MP_UPPER(mp),MP_LOWER(mp),room));
 	DPRINTF(("node size = %"Z"u", node_size));
+	mdb_pf_page_full(pf_line, mc, mp, indx, key, data, flags, node_size, room);
 	mc->mc_txn->mt_flags |= MDB_TXN_ERROR;
 	return MDB_PAGE_FULL;
 }
