@@ -19,6 +19,7 @@ mod made_by;
 mod manifest;
 mod models;
 mod optional_memory;
+mod optional_memory_set;
 mod plan_mode;
 mod powers;
 mod proposed_change;
@@ -44,6 +45,10 @@ pub use self::models::{
 pub use self::optional_memory::{
     OPTIONAL_MEMORY_BUDGET_KEYS, OPTIONAL_MEMORY_PROFILE_KEYS, OptionalMemory,
     OptionalMemoryProfile,
+};
+pub use self::optional_memory_set::{
+    AgentOptionalMemorySetRequest, AgentOptionalMemoryState, OptionalMemoryChoice,
+    OptionalMemoryView, set_agent_optional_memory_from_request_as,
 };
 pub use self::plan_mode::{
     AgentPlanMode, AgentPlanModeSetRequest, AgentPlanModeView, set_agent_plan_mode_from_request_as,
