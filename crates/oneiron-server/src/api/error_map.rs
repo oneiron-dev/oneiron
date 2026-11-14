@@ -158,8 +158,8 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
                 state: Some("last_bound_owner_delete".to_owned()),
             },
             [
-                "Add another owner first; then this person can be deleted.",
-                "Erase the vault if ending it is the goal.",
+                "Erase the vault if ending it is the goal; that is available now.",
+                "Binding another owner first needs the owner enrollment ceremony, which is not yet available; after it, this person can be deleted.",
             ],
         ),
         ErrorKind::GateWriteRejected => ApiError::new(

@@ -204,9 +204,16 @@ fn a_deleted_owner_holding_its_binding_takes_no_task_verb() {
     );
 }
 
-/// The guard's refusal names both ways out of it.
+/// The guard's refusal names both ways out as they stand (Engine
+/// L9-52-OWNER-GUARD-COOWNER, 14 Nov 2026): erasing the vault, available now,
+/// and binding another owner, which waits on the owner enrollment ceremony.
+/// It never sends the owner to a door that is not there yet.
 fn names_both_ways_out(message: &str) -> bool {
-    message.contains("add another owner first") && message.contains("erase the vault")
+    message.contains("erase the vault if ending it is the goal (available now)")
+        && message.contains(
+            "bind another owner first (needs the owner enrollment ceremony, not yet available)",
+        )
+        && !message.contains("add another owner first")
 }
 
 #[test]
@@ -218,6 +225,14 @@ fn the_last_bound_owners_person_is_not_deleted_and_the_refusal_names_both_ways_o
         .expect_err("the last bound owner deletes their own person");
     assert_eq!(refused.code, MEMORY_CODE_INVALID_STATE, "{refused:?}");
     assert!(names_both_ways_out(&refused.message), "{refused:?}");
+    assert_eq!(
+        refused.suggestions,
+        [
+            "Erase the vault if ending it is the goal; that is available now.",
+            "Binding another owner first needs the owner enrollment ceremony, which is not yet available; after it, this person can be deleted.",
+        ],
+        "the hints name the same two ways out"
+    );
     let host = f
         .vault
         .delete_entity(&f.owner)
