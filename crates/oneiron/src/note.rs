@@ -413,10 +413,11 @@ pub use files::{
 };
 mod folder_source;
 pub use folder_source::{
-    DRIVE_WIRE_RATE_LIMITED, DriveCall, DriveChange, DriveChangesPage, DriveFileMeta, DriveOrigin,
-    DriveQuota, DriveSource, DriveStepBudget, DriveStepReport, DriveSyncState, DriveWire,
-    FileOriginal, FolderFile, FolderFileState, FolderRescan, FolderRescanReport, FolderSource,
-    FolderSourceFile, OriginalBytes,
+    DRIVE_FOLDER_MIME_TYPE, DRIVE_PICKED_OAUTH_SCOPE, DRIVE_WHOLE_OAUTH_SCOPE,
+    DRIVE_WIRE_RATE_LIMITED, DriveAccess, DriveCall, DriveChange, DriveChangesPage, DriveFileMeta,
+    DriveFilesPage, DriveListing, DriveOrigin, DriveQuota, DriveSource, DriveStepBudget,
+    DriveStepReport, DriveSyncState, DriveWire, FileOriginal, FolderFile, FolderFileState,
+    FolderRescan, FolderRescanReport, FolderSource, FolderSourceFile, OriginalBytes,
 };
 pub(crate) use folder_source::{MAX_DRIVE_DOWNLOAD_BYTES, erase_folder_source_actor_in_txn};
 mod import;

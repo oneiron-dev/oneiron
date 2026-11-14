@@ -48,8 +48,10 @@ mod reconcile;
 
 pub(crate) use drive::MAX_DRIVE_DOWNLOAD_BYTES;
 pub use drive::{
-    DRIVE_WIRE_RATE_LIMITED, DriveCall, DriveChange, DriveChangesPage, DriveFileMeta, DriveOrigin,
-    DriveQuota, DriveSource, DriveStepBudget, DriveStepReport, DriveSyncState, DriveWire,
+    DRIVE_FOLDER_MIME_TYPE, DRIVE_PICKED_OAUTH_SCOPE, DRIVE_WHOLE_OAUTH_SCOPE,
+    DRIVE_WIRE_RATE_LIMITED, DriveAccess, DriveCall, DriveChange, DriveChangesPage, DriveFileMeta,
+    DriveFilesPage, DriveListing, DriveOrigin, DriveQuota, DriveSource, DriveStepBudget,
+    DriveStepReport, DriveSyncState, DriveWire,
 };
 pub use original::{FileOriginal, OriginalBytes};
 

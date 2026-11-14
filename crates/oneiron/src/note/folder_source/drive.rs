@@ -1,6 +1,8 @@
 //! A Google Drive source (MAIL-GOOGLE = A, ARCH-0027 #mail-drive): an
-//! attached folder source whose files are the Drive files its owner picked
-//! (`drive.file`), read through a [`DriveWire`] instead of a host walk. The
+//! attached folder source whose files are the Drive files its owner chose
+//! at attach, read through a [`DriveWire`] instead of a host walk. The
+//! owner chooses either the files they picked (`drive.file`) or their whole
+//! Drive (`drive.readonly`; DRIVE-ACCESS = B, the owner 15 Nov 00:43). The
 //! same ledger and the same rescan serve it: a new file lands as an
 //! imported NOTE, a changed one supersedes the text it landed, and one gone
 //! from Drive or put in its trash retracts its note (archived, never
@@ -9,9 +11,15 @@
 //!
 //! Drive takes metadata first, chosen content next, and exports when
 //! needed. The first step takes the change feed's start token
-//! (`changes.getStartPageToken`) before it reads the picked files'
-//! metadata, so no change between the two is lost, and holds each new file
-//! by its name only. Later steps drain `changes.list` from the stored token.
+//! (`changes.getStartPageToken`) before it reads any file's metadata, so no
+//! change between the two is lost, and holds each new file by its name
+//! only. For picked files it reads each one's metadata. For a whole Drive
+//! it lists every file (`files.list`, newest change first, its trash and
+//! folders left out), a bounded number of pages a step: the listing's page
+//! token is kept on the source, so a long listing spans steps and quota
+//! windows, and once it ends a file the source held that it did not name
+//! is read as gone. Later steps drain `changes.list` from the stored token:
+//! the changes to the picked files, or every change for a whole Drive.
 //! Each step then reads the text of the files it owes, newest first, within
 //! its budget: a stored text file or PDF is downloaded and read as the
 //! attached folder reads it; a Google Doc exports as Markdown, a Sheet as
@@ -75,9 +83,44 @@ const DRIVE_EXPORTS: [(&str, &str); 3] = [
 /// form, a drawing, a folder, a shortcut) is held by its name only.
 const GOOGLE_NATIVE_PREFIX: &str = "application/vnd.google-apps.";
 
-/// What the owner picked to attach: the Google account the files are read
+/// A Drive folder's type: a whole Drive's source holds its files, never its
+/// folders.
+pub const DRIVE_FOLDER_MIME_TYPE: &str = "application/vnd.google-apps.folder";
+
+/// The Google OAuth scope a source of picked files asks for: only the files
+/// the owner picked through the Google Picker.
+pub const DRIVE_PICKED_OAUTH_SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
+
+/// The Google OAuth scope a whole Drive's source asks for: every file of
+/// the Drive, read only. On self-host the owner's own OAuth client asks it
+/// at once; Cloud's restricted-scope verification is a later Cloud task
+/// (DRIVE-ACCESS = B).
+pub const DRIVE_WHOLE_OAUTH_SCOPE: &str = "https://www.googleapis.com/auth/drive.readonly";
+
+/// What of the Drive the owner chose to attach (DRIVE-ACCESS = B: the whole
+/// Drive is a first-class choice at connect time).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DriveAccess {
+    /// The files the owner picked through the Google Picker, by Drive id.
+    Picked { files: Vec<String> },
+    /// Every file of the Drive.
+    Whole,
+}
+
+impl DriveAccess {
+    /// The Google OAuth scope this access asks for.
+    #[must_use]
+    pub const fn oauth_scope(&self) -> &'static str {
+        match self {
+            Self::Picked { .. } => DRIVE_PICKED_OAUTH_SCOPE,
+            Self::Whole => DRIVE_WHOLE_OAUTH_SCOPE,
+        }
+    }
+}
+
+/// What the owner chose to attach: the Google account the files are read
 /// from, the custody record holding the owner's Google grant for Drive,
-/// and the Drive files chosen through the Google Picker (`drive.file`).
+/// and the files read: the picked ones, or the whole Drive.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DriveOrigin {
     /// The custody record the credential is stored under.
@@ -85,8 +128,8 @@ pub struct DriveOrigin {
     /// The account's address: the wire reads only through a credential
     /// that reads this account.
     pub account: String,
-    /// The picked files' Drive ids.
-    pub files: Vec<String>,
+    /// The files the source reads.
+    pub access: DriveAccess,
 }
 
 impl DriveOrigin {
@@ -118,10 +161,13 @@ impl DriveOrigin {
                 "a Drive source names its account and its custody record",
             ));
         }
-        if self.files.is_empty() {
+        let DriveAccess::Picked { files } = &self.access else {
+            return Ok(());
+        };
+        if files.is_empty() {
             return Err(invalid("a Drive source names the files the owner picked"));
         }
-        if !self.files.iter().all(|id| {
+        if !files.iter().all(|id| {
             !id.is_empty()
                 && id.len() <= MAX_DRIVE_FIELD_BYTES
                 && id
@@ -178,6 +224,14 @@ pub struct DriveChangesPage {
     pub new_start: Option<String>,
 }
 
+/// One page of a whole Drive's listing.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DriveFilesPage {
+    pub files: Vec<DriveFileMeta>,
+    /// The token of the listing's next page; none on its last page.
+    pub next_page: Option<String>,
+}
+
 /// One kind of provider call a Drive step makes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DriveCall {
@@ -185,6 +239,8 @@ pub enum DriveCall {
     StartPageToken,
     /// One page of the change feed (`changes.list`).
     Changes,
+    /// One page of a whole Drive's listing (`files.list`).
+    List,
     /// One file's metadata (`files.get`).
     File,
     /// One stored file's bytes (`files.get` with `alt=media`).
@@ -198,7 +254,7 @@ pub enum DriveCall {
 pub struct DriveQuota {
     /// The quota units one user may spend in a minute.
     pub units_per_minute: u32,
-    /// A listing call (`changes.list`).
+    /// A listing call (`changes.list`, `files.list`).
     pub list: u32,
     /// A metadata read (`files.get`, the start token, and the credential
     /// check a wire makes before its first call, Drive's `about`).
@@ -212,7 +268,7 @@ impl DriveQuota {
     #[must_use]
     pub const fn of(&self, call: DriveCall) -> u32 {
         match call {
-            DriveCall::Changes => self.list,
+            DriveCall::Changes | DriveCall::List => self.list,
             DriveCall::StartPageToken | DriveCall::File => self.get,
             DriveCall::Download | DriveCall::Export => self.content,
         }
@@ -233,6 +289,15 @@ pub trait DriveWire {
     /// # Errors
     /// As [`Self::start_page_token`].
     fn changes(&self, origin: &DriveOrigin, token: &str) -> Result<Option<DriveChangesPage>>;
+
+    /// One page of the whole Drive's listing, newest change first, with its
+    /// trash and its folders left out: its first page, or the page `page`
+    /// names. None when the provider no longer knows `page`, and the
+    /// listing reads again from its first page.
+    ///
+    /// # Errors
+    /// As [`Self::start_page_token`].
+    fn list(&self, origin: &DriveOrigin, page: Option<&str>) -> Result<Option<DriveFilesPage>>;
 
     /// One file's metadata; none for a file the account no longer reaches.
     ///
@@ -264,10 +329,23 @@ pub trait DriveWire {
 pub struct DriveSyncState {
     /// The change feed's token; none until the first step takes it.
     pub page_token: Option<String>,
+    /// A whole Drive's listing while it is under way; none once it ended,
+    /// and for picked files. The change feed is drained once it ends.
+    pub listing: Option<DriveListing>,
     /// The files whose text is owed: their metadata landed, and a later
     /// step reads their text.
     pub owed: Vec<DriveFileMeta>,
     pub(crate) quota: ProviderQuotaWindow,
+}
+
+/// Where a whole Drive's listing stands.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct DriveListing {
+    /// The token of the page read next; none for the listing's first page.
+    pub next_page: Option<String>,
+    /// The ids the listing named so far: once it ends, a file the source
+    /// holds that it did not name has left the Drive.
+    pub listed: Vec<String>,
 }
 
 /// A Drive source: what the owner picked, and where its import stands.
@@ -282,6 +360,8 @@ pub struct DriveSource {
 pub struct DriveStepBudget {
     /// The change feed's pages one step drains.
     pub change_pages: usize,
+    /// The pages of a whole Drive's listing one step reads.
+    pub list_pages: usize,
     /// The files whose text one step reads.
     pub texts: usize,
 }
@@ -290,6 +370,7 @@ impl Default for DriveStepBudget {
     fn default() -> Self {
         Self {
             change_pages: 10,
+            list_pages: 10,
             texts: 20,
         }
     }
@@ -306,6 +387,9 @@ pub struct DriveStepReport {
     pub texts: usize,
     /// The files whose text is still owed.
     pub owed: usize,
+    /// A whole Drive's listing is still under way: a later step reads its
+    /// next page.
+    pub listing: bool,
     /// Until when the source rests: its quota is spent, or the provider
     /// asked it to wait.
     pub quota_paused_until: Option<u64>,
@@ -516,6 +600,11 @@ struct FeedRead {
     /// The token the source keeps after the read; none until a start read
     /// completes.
     token: Option<String>,
+    /// A whole Drive's listing as the read leaves it: none once it ended,
+    /// and for picked files.
+    listing: Option<DriveListing>,
+    /// The ids a whole Drive's listing named, when it ended in this read.
+    listed: Option<HashSet<String>>,
 }
 
 impl FeedRead {
@@ -525,6 +614,8 @@ impl FeedRead {
             gone: Vec::new(),
             metadata: 0,
             token,
+            listing: None,
+            listed: None,
         }
     }
 }
@@ -538,10 +629,22 @@ fn paused(error: Error, feed: FeedRead) -> Result<FeedRead> {
     }
 }
 
+/// Whether a whole Drive's source holds `file`: a file out of the trash,
+/// never a folder.
+fn whole_drive_holds(file: &DriveFileMeta) -> bool {
+    !file.trashed && file.mime_type != DRIVE_FOLDER_MIME_TYPE
+}
+
 /// The change feed's start: its start token, then each picked file's
-/// metadata. A call out of quota ends it with nothing of it kept, so the
-/// next step starts it again.
-fn read_drive_start(wire: &MeteredDriveWire<'_>, origin: &DriveOrigin) -> Result<FeedRead> {
+/// metadata, or a whole Drive's listing from its first page. A call out of
+/// quota before the token, or among the picked files, ends it with nothing
+/// of it kept, so the next step starts it again; a listing keeps the pages
+/// it read.
+fn read_drive_start(
+    wire: &MeteredDriveWire<'_>,
+    origin: &DriveOrigin,
+    budget: DriveStepBudget,
+) -> Result<FeedRead> {
     let mut feed = FeedRead::at(None);
     let start = match wire.metered(DriveCall::StartPageToken, |wire| {
         wire.start_page_token(origin)
@@ -549,8 +652,15 @@ fn read_drive_start(wire: &MeteredDriveWire<'_>, origin: &DriveOrigin) -> Result
         Ok(start) => start,
         Err(error) => return paused(error, feed),
     };
+    let files = match &origin.access {
+        DriveAccess::Picked { files } => files,
+        DriveAccess::Whole => {
+            feed.token = Some(start);
+            return read_drive_listing(wire, origin, DriveListing::default(), budget, feed);
+        }
+    };
     let mut first = Vec::new();
-    for id in &origin.files {
+    for id in files {
         match wire.metered(DriveCall::File, |wire| wire.file(origin, id)) {
             Ok(Some(file)) if !file.trashed => first.push(file),
             Ok(_) => feed.gone.push(id.clone()),
@@ -566,14 +676,60 @@ fn read_drive_start(wire: &MeteredDriveWire<'_>, origin: &DriveOrigin) -> Result
     Ok(feed)
 }
 
+/// Up to the budget's pages of a whole Drive's listing, from where
+/// `listing` stands, into `feed`: each file it names is owed. A page Drive
+/// no longer knows reads the listing again from its first page. A call out
+/// of quota ends the read, and the next step reads on from the page it
+/// stopped at. On its last page the listing ends, and `feed` names every
+/// file it listed.
+fn read_drive_listing(
+    wire: &MeteredDriveWire<'_>,
+    origin: &DriveOrigin,
+    mut listing: DriveListing,
+    budget: DriveStepBudget,
+    mut feed: FeedRead,
+) -> Result<FeedRead> {
+    for _ in 0..budget.list_pages {
+        let page = match wire.metered(DriveCall::List, |wire| {
+            wire.list(origin, listing.next_page.as_deref())
+        }) {
+            Ok(Some(page)) => page,
+            Ok(None) => {
+                listing.next_page = None;
+                continue;
+            }
+            Err(error) => {
+                feed.listing = Some(listing);
+                return paused(error, feed);
+            }
+        };
+        for file in page.files {
+            if !whole_drive_holds(&file) {
+                continue;
+            }
+            feed.metadata += 1;
+            listing.listed.push(file.id.clone());
+            feed.owe.push(file);
+        }
+        listing.next_page = page.next_page;
+        if listing.next_page.is_none() {
+            feed.listed = Some(listing.listed.into_iter().collect());
+            return Ok(feed);
+        }
+    }
+    feed.listing = Some(listing);
+    Ok(feed)
+}
+
 impl Vault {
-    /// Attaches the Drive files `origin` names as a standing source of
-    /// notes: the owner's one act, as for a folder; each step after it
-    /// reads under it. `kind` defaults to the Files world's default kind.
+    /// Attaches the Drive files `origin` names, the picked ones or the
+    /// whole Drive, as a standing source of notes: the owner's one act, as
+    /// for a folder; each step after it reads under it. `kind` defaults to
+    /// the Files world's default kind.
     ///
     /// # Errors
-    /// A blank or oversize field, no picked file, an unknown `kind`, the
-    /// account attached already, or a storage error.
+    /// A blank or oversize field, picked access with no file, an unknown
+    /// `kind`, the account attached already, or a storage error.
     pub fn attach_drive_source(
         &self,
         owner: &AuthenticatedOwner,
@@ -581,8 +737,10 @@ impl Vault {
         kind: Option<&str>,
     ) -> Result<FolderSource> {
         origin.validate()?;
-        let mut seen = HashSet::new();
-        origin.files.retain(|id| seen.insert(id.clone()));
+        if let DriveAccess::Picked { files } = &mut origin.access {
+            let mut seen = HashSet::new();
+            files.retain(|id| seen.insert(id.clone()));
+        }
         let folder = origin.folder();
         self.attach_source(
             owner,
@@ -599,7 +757,9 @@ impl Vault {
 
     /// One bounded step of the Drive source attached as `folder`, read
     /// through `wire`: the change feed (or, on the first step, its start
-    /// token and the picked files' metadata), then the owed files' text,
+    /// token and the picked files' metadata or the whole Drive's listing;
+    /// while that listing is under way, its next pages), then the owed
+    /// files' text,
     /// newest first, then one rescan of the ledger with what was read. A
     /// call out of quota ends the reads cleanly: what was read lands, and
     /// the source rests until its window opens. A file whose text could not
@@ -643,36 +803,26 @@ impl Vault {
         };
         let mut report = DriveStepReport {
             metadata: feed.metadata,
+            listing: feed.listing.is_some(),
             ..DriveStepReport::default()
         };
         sync.page_token = feed.token;
-        let gone: HashSet<&str> = feed.gone.iter().map(String::as_str).collect();
-        sync.owed.retain(|owed| !gone.contains(owed.id.as_str()));
-        for file in feed.owe {
-            sync.owed.retain(|owed| owed.id != file.id);
-            // The ledger took this revision already: its text, or its name
-            // for a reason other than an unread text.
-            let taken = ledger.get(&file.id).is_some_and(|row| {
-                let held = match row.state {
-                    FolderFileState::Retracted => false,
-                    FolderFileState::NameOnly { why } => {
-                        row.note.is_some() || why != NameOnlyReason::Unread
-                    }
-                    FolderFileState::Landed | FolderFileState::Proposed { .. } => {
-                        row.note.is_some()
-                    }
-                };
-                held && row.meta.is_some_and(|meta| {
-                    (meta.bytes, meta.modified_at) == (file.facts().bytes, file.modified_at)
-                })
-            });
-            if !taken {
-                sync.owed.push(file);
-            }
+        sync.listing = feed.listing;
+        let mut gone = feed.gone;
+        // A whole Drive's listing that ended named every file the Drive
+        // holds: one the source holds that it did not name has left.
+        if let Some(listed) = &feed.listed {
+            gone.extend(
+                ledger
+                    .iter()
+                    .filter(|(id, row)| {
+                        !matches!(row.state, FolderFileState::Retracted)
+                            && !listed.contains(id.as_str())
+                    })
+                    .map(|(id, _)| id.clone()),
+            );
         }
-        // Newest first.
-        sync.owed
-            .sort_by(|a, b| b.modified_at.cmp(&a.modified_at).then(a.id.cmp(&b.id)));
+        sync.owed = owed_after(std::mem::take(&mut sync.owed), feed.owe, &gone, &ledger);
         metered.live.set(false);
         let mut read = Vec::new();
         let mut kept = Vec::new();
@@ -766,8 +916,7 @@ impl Vault {
                     .push(name_only(file, NameOnlyReason::Unread));
             }
         }
-        rescan.missing = feed
-            .gone
+        rescan.missing = gone
             .iter()
             .chain(&left)
             .filter(|id| ledger.contains_key(id.as_str()))
@@ -787,10 +936,12 @@ impl Vault {
     }
 
     /// The change feed's read for one step: on the first step its start
-    /// (see [`read_drive_start`]); after it, up to the budget's pages of
-    /// changes to the picked files. A token the provider no longer knows
-    /// starts the feed again. A call out of quota ends the read; the source
-    /// keeps the token of the last page read.
+    /// (see [`read_drive_start`]); while a whole Drive's listing is under
+    /// way, its next pages (see [`read_drive_listing`]); after it, up to the
+    /// budget's pages of changes: to the picked files, or every change to a
+    /// file of a whole Drive. A token the provider no longer knows starts
+    /// the feed again. A call out of quota ends the read; the source keeps
+    /// the token of the last page read.
     fn read_drive_feed(
         &self,
         wire: &MeteredDriveWire<'_>,
@@ -799,18 +950,33 @@ impl Vault {
         budget: DriveStepBudget,
     ) -> Result<FeedRead> {
         let Some(mut token) = sync.page_token.clone() else {
-            return read_drive_start(wire, origin);
+            return read_drive_start(wire, origin, budget);
         };
         let mut feed = FeedRead::at(Some(token.clone()));
-        let picked: HashSet<&str> = origin.files.iter().map(String::as_str).collect();
+        if let Some(listing) = &sync.listing {
+            return read_drive_listing(wire, origin, listing.clone(), budget, feed);
+        }
+        let picked: Option<HashSet<&str>> = match &origin.access {
+            DriveAccess::Picked { files } => Some(files.iter().map(String::as_str).collect()),
+            DriveAccess::Whole => None,
+        };
         for _ in 0..budget.change_pages {
             let page = match wire.metered(DriveCall::Changes, |wire| wire.changes(origin, &token)) {
                 Ok(Some(page)) => page,
-                Ok(None) => return read_drive_start(wire, origin),
+                Ok(None) => return read_drive_start(wire, origin, budget),
                 Err(error) => return paused(error, feed),
             };
             for change in page.changes {
-                if !picked.contains(change.file_id.as_str()) {
+                let read = match &picked {
+                    Some(picked) => picked.contains(change.file_id.as_str()),
+                    // A folder is never held; a trashed or removed file is
+                    // read as gone.
+                    None => change
+                        .file
+                        .as_ref()
+                        .is_none_or(|file| file.mime_type != DRIVE_FOLDER_MIME_TYPE),
+                };
+                if !read {
                     continue;
                 }
                 feed.metadata += 1;
@@ -884,6 +1050,50 @@ impl Vault {
             Ok(())
         })
     }
+}
+
+/// Whether the ledger took `file`'s revision already: its text, or its
+/// name for a reason other than an unread text.
+fn ledger_took(row: Option<&FolderSourceFile>, file: &DriveFileMeta) -> bool {
+    row.is_some_and(|row| {
+        let held = match row.state {
+            FolderFileState::Retracted => false,
+            FolderFileState::NameOnly { why } => {
+                row.note.is_some() || why != NameOnlyReason::Unread
+            }
+            FolderFileState::Landed | FolderFileState::Proposed { .. } => row.note.is_some(),
+        };
+        held && row.meta.is_some_and(|meta| {
+            (meta.bytes, meta.modified_at) == (file.facts().bytes, file.modified_at)
+        })
+    })
+}
+
+/// The files whose text is owed after a feed read: those owed before, less
+/// the ones `gone`, then each file the read `named`, unless the ledger took
+/// its revision already. Newest first.
+fn owed_after(
+    owed: Vec<DriveFileMeta>,
+    named: Vec<DriveFileMeta>,
+    gone: &[String],
+    ledger: &HashMap<String, FolderSourceFile>,
+) -> Vec<DriveFileMeta> {
+    let gone: HashSet<&str> = gone.iter().map(String::as_str).collect();
+    let mut owed: HashMap<String, DriveFileMeta> = owed
+        .into_iter()
+        .filter(|file| !gone.contains(file.id.as_str()))
+        .map(|file| (file.id.clone(), file))
+        .collect();
+    for file in named {
+        if ledger_took(ledger.get(&file.id), &file) {
+            owed.remove(&file.id);
+        } else {
+            owed.insert(file.id.clone(), file);
+        }
+    }
+    let mut owed: Vec<DriveFileMeta> = owed.into_values().collect();
+    owed.sort_by(|a, b| b.modified_at.cmp(&a.modified_at).then(a.id.cmp(&b.id)));
+    owed
 }
 
 /// `file` held by its name only, for `why`.
