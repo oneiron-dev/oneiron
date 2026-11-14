@@ -6,6 +6,9 @@
 //! empty, an overlay (`image_object`: no stored image body holds one), and an
 //! image locator on a text artifact are refused, and open nothing.
 //!
+//! The vault holds no policy manifest, so its document resource policy is
+//! fail-closed: an image pin reads no document package, so it still pins.
+//!
 //! The locators go in as JSON, so this file also builds against an engine
 //! whose locator has no image variants (the red run).
 //!
@@ -159,8 +162,9 @@ fn a_pixel_region_of_an_image_version_pins_and_a_thread_opens_on_it() -> TestRes
         "the pin keeps the region as asked"
     );
     assert_eq!(pin.quote, None, "a region names no words");
-    assert!(
-        fixture.pin_refusal(photo, &region(0, 0, 40, 20))?.is_none(),
+    assert_eq!(
+        fixture.pin_refusal(photo, &region(0, 0, 40, 20))?,
+        None,
         "the whole canvas pins"
     );
 
@@ -234,8 +238,9 @@ fn an_image_pin_outside_the_canvas_an_overlay_or_on_a_text_artifact_is_refused()
 
     // EXIF orientation 6 turns the stored 8 x 6 JPEG into a 6 x 8 canvas.
     let turned = fixture.artifact("turned.jpg", "image/jpeg", &jpeg(8, 6, 6)?)?;
-    assert!(
-        fixture.pin_refusal(turned, &region(0, 0, 6, 8))?.is_none(),
+    assert_eq!(
+        fixture.pin_refusal(turned, &region(0, 0, 6, 8))?,
+        None,
         "the turned canvas pins whole"
     );
     let stored = fixture

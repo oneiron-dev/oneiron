@@ -222,6 +222,20 @@ impl Memory<'_> {
             .vault()
             .export_blob_artifact_as_raw(&anchor.artifact_id, Some(anchor.version), sight)?
             .ok_or_else(|| MemoryError::not_found("anchor version not found"))?;
+        // An image region or overlay names no words (L4-16): its view reads
+        // no document package, so no document resource policy refuses it.
+        if matches!(
+            anchor.locator,
+            Locator::ImagePixel { .. } | Locator::ImageObject { .. }
+        ) {
+            return Ok(AnnotationAnchorView {
+                artifact_id: anchor.artifact_id,
+                version: anchor.version,
+                locator: (&anchor.locator).into(),
+                quote: None,
+                body: anchor.body.as_ref().map(Into::into),
+            });
+        }
         let limits = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             self.vault().text_limits_in_txn(&txn)?
