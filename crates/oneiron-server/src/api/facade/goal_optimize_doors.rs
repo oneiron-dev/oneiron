@@ -118,7 +118,7 @@ pub(crate) async fn vault_skills_optimize_measure(
                         "name pulls_per_axis or set skills.live_pulls_per_axis",
                     )
                 })?;
-            let bandit = ServeAxisBandit::for_proposal(judge, &input.proposal)?;
+            let bandit = ServeAxisBandit::for_proposal_as_owner(judge, &input.proposal, owner)?;
             let answer = sdk::skill_optimize_measure_as_owner(
                 server.vault(),
                 owner,

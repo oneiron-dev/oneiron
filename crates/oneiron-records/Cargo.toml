@@ -1,0 +1,25 @@
+[package]
+name = "oneiron-records"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Engine-internal stored record types below the oneiron engine: side-table payloads, receipts, queue rows and checkpoint parts"
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+oneiron-verb-wire = { version = "0.1.0", path = "../oneiron-verb-wire" }
+
+[features]
+# Forwarded from `oneiron/sync`, `oneiron/test-support` and `oneiron/test-hooks`: a moved item keeps the gate it had
+# in the engine.
+sync = ["oneiron-verb-wire/sync"]
+test-support = ["oneiron-verb-wire/test-support"]
+test-hooks = ["oneiron-verb-wire/test-hooks"]
+
+[lints]
+workspace = true
