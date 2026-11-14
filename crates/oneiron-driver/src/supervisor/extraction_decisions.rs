@@ -22,6 +22,17 @@ pub trait ExtractionDecisionGate: Send + Sync {
     ///
     /// Returns failures while reading the host's live admission policy.
     fn admits(&self) -> Result<bool>;
+
+    /// Admits the prepared extraction route for one bound generation step.
+    ///
+    /// The default refuses so a gate written for verdict reads never admits generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns failures while reading the host's live admission policy.
+    fn admits_step(&self) -> Result<bool> {
+        Ok(false)
+    }
 }
 
 /// Owns the native resources shared by extraction loans within one prepared pass.
