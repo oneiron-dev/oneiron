@@ -19,6 +19,9 @@ impl Memory<'_> {
         if self.credential_withholds(task_ref)? {
             return Err(not_found());
         }
+        // A revision is its caller's text: it carries no composer stamp
+        // (L8-07).
+        super::super::compose::refuse_caller_stamp(&next)?;
         next.admit_references(self, "tasks.update")?;
         // The first brief is kept beside a revision of it, read in the same
         // snapshot as its revision number (FIX 9005).
