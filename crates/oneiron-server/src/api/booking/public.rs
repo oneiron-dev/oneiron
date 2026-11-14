@@ -381,6 +381,9 @@ mod client_address_tests;
 #[path = "public_fixture.rs"]
 mod fixture;
 #[cfg(test)]
+#[path = "public_grant_view_tests.rs"]
+mod grant_view_tests;
+#[cfg(test)]
 #[path = "public_lifecycle_tests.rs"]
 mod lifecycle_tests;
 #[cfg(test)]
