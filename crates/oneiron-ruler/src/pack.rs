@@ -45,12 +45,14 @@ impl fmt::Display for Slice {
     }
 }
 
-/// The kind of a record. Only conversation turns exist today.
+/// The kind of a record: a conversation turn or a collection passage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecordKind {
     /// One conversation turn.
     Turn,
+    /// One passage of a document collection (MIRACL, Mr.TyDi).
+    Passage,
 }
 
 /// One slice manifest: the queries of the slice and the records they need.
@@ -113,11 +115,11 @@ pub struct Record {
     pub record_id: String,
     /// The kind of the record.
     pub kind: RecordKind,
-    /// `user` or `assistant` for LongMemEval.
+    /// `user` or `assistant` for LongMemEval; `document` for a passage.
     pub speaker: String,
     /// The text that is embedded. Never blank.
     pub text: String,
-    /// `<session_id>#<turn_index>` for LongMemEval.
+    /// `<session_id>#<turn_index>` for LongMemEval; the docid `<article>#<n>` for a passage.
     pub source_ref: String,
 }
 
