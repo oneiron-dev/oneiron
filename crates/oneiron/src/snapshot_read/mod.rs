@@ -12,6 +12,7 @@
 //! authority, privacy, relationship, audience, sensitivity, device and world
 //! filters, source finality and deletion apply to each row.
 
+mod conflicts_page;
 mod evidence_spans;
 mod policy_preflight;
 mod run_reader;
@@ -22,6 +23,10 @@ mod source_version;
 mod strength_observations;
 pub(crate) mod tables;
 
+pub use conflicts_page::{
+    ConflictAlternative, ConflictMember, ConflictsPage, ConflictsPageRequest, ObservedConflict,
+    conflicts_page,
+};
 pub use evidence_spans::{
     EVIDENCE_SPANS_MASKED_KEY_CROSSES_MESSAGES, EVIDENCE_SPANS_MAX_RANGES, EvidenceMessageSlice,
     EvidenceRange, EvidenceSourceStatus, EvidenceSpan, EvidenceSpans, EvidenceSpansRequest,
