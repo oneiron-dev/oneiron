@@ -32,6 +32,8 @@ import {
   Verb,
   WindowGround,
   Figure,
+  Tooltip,
+  useMicroSidebarPeek,
   type ActivityAge,
   type ActivityKind,
   type NeedsYouAnswerRecord,
@@ -792,6 +794,61 @@ function sidebarFor(id: string, specimen: string): React.ReactNode | null {
   }
 }
 
+/* A strip item the gallery builds itself, as an app does for a place with
+   a symbol of its own: the library's item classes, a tooltip with a
+   caption (or the word under the symbol), and the frame's peek through
+   useMicroSidebarPeek. */
+function OwnPlaceItem({
+  id,
+  icon,
+  label,
+  caption,
+  current,
+  word,
+  onClick,
+}: {
+  id: string
+  icon: React.ReactNode
+  label: string
+  caption?: string
+  current: boolean
+  word: boolean
+  onClick: () => void
+}) {
+  const peek = useMicroSidebarPeek(id)
+  const control = (
+    <button
+      type="button"
+      className="sl-micro-item-control"
+      aria-label={label}
+      aria-current={current ? 'page' : undefined}
+      data-current={current ? '' : undefined}
+      onKeyDown={peek.onControlKeyDown}
+      onClick={onClick}
+    >
+      <span className="sl-micro-item-mark" aria-hidden="true">
+        {icon}
+      </span>
+      {word ? (
+        <span className="sl-micro-item-word" aria-hidden="true">
+          {label}
+        </span>
+      ) : null}
+    </button>
+  )
+  return (
+    <div className="sl-micro-item" {...peek.itemProps}>
+      {word ? (
+        control
+      ) : (
+        <Tooltip label={label} caption={caption} side="right" disabled={peek.peeking}>
+          {control}
+        </Tooltip>
+      )}
+    </div>
+  )
+}
+
 /* A whole microsidebar on fixture data: the vault's mark (home), activity
    with its count, the vault, more; the divider; the pinned lenses (they
    reorder and unpin); the person at the foot. Alone, it stands on a
@@ -818,9 +875,17 @@ export function MicroSidebarDemo({
   )
   const strip = (
     <MicroSidebar labels={labels} aria-label={`places, ${labels ?? 'symbols'}`} data-specimen={specimen}>
-      <MicroSidebar.VaultMark name="antevon" current={current === 'home'} onClick={() => onCurrent('home')} />
+      <MicroSidebar.VaultMark name="antevon" caption="home" current={current === 'home'} onClick={() => onCurrent('home')} />
       {item('activity', 'activity', <Icon name="activity" />, { count: 3, needsYou: waiting })}
-      {item('vault', 'vault', <Icon name="vault" />)}
+      <OwnPlaceItem
+        id="vault"
+        icon={<Icon name="vault" />}
+        label="vault"
+        caption="ledger and settings"
+        word={labels === 'word'}
+        current={current === 'vault'}
+        onClick={() => onCurrent('vault')}
+      />
       <MicroSidebar.More current={MORE_PLACES.some((m) => m.id === current) && !pinned.includes(current)}>
         {MORE_PLACES.map((m) => (
           <MicroSidebar.MoreItem

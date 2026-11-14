@@ -267,6 +267,7 @@ export {
   type MicroSidebarPinnedProps,
   type MicroSidebarFootProps,
 } from './frame/MicroSidebar'
+export { useMicroSidebarPeek, type MicroSidebarPeek } from './frame/app-frame-context'
 export { splitChildRows, SIDEBAR_CHILD_ROWS_SHOWN, type ChildRowSplit } from './frame/sidebar-tree'
 export { AppFrame, type AppFrameProps, type AppFrameFoldProps } from './frame/AppFrame'
 export { PlaceHead, type PlaceHeadProps } from './frame/PlaceHead'
