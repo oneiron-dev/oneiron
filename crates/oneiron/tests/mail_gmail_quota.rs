@@ -5,32 +5,32 @@
 //! source a minute. A step out of quota ends as a pause, not a failure, and
 //! a resting source makes no provider call and is not due.
 //!
+//! Review round 1 (REVIEW-7782): a step stopped part-way through a
+//! change-feed page goes on after the changes it applied, and a step of a
+//! source another step is under way on keeps that step's rest.
+//!
 //! The provider is a fake Gmail wire that declares Gmail's quota and logs
 //! each call; the units are counted from that log at Gmail's costs.
 //!
 //! Public paths only:
 //! `cargo test --locked -p oneiron --all-features --test mail_gmail_quota`.
 
+#[path = "mail_gmail_quota/fixture.rs"]
+mod fixture;
+
 use std::cell::{Cell, RefCell};
-use std::sync::Arc;
+use std::collections::BTreeSet;
+use std::sync::mpsc;
+use std::time::Duration;
 
-use oneiron::authority::{HostSlipIssuer, MachineRole};
-use oneiron::mail_pack::source::{active_sources, due_sources};
+use fixture::{Mailbox, OWNER_ADDRESS, TestResult, now};
+use oneiron::mail_pack::source::active_sources;
 use oneiron::mail_pack::{
-    GMAIL_MAIL_QUOTA, MAIL_WIRE_RATE_LIMITED, MailAttachmentRef, MailCall, MailCallCosts,
-    MailCopySetting, MailFull, MailHeaders, MailHistoryPage, MailHistoryRead, MailIdPage,
-    MailListQuery, MailMessageRef, MailProvider, MailProviderWire, MailQuota,
-    MailSourceConnectRequest, MailSourceKind, MailSourceRef, MailSyncBudget, MailSyncReport,
-    MailSyncSource,
+    GMAIL_MAIL_QUOTA, MAIL_WIRE_RATE_LIMITED, MailAttachmentRef, MailCall, MailCallCosts, MailFull,
+    MailHeaders, MailHistoryChange, MailHistoryPage, MailHistoryRead, MailIdPage, MailListQuery,
+    MailMessageRef, MailProviderWire, MailQuota, MailSyncBudget, MailSyncSource,
 };
-use oneiron::secret_custody::{SECRET_CUSTODY_SCHEMA_VERSION, decode_secret_custody_body};
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
-type TestResult = Result<(), Box<dyn std::error::Error>>;
-
-/// The mailbox's address and the custody record its credential is under.
-const OWNER_ADDRESS: &str = "owen@example.com";
-const CUSTODY_REF: &str = "test-gmail-quota-cred";
 /// The messages one listing page names, as Gmail's wire lists them.
 const PAGE_SIZE: u32 = 100;
 /// The share of the minute the copy may spend: 75% of Gmail's 6,000.
@@ -47,8 +47,24 @@ struct GmailFake {
     full_bytes: u64,
     /// Whether the next header read answers Gmail's rate limit.
     rate_limit_next_headers: Cell<bool>,
+    /// The messages still in spam.
+    spam: RefCell<BTreeSet<u32>>,
+    /// The changes the change feed's one page reports.
+    feed: RefCell<Vec<MailHistoryChange>>,
+    /// Holds each change-feed read until the test lets it go.
+    gate: Option<HistoryGate>,
     calls: RefCell<Vec<MailCall>>,
+    /// The message each header read named, in order.
+    headers_read: RefCell<Vec<String>>,
     read: Cell<u64>,
+}
+
+/// A change-feed read held until the test lets it go: it says it began,
+/// waits, then answers (Gmail's rate limit, or an empty page).
+struct HistoryGate {
+    began: mpsc::Sender<()>,
+    go: mpsc::Receiver<()>,
+    rate_limited: bool,
 }
 
 impl GmailFake {
@@ -59,9 +75,25 @@ impl GmailFake {
             newest_at: now(),
             full_bytes,
             rate_limit_next_headers: Cell::new(false),
+            spam: RefCell::new(BTreeSet::new()),
+            feed: RefCell::new(Vec::new()),
+            gate: None,
             calls: RefCell::new(Vec::new()),
+            headers_read: RefCell::new(Vec::new()),
             read: Cell::new(0),
         }
+    }
+
+    /// An empty mailbox whose change-feed reads `gate` holds.
+    fn gated(gate: HistoryGate) -> Self {
+        Self {
+            gate: Some(gate),
+            ..Self::new(0, GMAIL_MAIL_QUOTA, 10_000)
+        }
+    }
+
+    fn headers_read(&self) -> Vec<String> {
+        self.headers_read.borrow().clone()
     }
 
     fn log(&self, call: MailCall) {
@@ -92,9 +124,13 @@ impl GmailFake {
             subject: Some(format!("Note {index}")),
             date: Some(received_at),
             received_at,
-            labels: vec!["INBOX".to_owned()],
+            labels: vec![if self.spam.borrow().contains(&index) {
+                "SPAM".to_owned()
+            } else {
+                "INBOX".to_owned()
+            }],
             sent_by_mailbox: false,
-            trash_or_spam: false,
+            trash_or_spam: self.spam.borrow().contains(&index),
             draft: false,
         }
     }
@@ -132,6 +168,7 @@ impl MailProviderWire for GmailFake {
         provider_id: &str,
     ) -> oneiron::Result<Option<MailHeaders>> {
         self.log(MailCall::Headers);
+        self.headers_read.borrow_mut().push(provider_id.to_owned());
         if self.rate_limit_next_headers.replace(false) {
             return Err(oneiron::Error::InvalidConfig(
                 MAIL_WIRE_RATE_LIMITED.to_owned(),
@@ -162,10 +199,25 @@ impl MailProviderWire for GmailFake {
         _page: Option<&str>,
     ) -> oneiron::Result<MailHistoryRead> {
         self.log(MailCall::History);
+        if let Some(gate) = &self.gate {
+            let _began = gate.began.send(());
+            let _go = gate.go.recv_timeout(Duration::from_secs(30));
+            if gate.rate_limited {
+                return Err(oneiron::Error::InvalidConfig(
+                    MAIL_WIRE_RATE_LIMITED.to_owned(),
+                ));
+            }
+        }
+        let changes = self.feed.borrow().clone();
         Ok(MailHistoryRead::Page(MailHistoryPage {
-            changes: Vec::new(),
+            // Once the page is applied the source stands past it.
+            anchor: if changes.is_empty() {
+                anchor.to_owned()
+            } else {
+                "200".to_owned()
+            },
+            changes,
             next_page: None,
-            anchor: anchor.to_owned(),
         }))
     }
 
@@ -188,11 +240,9 @@ impl MailProviderWire for GmailFake {
     }
 }
 
-/// Unix seconds now.
-fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs())
+/// The message ids `indexes` name.
+fn ids(indexes: std::ops::Range<u32>) -> Vec<String> {
+    indexes.map(|index| format!("m{index:04}")).collect()
 }
 
 /// The units `calls` cost at `costs`.
@@ -203,130 +253,6 @@ fn units(calls: &[MailCall], costs: &MailCallCosts) -> u64 {
 /// Whether `call` reads the change feed (or its anchor).
 fn live(call: MailCall) -> bool {
     matches!(call, MailCall::Anchor | MailCall::History)
-}
-
-/// Registers the Gmail credential `CUSTODY_REF`, stored for the owner, as
-/// the owner's custody door registers one.
-fn register_mail_credential(vault: &Vault) -> TestResult {
-    use rmpv::Value;
-    let band = |min: u64, max: u64| {
-        Value::Map(vec![
-            (Value::from("min"), Value::from(min)),
-            (Value::from("max"), Value::from(max)),
-        ])
-    };
-    let floor = Value::Map(vec![
-        (Value::from("portable"), band(0, 2)),
-        (Value::from("device_bound"), band(0, 2)),
-        (Value::from("cross_vault"), band(0, 0)),
-        (Value::from("rotation_max_age_secs"), Value::Nil),
-        (Value::from("env_bindings"), Value::Map(vec![])),
-    ]);
-    let binding = Value::Map(vec![
-        (Value::from("effector"), Value::from("connector:gmail")),
-        (Value::from("tier_ceiling"), Value::from(0_u64)),
-        (Value::from("scopes"), Value::Array(vec![])),
-    ]);
-    let body = Value::Map(vec![
-        (
-            Value::from("schema_version"),
-            Value::from(u64::from(SECRET_CUSTODY_SCHEMA_VERSION)),
-        ),
-        (Value::from("name"), Value::from(CUSTODY_REF)),
-        (Value::from("class"), Value::from("custody-portable")),
-        (Value::from("device_only"), Value::from(false)),
-        (
-            Value::from("value_bytes"),
-            Value::Binary(b"test-gmail-token".to_vec()),
-        ),
-        (Value::from("status"), Value::from("active")),
-        (Value::from("registered_at"), Value::from(1_u64)),
-        (Value::from("rotated_at"), Value::Nil),
-        (Value::from("rotation_generation"), Value::from(0_u64)),
-        (Value::from("bindings"), Value::Array(vec![binding])),
-        (Value::from("manifest_ref"), Value::from("")),
-        (Value::from("declared_paths"), Value::Array(vec![])),
-        (Value::from("policy_floor_snapshot"), floor),
-        (Value::from("model_reveal_allowed"), Value::from(true)),
-    ]);
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &body)?;
-    vault.register_secret(decode_secret_custody_body(&bytes)?)?;
-    Ok(())
-}
-
-/// A vault with the mail pack installed and the owner's Gmail mailbox
-/// connected, copying all mail.
-struct Mailbox {
-    _directory: tempfile::TempDir,
-    vault: Vault,
-    owner: EntityId,
-    source: EntityId,
-}
-
-impl Mailbox {
-    fn connect() -> Result<Self, Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        // The pack installs as the embedded owner, whose proof needs the
-        // vault's writer lease: open it owned, and start the host as a
-        // server does.
-        let vault = Vault::open_owned(directory.path(), VaultConfig::default())?;
-        let owner = vault.ensure_embedded_owner_actor()?;
-        let issuer = HostSlipIssuer::from_secret(b"mail gmail quota test host")?;
-        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
-        vault.ensure_host_root_slip(&issuer)?;
-        vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
-        let memory = vault.memory(owner, EdgeActorClass::Human);
-        oneiron::mail_pack::install_mail_calendar_pack_embedded(&memory)?;
-        register_mail_credential(&vault)?;
-        let connected = memory.mail_sources_connect(&MailSourceConnectRequest {
-            provider: MailProvider::Google,
-            kind: MailSourceKind::PersonalMailbox,
-            address: OWNER_ADDRESS.to_owned(),
-            provider_account: OWNER_ADDRESS.to_owned(),
-            custody_ref: CUSTODY_REF.to_owned(),
-            members: Vec::new(),
-            for_person: None,
-            channel_identity_ref: None,
-            copy: Some(MailCopySetting::All),
-            on_provider_delete: None,
-            calendar_details: None,
-        })?;
-        let source = EntityId::from_hex(&connected.source.source_ref)?;
-        Ok(Self {
-            _directory: directory,
-            vault,
-            owner,
-            source,
-        })
-    }
-
-    /// One import step through `wire`, as the owner's
-    /// `vault.mail.sources.sync` runs it.
-    fn step(
-        &self,
-        wire: &GmailFake,
-        budget: MailSyncBudget,
-    ) -> Result<MailSyncReport, Box<dyn std::error::Error>> {
-        let memory = self.vault.memory(self.owner, EdgeActorClass::Human);
-        let owner = memory.embedded_owner("vault.mail.sources.sync")?;
-        Ok(self
-            .vault
-            .mail_sync_step(&owner, self.source, wire, budget)?)
-    }
-
-    fn status(&self) -> Result<oneiron::mail_pack::MailSyncStatusView, Box<dyn std::error::Error>> {
-        let memory = self.vault.memory(self.owner, EdgeActorClass::Human);
-        Ok(memory.mail_sources_sync_status(&MailSourceRef {
-            source_ref: self.source.to_hex(),
-        })?)
-    }
-
-    fn due(&self) -> Result<bool, Box<dyn std::error::Error>> {
-        Ok(due_sources(&self.vault)?
-            .iter()
-            .any(|(source, _)| *source == self.source))
-    }
 }
 
 #[test]
@@ -483,4 +409,113 @@ fn a_rate_limit_answer_pauses_the_source_without_an_error() -> TestResult {
     assert_eq!(status.quota_paused_until, Some(until), "{status:?}");
     assert!(!mailbox.due()?, "the resting source is not due");
     Ok(())
+}
+
+/// REVIEW-7782 P1 importer.rs:757: one change-feed page names more
+/// messages still in spam than a minute's units read. Main's step pauses
+/// before it keeps the page, so every later step reads the same messages
+/// again and never reaches the inbox message after them.
+#[test]
+fn a_step_paused_mid_page_goes_on_after_the_changes_it_applied() -> TestResult {
+    let mailbox = Mailbox::connect()?;
+    // A minute of 100 units: the anchor (1), a history page (2) and four
+    // metadata reads (80) fit; a fifth does not.
+    let quota = MailQuota {
+        units_per_minute: 100,
+        ..GMAIL_MAIL_QUOTA
+    };
+    let wire = GmailFake::new(0, quota, 10_000);
+    // Six messages still in spam, then one in the inbox, on one page.
+    wire.spam.borrow_mut().extend(0..6);
+    wire.feed.borrow_mut().extend((0..7).map(|index| {
+        MailHistoryChange::Added(MailMessageRef {
+            provider_id: format!("m{index:04}"),
+            thread_id: Some(format!("t{index:04}")),
+        })
+    }));
+    let first = mailbox.step(&wire, MailSyncBudget::default())?;
+    let until = first
+        .quota_paused_until
+        .ok_or("the page outruns the minute and the step pauses")?;
+    let read_first = wire.headers_read();
+    assert_eq!(read_first, ids(0..4), "the first step reads four messages");
+
+    // The minute window opens again.
+    std::thread::sleep(Duration::from_secs(until.saturating_sub(now()) + 1));
+    let second = mailbox.step(&wire, MailSyncBudget::default())?;
+    let read_second = wire.headers_read().split_off(read_first.len());
+    assert_eq!(
+        read_second,
+        ids(4..7),
+        "the next step goes on after the four messages the first read: {second:?}"
+    );
+    assert_eq!(
+        second.landed, 1,
+        "the inbox message after them lands: {second:?}"
+    );
+    Ok(())
+}
+
+/// REVIEW-7782 P1 importer.rs:785: the owner's step starts while the host's
+/// step of the same source is under way; the host's step is answered
+/// Gmail's rate limit and rests the source. On main the owner's step, begun
+/// from the windows before that rest, ends after it and writes its own over
+/// it, so the next step calls Gmail inside the rest.
+#[test]
+fn a_concurrent_step_keeps_the_rest_a_rate_limit_answer_set() -> TestResult {
+    let mailbox = Mailbox::connect()?;
+    let (first_began, first_begins) = mpsc::channel();
+    let (first_go, first_goes) = mpsc::channel();
+    let (second_began, second_begins) = mpsc::channel();
+    let (second_go, second_goes) = mpsc::channel();
+    let mailbox = &mailbox;
+    std::thread::scope(|scope| -> TestResult {
+        let first = scope.spawn(move || {
+            let wire = GmailFake::gated(HistoryGate {
+                began: first_began,
+                go: first_goes,
+                rate_limited: true,
+            });
+            mailbox
+                .step(&wire, MailSyncBudget::default())
+                .map_err(|error| error.to_string())
+        });
+        first_begins.recv_timeout(Duration::from_secs(60))?;
+        let second = scope.spawn(move || {
+            let wire = GmailFake::gated(HistoryGate {
+                began: second_began,
+                go: second_goes,
+                rate_limited: false,
+            });
+            let report = mailbox
+                .step(&wire, MailSyncBudget::default())
+                .map_err(|error| error.to_string());
+            (report, wire.calls())
+        });
+        // On main the second step reads the feed while the first is under
+        // way; here it waits for the first to end.
+        let _second_began = second_begins.recv_timeout(Duration::from_secs(3));
+        first_go.send(())?;
+        let first = first.join().map_err(|_| "the first step panicked")??;
+        let _second_go = second_go.send(());
+        let (second, second_calls) = second.join().map_err(|_| "the second step panicked")?;
+        let second = second?;
+
+        let until = first
+            .quota_paused_until
+            .ok_or("the rate-limited step rests the source")?;
+        assert_eq!(
+            second_calls,
+            Vec::<MailCall>::new(),
+            "the second step makes no provider call while the source rests: {second:?}"
+        );
+        let status = mailbox.status()?;
+        assert_eq!(
+            status.quota_paused_until,
+            Some(until),
+            "the rest the first step set stands after the second ends: {status:?}"
+        );
+        assert!(!mailbox.due()?, "the resting source is not due");
+        Ok(())
+    })
 }
