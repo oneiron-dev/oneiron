@@ -103,6 +103,15 @@ pub const OAUTH_REDIRECT_URIS_MAX: usize = 16;
 /// The longest redirect URI or metadata-document `client_id` this vault reads, in bytes (CALLS,
 /// FIX 4902: an engine call).
 pub const OAUTH_URI_MAX_BYTES: usize = 2_048;
+/// Redirect URIs this vault admits by their exact string although no general rule admits them
+/// (L1-02, ARCH-0028 #default-route; RESEARCH-1396 #grok, its source [G6], the Cursor forum
+/// thread "grok-bot-custom-mcp-oauth-fails-before-sign-in-redirect-uri-not-allowed").
+/// Grok Bot registers by DCR and lists `cursor://anysphere.cursor-mcp/oauth/callback`, a
+/// private-use scheme with no `.` in it, which [`oauth_redirect_uri_admitted`] refuses as a
+/// scheme. Canon says to qualify that callback in a test and not to relax callback checks
+/// globally, so each entry is admitted only as this exact string.
+pub const OAUTH_NAMED_CLIENT_REDIRECT_URIS: &[&str] =
+    &["cursor://anysphere.cursor-mcp/oauth/callback"];
 /// The longest `state` an authorize request may carry, in bytes (CALLS, FIX 4902: an engine
 /// call).
 pub const OAUTH_STATE_MAX_BYTES: usize = 1_024;

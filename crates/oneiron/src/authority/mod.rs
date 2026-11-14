@@ -363,14 +363,15 @@ pub use oauth_server::{
     OAUTH_ACCESS_TOKEN_PREFIX, OAUTH_ACCESS_TTL_SECS, OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER,
     OAUTH_AUTHORIZATIONS_PER_HOUR, OAUTH_AUTHORIZATIONS_PER_SOURCE_PER_HOUR, OAUTH_CIMD_TTL_SECS,
     OAUTH_CLIENT_NAME_MAX_CHARS, OAUTH_CLIENTS_MAX, OAUTH_CODE_PREFIX, OAUTH_CODE_TTL_SECS,
-    OAUTH_DEFAULT_TIER, OAUTH_MATCH_CODE_LEN, OAUTH_PENDING_REQUESTS_MAX, OAUTH_REDIRECT_URIS_MAX,
-    OAUTH_REFRESH_TOKEN_PREFIX, OAUTH_REFRESH_TTL_SECS, OAUTH_REGISTRATIONS_PER_HOUR,
-    OAUTH_REGISTRATIONS_PER_SOURCE_PER_HOUR, OAUTH_REQUEST_TTL_SECS, OAUTH_STATE_MAX_BYTES,
-    OAUTH_URI_MAX_BYTES, OAuthAccess, OAuthAuthorizationAllowed, OAuthAuthorizationPending,
-    OAuthAuthorizationStart, OAuthAuthorizationStatus, OAuthClientRecord, OAuthClientRegistration,
-    OAuthClientSource, OAuthCodeExchange, OAuthRefresh, OAuthRegistrationRefusal,
-    OAuthTokenRefusal, OAuthTokens, oauth_client_id_is_metadata_url, oauth_code_challenge_admitted,
-    oauth_redirect_uri_admitted, oauth_requested_tier, oauth_scopes_supported,
+    OAUTH_DEFAULT_TIER, OAUTH_MATCH_CODE_LEN, OAUTH_NAMED_CLIENT_REDIRECT_URIS,
+    OAUTH_PENDING_REQUESTS_MAX, OAUTH_REDIRECT_URIS_MAX, OAUTH_REFRESH_TOKEN_PREFIX,
+    OAUTH_REFRESH_TTL_SECS, OAUTH_REGISTRATIONS_PER_HOUR, OAUTH_REGISTRATIONS_PER_SOURCE_PER_HOUR,
+    OAUTH_REQUEST_TTL_SECS, OAUTH_STATE_MAX_BYTES, OAUTH_URI_MAX_BYTES, OAuthAccess,
+    OAuthAuthorizationAllowed, OAuthAuthorizationPending, OAuthAuthorizationStart,
+    OAuthAuthorizationStatus, OAuthClientRecord, OAuthClientRegistration, OAuthClientSource,
+    OAuthCodeExchange, OAuthRefresh, OAuthRegistrationRefusal, OAuthTokenRefusal, OAuthTokens,
+    oauth_client_id_is_metadata_url, oauth_code_challenge_admitted, oauth_redirect_uri_admitted,
+    oauth_requested_tier, oauth_scopes_supported,
 };
 pub use observation_policy::*;
 // The origin cut a repo manifest is written and judged by (FIX 15740).

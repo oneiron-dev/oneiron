@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use super::rows::{CLIENTS, FAMILIES, REQUESTS, client_key};
 use super::{
-    OAUTH_CIMD_TTL_SECS, OAUTH_CLIENT_NAME_MAX_CHARS, OAUTH_CLIENTS_MAX, OAUTH_REDIRECT_URIS_MAX,
-    OAUTH_URI_MAX_BYTES,
+    OAUTH_CIMD_TTL_SECS, OAUTH_CLIENT_NAME_MAX_CHARS, OAUTH_CLIENTS_MAX,
+    OAUTH_NAMED_CLIENT_REDIRECT_URIS, OAUTH_REDIRECT_URIS_MAX, OAUTH_URI_MAX_BYTES,
 };
 use crate::error::Result;
 use crate::{EntityId, Vault};
@@ -137,11 +137,15 @@ impl OAuthRegistrationRefusal {
 /// canon names no DCR policy detail): at most [`OAUTH_URI_MAX_BYTES`], with no fragment and no
 /// user info, and either https with a host, http on a loopback host (`127.0.0.1`, `[::1]` or
 /// `localhost`, RFC 8252 §7.3), or a native app's private-use scheme in reverse-domain form, a
-/// scheme with a `.` in it (RFC 8252 §7.1).
+/// scheme with a `.` in it (RFC 8252 §7.1). A URI in [`OAUTH_NAMED_CLIENT_REDIRECT_URIS`] is
+/// admitted as that exact string, and only so (L1-02).
 #[must_use]
 pub fn oauth_redirect_uri_admitted(uri: &str) -> bool {
     if uri.len() > OAUTH_URI_MAX_BYTES {
         return false;
+    }
+    if OAUTH_NAMED_CLIENT_REDIRECT_URIS.contains(&uri) {
+        return true;
     }
     let Ok(url) = Url::parse(uri) else {
         return false;
