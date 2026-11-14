@@ -7,14 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::connector_key::{ConnectorCatalogEntry, ConnectorDescription, ConnectorIssuerHaltView};
 use crate::memory::{Memory, MemoryResult, OutboundDraftInput, OutboundIntentReceipt};
 
-/// `connector.list`'s input: a name or summary fragment; all catalogued
-/// keys and first-party interfaces in the discovery lens when blank.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ConnectorListRequest {
-    #[serde(default)]
-    pub query: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::connector::{ConnectorListRequest, ConnectorNameRequest};
 
 /// A catalogued key or a first-party connector interface. Discovery does
 /// not authorize a call or promise that its provider is available.
@@ -49,13 +43,6 @@ impl From<ConnectorCatalogEntry> for ConnectorEntry {
             registered_at: entry.registered_at,
         }
     }
-}
-
-/// `connector.status`'s input: a catalogued connector's name.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ConnectorNameRequest {
-    pub name: String,
 }
 
 /// One connector's history lens: its entry and the key that governs it. A

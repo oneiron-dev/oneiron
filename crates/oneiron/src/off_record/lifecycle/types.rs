@@ -9,43 +9,10 @@ pub(super) const OFF_RECORD_SESSION_RECORD_VERSION: u8 = 0;
 /// Longest accepted caller-supplied opaque session ref, in bytes.
 pub(super) const OFF_RECORD_SESSION_REF_MAX_LEN: usize = 256;
 
-/// Current write-routing mode of an off-record session.
-///
-/// The mode says where NEW writes land. It never moves rows: flipping to
-/// [`OffRecordMode::OnRecord`] seals the overlay so later writes go to base,
-/// and the room's earlier turns stay overlay-only until promote or close.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum OffRecordMode {
-    OffRecord,
-    OnRecord,
-    /// No transcript, derived memory, telemetry, or receipts are retained.
-    /// Entry is explicit; this mode cannot be changed or promoted.
-    Anonymous,
-}
-
-impl OffRecordMode {
-    pub(crate) const fn write_target(self) -> crate::session_overlay::RouteTarget {
-        match self {
-            Self::OffRecord => crate::session_overlay::RouteTarget::Overlay,
-            Self::OnRecord => crate::session_overlay::RouteTarget::Base,
-            Self::Anonymous => crate::session_overlay::RouteTarget::Discard,
-        }
-    }
-}
-
-/// Backend class the disclosure-honesty line is relative to (OF-326
-/// EF-316-style honesty caveat): evaporation is backend-relative.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum OffRecordBackendClass {
-    /// Local inference: real evaporation — nothing leaves the device and
-    /// nothing survives close.
-    Local,
-    /// Cloud or BYO-key inference: this engine persists nothing at close,
-    /// but provider retention applies to what transited the provider API.
-    RemoteProvider,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::off_record::lifecycle::types::{
+    OffRecordBackendClass, OffRecordMode, OffRecordNoticeAct,
+};
 
 /// Read-only projection of one in-process off-record session record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,30 +60,6 @@ pub struct OffRecordSessionRecord {
     /// first, one per agent. A save answers every one of them.
     #[serde(default)]
     pub suggestions: Vec<OffRecordSaveSuggestion>,
-}
-
-/// What a person did with the talk, as the room hears of it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum OffRecordNoticeAct {
-    /// Saved the whole talk so far into their own vault.
-    SavedTalk,
-    /// Saved one turn into their own vault.
-    SavedTurn,
-    /// Saved a selected scratch artifact and its document into this vault.
-    SavedArtifact,
-    /// Put the stretch on record: later turns are saved as they land.
-    SavingFromHere,
-    /// Saving stopped: the person who put the stretch on record left its
-    /// room, or lost this vault or their proof. Later turns stay off record.
-    SavingStopped,
-    /// Took an export file of the talk.
-    Exported,
-    /// An agent suggested a save. Nothing was saved.
-    SaveSuggested,
-    /// A holder of this vault's write grant declined the waiting save
-    /// suggestions. Nothing was saved.
-    SaveDeclined,
 }
 
 /// One notice in the room's timeline: who did what, and when.
