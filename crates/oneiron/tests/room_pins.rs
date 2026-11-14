@@ -42,7 +42,9 @@ use oneiron::policy_manifest_doors::{
 };
 use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
 use oneiron::verbs::{AgentDefinitionCreateRequest, AgentDefinitionSpec};
-use oneiron::workspace_roster::{ProjectRecord, RoomPinPolicySet, RoomPinReply, RoomPinRequest};
+use oneiron::workspace_roster::{
+    ProjectRecord, RoomMemberRoleSet, RoomPinPolicySet, RoomPinReply, RoomPinRequest,
+};
 use oneiron::{DeleteReason, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -536,6 +538,48 @@ fn a_delegating_owner_makes_a_member_admin_who_then_runs_the_pins() -> TestResul
     // An agent sets no role, the admin's pen included.
     assert!(set_role(&agent(&fx, fx.leader_agent), room, fx.member, "admin").is_err());
     assert_eq!(fx.vault.conversation_body(room)?.roles.len(), 1);
+    Ok(())
+}
+
+/// Review round 1 of #7700 (P1): a PERSON acting as an agent sets no role,
+/// even in a room it created, whose creator holds the owner's standing in an
+/// unrooted vault whatever class it acts as. Refused through the door and
+/// through the verb, and no role changes; the same PERSON acting as itself
+/// then sets the role. At the reviewed head 92b3176c5a5 the agent-class call
+/// made the member an admin.
+#[test]
+fn a_person_acting_as_an_agent_sets_no_role_in_a_room_it_created() -> TestResult {
+    let fx = open_fixture()?;
+    let room = EntityId::now();
+    fx.vault.create_conversation(
+        room,
+        &ConversationBody {
+            kind: ConversationKind::Group,
+            member_ids: vec![fx.leader, fx.member],
+            ..Default::default()
+        },
+        WriteActor::new(fx.leader, EdgeActorClass::Agent),
+        fx.vault.now_recorded_at(),
+    )?;
+    let input = RoomMemberRoleSet {
+        room,
+        person: fx.member,
+        role: RoomRole::Admin,
+    };
+    let refused = agent(&fx, fx.leader).rooms_members_role_set(&input);
+    assert!(refused.is_err(), "{refused:?}");
+    assert!(set_role(&agent(&fx, fx.leader), room, fx.member, "admin").is_err());
+    assert!(fx.vault.conversation_body(room)?.roles.is_empty());
+
+    let receipt = person(&fx, fx.leader).rooms_members_role_set(&input)?;
+    assert_eq!(receipt.set_by, fx.leader);
+    assert_eq!(
+        fx.vault
+            .conversation_body(room)?
+            .roles
+            .get(&fx.member.to_hex()),
+        Some(&RoomRole::Admin)
+    );
     Ok(())
 }
 
