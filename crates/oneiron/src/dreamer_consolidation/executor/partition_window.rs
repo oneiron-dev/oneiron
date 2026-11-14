@@ -249,7 +249,7 @@ impl ConsolidationExecutor<'_> {
             let serial = matches!(slot, WindowSlotRun::Serial);
             let caught = {
                 let mut finish =
-                    self.boxed_finish_window_slot(slot, *attempt, ctx, stopped, committed);
+                    self.boxed_finish_window_slot(slot, attempt, ctx, stopped, committed);
                 poll_fn(|task_cx| {
                     match std::panic::catch_unwind(AssertUnwindSafe(|| {
                         finish.as_mut().poll(task_cx)
