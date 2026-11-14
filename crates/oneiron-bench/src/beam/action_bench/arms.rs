@@ -14,7 +14,7 @@ use oneiron::memory::{
     WitnessTurn,
 };
 use oneiron::store::GateDecisionId;
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::{DeleteReason, EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
 use oneiron_keystore::MemoryKeystore;
 use serde::{Deserialize, Serialize};
 
@@ -171,12 +171,6 @@ struct IngestCounts {
     after_freeze: usize,
 }
 
-#[derive(Clone, Copy)]
-struct WrittenTurn {
-    turn: EntityId,
-    message: EntityId,
-}
-
 /// One history's ingest: its turns and claims in time order, and each
 /// deletion when the user made it; nothing at or after the freeze.
 struct Ingest<'v> {
@@ -184,9 +178,10 @@ struct Ingest<'v> {
     memory: Memory<'v>,
     owner: EntityId,
     worlds: &'v BTreeMap<String, EntityId>,
-    conversation: String,
-    /// Each witnessed turn's ids, by the turn's place in the history.
-    turns: Vec<Option<WrittenTurn>>,
+    /// The history's one conversation: the first witness mints it at this id.
+    conversation: EntityId,
+    /// Each witnessed turn's message id, by the turn's place in the history.
+    turns: Vec<Option<EntityId>>,
     /// Each written claim's id, by the claim's place in the history.
     claims: Vec<Option<EntityId>>,
     counts: IngestCounts,
@@ -204,7 +199,7 @@ impl<'v> Ingest<'v> {
             memory: vault.memory(owner, EdgeActorClass::Human),
             owner,
             worlds,
-            conversation: EntityId::now().to_hex(),
+            conversation: EntityId::now(),
             turns: vec![None; history.turns.len()],
             claims: vec![None; history.claims.len()],
             counts: IngestCounts::default(),
@@ -225,9 +220,9 @@ impl<'v> Ingest<'v> {
     fn apply(&mut self, event: Event<'_>) -> Result<(), String> {
         match event {
             Event::Turn(index, turn) => {
-                let written = witness(&self.memory, &self.conversation, turn)?;
+                let message = witness(&self.memory, self.conversation, turn)?;
                 if let Some(slot) = self.turns.get_mut(index) {
-                    *slot = Some(written);
+                    *slot = Some(message);
                 }
                 self.counts.turns += 1;
             }
@@ -249,15 +244,16 @@ impl<'v> Ingest<'v> {
                 self.counts.claims += 1;
             }
             Event::DeleteTurn(index, _) => {
-                let Some(Some(written)) = self.turns.get(index).copied() else {
+                let Some(Some(message)) = self.turns.get(index).copied() else {
                     return Err("a deleted turn was never witnessed".to_owned());
                 };
-                // The message must have stood. Its TURN is deleted after it,
-                // and is gone either way once that returns.
-                if !delete(self.vault, &written.message)? {
+                // The user deletes what they said: the turn's message, as its
+                // author, through the room door (the plain delete refuses a
+                // room record). The TURN stays as its container; the
+                // message's erase refreshes the TURN's search state.
+                if !delete_message(self.vault, self.conversation, message, self.owner)? {
                     return Err("a deleted turn's message did not stand".to_owned());
                 }
-                delete(self.vault, &written.turn)?;
                 self.counts.deleted += 1;
             }
             Event::DeleteClaim(index, _) => {
@@ -313,11 +309,12 @@ fn events(history: &History) -> Vec<Event<'_>> {
     events
 }
 
-fn witness(memory: &Memory<'_>, conversation: &str, turn: &Turn) -> Result<WrittenTurn, String> {
+/// Witnesses one turn of one message: the message's id.
+fn witness(memory: &Memory<'_>, conversation: EntityId, turn: &Turn) -> Result<EntityId, String> {
     let message = EntityId::now();
-    let receipt = memory
+    memory
         .witness(&WitnessTurn {
-            conversation_ref: conversation.to_owned(),
+            conversation_ref: conversation.to_hex(),
             turn_ref: None,
             thread_audience: None,
             messages: vec![WitnessMessage {
@@ -338,10 +335,7 @@ fn witness(memory: &Memory<'_>, conversation: &str, turn: &Turn) -> Result<Writt
             assertions: WitnessAssertions::default(),
         })
         .map_err(|error| error.to_string())?;
-    Ok(WrittenTurn {
-        turn: receipt.turn_id,
-        message,
-    })
+    Ok(message)
 }
 
 fn upsert(
@@ -377,6 +371,25 @@ fn upsert(
 /// the item stood.
 fn delete(vault: &Vault, id: &EntityId) -> Result<bool, String> {
     vault.delete_entity(id).map_err(|error| error.to_string())
+}
+
+/// The owner's delete of a message they wrote, as a user's delete of what
+/// they said runs: whether the message stood.
+fn delete_message(
+    vault: &Vault,
+    conversation: EntityId,
+    message: EntityId,
+    owner: EntityId,
+) -> Result<bool, String> {
+    vault
+        .delete_room_record(
+            conversation,
+            message,
+            WriteActor::new(owner, EdgeActorClass::Human),
+            DeleteReason::UserDelete,
+        )
+        .map(|outcome| outcome.existed)
+        .map_err(|error| error.to_string())
 }
 
 fn memory_failure(history: &str, reason: &str) -> BeamError {
