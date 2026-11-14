@@ -141,6 +141,10 @@ pub(crate) struct ListedTool {
     description: String,
     /// The literal declaration; resolution happens on the engine side.
     input_schema: Value,
+    /// The literal `outputSchema`, when the tool declares an object one
+    /// (L8-31). It types the caller's reply and grants nothing; the engine
+    /// drops one it cannot resolve.
+    output_schema: Option<Value>,
     read_only: bool,
     destructive: bool,
     open_world: bool,
@@ -187,6 +191,10 @@ impl ListedTool {
                 .unwrap_or_default()
                 .to_owned(),
             input_schema: input_schema.clone(),
+            output_schema: tool
+                .get("outputSchema")
+                .filter(|schema| schema.is_object())
+                .cloned(),
             read_only,
             destructive: !read_only && hint("destructiveHint") != Some(false),
             open_world: hint("openWorldHint") != Some(false),
@@ -226,6 +234,7 @@ impl ListedTool {
             permissions,
             triggers: BTreeSet::new(),
             input_schema: self.input_schema.clone(),
+            output_schema: self.output_schema.clone(),
         }
     }
 
@@ -340,6 +349,7 @@ pub(crate) fn slate_manifest(
                 data_class: class.data_class,
                 header_parameters: header_parameters(&row.input_schema),
                 resolved_input_schema: Some(row.input_schema.clone()),
+                resolved_output_schema: row.output_schema.clone(),
                 trigger: None,
                 destroys: listed.destructive,
                 spends: class.spends,
@@ -751,5 +761,66 @@ impl Drop for Session<'_> {
             end = end.header(AUTHORIZATION, auth.clone());
         }
         drop(end.send());
+    }
+}
+
+#[cfg(test)]
+mod output_schema_tests {
+    use super::{ListedTool, resolve, slate_manifest};
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    /// L8-31: a listed tool's object `outputSchema` reaches the resolved
+    /// manifest and the owner's slate row resolved; a non-object one is not
+    /// read, and a tool without one carries none.
+    #[test]
+    fn a_listed_output_schema_reaches_the_slate_row_resolved() {
+        let tools: Vec<ListedTool> = [
+            json!({
+                "name": "search",
+                "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
+                "outputSchema": {
+                    "type": "object",
+                    "properties": {"hits": {"type": "array", "items": {"$ref": "#/$defs/hit"}}},
+                    "$defs": {"hit": {"type": "object", "properties": {"id": {"type": "string"}}}}
+                },
+                "annotations": {"readOnlyHint": true}
+            }),
+            json!({
+                "name": "delete_item",
+                "inputSchema": {"type": "object"},
+                "outputSchema": "not a schema"
+            }),
+        ]
+        .iter()
+        .map(|tool| ListedTool::parse(tool).expect("a listed tool"))
+        .collect();
+        let resolved = resolve(&tools).expect("the listing resolves");
+        let slate = slate_manifest(&resolved, &tools, &BTreeMap::new());
+        let row = |name: &str| {
+            slate
+                .tools
+                .iter()
+                .find(|row| row.name == name)
+                .expect("a slate row")
+        };
+        assert_eq!(
+            row("search").resolved_output_schema,
+            Some(json!({
+                "type": "object",
+                "properties": {"hits": {"type": "array", "items": {
+                    "type": "object", "properties": {"id": {"type": "string"}}
+                }}}
+            }))
+        );
+        assert_eq!(row("delete_item").resolved_output_schema, None);
+        assert_eq!(
+            resolved
+                .tools()
+                .iter()
+                .map(|tool| (tool.name.as_str(), tool.output_schema.is_some()))
+                .collect::<Vec<_>>(),
+            vec![("delete_item", false), ("search", true)]
+        );
     }
 }

@@ -171,6 +171,7 @@ fn connector_source_rows_test_write_owner_claim(
 /// The catalog connector `memory` admitted Active by owner attestation, so a call routes.
 fn connector_source_rows_test_admit_connector(vault: &Vault, owner_proof: &AuthenticatedOwner) {
     let manifest = vec![SlateToolManifest {
+        resolved_output_schema: None,
         name: CONNECTOR_SOURCE_ROWS_TEST_CONNECTOR_TOOL.to_owned(),
         data_class: SlateDataClass::Personal,
         header_parameters: Vec::new(),

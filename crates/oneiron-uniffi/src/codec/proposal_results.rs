@@ -378,17 +378,25 @@ impl Lift<oneiron::task_verb::sdk::ConnectorSchemaReply> for crate::ConnectorSch
             source,
             foreign,
             input_schema,
+            output_schema,
+            input_typescript,
+            output_typescript,
             destructive,
             reasons,
         } = value;
-        let input_schema = match input_schema {
-            None | Some(serde_json::Value::Null) => None,
-            Some(schema) => Some(WireJson::lift(schema)?),
+        let lift_schema = |schema: Option<serde_json::Value>| match schema {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(schema) => WireJson::lift(schema).map(Some),
         };
+        let input_schema = lift_schema(input_schema)?;
+        let output_schema = lift_schema(output_schema)?;
         Ok(Self {
             source,
             foreign,
             input_schema,
+            output_schema,
+            input_typescript,
+            output_typescript,
             destructive,
             reasons: if reasons.is_empty() {
                 None

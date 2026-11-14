@@ -200,6 +200,7 @@ fn setup_with_secret(
         policy_floor_snapshot: SecretCustodyFloor::default(),
     })?;
     let manifest = vec![SlateToolManifest {
+        resolved_output_schema: None,
         name: "send".into(),
         data_class: SlateDataClass::Personal,
         header_parameters: Vec::new(),

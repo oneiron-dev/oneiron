@@ -115,21 +115,26 @@ fn probe_failure() -> Error {
 /// Probe listings are literal declarations: compare them only after the same
 /// resolution the candidate went through. Listings carry no permission rows,
 /// so those come from the candidate by tool name, and no client capability,
-/// so the candidate's elicitation declaration stands.
+/// so the candidate's elicitation declaration stands. Probe listings carry
+/// no output schema either: the candidate's stands, as its permissions do.
 fn ensure_declared(manifest: &ResolvedConnectorManifest, tools: &[ProbeTool]) -> Result<()> {
     let observed = ResolvedConnectorManifest::resolve(
         tools
             .iter()
-            .map(|tool| ConnectorToolSchema {
-                name: tool.name.clone(),
-                permissions: manifest
+            .map(|tool| {
+                let candidate = manifest
                     .tools()
                     .iter()
-                    .find(|candidate| candidate.name == tool.name)
-                    .map(|candidate| candidate.permissions.clone())
-                    .unwrap_or_default(),
-                triggers: tool.trigger.iter().cloned().collect(),
-                input_schema: tool.input_schema.clone(),
+                    .find(|candidate| candidate.name == tool.name);
+                ConnectorToolSchema {
+                    name: tool.name.clone(),
+                    permissions: candidate
+                        .map(|candidate| candidate.permissions.clone())
+                        .unwrap_or_default(),
+                    triggers: tool.trigger.iter().cloned().collect(),
+                    input_schema: tool.input_schema.clone(),
+                    output_schema: candidate.and_then(|candidate| candidate.output_schema.clone()),
+                }
             })
             .collect(),
     )?

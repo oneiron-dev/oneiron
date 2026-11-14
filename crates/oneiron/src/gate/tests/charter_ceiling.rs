@@ -155,6 +155,7 @@ fn qualify_scoped_fixture(vault: &crate::Vault, key_id: &EntityId) -> Result<()>
         }
     }
     let manifest = ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+        output_schema: None,
         name: "read_file".into(),
         permissions: ["read".into()].into(),
         triggers: Default::default(),
@@ -653,6 +654,7 @@ fn resolved_manifest_drift_holds_scoped_tool_at_gate() -> Result<()> {
     qualify_scoped_fixture(&vault, &key_id)?;
     let manifest = |default| {
         ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+        output_schema: None,
         name: "read_file".into(), permissions: ["read".into()].into(), triggers: Default::default(),
         input_schema: json!({"type":"object", "properties":{"path":{"type":"string","default":default}}}),
     }]).unwrap()
