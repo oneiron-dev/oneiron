@@ -9,8 +9,8 @@
 //! admitted under the fork head's id (`store_doc`), so a key found there
 //! names the head, which is no entity (NOTE-PROPOSAL-FORK-RULING-KEEPS-HANDLE).
 //! The answer puts the value back in each pending fork of the NOTE that
-//! holds the handle, and in the text a merge lands from, so a land after the
-//! ruling carries the value. A land moves the fork's keys to the NOTE
+//! holds the handle, and in the texts a merge lands from, so a land after
+//! the ruling carries the value. A land moves the fork's keys to the NOTE
 //! (`proposals::land`), so an answer after it reaches the NOTE.
 
 use super::document::{NoteDocument, TITLE, encode_title};
@@ -18,6 +18,7 @@ use super::document_store::{load, persist_authoritative};
 use super::documents::{NOTE_PROPOSAL_DOC, proposal_value, snapshot};
 use super::operations::record_authorship;
 use super::proposals::{NOTE_FORK, replace_fork_row_in_txn};
+use super::token_uses::record_token_uses_in_txn;
 use super::{NoteActor, NoteAuthorship};
 use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeActorClass;
@@ -66,7 +67,7 @@ pub(crate) fn restore_found_key_text_in_txn(
     if note == record || is_live_note_in_txn(vault, txn, note)? {
         restore_live_in_txn(vault, txn, note, text_form, value, actor)?;
     }
-    restore_pending_forks_in_txn(vault, txn, note, text_form, value)?;
+    restore_pending_forks_in_txn(vault, txn, note, text_form, value, actor)?;
     Ok(true)
 }
 
@@ -91,10 +92,27 @@ fn restore_live_in_txn(
     actor: EntityId,
 ) -> Result<()> {
     let doc = load(vault, txn, note)?;
+    if restore_document_in_txn(vault, txn, &doc, text_form, value, actor)? {
+        persist_authoritative(vault, txn, &doc)?;
+    }
+    Ok(())
+}
+
+/// The value back in the body and title of `doc` where they hold
+/// `text_form`, as an edit stamped by `actor`. Returns whether either held
+/// it; the caller stores `doc`.
+fn restore_document_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+    text_form: &str,
+    value: &[u8],
+    actor: EntityId,
+) -> Result<bool> {
     let body = Some(doc.view()?.markdown).filter(|text| text.contains(text_form));
     let title = doc.title()?.filter(|text| text.contains(text_form));
     if body.is_none() && title.is_none() {
-        return Ok(());
+        return Ok(false);
     }
     let value = as_text(value)?;
     // The commit names the ruling person's stamp token (FIX 10930).
@@ -107,7 +125,7 @@ fn restore_live_in_txn(
         doc.set_title(&title.replace(text_form, value), stamp)?;
     }
     record_authorship(
-        &doc,
+        doc,
         &NoteAuthorship {
             operation: vault.new_entity_id()?,
             actor: NoteActor::Actor(stamp.token),
@@ -117,21 +135,25 @@ fn restore_live_in_txn(
         },
         stamp,
     )?;
-    persist_authoritative(vault, txn, &doc)
+    Ok(true)
 }
 
 /// The value back in each pending fork of `note` that holds `text_form`:
-/// its stored proposal, rebuilt as the value carrier `store_doc` keeps for a
-/// masked fork (no pins, no authorship), and the text a merge lands from
-/// (`NoteFork::recovery_merge`). A carrier that keeps its operations holds
-/// no handle the mask placed and stays as it is; a decided fork stays as it
-/// was decided.
+/// its stored proposal and the texts a merge lands from
+/// (`NoteFork::recovery_merge`). A value carrier, which `store_doc` keeps
+/// for a masked fork (no pins, no authorship), is rebuilt with the value. A
+/// declared rewrite that keeps its operations takes the value as an edit by
+/// `actor`, since a switch lands its document whole (REVIEW-7904 F2). A
+/// merge fork that keeps its operations stays as it is: a merge imports
+/// them into the NOTE, whose own edit by the ruling already holds the
+/// value. A decided fork stays as it was decided.
 fn restore_pending_forks_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     note: EntityId,
     text_form: &str,
     value: &[u8],
+    actor: EntityId,
 ) -> Result<()> {
     let prefix = format!("{}:", note.to_hex());
     let mut restored = false;
@@ -159,13 +181,27 @@ fn restore_pending_forks_in_txn(
             let bytes = snapshot(&proposal_value(note, &text, &metadata)?)?;
             NOTE_PROPOSAL_DOC.put(&vault.store, txn, &key, &bytes)?;
             restored = true;
+        } else if held
+            && fork.rewrite
+            && restore_document_in_txn(vault, txn, &carrier, text_form, value, actor)?
+        {
+            // Stored as `store_doc` stores a fork that keeps its operations.
+            record_token_uses_in_txn(vault, txn, note, &carrier.doc, None)?;
+            NOTE_PROPOSAL_DOC.put(&vault.store, txn, &key, &snapshot(&carrier.doc)?)?;
+            restored = true;
         }
         if let Some((base, merged)) = &fork.recovery_merge
-            && merged.contains(text_form)
+            && (base.contains(text_form) || merged.contains(text_form))
         {
+            // Both texts take the value: a base left with the handle would
+            // read the ruling's own edit of the NOTE as an edit of the same
+            // span as the fork's, and refuse the merge (REVIEW-7904 F1).
+            let value = as_text(value)?;
             let mut value_fork = fork.clone();
-            value_fork.recovery_merge =
-                Some((base.clone(), merged.replace(text_form, as_text(value)?)));
+            value_fork.recovery_merge = Some((
+                base.replace(text_form, value),
+                merged.replace(text_form, value),
+            ));
             replace_fork_row_in_txn(vault, txn, &fork, &value_fork)?;
             restored = true;
         }

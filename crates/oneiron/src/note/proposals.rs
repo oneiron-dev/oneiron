@@ -740,7 +740,10 @@ pub(super) fn land(
     // The fork's found keys, their rulings and its ruled screen go to the
     // NOTE before its text is admitted there: a value ruled in the fork
     // lands kept, and a key still open is answered on the NOTE
-    // (NOTE-PROPOSAL-FORK-RULING-KEEPS-HANDLE). A reject lands no text.
+    // (NOTE-PROPOSAL-FORK-RULING-KEEPS-HANDLE). A reject lands no text. A
+    // merge the write gate holds as Proposed keeps the move with the fork
+    // still pending, so a later reject leaves its keys on the NOTE (FIX
+    // [NOTE-FORK-PROPOSED-MERGE-KEYS-ON-NOTE]).
     if verdict != NoteVerdict::Reject {
         crate::secret_custody::move_side_row_custody_in_txn(
             &vault.store,
