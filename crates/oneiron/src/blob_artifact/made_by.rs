@@ -58,6 +58,24 @@ pub(super) fn default_version_made_by(
     }
 }
 
+/// A sealed version's own envelope, the seal's receipt (ARCH-0075 seal
+/// follow-up): made from the original upload's version claim, its params
+/// the audit chain the seal certified. A sealed output is the first version
+/// of a new artifact, so the writer's default would name no input and the
+/// artifact row would have no birth. The seal attempt stays in the
+/// version's provenance (`seal_job`).
+pub(super) fn seal_version_made_by(
+    actor: &WriteActor,
+    provenance: &BlobVersionProvenance,
+    original_claim: EntityId,
+    audit_chain_sha256: &[u8; 32],
+    at: u64,
+) -> MadeBy {
+    let mut made_by = default_version_made_by(actor, provenance, Some(original_claim), at);
+    made_by.process.params_hash = crate::entity_id::bytes_to_hex_lower(audit_chain_sha256);
+    made_by
+}
+
 /// Binds a supplied envelope to the authenticated writer while retaining the
 /// supplied actor only as input provenance (FIX 9618).
 pub(super) fn bind_version_made_by(
