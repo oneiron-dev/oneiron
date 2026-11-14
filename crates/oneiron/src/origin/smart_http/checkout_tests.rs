@@ -168,7 +168,7 @@ impl crate::dispatch_byoa::ByoEndpointBackendFactory for NoBuildEndpoint {
     fn resolve_backend(
         &self,
         _: &crate::dispatch_byoa::ByoEndpointSpec,
-    ) -> crate::dispatch_byoa::ByoaResult<Arc<dyn crate::LlmBackend>> {
+    ) -> crate::dispatch_byoa::ByoaResult<crate::dispatch_byoa::ByoEndpointBinding> {
         Err(crate::dispatch_byoa::ByoaError::Backend(
             "not an endpoint".into(),
         ))
