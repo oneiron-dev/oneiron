@@ -117,7 +117,12 @@ impl Vault {
         let grant = decode_federation_grant_body(&body)?;
         require_guest_purpose_in_txn(self, &txn, grant_ref, &grant)?;
         let now = self.instant_in_txn(&txn)?.secs();
-        if !grant.is_live_at(now) || expires_at <= now {
+        // The grant's end is the visit's, a wall-clock fact (DEC-0006 duration
+        // amendment), so it is judged no earlier than the recording clock; the
+        // slip's own lifetime stays on the authority clock (identity
+        // #slip-clocks).
+        let grant_at = now.max(crate::ports::job_recorded_at_in_txn(&self.store, &txn)?);
+        if !grant.is_live_at(grant_at) || expires_at <= now {
             return Err(invalid_authority());
         }
         let holder_key = grant
@@ -304,7 +309,11 @@ impl Vault {
         };
         let grant = decode_federation_grant_body(&body)?;
         require_guest_purpose_in_txn(self, txn, grant_ref, &grant)?;
-        if grant.member_ref.to_hex() != member || !grant.is_live_at(now) {
+        // A guest grant's end is the visit's, a wall-clock fact (DEC-0006
+        // duration amendment): a caller's slip-clock `now` can bring it
+        // forward, never put it back past the recording clock.
+        let at = now.max(crate::ports::job_recorded_at_in_txn(&self.store, txn)?);
+        if grant.member_ref.to_hex() != member || !grant.is_live_at(at) {
             return Err(invalid_authority());
         }
         Ok(grant)

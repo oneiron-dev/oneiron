@@ -112,6 +112,11 @@ mod reseal;
 mod public_read;
 pub use public_read::EsignLeasedReadError;
 
+mod qr_capability;
+pub use qr_capability::{
+    EsignQrCapability, EsignQrItem, EsignQrOutcome, EsignQrPage, EsignQrSigner,
+};
+
 mod artifact_actor;
 pub(crate) use artifact_actor::{actor as artifact_machine, seal_actor as seal_machine};
 
