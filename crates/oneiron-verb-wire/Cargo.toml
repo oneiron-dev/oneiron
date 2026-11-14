@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "The wire types of the oneiron engine's public verbs, below the engine: every request, response and value type that carries a JSON schema"
 repository.workspace = true
-homepage.workspace = true
 
 [lib]
 doctest = false

@@ -67,6 +67,8 @@ edition = "2024"
 rust-version = "1.96"
 license = "Apache-2.0"
 repository = "https://github.com/oneiron-dev/oneiron"
+# No `homepage`: it equalled `repository`, which Cargo 1.100 reports as `redundant_homepage`.
+# A member must not write `homepage.workspace = true`; that is a hard manifest error now.
 readme = "README.md"
 keywords = ["retrieval", "vector-search", "lmdb", "crdt"]
 categories = ["database", "command-line-utilities"]
