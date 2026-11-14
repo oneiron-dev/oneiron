@@ -215,10 +215,10 @@ impl WorkspaceRun<'_> {
         })
     }
 
-    /// The call's answer. A read answers the provider's reply as it stands.
-    /// A write answers the reply beside its readback (or why there is none)
-    /// and its two Gate records' ids. A refused status answers as a tool
-    /// error.
+    /// The call's answer. A read answers the provider's reply as it stands,
+    /// and a content read the file's content under the file's id. A write
+    /// answers the reply beside its readback (or why there is none) and its
+    /// two Gate records' ids. A refused status answers as a tool error.
     fn answer(
         &self,
         tool: &WorkspaceTool,
@@ -235,6 +235,14 @@ impl WorkspaceRun<'_> {
         let reply = match outcome {
             WorkspaceWireOutcome::NotSent(reason) => return WorkspaceAnswer::NotSent(reason),
             WorkspaceWireOutcome::Uncertain(reason) => return WorkspaceAnswer::Uncertain(reason),
+            WorkspaceWireOutcome::Content(content) => {
+                let mut output = content.output();
+                output[field] = Value::from(plan.target.as_str());
+                return WorkspaceAnswer::Answered {
+                    output,
+                    is_error: false,
+                };
+            }
             WorkspaceWireOutcome::Answered { status, body } if !(200..300).contains(&status) => {
                 let mut output = json!({ "status": status, "error": body });
                 if !plan.target.is_empty() {
@@ -273,6 +281,7 @@ impl WorkspaceRun<'_> {
             ) => {
                 output["readbackError"] = Value::from(reason);
             }
+            Some(WorkspaceWireOutcome::Content(content)) => output["readback"] = content.output(),
             None => output["readbackError"] = Value::from(connection.code(READBACK_NOT_RUN)),
         }
         if let Some(receipts) = receipts {
@@ -298,6 +307,10 @@ fn effect_result(
         WorkspaceWireOutcome::Answered { status, body } => {
             (format!("rejected_{status}"), Some(json_digest(body)))
         }
+        WorkspaceWireOutcome::Content(content) => (
+            SEND_DELIVERED.to_owned(),
+            Some(blake3::hash(content.bytes()).to_hex().to_string()),
+        ),
         WorkspaceWireOutcome::NotSent(_) => (SEND_NOT_SENT.to_owned(), None),
         WorkspaceWireOutcome::Uncertain(_) => (SEND_UNCERTAIN.to_owned(), None),
     };

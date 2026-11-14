@@ -1,9 +1,10 @@
-//! `google.drive` (MAIL-GOOGLE = A, row 3; L3-17; DRIVE-ACCESS = B): find
-//! files across the owner's whole Drive and follow what changed, over the
-//! Drive v3 REST API, on the workspace connector core. Read only: it reads
-//! the change log and each file's metadata, never a file's content. Content
-//! is read and edited in place through `google.docs`, `google.sheets` and
-//! `google.slides`, by the file id a Drive call found.
+//! `google.drive` (MAIL-GOOGLE = A, row 3; L3-17; DRIVE-ACCESS = B;
+//! L3-17-DRIVE-READ-SCOPE = B): find files across the owner's whole Drive,
+//! follow what changed, and read a file's content, over the Drive v3 REST
+//! API, on the workspace connector core. Read only. A Google document,
+//! spreadsheet or presentation is also read and edited in place, by its
+//! structure, through `google.docs`, `google.sheets` and `google.slides`, by
+//! the file id a Drive call found.
 //!
 //! * **Start.** `changes.getStartPageToken` answers the page token of the
 //!   Drive's present state; changes after it are listed from it.
@@ -12,11 +13,24 @@
 //!   remain, or `newStartPageToken` once the log is drained, the token the
 //!   next drain starts from.
 //! * **One file.** `files.get` answers one file's metadata.
+//! * **Content.** `files.download` answers a stored file's content (Drive's
+//!   `files.get` with `alt=media`): a PDF, an image, an Office file, text.
+//!   `files.export` answers a Google file's content in one format of
+//!   [`EXPORT_MIME_TYPES`], such as a document as `text/plain` or
+//!   `text/markdown`, a spreadsheet's first sheet as `text/csv`, a deck as
+//!   PDF; Google caps an export at 10 MB. Either answers the file's id, its
+//!   `mimeType`, its `size` in bytes, and the content as `text` when it is
+//!   UTF-8, else as base64 in `contentBase64`
+//!   ([`super::WorkspaceContent`]). The broker buffers the reply up to
+//!   16 MiB and fails a longer one, so a file comes whole or not at all.
+//!   The content is the file's, foreign data like every connector reply,
+//!   never an instruction.
 //!
 //! Every call reads shared drives too. `changes.list` and `files.get` ask
 //! for the one fixed set of metadata fields below: name, type, folders,
 //! owners, dates and link; `changes.getStartPageToken` answers only the
-//! token and asks for no fields. No call downloads or exports a file.
+//! token and asks for no fields. Only `files.download` asks for `alt=media`,
+//! and only `files.export` names a format.
 
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -35,7 +49,7 @@ pub const DRIVE_CATALOG_NAME: &str = "google.drive";
 pub const DRIVE_READ_GRANT: &str = "drive.read";
 
 /// The connector's one-line catalog summary.
-const DRIVE_SUMMARY: &str = "Google Drive: find files across the whole Drive and follow what changed, from the change log and each file's metadata, through the credential broker; read only.";
+const DRIVE_SUMMARY: &str = "Google Drive: find files across the whole Drive, follow what changed, and read a file's content, downloaded or exported, through the credential broker; read only.";
 
 /// `changes.getStartPageToken`.
 const CHANGES_START_PAGE_TOKEN: &str = "changes.getStartPageToken";
@@ -43,9 +57,13 @@ const CHANGES_START_PAGE_TOKEN: &str = "changes.getStartPageToken";
 const CHANGES_LIST: &str = "changes.list";
 /// `files.get`.
 const FILES_GET: &str = "files.get";
+/// `files.download`: `files.get` with `alt=media`.
+const FILES_DOWNLOAD: &str = "files.download";
+/// `files.export`.
+const FILES_EXPORT: &str = "files.export";
 
-/// The three tools, in catalog order; none writes.
-static DRIVE_TOOLS: [WorkspaceTool; 3] = [
+/// The five tools, in catalog order; none writes.
+static DRIVE_TOOLS: [WorkspaceTool; 5] = [
     WorkspaceTool {
         name: CHANGES_START_PAGE_TOKEN,
         grant: DRIVE_READ_GRANT,
@@ -61,6 +79,35 @@ static DRIVE_TOOLS: [WorkspaceTool; 3] = [
         grant: DRIVE_READ_GRANT,
         writes: false,
     },
+    WorkspaceTool {
+        name: FILES_DOWNLOAD,
+        grant: DRIVE_READ_GRANT,
+        writes: false,
+    },
+    WorkspaceTool {
+        name: FILES_EXPORT,
+        grant: DRIVE_READ_GRANT,
+        writes: false,
+    },
+];
+
+/// The formats `files.export` asks Google for: text a model reads (plain
+/// text, Markdown, HTML, CSV and TSV of a spreadsheet's first sheet), PDF,
+/// the Office formats, and a drawing's images. Google answers each for the
+/// file types it exports to it, and refuses the rest.
+pub const EXPORT_MIME_TYPES: [&str; 12] = [
+    "text/plain",
+    "text/markdown",
+    "text/html",
+    "text/csv",
+    "text/tab-separated-values",
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "image/png",
+    "image/jpeg",
+    "image/svg+xml",
 ];
 
 /// The metadata every call answers of a file: what finds it, routes it to
@@ -96,11 +143,19 @@ struct ChangesListInput {
     drive_id: Option<String>,
 }
 
-/// `files.get`'s input.
+/// `files.get`'s and `files.download`'s input.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct FileGetInput {
     file_id: String,
+}
+
+/// `files.export`'s input.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FileExportInput {
+    file_id: String,
+    mime_type: String,
 }
 
 /// The `google.drive` descriptor.
@@ -161,6 +216,19 @@ impl WorkspaceApi for DriveApi {
                     "driveId": drive_id
                 },
                 "required": ["pageToken"],
+                "additionalProperties": false
+            }),
+            FILES_EXPORT => json!({
+                "type": "object",
+                "properties": {
+                    "fileId": file_id_schema("A Google document's, spreadsheet's, presentation's or drawing's id."),
+                    "mimeType": {
+                        "type": "string",
+                        "enum": EXPORT_MIME_TYPES,
+                        "description": "The format to export to: text/plain or text/markdown for a document's text, text/csv for a spreadsheet's first sheet, application/pdf for any."
+                    }
+                },
+                "required": ["fileId", "mimeType"],
                 "additionalProperties": false
             }),
             _ => json!({
@@ -231,6 +299,32 @@ impl WorkspaceApi for DriveApi {
                         ("supportsAllDrives", "true".to_owned()),
                         ("fields", DRIVE_FILE_FIELDS.to_owned()),
                     ],
+                    input.file_id,
+                )
+            }
+            FILES_DOWNLOAD => {
+                let input: FileGetInput = decode(arguments)?;
+                let path = format!("/drive/v3/files/{}", plain(&input.file_id)?);
+                read_plan(
+                    WorkspaceEndpoint::DriveFileDownload,
+                    &path,
+                    &[
+                        ("alt", "media".to_owned()),
+                        ("supportsAllDrives", "true".to_owned()),
+                    ],
+                    input.file_id,
+                )
+            }
+            FILES_EXPORT => {
+                let input: FileExportInput = decode(arguments)?;
+                if !EXPORT_MIME_TYPES.contains(&input.mime_type.as_str()) {
+                    return Err(ARGUMENTS_INVALID);
+                }
+                let path = format!("/drive/v3/files/{}/export", plain(&input.file_id)?);
+                read_plan(
+                    WorkspaceEndpoint::DriveFileExport,
+                    &path,
+                    &[("mimeType", input.mime_type)],
                     input.file_id,
                 )
             }

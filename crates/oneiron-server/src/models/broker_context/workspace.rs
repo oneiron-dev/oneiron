@@ -7,8 +7,10 @@
 //! custody door with the access token, which goes to the broker with that
 //! one request. The broker adds it as `Authorization: Bearer`, sends once
 //! over verified TLS to the endpoint's origin, and strips it from the reply.
-//! Only broker clients and the serve runtime are kept here, never the key
-//! door, so the vault's transports hold no reference back to the vault.
+//! The reply goes back to the engine as it came, its status, media type and
+//! bytes, and the engine reads it. Only broker clients and the serve runtime
+//! are kept here, never the key door, so the vault's transports hold no
+//! reference back to the vault.
 
 use std::fmt;
 use std::sync::{Arc, OnceLock};
@@ -19,7 +21,6 @@ use oneiron::channel_identity_provider::workspace_connector::{
     WorkspaceWireRequest,
 };
 use oneiron_broker::{BrokerClient, BrokerConnection, BrokerError, CallHeader, Outcome, Shape};
-use serde_json::Value;
 use zeroize::Zeroizing;
 
 use super::super::broker::{BrokerSite, REPLY_MARGIN};
@@ -121,6 +122,8 @@ const fn shape(endpoint: WorkspaceEndpoint) -> Shape {
         WorkspaceEndpoint::DriveChangesStartPageToken => Shape::DriveChangesStartPageToken,
         WorkspaceEndpoint::DriveChangesList => Shape::DriveChangesList,
         WorkspaceEndpoint::DriveFileGet => Shape::DriveFileGet,
+        WorkspaceEndpoint::DriveFileDownload => Shape::DriveFileDownload,
+        WorkspaceEndpoint::DriveFileExport => Shape::DriveFileExport,
         WorkspaceEndpoint::ExcelCreateSession => Shape::ExcelCreateSession,
         WorkspaceEndpoint::ExcelRangeGet => Shape::ExcelRangeGet,
         WorkspaceEndpoint::ExcelRangeUpdate => Shape::ExcelRangeUpdate,
@@ -168,6 +171,7 @@ impl WorkspaceBrokerHost for WorkspaceBroker {
         Ok(Box::new(WorkspaceCall {
             runtime: self.runtime.clone(),
             connection,
+            endpoint,
             header,
             body: request.body().to_vec(),
         }))
@@ -178,6 +182,7 @@ impl WorkspaceBrokerHost for WorkspaceBroker {
 struct WorkspaceCall {
     runtime: tokio::runtime::Handle,
     connection: BrokerConnection,
+    endpoint: WorkspaceEndpoint,
     header: CallHeader,
     body: Vec<u8>,
 }
@@ -187,6 +192,7 @@ impl WorkspaceBrokerCall for WorkspaceCall {
         let Self {
             runtime,
             connection,
+            endpoint,
             header,
             body,
         } = *self;
@@ -197,10 +203,13 @@ impl WorkspaceBrokerCall for WorkspaceCall {
         });
         match sent {
             Some(Ok(reply)) => match reply.outcome {
-                Outcome::Answered { status, .. } => WorkspaceWireOutcome::Answered {
-                    status,
-                    body: serde_json::from_slice(&reply.body).unwrap_or(Value::Null),
-                },
+                Outcome::Answered { status, headers } => {
+                    let content_type = headers
+                        .iter()
+                        .find(|(name, _)| name == "content-type")
+                        .map(|(_, value)| value.as_str());
+                    WorkspaceWireOutcome::answered(endpoint, status, content_type, &reply.body)
+                }
                 Outcome::Refused { reason } => {
                     WorkspaceWireOutcome::NotSent(format!("workspace_broker_refused: {reason}"))
                 }

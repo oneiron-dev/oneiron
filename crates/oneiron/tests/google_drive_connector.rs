@@ -1,14 +1,18 @@
 //! `google.drive` on the workspace connector core (L3-17, PR 3;
-//! DRIVE-ACCESS = B): it routes to the built-in through the one Google
-//! connection, declares three reads under the one `drive.read` grant, and
-//! plans each as one `GET` under Drive v3 with the one fixed field mask and
-//! no content download. Uses only doors main has, so its red there is a
-//! wrong value, not a missing door.
+//! DRIVE-ACCESS = B; GOOGLE-DRIVE-CONTENT-READ): it routes to the built-in
+//! through the one Google connection, declares five reads under the one
+//! `drive.read` grant, and plans each as one `GET` under Drive v3: the
+//! metadata reads with the one fixed field mask and no content download,
+//! `files.download` with `alt=media`, `files.export` with one listed format.
+//! A content read's success answers the file's bytes, as text when they are
+//! UTF-8, else as base64; its error, and every other read, answers JSON.
 //!
 //! Fleet: `cargo test --locked -p oneiron --all-features --test google_drive_connector`
 
+use oneiron::channel_identity_provider::workspace_connector::drive::EXPORT_MIME_TYPES;
 use oneiron::channel_identity_provider::workspace_connector::{
-    WorkspacePlan, module, workspace_manifest,
+    WorkspaceContent, WorkspaceEndpoint, WorkspacePlan, WorkspaceWireOutcome, module,
+    workspace_manifest,
 };
 use oneiron::verbs::{ConnectorSchemaRequest, connector_schema_read};
 use oneiron::{EdgeActorClass, Vault, VaultConfig};
@@ -68,7 +72,13 @@ fn drive_schema_routes_to_the_google_connection() -> TestResult {
     let vault = Vault::open_owned(directory.path(), VaultConfig::default())?;
     let owner = vault.ensure_embedded_owner_actor()?;
     let memory = vault.memory(owner, EdgeActorClass::Human);
-    for tool in ["changes.getStartPageToken", "changes.list", "files.get"] {
+    for tool in [
+        "changes.getStartPageToken",
+        "changes.list",
+        "files.get",
+        "files.download",
+        "files.export",
+    ] {
         let reply = connector_schema_read(
             &memory,
             ConnectorSchemaRequest {
@@ -88,7 +98,7 @@ fn drive_schema_routes_to_the_google_connection() -> TestResult {
 }
 
 #[test]
-fn drive_declares_three_reads_under_one_grant() -> TestResult {
+fn drive_declares_five_reads_under_one_grant() -> TestResult {
     let api = module("google.drive").ok_or("google.drive routes to no module")?;
     let tools: Vec<(&str, &str, bool)> = api
         .tools()
@@ -101,6 +111,8 @@ fn drive_declares_three_reads_under_one_grant() -> TestResult {
             ("changes.getStartPageToken", "drive.read", false),
             ("changes.list", "drive.read", false),
             ("files.get", "drive.read", false),
+            ("files.download", "drive.read", false),
+            ("files.export", "drive.read", false),
         ],
         "every Drive tool reads, under the one drive.read grant"
     );
@@ -117,7 +129,21 @@ fn drive_declares_three_reads_under_one_grant() -> TestResult {
     assert_eq!(schema("changes.getStartPageToken")?.get("required"), None);
     assert_eq!(schema("changes.list")?["required"], json!(["pageToken"]));
     assert_eq!(schema("files.get")?["required"], json!(["fileId"]));
-    for name in ["changes.getStartPageToken", "changes.list", "files.get"] {
+    assert_eq!(schema("files.download")?["required"], json!(["fileId"]));
+    let export = schema("files.export")?;
+    assert_eq!(export["required"], json!(["fileId", "mimeType"]));
+    assert_eq!(
+        export["properties"]["mimeType"]["enum"],
+        json!(EXPORT_MIME_TYPES),
+        "the caller picks a format from the one list"
+    );
+    for name in [
+        "changes.getStartPageToken",
+        "changes.list",
+        "files.get",
+        "files.download",
+        "files.export",
+    ] {
         assert_eq!(
             schema(name)?["additionalProperties"],
             json!(false),
@@ -230,5 +256,219 @@ fn drive_reads_refuse_a_download_a_caller_mask_and_a_bad_token() -> TestResult {
             "{tool} {refused}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn drive_content_reads_ask_google_for_the_file_and_nothing_else() -> TestResult {
+    let download = drive_test_plan("files.download", &json!({ "fileId": DRIVE_TEST_FILE }))?
+        .map_err(|reason| format!("the download was refused: {reason}"))?;
+    assert_eq!(
+        download.effect().endpoint(),
+        WorkspaceEndpoint::DriveFileDownload
+    );
+    assert_eq!(download.effect().endpoint().method(), "GET");
+    assert_eq!(download.effect().endpoint().wire_model(), "drive.v3");
+    assert!(download.effect().endpoint().answers_content());
+    assert_eq!(
+        download.effect().url(),
+        format!(
+            "https://www.googleapis.com/drive/v3/files/{DRIVE_TEST_FILE}?alt=media&supportsAllDrives=true"
+        ),
+        "the file's media under Drive's own origin, the one query the broker's row takes"
+    );
+    assert!(download.effect().body().is_empty());
+    assert!(download.effect().headers().is_empty());
+    assert!(download.readback().is_none(), "a read sends one request");
+    assert_eq!(download.target(), DRIVE_TEST_FILE);
+
+    for format in EXPORT_MIME_TYPES {
+        let export = drive_test_plan(
+            "files.export",
+            &json!({ "fileId": DRIVE_TEST_FILE, "mimeType": format }),
+        )?
+        .map_err(|reason| format!("the {format} export was refused: {reason}"))?;
+        assert_eq!(
+            export.effect().endpoint(),
+            WorkspaceEndpoint::DriveFileExport
+        );
+        assert_eq!(export.effect().endpoint().method(), "GET");
+        assert!(export.effect().endpoint().answers_content());
+        let (path, query) = drive_test_query(&export.effect().url())?;
+        assert_eq!(
+            path,
+            format!("https://www.googleapis.com/drive/v3/files/{DRIVE_TEST_FILE}/export")
+        );
+        assert_eq!(
+            query,
+            vec![("mimeType".to_owned(), format.to_owned())],
+            "the format, and nothing else"
+        );
+        assert!(export.readback().is_none(), "a read sends one request");
+        assert_eq!(export.target(), DRIVE_TEST_FILE);
+    }
+    assert_eq!(
+        drive_test_plan(
+            "files.export",
+            &json!({ "fileId": DRIVE_TEST_FILE, "mimeType": "text/plain" }),
+        )?
+        .map_err(|reason| format!("the text export was refused: {reason}"))?
+        .effect()
+        .url(),
+        format!(
+            "https://www.googleapis.com/drive/v3/files/{DRIVE_TEST_FILE}/export?mimeType=text%2Fplain"
+        ),
+        "the format percent-encoded, as the broker's data-query check takes it"
+    );
+    for endpoint in [
+        WorkspaceEndpoint::DriveChangesStartPageToken,
+        WorkspaceEndpoint::DriveChangesList,
+        WorkspaceEndpoint::DriveFileGet,
+    ] {
+        assert!(!endpoint.answers_content(), "{endpoint:?} answers JSON");
+    }
+    Ok(())
+}
+
+#[test]
+fn drive_content_reads_refuse_another_format_or_field() -> TestResult {
+    for (tool, refused) in [
+        // A format outside the list: Google's own type, a parameter, none.
+        (
+            "files.export",
+            json!({ "fileId": DRIVE_TEST_FILE, "mimeType": "application/vnd.google-apps.document" }),
+        ),
+        (
+            "files.export",
+            json!({ "fileId": DRIVE_TEST_FILE, "mimeType": "text/plain; charset=utf-8" }),
+        ),
+        (
+            "files.export",
+            json!({ "fileId": DRIVE_TEST_FILE, "mimeType": "" }),
+        ),
+        ("files.export", json!({ "fileId": DRIVE_TEST_FILE })),
+        // A field the tools do not name: a flagged file's override, a mask.
+        (
+            "files.download",
+            json!({ "fileId": DRIVE_TEST_FILE, "acknowledgeAbuse": true }),
+        ),
+        (
+            "files.download",
+            json!({ "fileId": DRIVE_TEST_FILE, "mimeType": "text/plain" }),
+        ),
+        (
+            "files.export",
+            json!({ "fileId": DRIVE_TEST_FILE, "mimeType": "text/plain", "alt": "media" }),
+        ),
+        // An id outside Google's alphabet.
+        ("files.download", json!({ "fileId": "../files" })),
+        (
+            "files.export",
+            json!({ "fileId": "a?alt=media", "mimeType": "text/plain" }),
+        ),
+        ("files.download", json!({})),
+    ] {
+        assert_eq!(
+            drive_test_plan(tool, &refused)?.err(),
+            Some("connector_arguments_invalid"),
+            "{tool} {refused}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn drive_content_answers_text_as_text_and_other_bytes_as_base64() -> TestResult {
+    // A document exported as text: UTF-8 behind Google's byte-order mark.
+    let text = "\u{feff}Quarterly plan\nOwen: ship the draft.\n";
+    let exported = WorkspaceWireOutcome::answered(
+        WorkspaceEndpoint::DriveFileExport,
+        200,
+        Some("text/plain; charset=utf-8"),
+        text.as_bytes(),
+    );
+    let WorkspaceWireOutcome::Content(content) = &exported else {
+        return Err(format!("a text export answered {exported:?}").into());
+    };
+    assert_eq!(content.media_type(), "text/plain");
+    assert_eq!(
+        content.bytes(),
+        text.as_bytes(),
+        "the bytes as Google sent them"
+    );
+    assert_eq!(
+        content.output(),
+        json!({
+            "mimeType": "text/plain",
+            "size": 40,
+            "text": "Quarterly plan\nOwen: ship the draft.\n"
+        })
+    );
+
+    // A stored PDF: bytes that are not UTF-8 answer as standard base64.
+    let pdf = b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n";
+    assert_eq!(
+        WorkspaceWireOutcome::answered(
+            WorkspaceEndpoint::DriveFileDownload,
+            200,
+            Some("Application/PDF"),
+            pdf,
+        ),
+        WorkspaceWireOutcome::Content(WorkspaceContent::new(Some("application/pdf"), pdf.to_vec()))
+    );
+    assert_eq!(
+        WorkspaceContent::new(Some("application/pdf"), pdf.to_vec()).output(),
+        json!({
+            "mimeType": "application/pdf",
+            "size": 15,
+            "contentBase64": "JVBERi0xLjcKJeLjz9MK"
+        })
+    );
+    assert_eq!(
+        WorkspaceContent::new(None, Vec::new()).output(),
+        json!({ "mimeType": "application/octet-stream", "size": 0, "text": "" }),
+        "no content type names the bytes as octets"
+    );
+
+    // A content read's error is Google's JSON, as every other read's reply.
+    let refused = json!({ "error": { "code": 403, "reason": "fileNotDownloadable" } });
+    assert_eq!(
+        WorkspaceWireOutcome::answered(
+            WorkspaceEndpoint::DriveFileDownload,
+            403,
+            Some("application/json; charset=UTF-8"),
+            refused.to_string().as_bytes(),
+        ),
+        WorkspaceWireOutcome::Answered {
+            status: 403,
+            body: refused
+        }
+    );
+    let metadata = json!({ "id": DRIVE_TEST_FILE, "name": "Quarterly plan" });
+    assert_eq!(
+        WorkspaceWireOutcome::answered(
+            WorkspaceEndpoint::DriveFileGet,
+            200,
+            Some("application/json; charset=UTF-8"),
+            metadata.to_string().as_bytes(),
+        ),
+        WorkspaceWireOutcome::Answered {
+            status: 200,
+            body: metadata
+        }
+    );
+    assert_eq!(
+        WorkspaceWireOutcome::answered(
+            WorkspaceEndpoint::DriveFileGet,
+            200,
+            Some("text/plain"),
+            b"not json",
+        ),
+        WorkspaceWireOutcome::Answered {
+            status: 200,
+            body: Value::Null
+        },
+        "a metadata read's body that is not JSON reads as null"
+    );
     Ok(())
 }
