@@ -316,7 +316,7 @@ pub(super) fn accepted_roster_marks(
             // A row that passes through has no op, so it is never a machine
             // profile (census L5-22 1a-iii).
             let Some(AuthorityOp::MachineProfile(profile)) =
-                entries.get(*hash).and_then(|row| row.op())
+                entries.get(*hash).and_then(FoldRow::op)
             else {
                 return false;
             };

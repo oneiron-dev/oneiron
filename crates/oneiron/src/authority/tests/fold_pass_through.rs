@@ -245,8 +245,8 @@ fn a_child_that_needs_the_hidden_mint_does_not_count() {
     let child = mint_entry(&owner, vault_id, fixture.mint_hash, 2, claims);
     let child_hash = authority_entry_hash(&child).unwrap();
     let rows = vec![
-        FoldRow::Open(fixture.genesis.clone()),
-        fixture.mint_closed.clone(),
+        FoldRow::Open(fixture.genesis),
+        fixture.mint_closed,
         FoldRow::Open(child),
     ];
     let fold = fold_rows(&rows);
