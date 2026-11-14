@@ -241,3 +241,59 @@ fn place_refuses_a_store_inside_the_vault() -> TestResult {
     );
     Ok(())
 }
+
+/// A hold files its copy under its own vault's root only. Two vaults share
+/// one hold store, as a company vault and a member's own vault on one
+/// install do: a hold on the first writes one vault root, the second vault
+/// has no entry for that hold, and it cannot open the first vault's copy.
+#[test]
+fn a_hold_writes_only_under_its_own_vault_root() -> TestResult {
+    let store_dir = tempfile::tempdir()?;
+    let first_dir = tempfile::tempdir()?;
+    let second_dir = tempfile::tempdir()?;
+    let config = || VaultConfig::device().with_legal_hold_store(store_dir.path().to_path_buf());
+    let first =
+        Vault::open_owned(first_dir.path(), config()).map_err(at("open the first vault"))?;
+    let second =
+        Vault::open_owned(second_dir.path(), config()).map_err(at("open the second vault"))?;
+    let (_actor, owner) = owner_on(&first)?;
+    let _second_owner = owner_on(&second)?;
+    let held = named_row(&first, "held record")?;
+    let hold = first
+        .place_legal_hold(&owner, vec![LegalHoldTarget::Record(held)], None)
+        .map_err(at("the first vault's hold"))?;
+    let roots = std::fs::read_dir(store_dir.path())
+        .map_err(at("list the hold store"))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().canonicalize())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(at("resolve the hold store's roots"))?;
+    assert_eq!(roots.len(), 1, "the store holds one vault root: {roots:?}");
+    let dir = hold_dir(&first, hold.hold_id)
+        .map_err(at("the hold's directory"))?
+        .canonicalize()
+        .map_err(at("resolve the hold's directory"))?;
+    assert!(
+        dir.starts_with(&roots[0]),
+        "the hold's directory lies under its own vault's root: {dir:?}"
+    );
+    let foreign = hold_dir(&second, hold.hold_id).map_err(at("the second vault's path"))?;
+    assert!(
+        !foreign.exists(),
+        "the second vault has no entry for the first vault's hold: {foreign:?}"
+    );
+    assert!(
+        open_clone(&second, hold.hold_id).is_err(),
+        "the second vault cannot open the first vault's copy"
+    );
+    assert_eq!(
+        open_clone(&first, hold.hold_id)
+            .map_err(at("open the first vault's copy"))?
+            .iter()
+            .map(|component| component.source)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([*held.as_bytes()]),
+        "the first vault's copy holds its own record"
+    );
+    Ok(())
+}
