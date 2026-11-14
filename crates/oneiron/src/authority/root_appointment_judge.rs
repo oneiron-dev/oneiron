@@ -512,10 +512,13 @@ fn proof_parts(
     Some(parts)
 }
 
-/// Whether no row of the ancestry `rows` names the successor key: as its
-/// signer or a cosigner, as a device it enrols, rotates from or to, hands the
-/// root to or revokes, as an owner root's anchor, or as another appointment's
-/// successor. The appointing anchor is never its own successor (the codec).
+/// Whether no row of the ancestry `rows` names the successor key: no row's
+/// canonical signed body carries the key's bytes, so no op of any variant
+/// names it (a device it enrols, rotates, hands the root to or revokes, an
+/// actor binding or its revocation, an owner root's anchor, another
+/// appointment's successor), and neither does a signer or cosigner. A row the
+/// codec cannot encode fails freshness. The appointing anchor is never its
+/// own successor (the codec).
 fn successor_is_fresh(
     rows: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     appointment: &RootAppointment,
@@ -525,31 +528,19 @@ fn successor_is_fresh(
     if *successor == AuthorityKey::Ed25519(anchor) {
         return false;
     }
-    !rows.values().any(|row| {
-        row.signer_key() == successor
-            || row
-                .cosigns
-                .iter()
-                .any(|cosign| cosign.public_key == *successor)
-            || match &row.op {
-                AuthorityOp::Genesis { device, .. }
-                | AuthorityOp::EnrollDevice { device }
-                | AuthorityOp::ReRoot { new_device: device }
-                | AuthorityOp::OwnerKeyEnroll(OwnerKeyEnroll { device, .. })
-                | AuthorityOp::RootAppointment(RootAppointment {
-                    successor: device, ..
-                }) => device.key == *successor,
-                AuthorityOp::RotateKey {
-                    old_key,
-                    new_device,
-                } => old_key == successor || new_device.key == *successor,
-                AuthorityOp::RevokeDevice { revoked_key } => revoked_key == successor,
-                AuthorityOp::OwnerRoot(record) => {
-                    *successor == AuthorityKey::Ed25519(record.anchor_key)
-                }
-                _ => false,
-            }
-    })
+    let key = match successor {
+        AuthorityKey::Ed25519(bytes) => bytes.as_slice(),
+        AuthorityKey::P256(bytes) => bytes.as_slice(),
+    };
+    if key.is_empty() {
+        return false;
+    }
+    !rows
+        .values()
+        .any(|row| match encode_authority_log_entry_body(row) {
+            Ok(body) => body.windows(key.len()).any(|window| window == key),
+            Err(_) => true,
+        })
 }
 
 /// ProofFold (PLAN v3 section 4a): the strict fold of exactly `rows`, under
