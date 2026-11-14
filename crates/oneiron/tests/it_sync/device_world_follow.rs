@@ -365,6 +365,69 @@ fn a_refused_follow_leaves_its_window_unsynced() {
     );
 }
 
+/// FOLLOWED-WINDOW-STALE-THIN-CACHE: an item of a world this device thin
+/// read before it followed the world keeps its thin read rows (`ro:e:`),
+/// which refuse a local edit at the item while the window has no promotion
+/// marker. Once the followed window's full exchange lands here, the rows go,
+/// as a promotion drops them. Before, they stayed until a promotion, a prune
+/// or the world's eviction.
+#[test]
+fn a_followed_window_drops_its_thin_reads_once_it_lands() {
+    let device = Device::open();
+    let at = now_secs();
+    let root = root_frame(at, &[device.founder]);
+    let founder = WindowKey::for_world(at, device.founder);
+    let item = EntityId::now();
+    let thin_rows = [
+        format!("ro:e:{}", item.to_hex()),
+        format!("ri:b:{}", item.to_hex()),
+    ];
+    // The item was thin read before its world was picked.
+    for row in &thin_rows {
+        device
+            .vault
+            .sync_state_put(row, founder.as_str().as_bytes())
+            .expect("the item's thin read row");
+    }
+    let connection = SyncConnection::new(device.manager(), ConnectionConfig::default())
+        .expect("the device's connection");
+    connection
+        .set_followed_worlds([device.founder].into_iter().collect())
+        .expect("the owner's pick");
+    let mut client = opened_client(&device);
+    let _first_frames = client.generate_initial_sync();
+    let _root_requests = client.handle_server_message(&root).expect("root update");
+    let grant =
+        transport::encode_window_sync(founder.as_str(), window_sub_tags::PROMOTION_GRANTED, &[])
+            .into_result()
+            .expect("grant frame");
+    client
+        .handle_server_message(&grant)
+        .expect("the device takes the home's grant for its followed window");
+    assert!(
+        device
+            .vault
+            .sync_state_get(&thin_rows[0])
+            .expect("read the thin row")
+            .is_some(),
+        "precondition: a grant alone lands nothing of the window",
+    );
+
+    client
+        .handle_server_message(&world_update(at, device.founder))
+        .expect("the home's update of the followed window lands");
+    for row in &thin_rows {
+        assert!(
+            device
+                .vault
+                .sync_state_get(row)
+                .expect("read the thin row")
+                .is_none(),
+            "the landed followed window dropped the thin read row {row}",
+        );
+    }
+}
+
 /// The owner picks another world while a negotiation builds its frames and
 /// picks the first world again before its steady loop starts. The steady
 /// loop compares the pick with the one the negotiation read as it began, so

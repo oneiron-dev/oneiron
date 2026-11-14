@@ -352,6 +352,7 @@ impl SyncClient {
                 }
                 let vv = doc_version_vector(&window.doc);
                 drop(window);
+                self.land_followed_window(&key)?;
                 Ok(vec![
                     transport::encode_window_sync(window_key, window_sub_tags::VV_REQUEST, &vv)
                         .into_own_frame()?,
@@ -568,6 +569,7 @@ impl SyncClient {
                 &key,
             )
             .map_err(|error| TransportError::Storage(format!("heal staged world edge: {error}")))?;
+            self.land_followed_window(&key)?;
         }
         Ok(())
     }
