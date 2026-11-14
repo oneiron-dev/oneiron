@@ -452,8 +452,8 @@ impl<'a> Expansion<'a> {
         stack: &mut Vec<String>,
         nesting: usize,
     ) -> Result<Value, String> {
-        let target = self
-            .schemas
+        let schemas = self.schemas;
+        let target = schemas
             .get(name)
             .ok_or_else(|| format!("reference {name} names no schema in the document"))?;
         let cycle = stack.iter().any(|seen| seen == name);
