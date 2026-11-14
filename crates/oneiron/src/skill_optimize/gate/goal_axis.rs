@@ -4,28 +4,10 @@ use super::*;
 use crate::skill::learning_judge::HONESTY_AXIS;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum GoalAxisKind {
-    Primary,
-    Floor,
-    Cost,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GoalAxisSpec {
-    pub name: String,
-    pub kind: GoalAxisKind,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GoalAxisScore {
-    pub kind: GoalAxisKind,
-    pub before: f32,
-    pub after: f32,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::gate::goal_axis::{
+    GoalAxisKind, GoalAxisScore, GoalAxisSpec,
+};
 
 /// A vault-owned revision. Rewriting even the same axes advances the revision,
 /// so a previously earned admission never silently inherits a new human ruling.
@@ -163,25 +145,42 @@ pub(super) fn goal_id_in_txn(
     Ok(SkillGoalId::of(skill, &record)?.entity())
 }
 
+/// A proved owner acts as that human; unattributed optimizer work stays Coach work.
+pub(super) fn goal_reader_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
+) -> Result<WriteActor> {
+    match owner {
+        Some(owner) => Ok(WriteActor::new(
+            owner.revalidate_in_txn(vault, txn)?,
+            EdgeActorClass::Human,
+        )),
+        None => coach_reader(),
+    }
+}
+
 pub(super) fn goal_definition_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     skill: &EntityId,
+    reader: Option<WriteActor>,
 ) -> Result<GoalDefinition> {
-    goal_definition_sourced_in_txn(vault, txn, skill).map(|(definition, _)| definition)
+    goal_definition_sourced_in_txn(vault, txn, skill, reader).map(|(definition, _)| definition)
 }
 
 pub(super) fn goal_definition_sourced_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     skill: &EntityId,
+    reader: Option<WriteActor>,
 ) -> Result<(GoalDefinition, Option<BTreeSet<EntityId>>)> {
     let (mut axes, policies, mut source_rows) = manifest_axes_sourced_in_txn(vault, txn)?;
     let goal_id = goal_id_in_txn(vault, txn, skill)?;
     source_rows.insert(*skill);
     // The project's goal record joins the vault's axes. A kind that disagrees
     // with policy is a conflict to resolve, not an axis to pick a side on.
-    let project = super::project_goal::project_goal_in_txn(vault, txn, &goal_id)?;
+    let project = super::project_goal::project_goal_in_txn(vault, txn, &goal_id, reader)?;
     if let Some(join) = &project {
         for axis in super::project_goal::project_axes(&join.record) {
             if let Some(existing) = axes.iter().find(|existing| existing.name == axis.name) {
@@ -265,6 +264,19 @@ pub fn skill_edit_goal(vault: &Vault, skill: &EntityId) -> Result<SkillEditGoal>
     skill_edit_goal_in_txn(vault, &txn, skill)
 }
 
+/// The effective goal under a live owner proof, never the Coach's read grant.
+/// # Errors
+/// As [`skill_edit_goal`], and a proof that no longer holds the vault.
+pub fn skill_edit_goal_as_owner(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    skill: &EntityId,
+) -> Result<SkillEditGoal> {
+    let txn = vault.store.env.read_txn()?;
+    let reader = goal_reader_in_txn(vault, &txn, Some(owner))?;
+    skill_edit_goal_sourced_as_in_txn(vault, &txn, skill, reader).map(|(goal, _)| goal)
+}
+
 pub(crate) fn skill_edit_goal_sourced(
     vault: &Vault,
     skill: &EntityId,
@@ -286,18 +298,32 @@ pub(crate) fn skill_edit_goal_sourced_in_txn(
     txn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<(SkillEditGoal, Option<BTreeSet<EntityId>>)> {
-    let (definition, source_rows) = goal_definition_sourced_in_txn(vault, txn, skill)?;
-    Ok((
-        SkillEditGoal {
-            goal_id: definition.goal_id,
-            revision: definition.revision,
-            axes: definition.axes,
-            project: definition
-                .project
-                .map(|join| (join.project, join.goal_claim)),
-        },
-        source_rows,
-    ))
+    skill_edit_goal_sourced_as_in_txn(vault, txn, skill, coach_reader()?)
+}
+
+fn skill_edit_goal_sourced_as_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+    reader: WriteActor,
+) -> Result<(SkillEditGoal, Option<BTreeSet<EntityId>>)> {
+    let (definition, source_rows) =
+        goal_definition_sourced_in_txn(vault, txn, skill, Some(reader))?;
+    Ok((edit_goal_of(&definition), source_rows))
+}
+
+/// The effective goal a definition the gate resolved names, for a host
+/// scorer (`HeldOutReplayCase::goal`).
+pub(super) fn edit_goal_of(definition: &GoalDefinition) -> SkillEditGoal {
+    SkillEditGoal {
+        goal_id: definition.goal_id,
+        revision: definition.revision.clone(),
+        axes: definition.axes.clone(),
+        project: definition
+            .project
+            .as_ref()
+            .map(|join| (join.project, join.goal_claim)),
+    }
 }
 
 /// The authenticated human sets the goal axes used by the optimizer for this
@@ -312,7 +338,7 @@ pub fn set_skill_edit_goal_axes(
 ) -> Result<String> {
     validate_axes(&axes)?;
     vault.with_write_txn_grouped(|txn| {
-        owner.revalidate_in_txn(vault, txn)?;
+        let actor = owner.revalidate_in_txn(vault, txn)?;
         let (required, _) = manifest_axes_in_txn(vault, txn)?;
         if !required.iter().all(|axis| axes.contains(axis)) {
             return Err(invalid(
@@ -330,7 +356,13 @@ pub fn set_skill_edit_goal_axes(
             .store
             .vault_meta
             .put(txn, &goal_key(&goal_id), &encoded)?;
-        Ok(goal_definition_in_txn(vault, txn, skill)?.revision)
+        Ok(goal_definition_in_txn(
+            vault,
+            txn,
+            skill,
+            Some(WriteActor::new(actor, EdgeActorClass::Human)),
+        )?
+        .revision)
     })
 }
 
