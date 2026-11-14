@@ -36,6 +36,7 @@ pub mod normalize;
 pub mod script;
 pub mod token;
 pub mod vietnamese;
+pub(crate) mod zawgyi;
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;

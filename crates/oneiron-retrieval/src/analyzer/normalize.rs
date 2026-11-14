@@ -5,8 +5,8 @@
 //! not offer a standalone katakana→hiragana transform.
 //!
 //! Khmer syllables are put in UTN #61 order before NFKC ([`super::khmer`],
-//! ONE-COENG). Myanmar Zawgyi detection and conversion (ONE-ZAWGYI) is still
-//! a follow-up (ARCH-0031 `#deferred`).
+//! ONE-COENG). Myanmar text that [`super::zawgyi`] detects as Zawgyi is
+//! converted to Unicode first (ONE-ZAWGYI).
 
 use std::borrow::Cow;
 
@@ -16,6 +16,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::khmer::{self, SyllableScanner};
 use super::manifest::NormalizationPolicy;
+use super::zawgyi;
 
 pub fn nfkc(input: &str) -> Cow<'_, str> {
     ComposingNormalizer::new_nfkc().normalize(input)
@@ -56,9 +57,9 @@ fn is_katakana_in_fold_range(c: char) -> bool {
     matches!(c as u32, 0x30A1..=0x30F6)
 }
 
-/// Result of applying Khmer canonical order, NFKC and casefold to an input,
-/// with enough metadata to remap a byte offset on the normalized side back
-/// to the original.
+/// Result of applying Zawgyi conversion, Khmer canonical order, NFKC and
+/// casefold to an input, with enough metadata to remap a byte offset on the
+/// normalized side back to the original.
 ///
 /// Normalization is applied grapheme-by-grapheme so combining-mark
 /// recomposition inside a cluster (e.g. halfwidth `ｶ` + `ﾞ` → `ガ`) still
@@ -143,15 +144,18 @@ impl<'a> NormalizedText<'a> {
     }
 }
 
-/// Apply the pre-tokenization stage of `policy` (Khmer canonical order, then
-/// NFKC + default casefold) to `input`, producing a [`NormalizedText`].
+/// Apply the pre-tokenization stage of `policy` (Zawgyi conversion and Khmer
+/// canonical order, then NFKC + default casefold) to `input`, producing a
+/// [`NormalizedText`].
 /// Returns `Unchanged` whenever the policy is off or the transform is a
 /// no-op.
 pub fn normalize_with_offset_map<'a>(
     input: &'a str,
     policy: &NormalizationPolicy,
 ) -> NormalizedText<'a> {
-    if (!policy.nfkc && !policy.casefold && !policy.khmer_coeng) || input.is_empty() {
+    if (!policy.nfkc && !policy.casefold && !policy.khmer_coeng && !policy.myanmar_zawgyi)
+        || input.is_empty()
+    {
         return NormalizedText::unchanged(input);
     }
 
@@ -176,6 +180,8 @@ pub fn normalize_with_offset_map<'a>(
     let mut changed = false;
     let khmer_coeng = policy.khmer_coeng;
     let mut syllables = khmer_coeng.then(SyllableScanner::default);
+    let zawgyi_input = policy.myanmar_zawgyi && zawgyi::is_zawgyi(input);
+    let mut previous_myanmar = false;
 
     // One unit is one grapheme, or the graphemes one Khmer syllable spans.
     let mut unit_start = 0;
@@ -187,6 +193,12 @@ pub fn normalize_with_offset_map<'a>(
         } else {
             Cow::Borrowed(unit)
         };
+        if zawgyi_input
+            && unit.starts_with(zawgyi::is_myanmar)
+            && let Cow::Owned(s) = zawgyi::to_unicode(&chunk)
+        {
+            chunk = Cow::Owned(s);
+        }
         if matches!(chunk, Cow::Owned(_)) {
             changed = true;
         }
@@ -206,9 +218,12 @@ pub fn normalize_with_offset_map<'a>(
         boundaries.push((out.len() as u32, end as u32));
     };
     for (orig_start, grapheme) in input.grapheme_indices(true) {
-        let joins = syllables
+        let khmer_joins = syllables
             .as_mut()
             .is_some_and(|scanner| scanner.joins_previous(grapheme));
+        let myanmar = zawgyi_input && grapheme.starts_with(zawgyi::is_myanmar);
+        let joins = khmer_joins || (myanmar && previous_myanmar);
+        previous_myanmar = myanmar;
         if !joins && unit_end > unit_start {
             normalize_unit(unit_start, unit_end, &mut out);
             unit_start = orig_start;

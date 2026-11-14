@@ -25,10 +25,13 @@ use oneiron_contracts::entity_id::bytes_to_hex_lower;
 /// index fails closed at the open-time handshake (`IncompatibleAnalyzer`)
 /// instead of silently scoring against divergent postings.
 ///
-/// v4 (ONE-COENG): Khmer syllables are put in UTN #61 order before NFKC
-/// ([`NormalizationPolicy::khmer_coeng`]), so a Khmer word typed in another
-/// order reaches the same postings. Tokens change for Khmer text only, but
-/// the handshake is per index: a populated v3 index fails closed the same way.
+/// v4 (ONE-COENG, ONE-ZAWGYI): Khmer syllables are put in UTN #61 order
+/// before NFKC ([`NormalizationPolicy::khmer_coeng`]), so a Khmer word typed in
+/// another order reaches the same postings. Myanmar input the detector reads as
+/// Zawgyi (P > 0.95) is converted to Unicode first
+/// ([`NormalizationPolicy::myanmar_zawgyi`]). Both changes share v4, so one
+/// reindex covers them. Tokens change for Khmer and Myanmar text only, but the
+/// handshake is per index: a populated v3 index fails closed the same way.
 pub const ANALYZER_VERSION: &str = "v4";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +71,12 @@ pub struct NormalizationPolicy {
     /// bump already makes it.
     #[serde(default)]
     pub khmer_coeng: bool,
+    /// Myanmar Zawgyi to Unicode conversion (ONE-ZAWGYI), applied before NFKC
+    /// when the detector reads the input as Zawgyi. A stored manifest from
+    /// before the flag parses with it off, so its hash differs from the
+    /// current one, as the version bump already makes it.
+    #[serde(default)]
+    pub myanmar_zawgyi: bool,
 }
 
 impl Default for NormalizationPolicy {
@@ -77,6 +86,7 @@ impl Default for NormalizationPolicy {
             casefold: true,
             kana_fold: true,
             khmer_coeng: true,
+            myanmar_zawgyi: true,
         }
     }
 }

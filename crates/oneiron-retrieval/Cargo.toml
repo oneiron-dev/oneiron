@@ -26,6 +26,7 @@ unicode-script = "0.5"
 unicode-segmentation = "1"
 whichlang = "0.1.1"
 rust-stemmers = "1.2.0"
+regex = { workspace = true }
 # Upstream v0.6.11 plus fork branch oneiron/v0.6.11: Android plugin-loader name, reasoned allows.
 sudachi = { git = "https://github.com/oneiron-dev/sudachi.rs", rev = "d8cba3609521805ebf35bfc2b71d8099a13befef" }
 jieba-rs = { version = "0.9", default-features = false }
