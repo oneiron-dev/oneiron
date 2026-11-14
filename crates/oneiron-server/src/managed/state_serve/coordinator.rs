@@ -304,6 +304,9 @@ async fn serve_with_handles(
     crate::managed_owner_check::ServerManagedOwnerCheck::install(&sync_server);
     // Served sends reach this host's provider APIs and mail server (FIX 4435).
     crate::builtin_host::install_served_transports(&sync_server, config.models.as_ref());
+    // A one-liner `tasks.create` is composed by this server's
+    // `[models.roles.local_reasoner]` seat, once the seats are built (L8-07).
+    crate::ai_host::HostTaskBriefModel::install(&sync_server);
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // An answered code consent wait's effect runs on this server, as plain
