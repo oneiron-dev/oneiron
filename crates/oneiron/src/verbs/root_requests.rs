@@ -150,22 +150,6 @@ pub fn cancel_root_request_as(
     Ok(vault.cancel_root_request(owner, surface, request)?)
 }
 
-impl From<RootChange> for RootChangeView {
-    fn from(change: RootChange) -> Self {
-        let machine = match change {
-            RootChange::Anchor { machine, .. } => Some(machine.to_hex()),
-            RootChange::Pin { .. } | RootChange::Activate | RootChange::Restore { .. } => None,
-        };
-        Self {
-            change: change.as_str().to_owned(),
-            root: change
-                .root()
-                .map(|root| crate::entity_id::bytes_to_hex_lower(&root.0)),
-            machine,
-        }
-    }
-}
-
 /// One root request naming this install with no result yet, as
 /// `vault.roots.requests.list` answers it: its change and its receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
