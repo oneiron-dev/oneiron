@@ -123,7 +123,7 @@ impl Host {
         let mut config = VaultConfig::device();
         config.embedding_model = None;
         config.dimensions = 4;
-        let vault = Arc::new(Vault::open(dir.path(), config)?);
+        let vault = Arc::new(Vault::open_owned(dir.path(), config)?);
         vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
         let owner = vault.ensure_embedded_owner_actor()?;
         // One PERSON the four claims hang off, one more PERSON seating the
