@@ -6,7 +6,9 @@
 //! named by the file's own id, since no custody record holds any of it. The
 //! owner's not-a-secret answer clears the seal: a masked reader is served the
 //! file, and a put of the same bytes is not sealed again. Only the owner
-//! answers it, and only not a secret: no value left the file.
+//! answers it, and only not a secret: no value left the file. A seal of bytes
+//! the file no longer holds needs no answer, and its card says so (Engine
+//! RULING 14 Nov 15:27).
 
 use std::sync::Arc;
 
@@ -15,6 +17,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use oneiron::secret_custody::{FoundKeyAction, FoundKeyCard, SecretSight};
 use oneiron::store::GateDecisionId;
+use oneiron::verbs::FoundKeyCardReply;
 use oneiron::{EntityId, ErrorKind, TimeRange, Vault, VaultConfig};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -241,6 +244,169 @@ fn a_person_and_kept_as_text_cannot_clear_the_seal() -> TestResult {
             Err(ErrorKind::SealedFileWithheld)
         ),
         "the file stays sealed"
+    );
+    Ok(())
+}
+
+/// Another key block one line per item, with other filler lines: other
+/// bytes the door seals whole.
+const OTHER_KEY_LINES: [&str; 4] = [
+    "-----BEGIN PRIVATE KEY-----",
+    "Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND",
+    "RERERERERERERERERERERERERERERERERERERERE",
+    "-----END PRIVATE KEY-----",
+];
+
+/// Each seal card of `record`'s notice, open or ruled.
+fn seal_cards(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    record: &EntityId,
+) -> oneiron::Result<Vec<FoundKeyCard>> {
+    Ok(notice_cards(vault, owner, record, false)?
+        .into_iter()
+        .filter(|card| card.place == "file" && card.name.is_empty())
+        .collect())
+}
+
+/// A file put again with other bytes the door also seals whole holds two
+/// seals under one handle. The owner's answer reaches only the seal of the
+/// bytes the file holds now; the earlier bytes stay sealed, so a put of them
+/// elsewhere is withheld from a masked reader (REVIEW-7887 F1).
+#[test]
+fn the_answer_clears_only_the_seal_of_the_bytes_the_file_holds_now() -> TestResult {
+    let (_dir, vault, owner) = open_vault()?;
+    let (id, before) = put_sealed_file(&vault)?;
+    let now = serde_json::to_vec(&OTHER_KEY_LINES)?;
+    put_asset(&vault, &id, 2, &now)?;
+    let cards = seal_cards(&vault, &owner, &id)?;
+    assert_eq!(
+        cards.len(),
+        2,
+        "FIXTURE: each version's bytes are sealed: {cards:?}"
+    );
+    let answerable: Vec<&FoundKeyCard> = cards
+        .iter()
+        .filter(|card| card.actions == vec![FoundKeyAction::NotASecret])
+        .collect();
+    assert_eq!(
+        answerable.len(),
+        1,
+        "only the seal of the bytes the file holds now offers the answer: {cards:?}"
+    );
+    vault.rule_found_key_not_a_secret(&owner, ActSurface::ThisInstall, &answerable[0].handle)?;
+    assert_eq!(
+        masked_read(&vault, &id)?,
+        Ok(now),
+        "the file as it is now is served once its seal is cleared"
+    );
+    let other = EntityId::now();
+    put_asset(&vault, &other, 1, &before)?;
+    assert!(
+        matches!(
+            masked_read(&vault, &other)?,
+            Err(ErrorKind::SealedFileWithheld)
+        ),
+        "the earlier bytes, which the owner did not see, stay sealed"
+    );
+    let earlier: Vec<FoundKeyCard> = seal_cards(&vault, &owner, &id)?
+        .into_iter()
+        .filter(|card| card.settled.is_none())
+        .collect();
+    assert_eq!(
+        earlier.len(),
+        1,
+        "the earlier bytes' seal stays open: {earlier:?}"
+    );
+    assert!(
+        notice_cards(&vault, &owner, &id, true)?.is_empty(),
+        "and waits on no answer (Engine RULING 14 Nov 15:27)"
+    );
+    Ok(())
+}
+
+/// A file put again with bytes the door does not seal keeps its earlier
+/// bytes' seal open, yet nothing waits on the owner (Engine RULING 14 Nov
+/// 15:27: "the card must not look like an unanswered question"): the card
+/// offers no action and says what is true, the owner's open list leaves the
+/// file out, and the file as it is now is served.
+#[test]
+fn a_seal_of_earlier_bytes_says_no_answer_is_needed() -> TestResult {
+    let (_dir, vault, owner) = open_vault()?;
+    let (id, _) = put_sealed_file(&vault)?;
+    let now = b"deploy notes, no key here\n".to_vec();
+    put_asset(&vault, &id, 2, &now)?;
+    let cards = seal_cards(&vault, &owner, &id)?;
+    assert_eq!(
+        cards.len(),
+        1,
+        "FIXTURE: only the earlier bytes are sealed: {cards:?}"
+    );
+    let card = &cards[0];
+    assert!(
+        card.settled.is_none(),
+        "the earlier bytes stay sealed: {card:?}"
+    );
+    assert!(
+        card.actions.is_empty(),
+        "the card offers no action: {card:?}"
+    );
+    let served = serde_json::to_value(FoundKeyCardReply::from(card.clone()))?;
+    assert_eq!(
+        served["note"],
+        "an earlier version of this file held a sealed value; it stays withheld; no answer is needed",
+        "the card says what is true: {served}"
+    );
+    assert!(
+        notice_cards(&vault, &owner, &id, true)?.is_empty(),
+        "the owner's open list holds nothing to answer"
+    );
+    assert_eq!(
+        masked_read(&vault, &id)?,
+        Ok(now),
+        "the file as it is now is served"
+    );
+    Ok(())
+}
+
+/// A file holding a key in custody and a seal is deleted through the key's
+/// handle: the seal closes with it, so no open notice names a deleted file
+/// (REVIEW-7887 F2).
+#[test]
+fn deleting_a_file_through_its_key_closes_its_seal_too() -> TestResult {
+    let (_dir, vault, owner) = open_vault()?;
+    let id = EntityId::now();
+    put_asset(
+        &vault,
+        &id,
+        1,
+        b"deploy notes\nTOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz\n",
+    )?;
+    put_asset(&vault, &id, 2, &serde_json::to_vec(&KEY_LINES)?)?;
+    let cards = notice_cards(&vault, &owner, &id, true)?;
+    let key = cards
+        .iter()
+        .find(|card| card.handle.starts_with("sc"))
+        .ok_or("FIXTURE: the token is a key in custody")?;
+    assert!(
+        cards
+            .iter()
+            .any(|card| card.place == "file" && card.name.is_empty()),
+        "FIXTURE: the file is sealed whole too: {cards:?}"
+    );
+    let settled = vault.delete_found_key_record(&owner, &key.handle)?;
+    assert_eq!(settled.action, FoundKeyAction::Delete);
+    assert!(
+        notice_cards(&vault, &owner, &id, true)?.is_empty(),
+        "no open notice is left for the deleted file"
+    );
+    let seals = seal_cards(&vault, &owner, &id)?;
+    assert!(
+        seals
+            .iter()
+            .all(|card| card.settled.as_ref().map(|settled| settled.action)
+                == Some(FoundKeyAction::Delete)),
+        "the seal closes as deleted: {seals:?}"
     );
     Ok(())
 }
