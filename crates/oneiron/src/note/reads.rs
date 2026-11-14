@@ -362,9 +362,12 @@ impl Memory<'_> {
         // head document; the sync registry asks for that document from an
         // empty version (FIX [REPLICA-NOTE-READ-400-BEFORE-DOCUMENT]). Until
         // it lands, this host holds no body to read: the read answers none,
-        // as for a row it does not hold, and takes no diary admission. Only
-        // an empty slot answers so; updates with no snapshot, and an erased
-        // NOTE, still refuse in the strict load below.
+        // as for a row it does not hold, and takes no diary admission. A live
+        // read's point read already answers no row here (scoped_read
+        // versions); this covers a read of a retained revision, which is
+        // served as its stored row. Only an empty slot answers so; updates
+        // with no snapshot, and an erased NOTE, still refuse in the strict
+        // load below.
         if !super::documents::head_document_held_in(at.store, txn, note)?
             && !self
                 .vault()

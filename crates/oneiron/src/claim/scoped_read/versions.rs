@@ -404,6 +404,18 @@ impl ScopedRead<'_> {
         if mode == ReadMode::Live {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            // A replica holds a NOTE's row before its authority sends the
+            // NOTE's head document (FIX [REPLICA-NOTE-READ-400-BEFORE-DOCUMENT]).
+            // Until any part of that document lands, this host has no live
+            // text to project: the row reads as one it does not hold yet. A
+            // slot with updates and no snapshot, and an erased NOTE, still
+            // refuse in the projection below.
+            if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+                && !crate::note::documents::head_document_held_in(&self.vault.store, txn, *id)?
+                && !self.vault.local_hard_delete_marker_exists_in_txn(txn, id)?
+            {
+                return Ok(None);
+            }
             #[cfg(feature = "sync")]
             let resolved = crate::entity_doc::resolve_record_body(
                 &self.vault.store,
