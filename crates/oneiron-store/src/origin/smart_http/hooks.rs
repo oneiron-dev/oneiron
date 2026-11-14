@@ -50,9 +50,12 @@ use oneiron_contracts::entity_id::EntityId;
 /// A push by anyone but the vault's owner (L8-51) also names each branch move
 /// that does not fast-forward, one `rewrite <ref>` line per ref, read with
 /// `merge-base --is-ancestor` while the new tip is still quarantined: only
-/// here can the door see both commits. The door refuses such a move, and any
-/// deletion, of the repository's protected ref. An owner's push runs no such
-/// check and writes no such line.
+/// here can the door see both commits. Each existing ref the push names that
+/// is symbolic gets one `symref <ref> <referent>` line, since git moves or
+/// deletes the referent in its place, and its move is judged as the
+/// referent's. The door refuses such a move, and any deletion, of the
+/// repository's protected ref. An owner's push runs no such check and writes
+/// no such line.
 pub const DOOR_PRE_RECEIVE_HOOK: &str = r#"#!/bin/sh
 # Vetted door hook (ONE-1908). Repository-supplied hooks never run: every serve
 # invocation pins core.hooksPath in argv to this door-owned directory.
@@ -162,6 +165,25 @@ while read -r old new ref; do
 		case "$old" in *[!0]*) exit 1 ;; esac
 	fi
 	printf 'ref %s %s %s\n' "$old" "$new" "$ref" >> "$part"
+	# Git moves or deletes the ref a symbolic ref names, never the symbolic
+	# ref itself, so a move of an existing ref is judged under the ref git
+	# moves: one "symref <ref> <referent>" line per symbolic ref. symbolic-ref
+	# follows the whole chain, and answers 1 for a ref that is not symbolic;
+	# any other failure is a fault, and a fault refuses the push.
+	moved=$ref
+	if [ "$flagrewrites" = 1 ]; then
+		case "$old" in
+			*[!0]*)
+				if referent=$(git symbolic-ref --quiet "$ref"); then
+					moved=$referent
+					printf 'symref %s %s\n' "$ref" "$moved" >> "$part"
+				else
+					code=$?
+					[ "$code" -eq 1 ] || exit 1
+				fi
+				;;
+		esac
+	fi
 	case "$new" in
 		*[!0]*) ;;
 		*) continue ;;
@@ -170,7 +192,7 @@ while read -r old new ref; do
 	# rewrites the branch's history. merge-base answers 1 for "not an
 	# ancestor"; any other failure is a fault, and a fault refuses the push.
 	if [ "$flagrewrites" = 1 ]; then
-		case "$ref" in
+		case "$moved" in
 			refs/heads/*)
 				case "$old" in
 					*[!0]*)

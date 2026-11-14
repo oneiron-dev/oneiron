@@ -5,7 +5,10 @@
 //! branch the repository's HEAD names: force-push or deletion of a protected
 //! ref, and history rewrite, are the repo surface's catastrophe class
 //! (ARCH-0068 RC4; DEC-0006 names them one-way). Such a push is refused while
-//! the hook still blocks the backend, so nothing it carried lands.
+//! the hook still blocks the backend, so nothing it carried lands. A push to a
+//! symbolic ref whose referent is the protected ref is the same move, since git
+//! moves or deletes the referent in its place; the hook names each such
+//! referent, and the move is judged as the protected ref's.
 //!
 //! A deletion or rewrite the door would otherwise have let land puts one
 //! question to the owner. Its state names the move (the repository, the ref,
@@ -16,8 +19,9 @@
 //! the door, and its intent's writer spends the leave with the intent, after
 //! every other check, so one leave lands one move. A leave spent on a move
 //! git then does not make is gone; the owner's own push is the way left.
-//! Git refuses to delete the branch HEAD names for every pusher, so a leave
-//! for that deletion meets git's own refusal, which the pusher reads as git's.
+//! Git refuses a deletion that names the branch HEAD names, for every pusher,
+//! so a leave for that deletion meets git's own refusal, which the pusher
+//! reads as git's.
 //!
 //! Inside its scope, the owner's live bypass grant replaces the question
 //! (DEC-0006 invariant 7; the floor's `protected_ref_rewrite_or_delete`): a
@@ -222,9 +226,12 @@ impl ProtectedRefDecision {
     /// Reads, for each move of `protected` in `request`, whether it may land:
     /// a creation and a fast-forward pass; a deletion or a rewrite passes on
     /// a live bypass of the owner's that covers it, or else only on the
-    /// owner's unspent leave for exactly it. `pusher` is the principal the
-    /// push was admitted for, and `repo` the CODE anchor and PROJECT its
-    /// authority names; with no `repo`, no bypass covers the move.
+    /// owner's unspent leave for exactly it. An update naming a symbolic ref
+    /// whose referent is `protected` is such a move, since git moves the
+    /// referent: it is judged, covered, asked and left as that move. `pusher`
+    /// is the principal the push was admitted for, and `repo` the CODE anchor
+    /// and PROJECT its authority names; with no `repo`, no bypass covers the
+    /// move.
     pub(super) fn read(
         vault: &Vault,
         protected: &ProtectedRef,
@@ -233,7 +240,9 @@ impl ProtectedRefDecision {
         repo: Option<&GitPushRepo>,
     ) -> Result<Self> {
         let mut decision = Self::default();
-        for update in (request.ref_updates.iter()).filter(|update| update.name == protected.name) {
+        for update in (request.ref_updates.iter())
+            .filter(|update| request.moved_ref(&update.name) == protected.name)
+        {
             let refuse = |decision: &mut Self, why: &str| {
                 decision.refused.push_with(|| {
                     format!(
@@ -247,7 +256,7 @@ impl ProtectedRefDecision {
                 continue;
             };
             let new_oid = update.new_oid.as_ref();
-            if new_oid.is_some() && !request.rewritten_refs.contains(&protected.name) {
+            if new_oid.is_some() && !request.rewritten_refs.contains(&update.name) {
                 continue;
             }
             let act = if new_oid.is_some() {
@@ -282,6 +291,9 @@ impl ProtectedRefDecision {
             }
             let digest = protected_move.approval_digest()?;
             match approve_once_authorization_in_txn(&vault.store, &rtxn, &digest) {
+                // A symbolic ref and its referent named together for one move
+                // are one move: its leave is spent once.
+                Ok(Some(_)) if decision.passes.approved.contains(&digest) => {}
                 Ok(Some(_)) => decision.passes.approved.push(digest),
                 Ok(None) => {
                     refuse(

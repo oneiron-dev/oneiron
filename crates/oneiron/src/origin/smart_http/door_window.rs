@@ -133,6 +133,21 @@ pub(super) struct DoorWindowRequest {
     /// current tip. The hook names them only for a push by anyone but the
     /// vault's owner.
     pub(super) rewritten_refs: Vec<String>,
+    /// Each existing ref the push names that is symbolic, with the ref git
+    /// moves or deletes in its place. The hook names them only for a push by
+    /// anyone but the vault's owner.
+    pub(super) symbolic_refs: Vec<(String, String)>,
+}
+
+impl DoorWindowRequest {
+    /// The ref git moves or deletes for an update that names `name`: its
+    /// referent when the hook found `name` symbolic, else `name` itself.
+    pub(super) fn moved_ref<'a>(&'a self, name: &'a str) -> &'a str {
+        self.symbolic_refs
+            .iter()
+            .find(|(symbolic, _)| symbolic == name)
+            .map_or(name, |(_, referent)| referent.as_str())
+    }
 }
 
 /// Services one door window: waits for the vetted hook, scans the quarantined
@@ -715,6 +730,7 @@ pub(super) fn parse_door_request(bytes: &[u8]) -> Result<DoorWindowRequest> {
     let mut quarantine_path = None;
     let mut ref_updates = Vec::new();
     let mut rewritten_refs = Vec::new();
+    let mut symbolic_refs = Vec::new();
     for line in text.lines() {
         if let Some(rest) = line.strip_prefix("quarantine ") {
             if !rest.is_empty() {
@@ -724,12 +740,19 @@ pub(super) fn parse_door_request(bytes: &[u8]) -> Result<DoorWindowRequest> {
             ref_updates.push(parse_ref_update(rest)?);
         } else if let Some(rest) = line.strip_prefix("rewrite ") {
             rewritten_refs.push(rest.to_owned());
+        } else if let Some(rest) = line.strip_prefix("symref ") {
+            // A ref name holds no space (git's ref-name rules).
+            let (symbolic, referent) = rest
+                .split_once(' ')
+                .ok_or_else(|| serve_failed("door request has a malformed symref line"))?;
+            symbolic_refs.push((symbolic.to_owned(), referent.to_owned()));
         }
     }
     Ok(DoorWindowRequest {
         quarantine_path,
         ref_updates,
         rewritten_refs,
+        symbolic_refs,
     })
 }
 
