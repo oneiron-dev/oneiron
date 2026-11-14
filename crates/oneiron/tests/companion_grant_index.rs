@@ -158,6 +158,11 @@ fn assert_index_answers_as_walk(vault: &Vault, asked: &Asked) {
 fn index_answers_as_the_walk_through_grants_revokes_a_delete_and_a_reopen() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    // The delete below signs its receipt: install this device's keystore, as a
+    // host does after each open, so the delete reaches the grant row.
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     assert!(
         doors::index_complete(&vault).expect("flag"),
         "open builds the index"
@@ -247,7 +252,8 @@ fn index_answers_as_the_walk_through_grants_revokes_a_delete_and_a_reopen() {
     assert_index_answers_as_walk(&vault, &asked);
 
     // A delete, landed or refused: either way the index answers as the walk.
-    let _ = vault.delete_entity(&at_work);
+    let deleted = vault.delete_entity(&at_work);
+    println!("delete of the facet grant: {deleted:?}");
     assert_index_answers_as_walk(&vault, &asked);
 
     // A vault older than the index: the reads walk, and the reopen rebuilds
