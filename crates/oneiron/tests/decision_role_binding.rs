@@ -183,7 +183,7 @@ fn bound(
     role: ModelRole,
     rung: &Arc<Scripted>,
 ) -> TestResult<ManifestBoundRung> {
-    let inner: Arc<dyn DecisionProvider> = Arc::clone(rung);
+    let inner: Arc<dyn DecisionProvider> = Arc::<Scripted>::clone(rung);
     Ok(ManifestBoundRung::new(Arc::clone(vault), role, inner)?)
 }
 
