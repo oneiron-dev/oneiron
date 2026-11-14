@@ -1,5 +1,10 @@
-import { afterAll, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
+import { mkdir, copyFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { blake3 } from "@noble/hashes/blake3";
 import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
+import { EngineFixture, awaitPublic } from "./support/engine.ts";
+import { ScriptedProviders, openaiStream, openaiText } from "./support/providers.ts";
 import { defineFile } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
@@ -205,6 +210,180 @@ type Learning04Seal = {
   directed_recheck: { attempt: Ref; confession: Ref; finding_receipts: Ref[] };
 };
 suite.todo(test, "LEARNING-04", "waits on typed confession, directed-recheck and stamped seal-audit receipt/completion calls");
+
+// LEARNING-05 setup (G2): one house-minted project and its goal, committed
+// through the witnessed interview on public doors only. The leader's
+// goal-intake runs are scripted code-mode runs on the drafter origin. The
+// house mints the project as memory.test.ts mintProject does; the opening
+// binds the leader's interview TASK to the interview thread and dispatches
+// its first intake run; each owner turn in that thread dispatches the next.
+const PROJECT_LEADER = "aaaaaaaaaaaaaaaaaaaaaaaaaaaa1709"; // seeded sys.team_lead (system_agent_definitions.v1.json)
+/** The wire fields of a streamed executor request; decision (Big rung) calls stay buffered. */
+const EXECUTOR_STREAM = { stream: true, stream_options: { include_usage: true } } as const;
+/** The four interview turns, named before they land: a fresh 32-hex
+ * `turn_ref` creates the TURN at that id, so no scripted program reads one. */
+const INTERVIEW_TURNS = {
+  question: "05a12020202020202020202020202021",
+  answer: "05a12020202020202020202020202022",
+  draft: "05a12020202020202020202020202023",
+  confirmation: "05a12020202020202020202020202024",
+} as const;
+type Entity = NonNullable<FacadeResult<"vault.get">["value"]>;
+type IntakeRecord = FacadeInput<"vault.projects.goal.intake.complete">["record"];
+/** The intake context fields the interview reads, keys per ProjectGoalInterviewContext serde. */
+type IntakeContext = {
+  goal_claim?: string | null; generation: number; interview_thread?: string | null; attempt_ref?: string | null;
+};
+async function intakeContext(engine: EngineFixture, project: string): Promise<IntakeContext> {
+  const read: unknown = await engine.client.call("vault.projects.goal.intake", { project_ref: project });
+  return read as IntakeContext; // Read-back of the context, keys per its serde.
+}
+async function entity(engine: EngineFixture, entity_ref: string): Promise<Entity> {
+  const result = await engine.client.call("vault.get", { entity_ref });
+  if (!result.value) throw new Error(`Public entity missing: ${entity_ref}`);
+  return result.value;
+}
+function git(cwd: string, args: string[]): string {
+  const run = Bun.spawnSync(["git", "-c", "user.name=oneiron-e2e", "-c", "user.email=e2e@oneiron.invalid", ...args],
+    { cwd, stdout: "pipe", stderr: "pipe" });
+  if (run.exitCode !== 0) throw new Error(`git ${args[0]} failed: ${run.stderr.toString()}`);
+  return run.stdout.toString().trim();
+}
+/** Imports the repo's project-proposal skill through the default hub at one
+ * local commit, as memory.test.ts installProjectProposal does. */
+async function installProjectProposal(engine: EngineFixture): Promise<void> {
+  const dir = resolve(engine.root, "project-proposal-hub");
+  await mkdir(resolve(dir, "skills", "project-proposal"), { recursive: true });
+  await copyFile(resolve(import.meta.dir, "../../skills/project-proposal/SKILL.md"), resolve(dir, "skills", "project-proposal", "SKILL.md"));
+  git(dir, ["init", "-q"]);
+  git(dir, ["add", "skills/project-proposal/SKILL.md"]);
+  git(dir, ["commit", "-q", "-m", "project-proposal"]);
+  const commit = git(dir, ["rev-parse", "HEAD"]);
+  const { hub } = await engine.client.call("vault.skill_hubs.default.get", {});
+  const configured = await engine.client.call("vault.skill_hubs.put", {
+    hub, kind: "local-dir", endpoint: dir, trust_tier: "community", sync_policy: "pinned-commit" });
+  expect(configured.consent.outcome).toBe("approved");
+  await engine.client.call("vault.skill_hubs.refs.set", {
+    hub_ref: { hub_id: hub, ref_string: "skills", pin: { type: "commit", value: commit } }, sync_policy: "pinned-commit" });
+  const hub_ref = { hub_id: hub, ref_string: "skills/project-proposal", pin: { type: "commit" as const, value: commit } };
+  const { entity: skill } = await engine.client.call("vault.skills.import", { hub_ref, publisher: "oneiron-e2e-local" });
+  const latest = async () => (await engine.client.call("vault.skills.receipts", { entity: skill })).imports.at(-1)?.disposition;
+  if (await latest() === "pending_permission") await engine.client.call("vault.skills.permissions.approve", { entity: skill, hub_ref });
+  const disposition = await latest();
+  if (disposition !== "installed" && disposition !== "already_installed") {
+    throw new Error(`project-proposal import not active: ${JSON.stringify(disposition)}`);
+  }
+}
+/** One scripted leader program on the drafter origin, answered as a stream. */
+function leaderStep(providers: ScriptedProviders, id: string, program: string, barrier?: string): void {
+  providers.enqueue({ id, origin: "drafter", role: "generative_reasoner", purpose: "leader goal intake",
+    request: { method: "POST", path: "/v1/chat/completions", model: "project-drafter", fields: EXECUTOR_STREAM },
+    ...(barrier ? { barrier } : {}),
+    response: openaiStream(id, "project-drafter", [program], { inputTokens: 512, outputTokens: 64 }) });
+}
+/** A guest call that claims `turn` and answers it with `content` as the turn
+ * `id` at `at` (Unix seconds); the companion author is the leader's. */
+function leaderReply(room: string, turn: string, id: string, at: number, content: string): string {
+  const speak = { conversation_ref: room, turn_ref: id, occurred_at: at, messages: [{ author: "companion",
+    message_type: "text", content, metadata: { room_reply_to: turn }, is_visible: true, order: 0 }] };
+  return `await vault.rooms.claim(${JSON.stringify({ room_ref: room, turn_ref: turn })});\n`
+    + `await vault.rooms.speak(${JSON.stringify(speak)});\n`;
+}
+/** The owner's own words in the interview thread, answering `turn`. */
+async function ownerReply(engine: EngineFixture, room: string, turn: string, id: string, at: number,
+  content: string): Promise<void> {
+  const receipt = await engine.client.call("vault.rooms.speak", { conversation_ref: room, turn_ref: id, occurred_at: at,
+    messages: [{ author: "user", message_type: "text", content, metadata: { room_reply_to: turn }, is_visible: true, order: 0 }] });
+  expect(receipt.turn_id).toBe(id);
+}
+/** Waits until the turn `id` reads in the interview thread. */
+async function threadTurn(engine: EngineFixture, room: string, thread: string, id: string, label: string): Promise<void> {
+  const read = async (): Promise<{ rows: { turn_id: string }[] }> => {
+    const page: unknown = await engine.client.call("vault.rooms.messages", { room_ref: room, thread_ref: thread });
+    return page as { rows: { turn_id: string }[] }; // RoomPage rows, keys per RoomTurn serde.
+  };
+  await awaitPublic(read, page => page.rows.some(row => row.turn_id === id), { label });
+}
+/** The confirmation a human types for `draft` shown at goal `generation`:
+ * `confirm <blake3(generation u64 big-endian || draft UTF-8) hex>`. */
+function confirmation(draft: string, generation: number): string {
+  const prefix = Buffer.alloc(8);
+  prefix.writeBigUInt64BE(BigInt(generation));
+  return `confirm ${Buffer.from(blake3(Buffer.concat([prefix, Buffer.from(draft, "utf8")]))).toString("hex")}`;
+}
+/** Mints one project from a house-drafted card and commits `record` as its
+ * goal through the witnessed interview; returns the project and goal claim.
+ * Turn times are past stamps after `occurred`, so complete never waits on
+ * the vault clock (it needs question < answer < draft < confirmation <= now). */
+async function mintProjectWithGoal(engine: EngineFixture, providers: ScriptedProviders, name: string,
+  record: IntakeRecord, occurred: number): Promise<{ project: string; room: string; goalClaim: string }> {
+  const client = engine.client;
+  const conversation = await client.call("vault.conversations.create", {
+    body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred });
+  providers.enqueue({ id: "project-yes", origin: "decider", role: "checker", purpose: "project question",
+    request: { method: "POST", path: "/v1/chat/completions", model: "project-decider" }, barrier: "project-decide",
+    response: openaiText("project-yes", "project-decider", JSON.stringify({ answer: true, probability: 0.9 }),
+      { inputTokens: 256, outputTokens: 16 }) });
+  const witnessed = await client.call("vault.witness", { conversation_ref: conversation.id, occurred_at: occurred,
+    messages: [{ author: "user", message_type: "text", is_visible: true, order: 0,
+      content: `I am starting ${name}, a project I will plan, build and review over several weeks of sittings.` }] });
+  const message = (await entity(engine, witnessed.message_short_ids[0]!)).id_hex;
+  await providers.awaitBarrier("project-decide");
+  const card_id = `project-${message}`;
+  const proposal = { card_id, source_message_ref: message,
+    goal: { goal: `Build ${name}`, why: `${name} is the owner's stated multi-week project.`, axes: ["plan", "build", "review"] },
+    picks: { leader_agent_def_ref: PROJECT_LEADER, board_human_refs: [engine.pairedActor.principalRef],
+      budget_share_bps: 1000, starting_skill_refs: [] } };
+  providers.enqueue({ id: "project-draft", origin: "drafter", role: "generative_reasoner", purpose: "house project drafter",
+    request: { method: "POST", path: "/v1/chat/completions", model: "project-drafter", fields: EXECUTOR_STREAM },
+    response: openaiStream("project-draft", "project-drafter",
+      [`await vault.projects.propose(${JSON.stringify(proposal)});\nfinish(${JSON.stringify(card_id)});`],
+      { inputTokens: 512, outputTokens: 128 }) });
+  providers.releaseBarrier("project-decide");
+  await awaitPublic(async () => client.call("vault.projects.proposals", { conversation_ref: conversation.id }),
+    cards => cards.some(card => card.card.card_id === card_id && card.state === "proposed"),
+    { label: `house-drafted project card ${card_id}` });
+  // The opening's intake run: its first program ends without finish, so the
+  // run asks for a second, held until the test has read the minted ids.
+  leaderStep(providers, "intake-open", `console.log("goal intake opened");`, "intake-open");
+  const minted = await client.call("vault.projects.confirm", { card_id, action_id: "mint_project", occurred_at: occurred });
+  expect(minted.card_id).toBe(card_id);
+  await providers.awaitBarrier("intake-open");
+  const project = minted.project_id;
+  const body = (await entity(engine, project)).body as { home_room?: unknown };
+  if (typeof body.home_room !== "string") throw new Error(`project ${project} names no home room`);
+  const room = body.home_room;
+  const thread = (await intakeContext(engine, project)).interview_thread;
+  if (typeof thread !== "string") throw new Error(`project ${project} opened no interview thread`);
+  const turns = INTERVIEW_TURNS;
+  const draft = JSON.stringify(record);
+  // The question run claims the thread root through its TASK and asks.
+  leaderStep(providers, "intake-question",
+    leaderReply(room, thread, turns.question, occurred + 1, "What should this project achieve, and how will we measure it?")
+    + `finish("asked");`);
+  providers.releaseBarrier("intake-open");
+  await threadTurn(engine, room, thread, turns.question, "the leader's interview question");
+  // The owner's answer dispatches the draft run in its own write.
+  leaderStep(providers, "intake-draft", leaderReply(room, turns.answer, turns.draft, occurred + 3, draft) + `finish("drafted");`);
+  await ownerReply(engine, room, turns.question, turns.answer, occurred + 2, draft);
+  await threadTurn(engine, room, thread, turns.draft, "the leader's draft");
+  const shown = await intakeContext(engine, project);
+  const attempt = shown.attempt_ref;
+  if (typeof attempt !== "string") throw new Error(`project ${project}'s intake names no run that loaded the skill`);
+  // The confirmation is a turn of the thread too: it dispatches one more
+  // intake run (RULING GOAL-INTAKE-DRAFT-RUN = A), answered with finish.
+  leaderStep(providers, "intake-confirmed", `finish("the goal is confirmed");`, "intake-confirmed");
+  await ownerReply(engine, room, turns.draft, turns.confirmation, occurred + 4, confirmation(draft, shown.generation));
+  const committed = await client.call("vault.projects.goal.intake.complete", {
+    project_ref: project, attempt_ref: attempt, turns, record });
+  expect(committed.project_ref).toBe(project);
+  await providers.awaitBarrier("intake-confirmed");
+  providers.releaseBarrier("intake-confirmed");
+  const closed = await intakeContext(engine, project);
+  expect(closed.interview_thread ?? null).toBeNull();
+  expect(closed.goal_claim).toBe(committed.goal_claim);
+  return { project, room, goalClaim: committed.goal_claim };
+}
 
 // LEARNING-05 — Niche archive and coverage floor should work. OF-545.
 // The archive doors exist: vault.research.archive.install/record/best/get/coverage/
