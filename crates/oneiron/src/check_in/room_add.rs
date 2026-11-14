@@ -214,6 +214,13 @@ pub(crate) fn room_add_check_in_in_txn(
     Ok(Some(DoorCheckIn::Wait(row.id)))
 }
 
+/// The live vault owner's own add, which a door has already proved her to
+/// make (`rooms.invite` admits only her): her own judgment, so she is sure
+/// (P26-SHAPE Q2 (iv) = A).
+pub(crate) fn owner_room_add_decision() -> CheckInDecision {
+    own_judgment(RolePreset::Owner)
+}
+
 /// A person's own add under `role`, whose `room_add` cell asks when unsure:
 /// their own judgment, so they are sure.
 fn own_judgment(role: RolePreset) -> CheckInDecision {

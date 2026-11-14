@@ -12,6 +12,12 @@
 //! intent and the parties it waits on, with no seat, launch or spend hold; a
 //! refusal is typed and final. Membership is never answered here: it is read
 //! live from the vault's roster, which only the membership doors change.
+//!
+//! An Admission yes is the add of the join's subject, so `rooms.consent`
+//! judges it by check-in under `room_add` in its writer (ROLES-CHECKIN
+//! P2.6a; P26-SHAPE Q2 = A): an agent's yes waits (`CHECK_IN_PENDING`)
+//! until the yes that names the approved check-in as `check_in_ref`, and is
+//! from now on. The owner's invitation records her own decision.
 
 use serde::{Deserialize, Serialize};
 
@@ -26,6 +32,7 @@ use super::join_receipt::{
     RosterActor, intent_digest, is_join_ref, join_ref, ready_key,
 };
 use crate::agent_dispatch::{AgentDispatcher, payer_binds_in_txn};
+use crate::check_in::{CheckInDecision, DoorCheckIn};
 use crate::conversation::{
     ContainerAttendee, ContainerAttendeeEvent, HistoryChoice, RoomHost, room_host_in_txn,
 };
@@ -55,6 +62,11 @@ pub struct ConsentAnswer {
     /// consent on its root.
     #[serde(default)]
     pub spend_scope: Option<SpendScopeId>,
+    /// For an Admission yes that waits on its check-in: the approved
+    /// check-in it spends (ROLES-CHECKIN P2.6a). Any other answer adds no
+    /// one and takes none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// A join's decision as its receipt holds it.
@@ -72,6 +84,11 @@ pub struct JoinOutcome {
     /// The receipt a Ready join committed: the evidence later work in the
     /// room re-proves. `None` while the join holds or after it was refused.
     pub receipt_ref: Option<String>,
+    /// The check-in decision on the Admission yes this call recorded, the
+    /// add of the join's subject (ROLES-CHECKIN P2.6a). Absent on a replay,
+    /// on every other answer, and for a person with no role on the vault.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 impl JoinOutcome {
@@ -88,6 +105,7 @@ impl JoinOutcome {
                     .as_str()
                     .to_owned()
             }),
+            check_in: None,
         }
     }
 }
@@ -161,7 +179,8 @@ impl Memory<'_> {
     }
 
     /// Records one party's answer to a join that waits on it, from that party
-    /// only, and decides again. Membership is never answered here.
+    /// only, and decides again. Membership is never answered here. An
+    /// Admission yes is judged by check-in ([`admission_check_in_in_txn`]).
     pub fn rooms_consent(&self, answer: &ConsentAnswer) -> MemoryResult<JoinOutcome> {
         if answer.part == ConsentPart::Membership {
             return Err(MemoryError::new(
@@ -178,10 +197,24 @@ impl Memory<'_> {
                 "join_ref is the 64-hex reference rooms.join returned",
             ));
         }
+        let admits = answer.part == ConsentPart::Admission && answer.grant;
+        let check_in_ref = answer
+            .check_in_ref
+            .as_deref()
+            .map(|hex| {
+                EntityId::from_hex(hex)
+                    .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))
+            })
+            .transpose()?;
+        if check_in_ref.is_some() && !admits {
+            return Err(MemoryError::bad_request(
+                "only an Admission yes adds someone, so only it spends a check-in: drop check_in_ref",
+            ));
+        }
         let vault = self.vault();
         let caller = self.write_actor();
         let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
-        let outcome = vault.try_with_write_txn_grouped(|txn| {
+        let consented = vault.try_with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
             if !JOINS.contains(&vault.store, txn, &answer.join_ref)? {
                 return Err(MemoryError::new(
@@ -190,14 +223,88 @@ impl Memory<'_> {
                     &["File the join with rooms.join first."],
                 ));
             }
-            let outcome = consent_in_txn(vault, txn, answer, caller, now, Some(&lane))?;
-            Ok(outcome)
+            let check_in = if admits {
+                match admission_check_in_in_txn(
+                    self,
+                    txn,
+                    &answer.join_ref,
+                    CONSENT_VERB,
+                    check_in_ref.as_ref(),
+                )? {
+                    Some(DoorCheckIn::Go(decision)) => Some(decision),
+                    Some(DoorCheckIn::Wait(id)) => return Ok(Consented::Waits(id)),
+                    None => None,
+                }
+            } else {
+                None
+            };
+            let mut outcome = consent_in_txn(vault, txn, answer, caller, now, Some(&lane))?;
+            outcome.check_in = check_in;
+            Ok(Consented::Done(Box::new(outcome)))
         })?;
+        let outcome = match consented {
+            Consented::Done(outcome) => *outcome,
+            Consented::Waits(id) => return Err(Error::CheckInPending(id.to_hex()).into()),
+        };
         // FIX 1794: the answer reaches the live window of the join's room or
         // thread.
         outcome.publish_after_commit(vault);
         Ok(outcome)
     }
+}
+
+/// The verb whose door records a party's answer to a join.
+const CONSENT_VERB: &str = "vault.rooms.consent";
+
+/// What a consent's writer did: the answer, or an Admission yes that waits
+/// on its pending check-in, the writer's one write.
+enum Consented {
+    Done(Box<JoinOutcome>),
+    Waits(EntityId),
+}
+
+/// Judges `memory`'s caller's Admission yes to the join `join_ref` at the
+/// door `verb`, in the door's writer `txn`, with `check_in_ref` the approved
+/// check-in an agent's yes spends (ROLES-CHECKIN P2.6a; P26-SHAPE Q2 = A).
+/// The yes is the add of the join's subject to its room or thread. The
+/// caller's standing and its admission of the room are proved first, so no
+/// check-in opens for a yes the door refuses; an agent's yes to a join that
+/// asks for the whole past is refused, as an agent's add is from now on
+/// (P26-SHAPE Q4 = A). `None` for an unknown or settled join, whose answer
+/// adds no one, and for a person with no role on the vault.
+///
+/// # Errors
+///
+/// A caller that does not answer the room's admission; an agent's yes to a
+/// join sharing the whole past, or with no live owner Grant listing `verb`;
+/// a `check_in_ref` the add cannot spend; storage errors.
+pub(in crate::workspace_roster) fn admission_check_in_in_txn(
+    memory: &Memory<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    join_ref: &str,
+    verb: &str,
+    check_in_ref: Option<&EntityId>,
+) -> MemoryResult<Option<DoorCheckIn>> {
+    let vault = memory.vault();
+    let caller = memory.write_actor();
+    vault.verify_own_agent_write_actor_in_txn(txn, &caller)?;
+    let Some(receipt) = super::join_history::live_join(&vault.store, txn, join_ref)? else {
+        return Ok(None);
+    };
+    if receipt.is_settled() {
+        return Ok(None);
+    }
+    let request = &receipt.request;
+    require_admission_party_in_txn(vault, txn, request.room, caller)?;
+    let full_history = receipt.history == HistoryChoice::Share;
+    crate::check_in::agent_add_is_from_now(memory, full_history)?;
+    let digest = crate::check_in::room_add_effect_digest(
+        &request.room,
+        request.branch.as_ref(),
+        &request.subject.id(),
+        full_history,
+    );
+    crate::check_in::room_add_check_in_in_txn(memory, txn, verb, digest, check_in_ref)
 }
 
 /// Files and decides `request` in the caller's write transaction, so a write
@@ -314,7 +421,7 @@ fn owner_invite_in_txn(
     ) {
         return Ok(invited);
     }
-    rooms_consent_in_txn(
+    let mut outcome = rooms_consent_in_txn(
         vault,
         txn,
         &ConsentAnswer {
@@ -322,10 +429,15 @@ fn owner_invite_in_txn(
             part: ConsentPart::Admission,
             grant: true,
             spend_scope: None,
+            check_in_ref: None,
         },
         caller,
         now,
-    )
+    )?;
+    // Her admission yes adds the person she invites: her own judgment
+    // (ROLES-CHECKIN P2.6a; P26-SHAPE Q2 (iv) = A).
+    outcome.check_in = Some(crate::check_in::owner_room_add_decision());
+    Ok(outcome)
 }
 
 /// Whether `reader` may file a roster join for `room`'s project (FIX 1163),
