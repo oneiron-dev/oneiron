@@ -214,11 +214,11 @@ impl UnfinalizedContextPack<'_> {
             (results, neighbors),
             self.world_share.as_ref(),
         );
-        let held = &self.value.results;
+        let kept_rows = &self.value.results;
         self.value
             .stats
             .working_set
-            .settle(|id| held.iter().any(|entity| entity.id == *id));
+            .settle(|id| kept_rows.iter().any(|entity| entity.id == *id));
         cut_critical
     }
 
