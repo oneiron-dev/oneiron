@@ -146,6 +146,27 @@ A raw curl call with a bearer alone is not equivalent: it lacks the fresh
 holder proof. The script is the complete HTTP client example; no crypto SDK
 or hand-written signature code is required.
 
+## Remote MCP with OAuth: cloud agents
+
+A cloud agent that runs on its vendor's servers, such as Grok Bot or Muse,
+cannot start `oneiron mcp` or hold a paired credential. It connects by URL
+instead: it adds `https://<vault-host>/mcp` and signs in at the vault's own
+OAuth 2.1 server (protected resource metadata, dynamic client registration,
+PKCE S256 and the `/mcp` resource). The vault owner allows each sign-in once,
+in the inbox, at a tier and optionally in one world. The app's bearer token
+maps to that grant at the vault and never carries a slip or a key, and
+`vault.consent.registry` revokes it.
+
+The vault needs a public https origin as its OAuth identity:
+`oneiron serve --oauth-resource-indicator https://<vault-host>`. Without it
+every OAuth route answers 404.
+
+- [Connect Grok Bot](connect/grok-bot.md)
+- [Connect Muse](connect/muse.md)
+
+A local coding agent keeps the paired credential above: it signs every call
+with its holder proof.
+
 ## Owner mode: MCP as the vault's owner
 
 Everything above connects an agent with its own delegated credential, the
