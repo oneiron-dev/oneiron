@@ -73,4 +73,11 @@ impl OfferLadder {
             }
         }
     }
+
+    /// How long, in all, a durable step waits unsent for this ladder's offer
+    /// back from a health rest before it hands the rest to its caller (FIX
+    /// 11226): the vault's longest wait for an offer back, as any call's.
+    pub(crate) fn step_rest_wait(&self) -> Duration {
+        Duration::from_secs(self.rests.max_wait_secs())
+    }
 }

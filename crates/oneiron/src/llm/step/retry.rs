@@ -15,6 +15,13 @@
 //!
 //! The reset a refusal states also rides out with it: the attempt's Retry
 //! park comes due at that reset ([`stated_reset_at`]).
+//!
+//! An attempt held unsent because its offer rests for its provider's health,
+//! or because its one probation request is out, spends no attempt (FIX
+//! 11226): the declared schedule counts sends. The call waits for the offer
+//! back, within its rest wait, and asks again; the rest still holds every
+//! other call off the offer. A rest past what is left of that wait returns at
+//! once, unsent.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -37,16 +44,52 @@ pub(super) fn retry_delay_ms(retry: usize) -> u64 {
         .unwrap_or(0)
 }
 
+/// How often a call held unsent by its offer's health asks again when no
+/// reset is stated (a probation request is out), and the least it waits for
+/// one that is: the schedule's first interval.
+const HEALTH_REST_POLL_MS: u64 = 250;
+
+/// One durable call's transport retries: the retries its schedule makes
+/// after the first send (FIX 9930), and how long it waits in all, unsent, for
+/// its offer back from a health rest (FIX 11226).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct TransportRetries {
+    pub(super) max: usize,
+    pub(super) rest_wait: Duration,
+}
+
+impl TransportRetries {
+    /// `max` retries on the schedule, and no wait for a health rest: a
+    /// backend that walks its own ladder waits for its offers itself.
+    pub(super) const fn schedule(max: usize) -> Self {
+        Self {
+            max,
+            rest_wait: Duration::ZERO,
+        }
+    }
+}
+
 pub(super) async fn generate_with_retry(
     backend: &dyn LlmBackend,
     request: &LlmRequest,
     lease: &super::BudgetLease,
-    max_retries: usize,
+    plan: TransportRetries,
 ) -> LlmResult<LlmResponse> {
+    let max_retries = plan.max;
     let mut retries = 0_usize;
+    let mut rested = Duration::ZERO;
     loop {
         match backend.generate(request.clone(), lease).await {
             Ok(response) => return Ok(response),
+            // Nothing went out: no attempt is spent (FIX 11226).
+            Err(LlmError::Retryable(error @ RetryableLlmError::HealthRest { .. })) => {
+                let wait = health_rest_wait(&error, unix_now_ms());
+                if rested.saturating_add(wait) > plan.rest_wait {
+                    return Err(LlmError::Retryable(error));
+                }
+                sleep_ms(u64::try_from(wait.as_millis()).unwrap_or(u64::MAX)).await;
+                rested = rested.saturating_add(wait);
+            }
             Err(LlmError::Retryable(error)) => {
                 if retries >= max_retries || waits_past_schedule(&error, retries, max_retries) {
                     return Err(LlmError::Retryable(error));
@@ -57,6 +100,28 @@ pub(super) async fn generate_with_retry(
             Err(error) => return Err(error),
         }
     }
+}
+
+/// How long, from `now_ms` (Unix milliseconds), until the offer a health
+/// rest names is back: to the start of the first second it states still
+/// ahead, at least [`HEALTH_REST_POLL_MS`]. A probation request's end, which
+/// no clock states, is asked for each [`HEALTH_REST_POLL_MS`].
+fn health_rest_wait(error: &RetryableLlmError, now_ms: u64) -> Duration {
+    let RetryableLlmError::HealthRest {
+        retry_after,
+        resets_at,
+    } = error
+    else {
+        return Duration::from_millis(HEALTH_REST_POLL_MS);
+    };
+    let now = now_ms / 1000;
+    let back_ms = resets_at
+        .iter()
+        .find(|at| **at > now)
+        .map(|at| at.saturating_mul(1000).saturating_sub(now_ms))
+        .or_else(|| retry_after.map(|secs| secs.saturating_mul(1000)))
+        .unwrap_or(0);
+    Duration::from_millis(back_ms.max(HEALTH_REST_POLL_MS))
 }
 
 /// Whether `error`, met before retry `retry` of `max_retries`, waits past every interval
@@ -119,9 +184,15 @@ pub(crate) fn stated_reset_at(error: &LlmError) -> Option<u64> {
 }
 
 fn unix_now() -> u64 {
+    unix_now_ms() / 1000
+}
+
+fn unix_now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs())
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 /// std-only timer future (zero-new-deps pin, design D1): a helper thread

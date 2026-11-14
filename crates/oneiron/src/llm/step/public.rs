@@ -2,10 +2,12 @@
 //! executor: the vault owner on their proof, or a live run's own actor on
 //! its lease (slice 6.5c, primitive D).
 use std::collections::HashSet;
+use std::time::Duration;
 
 use super::super::{
     BudgetGuard, ContentPart, FallbackRegistry, LlmBackend, LlmError, LlmResponse, ResponseFormat,
 };
+use super::retry::TransportRetries;
 use super::step_claim::{step_index_lookup, step_index_lookup_in_txn};
 use super::step_state::step_state_read;
 use super::submission_custody::{SUBMISSIONS, Submission, erased, put_submission_in_txn};
@@ -51,20 +53,24 @@ pub use oneiron_verb_wire::llm::step::public::{
 /// Submit or resume the caller's own logical step. Successes AND terminal
 /// failures are durable; replay neither multiplies retries nor sends a failed
 /// request again. The invocation claim only serializes live entries, while
-/// the step's own checkpoints recover across process restarts.
+/// the step's own checkpoints recover across process restarts. A send the
+/// backend holds unsent while its offer rests for its health spends no
+/// declared attempt: the step waits for the offer back up to `rest_wait`, in
+/// all (FIX 11226).
 pub async fn submit_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: ModelStepSubmit,
     backend: &dyn LlmBackend,
     guard: &BudgetGuard,
+    rest_wait: Duration,
 ) -> MemoryResult<ModelStepReceipt> {
     admitted(
         submit(
             vault,
             Submitter::Owner(owner),
             input,
-            Some((backend, guard, None)),
+            Some((backend, guard, None, rest_wait)),
         )
         .await?,
     )
@@ -110,6 +116,10 @@ pub struct RunStepCaller<'a> {
 /// books what the step's physical calls spend on the run's spend scope, on
 /// its own live lease, so a replay of a saved step, which makes no call,
 /// books nothing.
+///
+/// A send held unsent while its offer rests for its health returns at once
+/// here, spending no attempt; [`submit_as_run_actor_on_scope`] takes the
+/// wait the host's ladder allows (FIX 11226).
 pub async fn submit_as_run_actor(
     vault: &Vault,
     caller: RunStepCaller<'_>,
@@ -117,12 +127,14 @@ pub async fn submit_as_run_actor(
     backend: &dyn LlmBackend,
     guard: &BudgetGuard,
 ) -> MemoryResult<ModelStepReceipt> {
-    submit_as_run_actor_on_scope(vault, caller, input, backend, guard, None).await
+    submit_as_run_actor_on_scope(vault, caller, input, backend, guard, None, Duration::ZERO).await
 }
 
 /// A run's step on its spend scope's guard, for a typed budget wait. The host
 /// read `spend_scope`'s cap generation before it built `guard`
-/// ([`StepSpendScope::read_before_guards`]).
+/// ([`StepSpendScope::read_before_guards`]). A send held unsent while its
+/// offer rests for its health waits for the offer back up to `rest_wait`, in
+/// all, as the owner's does (FIX 11226).
 pub async fn submit_as_run_actor_on_scope(
     vault: &Vault,
     caller: RunStepCaller<'_>,
@@ -130,8 +142,9 @@ pub async fn submit_as_run_actor_on_scope(
     backend: &dyn LlmBackend,
     guard: &BudgetGuard,
     spend_scope: Option<&StepSpendScope>,
+    rest_wait: Duration,
 ) -> MemoryResult<ModelStepReceipt> {
-    let execution = Some((backend, guard, spend_scope.cloned()));
+    let execution = Some((backend, guard, spend_scope.cloned(), rest_wait));
     admitted(submit(vault, Submitter::Run(caller), input, execution).await?)
 }
 
@@ -314,7 +327,12 @@ async fn submit(
     vault: &Vault,
     submitter: Submitter<'_>,
     input: ModelStepSubmit,
-    execution: Option<(&dyn LlmBackend, &BudgetGuard, Option<StepSpendScope>)>,
+    execution: Option<(
+        &dyn LlmBackend,
+        &BudgetGuard,
+        Option<StepSpendScope>,
+        Duration,
+    )>,
 ) -> MemoryResult<Option<ModelStepReceipt>> {
     validate(&input)?;
     submitter.attached()?;
@@ -453,7 +471,9 @@ async fn submit(
         }
         return view(vault, id, &row).map(Some).map_err(MemoryError::from);
     };
-    let spend_scope = execution.as_ref().and_then(|(_, _, scope)| scope.clone());
+    let spend_scope = execution
+        .as_ref()
+        .and_then(|(_, _, scope, _)| scope.clone());
     let context = DurableStepContext {
         vault,
         attempt_id: id,
@@ -465,14 +485,17 @@ async fn submit(
         spend_scope,
         wake_pass_bound: false,
     };
-    let outcome = if let Some((backend, guard, _)) = execution {
+    let outcome = if let Some((backend, guard, _, rest_wait)) = execution {
         super::execute::call_as_step_with_fallbacks_and_retries(
             &context,
             backend,
             guard,
             row.input.request.clone(),
             &FallbackRegistry::standard(),
-            usize::from(row.input.retry.max_attempts - 1),
+            TransportRetries {
+                max: usize::from(row.input.retry.max_attempts - 1),
+                rest_wait,
+            },
         )
         .await
     } else {

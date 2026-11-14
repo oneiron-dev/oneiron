@@ -324,6 +324,7 @@ pub(super) fn failure_kind(error: &LlmError) -> &'static str {
             "device_admission_stopped"
         }
         LlmError::Retryable(RetryableLlmError::WorldRouteNotAdmitted) => "world_route_not_admitted",
+        LlmError::Retryable(RetryableLlmError::HealthRest { .. }) => "health_rest",
         LlmError::Fatal(FatalLlmError::InvalidRequest) => "invalid_request",
         LlmError::Fatal(FatalLlmError::InvalidRequestDetail { .. }) => "invalid_request",
         LlmError::Fatal(FatalLlmError::ContextWindowExceeded { .. }) => "context_window_exceeded",

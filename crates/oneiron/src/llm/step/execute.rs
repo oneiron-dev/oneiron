@@ -5,6 +5,7 @@ use super::super::{
     LlmResponse, LlmUsage,
 };
 use super::budget_wait::wake_budget_trap_in_txn;
+use super::retry::TransportRetries;
 use super::source::StepSource;
 use super::step_claim::{
     decode_step_claim_value, load_step_response_in_txn, log_terminal_step, step_index_lookup_in_txn,
@@ -139,7 +140,7 @@ pub async fn call_as_step_checked(
         request,
         &super::super::FallbackRegistry::standard(),
         Some(check),
-        DREAMER_STEP_RETRY_BACKOFF_MS.len(),
+        TransportRetries::schedule(DREAMER_STEP_RETRY_BACKOFF_MS.len()),
         None,
     )
     .await
@@ -162,7 +163,7 @@ pub(crate) async fn call_as_step_checked_with_unsaved_usage(
         request,
         &super::super::FallbackRegistry::standard(),
         Some(check),
-        DREAMER_STEP_RETRY_BACKOFF_MS.len(),
+        TransportRetries::schedule(DREAMER_STEP_RETRY_BACKOFF_MS.len()),
         Some(&mut unsaved_usage),
     )
     .await;
@@ -183,32 +184,24 @@ pub async fn call_as_step_with_fallbacks(
         guard,
         request,
         fallbacks,
-        DREAMER_STEP_RETRY_BACKOFF_MS.len(),
+        TransportRetries::schedule(DREAMER_STEP_RETRY_BACKOFF_MS.len()),
     )
     .await
 }
 
 /// The same durable execution path with the caller's own retry count; retries
-/// past the engine schedule pace at its last interval (FIX 9930).
+/// past the engine schedule pace at its last interval (FIX 9930), and a send
+/// held unsent by its offer's health waits within the plan's rest wait,
+/// spending none (FIX 11226).
 pub(super) async fn call_as_step_with_fallbacks_and_retries(
     ctx: &DurableStepContext<'_>,
     backend: &dyn LlmBackend,
     guard: &BudgetGuard,
     request: LlmRequest,
     fallbacks: &super::super::FallbackRegistry,
-    max_retries: usize,
+    retries: TransportRetries,
 ) -> DurableStepResult<StepOutcome> {
-    durable_step(
-        ctx,
-        backend,
-        guard,
-        request,
-        fallbacks,
-        None,
-        max_retries,
-        None,
-    )
-    .await
+    durable_step(ctx, backend, guard, request, fallbacks, None, retries, None).await
 }
 
 async fn durable_step(
@@ -218,7 +211,7 @@ async fn durable_step(
     request: LlmRequest,
     fallbacks: &super::super::FallbackRegistry,
     check: Option<&ReplyCheck>,
-    max_retries: usize,
+    retries: TransportRetries,
     mut unsaved_usage: Option<&mut Option<LlmUsage>>,
 ) -> DurableStepResult<StepOutcome> {
     let step_hash = request.canonical_hash()?;
@@ -324,7 +317,7 @@ async fn durable_step(
                 calls,
                 &capture,
                 check,
-                max_retries,
+                retries,
             ),
         )
         .await;

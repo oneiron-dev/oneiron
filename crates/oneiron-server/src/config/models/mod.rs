@@ -91,6 +91,8 @@ pub(crate) struct ModelsFile {
     prefer_local: Option<bool>,
     extraction_egress: Option<bool>,
     raw_budget_units: Option<u64>,
+    /// A down provider's first health rest, in seconds (FIX 11226).
+    health_rest_secs: Option<u64>,
     #[serde(default)]
     providers: BTreeMap<String, ProviderFile>,
     #[serde(default)]
@@ -222,6 +224,11 @@ pub struct ModelsConfig {
     pub extraction_egress: bool,
     /// Process-lifetime meter for the raw `/v1/llm` routes.
     pub raw_budget_units: u64,
+    /// `health_rest_secs`: a down provider's first health rest, in seconds
+    /// (FIX 11226). Each failure in a row doubles it, up to the longest
+    /// health rest, 60 seconds. Unset keeps 5; one second is the floor of
+    /// the vault's seconds clock.
+    pub health_rest_secs: u64,
     pub dreamer: DreamerSettings,
     pub chat: ChatSettings,
     pub workflows: WorkflowSettings,
@@ -549,6 +556,15 @@ impl ModelsFile {
                 .unwrap_or(DEFAULT_STEP_RETRY_BACKOFF_SECS),
         };
         let raw_budget_units = self.raw_budget_units.unwrap_or(DEFAULT_RAW_BUDGET_UNITS);
+        let health_rest_secs = self
+            .health_rest_secs
+            .unwrap_or(crate::models::HEALTH_REST_SECS);
+        if !(1..=crate::models::HEALTH_REST_MAX_SECS).contains(&health_rest_secs) {
+            anyhow::bail!(
+                "models.health_rest_secs must be between 1 and {}",
+                crate::models::HEALTH_REST_MAX_SECS
+            );
+        }
         let step_wall = self
             .code_mode
             .step_wall_secs
@@ -636,6 +652,7 @@ impl ModelsFile {
             }),
             extraction_egress: self.extraction_egress.unwrap_or(false),
             raw_budget_units,
+            health_rest_secs,
             dreamer,
             chat,
             workflows,
