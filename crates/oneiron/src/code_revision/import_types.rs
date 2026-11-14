@@ -8,15 +8,10 @@
 //! enumerated files; no blob content or file list is copied here. Both
 //! claims have deterministic ids, so a repeat finds the same row and a
 //! different body under that id is corruption, never an overwrite.
-use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::CodeTreeBlob;
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-};
-use crate::code_document::CodeDocumentFrontier;
+use crate::claim::{ClaimBody, ClaimSubject};
 use crate::codebase::entity_id_from_hash_material;
 use crate::critic::LensCatalog;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -37,24 +32,8 @@ pub use crate::store::code_import_manifest::CodeImportAnchor;
 
 pub use crate::store::code_revision_record::CodePathRetirement;
 
-/// The owner's explicit promotion request over one exact manifest: its
-/// digest, the exact checked Baseline revision, the review catalog the
-/// owner selects for this import and, when that catalog has lenses, the
-/// saved review verdict. An empty lens list is quorum 0 on this import
-/// alone: the owner's acceptance of the digest is the review (CALL F).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeImportAcceptance {
-    /// The manifest digest the owner accepts, 64 lower-hex.
-    pub manifest_digest: String,
-    /// The checked Baseline revision whose untouched bytes it admits.
-    pub baseline_revision: EntityId,
-    /// The manifest-review catalog the owner selects for this import.
-    pub catalog: LensCatalog,
-    /// The persisted `vault.critic.review` verdict over the manifest;
-    /// required when the catalog has lenses, unused when it has none.
-    pub review_verdict: Option<EntityId>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::code_revision::import_types::CodeImportAcceptance;
 
 pub(crate) use crate::store::code_import_manifest::CodeImportManifest;
 

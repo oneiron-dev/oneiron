@@ -17,9 +17,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/decode.rs` | src | L | 1 struct · 1 enum · 5 fn · 6 crate-vis | Header, Profile | Reading an image: the header first, then pixels only when it passes |
 | `src/lib.rs` | src | s | 4 re-export | — | The image organ (ART-1, the first slice): still PNG, JPEG and WebP images as a native `image` kind, behind… |
 | `src/ops.rs` | src | s | 1 fn · 7 crate-vis | — | The edit ops: each changes the body only, never pixels |
-| `src/organ.rs` | src | m | 1 struct · 6 const | ImageOrgan | The image organ: six verbs over the `image` body, schema 1 |
+| `src/organ.rs` | src | m | 1 struct · 7 const | ImageOrgan | The image organ: seven verbs over the `image` body, schema 1 |
 | `src/render.rs` | src | s | 3 crate-vis | — | Export: the only place pixels are made |
 | `tests/fixtures/mod.rs` | test | m | 27 crate-vis | — | Images made in code, so no binary fixture is stored: corner-coded pixels, EXIF and ICC through the encoders… |
 | `tests/host_e2e.rs` | test | s | — | — | The image organ as its own process behind the organ host, over a real vault blob (ART-1 "done means", the… |
 | `tests/hostile_input.rs` | test | m | — | — | Inputs built to slip past the header checks (the second PR2 review round) |
-| `tests/image_ops.rs` | test | m | — | — | The image organ's first slice, checked against analytic pixels (ART-1 plan, "Fixture and oracle gate"): crop… |
+| `tests/image_edit_landing.rs` | test | m | — | — | An image artifact's edit through the image organ's host adapter (`oneiron_organ_host::image`, L4-15): the… |
+| `tests/image_ops.rs` | test | L | — | — | The image organ's first slice, checked against analytic pixels (ART-1 plan, "Fixture and oracle gate"): crop… |

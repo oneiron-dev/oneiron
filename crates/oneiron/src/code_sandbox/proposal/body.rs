@@ -186,8 +186,8 @@ impl PartialEq for SandboxProposalBody {
 }
 impl Eq for SandboxProposalBody {}
 
-/// One host buffer of a spool copy or a body read; never a size bound.
-const READ_FRAME: usize = 1024 * 1024;
+#[doc(hidden)]
+use oneiron_verb_wire::code_sandbox::proposal::body::READ_FRAME;
 
 /// A body still being written. Nothing reads it until [`Self::finish`].
 pub struct SandboxProposalBodyWriter {

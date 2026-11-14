@@ -60,13 +60,8 @@ pub struct DrafterVersionView {
     pub revertible: bool,
 }
 
-/// The status read: events after `events_after` only, when given.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DrafterStatusRequest {
-    #[serde(default)]
-    pub events_after: Option<EntityId>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::drafter::doors::{DrafterRevertRequest, DrafterStatusRequest};
 
 /// The owner's policy, every bound target's pointer, what each target's
 /// worker serves now, and the events, oldest first.
@@ -79,15 +74,6 @@ pub struct DrafterStatus {
     /// and why a binding is not applied where it is not.
     pub served: Vec<DrafterServedView>,
     pub events: Vec<DrafterEvent>,
-}
-
-/// A revert of `version`'s target to `version`, at the binding generation
-/// the caller read.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DrafterRevertRequest {
-    pub version: EntityId,
-    pub expected_binding_generation: u64,
 }
 
 /// The binding as the revert left it, and the event that records it;

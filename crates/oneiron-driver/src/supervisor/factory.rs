@@ -28,6 +28,7 @@ use oneiron::{EntityId, Vault, WavePlanner};
 use oneiron_llm_local::{LocalLlmBackend, LocalLlmRuntime};
 
 use super::attachment::{LinkedShutdown, PassAttachment, PassAttachmentSource};
+use super::dreamer_jobs::DreamerJobsExecutor;
 
 /// Host-supplied consumer of the live ready TASK subset.
 pub type WaveReadyDispatcher =
@@ -243,6 +244,10 @@ pub struct ConsolidationExecutorFactory {
     /// The host's ladder for the Dreamer's typed questions. `None` asks them
     /// with the shipped wording, the verdict role's read the only rung.
     decisions: Option<ConsolidationDecisions>,
+    /// The vault the Dreamer's jobs bind their attempts in (untangle 6.9c):
+    /// the job wrapper is installed either way, and with `None` a strength
+    /// attempt parks, resumable, for want of a host.
+    dreamer_job_vault: Option<Arc<Vault>>,
 }
 
 impl ConsolidationExecutorFactory {
@@ -279,6 +284,7 @@ impl ConsolidationExecutorFactory {
             wave_dispatch: None,
             attachment: None,
             decisions: None,
+            dreamer_job_vault: None,
         }
     }
 
@@ -288,6 +294,16 @@ impl ConsolidationExecutorFactory {
     #[must_use]
     pub fn with_decisions(mut self, decisions: ConsolidationDecisions) -> Self {
         self.decisions = Some(decisions);
+        self
+    }
+
+    /// Lends the Dreamer's jobs the vault this factory's passes run on
+    /// (untangle 6.9c PR 4): a strength attempt then runs
+    /// `oneiron_dreamer::strength_archive` over a client bound to that
+    /// attempt (`Vault::bind_dreamer_attempt`), never over the vault itself.
+    #[must_use]
+    pub fn with_dreamer_job_vault(mut self, vault: Arc<Vault>) -> Self {
+        self.dreamer_job_vault = Some(vault);
         self
     }
 
@@ -514,6 +530,7 @@ impl ConsolidationExecutorFactory {
             Some(host) => roles.with_thing_child_host(Arc::clone(host)),
             None => roles,
         };
+        let job_vault = self.dreamer_job_vault.clone();
         let mut executors = Vec::new();
         for sink in std::iter::once(&mut self.sink).chain(self.parallel_sinks.iter_mut()) {
             let inner = ConsolidationExecutor {
@@ -565,21 +582,24 @@ impl ConsolidationExecutorFactory {
                 inner,
                 runtime: runtime.take(),
             };
-            executors.push(ConnectorEventExecutor::new(inner, responder.take()));
+            let inner = ConnectorEventExecutor::new(inner, responder.take());
+            executors.push(DreamerJobsExecutor::new(inner, job_vault.clone()));
         }
         Ok(executors)
     }
 }
 
 impl PassExecutorFactory for ConsolidationExecutorFactory {
-    type Exec<'p> = ConnectorEventExecutor<
-        'p,
-        WeaveRecipeExecutor<
-            PersonAboutExecutor<
-                'p,
-                ScopeSummaryExecutor<'p, CommitmentWakeExecutor<'p, ConsolidationExecutor<'p>>>,
+    type Exec<'p> = DreamerJobsExecutor<
+        ConnectorEventExecutor<
+            'p,
+            WeaveRecipeExecutor<
+                PersonAboutExecutor<
+                    'p,
+                    ScopeSummaryExecutor<'p, CommitmentWakeExecutor<'p, ConsolidationExecutor<'p>>>,
+                >,
+                Option<&'p mut dyn WeaveRecipeRuntime>,
             >,
-            Option<&'p mut dyn WeaveRecipeRuntime>,
         >,
     >;
 

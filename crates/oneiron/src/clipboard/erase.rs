@@ -1,5 +1,3 @@
-use serde::{Deserialize, Serialize};
-
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{DeleteReason, DeletionGateContext, GatedDeletion};
 use crate::edge::EdgeActorClass;
@@ -9,22 +7,8 @@ use crate::{EntityId, Vault};
 use super::clipboard_world_id;
 use super::retention::ClipboardRetention;
 
-/// Which ordinary Clipboard records the owner erases. Ranges are [from, before).
-/// All empties the dedicated world; it retains the role's WORLD metadata.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum ClipboardErase {
-    Clip { clip: EntityId },
-    Range { from: u64, before: u64 },
-    All,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ClipboardEraseReport {
-    /// Records the native hard-delete door completed. Not a delivery receipt
-    /// and not a claim that the filesystem or retained backups shrank.
-    pub erased: Vec<EntityId>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::clipboard::erase::{ClipboardErase, ClipboardEraseReport};
 
 impl Vault {
     /// Carries out the owner's erase through the existing hard-delete door,

@@ -45,21 +45,8 @@ pub struct ForkRequest {
     pub rewrite: Option<String>,
 }
 
-/// A consume-once fork's durable state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum ForkStatus {
-    Pending,
-    Merged,
-    Switched,
-    Rejected,
-}
-/// Explicit settle verbs. Only SWITCH has a stale-base refusal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum SettleVerb {
-    Merge,
-    Switch,
-    Reject,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::entity_doc::forks::{ForkStatus, SettleVerb};
 
 /// Durable fork identity and provenance, recorded at the moment it joins a set.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

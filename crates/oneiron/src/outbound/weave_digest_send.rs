@@ -13,8 +13,6 @@
 //! contact of the reader's. A reader with no route gets the inbox notice
 //! alone, and no error.
 
-use serde::{Deserialize, Serialize};
-
 use crate::agent_def::AgentWakeCadence;
 use crate::channel_identity::ChannelIdentityState;
 use crate::claim::WeaveDigestReader;
@@ -44,33 +42,10 @@ const WEAVE_DIGEST_SEND_TRIGGER: &str = "commitment_timer_wake";
 const OVERRIDES: SideTable<EntityId, WeaveDigestChannelOverride, Named> =
     SideTable::new(&side_table::WEAVE_DIGEST_CHANNEL_OVERRIDE);
 
-/// Where the owner sends one reader's digest instead of the reader's primary
-/// route.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum WeaveDigestChannelOverride {
-    /// No send: the reader's inbox notice alone.
-    Off,
-    /// The send goes from this channel identity of the vault's, to the
-    /// reader's live contact on it, from the companion agent it is bound to.
-    /// While that identity carries no such route, nothing is sent.
-    Identity {
-        #[schemars(with = "String")]
-        channel_identity_ref: EntityId,
-    },
-}
-
-/// One reader's digest channel, as the owner reads and sets it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WeaveDigestChannelSetting {
-    /// The reader, as 32 hex.
-    #[schemars(with = "String")]
-    pub reader_ref: EntityId,
-    /// The owner's override; `None` is the default: the send on, to the
-    /// reader's primary route. Setting `None` removes the row.
-    pub route: Option<WeaveDigestChannelOverride>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::outbound::weave_digest_send::{
+    WeaveDigestChannelOverride, WeaveDigestChannelSetting,
+};
 
 /// Who sends one digest, and to which address on which channel.
 struct DigestRoute {

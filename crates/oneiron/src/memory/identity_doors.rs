@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use super::{EntityRefReceipt, Memory, MemoryError, MemoryResult, StructuralPutInput};
 use crate::consent::AuthenticatedOwner;
 use crate::ingest::{EntityResolutionCandidate, EntityResolutionWaterfallDecision};
-use crate::provenance::made_by::MadeBy;
 use crate::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE};
 use crate::{EntityId, Error, Vault};
 
@@ -105,25 +104,10 @@ pub struct IdentityLookupRequest {
     pub mention_evidence: Vec<EntityResolutionCandidate>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct IdentityConfidenceEvidence {
-    pub claim_ref: String,
-    pub effective_confidence: f32,
-    pub source: Option<String>,
-    pub evidence: Option<serde_json::Value>,
-    pub made_by: Option<MadeBy>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct IdentityLookupCandidate {
-    pub entity_ref: String,
-    pub matched_hints: Vec<String>,
-    pub identity_evidence_refs: Vec<String>,
-    pub identity_owner_ref: Option<String>,
-    pub identity_recorded_at: Option<u64>,
-    pub made_by: Option<MadeBy>,
-    pub mention_evidence: Vec<IdentityConfidenceEvidence>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::identity_doors::{
+    IdentityConfidenceEvidence, IdentityLookupCandidate,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct IdentityLookup {

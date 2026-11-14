@@ -26,10 +26,16 @@ impl PipelineBuilder<'_> {
     /// the context-pack path consumes (gated scores + the claim bodies the
     /// D19 gate already decoded + the suppression count).
     pub(crate) fn run_for_pack(mut self) -> Result<PipelineOutput> {
+        // A candidate scoring set is a caller input: one outside its knob
+        // ranges fails closed before any read (RESEARCH-0651 contract item 1).
+        self.params.validate()?;
         // A project filter is the ingest door's project id, held to its
         // bounds before any index, expansion or telemetry work (H38).
         if let Some(project_id) = self.project_id_filter.as_deref() {
             crate::codebase::validate_project_id(project_id)?;
+        }
+        if self.eval {
+            self.refuse_nondeterminism()?;
         }
         // Scoped search already denies before counting candidates. Also stop
         // resolved-deny builders before index trust checks, host expansion,
@@ -343,7 +349,9 @@ impl PipelineBuilder<'_> {
         let mut replay_inputs = attempt.replay_inputs;
         let mut critical = attempt.critical;
 
-        self.flush_ppr_cache_writes(&deferred_ppr_cache_writes)?;
+        if !self.eval {
+            self.flush_ppr_cache_writes(&deferred_ppr_cache_writes)?;
+        }
 
         let mut claim_bodies = HashMap::new();
         let mut claims_suppressed = 0_usize;
@@ -399,7 +407,9 @@ impl PipelineBuilder<'_> {
                     },
                 )?;
                 retried = true;
-                self.flush_ppr_cache_writes(&retry.deferred_ppr_cache_writes)?;
+                if !self.eval {
+                    self.flush_ppr_cache_writes(&retry.deferred_ppr_cache_writes)?;
+                }
                 // A retry cache hit must not erase an earlier miss in this run.
                 merge_retrieval_diagnostics(&mut diagnostics, retry.diagnostics);
                 text_exhausted = retry.text_exhausted;
@@ -546,7 +556,7 @@ impl PipelineBuilder<'_> {
             .session
             .is_none_or(crate::off_record::SessionRetrievalTelemetry::writes_to_base)
             && self.read.holds_room_rows();
-        let capture = capture_enabled && !withheld;
+        let capture = capture_enabled && !withheld && !self.eval;
         let telemetry_run_id = if !capture {
             if let Some(session) = self.session {
                 if capture_enabled {
@@ -816,6 +826,7 @@ impl PipelineBuilder<'_> {
             self.vector_search.is_some() || hyde_expanded,
             space,
             &floors,
+            &self.params,
             |id| match rtxn.as_ref() {
                 Some(rtxn) => {
                     Ok(read_entity_metadata(&self.read, rtxn, id)?.map(|meta| meta.entity_type))

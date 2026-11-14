@@ -45,14 +45,8 @@ impl std::fmt::Display for SpendScopeId {
     }
 }
 
-/// Whether a scope still takes spend and reservations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SpendState {
-    Open,
-    /// Settled into its parent. Late spend lands on the nearest open ancestor.
-    Closed,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::spend_scope::SpendState;
 
 /// What a child launch asks of its parent's scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

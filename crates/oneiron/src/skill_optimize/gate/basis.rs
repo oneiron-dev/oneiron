@@ -337,6 +337,12 @@ pub struct HeldOutReplayCase<'a> {
     pub instructions: &'a str,
     /// The reserved receipts to replay against, gate-recomputed.
     pub held_out_receipts: &'a [String],
+    /// The goal the gate resolved this case's ruling under, read as the
+    /// acting reader (the owner on an owner's door, the Coach on its own
+    /// runs), when the gate holds one: a host scorer declares and words its
+    /// axes from it instead of reading the goal again as the Coach (review
+    /// round 1 of #7553). `None` where no gate resolved one.
+    pub goal: Option<&'a SkillEditGoal>,
 }
 
 /// Host replay data and the Coach's configured typed-decision path.

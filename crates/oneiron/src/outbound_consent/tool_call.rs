@@ -23,15 +23,8 @@ pub struct HeaderGrantRequirement {
     pub header: String,
     pub data_class: ToolGrantDataClass,
 }
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum MutationIntent {
-    #[default]
-    Preview,
-    ExplicitMutation,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::outbound_consent::tool_call::MutationIntent;
 
 /// Resolved descriptor supplied by the tool registry, not by the argument map.
 #[derive(Debug, Clone, Copy)]

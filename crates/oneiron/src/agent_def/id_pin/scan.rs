@@ -30,8 +30,8 @@ pub(super) fn observe_list_entries(
         ),
         (
             b"optional_memory",
-            profile
-                .and_then(|profile| profile.optional_memory.as_ref())
+            def.optional_memory
+                .as_ref()
                 .map_or(0, |optional| optional.families.len()),
         ),
     ];

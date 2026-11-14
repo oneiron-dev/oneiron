@@ -1,8 +1,50 @@
 //! One research continuation pass over its persisted tasks.
 //! Entry method: `Pass::advance`.
 //! The `Pass` type and continuation records remain defined in `super`.
+//!
+//! Each step commits its accounting (reserve, serve, settle, refund) in the
+//! same write as the row it moves to, and that write first checks that no
+//! other pass moved the row since it was read. A pass that lost the row
+//! changes nothing, and a crash leaves a step whole or undone. A dispatch
+//! enqueues its run in the write that puts the run on the row. The record
+//! doors an ended run's answer goes to write on their own, once each, by
+//! node.
 
 use super::*;
+use crate::agent_dispatch::AgentSpawnAdmission;
+
+/// A refused refund or settlement leaves the reservation as it stands; any
+/// other error stops the pass.
+fn past_refusal(result: Result<()>) -> Result<()> {
+    match result {
+        Ok(()) | Err(Error::InvalidConfig(_)) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+/// No room on `line`: `task` waits at the front, as a round pauses, with
+/// nothing reserved and nothing dispatched.
+fn hold_front(next: &mut ResearchContinuation, task: ResearchTask, line: ResearchReservationLine) {
+    next.pending.insert(0, task);
+    next.state = ResearchContinuationState::Held {
+        reason: BUDGET_HELD.to_owned(),
+    };
+    next.held_line = Some(line);
+}
+
+fn shot_spent_hold() -> ResearchContinuationState {
+    ResearchContinuationState::Held {
+        reason: SHOT_SPENT.to_owned(),
+    }
+}
+
+/// `run` is the row's task in flight, last on its run trail.
+fn put_run(next: &mut ResearchContinuation, run: AttemptId) {
+    if let Some(running) = &mut next.running {
+        running.run = Some(run);
+    }
+    next.runs.push(run);
+}
 
 impl Pass<'_> {
     fn root(&self) -> AttemptId {
@@ -37,10 +79,16 @@ impl Pass<'_> {
         Ok(())
     }
 
-    /// Store `next` over `row` in one write, unless another pass moved the
-    /// row since it was read.
-    fn save(&self, row: &ResearchContinuation, mut next: ResearchContinuation) -> Result<()> {
-        next.updated_at = self.now;
+    /// Store `next` over `row` with this step's accounting, in one write.
+    /// The write first checks that no other pass moved the row since it was
+    /// read, then runs `account` on `next`, then stores it; a pass that lost
+    /// the row, or an `account` that fails, writes nothing.
+    fn commit<T>(
+        &self,
+        row: &ResearchContinuation,
+        mut next: ResearchContinuation,
+        account: impl FnOnce(&mut heed::RwTxn<'_>, &mut ResearchContinuation) -> Result<T>,
+    ) -> Result<T> {
         let key = (*row.root.as_bytes(), row.work.key());
         self.vault.with_write_txn_grouped(|txn| {
             if CONTINUATION.get(&self.vault.store, txn, &key)?.as_ref() != Some(row) {
@@ -48,28 +96,43 @@ impl Pass<'_> {
                     "another pass advanced this research continuation",
                 ));
             }
-            CONTINUATION.put(&self.vault.store, txn, &key, &next)
+            let value = account(txn, &mut next)?;
+            next.updated_at = self.now;
+            CONTINUATION.put(&self.vault.store, txn, &key, &next)?;
+            Ok(value)
         })
     }
 
-    /// End a continuation on a refusal. A reservation nothing was dispatched
-    /// on is refunded; a dispatched run's stays as the run left it.
+    /// Store `next` over `row` in one write, unless another pass moved the
+    /// row since it was read.
+    fn save(&self, row: &ResearchContinuation, next: ResearchContinuation) -> Result<()> {
+        self.commit(row, next, |_, _| Ok(()))
+    }
+
+    /// End a continuation on a refusal. What a task nothing was dispatched on
+    /// holds open is refunded in the same write; a dispatched run's
+    /// reservation stays as the run left it, and a served confirmation's
+    /// exposure stays spent.
     fn fail(&self, row: &ResearchContinuation, reason: String) -> Result<()> {
         let mut next = row.clone();
-        if let Some(running) = &row.running
-            && running.run.is_none()
-        {
-            match self.refund(running.reservation) {
-                Ok(()) | Err(Error::InvalidConfig(_)) => {}
-                Err(error) => return Err(error),
-            }
+        let unrun = row.running.as_ref().filter(|running| running.run.is_none());
+        if unrun.is_some() {
             next.running = None;
         }
         next.state = failed(reason);
-        self.save(row, next)
+        self.commit(row, next, |txn, _| {
+            if let Some(running) = unrun {
+                past_refusal(self.refund_in_txn(txn, running.reservation))?;
+                if let Some(exposure) = running.exposure {
+                    past_refusal(self.refund_in_txn(txn, exposure))?;
+                }
+            }
+            Ok(())
+        })
     }
 
-    fn step(&self, row: &ResearchContinuation) -> Result<Flow> {
+    /// One step of `row`, as this pass read it.
+    pub(super) fn step(&self, row: &ResearchContinuation) -> Result<Flow> {
         if let Some(running) = &row.running {
             return match running.run {
                 None => self.dispatch(row, running),
@@ -79,6 +142,7 @@ impl Pass<'_> {
         let mut next = row.clone();
         // A budget hold retries its task now.
         next.state = ResearchContinuationState::Open;
+        next.held_line = None;
         if next.pending.is_empty() {
             next.state = ResearchContinuationState::Done {
                 note: "every task ran".to_owned(),
@@ -106,35 +170,61 @@ impl Pass<'_> {
                 (RsiSpendPurpose::HeldOut, execution.confirm_units, candidate)
             }
         };
-        match reserve_research_work(
-            self.vault,
-            self.root(),
-            purpose,
-            units,
-            Some(attempt),
-            self.now,
-        ) {
-            Ok(reservation) => {
-                next.running = Some(ResearchRunning {
-                    task,
-                    reservation,
-                    run: None,
-                    release: None,
-                });
-                self.save(row, next)?;
-                Ok(Flow::Next)
-            }
-            // No room: the task waits at the front, as a round pauses.
-            Err(error) if is_budget_refusal(&error) => {
-                next.pending.insert(0, task);
-                next.state = ResearchContinuationState::Held {
-                    reason: BUDGET_HELD.to_owned(),
+        let work = ResearchReservationLine::Work { purpose };
+        let exploration = ResearchReservationLine::Exploration;
+        // The signing keys a token reservation may need load before the write.
+        let work_signing = reservation_signing(self.vault, self.binding, work);
+        let exploration_signing = reservation_signing(self.vault, self.binding, exploration);
+        // The reservations and the running row are one write: a pass that
+        // lost the row reserves nothing, and a crash leaves no reservation
+        // without its row (FIX 14686 needs no compensation).
+        self.commit(row, next, |txn, next| {
+            // Serving the sealed cohort spends exposure on its own line,
+            // reserved before the token work and before the shot.
+            let exposure = match task {
+                ResearchTask::Confirm { candidate } => {
+                    let ask = ReservationAsk {
+                        line: exploration,
+                        units: SERVING_EXPOSURE,
+                        attempt: Some(candidate),
+                        at: self.now,
+                    };
+                    match reserve_in_txn(self.vault, txn, self.binding, ask, exploration_signing)? {
+                        Reserved::Id(exposure) => Some(exposure),
+                        Reserved::Refused(_) => {
+                            hold_front(next, task, exploration);
+                            return Ok(Flow::Stop);
+                        }
+                    }
+                }
+                _ => None,
+            };
+            let ask = ReservationAsk {
+                line: work,
+                units,
+                attempt: Some(attempt),
+                at: self.now,
+            };
+            let reservation =
+                match reserve_in_txn(self.vault, txn, self.binding, ask, work_signing)? {
+                    Reserved::Id(reservation) => reservation,
+                    Reserved::Refused(_) => {
+                        if let Some(exposure) = exposure {
+                            finish_in_txn(self.vault, txn, self.root(), exposure, Finish::Refund)?;
+                        }
+                        hold_front(next, task, work);
+                        return Ok(Flow::Stop);
+                    }
                 };
-                self.save(row, next)?;
-                Ok(Flow::Stop)
-            }
-            Err(error) => Err(error),
-        }
+            next.running = Some(ResearchRunning {
+                task,
+                reservation,
+                exposure,
+                run: None,
+                release: None,
+            });
+            Ok(Flow::Next)
+        })
     }
 
     /// The held-out basis needs no run. Only a Promote goes on, and only to
@@ -169,7 +259,10 @@ impl Pass<'_> {
         Ok(Flow::Next)
     }
 
-    /// Dispatch the task in flight. After a crash the same dedupe key brings
+    /// Dispatch the task in flight. The enqueue commits in the write that puts
+    /// the run on the row, after that write's row check: a pass that lost the
+    /// row enqueues nothing, even once the run it lost to has ended and the
+    /// dedupe key no longer finds it. After a crash the same dedupe key brings
     /// back the run already made. A refused dispatch refunds and fails.
     fn dispatch(&self, row: &ResearchContinuation, running: &ResearchRunning) -> Result<Flow> {
         let root = self.root();
@@ -188,6 +281,7 @@ impl Pass<'_> {
                 let Some(release) = &running.release else {
                     return self.release(row, running, candidate);
                 };
+                // The serving settled its exposure in the write that served.
                 let referee = self
                     .execution
                     .referee
@@ -201,7 +295,8 @@ impl Pass<'_> {
         let reservation = self
             .reservation(running.reservation)?
             .ok_or(invalid("the running research task has no reservation"))?;
-        let outcome = AgentDispatcher::new(self.vault).dispatch_with_context(
+        let dispatcher = AgentDispatcher::new(self.vault);
+        let admission = dispatcher.admit_spawn(
             DispatchAgent {
                 target: AgentDispatchTarget::Custom(agent),
                 parent_attempt: Some(parent),
@@ -218,70 +313,132 @@ impl Pass<'_> {
                 .with_token_ceiling(reservation.units)
                 .with_context_spec(ContextSpec::excluded().with_briefing(briefing)),
         );
-        let reason = match outcome {
-            Ok(
-                AgentDispatchOutcome::Dispatched(status) | AgentDispatchOutcome::Existing(status),
-            ) => {
-                let mut next = row.clone();
-                if let Some(running) = &mut next.running {
-                    running.run = Some(status.attempt.id);
-                }
-                next.runs.push(status.attempt.id);
-                self.save(row, next)?;
-                return Ok(Flow::Next);
-            }
-            Ok(_) => "the dispatcher parked the run rather than start it".to_owned(),
+        let reason = match admission.and_then(|admission| self.enqueue(row, &dispatcher, admission))
+        {
+            Ok(true) => return Ok(Flow::Next),
+            Ok(false) => "the dispatcher parked the run rather than start it".to_owned(),
             Err(error @ (Error::InvalidConfig(_) | Error::Artifact(_) | Error::Gate(_))) => {
                 error.to_string()
             }
             Err(error) => return Err(error),
         };
-        self.refund(running.reservation)?;
         let mut next = row.clone();
         next.running = None;
         next.state = failed(reason);
-        self.save(row, next)?;
+        self.commit(row, next, |txn, _| self.refund_running_in_txn(txn, running))?;
         Ok(Flow::Stop)
     }
 
-    /// Spend the candidate's sealed confirmation and keep its release on the
-    /// task. A shot already spent, here or before a crash, is never spent
-    /// again: the campaign holds.
+    /// Put the run `admission` names on the row, in one write with its
+    /// enqueue when it is a new run; `false` when the dispatcher parked the
+    /// run rather than start it, which writes nothing.
+    fn enqueue(
+        &self,
+        row: &ResearchContinuation,
+        dispatcher: &AgentDispatcher<'_>,
+        admission: AgentSpawnAdmission,
+    ) -> Result<bool> {
+        let admitted = match admission {
+            AgentSpawnAdmission::Admitted(admitted) => *admitted,
+            // A pending run under this row's dedupe key is the run it made.
+            AgentSpawnAdmission::Answered(outcome) => {
+                let AgentDispatchOutcome::Existing(status) = *outcome else {
+                    return Ok(false);
+                };
+                self.commit(row, row.clone(), |_, next| {
+                    put_run(next, status.attempt.id);
+                    Ok(())
+                })?;
+                return Ok(true);
+            }
+        };
+        self.commit(row, row.clone(), |txn, next| {
+            let (AgentDispatchOutcome::Dispatched(status)
+            | AgentDispatchOutcome::Existing(status)) =
+                dispatcher.enqueue_admitted_in_txn(txn, admitted)?
+            else {
+                return Err(Error::InvariantViolation(
+                    "an admitted agent spawn enqueues its run or finds it",
+                ));
+            };
+            put_run(next, status.attempt.id);
+            Ok(())
+        })?;
+        self.vault.store.notify_attempt_observers();
+        Ok(true)
+    }
+
+    /// Spend the candidate's sealed confirmation, serve its cohort and keep
+    /// the release on the task, in one write with the serving's exposure
+    /// settled. A shot already spent (by the workflow's own door) is never
+    /// spent again: the campaign holds. A cohort that will not serve after
+    /// the shot leaves the shot spent, as `reserve_confirmation` does.
     fn release(
         &self,
         row: &ResearchContinuation,
         running: &ResearchRunning,
         candidate: AttemptId,
     ) -> Result<Flow> {
-        let mut next = row.clone();
-        if !self.shot_spent(candidate)? {
-            match reserve_confirmation(self.vault, self.root(), candidate, self.now) {
+        let root = self.root();
+        let seat = self.binding.confirmation.as_ref().map(|seat| seat.cohort);
+        self.commit(row, row.clone(), |txn, next| {
+            if basis_in_txn(self.vault, txn, root, candidate)?
+                .is_some_and(|basis| basis.confirmation.is_some())
+            {
+                return self.end_unserved(txn, next, running, shot_spent_hold());
+            }
+            let shot = seat
+                .ok_or(invalid("this campaign names no sealed confirmation cohort"))
+                .and_then(|cohort| {
+                    spend_confirmation_shot_in_txn(
+                        self.vault, txn, root, candidate, cohort, self.now,
+                    )
+                    .map(|_| cohort)
+                });
+            let cohort = match shot {
+                Ok(cohort) => cohort,
+                // Refused before the shot was consumed: nothing was spent.
+                Err(Error::InvalidConfig(reason)) => {
+                    return self.end_unserved(txn, next, running, failed(reason));
+                }
+                Err(error) => return Err(error),
+            };
+            match serve_confirmation_in_txn(self.vault, txn, root, candidate, cohort, self.now) {
                 Ok(release) => {
+                    if let Some(exposure) = running.exposure {
+                        finish_in_txn(
+                            self.vault,
+                            txn,
+                            root,
+                            exposure,
+                            Finish::Settle(SERVING_EXPOSURE),
+                        )?;
+                    }
                     if let Some(running) = &mut next.running {
                         running.release = Some(release);
                     }
-                    self.save(row, next)?;
-                    return Ok(Flow::Next);
+                    Ok(Flow::Next)
                 }
-                Err(Error::InvalidConfig(reason)) => {
-                    // Refused before the shot was consumed: nothing was spent.
-                    if !self.shot_spent(candidate)? {
-                        self.refund(running.reservation)?;
-                        next.running = None;
-                        next.state = failed(reason);
-                        self.save(row, next)?;
-                        return Ok(Flow::Stop);
-                    }
+                Err(Error::InvalidConfig(_)) => {
+                    self.end_unserved(txn, next, running, shot_spent_hold())
                 }
-                Err(error) => return Err(error),
+                Err(error) => Err(error),
             }
-        }
-        self.refund(running.reservation)?;
+        })
+    }
+
+    /// End a confirmation whose cohort was not served, in `txn`: refund what
+    /// it holds open, clear it, and leave `state`.
+    fn end_unserved(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        next: &mut ResearchContinuation,
+        running: &ResearchRunning,
+        state: ResearchContinuationState,
+    ) -> Result<Flow> {
+        self.refund_running_in_txn(txn, running)?;
         next.running = None;
-        next.state = ResearchContinuationState::Held {
-            reason: SHOT_SPENT.to_owned(),
-        };
-        self.save(row, next)?;
+        next.state = state;
         Ok(Flow::Stop)
     }
 
@@ -321,8 +478,10 @@ impl Pass<'_> {
                 return Err(invalid("a held-out basis dispatches no run"));
             }
         }
-        self.settle(running.reservation, run)?;
-        self.save(row, next)?;
+        let actual = run_spend_units(self.vault, run)?;
+        self.commit(row, next, |txn, _| {
+            self.settle_in_txn(txn, running.reservation, actual)
+        })?;
         Ok(Flow::Next)
     }
 
@@ -607,12 +766,6 @@ impl Pass<'_> {
             .find(|basis| basis.candidate == candidate))
     }
 
-    fn shot_spent(&self, candidate: AttemptId) -> Result<bool> {
-        Ok(self
-            .basis_of(candidate)?
-            .is_some_and(|basis| basis.confirmation.is_some()))
-    }
-
     fn measurement(
         &self,
         split: &CampaignDatasetRef,
@@ -633,30 +786,46 @@ impl Pass<'_> {
             .find(|row| row.id == id))
     }
 
-    /// Settle a finished run's reservation with what it spent, once.
-    fn settle(&self, id: EntityId, run: AttemptId) -> Result<()> {
-        if let Some(row) = self.reservation(id)?
-            && row.settlement.is_none()
-        {
-            match run_spend_units(self.vault, run)? {
-                Some(actual) => {
-                    settle_research_work(self.vault, self.root(), id, actual)?;
-                }
-                None => {
-                    settle_research_work_unknown(self.vault, self.root(), id)?;
-                }
-            }
+    /// Whether reservation `id` is still open in `txn`.
+    fn open_in_txn(&self, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<bool> {
+        Ok(reservation_in_txn(self.vault, txn, self.root(), id)?
+            .is_some_and(|row| row.settlement.is_none()))
+    }
+
+    /// Settle a finished run's reservation in `txn` with what it spent
+    /// (`None`: no token meter, so it stays committed), once.
+    fn settle_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        actual: Option<u64>,
+    ) -> Result<()> {
+        if self.open_in_txn(txn, id)? {
+            let how = actual.map_or(Finish::Unknown, Finish::Settle);
+            finish_in_txn(self.vault, txn, self.root(), id, how)?;
         }
         Ok(())
     }
 
-    /// Refund a reservation nothing was dispatched on, once.
-    fn refund(&self, id: EntityId) -> Result<()> {
-        if self
-            .reservation(id)?
-            .is_some_and(|row| row.settlement.is_none())
-        {
-            refund_research_work(self.vault, self.root(), id)?;
+    /// Refund a reservation nothing was spent on, in `txn`, once.
+    fn refund_in_txn(&self, txn: &mut heed::RwTxn<'_>, id: EntityId) -> Result<()> {
+        if self.open_in_txn(txn, id)? {
+            finish_in_txn(self.vault, txn, self.root(), id, Finish::Refund)?;
+        }
+        Ok(())
+    }
+
+    /// Refund what a task that dispatched nothing holds open, in `txn`: its
+    /// token work, and a confirmation's exposure while it is open (the
+    /// serving settles it in the write that serves).
+    fn refund_running_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        running: &ResearchRunning,
+    ) -> Result<()> {
+        self.refund_in_txn(txn, running.reservation)?;
+        if let Some(exposure) = running.exposure {
+            self.refund_in_txn(txn, exposure)?;
         }
         Ok(())
     }

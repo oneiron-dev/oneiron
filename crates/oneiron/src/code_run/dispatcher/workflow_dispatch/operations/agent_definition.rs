@@ -8,41 +8,8 @@ use crate::llm::{ModelId, ModelTierRef};
 use crate::skill::SkillDependency;
 use serde::{Deserialize, Serialize};
 
-/// A versioned composition reference, not an installed capability or grant.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentSkillInput {
-    pub skill_id: String,
-    #[serde(default)]
-    pub min_version: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentMcpInput {
-    pub key: String,
-    #[serde(default)]
-    pub min_version: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum AgentScopeInput {
-    #[default]
-    All,
-    Base,
-    World {
-        world: EntityId,
-    },
-}
-
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentCeilingInput {
-    Auto,
-    #[default]
-    Proposed,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::code_run::dispatcher::workflow_dispatch::operations::agent_definition::{AgentCeilingInput, AgentMcpInput, AgentScopeInput, AgentSkillInput};
 
 /// The authored composition. Importing one is the same inert create as
 /// defining one locally; it cannot import approval, provenance or a system id.

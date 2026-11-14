@@ -810,7 +810,15 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
     .await;
     assert!(exact.get("error").is_none(), "{exact}");
     let exact = &exact["result"]["structuredContent"];
-    let page: RoomPage = serde_json::from_value(exact["output"].clone()).expect("typed page");
+    let mut page: RoomPage = serde_json::from_value(exact["output"].clone()).expect("typed page");
+    // The verb names each turn's actor (FIX [UI-GATE-PREVIEW] phase 3); the
+    // engine's own page door leaves that table empty.
+    let actors = std::mem::take(&mut page.actors);
+    assert_eq!(
+        actors.keys().cloned().collect::<Vec<_>>(),
+        vec![owner.to_hex()],
+        "every turn is the owner's"
+    );
     assert_eq!(
         page,
         memory

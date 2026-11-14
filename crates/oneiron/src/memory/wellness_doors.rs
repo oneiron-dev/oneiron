@@ -16,11 +16,8 @@ pub struct WellnessPolicyConfigureRequest {
     pub policy: Option<ActionModePolicy>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WellnessPersonRequest {
-    pub affected_person_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::wellness_doors::WellnessPersonRequest;
 
 /// Non-clinical measurements and advisory mode, never a diagnosis or a truth revision.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

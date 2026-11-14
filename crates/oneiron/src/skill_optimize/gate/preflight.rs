@@ -45,18 +45,8 @@ struct PreflightRow {
     passed: bool,
 }
 
-/// A proposal's offline preflight on its current basis.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SkillEditPreflight {
-    /// No floor regressed, the honesty floor included.
-    pub passed: bool,
-    /// The goal revision the floors were judged under.
-    pub goal_revision: String,
-    /// Each offline floor and cost axis, scored on the held-out set.
-    pub offline: Vec<(String, AxisScores)>,
-    /// The honesty floor, from the same held-out replays.
-    pub honesty: AxisScores,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::gate::preflight::SkillEditPreflight;
 
 impl From<PreflightRow> for SkillEditPreflight {
     fn from(row: PreflightRow) -> Self {
@@ -98,8 +88,9 @@ fn basis_in_txn(
     target: &EntityId,
     current: &SkillRecord,
     judge_revision: &str,
+    reader: WriteActor,
 ) -> Result<(PreflightBasis, GoalDefinition, Vec<String>)> {
-    let definition = goal_definition_in_txn(vault, txn, target)?;
+    let definition = goal_definition_in_txn(vault, txn, target, Some(reader))?;
     let held_out = held_out_receipts_in_txn(vault, txn, target)?;
     let basis = PreflightBasis {
         proposal_digest: skill_body_binding_digest(staged)?,
@@ -160,6 +151,7 @@ fn preflight_with_owner(
         &target,
         &current,
         scorer.judge_revision(),
+        goal_reader_in_txn(vault, &txn, owner)?,
     )?;
     if let Some(row) = PREFLIGHTS.get(&vault.store, &txn, proposal)?
         && row.basis == basis
@@ -175,6 +167,10 @@ fn preflight_with_owner(
         return Err(invalid("an offline preflight requires held-out evidence"));
     }
     let plan = super::live::goal_axis_plan(&definition, 0);
+    // The goal the preflight reads under, for a host scorer: the honesty
+    // cases (review round 1 of #7553) and the offline floors (review round 2
+    // of #7614).
+    let edit_goal = super::goal_axis::edit_goal_of(&definition);
     let offline = crate::skill_optimize::goal_axes::score_offline_goal_axes(
         target,
         &current,
@@ -182,6 +178,7 @@ fn preflight_with_owner(
         &plan.offline,
         &held_out,
         scorer,
+        Some(&edit_goal),
     )?;
     let before = HeldOutReplayCase {
         skill: target,
@@ -189,6 +186,7 @@ fn preflight_with_owner(
         version: &current.version,
         instructions: &current_instructions,
         held_out_receipts: &held_out,
+        goal: Some(&edit_goal),
     };
     let after = HeldOutReplayCase {
         skill: target,
@@ -196,6 +194,7 @@ fn preflight_with_owner(
         version: &staged.version,
         instructions: &staged_instructions,
         held_out_receipts: &held_out,
+        goal: Some(&edit_goal),
     };
     let honesty = super::measurement::measure_honesty(scorer, &before, &after)?;
     let floor = |name: &str| {
@@ -218,9 +217,7 @@ fn preflight_with_owner(
         passed,
     };
     vault.with_write_txn_grouped(|txn| {
-        if let Some(owner) = owner {
-            owner.revalidate_in_txn(vault, txn)?;
-        }
+        let reader = goal_reader_in_txn(vault, txn, owner)?;
         let staged_now = vault.read_skill_record_in_txn(txn, proposal)?;
         let current_now = vault.read_skill_record_in_txn(txn, &target)?;
         let (now, _, _) = basis_in_txn(
@@ -230,6 +227,7 @@ fn preflight_with_owner(
             &target,
             &current_now,
             scorer.judge_revision(),
+            reader,
         )?;
         if now != row.basis {
             return Err(retry(
@@ -261,7 +259,7 @@ pub(crate) fn skill_edit_trial_basis_in_txn(
     if !target_is_current(&staged, &current) || staged.version == current.version {
         return Ok(None);
     }
-    let definition = goal_definition_in_txn(vault, txn, &target)?;
+    let definition = goal_definition_in_txn(vault, txn, &target, Some(coach_reader()?))?;
     let Some(join) = definition.project else {
         return Ok(None);
     };

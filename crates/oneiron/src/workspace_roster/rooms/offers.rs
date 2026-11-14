@@ -206,20 +206,8 @@ impl StoredOffer {
     }
 }
 
-/// A page of the current cards in a room, or in one of its threads.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OffersRequest {
-    pub room: EntityId,
-    /// One thread's cards; `None` reads every card in the room.
-    #[serde(default)]
-    pub branch: Option<EntityId>,
-    /// The `next_after` of the previous page.
-    #[serde(default)]
-    pub after: Option<String>,
-    #[serde(default)]
-    pub limit: Option<u32>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::rooms::offers::OffersRequest;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OffersPage {

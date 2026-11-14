@@ -569,4 +569,53 @@ impl UsageLedger {
             .collect();
         Ok(usage)
     }
+
+    /// The units settled by calls stamped with call purpose `purpose` that
+    /// occurred in `from <= at < until`: what the Coach's offer passes spent
+    /// of the budget they share. A stored event that does not decode makes
+    /// the sum `u64::MAX`, so an unreadable spend reads as spent, never as
+    /// zero.
+    ///
+    /// # Errors
+    ///
+    /// An invalid owner or vault dimension, or a store error.
+    pub fn purpose_settled_units(
+        &self,
+        owner: &str,
+        vault_id: &str,
+        purpose: &str,
+        from: u64,
+        until: u64,
+    ) -> Result<u64, UsageError> {
+        validate_dimension("owner", owner, MAX_DIMENSION_LEN)?;
+        validate_dimension("vaultId", vault_id, MAX_DIMENSION_LEN)?;
+        let mut units: u64 = 0;
+        self.vault
+            .try_with_write_txn_grouped(|txn| -> Result<_, UsageError> {
+                self.vault.sync_state_visit_prefix_in_write_txn(
+                    txn,
+                    &usage_event_prefix(owner, vault_id),
+                    |_, raw| -> Result<(), UsageError> {
+                        let Ok(stored) = decode_entry(raw) else {
+                            units = u64::MAX;
+                            return Ok(());
+                        };
+                        let at = stored.event.occurred_at.unwrap_or(stored.recorded_at);
+                        if at < from || at >= until {
+                            return Ok(());
+                        }
+                        if let Some(call) = stored
+                            .event
+                            .run
+                            .as_ref()
+                            .filter(|call| call.purpose.as_deref() == Some(purpose))
+                        {
+                            units = units.saturating_add(call.settled_units);
+                        }
+                        Ok(())
+                    },
+                )
+            })?;
+        Ok(units)
+    }
 }

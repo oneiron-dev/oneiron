@@ -36,14 +36,8 @@ use crate::{EntityId, Error, Result, Vault};
 /// and the date on either side.
 const BOUNDARY_SEARCH_DAYS: usize = 4;
 
-/// Whether a cycle still admits its items.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum FreeTimeCycleState {
-    Open,
-    /// Ended: no new item runs; calls already made settle normally.
-    Closed,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_runner::free_time::cycle::FreeTimeCycleState;
 
 /// What the agent chose for its own time, in its free time for its human.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

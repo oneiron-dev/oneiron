@@ -15,19 +15,8 @@ use crate::work_line::LineObserver;
 use crate::{EdgeActorClass, EntityId, Vault};
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AdmissionStatusRequest {
-    /// The call's x-oneiron-invocation, 32 hex digits.
-    pub intent_key: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AdmissionReceiptsRequest {
-    /// The exact set of authored invocation ids to reconcile, in reply order.
-    pub intent_keys: Vec<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::receipt::admission::{AdmissionReceiptsRequest, AdmissionStatusRequest};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]

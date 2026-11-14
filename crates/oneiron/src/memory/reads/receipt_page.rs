@@ -106,6 +106,14 @@ pub struct VaultReceiptsPage {
     /// Send receipt rows skipped as undecodable (FIX 12044): counted, never
     /// read as receipts. None on the gate ledger, which holds no sends.
     pub undecodable: u32,
+    /// Who made each receipt's change, keyed by the `actor_ref` it names, as
+    /// this reader may name them (FIX [UI-GATE-PREVIEW] phase 3): one entry
+    /// per actor on the page, `unknown` for one the reader cannot name. The
+    /// principal a receipt was made on behalf of stays its own field. The
+    /// caller's own `vault.receipts` fills it; a room session's read of the
+    /// verb leaves it empty.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub actors: std::collections::BTreeMap<String, crate::context_board::ActorAttribution>,
 }
 
 /// Where a family page ends, in newest-first, then kind and id, order.
@@ -226,7 +234,14 @@ impl Memory<'_> {
         kinds: &[String],
         after: Option<&str>,
     ) -> MemoryResult<VaultReceiptsPage> {
-        receipts_page_for(self, limit, kinds, after)
+        let mut page = receipts_page_for(self, limit, kinds, after)?;
+        page.actors = self.actor_attributions(
+            page.receipts
+                .iter()
+                .filter_map(|receipt| receipt.actor_ref.clone())
+                .collect(),
+        )?;
+        Ok(page)
     }
 }
 
@@ -353,6 +368,7 @@ pub(crate) fn receipts_page_for(
         undecodable: reader
             .receipt_vault()
             .undecodable_send_receipts_for_kinds(kinds)?,
+        actors: std::collections::BTreeMap::new(),
     })
 }
 

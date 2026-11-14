@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 use oneiron::Vault;
 use oneiron::limit_ask::EngineLimit;
 use oneiron_organ_protocol::{
-    ByteBuf, Call, CancelReason, Hash32, INLINE_MAX_BYTES, Input, Outcome, Payload, SharedRegion,
+    ByteBuf, Call, CancelReason, ErrorCode, Hash32, INLINE_MAX_BYTES, Input, Outcome, Payload,
+    SharedRegion,
 };
 
 use crate::asks::{AskContext, CallAsks};
@@ -253,7 +254,8 @@ impl OrganHost {
         true
     }
 
-    /// Stops every process idle longer than `idle_unload`.
+    /// Stops every process idle longer than `idle_unload`, and every
+    /// recycled process no call is in flight on any more. Counts the first.
     pub fn unload_idle(&self) -> usize {
         let slots: Vec<Arc<Slot>> = lock(&self.slots).values().cloned().collect();
         let mut unloaded = 0;
@@ -263,6 +265,7 @@ impl OrganHost {
                 slot.prune();
                 unloaded += 1;
             }
+            stop_recycled(&slot);
         }
         unloaded
     }
@@ -572,9 +575,18 @@ impl OrganHost {
             return Err(HostError::Revoked);
         }
         let proposal = match reply {
-            Outcome::Proposal(proposal) => proposal,
+            Outcome::Proposal(proposal) => {
+                slot.answered(&process, false);
+                proposal
+            }
             Outcome::Error(error) => {
                 vault.measure_limit(EngineLimit::OrganDetailBytes, error.detail.len() as u64);
+                // A third `internal` in a row recycles the live process; it
+                // is stopped now unless another call is still in flight on
+                // it, and then by the sweep once that call ends.
+                if slot.answered(&process, error.code == ErrorCode::Internal) {
+                    stop_recycled(&slot);
+                }
                 return Err(HostError::Organ(error));
             }
         };
@@ -778,6 +790,18 @@ impl OrganHost {
             len,
             held,
         })
+    }
+}
+
+/// Stops each recycled process of `slot` that no call is in flight on any
+/// more ([`Slot::answered`]), as an unload stops a process.
+fn stop_recycled(slot: &Slot) {
+    let recycled = slot.take_idle_recycled();
+    for process in &recycled {
+        process.shutdown(Duration::from_secs(1));
+    }
+    if !recycled.is_empty() {
+        slot.prune();
     }
 }
 

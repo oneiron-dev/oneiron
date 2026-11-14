@@ -154,26 +154,8 @@ impl StoredHolderProof {
     }
 }
 
-/// A holder signature's bytes: exactly 128 lowercase hex characters.
-fn holder_signature_bytes(signature: &str) -> Option<[u8; 64]> {
-    let text = signature.as_bytes();
-    if text.len() != 128 {
-        return None;
-    }
-    let digit = |c: u8| match c {
-        b'0'..=b'9' => Some(c - b'0'),
-        b'a'..=b'f' => Some(c - b'a' + 10),
-        _ => None,
-    };
-    let mut bytes = [0_u8; 64];
-    for (byte, pair) in bytes.iter_mut().zip(text.chunks_exact(2)) {
-        let [high, low] = pair else {
-            return None;
-        };
-        *byte = (digit(*high)? << 4) | digit(*low)?;
-    }
-    Some(bytes)
-}
+#[doc(hidden)]
+use oneiron_verb_wire::task_verb::ask_forward::holder_signature_bytes;
 
 /// One relayed intent, as the replica that took it persisted it: an
 /// immutable TASK companion record, never an answer. Its id derives from its

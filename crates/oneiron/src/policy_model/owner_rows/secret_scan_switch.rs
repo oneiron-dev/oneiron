@@ -3,7 +3,6 @@
 //! The switch is a vault setting held in this vault's metadata, read inside
 //! every batch write transaction. Only a live vault owner changes it, and each
 //! change lands its receipt and a typed event in the same transaction.
-use serde::{Deserialize, Serialize};
 
 use super::ledger::{PolicyChangedEvent, put_event_in_txn};
 use crate::Vault;
@@ -19,19 +18,8 @@ use crate::side_table::{self, Named, SideTable};
 /// Event kind on the shared owner-policy stream for a switch change.
 const SECRET_SCAN_CHANGED: &str = "policy.secret_scan.changed";
 
-/// One owner change of the switch, in revision order.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SecretScanReceipt {
-    pub receipt_id: String,
-    pub revision: u64,
-    /// The owner actor who switched it, as hex.
-    pub author: String,
-    pub mode: SecretScanMode,
-    /// The mode the vault had before this change.
-    pub previous: SecretScanMode,
-    pub at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::policy_model::owner_rows::secret_scan_switch::SecretScanReceipt;
 
 const RECEIPTS: SideTable<u64, SecretScanReceipt, Named> =
     SideTable::new(&side_table::OWNER_POLICY_SECRET_SCAN_RECEIPT);

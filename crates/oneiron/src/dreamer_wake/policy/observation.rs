@@ -19,9 +19,8 @@ pub struct WakeCadenceReceipt {
     pub processed_change_id: Option<[u8; 16]>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WakeCadenceRequest {}
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_wake::policy::observation::WakeCadenceRequest;
 
 /// The policy, durable decision and unconsumed recipe ranges in one snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

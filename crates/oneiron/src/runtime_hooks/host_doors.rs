@@ -61,14 +61,8 @@ pub struct HostWakeResult {
     pub request_id: Option<crate::dreamer_wake::NightStepRequestId>,
 }
 
-/// Names an existing durable spend scope. Its cap's policy is Suspend;
-/// neither the policy nor accounting can be changed by this notification.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HostBudgetHitRequest {
-    pub seat: String,
-    pub policy: BudgetExhaustionPolicy,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::runtime_hooks::host_doors::HostBudgetHitRequest;
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HostBudgetAccounting {

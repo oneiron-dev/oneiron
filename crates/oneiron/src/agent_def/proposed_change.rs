@@ -43,17 +43,8 @@ const APPROVE_REASON: &str = "gate.allow.owner_agent_definition_change";
 /// The reason code of a rejection.
 const REJECT_REASON: &str = "gate.deny.owner_agent_definition_change";
 
-/// How the owner answered a proposed change to a stored definition.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum ProposedAgentDefinitionChangeDecision {
-    /// The proposal became the stored definition's next version.
-    Approved,
-    /// The stored definition stayed as it was.
-    Rejected,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::agent_def::proposed_change::ProposedAgentDefinitionChangeDecision;
 
 /// One proposed change waiting for the owner.
 #[derive(Debug, Clone)]

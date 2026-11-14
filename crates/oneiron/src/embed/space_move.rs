@@ -101,25 +101,10 @@ impl std::fmt::Display for SpaceRef {
     }
 }
 
-/// A paired comparison's reading (NOT-WORSE = A).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum NotWorse {
-    /// The interval's low end is at or above minus the tolerance.
-    NotWorse,
-    /// The whole interval is below minus the tolerance.
-    Worse,
-    /// Too few families, or the interval spans the tolerance.
-    Unknown,
-}
-
-/// A family-grouped mean paired difference and its two-sided 95% interval.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct PairedInterval {
-    pub mean: f32,
-    pub low: f32,
-    pub high: f32,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::embed::space_move::{
+    CohortProbe, NotWorse, PairedInterval, SpaceMoveState,
+};
 
 /// One kind's paired probe run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -160,18 +145,6 @@ pub struct KindProbeCheck {
     pub cohort_members: Vec<CohortProbe>,
 }
 
-/// One probe a check ran whose date window had ended: a member of a cut cohort.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CohortProbe {
-    /// 32 hex.
-    pub probe: String,
-    /// Its source document.
-    pub source: EntityId,
-    /// Its date window, vault seconds: `from` up to, not including, `until`.
-    pub from: u64,
-    pub until: u64,
-}
-
 /// One paired probe run over every kind a move carries.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SpaceMoveCheck {
@@ -184,22 +157,6 @@ pub struct SpaceMoveCheck {
     /// no cohort metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cohort_check: Option<String>,
-}
-
-/// Where a move stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SpaceMoveState {
-    /// The candidate fills beside the incumbent, which serves.
-    Open,
-    /// The candidate serves; the incumbent stays declared for undo. `by_owner` is the owner's
-    /// yes over a check that did not read not worse.
-    SwappedIn { at: u64, by_owner: bool },
-    /// The incumbent kept serving; the candidate's rows of the moved kinds went. `timed_out` is
-    /// a move closed at [`SPACE_MOVE_FILL_DEADLINE_SECS`] with no check run, not a worse one.
-    Kept { at: u64, timed_out: bool },
-    /// An undo bound the incumbent again.
-    Undone { at: u64 },
 }
 
 /// A kind slot version move: every kind slot the incumbent served, moving to the candidate.

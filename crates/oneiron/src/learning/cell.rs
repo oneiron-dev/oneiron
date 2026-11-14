@@ -14,8 +14,8 @@ use crate::error::{Error, Result};
 
 pub use crate::receipt::task_type_ref::{ROOT_TYPE_NODE, TypeRef};
 
-/// Longest qualifier text a cell keeps, in bytes.
-const MAX_QUALIFIER_BYTES: usize = 256;
+#[doc(hidden)]
+use oneiron_verb_wire::learning::cell::MAX_QUALIFIER_BYTES;
 
 pub use crate::claim::learning_predicate::LearningPredicate;
 

@@ -85,16 +85,5 @@ pub struct RecallExecution<'a> {
     pub render_budget: Option<usize>,
 }
 
-use crate::store::RetrievalTurn;
-use serde::{Deserialize, Serialize};
-
-/// Opt-in stage capture and the actual host turn whose retrieval is being observed.
-/// The vault's capture setting remains authoritative; this cannot turn it on.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RecallTelemetry {
-    #[serde(default)]
-    pub capture_trace: bool,
-    #[serde(default)]
-    pub turn: Option<RetrievalTurn>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::retrieval_depth::controls::RecallTelemetry;

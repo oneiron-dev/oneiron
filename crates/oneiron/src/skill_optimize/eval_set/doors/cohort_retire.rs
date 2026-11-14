@@ -6,12 +6,9 @@
 //! the caller as its author (LEARN-RETIRE-SOURCE = B); the eval-authoring
 //! skill's own retirements keep naming its attempt.
 
-use serde::{Deserialize, Serialize};
-
 use super::super::cohort::{EvalCohort, EvalCohortRetirementAuthor};
 use crate::EdgeActorClass;
 use crate::authority::{NoStanding, PACT_STANDING_LAPSED, principal_standing_or_lapse_in_txn};
-use crate::entity_id::EntityId;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 
 /// The verb a Grant lists to name the retirement: the row's own name.
@@ -20,15 +17,8 @@ const RETIRE_VERB: &str = "vault.evals.cohorts.retire";
 /// Why an agent with no conferring Grant is refused.
 const NO_GRANT: &str = "no live Grant from a live owner names this agent and lists the verb";
 
-/// `vault.evals.cohorts.retire`'s input: the cohort and why. Who retires it,
-/// the exposure it retires on and the time come from the engine.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EvalCohortRetireRequest {
-    pub cohort: EntityId,
-    /// Why the cohort retires: at most 512 bytes once trimmed.
-    pub reason: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::eval_set::doors::cohort_retire::EvalCohortRetireRequest;
 
 /// `vault.evals.cohorts.retire` on the caller's handle: the retired cohort,
 /// with its receipt. A cohort that already retired comes back with its first

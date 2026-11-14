@@ -117,7 +117,7 @@ impl Vault {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "missing_file".into(),
-                    judged_live: judged_live.clone(),
+                    judged_live,
                 });
                 continue;
             };
@@ -127,7 +127,7 @@ impl Vault {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "missing_file".into(),
-                    judged_live: judged_live.clone(),
+                    judged_live,
                 });
                 continue;
             };
@@ -154,7 +154,7 @@ impl Vault {
                 abstained.push(UnitAbstention {
                     unit,
                     decision: None,
-                    judged_live: judged_live.clone(),
+                    judged_live,
                 });
                 continue;
             }
@@ -170,7 +170,7 @@ impl Vault {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "evidence_budget".into(),
-                    judged_live: judged_live.clone(),
+                    judged_live,
                 });
                 continue;
             };

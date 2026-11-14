@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "The SDK generator: writes the verb table's generated SDK outputs"
 repository.workspace = true
-homepage.workspace = true
 publish = false
 
 [lib]

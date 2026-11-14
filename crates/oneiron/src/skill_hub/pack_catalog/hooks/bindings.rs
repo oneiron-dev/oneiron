@@ -215,8 +215,12 @@ impl Vault {
             let previous = row.clone();
             row.enabled = enabled;
             let envelope = owner_envelope(owner, owner_id, &row.pack, &row.source)?;
+            // The owner's dial carries the owner's proof past the
+            // criticality floor ([`Self::bind_pack_hooks`]).
+            let owner_authored = owner.owner_answer_in_txn(self, txn)?;
             let at = crate::unix_seconds_now();
             self.batch_in()
+                .with_owner_authored(owner_authored)
                 .claim_candidate(
                     &id,
                     binding_candidate(&row)?,

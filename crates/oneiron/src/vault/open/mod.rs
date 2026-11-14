@@ -717,6 +717,7 @@ impl Vault {
         // older than their index (PAIR-GRANT-DESIGN Q2 = A).
         crate::federation::backfill_agent_grant_member_index(&vault, false)?;
         vault.backfill_widen_contact_verdict_index(false)?;
+        vault.backfill_standing_outbound_grant_index(false)?;
         crate::counterparty_contact::backfill_counterparty_identity_index(&vault, false)?;
         vault.backfill_row_deletion_fences_on_open()?;
         vault.backfill_origin_cas_intents_on_open()?;
@@ -819,6 +820,13 @@ impl Vault {
     #[must_use]
     pub fn is_host_readable(&self) -> bool {
         self.privacy.host_readable()
+    }
+
+    /// Who supplies this vault's data key, as the opener validated it: what
+    /// the recovery preset reads before "Nobody but me" is entered.
+    #[must_use]
+    pub(crate) fn data_key_custody(&self) -> &crate::config::VaultDataKeyCustody {
+        &self.privacy.data_key_custody
     }
 
     /// This vault's content-free diagnostic counters.

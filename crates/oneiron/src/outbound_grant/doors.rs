@@ -173,12 +173,30 @@ pub(crate) fn standing_outbound_grants_in_txn(
 }
 
 /// Every standing outbound grant `principal_ref` holds, revoked ones
-/// included, in id order, on the caller's transaction.
+/// included, in id order, on the caller's transaction: served from the
+/// principal index when it is complete, else by the full scan.
 ///
 /// # Errors
 ///
 /// Storage errors.
 pub(crate) fn standing_outbound_grants_for_principal_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    principal_ref: &str,
+) -> Result<Vec<StandingOutboundGrant>> {
+    match super::index::indexed_grants_for_principal_in_txn(store, txn, principal_ref) {
+        Some(grants) => Ok(grants),
+        None => scanned_standing_outbound_grants_for_principal_in_txn(store, txn, principal_ref),
+    }
+}
+
+/// [`standing_outbound_grants_for_principal_in_txn`] by the full scan of
+/// every standing consent Grant row.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn scanned_standing_outbound_grants_for_principal_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     principal_ref: &str,
@@ -189,7 +207,8 @@ pub(crate) fn standing_outbound_grants_for_principal_in_txn(
 }
 
 /// The standing outbound grant `id`, on the caller's transaction: its live
-/// row when it has one, else the row it was revoked as.
+/// row when it has one, else the row it was revoked as. Served from the id
+/// index when it is complete, else by the full scan.
 ///
 /// # Errors
 ///
@@ -199,17 +218,52 @@ pub(crate) fn standing_outbound_grant_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<StandingOutboundGrant>> {
+    let grants = match super::index::indexed_grants_with_id_in_txn(store, txn, id) {
+        Some(grants) => grants,
+        None => scanned_standing_outbound_grants_with_id_in_txn(store, txn, id)?,
+    };
+    Ok(live_else_first_grant(grants))
+}
+
+/// [`standing_outbound_grant_in_txn`] by the full scan of every standing
+/// consent Grant row.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn scanned_standing_outbound_grant_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<StandingOutboundGrant>> {
+    Ok(live_else_first_grant(
+        scanned_standing_outbound_grants_with_id_in_txn(store, txn, id)?,
+    ))
+}
+
+/// Every standing outbound grant whose id is `id`, revoked ones included, in
+/// the scan's order.
+fn scanned_standing_outbound_grants_with_id_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<StandingOutboundGrant>> {
+    let mut grants = standing_outbound_grants_in_txn(store, txn)?;
+    grants.retain(|grant| grant.id == *id);
+    Ok(grants)
+}
+
+/// The first live grant of `grants`, else the first one.
+fn live_else_first_grant(grants: Vec<StandingOutboundGrant>) -> Option<StandingOutboundGrant> {
     let mut found = None;
-    for grant in standing_outbound_grants_in_txn(store, txn)? {
-        if grant.id != *id {
-            continue;
-        }
+    for grant in grants {
         if grant.is_active() {
-            return Ok(Some(grant));
+            return Some(grant);
         }
         if found.is_none() {
             found = Some(grant);
         }
     }
-    Ok(found)
+    found
 }

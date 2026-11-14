@@ -11,8 +11,6 @@
 //! still the vault's; once another change moved it, the item asks for a
 //! fresh preview instead, and every completed item keeps its receipt. A
 //! journal written before the pin existed keeps today's reading.
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 
 use super::apply::{ShapeApplyItem, ShapeItemState, open};
 use super::live::LiveShape;
@@ -26,12 +24,8 @@ use crate::{EntityId, Vault};
 const STALE_PREVIEW: &str = "what this item reaches changed since its preview; plan again to see \
                              the reach it would land with";
 
-/// The dependencies a waiting item's preview stood on, as one digest.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ShapeApprovalDependencies {
-    /// BLAKE3, hex, over the policy read-frontier and the reach rows.
-    pub digest: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::vault_shape::approval::ShapeApprovalDependencies;
 
 /// The dependencies `live` stands on.
 pub(super) fn approval_dependencies(live: &LiveShape) -> ShapeApprovalDependencies {

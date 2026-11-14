@@ -5,6 +5,14 @@
 //! and verb. Slack, LINE, Gmail and native mail ship here (FIX 11641,
 //! FIX 11642).
 //!
+//! Every campaign email ends with one plain opt-out line naming its sender
+//! address (ARCH-0059 #opt-out; Engine ruling L3-02-SEND-MODE-SCOPE = A):
+//! the reader replies STOP, which the STOP-reply path turns into a send hold
+//! and a standing opt-out. The line is appended to the step body before the
+//! send plan or the native message is sealed, so the content ref names it
+//! and a retry seals the same ref. No send carries the bulk List-Unsubscribe
+//! header; a bulk send mode waits for its unsubscribe minter.
+//!
 //! The envelope decode is strict: any other shape — including a program
 //! written before the body filer, whose raw bytes carry no envelope —
 //! fails as [`OutboundFailureKind::InvalidRequest`], never as a literal
@@ -28,6 +36,7 @@ use crate::channel_identity_provider::stalwart::{
     NativeMailMessage, StalwartClient, StalwartSendSink,
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::error::Result;
 use crate::outbound::{
     OutboundExecutionOutcome, OutboundExecutionOutcomeKind, OutboundExecutionRequest,
     OutboundExecutionSink, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
@@ -72,6 +81,74 @@ struct EmailSendKeys {
     subject: String,
     composed_at: u64,
     sender_ref: EntityId,
+}
+
+/// The opt-out line's words before the sender address (Engine ruling
+/// L3-02-SEND-MODE-SCOPE, 13 Nov 21:23; English only until the line is
+/// localised).
+const OPT_OUT_LINE_HEAD: &str = "If you would rather not hear from me again, reply STOP to ";
+
+/// The opt-out line's words after the sender address.
+const OPT_OUT_LINE_TAIL: &str = " and I will not write to you again.";
+
+/// The body a campaign email carries: the step body, then a blank line and
+/// the plain opt-out line naming `sender_address`, the mailbox the reader
+/// replies to (ARCH-0059 #opt-out). The step body's trailing whitespace is
+/// dropped, so the line always follows one blank line. Deterministic: the
+/// same step body and sender give the same bytes.
+fn campaign_email_body(step_body: &str, sender_address: &str) -> String {
+    format!(
+        "{}\n\n{OPT_OUT_LINE_HEAD}{sender_address}{OPT_OUT_LINE_TAIL}",
+        step_body.trim_end()
+    )
+}
+
+/// Seals one campaign gmail send from the filed step body: the member
+/// mailbox's plan whose body ends with the opt-out line naming that mailbox.
+/// The gmail branch sends exactly this plan.
+///
+/// # Errors
+/// As [`GmailSendPlan::new`]: a malformed recipient, a header-unsafe
+/// subject, a body over the plan's cap, or an unrepresentable time.
+pub(crate) fn seal_campaign_gmail_plan(
+    adapter: &GmailDelegatedAdapter,
+    logical_ref: &str,
+    target: &str,
+    subject: &str,
+    step_body: &str,
+    composed_at: u64,
+) -> Result<GmailSendPlan> {
+    let body = campaign_email_body(step_body, adapter.config().mailbox_address());
+    GmailSendPlan::new(
+        adapter,
+        logical_ref,
+        target,
+        subject,
+        &body,
+        None,
+        composed_at,
+    )
+}
+
+/// Seals one campaign native mail message from the filed step body: its text
+/// ends with the opt-out line naming `sender_address`, the sending
+/// identity's own mailbox. The stalwart branch submits exactly this message.
+///
+/// # Errors
+/// As [`NativeMailMessage::new`]: a malformed recipient, an unsafe subject,
+/// or a message over the native mail cap.
+pub(crate) fn seal_campaign_native_message(
+    target: &str,
+    subject: &str,
+    step_body: &str,
+    sender_address: &str,
+) -> Result<NativeMailMessage> {
+    NativeMailMessage::new(
+        target,
+        subject.to_owned(),
+        Some(campaign_email_body(step_body, sender_address)),
+        None,
+    )
 }
 
 /// A campaign send's result sender: the envelope decode, the filed-body
@@ -130,9 +207,10 @@ impl CampaignChannelSender {
 
     /// The gmail branch (FIX 11641): the frozen email keys name the sender
     /// row, whose delegated grant derives the member adapter; the frozen
-    /// body, subject and composition time seal one send plan, which the
-    /// gmail sink executes over the production send wire. The adapter, wire
-    /// and sink are per-`send()` locals; no sender-struct fields needed.
+    /// body with its opt-out line, subject and composition time seal one
+    /// send plan ([`seal_campaign_gmail_plan`]), which the gmail sink
+    /// executes over the production send wire. The adapter, wire and sink
+    /// are per-`send()` locals; no sender-struct fields needed.
     ///
     /// Sink-contract checklist (the campaign gmail send is the stack's
     /// first production consumer): channel `email` + verb `send` from the
@@ -157,13 +235,12 @@ impl CampaignChannelSender {
         let Ok(Some(body_text)) = self.vault.campaign_step_body_text(&envelope.content_ref) else {
             return self.invalid();
         };
-        let Ok(plan) = GmailSendPlan::new(
+        let Ok(plan) = seal_campaign_gmail_plan(
             &adapter,
             intent_id_hex,
             &envelope.target,
             &keys.subject,
             &body_text,
-            None,
             keys.composed_at,
         ) else {
             return self.invalid();
@@ -215,10 +292,12 @@ impl CampaignChannelSender {
 
     /// The stalwart branch (FIX 11642): the frozen email keys name the
     /// sender row, which must already be provisioned as a native mailbox;
-    /// the frozen body, subject and target seal one native message, which
-    /// the stalwart sink submits over the injected host-owned client. The
-    /// message and sink are per-`send()` locals; the client rides the
-    /// sender struct because only the server can build it.
+    /// the frozen body with its opt-out line naming the sender's own
+    /// address, subject and target seal one native message
+    /// ([`seal_campaign_native_message`]), which the stalwart sink submits
+    /// over the injected host-owned client. The message and sink are
+    /// per-`send()` locals; the client rides the sender struct because only
+    /// the server can build it.
     ///
     /// Sink-contract checklist: channel `email` + verb `send`;
     /// `channel_identity_ref` is the sender row; `intent.content_ref` is
@@ -249,11 +328,16 @@ impl CampaignChannelSender {
         let Ok(Some(body_text)) = self.vault.campaign_step_body_text(&envelope.content_ref) else {
             return self.invalid();
         };
-        let Ok(message) = NativeMailMessage::new(
+        // The sender's own address, which the sink sends from, is the one
+        // the opt-out line names.
+        let Ok(Some(sender_facts)) = self.vault.channel_identity_facts(&keys.sender_ref) else {
+            return self.invalid();
+        };
+        let Ok(message) = seal_campaign_native_message(
             &envelope.target,
-            keys.subject.clone(),
-            Some(body_text),
-            None,
+            &keys.subject,
+            &body_text,
+            &sender_facts.address_or_handle,
         ) else {
             return self.invalid();
         };
@@ -262,9 +346,6 @@ impl CampaignChannelSender {
         // key.
         let recipient = message.to.clone();
         let Ok(message_ref) = message.content_ref() else {
-            return self.invalid();
-        };
-        let Ok(Some(sender_facts)) = self.vault.channel_identity_facts(&keys.sender_ref) else {
             return self.invalid();
         };
         let execution = {

@@ -1,8 +1,8 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, test } from "bun:test";
 import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
 import { EngineFixture, type PairedActor } from "./support/engine.ts";
 import { PublicHttpError } from "./support/clients.ts";
-import { defineFile, redactor, secretHex } from "./support/run.ts";
+import { defineFile, expect, redactor, secretHex } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";

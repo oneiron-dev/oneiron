@@ -1,0 +1,2029 @@
+{
+  "provider_seen": [
+    {
+      "digest": "68ab6de1d6a827b746eec1d062ce4cdc857fa3b6ae5270e169bbf23b1c4f8629",
+      "model": "oneiron-testkit/scripted@1",
+      "route": "generate oneiron-testkit/scripted@1",
+      "step": "golden-day-1-0",
+      "streamed": false
+    },
+    {
+      "digest": "78d9143fe540c8d87f9f1c3807d66bd8622baf605aaa7e445e123a51655ea334",
+      "model": "oneiron-testkit/scripted@1",
+      "route": "generate oneiron-testkit/scripted@1",
+      "step": "golden-day-1-1",
+      "streamed": false
+    }
+  ],
+  "schema_version": 1,
+  "script": "golden-day-1",
+  "steps": [
+    {
+      "answer": {
+        "message_short_ids": [
+          "short#2"
+        ],
+        "messages": [
+          {
+            "id": "record#1",
+            "kind": "MESSAGE",
+            "label": "label#2",
+            "short_id": "short#2"
+          }
+        ],
+        "receipt_ref": "receipt#1",
+        "turn": {
+          "id": "turn#1",
+          "kind": "TURN",
+          "label": "label#1",
+          "short_id": "short#1"
+        },
+        "turn_id": "turn#1",
+        "turn_short_id": "short#1",
+        "wake_outcome": {
+          "outcome": "not_armed"
+        }
+      },
+      "at": 1800000000,
+      "caller": "owner",
+      "input": {
+        "conversation_ref": "conversation",
+        "messages": [
+          {
+            "author": "user",
+            "content": "I moved to Lisbon last March, and my sister Ana lives two streets away.",
+            "is_visible": true,
+            "message_type": "dialogue",
+            "order": 0
+          }
+        ],
+        "occurred_at": 1800000000
+      },
+      "step": "witness",
+      "verb": "vault.witness"
+    },
+    {
+      "answer": {
+        "admitted": 2,
+        "attempts": [
+          {
+            "attempt_id": "attempt#1",
+            "attempt_type": "dreamer.sieve.follower",
+            "execution": "completed units=18",
+            "landed": [],
+            "pended": [],
+            "rejected": [],
+            "unlent": false
+          },
+          {
+            "attempt_id": "attempt#2",
+            "attempt_type": "micro",
+            "execution": "completed units=18",
+            "landed": [
+              "claim#1"
+            ],
+            "pended": [],
+            "rejected": [],
+            "unlent": false
+          }
+        ],
+        "claim_authoring_fallback": null,
+        "completed": 2,
+        "deferred": 0,
+        "failed": 0,
+        "landings": 0,
+        "parked": 0,
+        "queue": [
+          {
+            "attempt_id": "attempt#3",
+            "kind": "project.proposal.detect.v1",
+            "park_reason": null,
+            "state": "Queued"
+          },
+          {
+            "attempt_id": "attempt#1",
+            "kind": "dreamer.consolidation.micro",
+            "park_reason": null,
+            "state": "Completed"
+          },
+          {
+            "attempt_id": "attempt#2",
+            "kind": "dreamer.consolidation.micro",
+            "park_reason": null,
+            "state": "Completed"
+          }
+        ],
+        "sources_truncated": 0,
+        "stop": "QueueEmpty",
+        "wake": "Turn",
+        "wake_queued": true
+      },
+      "at": 1800000060,
+      "caller": "dreamer",
+      "input": {},
+      "step": "dreamer-turn-wake",
+      "verb": "dreamer.turn_wake"
+    },
+    {
+      "answer": {
+        "approval": "auto",
+        "claim": {
+          "id": "claim:remembered",
+          "kind": "CLAIM",
+          "label": "label#3",
+          "short_id": "short#3"
+        },
+        "claim_short_id": "short#3",
+        "receipt_ref": "receipt#2",
+        "superseded": null,
+        "superseded_short_id": null
+      },
+      "at": 1800000120,
+      "caller": "owner",
+      "input": {
+        "confidence": 0.9,
+        "learned_at": 1800000120,
+        "occurred_at": 1800000120,
+        "predicate": "project.deadline",
+        "source": "user_stated",
+        "subject_ref": "owner",
+        "value": "label#4"
+      },
+      "step": "remember",
+      "verb": "vault.remember"
+    },
+    {
+      "answer": {
+        "agent_def_ref": "agent",
+        "approval_status": "approved",
+        "definition": {
+          "agent_id": "golden-day-reader",
+          "ceiling": "proposed",
+          "code_mode_mcps": [],
+          "compaction_model": null,
+          "connectors": [],
+          "desc": "the reader the golden day grants and revokes",
+          "display_name": null,
+          "enabled": true,
+          "forked_from": null,
+          "instructions": null,
+          "model_tier": null,
+          "models": [],
+          "scope": {
+            "kind": "all"
+          },
+          "skills": [],
+          "version": "1"
+        },
+        "lifecycle_status": "active"
+      },
+      "at": 1800000180,
+      "caller": "owner",
+      "input": {
+        "agent_def_ref": "agent",
+        "definition": {
+          "agent_id": "golden-day-reader",
+          "desc": "the reader the golden day grants and revokes",
+          "version": "1"
+        }
+      },
+      "step": "agent-create",
+      "verb": "vault.agents.create"
+    },
+    {
+      "answer": {
+        "act_ref": "act#1",
+        "grant": {
+          "agent": "agent",
+          "authority_scope": {
+            "audience": {
+              "kind": "all"
+            },
+            "bands": {
+              "kind": "all"
+            },
+            "facets": {
+              "kind": "all"
+            },
+            "sensitivity": {
+              "kind": "at_most",
+              "value": "restricted"
+            },
+            "verbs": {
+              "kind": "some",
+              "values": [
+                "read"
+              ]
+            },
+            "worlds": {
+              "kind": "all"
+            }
+          },
+          "confers": true,
+          "delegated_by": "owner",
+          "grant_ref": "grant",
+          "revoke_command": "vault.agents.grants.revoke"
+        }
+      },
+      "at": 1800000240,
+      "caller": "owner",
+      "input": {
+        "agent": "agent",
+        "authority_scope": {
+          "audience": {
+            "kind": "all"
+          },
+          "bands": {
+            "kind": "all"
+          },
+          "facets": {
+            "kind": "all"
+          },
+          "sensitivity": {
+            "kind": "all"
+          },
+          "verbs": {
+            "kind": "some",
+            "values": [
+              "read"
+            ]
+          },
+          "worlds": {
+            "kind": "all"
+          }
+        }
+      },
+      "step": "grant-mint",
+      "verb": "vault.agents.grants.mint"
+    },
+    {
+      "answer": {
+        "items": [
+          {
+            "confidence": 0.8999999761581421,
+            "confidence_basis": "deterministic_fallback",
+            "facet": null,
+            "hedge_bucket": "confident",
+            "kind": "CLAIM",
+            "predicate": "project.deadline",
+            "project_ref": "project#1",
+            "provenance": {
+              "evidence_turn_ids": [],
+              "source": "user_stated",
+              "source_revision_ids": [
+                "claim:remembered"
+              ]
+            },
+            "record": {
+              "id": "claim:remembered",
+              "kind": "CLAIM",
+              "label": "label#4",
+              "short_id": "short#3"
+            },
+            "salience": null,
+            "short_id": "short#3",
+            "source_revision_ref": "revision#1",
+            "value_text": "label#4",
+            "world": "world#1"
+          },
+          {
+            "confidence": 0.8999999761581421,
+            "confidence_basis": "deterministic_fallback",
+            "facet": null,
+            "hedge_bucket": "confident",
+            "kind": "CLAIM",
+            "predicate": "residence.city",
+            "project_ref": "project#1",
+            "provenance": {
+              "evidence_turn_ids": [],
+              "source": "generated",
+              "source_revision_ids": [
+                "claim#1"
+              ]
+            },
+            "record": {
+              "id": "claim#1",
+              "kind": "CLAIM",
+              "label": "label#5",
+              "short_id": "short#4"
+            },
+            "salience": null,
+            "short_id": "short#4",
+            "source_revision_ref": "revision#2",
+            "value_text": "Lisbon",
+            "world": "world#1"
+          },
+          {
+            "confidence": 1.0,
+            "facet": null,
+            "hedge_bucket": "confident",
+            "kind": "MACHINE",
+            "predicate": null,
+            "project_ref": null,
+            "provenance": {
+              "evidence_turn_ids": [],
+              "source": "record",
+              "source_revision_ids": [
+                "record#2"
+              ]
+            },
+            "record": {
+              "id": "record#2",
+              "kind": "MACHINE",
+              "label": "label#6",
+              "short_id": "short#5"
+            },
+            "salience": null,
+            "short_id": "short#5",
+            "source_revision_ref": "revision#3",
+            "value_text": "{}",
+            "world": null
+          },
+          {
+            "cited_messages": [
+              {
+                "record": {
+                  "id": "record#1",
+                  "kind": "MESSAGE",
+                  "label": "label#2",
+                  "short_id": "short#2"
+                },
+                "short_id": "short#2",
+                "value_text": "I moved to Lisbon last March, and my sister Ana lives two streets away."
+              }
+            ],
+            "confidence": 1.0,
+            "conversation_id": "conversation",
+            "facet": null,
+            "hedge_bucket": "confident",
+            "kind": "TURN",
+            "predicate": null,
+            "project_ref": null,
+            "provenance": {
+              "evidence_turn_ids": [],
+              "source": "record",
+              "source_revision_ids": [
+                "turn#1",
+                "record#1"
+              ]
+            },
+            "record": {
+              "id": "turn#1",
+              "kind": "TURN",
+              "label": "label#1",
+              "short_id": "short#1"
+            },
+            "salience": null,
+            "short_id": "short#1",
+            "source_revision_ref": "revision#4",
+            "value_text": "I moved to Lisbon last March, and my sister Ana lives two streets away.",
+            "world": null
+          },
+          {
+            "confidence": 1.0,
+            "facet": null,
+            "hedge_bucket": "confident",
+            "kind": "NOTIFICATION",
+            "predicate": null,
+            "project_ref": null,
+            "provenance": {
+              "evidence_turn_ids": [],
+              "source": "record",
+              "source_revision_ids": [
+                "record#3"
+              ]
+            },
+            "record": {
+              "id": "record#3",
+              "kind": "NOTIFICATION",
+              "label": "label#7",
+              "short_id": "short#6"
+            },
+            "salience": null,
+            "short_id": "short#6",
+            "source_revision_ref": "revision#5",
+            "value_text": "{\"kind\":\"finding\",\"source\":{\"producer\":\"dreamer.finding\",\"event\":\"claim#1\"},\"subject_refs\":[\"claim#1\",\"owner\"],\"created_at\":1800000060000}",
+            "world": null
+          }
+        ],
+        "narrowing": {
+          "actor_ceiling": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "applied": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "narrowed_axes": [],
+          "replan_hint": [],
+          "requested": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "suppressed_count": 0
+        },
+        "pack_version": 1,
+        "rendered": null,
+        "retrieval_meta": {
+          "claims_returned": 2,
+          "confidence_adjustment": -0.15,
+          "deep_pending": null,
+          "partial": false,
+          "quality": "degraded",
+          "sparse": true,
+          "total_candidates": 5
+        },
+        "scope_honesty": {
+          "out_of_scope_worlds": []
+        }
+      },
+      "at": 1800000300,
+      "caller": "owner",
+      "input": {
+        "as_of": 1800000300,
+        "effort": "light",
+        "limit": 10,
+        "query": "harbour survey Friday"
+      },
+      "step": "owner-recall",
+      "verb": "vault.recall"
+    },
+    {
+      "answer": {
+        "narrowing": {
+          "actor_ceiling": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "applied": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "narrowed_axes": [],
+          "replan_hint": [],
+          "requested": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "suppressed_count": 0
+        },
+        "value": [
+          {
+            "kind": "CLAIM",
+            "record": {
+              "id": "claim:remembered",
+              "kind": "CLAIM",
+              "label": "label#4",
+              "short_id": "short#3"
+            },
+            "score": 0.9999786019325256,
+            "short_id": "short#7",
+            "snippet": null
+          }
+        ]
+      },
+      "at": 1800000360,
+      "caller": "owner",
+      "input": {
+        "limit": 10,
+        "query": "harbour survey"
+      },
+      "step": "owner-search",
+      "verb": "vault.search.bm25"
+    },
+    {
+      "answer": {
+        "narrowing": {
+          "actor_ceiling": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "applied": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "narrowed_axes": [],
+          "replan_hint": [],
+          "requested": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "suppressed_count": 0
+        },
+        "value": [
+          {
+            "approval": "auto",
+            "claim": {
+              "id": "claim:remembered",
+              "kind": "CLAIM",
+              "label": "label#4",
+              "short_id": "short#3"
+            },
+            "claim_ref": "claim:remembered",
+            "claim_scope": {
+              "scope_facet_id": "facet#1",
+              "scope_project_id": "project#1",
+              "scope_relationship_id": "all",
+              "world_id": "world#1"
+            },
+            "confidence": 0.8999999761581421,
+            "lifecycle": "active",
+            "made_by": null,
+            "predicate": "project.deadline",
+            "salience": null,
+            "scope": null,
+            "short_ref": "short#3",
+            "source": "user_stated",
+            "stale": false,
+            "subject_ref": "owner",
+            "valid_from": null,
+            "valid_to": null,
+            "value": "label#4",
+            "world_ref": null
+          }
+        ]
+      },
+      "at": 1800000420,
+      "caller": "owner",
+      "input": {
+        "limit": 100,
+        "predicate": "project.deadline"
+      },
+      "step": "owner-claims",
+      "verb": "vault.claims.list"
+    },
+    {
+      "answer": {
+        "narrowing": {
+          "actor_ceiling": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "applied": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "narrowed_axes": [],
+          "replan_hint": [],
+          "requested": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "suppressed_count": 0
+        },
+        "value": {
+          "body": {
+            "appr": "auto",
+            "conf": 0.8999999761581421,
+            "confBand": "certain",
+            "confBasis": "deterministic_fallback",
+            "evid": {
+              "actor_class": 0,
+              "actor_entity_ref": null,
+              "provenance": {
+                "surface": "facade",
+                "verb": "vault.commit"
+              }
+            },
+            "life": "active",
+            "pred": "project.deadline",
+            "scopeFacetId": null,
+            "scopeProjectId": null,
+            "scopeRelationshipId": "all",
+            "scopeVersion": 2,
+            "src": "user_stated",
+            "subj": null,
+            "val": "label#4",
+            "worldId": null
+          },
+          "id_hex": "claim:remembered",
+          "kind": "CLAIM",
+          "learned_at": 1800000120,
+          "made_by": null,
+          "occurred_end": 1800000120,
+          "occurred_start": 1800000120,
+          "short_ref": "short#3"
+        }
+      },
+      "at": 1800000480,
+      "caller": "owner",
+      "input": {
+        "entity_ref": "claim:remembered"
+      },
+      "step": "owner-get",
+      "verb": "vault.get"
+    },
+    {
+      "answer": {
+        "items": [
+          {
+            "confidence": 0.8999999761581421,
+            "confidence_basis": "deterministic_fallback",
+            "facet": null,
+            "hedge_bucket": "confident",
+            "kind": "CLAIM",
+            "predicate": "project.deadline",
+            "project_ref": "project#1",
+            "provenance": {
+              "evidence_turn_ids": [],
+              "source": "user_stated",
+              "source_revision_ids": [
+                "claim:remembered"
+              ]
+            },
+            "record": {
+              "id": "claim:remembered",
+              "kind": "CLAIM",
+              "label": "label#4",
+              "short_id": "short#3"
+            },
+            "salience": null,
+            "short_id": "short#3",
+            "source_revision_ref": "revision#1",
+            "value_text": "label#4",
+            "world": "world#1"
+          },
+          {
+            "confidence": 0.8999999761581421,
+            "confidence_basis": "deterministic_fallback",
+            "facet": null,
+            "hedge_bucket": "confident",
+            "kind": "CLAIM",
+            "predicate": "residence.city",
+            "project_ref": "project#1",
+            "provenance": {
+              "evidence_turn_ids": [],
+              "source": "generated",
+              "source_revision_ids": [
+                "claim#1"
+              ]
+            },
+            "record": {
+              "id": "claim#1",
+              "kind": "CLAIM",
+              "label": "label#5",
+              "short_id": "short#4"
+            },
+            "salience": null,
+            "short_id": "short#4",
+            "source_revision_ref": "revision#2",
+            "value_text": "Lisbon",
+            "world": "world#1"
+          },
+          {
+            "confidence": 1.0,
+            "facet": null,
+            "hedge_bucket": "confident",
+            "kind": "MACHINE",
+            "predicate": null,
+            "project_ref": null,
+            "provenance": {
+              "evidence_turn_ids": [],
+              "source": "record",
+              "source_revision_ids": [
+                "record#2"
+              ]
+            },
+            "record": {
+              "id": "record#2",
+              "kind": "MACHINE",
+              "label": "label#6",
+              "short_id": "short#5"
+            },
+            "salience": null,
+            "short_id": "short#5",
+            "source_revision_ref": "revision#3",
+            "value_text": "{}",
+            "world": null
+          },
+          {
+            "cited_messages": [
+              {
+                "record": {
+                  "id": "record#1",
+                  "kind": "MESSAGE",
+                  "label": "label#2",
+                  "short_id": "short#2"
+                },
+                "short_id": "short#2",
+                "value_text": "I moved to Lisbon last March, and my sister Ana lives two streets away."
+              }
+            ],
+            "confidence": 1.0,
+            "facet": null,
+            "hedge_bucket": "confident",
+            "kind": "TURN",
+            "predicate": null,
+            "project_ref": null,
+            "provenance": {
+              "evidence_turn_ids": [],
+              "source": "record",
+              "source_revision_ids": [
+                "turn#1",
+                "record#1"
+              ]
+            },
+            "record": {
+              "id": "turn#1",
+              "kind": "TURN",
+              "label": "label#1",
+              "short_id": "short#1"
+            },
+            "salience": null,
+            "short_id": "short#1",
+            "source_revision_ref": "revision#4",
+            "value_text": "I moved to Lisbon last March, and my sister Ana lives two streets away.",
+            "world": null
+          },
+          {
+            "confidence": 1.0,
+            "facet": null,
+            "hedge_bucket": "confident",
+            "kind": "NOTIFICATION",
+            "predicate": null,
+            "project_ref": null,
+            "provenance": {
+              "evidence_turn_ids": [],
+              "source": "record",
+              "source_revision_ids": [
+                "record#3"
+              ]
+            },
+            "record": {
+              "id": "record#3",
+              "kind": "NOTIFICATION",
+              "label": "label#7",
+              "short_id": "short#6"
+            },
+            "salience": null,
+            "short_id": "short#6",
+            "source_revision_ref": "revision#5",
+            "value_text": "{\"kind\":\"finding\",\"source\":{\"producer\":\"dreamer.finding\",\"event\":\"claim#1\"},\"subject_refs\":[\"claim#1\",\"owner\"],\"created_at\":1800000060000}",
+            "world": null
+          }
+        ],
+        "narrowing": {
+          "actor_ceiling": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "applied": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "narrowed_axes": [
+            "entity_types",
+            "max_sensitivity_band",
+            "min_confidence",
+            "min_salience",
+            "deny_all"
+          ],
+          "replan_hint": [
+            "entity_types",
+            "max_sensitivity_band",
+            "min_confidence",
+            "min_salience",
+            "deny_all",
+            "grant_scope"
+          ],
+          "requested": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "suppressed_count": 0
+        },
+        "pack_version": 1,
+        "rendered": null,
+        "retrieval_meta": {
+          "claims_returned": 2,
+          "confidence_adjustment": -0.15,
+          "deep_pending": null,
+          "partial": false,
+          "quality": "degraded",
+          "sparse": true,
+          "total_candidates": 5
+        },
+        "scope_honesty": {
+          "out_of_scope_worlds": []
+        }
+      },
+      "at": 1800000540,
+      "caller": "agent",
+      "input": {
+        "as_of": 1800000540,
+        "effort": "light",
+        "limit": 10,
+        "query": "harbour survey Friday"
+      },
+      "step": "agent-recall",
+      "verb": "vault.recall"
+    },
+    {
+      "answer": {
+        "narrowing": {
+          "actor_ceiling": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "applied": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "narrowed_axes": [
+            "entity_types",
+            "max_sensitivity_band",
+            "min_confidence",
+            "min_salience",
+            "deny_all"
+          ],
+          "replan_hint": [
+            "entity_types",
+            "max_sensitivity_band",
+            "min_confidence",
+            "min_salience",
+            "deny_all",
+            "grant_scope"
+          ],
+          "requested": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "suppressed_count": 0
+        },
+        "value": [
+          {
+            "kind": "CLAIM",
+            "record": {
+              "id": "claim:remembered",
+              "kind": "CLAIM",
+              "label": "label#4",
+              "short_id": "short#3"
+            },
+            "score": 0.9999572038650513,
+            "short_id": "short#7",
+            "snippet": null
+          }
+        ]
+      },
+      "at": 1800000600,
+      "caller": "agent",
+      "input": {
+        "limit": 10,
+        "query": "harbour survey"
+      },
+      "step": "agent-search",
+      "verb": "vault.search.bm25"
+    },
+    {
+      "answer": {
+        "narrowing": {
+          "actor_ceiling": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "applied": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "narrowed_axes": [
+            "deny_all"
+          ],
+          "replan_hint": [
+            "deny_all",
+            "grant_scope"
+          ],
+          "requested": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "suppressed_count": 0
+        },
+        "value": [
+          {
+            "approval": "auto",
+            "claim": {
+              "id": "claim:remembered",
+              "kind": "CLAIM",
+              "label": "label#4",
+              "short_id": "short#3"
+            },
+            "claim_ref": "claim:remembered",
+            "claim_scope": {
+              "scope_facet_id": "facet#1",
+              "scope_project_id": "project#1",
+              "scope_relationship_id": "all",
+              "world_id": "world#1"
+            },
+            "confidence": 0.8999999761581421,
+            "lifecycle": "active",
+            "made_by": null,
+            "predicate": "project.deadline",
+            "salience": null,
+            "scope": null,
+            "short_ref": "short#3",
+            "source": "user_stated",
+            "stale": false,
+            "subject_ref": "owner",
+            "valid_from": null,
+            "valid_to": null,
+            "value": "label#4",
+            "world_ref": null
+          }
+        ]
+      },
+      "at": 1800000660,
+      "caller": "agent",
+      "input": {
+        "limit": 100,
+        "predicate": "project.deadline"
+      },
+      "step": "agent-claims",
+      "verb": "vault.claims.list"
+    },
+    {
+      "answer": {
+        "narrowing": {
+          "actor_ceiling": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "applied": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "narrowed_axes": [
+            "deny_all"
+          ],
+          "replan_hint": [
+            "deny_all",
+            "grant_scope"
+          ],
+          "requested": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "suppressed_count": 0
+        },
+        "value": {
+          "body": {
+            "appr": "auto",
+            "conf": 0.8999999761581421,
+            "confBand": "certain",
+            "confBasis": "deterministic_fallback",
+            "evid": {
+              "actor_class": 0,
+              "actor_entity_ref": null,
+              "provenance": {
+                "surface": "facade",
+                "verb": "vault.commit"
+              }
+            },
+            "life": "active",
+            "pred": "project.deadline",
+            "scopeFacetId": null,
+            "scopeProjectId": null,
+            "scopeRelationshipId": "all",
+            "scopeVersion": 2,
+            "src": "user_stated",
+            "subj": null,
+            "val": "label#4",
+            "worldId": null
+          },
+          "id_hex": "claim:remembered",
+          "kind": "CLAIM",
+          "learned_at": 1800000120,
+          "made_by": null,
+          "occurred_end": 1800000120,
+          "occurred_start": 1800000120,
+          "short_ref": "short#3"
+        }
+      },
+      "at": 1800000720,
+      "caller": "agent",
+      "input": {
+        "entity_ref": "claim:remembered"
+      },
+      "step": "agent-get",
+      "verb": "vault.get"
+    },
+    {
+      "answer": {
+        "act_ref": "act#2",
+        "agent": "agent",
+        "changed": true,
+        "grant_ref": "grant"
+      },
+      "at": 1800000780,
+      "caller": "owner",
+      "input": {
+        "grant_ref": "grant"
+      },
+      "step": "grant-revoke",
+      "verb": "vault.agents.grants.revoke"
+    },
+    {
+      "answer": {
+        "changed": false,
+        "grant_ref": "grant"
+      },
+      "at": 1800000840,
+      "caller": "owner",
+      "input": {
+        "grant_ref": "grant"
+      },
+      "step": "grant-revoke-again",
+      "verb": "vault.agents.grants.revoke"
+    },
+    {
+      "answer": {
+        "items": [],
+        "narrowing": {
+          "actor_ceiling": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "applied": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "narrowed_axes": [
+            "deny_all"
+          ],
+          "replan_hint": [
+            "deny_all",
+            "grant_scope"
+          ],
+          "requested": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "suppressed_count": 0
+        },
+        "pack_version": 1,
+        "rendered": null,
+        "retrieval_meta": {
+          "claims_returned": 0,
+          "confidence_adjustment": -0.35,
+          "deep_pending": null,
+          "partial": false,
+          "quality": "passthrough",
+          "sparse": true,
+          "total_candidates": 0
+        },
+        "scope_honesty": {
+          "out_of_scope_worlds": []
+        }
+      },
+      "at": 1800000900,
+      "caller": "agent",
+      "input": {
+        "as_of": 1800000900,
+        "effort": "light",
+        "limit": 10,
+        "query": "harbour survey Friday"
+      },
+      "step": "agent-after-revoke-recall",
+      "verb": "vault.recall"
+    },
+    {
+      "answer": {
+        "narrowing": {
+          "actor_ceiling": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "applied": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "narrowed_axes": [
+            "deny_all"
+          ],
+          "replan_hint": [
+            "deny_all",
+            "grant_scope"
+          ],
+          "requested": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "suppressed_count": 0
+        },
+        "value": []
+      },
+      "at": 1800000960,
+      "caller": "agent",
+      "input": {
+        "limit": 10,
+        "query": "harbour survey"
+      },
+      "step": "agent-after-revoke-search",
+      "verb": "vault.search.bm25"
+    },
+    {
+      "answer": {
+        "narrowing": {
+          "actor_ceiling": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "applied": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "narrowed_axes": [
+            "deny_all"
+          ],
+          "replan_hint": [
+            "deny_all",
+            "grant_scope"
+          ],
+          "requested": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "suppressed_count": 0
+        },
+        "value": []
+      },
+      "at": 1800001020,
+      "caller": "agent",
+      "input": {
+        "limit": 100,
+        "predicate": "project.deadline"
+      },
+      "step": "agent-after-revoke-claims",
+      "verb": "vault.claims.list"
+    },
+    {
+      "answer": {
+        "narrowing": {
+          "actor_ceiling": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "applied": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "narrowed_axes": [
+            "deny_all"
+          ],
+          "replan_hint": [
+            "deny_all",
+            "grant_scope"
+          ],
+          "requested": {
+            "deny_all": true,
+            "entity_types": [],
+            "include_stale": false,
+            "max_sensitivity_band": 0,
+            "min_confidence": 1.0,
+            "min_salience": 1.0
+          },
+          "suppressed_count": 0
+        },
+        "value": null
+      },
+      "at": 1800001080,
+      "caller": "agent",
+      "input": {
+        "entity_ref": "claim:remembered"
+      },
+      "step": "agent-after-revoke-get",
+      "verb": "vault.get"
+    }
+  ],
+  "streams": {
+    "authority_audit": {
+      "page_count": 1,
+      "pages": [
+        {
+          "order": "entry_ref_ascending",
+          "scanned": 26
+        }
+      ],
+      "rows": [
+        {
+          "advisory_ts": "<measured>",
+          "cosigner_keys": [
+            "key#2"
+          ],
+          "entry_hash": "entry_hash#1",
+          "entry_ref": "entry#1",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 11,
+          "signer_key": "key#1",
+          "source_op": "bind_actor",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "cosigner_keys": [
+            "key#3"
+          ],
+          "entry_hash": "entry_hash#2",
+          "entry_ref": "entry#2",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 13,
+          "signer_key": "key#1",
+          "source_op": "bind_actor",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "cosigner_keys": [
+            "key#4"
+          ],
+          "entry_hash": "entry_hash#3",
+          "entry_ref": "entry#3",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 15,
+          "signer_key": "key#1",
+          "source_op": "bind_actor",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "cosigner_keys": [
+            "key#5"
+          ],
+          "entry_hash": "entry_hash#4",
+          "entry_ref": "entry#4",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 17,
+          "signer_key": "key#1",
+          "source_op": "bind_actor",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "cosigner_keys": [
+            "key#6"
+          ],
+          "entry_hash": "entry_hash#5",
+          "entry_ref": "entry#5",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 19,
+          "signer_key": "key#1",
+          "source_op": "bind_actor",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "cosigner_keys": [
+            "key#7"
+          ],
+          "entry_hash": "entry_hash#6",
+          "entry_ref": "entry#6",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 21,
+          "signer_key": "key#1",
+          "source_op": "bind_actor",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "cosigner_keys": [
+            "key#8"
+          ],
+          "entry_hash": "entry_hash#7",
+          "entry_ref": "entry#7",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 23,
+          "signer_key": "key#1",
+          "source_op": "bind_actor",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "cosigner_keys": [
+            "key#9"
+          ],
+          "entry_hash": "entry_hash#8",
+          "entry_ref": "entry#8",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 5,
+          "signer_key": "key#1",
+          "source_op": "bind_actor",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "cosigner_keys": [
+            "key#10"
+          ],
+          "entry_hash": "entry_hash#9",
+          "entry_ref": "entry#9",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 7,
+          "signer_key": "key#1",
+          "source_op": "bind_actor",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "cosigner_keys": [
+            "key#11"
+          ],
+          "entry_hash": "entry_hash#10",
+          "entry_ref": "entry#10",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 9,
+          "signer_key": "key#1",
+          "source_op": "bind_actor",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "detail": "mint; withdrawn",
+          "entry_hash": "act#1",
+          "entry_ref": "entry#11",
+          "event_kind": "grant",
+          "fold_valid": true,
+          "grant_ref": "grant",
+          "holder_ref": "agent",
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 1,
+          "signer_key": "key#12",
+          "source_op": "agent_grant_act",
+          "subject_ref": "owner",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "detail": "revoke",
+          "entry_hash": "act#2",
+          "entry_ref": "entry#12",
+          "event_kind": "revoke",
+          "fold_valid": true,
+          "grant_ref": "grant",
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 2,
+          "signer_key": "key#12",
+          "source_op": "agent_grant_act",
+          "subject_ref": "owner",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "entry_hash": "entry_hash#11",
+          "entry_ref": "entry#13",
+          "event_kind": "grant",
+          "expires_at": "<measured>",
+          "fold_valid": true,
+          "holder_ref": "actor#1",
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 1,
+          "signer_key": "key#1",
+          "source_op": "slip_mint",
+          "subject_ref": "entity#1",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "entry_hash": "vault#1",
+          "entry_ref": "entry#14",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 0,
+          "signer_key": "key#1",
+          "source_op": "genesis"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "entry_hash": "entry_hash#12",
+          "entry_ref": "entry#15",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 10,
+          "signer_key": "key#1",
+          "source_op": "enroll_device",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "entry_hash": "entry_hash#13",
+          "entry_ref": "entry#16",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 12,
+          "signer_key": "key#1",
+          "source_op": "enroll_device",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "entry_hash": "entry_hash#14",
+          "entry_ref": "entry#17",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 14,
+          "signer_key": "key#1",
+          "source_op": "enroll_device",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "entry_hash": "entry_hash#15",
+          "entry_ref": "entry#18",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 16,
+          "signer_key": "key#1",
+          "source_op": "enroll_device",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "entry_hash": "entry_hash#16",
+          "entry_ref": "entry#19",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 18,
+          "signer_key": "key#1",
+          "source_op": "enroll_device",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "entry_hash": "entry_hash#17",
+          "entry_ref": "entry#20",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 2,
+          "signer_key": "key#1",
+          "source_op": "bind_actor",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "entry_hash": "entry_hash#18",
+          "entry_ref": "entry#21",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 20,
+          "signer_key": "key#1",
+          "source_op": "enroll_device",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "entry_hash": "entry_hash#19",
+          "entry_ref": "entry#22",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 22,
+          "signer_key": "key#1",
+          "source_op": "enroll_device",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "entry_hash": "entry_hash#20",
+          "entry_ref": "entry#23",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 3,
+          "signer_key": "key#1",
+          "source_op": "machine_profile",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "entry_hash": "entry_hash#21",
+          "entry_ref": "entry#24",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 4,
+          "signer_key": "key#1",
+          "source_op": "enroll_device",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "entry_hash": "entry_hash#22",
+          "entry_ref": "entry#25",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 6,
+          "signer_key": "key#1",
+          "source_op": "enroll_device",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "entry_hash": "entry_hash#23",
+          "entry_ref": "entry#26",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 8,
+          "signer_key": "key#1",
+          "source_op": "enroll_device",
+          "vault_ref": "vault#1"
+        }
+      ]
+    },
+    "family": {
+      "page_count": 1,
+      "rows": [
+        {
+          "actor_class": "system",
+          "actor_ref": "dreamer",
+          "claim": null,
+          "claim_ref": null,
+          "content_kind": "dreamer_authority",
+          "created_at": 1800000060,
+          "fields": {
+            "actor_class": "system",
+            "content_kind": "dreamer_authority",
+            "diff_handle": "attempt#1",
+            "policy_manifest_version": "1.2",
+            "read_frontier_hash": "frontier#1"
+          },
+          "kind": "gate",
+          "outcome": "allow",
+          "reason_codes": [
+            "gate.dreamer.facet_admitted"
+          ],
+          "receipt_ref": "receipt#4"
+        },
+        {
+          "actor_class": "system",
+          "actor_ref": "dreamer",
+          "claim": null,
+          "claim_ref": null,
+          "content_kind": "dreamer_authority",
+          "created_at": 1800000060,
+          "fields": {
+            "actor_class": "system",
+            "content_kind": "dreamer_authority",
+            "diff_handle": "attempt#2",
+            "policy_manifest_version": "1.2",
+            "read_frontier_hash": "frontier#1"
+          },
+          "kind": "gate",
+          "outcome": "allow",
+          "reason_codes": [
+            "gate.dreamer.facet_admitted"
+          ],
+          "receipt_ref": "receipt#3"
+        },
+        {
+          "actor_class": "system",
+          "actor_ref": "dreamer",
+          "claim": {
+            "id": "claim#1",
+            "kind": "CLAIM",
+            "label": "label#9",
+            "short_id": null
+          },
+          "claim_ref": "claim#1",
+          "content_kind": "claim",
+          "created_at": 1800000060,
+          "fields": {
+            "actor_class": "system",
+            "content_kind": "claim",
+            "diff_handle": "diff#1",
+            "job_ref": "attempt#2",
+            "policy_manifest_version": "1.2",
+            "read_frontier_hash": "frontier#1",
+            "receipt_reason": "gate.allow.fallback_criticality",
+            "trigger_ref": "trigger#1"
+          },
+          "kind": "gate",
+          "outcome": "allow",
+          "reason_codes": [
+            "gate.allow",
+            "gate.allow.fallback_criticality"
+          ],
+          "receipt_ref": "receipt#7"
+        },
+        {
+          "actor_class": "system",
+          "actor_ref": "dreamer",
+          "claim": {
+            "id": "claim#2",
+            "kind": "CLAIM",
+            "label": "label#8",
+            "short_id": null
+          },
+          "claim_ref": "claim#2",
+          "content_kind": "claim",
+          "created_at": 1800000060,
+          "fields": {
+            "actor_class": "system",
+            "content_kind": "claim",
+            "diff_handle": "diff#2",
+            "policy_manifest_version": "1.2",
+            "read_frontier_hash": "frontier#1",
+            "trigger_ref": "trigger#2"
+          },
+          "kind": "gate",
+          "outcome": "pending",
+          "reason_codes": [
+            "gate.pending.criticality_floor"
+          ],
+          "receipt_ref": "receipt#5"
+        },
+        {
+          "actor_class": "system",
+          "actor_ref": "dreamer",
+          "claim": {
+            "id": "claim#3",
+            "kind": "CLAIM",
+            "label": "label#8",
+            "short_id": null
+          },
+          "claim_ref": "claim#3",
+          "content_kind": "claim",
+          "created_at": 1800000060,
+          "fields": {
+            "actor_class": "system",
+            "content_kind": "claim",
+            "diff_handle": "diff#3",
+            "policy_manifest_version": "1.2",
+            "read_frontier_hash": "frontier#1",
+            "trigger_ref": "trigger#3"
+          },
+          "kind": "gate",
+          "outcome": "pending",
+          "reason_codes": [
+            "gate.pending.criticality_floor"
+          ],
+          "receipt_ref": "receipt#6"
+        },
+        {
+          "actor_class": "human",
+          "actor_ref": "owner",
+          "claim": {
+            "id": "claim:remembered",
+            "kind": "CLAIM",
+            "label": "label#8",
+            "short_id": null
+          },
+          "claim_ref": "claim:remembered",
+          "content_kind": "claim",
+          "created_at": 1800000120,
+          "fields": {
+            "actor_class": "human",
+            "content_kind": "claim",
+            "diff_handle": "diff#4",
+            "policy_manifest_version": "1.2",
+            "read_frontier_hash": "frontier#1",
+            "receipt_reason": "gate.allow.fallback_criticality",
+            "trigger_ref": "trigger#4"
+          },
+          "kind": "gate",
+          "outcome": "allow",
+          "reason_codes": [
+            "gate.allow",
+            "gate.allow.fallback_criticality"
+          ],
+          "receipt_ref": "receipt#2"
+        }
+      ],
+      "undecodable": [
+        0
+      ]
+    },
+    "gate_ledger": {
+      "page_count": 1,
+      "rows": [
+        {
+          "actor_class": "system",
+          "actor_ref": "dreamer",
+          "claim": null,
+          "claim_ref": null,
+          "content_kind": "dreamer_authority",
+          "created_at": 1800000060,
+          "kind": "gate",
+          "outcome": "allow",
+          "reason_codes": [
+            "gate.dreamer.facet_admitted"
+          ],
+          "receipt_ref": "receipt#3"
+        },
+        {
+          "actor_class": "system",
+          "actor_ref": "dreamer",
+          "claim": null,
+          "claim_ref": null,
+          "content_kind": "dreamer_authority",
+          "created_at": 1800000060,
+          "kind": "gate",
+          "outcome": "allow",
+          "reason_codes": [
+            "gate.dreamer.facet_admitted"
+          ],
+          "receipt_ref": "receipt#4"
+        },
+        {
+          "actor_class": "system",
+          "actor_ref": "dreamer",
+          "claim": {
+            "id": "claim#2",
+            "kind": "CLAIM",
+            "label": "label#8",
+            "short_id": null
+          },
+          "claim_ref": "claim#2",
+          "content_kind": "claim",
+          "created_at": 1800000060,
+          "kind": "gate",
+          "outcome": "pending",
+          "reason_codes": [
+            "gate.pending.criticality_floor"
+          ],
+          "receipt_ref": "receipt#5"
+        },
+        {
+          "actor_class": "system",
+          "actor_ref": "dreamer",
+          "claim": {
+            "id": "claim#3",
+            "kind": "CLAIM",
+            "label": "label#8",
+            "short_id": null
+          },
+          "claim_ref": "claim#3",
+          "content_kind": "claim",
+          "created_at": 1800000060,
+          "kind": "gate",
+          "outcome": "pending",
+          "reason_codes": [
+            "gate.pending.criticality_floor"
+          ],
+          "receipt_ref": "receipt#6"
+        },
+        {
+          "actor_class": "system",
+          "actor_ref": "dreamer",
+          "claim": {
+            "id": "claim#1",
+            "kind": "CLAIM",
+            "label": "label#9",
+            "short_id": null
+          },
+          "claim_ref": "claim#1",
+          "content_kind": "claim",
+          "created_at": 1800000060,
+          "kind": "gate",
+          "outcome": "allow",
+          "reason_codes": [
+            "gate.allow"
+          ],
+          "receipt_ref": "receipt#7"
+        },
+        {
+          "actor_class": "human",
+          "actor_ref": "owner",
+          "claim": {
+            "id": "claim:remembered",
+            "kind": "CLAIM",
+            "label": "label#8",
+            "short_id": null
+          },
+          "claim_ref": "claim:remembered",
+          "content_kind": "claim",
+          "created_at": 1800000120,
+          "kind": "gate",
+          "outcome": "allow",
+          "reason_codes": [
+            "gate.allow"
+          ],
+          "receipt_ref": "receipt#2"
+        }
+      ],
+      "undecodable": [
+        0
+      ]
+    }
+  }
+}

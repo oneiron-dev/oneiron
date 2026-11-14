@@ -72,6 +72,13 @@ pub trait Reranker: Send + Sync {
     fn binds_words(&self) -> bool {
         false
     }
+
+    /// Whether the scores are a pure function of the query and the candidates handed in: no model call, no clock,
+    /// no randomness and no state read outside the call. An eval run ([`crate::pipeline::RetrievalEvalSpec`])
+    /// accepts only a reranker that says so.
+    fn deterministic(&self) -> bool {
+        false
+    }
 }
 
 /// Per-run rerank knobs (the 1186-D2 "N knob").

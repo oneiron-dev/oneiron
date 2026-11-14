@@ -14,11 +14,8 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::TURNS;
 use super::offer_history::{OFFER_ROWS, OfferRow, live_offer};
-use super::offer_settle::OfferAnswer;
 use super::offers::{
     OFFER_CURRENT, OFFERS, OfferBallot, OfferCard, OfferState, StoredOffer, current_key,
     is_offer_id, room_wide_prefix,
@@ -38,14 +35,8 @@ pub(crate) use crate::context_board::room_offer::ROOM_OFFER_IDLE_SECS;
 /// room-wide cards it mentions in: an array of offer ids.
 const OFFER_REFS: &str = "room_offer_refs";
 
-/// An advisory ballot on a room-wide card, from someone in its room.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OfferVoteRequest {
-    pub offer_id: String,
-    /// What the voter would have the host answer: join, or not now.
-    pub action: OfferAnswer,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::rooms::offer_activity::OfferVoteRequest;
 
 /// Whether `card`, a room-wide card open in store, has aged out at `now`:
 /// past its fixed deadline, or a day past its last engagement when it has
@@ -304,7 +295,8 @@ fn engage_in_txn(
 /// [`engage_in_txn`] for a witnessed turn, in the witness's own write, before
 /// its room admits it: the cards its new visible messages name and, in a
 /// project room, those the turn it answers names. A retried message, a hidden
-/// one or a system line engages nothing.
+/// one, a system line or a counterparty's (somebody else's words, never the
+/// writer's own offer activity) engages nothing.
 pub(super) fn witness_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -324,8 +316,10 @@ pub(super) fn witness_in_txn(
         let reply = metadata
             .get("room_reply_to")
             .and_then(serde_json::Value::as_str);
-        if message.author == WitnessAuthor::System
-            || !message.is_visible
+        if matches!(
+            message.author,
+            WitnessAuthor::System | WitnessAuthor::Counterparty
+        ) || !message.is_visible
             || (refs.is_none() && reply.is_none())
             || vault.get_entity_type_in_txn(txn, id)?.is_some()
         {

@@ -178,7 +178,10 @@ impl FakeHome {
                         sub_tag,
                     });
                 }
-                if sub_tag == window_sub_tags::PROMOTION_REQUEST {
+                if matches!(
+                    sub_tag,
+                    window_sub_tags::PROMOTION_REQUEST | window_sub_tags::FOLLOW_REQUEST
+                ) {
                     vec![
                         transport::encode_window_sync(
                             window,
@@ -424,7 +427,7 @@ async fn pick_change_renegotiates_live() {
                     synced(sync) >= 2
                         && world_asks(home, 2).contains(&(
                             founder.as_str().to_owned(),
-                            window_sub_tags::PROMOTION_REQUEST,
+                            window_sub_tags::FOLLOW_REQUEST,
                         ))
                 },
             )
@@ -459,4 +462,95 @@ async fn pick_change_renegotiates_live() {
     };
     let (ran, ()) = tokio::join!(run, script);
     ran.expect("the run ends at shutdown");
+}
+
+/// FOLLOWED-WINDOW-FULL-RESYNC: a followed world's window carries a
+/// full-resync marker (`fr:w:`). The device re-bootstraps it over the follow
+/// the home granted on this connection: it asks the home for the window's
+/// replacement. Before, each connect failed with "opened-item full-resync
+/// requires explicit sync-all recovery", since only a window this device
+/// promoted (`rp:w:`) could recover.
+#[test]
+fn a_marked_followed_window_rebootstraps_over_its_follow() {
+    let run = std::thread::Builder::new()
+        .name("a_marked_followed_window_rebootstraps_over_its_follow".to_owned())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime")
+                .block_on(marked_followed_window_rebootstraps_over_its_follow());
+        })
+        .expect("test thread");
+    if let Err(panic) = run.join() {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+async fn marked_followed_window_rebootstraps_over_its_follow() {
+    let device = Device::open();
+    let at = now_secs();
+    let founder = WindowKey::for_world(at, device.founder);
+    let (url, home, release_index) = FakeHome::start(root_frame(at, &[device.founder])).await;
+    release_index.send(()).expect("the index read is not held");
+    device
+        .vault
+        .sync_state_put(&format!("fr:w:{founder}"), &[1])
+        .expect("the followed window's full-resync marker");
+    let connection = SyncConnection::new(
+        device.manager(),
+        ConnectionConfig {
+            client_config: SyncClientConfig {
+                server_url: url,
+                residence_mode: SyncResidenceMode::Opened,
+                residence_selector: Some(SyncSelector::new(
+                    EntityId::now(),
+                    EntityId::now(),
+                    SyncSelectorWorld::All,
+                    Vec::new(),
+                    Vec::new(),
+                )),
+                note_session: Some(note_session(&device)),
+                ..SyncClientConfig::default()
+            },
+            auto_reconnect: false,
+        },
+    )
+    .expect("the device's connection");
+    connection
+        .set_followed_worlds([device.founder].into_iter().collect())
+        .expect("the owner's pick");
+    let (shutdown, shutdown_rx) = oneshot::channel();
+    let (sync_tx, sync) = mpsc::unbounded_channel();
+    let run = connection.run_observed(shutdown_rx, move |event| {
+        let _ = sync_tx.send(event);
+    });
+    let mut watch = Watch {
+        home,
+        sync,
+        home_seen: Vec::new(),
+        sync_seen: Vec::new(),
+    };
+    let script = async {
+        watch
+            .until(
+                "the device asks the home for the marked followed window's replacement",
+                |home, _| {
+                    world_asks(home, 1).contains(&(
+                        founder.as_str().to_owned(),
+                        window_sub_tags::REPLACEMENT_REQUEST,
+                    ))
+                },
+            )
+            .await;
+        assert!(
+            world_asks(&watch.home_seen, 1)
+                .contains(&(founder.as_str().to_owned(), window_sub_tags::FOLLOW_REQUEST,)),
+            "the window was asked as a follow first",
+        );
+        // The fake home answers no replacement; the run may have ended.
+        let _ = shutdown.send(());
+    };
+    let (_ran, ()) = tokio::join!(run, script);
 }

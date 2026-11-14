@@ -376,7 +376,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 continue;
             }
             let after = entry.name.clone();
-            if !builder.try_push_after(entry.clone(), after) {
+            if !builder.try_push_after(entry, after) {
                 next_cursor = builder.last_entry_name();
                 break;
             }

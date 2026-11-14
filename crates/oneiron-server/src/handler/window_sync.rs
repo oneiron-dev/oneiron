@@ -78,15 +78,26 @@ pub(super) async fn handle_window_sync(
             (*sub_tag, envelope.payload.as_slice())
         });
 
-    if sub_tag == window_sub_tags::PROMOTION_REQUEST {
+    if matches!(
+        sub_tag,
+        window_sub_tags::PROMOTION_REQUEST | window_sub_tags::FOLLOW_REQUEST
+    ) {
         // Every opened-item machine of this vault asks for the embedding setup window (OF-370),
         // whatever it opened. A home that holds no such window, or does not grant it to this
-        // machine, answers nothing, and the machine asks again on its next connection.
+        // machine, answers nothing, and the machine asks again on its next connection. A machine
+        // asks as well for each window of a world it follows (ARCH-0023b #partial-sync): a home
+        // that does not list the window, or does not grant the whole of it to this machine,
+        // answers FOLLOW_REFUSED and keeps the socket. A refused promotion of a window the
+        // machine opened still ends the socket.
         let setup = key == WindowKey::from_timestamp(oneiron::embed::EMBEDDING_SETUP_LEARNED_AT);
-        if setup
+        let follow = sub_tag == window_sub_tags::FOLLOW_REQUEST;
+        if (setup || follow)
             && protocol::is_residence_version(conn_state.protocol_version)
             && !read_window_list(&server.root_doc).contains(&key)
         {
+            if follow {
+                refuse_follow(window_key, direct_tx)?;
+            }
             return Ok(ControlFlow::Continue(()));
         }
         if !protocol::is_residence_version(conn_state.protocol_version)
@@ -125,6 +136,16 @@ pub(super) async fn handle_window_sync(
             )
         });
         if setup && authorized.is_err() {
+            return Ok(ControlFlow::Continue(()));
+        }
+        if follow && let Err(refusal) = &authorized {
+            tracing::debug!(
+                conn_id,
+                window = %key,
+                %refusal,
+                "followed window not granted to this machine"
+            );
+            refuse_follow(window_key, direct_tx)?;
             return Ok(ControlFlow::Continue(()));
         }
         authorized?;
@@ -190,6 +211,7 @@ pub(super) async fn handle_window_sync(
             | window_sub_tags::PROMOTION_GRANTED
             | window_sub_tags::PROMOTED_INVALIDATE
             | window_sub_tags::WINDOW_INVALIDATE
+            | window_sub_tags::FOLLOW_REFUSED
     ) {
         return Err(ProtocolError::InvalidPayload(
             "client cannot send server-only residence control",
@@ -774,6 +796,20 @@ fn replacement_frame(
             .map_err(|e| ProtocolError::ExportFailed(e.to_string()))
         })
         .transpose()
+}
+
+/// Answers a follow the home does not grant on this socket: the device keeps
+/// the window unsynced here and its writes queued, and the socket stays open.
+fn refuse_follow(
+    window_key: &str,
+    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+) -> Result<(), ProtocolError> {
+    let refused = protocol::encode_window_sync(window_key, window_sub_tags::FOLLOW_REFUSED, &[])
+        .into_result()
+        .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
+    direct_tx
+        .send(refused)
+        .map_err(|_| ProtocolError::Persistence("follow reply channel closed".into()))
 }
 
 /// A cached promotion is not permanent authority. Recheck the bound actor,

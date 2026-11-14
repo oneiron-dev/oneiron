@@ -2,10 +2,6 @@
 //! build script places it in `side_table`'s catalogue.
 
 crate::side_table::side_tables! {
-    /// Index from a principal reference to every standing outbound grant naming it. Key: u16be(len) +
-    /// string(principal_ref) + id16.
-    OUTBOUND_GRANT_PRINCIPAL_INDEX: VaultMeta b"outbound_grant/principal/v1\0" Raw
-        [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// The first agent send through each outbound channel (DEC-0006 #undo-send): its TASK and
     /// when it was scheduled, the send that carries the one-line hint that a delay can be set.
     /// Written once per channel. Key: string (the channel, as its manifest names it).

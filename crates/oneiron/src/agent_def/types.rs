@@ -87,7 +87,6 @@ impl MemoryProfile {
             hot_steps: None,
             output_decay: None,
             verbatim_pins: Vec::new(),
-            optional_memory: None,
         }
     }
 
@@ -134,12 +133,6 @@ impl MemoryProfile {
     #[must_use]
     pub fn with_budget_split(mut self, split: ContextBudgetSplit) -> Self {
         self.budget_split = Some(split);
-        self
-    }
-
-    #[must_use]
-    pub fn with_optional_memory(mut self, optional_memory: OptionalMemoryProfile) -> Self {
-        self.optional_memory = Some(optional_memory);
         self
     }
 }
@@ -202,6 +195,7 @@ impl AgentDefinition {
             refusal: None,
             models: Vec::new(),
             compaction_model: None,
+            optional_memory: None,
         }
     }
 
@@ -265,6 +259,14 @@ impl AgentDefinition {
     #[must_use]
     pub fn with_memory_profile(mut self, memory_profile: Option<MemoryProfile>) -> Self {
         self.memory_profile = memory_profile;
+        self
+    }
+
+    /// Attaches the reader's optional recall per task family (ZERO-RETRIEVAL
+    /// = A). `None` reproduces the record without it, byte-for-byte.
+    #[must_use]
+    pub fn with_optional_memory(mut self, optional_memory: Option<OptionalMemoryProfile>) -> Self {
+        self.optional_memory = optional_memory;
         self
     }
 

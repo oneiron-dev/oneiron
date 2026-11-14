@@ -53,7 +53,12 @@ impl Vault {
     /// revoked, and histories that were quarantined, are left as they were.
     /// Once the move commits, `next`'s seed is escrowed in the vault's key
     /// custody (FIX-LIST 10770), best effort: a fault there is warned, and
-    /// the move stands.
+    /// the move stands. Then the stale-stamp sweep runs, as after every
+    /// authority commit (H213): a severed pact's worlds carry their stamp
+    /// when this returns. A sweep fault is warned and the move stands: the
+    /// sweep stays owed, and the next commit by any writer retries it. An
+    /// error here always means nothing moved, which
+    /// [`Self::re_root_host_to_new_seed`] relies on to put the old seed back.
     pub fn re_root_host(
         &self,
         current: &HostSlipIssuer,
@@ -64,6 +69,7 @@ impl Vault {
         }
         // Writer rows are created in their own transactions, before this one.
         let engine_writers = self.engine_machine_actors()?;
+        let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
         let before = self.authority_fold_readonly_in_txn(&txn)?;
         require_host(&before, current)?;
@@ -137,6 +143,15 @@ impl Vault {
         // 11993).
         self.note_committed_authority_rows(re_rooted);
         self.escrow_host_slip_issuer_logged(next);
+        // The move stands whatever the sweep answers: a failed sweep stays
+        // owed (L7-31).
+        if let Err(error) = watch.finish() {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "the stale-stamp sweep after a host re-root failed; \
+                 the move stands, and the next commit sweeps again"
+            );
+        }
         Ok(HostReRoot {
             vault_id,
             writers_enrolled: writers.len(),
@@ -252,6 +267,22 @@ fn head_re_roots_to(
     };
     Ok(authority_entry_hash(&entry)? == *head
         && matches!(&entry.op, AuthorityOp::ReRoot { new_device } if new_device.key == *key))
+}
+
+/// [`Vault::re_root_authority`] signed by the live host root `current`, to
+/// `next`'s key: the raw move alone, with none of [`Vault::re_root_host`]'s
+/// carried rows. For the integration tests' door (L7-31).
+#[cfg(oneiron_test_support)]
+pub(crate) fn re_root_authority_as_host_for_test(
+    vault: &Vault,
+    current: &HostSlipIssuer,
+    next: &HostSlipIssuer,
+) -> Result<AuthorityLogEntry> {
+    vault.re_root_authority(
+        next.root_device(vault.privacy_posture()),
+        current.public_key(),
+        |transcript| Ok(current.sign_slip(transcript)),
+    )
 }
 
 /// Every target with a trusted history pin, readable or not.

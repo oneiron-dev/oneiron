@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "Authority vocabulary of the oneiron engine: the authority-log wire layer and federation scope codecs"
 repository.workspace = true
-homepage.workspace = true
 
 [dependencies]
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }

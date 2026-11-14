@@ -93,16 +93,8 @@ impl From<ShapeMemberRole> for FederationGrantRole {
     }
 }
 
-/// The ARCH-0043 preset a shared vault's defaults came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ShapePreset {
-    Personal,
-    Family,
-    Team,
-    Org,
-    Community,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::vault_shape::member::ShapePreset;
 
 impl From<SharedVaultPreset> for ShapePreset {
     fn from(preset: SharedVaultPreset) -> Self {

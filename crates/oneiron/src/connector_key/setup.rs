@@ -38,7 +38,12 @@ use crate::{EntityId, Vault};
 mod allow_ask;
 mod google_code;
 mod grants;
-pub use google_code::{GoogleAuthorizationCode, GoogleAuthorizationGrant};
+// Microsoft's code exchange and refresh ([MICROSOFT365-OAUTH-EXCHANGE]).
+mod microsoft_code;
+pub use google_code::GoogleAuthorizationCode;
+pub use microsoft_code::MicrosoftAuthorizationCode;
+#[cfg(oneiron_test_support)]
+pub(crate) use microsoft_code::{exchange_microsoft_code_at, refresh_stored_microsoft_grant_at};
 // A built-in channel's isolated probe replies (FIX 710).
 mod probe;
 // `self.use`'s own checks, cleared inside the door (FIX 7647).
@@ -61,9 +66,13 @@ pub const BROWSER_SESSION_CHECK: &str = "browser.session";
 /// Authenticated JMAP discovery and a domain read on the host's own mail
 /// server. Only a served host with a `[native_mail]` server runs it.
 pub const NATIVE_MAIL_JMAP_CHECK: &str = "native_mail.jmap";
-/// Google's token information for the stored Google Sheets grant (FIX
-/// 4862): the account it belongs to and the scopes it holds.
-pub const SHEETS_TOKEN_CHECK: &str = "sheets.token";
+/// Google's token information for the stored Google grant of the built-in
+/// Google pack (FIX 4862; L3-17): the account it belongs to and the scopes
+/// it holds.
+pub const GOOGLE_TOKEN_CHECK: &str = "google.token";
+/// The Microsoft 365 connection's check (L3-17-EXCEL-CONNECTION = B): the
+/// Graph profile of the account the stored grant belongs to.
+pub const MICROSOFT365_ME_CHECK: &str = "microsoft365.me";
 const LINKEDIN_ME_URL: &str = "https://www.linkedin.com/voyager/api/me";
 /// Google's OAuth token endpoint: where a stored Gmail refresh token is
 /// exchanged for the access token its check presents.
@@ -71,8 +80,8 @@ const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 /// Google's token information endpoint: the account and scopes an access
 /// token holds. The token goes in the form body, never in the URL.
 const GOOGLE_TOKENINFO_URL: &str = "https://oauth2.googleapis.com/tokeninfo";
-// Identity scopes can accompany a Google grant (Gmail's, Sheets') without
-// adding mail or spreadsheet access.
+// Identity scopes can accompany a Google grant (Gmail's, the Google pack's)
+// without adding mail or file access.
 const GOOGLE_IDENTITY_SCOPES: [&str; 5] = [
     "openid",
     "email",
@@ -138,6 +147,25 @@ pub trait PackConnectionVerifier {
     }
 }
 
+/// A grant a provider's code exchange made (Google's, Microsoft's), ready
+/// for ordinary credential custody: the stored grant's bytes, wiped on drop,
+/// never an API reply.
+pub struct AuthorizationCodeGrant {
+    bytes: Zeroizing<Vec<u8>>,
+    refreshable: bool,
+}
+
+impl AuthorizationCodeGrant {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Whether the provider issued a refresh token with the access token.
+    pub fn has_refresh_token(&self) -> bool {
+        self.refreshable
+    }
+}
+
 /// The read-only provider checks the engine ships for its built-in packs.
 /// Each check name maps to one fixed provider endpoint; the credential is
 /// read through the credential door for the declared effector and goes
@@ -148,13 +176,14 @@ pub struct ProviderConnectionChecks {
 
 impl ProviderConnectionChecks {
     /// Every check name this verifier answers.
-    pub const CHECKS: [&'static str; 6] = [
+    pub const CHECKS: [&'static str; 7] = [
         SLACK_AUTH_TEST_CHECK,
         LINE_BOT_INFO_CHECK,
         GMAIL_PROFILE_CHECK,
         LINKEDIN_SESSION_CHECK,
         TELEGRAM_GET_ME_CHECK,
-        SHEETS_TOKEN_CHECK,
+        GOOGLE_TOKEN_CHECK,
+        MICROSOFT365_ME_CHECK,
     ];
 
     /// A bounded HTTPS client: no proxy, no redirects, short timeouts.
@@ -247,9 +276,7 @@ impl ProviderConnectionChecks {
         }
         let grant: StoredGoogleGrant = serde_json::from_str(text)
             .map_err(|_| invalid("the stored Gmail grant is not JSON"))?;
-        if let (Some(refresh_token), Some(client_id)) =
-            (present(&grant.refresh_token), present(&grant.client_id))
-        {
+        if let Some((refresh_token, client_id)) = grant.refresh_pair()? {
             let (access_token, granted) = self.exchange_google_refresh(
                 refresh_token,
                 client_id,
@@ -267,13 +294,48 @@ impl ProviderConnectionChecks {
         self.send(GMAIL_PROFILE_CHECK, method, url, access_token.as_bytes())
     }
 
-    /// Google's token information for the stored Sheets grant (FIX 4862):
+    /// The Microsoft Graph profile read with the stored grant. A grant the
+    /// Microsoft code exchange stored (a refresh token, its OAuth client and
+    /// its tenant) is first refreshed at its tenant's token endpoint, here
+    /// inside the credential door; any other grant presents its access token
+    /// as it is: bare text, or a JSON grant's `access_token`. A Microsoft
+    /// grant never goes to Google's token endpoint.
+    fn send_microsoft365_me(
+        &self,
+        method: &reqwest::Method,
+        url: &str,
+        value: &[u8],
+    ) -> Result<CheckReply> {
+        // The check stores nothing: its basis is pinned before the provider
+        // call, so a write-back here would move the basis it records.
+        if let Some(fresh) = Self::refresh_stored_microsoft_grant(&self.client, value)? {
+            return self.send(
+                MICROSOFT365_ME_CHECK,
+                method,
+                url,
+                fresh.access_token.as_bytes(),
+            );
+        }
+        let text = std::str::from_utf8(value)
+            .map_err(|_| invalid("the stored credential is not text"))?
+            .trim();
+        if !text.starts_with('{') {
+            return self.send(MICROSOFT365_ME_CHECK, method, url, value);
+        }
+        let grant: StoredAccessGrant = serde_json::from_str(text)
+            .map_err(|_| invalid("the stored Microsoft grant is not JSON"))?;
+        let access_token = present(&grant.access_token)
+            .ok_or_else(|| invalid("the stored Microsoft grant holds no access token"))?;
+        self.send(MICROSOFT365_ME_CHECK, method, url, access_token.as_bytes())
+    }
+
+    /// Google's token information for the stored Google grant (FIX 4862):
     /// the grant's access token, refreshed first when the grant carries a
     /// refresh token and its OAuth client, goes in the form body of one POST
     /// to `url`. The scopes Google reports for the token stand as the scopes
     /// the credential holds. An exchanged access token is presented once and
     /// never kept.
-    fn send_sheets_token(&self, url: &str, value: &[u8]) -> Result<CheckReply> {
+    fn send_google_token(&self, url: &str, value: &[u8]) -> Result<CheckReply> {
         let (access_token, granted) = self.stored_google_access_token(value)?;
         let response = self
             .client
@@ -321,9 +383,7 @@ impl ProviderConnectionChecks {
         }
         let grant: StoredGoogleGrant = serde_json::from_str(text)
             .map_err(|_| invalid("the stored Google grant is not JSON"))?;
-        if let (Some(refresh_token), Some(client_id)) =
-            (present(&grant.refresh_token), present(&grant.client_id))
-        {
+        if let Some((refresh_token, client_id)) = grant.refresh_pair()? {
             return self.exchange_google_refresh(
                 refresh_token,
                 client_id,
@@ -336,6 +396,27 @@ impl ProviderConnectionChecks {
             )
         })?;
         Ok((Zeroizing::new(access_token.to_owned()), None))
+    }
+
+    /// Refuses a stored grant that names a Microsoft tenant before a Google
+    /// path presents it: neither its access token nor its refresh token goes
+    /// to Google. Any other credential passes; only its tenant is read.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] for a stored Microsoft grant.
+    pub(crate) fn refuse_microsoft_grant(value: &[u8]) -> Result<()> {
+        let Ok(text) = std::str::from_utf8(value) else {
+            return Ok(());
+        };
+        let text = text.trim();
+        if !text.starts_with('{') {
+            return Ok(());
+        }
+        match serde_json::from_str::<StoredGrantTenant>(text) {
+            Ok(grant) if present(&grant.tenant).is_some() => Err(invalid(MICROSOFT_GRANT_REFUSED)),
+            _ => Ok(()),
+        }
     }
 
     /// A fresh access token for a stored grant that carries its OAuth client.
@@ -352,9 +433,7 @@ impl ProviderConnectionChecks {
         }
         let grant: StoredGoogleGrant = serde_json::from_str(text)
             .map_err(|_| invalid("the stored Gmail grant is not JSON"))?;
-        let (Some(refresh_token), Some(client_id)) =
-            (present(&grant.refresh_token), present(&grant.client_id))
-        else {
+        let Some((refresh_token, client_id)) = grant.refresh_pair()? else {
             return Ok(None);
         };
         let checks = Self {
@@ -419,6 +498,27 @@ impl ProviderConnectionChecks {
     }
 }
 
+/// What a stored grant gives one provider call: the access token to
+/// present and, when a refresh rotated the grant, the stored grant rewritten
+/// around the provider's newer refresh token, for the custody write-back
+/// after the door returns (RULING MICROSOFT365-REFRESH-WRITEBACK). Both are
+/// wiped on drop.
+pub(crate) struct GrantAccess {
+    pub(crate) access_token: Zeroizing<String>,
+    pub(crate) successor: Option<Zeroizing<Vec<u8>>>,
+}
+
+/// Why a Google path refuses a stored Microsoft grant.
+const MICROSOFT_GRANT_REFUSED: &str =
+    "the stored grant is a Microsoft grant; it is never sent to Google";
+
+/// The tenant a stored grant names, and nothing else of it.
+#[derive(Deserialize)]
+struct StoredGrantTenant {
+    #[serde(default)]
+    tenant: Option<String>,
+}
+
 /// A stored Google grant, read inside the credential door and wiped on drop.
 #[derive(Deserialize)]
 struct StoredGoogleGrant {
@@ -430,6 +530,21 @@ struct StoredGoogleGrant {
     client_id: Option<String>,
     #[serde(default)]
     client_secret: Option<String>,
+    /// Named only by a Microsoft grant ([`MicrosoftAuthorizationCode`]).
+    #[serde(default)]
+    tenant: Option<String>,
+}
+
+impl StoredGoogleGrant {
+    /// The refresh token and the OAuth client it was issued to, when the
+    /// grant carries both. A grant that names a Microsoft tenant is refused
+    /// whole: its refresh token and client secret never go to Google.
+    fn refresh_pair(&self) -> Result<Option<(&str, &str)>> {
+        if present(&self.tenant).is_some() {
+            return Err(invalid(MICROSOFT_GRANT_REFUSED));
+        }
+        Ok(present(&self.refresh_token).zip(present(&self.client_id)))
+    }
 }
 
 impl Drop for StoredGoogleGrant {
@@ -437,6 +552,20 @@ impl Drop for StoredGoogleGrant {
         self.access_token.zeroize();
         self.refresh_token.zeroize();
         self.client_secret.zeroize();
+    }
+}
+
+/// A stored grant whose access token is presented as it is, read inside the
+/// credential door and wiped on drop. Its other fields are skipped unread.
+#[derive(Deserialize)]
+struct StoredAccessGrant {
+    #[serde(default)]
+    access_token: Option<String>,
+}
+
+impl Drop for StoredAccessGrant {
+    fn drop(&mut self) {
+        self.access_token.zeroize();
     }
 }
 
@@ -455,6 +584,22 @@ struct GoogleTokenReply {
 impl Drop for GoogleTokenReply {
     fn drop(&mut self) {
         self.access_token.zeroize();
+    }
+}
+
+#[cfg(oneiron_test_support)]
+impl ProviderConnectionChecks {
+    /// The checks on `client`: a test's own transport.
+    pub(crate) fn on_client(client: reqwest::blocking::Client) -> Self {
+        Self { client }
+    }
+
+    /// The HTTP status of the `microsoft365.me` check's provider call with
+    /// `value` as the stored grant.
+    pub(crate) fn microsoft365_me_status(&self, value: &[u8]) -> Result<u16> {
+        let (method, url) = provider_call(MICROSOFT365_ME_CHECK).map_err(Error::InvalidConfig)?;
+        self.send_microsoft365_me(&method, url, value)
+            .map(|reply| reply.status)
     }
 }
 
@@ -482,7 +627,8 @@ impl PackConnectionVerifier for ProviderConnectionChecks {
             .inject_secret_at_door(&secret.name, &secret.effector, &mut |value: &[u8]| {
                 reply = Some(match check.check {
                     GMAIL_PROFILE_CHECK => self.send_gmail_profile(&method, url, value)?,
-                    SHEETS_TOKEN_CHECK => self.send_sheets_token(url, value)?,
+                    GOOGLE_TOKEN_CHECK => self.send_google_token(url, value)?,
+                    MICROSOFT365_ME_CHECK => self.send_microsoft365_me(&method, url, value)?,
                     _ => self.send(check.check, &method, url, value)?,
                 });
                 Ok(())
@@ -512,7 +658,8 @@ fn provider_call(check: &str) -> std::result::Result<(reqwest::Method, &'static 
         ),
         LINKEDIN_SESSION_CHECK => (reqwest::Method::GET, LINKEDIN_ME_URL),
         TELEGRAM_GET_ME_CHECK => (reqwest::Method::GET, "https://api.telegram.org"),
-        SHEETS_TOKEN_CHECK => (reqwest::Method::POST, GOOGLE_TOKENINFO_URL),
+        GOOGLE_TOKEN_CHECK => (reqwest::Method::POST, GOOGLE_TOKENINFO_URL),
+        MICROSOFT365_ME_CHECK => (reqwest::Method::GET, "https://graph.microsoft.com/v1.0/me"),
         BROWSER_SESSION_CHECK => {
             return Err(
                 "this host runs no browser guest; a served host with a [browser] guest checks it"
@@ -601,8 +748,14 @@ fn evidence_of(
         }
         // Google names the account by email when the grant holds an
         // identity scope, and by its stable subject id always.
-        SHEETS_TOKEN_CHECK => field("email")
+        GOOGLE_TOKEN_CHECK => field("email")
             .or_else(|| field("sub"))
+            .unwrap_or_default()
+            .to_owned(),
+        // Graph names a work account by its sign-in name, its mail address
+        // when it has one.
+        MICROSOFT365_ME_CHECK => field("userPrincipalName")
+            .or_else(|| field("mail"))
             .unwrap_or_default()
             .to_owned(),
         _ => field("emailAddress").unwrap_or_default().to_owned(),
@@ -621,7 +774,8 @@ fn evidence_of(
         LINKEDIN_SESSION_CHECK => reply
             .get("miniProfile")
             .and_then(|profile| reply_field(profile, "publicIdentifier")),
-        SHEETS_TOKEN_CHECK => field("sub"),
+        GOOGLE_TOKEN_CHECK => field("sub"),
+        MICROSOFT365_ME_CHECK => field("id"),
         _ => field("emailAddress"),
     }
     .map(str::to_owned);
@@ -671,7 +825,7 @@ fn connection_bound(
 
 /// The provider's word against the owner's: an account must be named, and
 /// reported scopes must be allowed, apart from undeclared Google identity
-/// scopes accompanying a Gmail or Sheets grant. Declared-but-declined scopes
+/// scopes accompanying a Gmail or Google pack grant. Declared-but-declined scopes
 /// still fail.
 fn judge_evidence(
     declared: &PackSetupConnection,
@@ -702,7 +856,7 @@ fn judge_evidence(
             .filter(|scope| {
                 !explained.contains(scope)
                     && !((declared.verify == GMAIL_PROFILE_CHECK
-                        || declared.verify == SHEETS_TOKEN_CHECK)
+                        || declared.verify == GOOGLE_TOKEN_CHECK)
                         && GOOGLE_IDENTITY_SCOPES.contains(scope))
             })
             .collect();

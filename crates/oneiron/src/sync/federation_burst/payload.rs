@@ -3,9 +3,8 @@
 use std::fmt;
 use std::ops::Deref;
 use std::sync::Arc;
-use std::time::Instant;
 
-use oneiron_contracts::host_memory::{MachineMemory, MemoryLease, MemoryRefusal};
+use oneiron_contracts::host_memory::MemoryLease;
 use serde::{Deserialize, Serialize};
 
 /// Immutable payload bytes. Clones share both the buffer and its admission.
@@ -48,20 +47,8 @@ impl FederationPayloadBytes {
     }
 }
 
-pub(super) fn reserve_memory(size: u64) -> crate::Result<MemoryLease> {
-    MachineMemory::process()
-        .lease(size, Instant::now())
-        .map_err(|refusal| {
-            let kind = match refusal {
-                MemoryRefusal::Floor { .. } => std::io::ErrorKind::OutOfMemory,
-                MemoryRefusal::WaitedOut { .. } => std::io::ErrorKind::WouldBlock,
-            };
-            crate::Error::Io(std::io::Error::new(
-                kind,
-                format!("federation payload memory: {refusal:?}"),
-            ))
-        })
-}
+#[doc(hidden)]
+pub(super) use oneiron_verb_wire::sync::federation_burst::payload::reserve_memory;
 
 impl Serialize for FederationPayloadBytes {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

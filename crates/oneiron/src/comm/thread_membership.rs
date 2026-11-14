@@ -62,7 +62,7 @@ pub(super) fn matching_thread_memberships_in_txn(
         // ordinary membership reads without a COMM_RECORD family scan.
         if !aliases.values().any(|target| target == canonical) {
             let rows = matching_thread_membership_with_boundary_in_txn(
-                vault, rtxn, party_ref, thread_ref, true, None,
+                vault, rtxn, None, party_ref, thread_ref, true, None,
             )?;
             return settled_member(vault, rtxn, rows);
         }
@@ -91,6 +91,7 @@ pub(super) fn matching_thread_memberships_in_txn(
     let rows = matching_thread_membership_with_boundary_in_txn(
         vault,
         rtxn,
+        None,
         party_ref,
         thread_ref,
         active_only,
@@ -119,9 +120,12 @@ fn settled_member(
     Ok(rows)
 }
 
+/// `index` is the projector's pass index when a join or leave decides, and
+/// `None` on a read path.
 fn matching_thread_membership_with_boundary_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
+    index: Option<&CommProjectorIndex>,
     party_ref: EntityId,
     thread_ref: &str,
     active_only: bool,
@@ -129,22 +133,8 @@ fn matching_thread_membership_with_boundary_in_txn(
 ) -> CommResult<Vec<(EntityId, CommClaim)>> {
     let aliases = crate::thread_passport::thread_aliases_in_txn(vault, rtxn)?;
     let canonical = canonical_member_ref(&aliases, thread_ref);
-    let mut rows = Vec::new();
-    for id in vault.claims_for_subject_in_txn(rtxn, &party_ref)? {
-        let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
-            continue;
-        };
-        if body.predicate != PREDICATE_COMM_THREAD_MEMBER {
-            continue;
-        }
-        let claim = CommClaim::from_claim_body(&body)?;
-        let CommClaimValue::ThreadMember { thread_ref, .. } = &claim.value else {
-            unreachable!("thread predicate")
-        };
-        if canonical_member_ref(&aliases, thread_ref) == canonical {
-            rows.push((id, claim));
-        }
-    }
+    let mut rows =
+        slot_thread_member_claims_in_txn(vault, rtxn, index, party_ref, &aliases, canonical)?;
     if !active_only {
         return Ok(rows);
     }
@@ -166,6 +156,100 @@ fn matching_thread_membership_with_boundary_in_txn(
     rows.sort_by_key(|(id, claim)| (std::cmp::Reverse(claim.valid_from), *id));
     rows.truncate(1);
     Ok(rows)
+}
+
+/// The thread-member claims about `party_ref` whose thread folds into the
+/// `canonical` slot, in claim-id order: the order of the party's inbound
+/// `claim_of` edges. With a pass index the party's claims are walked once
+/// while every commit is the pass's own, and each later read decodes only
+/// the slot's own claims, each re-read in this transaction. Without one,
+/// every claim about the party is read.
+fn slot_thread_member_claims_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    index: Option<&CommProjectorIndex>,
+    party_ref: EntityId,
+    aliases: &BTreeMap<String, String>,
+    canonical: &str,
+) -> CommResult<Vec<(EntityId, CommClaim)>> {
+    let in_slot =
+        |claim: &CommClaim| canonical_member_ref(aliases, claim_thread_ref(claim)) == canonical;
+    let cached =
+        index.and_then(|index| index.thread_member_claim_ids(party_ref, aliases, canonical));
+    if let Some(ids) = cached {
+        let mut rows = Vec::new();
+        for id in ids {
+            if let Some(claim) = thread_member_claim_in_txn(vault, rtxn, &id)?
+                && in_slot(&claim)
+            {
+                rows.push((id, claim));
+            }
+        }
+        return Ok(rows);
+    }
+    let mut rows = Vec::new();
+    for id in vault.claims_for_subject_in_txn(rtxn, &party_ref)? {
+        if let Some(claim) = thread_member_claim_in_txn(vault, rtxn, &id)? {
+            rows.push((id, claim));
+        }
+    }
+    if let Some(index) = index {
+        index.note_thread_member_claims(
+            party_ref,
+            rows.iter()
+                .map(|(id, claim)| (*id, claim_thread_ref(claim).to_owned())),
+        );
+    }
+    rows.retain(|(_, claim)| in_slot(claim));
+    Ok(rows)
+}
+
+/// Claim `id` as a thread-member claim, or `None` when the row is gone or
+/// carries another predicate.
+fn thread_member_claim_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> CommResult<Option<CommClaim>> {
+    note_thread_member_claim_read();
+    let Some(body) = vault.get_claim_in_txn(rtxn, id)? else {
+        return Ok(None);
+    };
+    if body.predicate != PREDICATE_COMM_THREAD_MEMBER {
+        return Ok(None);
+    }
+    Ok(Some(CommClaim::from_claim_body(&body)?))
+}
+
+/// The thread reference a thread-member claim's value names.
+fn claim_thread_ref(claim: &CommClaim) -> &str {
+    let CommClaimValue::ThreadMember { thread_ref, .. } = &claim.value else {
+        unreachable!("thread predicate")
+    };
+    thread_ref
+}
+
+// Test-door tally of the claim reads the membership fold makes, per thread
+// (L6-23, ARCH-0057 membership-history scans): within one projector pass a
+// party's claims are walked once, then each join or leave reads its slot's.
+#[cfg(oneiron_test_support)]
+thread_local! {
+    static THREAD_MEMBER_CLAIM_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(oneiron_test_support)]
+fn note_thread_member_claim_read() {
+    THREAD_MEMBER_CLAIM_READS.with(|reads| reads.set(reads.get().saturating_add(1)));
+}
+
+#[cfg(not(oneiron_test_support))]
+const fn note_thread_member_claim_read() {}
+
+/// The claim reads the membership fold made on this thread since the last
+/// call.
+#[cfg(oneiron_test_support)]
+pub(crate) fn take_thread_member_claim_reads() -> usize {
+    THREAD_MEMBER_CLAIM_READS.with(|reads| reads.replace(0))
 }
 
 pub(crate) fn active_thread_refs_in_txn(
@@ -234,6 +318,7 @@ pub(super) fn apply_thread_membership_in_txn(
             let active = matching_thread_membership_with_boundary_in_txn(
                 vault,
                 wtxn,
+                Some(index),
                 party_ref,
                 thread,
                 true,
@@ -243,9 +328,16 @@ pub(super) fn apply_thread_membership_in_txn(
             )?;
             require_at_most_one(&active)?;
             let mut heads = Vec::new();
+            let mut minted_thread_member_claim = None;
             if active.is_empty() {
                 let history = matching_thread_membership_with_boundary_in_txn(
-                    vault, wtxn, party_ref, thread, false, None,
+                    vault,
+                    wtxn,
+                    Some(index),
+                    party_ref,
+                    thread,
+                    false,
+                    None,
                 )?;
                 let latest_transition = latest_claim_transition_boundary(&history)
                     .max(index.latest_thread_transition(&key, &aliases))
@@ -282,6 +374,7 @@ pub(super) fn apply_thread_membership_in_txn(
                 }
                 if minted {
                     heads.push(claim_id);
+                    minted_thread_member_claim = Some((party_ref, raw_thread.to_owned(), claim_id));
                 }
             }
             // The source event row is stamped `projected` by the same commit,
@@ -300,6 +393,7 @@ pub(super) fn apply_thread_membership_in_txn(
                     )
                         .max(peer_transition.unwrap_or((0, false))),
                 )),
+                minted_thread_member_claim,
                 heads,
                 contacts: Vec::new(),
                 source_stamped: false,
@@ -325,6 +419,7 @@ pub(super) fn apply_thread_membership_in_txn(
             let active = matching_thread_membership_with_boundary_in_txn(
                 vault,
                 wtxn,
+                Some(index),
                 party_ref,
                 thread,
                 true,
@@ -343,12 +438,17 @@ pub(super) fn apply_thread_membership_in_txn(
                     .max(index.latest_thread_transition(&key, &aliases))
                     .max(peer_transition.map(|(at, _)| at));
                 if latest_transition.is_none_or(|boundary| occurred_at >= boundary) {
-                    for (claim_id, claim) in matching_thread_memberships_in_txn(
+                    // Every physical head of the slot, standing or not: the
+                    // history read `matching_thread_memberships_in_txn` makes
+                    // with `active_only` false, from the pass index.
+                    for (claim_id, claim) in matching_thread_membership_with_boundary_in_txn(
                         vault,
                         wtxn,
+                        Some(index),
                         party_ref,
-                        Some(thread),
+                        thread,
                         false,
+                        None,
                     )? {
                         if claim.is_standing() {
                             admission.write(vault, wtxn, &[claim_id], &[claim_id], |txn| {
@@ -370,6 +470,7 @@ pub(super) fn apply_thread_membership_in_txn(
                     )
                         .max(peer_transition.unwrap_or((0, false))),
                 )),
+                minted_thread_member_claim: None,
                 heads,
                 contacts: Vec::new(),
                 source_stamped: false,
