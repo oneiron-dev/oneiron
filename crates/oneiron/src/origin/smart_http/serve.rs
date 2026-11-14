@@ -26,6 +26,7 @@ use super::paths::{
     origin_repo_dir, origin_serving_root, push_refused, repository_busy, serve_failed, serve_idle,
 };
 use super::projected_serve::{ProjectedExchange, select_projected_exchange};
+use super::protected_ref_confirm::ProtectedRef;
 use super::push_admission::{ServeCaller, admit_push, stamp_admission};
 use super::read_projection::RepoGitBackend;
 use super::recipient_serve::RepoGitReadContext;
@@ -35,7 +36,7 @@ use crate::credential_door::CredentialDoorService;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::git_push::GitPushStamp;
-use crate::git_wire::{lock_repository, lock_repository_within, try_lock_repository};
+use crate::git_wire::{GitWire, lock_repository, lock_repository_within, try_lock_repository};
 use crate::origin::RepoPortableId;
 use crate::origin::residence::{OriginAuthorityLease, OriginAuthorityStamp};
 use crate::store::code_snapshot::RepoRef;
@@ -342,7 +343,12 @@ pub(super) fn serve_request(
         .map_or_else(|| repo_dir.clone(), Path::to_path_buf);
     let door_root = origin_door_root(vault)?;
     let list_paths = push.as_ref().is_some_and(GitPushStamp::names_checkout);
-    let hooks = DoorHooksDir::materialize_listing(&door_root, scan, list_paths)?;
+    // Anyone but the vault's owner may neither delete nor rewrite the
+    // repository's default branch (L8-51), so their hook names every branch
+    // move that does not fast-forward. The owner's push runs no such check.
+    let guards_protected_ref = push.as_ref().is_some_and(|stamp| !stamp.is_owner());
+    let hooks =
+        DoorHooksDir::materialize_listing(&door_root, scan, list_paths, guards_protected_ref)?;
     let command = match &projected {
         Some(projected) => projected.command(&project_root, hooks.path())?,
         None => ServeCommand::http_backend(&repo_dir, &project_root, hooks.path())?,
@@ -359,6 +365,12 @@ pub(super) fn serve_request(
         // A fetch and an advertisement mutate nothing, so neither queues behind
         // a push and neither delays one.
         None
+    };
+    // Read under the canonical coordinator, from the canonical store: an
+    // ingress is a copy, and its HEAD is not the repository's.
+    let protected_ref = match &coordinator {
+        Some(_) if guards_protected_ref => protected_default_ref(vault, &repo_dir)?,
+        _ => None,
     };
     // The ingress's own coordinator, after the canonical one, never before.
     let ingress_coordinator = match (&coordinator, served_dir != repo_dir) {
@@ -449,6 +461,7 @@ pub(super) fn serve_request(
                 admission: admission.as_ref(),
                 scan,
                 spill_floor: spill_floor.as_ref(),
+                protected_ref: protected_ref.as_ref(),
             },
             repo_dir: &served_dir,
             hooks: &hooks,
@@ -526,6 +539,36 @@ pub(super) fn repo_common_dir(repo_dir: &Path) -> Result<PathBuf> {
         Err(error) => return Err(Error::Io(error)),
     };
     Ok(common.canonicalize()?)
+}
+
+/// The branch the served repository's HEAD names, as a full ref, with the
+/// repository's identity: the ref a push by anyone but the vault's owner may
+/// neither delete nor rewrite (L8-51). `None` when HEAD is detached or names
+/// no branch. Read through git, which reads either ref store; a read that
+/// fails for any other reason refuses the push.
+fn protected_default_ref(vault: &Vault, repo_dir: &Path) -> Result<Option<ProtectedRef>> {
+    let args = ["symbolic-ref", "--quiet", "HEAD"].map(str::to_owned);
+    let output = crate::git_wire::run_bridged_git_argv(repo_dir, &args)?;
+    if output.timed_out || output.truncated {
+        return Err(serve_failed("the served repository's HEAD did not read"));
+    }
+    if !output.success {
+        // `symbolic-ref --quiet` answers 1, and only 1, for a detached HEAD.
+        return match output.exit_code {
+            Some(1) => Ok(None),
+            _ => Err(serve_failed("the served repository's HEAD did not read")),
+        };
+    }
+    let name = String::from_utf8(output.stdout)
+        .map_err(|_| serve_failed("the served repository's HEAD is not UTF-8"))?;
+    let name = name.trim_end_matches(['\r', '\n']);
+    if !name.starts_with("refs/heads/") {
+        return Ok(None);
+    }
+    Ok(Some(ProtectedRef {
+        name: name.to_owned(),
+        repo_identity_hex: GitWire::new(vault)?.repository_identity(repo_dir)?.as_hex(),
+    }))
 }
 
 /// A repo_ref that names the repository before any commit is pinned to it.

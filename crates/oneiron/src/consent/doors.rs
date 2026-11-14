@@ -7,7 +7,7 @@ use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRec
 use super::bound::{ActorBound, GrantBound};
 use super::codec::GRANTS;
 use super::effect::{
-    ApproveOnceAuthorization, CATASTROPHE_FLOOR_V2, CatastropheClass, ComposedEffect,
+    ApproveOnceAuthorization, CATASTROPHE_FLOOR_V3, CatastropheClass, ComposedEffect,
     ConsentDecision, EffectDigest,
 };
 use super::grant::{
@@ -632,7 +632,7 @@ pub struct ConsentEvaluation {
 #[must_use]
 pub fn bound_catastrophe_class(bound: &GrantBound) -> Option<CatastropheClass> {
     let class = bound.class().as_str();
-    CATASTROPHE_FLOOR_V2
+    CATASTROPHE_FLOOR_V3
         .into_iter()
         .find(|catastrophe| catastrophe.as_str() == class)
 }
