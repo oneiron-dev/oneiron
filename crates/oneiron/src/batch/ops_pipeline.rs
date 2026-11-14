@@ -341,10 +341,11 @@ pub(crate) fn apply_ops_with_gate_mode(
 /// would build on the row as it was before the first. A put's index, in
 /// particular, could not publish the revision the put staged.
 ///
-/// A room indexes what it stages at once and runs no idle pass. So the apply
-/// that indexes a row the room put publishes the row's revision (its indexed
-/// revision becomes its live one), and hides the row's text or vector that
-/// it did not restage when they describe another body. When neither base's
+/// A room indexes what it stages at once and runs no idle pass. A Put-only
+/// restage indexes its live body's text and publishes its revision at once.
+/// Explicit text or vector writes also publish the row's revision (its indexed
+/// revision becomes its live one), and hide the row's text or vector that
+/// they did not restage when they describe another body. When neither base's
 /// indexed body nor its live one is the room's, it hides base's vector of
 /// the row even when base has none yet, since base may still embed that
 /// body. Base keeps its deferred-index interval.
@@ -379,11 +380,15 @@ pub(crate) fn apply_ops_session(
 
     // One write of a row per apply (see above), refused before a byte stages.
     let mut rows = HashSet::new();
+    let mut puts = HashSet::new();
     let mut texts = HashSet::new();
     let mut vectors = HashSet::new();
     for entry in &entries {
         let id = match &entry.op {
-            BatchOp::Put { id, .. } => id,
+            BatchOp::Put { id, .. } => {
+                puts.insert(*id);
+                id
+            }
             BatchOp::Text { id, .. } => {
                 texts.insert(*id);
                 id
@@ -626,16 +631,33 @@ pub(crate) fn apply_ops_session(
         }
         overlay.stage_journal_entry(entry)?;
     }
-    // The apply that indexes a row the room put publishes its revision, and
-    // hides an index of another body that it did not restage (see above). A
-    // vector the room staged describes the body it indexed last, so it stands
-    // until the body changes (Sol R23).
-    for id in texts.union(&vectors) {
+    let mut restaged = HashSet::new();
+    for id in puts.difference(&texts) {
+        if !view.entities.stages_row(id.as_bytes()) {
+            continue;
+        }
+        if let Some(fields) =
+            crate::vault::entity_revision::room_restage_text_fields(view, wtxn, id)?
+        {
+            crate::store::text_index::index_text(view, wtxn, analyzer, id, &fields)?;
+            restaged.insert(*id);
+        }
+    }
+    // Put-only restages publish their live-body text now. A Text in the next
+    // apply replaces those postings and finds live == indexed at publication.
+    // Explicit text/vector writes keep their path, hiding indexes of another
+    // body only when neither that write nor the restage replaced them.
+    let indexed: HashSet<_> = texts
+        .union(&vectors)
+        .copied()
+        .chain(restaged.iter().copied())
+        .collect();
+    for id in &indexed {
         if !view.entities.stages_row(id.as_bytes()) {
             continue;
         }
         let changed = crate::vault::entity_revision::publish_room_revision(view, wtxn, id)?;
-        if changed && !texts.contains(id) {
+        if changed && !texts.contains(id) && !restaged.contains(id) {
             crate::store::text_index::deindex_text(view, wtxn, id)?;
         }
         if !vectors.contains(id) && (changed || !view.vectors.stages_row(id.as_bytes())) {
