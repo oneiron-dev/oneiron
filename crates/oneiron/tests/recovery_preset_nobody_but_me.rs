@@ -4,7 +4,8 @@
 //! sheet, removes the password and passkey wraps and retires every escrow
 //! recipient but the world kit's, in one write; while it holds, the add
 //! doors refuse those kinds, a presented capsule opens nothing on the live
-//! vault, and a host-managed or supervisor-delivered key cannot enter it.
+//! vault nor on a checkpoint sealed under the preset, and a host-managed or
+//! supervisor-delivered key cannot enter it.
 //!
 //! Its switch "any 2 pieces" (PR 2; PIECES = A, FLIP = A, OLD-DEVICE = A):
 //! turning it on issues a data-key kit over three homes in the same write,
@@ -103,8 +104,12 @@ fn sheet_alone_restores_under_nobody_but_me() {
         "a new vault starts on the standard preset"
     );
 
+    let mut kept = None;
     let change = vault
-        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe)
+        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe, |sheet| {
+            kept = Some(sheet.code());
+            Ok(())
+        })
         .expect("the owner enters \"Nobody but me\"");
     assert_eq!(change.previous, RecoveryPreset::Standard);
     assert_eq!(change.preset, RecoveryPreset::NobodyButMe);
@@ -114,6 +119,11 @@ fn sheet_alone_restores_under_nobody_but_me() {
     );
     let sheet = change.sheet.expect("entering the preset issues the sheet");
     let code = sheet.code();
+    assert_eq!(
+        kept.as_deref().map(String::as_str),
+        Some(code.as_str()),
+        "the sheet the owner kept before the write is the one the vault took"
+    );
     assert_eq!(
         code.chars().filter(char::is_ascii_alphanumeric).count(),
         56,
@@ -167,7 +177,7 @@ fn passkey_and_password_wraps_go_and_stop_opening_under_nobody_but_me() {
         .expect("a vault password on the standard preset");
 
     let change = vault
-        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe)
+        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe, |_| Ok(()))
         .expect("the owner enters \"Nobody but me\"");
     let mut removed: Vec<String> = change.removed.iter().map(|info| info.id.clone()).collect();
     removed.sort();
@@ -239,7 +249,7 @@ fn nobody_but_me_retires_a_host_escrow_and_refuses_its_capsule_and_a_new_one() {
         .capsule;
 
     let change = vault
-        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe)
+        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe, |_| Ok(()))
         .expect("the owner enters \"Nobody but me\"");
     assert_eq!(
         change
@@ -279,6 +289,96 @@ fn nobody_but_me_retires_a_host_escrow_and_refuses_its_capsule_and_a_new_one() {
     assert_eq!(wrap_ids(&vault), ids, "a refused add changes no wrap");
 }
 
+/// A capsule a host escrow kept from before the change still opens a
+/// checkpoint sealed before it, as the data key does not rotate, and never
+/// one sealed under the preset: its key header names the preset (review of
+/// #7766, round 1).
+#[test]
+fn a_checkpoint_sealed_under_nobody_but_me_refuses_an_earlier_capsule() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let vault = keyed_vault(&directory.path().join("vault"));
+    let owner_proof = owner(&vault).expect("owner proof");
+    let recipient = escrow_recipient(&[7u8; 32]).expect("escrow recipient");
+    vault
+        .add_vault_key_escrow_as(&owner_proof, "box", recipient.public_key())
+        .expect("a host escrow on the standard preset");
+    let capsule = vault
+        .vault_key_escrow_capsules()
+        .expect("escrow capsules")
+        .into_iter()
+        .find(|capsule| capsule.label == "box")
+        .expect("the box's capsule, as a registry would keep it")
+        .capsule;
+    let before = directory.path().join("before");
+    vault
+        .snapshot_checkpoint(&before, 100)
+        .expect("seal a checkpoint on the standard preset");
+
+    vault
+        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe, |_| Ok(()))
+        .expect("the owner enters \"Nobody but me\"");
+    let after = directory.path().join("after");
+    vault
+        .snapshot_checkpoint(&after, 101)
+        .expect("seal a checkpoint under the preset");
+
+    let presented = |image: &Path| {
+        CheckpointKey::unlock(
+            image,
+            &VaultKeyUnlock::EscrowCapsule {
+                label: "box",
+                capsule: &capsule,
+                secret: &recipient,
+            },
+        )
+        .map(|_| ())
+    };
+    presented(&before).expect("the earlier capsule still opens what was sealed before the change");
+    refused_by_preset(
+        presented(&after),
+        "the earlier capsule on a checkpoint sealed under the preset",
+    );
+}
+
+/// The sheet is kept before the write that removes the old wraps: a keep
+/// that fails changes nothing, and the password still opens the vault
+/// (review of #7766, round 1).
+#[test]
+fn a_failed_sheet_keep_leaves_the_standard_preset_and_its_wraps() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let path = directory.path().join("vault");
+    let vault = keyed_vault(&path);
+    let owner_proof = owner(&vault).expect("owner proof");
+    vault
+        .set_vault_key_password(b"correct horse battery staple", None)
+        .expect("a vault password on the standard preset");
+    let ids = wrap_ids(&vault);
+
+    let mut offered_before_the_write = false;
+    let refused = vault.set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe, |_| {
+        offered_before_the_write = wrap_ids(&vault).contains(&"password".to_owned());
+        Err(oneiron::Error::Io(std::io::Error::other(
+            "no space left for the sheet's file",
+        )))
+    });
+    assert!(refused.is_err(), "a failed keep refuses the change");
+    assert!(
+        offered_before_the_write,
+        "the sheet is offered while the password wrap is still there"
+    );
+    assert_eq!(
+        vault.recovery_preset().expect("preset"),
+        RecoveryPreset::Standard
+    );
+    assert_eq!(wrap_ids(&vault), ids, "a failed keep changes no wrap");
+
+    drop(vault);
+    let fresh = Vault::open(&path, VaultConfig::device()).expect("reopen with no keystore");
+    fresh
+        .unlock_vault_key_with_password(b"correct horse battery staple")
+        .expect("the password still opens the vault");
+}
+
 #[test]
 fn nobody_but_me_is_refused_under_a_supervisor_delivered_key() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -296,7 +396,7 @@ fn nobody_but_me_is_refused_under_a_supervisor_delivered_key() {
     );
     let owner_proof = owner(&vault).expect("owner proof");
     let refusal = vault
-        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe)
+        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe, |_| Ok(()))
         .expect_err("a host-delivered key cannot be \"Nobody but me\"");
     assert!(
         refusal.to_string().contains("owner-held data key"),
@@ -314,12 +414,14 @@ fn the_preset_in_force_changes_nothing_and_leaving_it_changes_no_wrap() {
     let vault = keyed_vault(&directory.path().join("vault"));
     let owner_proof = owner(&vault).expect("owner proof");
     vault
-        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe)
+        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe, |_| Ok(()))
         .expect("enter the preset");
     let entered = wrap_ids(&vault);
 
     let again = vault
-        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe)
+        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe, |_| {
+            panic!("the preset in force draws no sheet to keep")
+        })
         .expect("the preset in force again");
     assert_eq!(again.previous, RecoveryPreset::NobodyButMe);
     assert!(again.sheet.is_none(), "no second sheet is issued");
@@ -327,7 +429,9 @@ fn the_preset_in_force_changes_nothing_and_leaving_it_changes_no_wrap() {
     assert_eq!(wrap_ids(&vault), entered);
 
     let left = vault
-        .set_recovery_preset_as(&owner_proof, RecoveryPreset::Standard)
+        .set_recovery_preset_as(&owner_proof, RecoveryPreset::Standard, |_| {
+            panic!("leaving the preset draws no sheet")
+        })
         .expect("leave the preset");
     assert_eq!(left.previous, RecoveryPreset::NobodyButMe);
     assert!(left.sheet.is_none() && left.removed.is_empty());
@@ -360,7 +464,7 @@ fn any_two_pieces_opens_with_two_pieces_and_never_with_one() {
     let vault = keyed_vault(&path);
     let owner_proof = owner(&vault).expect("owner proof");
     let old_sheet = vault
-        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe)
+        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe, |_| Ok(()))
         .expect("the owner enters \"Nobody but me\"")
         .sheet
         .expect("its sheet");
@@ -517,7 +621,7 @@ fn any_two_pieces_refuses_every_single_secret_wrap() {
         .set_vault_key_password(b"correct horse battery staple", None)
         .expect("a vault password on the standard preset");
     let refusal = vault
-        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMeAnyTwo)
+        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMeAnyTwo, |_| Ok(()))
         .expect_err("\"any 2 pieces\" is turned on with its kit");
     assert!(refusal.to_string().contains("issues the kit"), "{refusal}");
 
@@ -574,7 +678,7 @@ fn turning_any_two_pieces_off_prints_a_fresh_sheet_and_the_kit_stays() {
     let vault = keyed_vault(&path);
     let owner_proof = owner(&vault).expect("owner proof");
     let first = vault
-        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe)
+        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe, |_| Ok(()))
         .expect("enter \"Nobody but me\"")
         .sheet
         .expect("the first sheet");
@@ -596,7 +700,7 @@ fn turning_any_two_pieces_off_prints_a_fresh_sheet_and_the_kit_stays() {
     let pieces: Vec<KitPiece> = switched.kit.pieces.iter().map(typed_back).collect();
 
     let off = vault
-        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe)
+        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe, |_| Ok(()))
         .expect("turn \"any 2 pieces\" off");
     assert_eq!(off.previous, RecoveryPreset::NobodyButMeAnyTwo);
     let second = off

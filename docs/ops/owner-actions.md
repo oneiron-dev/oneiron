@@ -2081,15 +2081,19 @@ oneiron vault-key recovery-preset --set standard
 ```
 
 Entering `nobody-but-me` needs the key held and a key you hold (`owner_held_local` custody; a
-host-managed or supervisor-delivered key is refused). In one write it prints the sheet's code to
-the new owner-only `--sheet-out` file, once (56 letters and digits in groups of 4: print it and keep
-it offline), removes the password and every passkey wrap, and retires every escrow recipient but the
-world kit's, each with its receipt. While it holds, adding a password, passkey or escrow wrap is
-refused, a registry's capsule opens nothing on the vault, and no delivered key is admitted. This
-device's wrap stays, and so do the recovery kits, which need two pieces. Setting the preset already
-in force changes nothing; `--set standard` changes no wrap, and the ordinary commands add any after.
-A running server takes the same steps at `GET` and `PUT /v1/owner/vault-key/recovery-preset` with
-`{"preset": "nobody_but_me"}`; the answer carries the sheet's code once.
+host-managed or supervisor-delivered key is refused). It first writes the sheet's code to the new
+owner-only `--sheet-out` file, once, and syncs it (56 letters and digits in groups of 4: print it
+and keep it offline). Only then, in one write, does it add the sheet's wrap, remove the password and
+every passkey wrap, and retire every escrow recipient but the world kit's, each with its receipt. If
+the file cannot be written, the vault does not change. While the preset holds, adding a password,
+passkey or escrow wrap is refused, a registry's capsule opens nothing on the vault or on a backup
+written under the preset, and no delivered key is admitted. This device's wrap stays, and so do the
+recovery kits, which need two pieces. Setting the preset already in force changes nothing;
+`--set standard` changes no wrap, and the ordinary commands add any after. A running server takes
+the same steps at `GET` and `PUT /v1/owner/vault-key/recovery-preset` with
+`{"preset": "nobody_but_me"}`; the answer carries the sheet's code once. On a maximum-tier vault,
+`mirror_pending: true` says the change stands but the page-seal mirror was not rewritten; the next
+sealed open repairs it.
 
 On a new host, the sheet restores the vault:
 
@@ -2127,7 +2131,8 @@ oneiron restore BACKUP --unlock kit --vault-id HEX --piece /Volumes/KEY/kit/piec
 the kit stays usable. The old sheet opens nothing written after either change.
 
 A sheet, passkey or capsule handed out before the change still opens the backups written before it:
-the data key does not rotate. The preset governs what the vault carries from then on.
+the data key does not rotate. A backup names the preset it was written under, so a capsule opens
+nothing written after the change.
 
 ### Maximum tier
 

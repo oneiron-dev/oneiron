@@ -145,7 +145,7 @@ impl Vault {
             .map(|(_, stored)| stored)
             .collect();
         Ok((
-            CarriedVaultKey::new(state.commitment, wraps),
+            CarriedVaultKey::new(state.commitment, state.recovery, wraps),
             key.derive(context, &vault_id),
         ))
     }
@@ -173,7 +173,11 @@ impl Vault {
                     .into_iter()
                     .map(|(_, stored)| stored)
                     .collect();
-                Some(CarriedVaultKey::new(state.commitment, wraps))
+                Some(CarriedVaultKey::new(
+                    state.commitment,
+                    state.recovery,
+                    wraps,
+                ))
             }
         };
         let Some(carried) = carried else {

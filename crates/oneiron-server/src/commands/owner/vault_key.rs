@@ -108,9 +108,10 @@ pub fn vault_key(command: VaultKeyCommand) -> anyhow::Result<()> {
 
 /// Shows the recovery preset, or sets it with `--set`. Entering
 /// `nobody-but-me` writes the printed sheet's code to the new owner-only file
-/// `--sheet-out` names: the file is made before the vault changes, so a
-/// sheet is never issued with nowhere to go, and removed again when no sheet
-/// was issued. The vault keeps only the sheet's wrap.
+/// `--sheet-out` names, synced, before the write that removes the old wraps
+/// (review of #7766): a failed write leaves the vault as it was. The file is
+/// removed again when the vault did not take the sheet. The vault keeps only
+/// the sheet's wrap.
 fn recovery_preset(args: VaultKeyRecoveryPresetArgs) -> anyhow::Result<()> {
     let unlock = UnlockRequest::of(&args.unlock);
     let Some(set) = args.set else {
@@ -142,36 +143,34 @@ fn recovery_preset(args: VaultKeyRecoveryPresetArgs) -> anyhow::Result<()> {
     };
     let vault = open(&args.serve, &unlock, need)?;
     let owner = local_owner(&vault)?;
-    let file = sheet_out
-        .as_deref()
-        .map(credential_file::create)
-        .transpose()?;
-    let discard = |path: Option<&Path>| {
-        if let Some(path) = path {
-            let _ = std::fs::remove_file(path);
-        }
+    let mut kept = None;
+    let changed = vault.set_recovery_preset_as(&owner, preset, |sheet| {
+        let path = sheet_out
+            .as_deref()
+            .ok_or_else(|| oneiron::Error::Io(std::io::Error::other("no --sheet-out file")))?;
+        credential_file::write_new(path, sheet.code().as_bytes())
+            .map_err(|error| oneiron::Error::Io(std::io::Error::other(error.to_string())))?;
+        kept = Some(path);
+        Ok(())
+    });
+    // A kept sheet the vault did not take opens nothing. One the vault may
+    // have taken stays: an error after the commit must not drop it.
+    let took_sheet = match &changed {
+        Ok(change) => change.previous != change.preset,
+        Err(_) => vault.recovery_preset().ok() != Some(RecoveryPreset::Standard),
     };
-    let change = match vault.set_recovery_preset_as(&owner, preset) {
-        Ok(change) => change,
-        Err(error) => {
-            drop(file);
-            discard(sheet_out.as_deref());
-            return Err(error.into());
-        }
-    };
-    let (mut set, sheet) = view::RecoveryPresetSet::of(&vault.vault_key_vault_id(), change);
-    match (sheet, file, sheet_out) {
-        (Some(sheet), Some(mut file), Some(path)) => {
-            let line = Zeroizing::new(format!("{}\n", sheet.code().as_str()));
-            file.write_all(line.as_bytes())?;
-            file.sync_all()?;
-            set.sheet_file = Some(path.display().to_string());
-        }
-        (_, file, path) => {
-            drop(file);
-            discard(path.as_deref());
-        }
+    if !took_sheet && let Some(path) = kept.take() {
+        let _ = std::fs::remove_file(path);
     }
+    let change = changed.map_err(|error| match kept {
+        Some(path) => anyhow::anyhow!(
+            "{error}; the sheet's code stays in {}, as the vault may have taken its wrap",
+            path.display()
+        ),
+        None => error.into(),
+    })?;
+    let (mut set, _) = view::RecoveryPresetSet::of(&vault.vault_key_vault_id(), change);
+    set.sheet_file = kept.map(|path| path.display().to_string());
     emit(&set)
 }
 

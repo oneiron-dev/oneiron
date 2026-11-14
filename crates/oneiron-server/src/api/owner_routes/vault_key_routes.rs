@@ -592,7 +592,8 @@ async fn set_recovery_preset(
             }
             RecoveryPreset::Standard => server.vault().as_ref(),
         };
-        let change = vault.set_recovery_preset_as(&owner, request.preset)?;
+        // The answer is the sheet's hand-over: nothing to keep before the write.
+        let change = vault.set_recovery_preset_as(&owner, request.preset, |_| Ok(()))?;
         let (mut set, sheet) = RecoveryPresetSet::of(&vault.vault_key_vault_id(), change);
         set.sheet_code = sheet.map(|sheet| sheet.code().as_str().to_owned());
         Ok(set)

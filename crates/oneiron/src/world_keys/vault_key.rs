@@ -39,7 +39,7 @@ use self::state::{
     presented_escrow, recipient_fingerprint, seal_wrap, wrap_digest,
 };
 use oneiron_crypto::backup::{KeyHeader, KeyHeaderWrap as StoredWrap};
-pub use oneiron_crypto::backup::{VaultKeyWrapInfo, VaultKeyWrapKind};
+pub use oneiron_crypto::backup::{RecoveryPreset, VaultKeyWrapInfo, VaultKeyWrapKind};
 use oneiron_crypto::{
     Argon2Cost, Envelope, HybridPublicKey, HybridSecretKey, Kek, OpenKey, OpenPolicy, Passphrase,
     Purpose, SealKey, SealParams, SuiteId, seal,
@@ -70,9 +70,7 @@ pub use self::escrow::{
     reseal_escrow_capsule,
 };
 pub(super) use self::recovery_preset::EscrowOrigin;
-pub use self::recovery_preset::{
-    RecoveryPreset, RecoveryPresetAnyTwoChange, RecoveryPresetChange, RecoverySheet,
-};
+pub use self::recovery_preset::{RecoveryPresetAnyTwoChange, RecoveryPresetChange, RecoverySheet};
 use self::recovery_preset::{admit_delivered_key, admit_presented_capsule, admit_wrap};
 pub use self::vocabulary::{
     KitPasskey, NewVaultKeyWrap, VaultKeyStatus, VaultKeyUnlock, escrow_recipient,
@@ -88,14 +86,18 @@ pub use self::vocabulary::{
 pub(crate) struct CarriedVaultKey(KeyHeader);
 
 impl CarriedVaultKey {
-    fn new(commitment: [u8; 32], wraps: Vec<StoredWrap>) -> Self {
-        Self(KeyHeader { commitment, wraps })
+    fn new(commitment: [u8; 32], recovery: RecoveryPreset, wraps: Vec<StoredWrap>) -> Self {
+        Self(KeyHeader {
+            commitment,
+            wraps,
+            recovery,
+        })
     }
 
     /// The vault key named by `commitment` with no wrap yet: what the mirror
     /// of a vault under a delivered key holds before its first wrap.
     pub(super) fn unwrapped(commitment: [u8; 32]) -> Self {
-        Self::new(commitment, Vec::new())
+        Self::new(commitment, RecoveryPreset::Standard, Vec::new())
     }
 
     /// The key header a sealed artifact carries, as its wire form.
@@ -144,7 +146,10 @@ impl CarriedVaultKey {
     /// The vault key a carried wrap opens to under `unlock`, and the digest
     /// of every carried wrap that opens. Each wrap `unlock` may open is
     /// tried: while a wrap change commits, a page-seal mirror carries a wrap
-    /// and its replacement under one id (OF-570).
+    /// and its replacement under one id (OF-570). A presented escrow capsule
+    /// is refused when the header names "Nobody but me": the data key does
+    /// not rotate, so a capsule kept from before the preset would open what
+    /// was sealed under it.
     pub(super) fn open_recording(
         &self,
         vault_id: &[u8; 32],
@@ -235,6 +240,7 @@ impl CarriedVaultKey {
                 capsule,
                 secret,
             } => {
+                admit_presented_capsule(self.0.recovery)?;
                 let presented = presented_escrow(label, capsule)?;
                 attempt(&presented, &UnlockSecret::Hybrid(secret));
             }
@@ -374,7 +380,11 @@ impl Vault {
             .into_iter()
             .map(|(_, stored)| stored)
             .collect();
-        Ok((!wraps.is_empty()).then_some(CarriedVaultKey::new(state.commitment, wraps)))
+        Ok((!wraps.is_empty()).then_some(CarriedVaultKey::new(
+            state.commitment,
+            state.recovery,
+            wraps,
+        )))
     }
 
     /// What a sealed vault's page-seal mirror holds while a wrap change
@@ -394,7 +404,11 @@ impl Vault {
             .map(|(_, stored)| stored)
             .collect();
         wraps.extend(adding.cloned());
-        Ok(CarriedVaultKey::new(state.commitment, wraps))
+        Ok(CarriedVaultKey::new(
+            state.commitment,
+            state.recovery,
+            wraps,
+        ))
     }
 
     /// Whether this vault holds one of `wraps` as it is, envelope for

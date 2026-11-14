@@ -172,6 +172,9 @@ pub(crate) struct RecoveryPresetSet {
     pub(crate) removed: Vec<WrapView>,
     /// The escrow recipients the change retired, with their receipts.
     pub(crate) retired: Vec<RetiredEscrowView>,
+    /// The change committed but the sealed vault's page-seal mirror still
+    /// needs repair; the next sealed open repairs it.
+    pub(crate) mirror_pending: bool,
 }
 
 impl RecoveryPresetSet {
@@ -196,6 +199,7 @@ impl RecoveryPresetSet {
                 .into_iter()
                 .map(RetiredEscrowView::from)
                 .collect(),
+            mirror_pending: change.mirror_pending,
         };
         (view, change.sheet)
     }
