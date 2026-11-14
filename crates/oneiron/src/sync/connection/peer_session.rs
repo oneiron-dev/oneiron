@@ -288,9 +288,9 @@ impl ProbedHome {
     /// own hello and reads the home's first frame. Returns
     /// [`first_frame_is_root`] on that frame, `false` on a close or a read
     /// error first, and `None` when no socket opened. The socket closes then;
-    /// nothing the home sent is applied. A 401 on its upgrade is told as the
-    /// home dial tells it: the host asks the home, and the probe decides
-    /// nothing (FIX 12442).
+    /// nothing the home sent is applied. A 401 or 403 on its upgrade is told
+    /// as the home dial tells it: the host asks the home, and the probe
+    /// decides nothing (FIX 12442, MEMBER-SELECTOR-SOCKET).
     async fn probe(&self) -> Option<bool> {
         let (request, _, _) =
             super::handshake::upgrade_request(&self.vault, &self.config, false).ok()?;
@@ -298,8 +298,8 @@ impl ProbedHome {
         let mut socket = match crate::sync::carrier::connect_sync_socket(request, dialer).await {
             Ok((socket, _)) => socket,
             Err(error) => {
-                if crate::sync::carrier::upgrade_unauthorized(&error) {
-                    let _ = self.events.send(SyncEvent::UpgradeUnauthorized);
+                if let Some(refusal) = crate::sync::carrier::upgrade_refusal(&error) {
+                    let _ = self.events.send(refusal.event());
                 }
                 return None;
             }

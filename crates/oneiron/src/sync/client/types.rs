@@ -416,6 +416,14 @@ pub enum SyncEvent {
     /// event never proves it. A host holding a shared membership asks the
     /// home through its signed leave check (FIX 12442).
     UpgradeUnauthorized,
+    /// The home answered this device's sync upgrade with HTTP 403: it
+    /// accepted the credential and refuses that credential this socket. The
+    /// connection does not redial on it: it waits for its shutdown or a
+    /// confirmed leave, and a host that renews the credential opens a new
+    /// connection (MEMBER-SELECTOR-SOCKET). A host holding a shared
+    /// membership asks the home through its signed leave check, as on a 401;
+    /// the event never proves a leave.
+    UpgradeForbidden,
     Error(String),
 }
 

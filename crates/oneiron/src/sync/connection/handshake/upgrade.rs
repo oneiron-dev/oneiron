@@ -97,15 +97,22 @@ impl SyncConnection {
         let (ws_stream, response) = crate::sync::carrier::connect_sync_socket(request, dialer)
             .await
             .map_err(|e| {
+                let message = format!("WS connect failed: {e}");
                 // A home's refused credential may mean a removed membership:
                 // the host asks the home, and this socket decides nothing
                 // (FIX 12442). A peer's refusal is not the home's.
-                if client.peer_session.is_none() && crate::sync::carrier::upgrade_unauthorized(&e) {
-                    let _ = event_tx.send(SyncEvent::UpgradeUnauthorized);
+                if client.peer_session.is_none()
+                    && let Some(refusal) = crate::sync::carrier::upgrade_refusal(&e)
+                {
+                    let _ = event_tx.send(refusal.event());
+                    // A 403 refuses this credential the socket: no redial on
+                    // it opens one (MEMBER-SELECTOR-SOCKET).
+                    if refusal == crate::sync::carrier::UpgradeRefusal::Forbidden {
+                        return SessionFault::Forbidden(message);
+                    }
                 }
                 // A carrier this machine cannot set up for its URL is its
                 // own fault; any other failure is the far end's (FIX 22217).
-                let message = format!("WS connect failed: {e}");
                 if crate::sync::carrier::own_setup_fault(&e) {
                     SessionFault::Local(message)
                 } else {

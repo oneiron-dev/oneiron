@@ -293,6 +293,23 @@ impl SyncConnection {
                         }
                     }
                 }
+                // The home refused this credential the socket
+                // (MEMBER-SELECTOR-SOCKET): the run never redials on it, and
+                // the home counts neither served nor down, so no peer
+                // session follows. The run waits for its shutdown or a
+                // confirmed leave; a host that renews the credential opens a
+                // new connection on it (device sync, FIX 3377).
+                Err(e) if e.is_forbidden() => {
+                    let _ = event_tx.send(SyncEvent::Error(format!("Connection failed: {e}")));
+                    let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
+                    if self.config.auto_reconnect {
+                        tokio::select! {
+                            _ = &mut shutdown_rx => {}
+                            _ = left_rx.wait_for(|left| *left) => {}
+                        }
+                    }
+                    break;
+                }
                 Err(e) => {
                     // The first peer is dialed on the first backoff step, not
                     // the home's grown one, as is the peer after a home turn
