@@ -115,7 +115,6 @@ struct Reader {
 #[derive(Clone)]
 struct DreamerCall {
     request: Value,
-    reply: String,
     prompt_tokens: u64,
     completion_tokens: u64,
 }
@@ -238,7 +237,6 @@ fn serve(mut stream: TcpStream, loopback: &Loopback) {
     } else {
         loopback.dreamer.lock().unwrap().push(DreamerCall {
             request,
-            reply,
             prompt_tokens,
             completion_tokens,
         });

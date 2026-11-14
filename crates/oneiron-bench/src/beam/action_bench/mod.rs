@@ -248,16 +248,9 @@ fn run_with_session(
         }
         if let (Some(host), Some(&correction_at)) = (settings.extraction, corrections.get(place)) {
             for &arm in settings.arms.iter().filter(|arm| arm.extracts()) {
-                let row = extract(
-                    settings,
-                    session,
-                    tasks,
-                    history,
-                    arm,
-                    correction_at,
-                    host,
-                    &mut rows,
-                )?;
+                let (row, acted) =
+                    extract(settings, session, tasks, history, arm, correction_at, host)?;
+                rows.extend(acted);
                 extraction.push(row);
             }
         }
@@ -285,11 +278,8 @@ fn run_with_session(
 /// One history under one extraction arm: a fresh vault replays the turns
 /// through the correction, the reader acts on each corrected-source
 /// follow-up, the replay runs on to the freeze with every lane drained, and
-/// the reader acts on every follow-up.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one call site; the run's parts and one history's"
-)]
+/// the reader acts on every follow-up. Answers the vault's row and the
+/// reader's rows, in the order the reader acted.
 fn extract(
     settings: &RunSettings<'_>,
     session: &ModelSession,
@@ -298,8 +288,8 @@ fn extract(
     arm: MemoryArm,
     correction_at: u64,
     host: &ExtractionHost,
-    rows: &mut Vec<ActionRow>,
-) -> BeamResult<ExtractionRow> {
+) -> BeamResult<(ExtractionRow, Vec<ActionRow>)> {
+    let mut rows = Vec::new();
     let mut vault = ExtractionVault::open(history, arm, host)?;
     vault.replay_through_correction(correction_at, host)?;
     for follow_up in tasks
@@ -332,7 +322,7 @@ fn extract(
             context,
         )?);
     }
-    vault.row(host, &session.prices)
+    Ok((vault.row(host, &session.prices)?, rows))
 }
 
 /// One reader call and its score. The reader's input has no arm label,
