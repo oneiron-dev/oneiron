@@ -372,8 +372,15 @@ impl Vault {
             });
         }
 
+        // An erased actor's outcome and demotion rows stay as acts with their
+        // receipts and fold into no scope (RAMP-SCOPE-ACTOR-ERASE, Engine
+        // RULING NEXT-ROW-18 = A1): a shared erased scope would hold nothing
+        // anyone could use.
         for ((_, id), row) in RAMP_OUTCOME.scan(&self.store, rtxn)? {
             let row = validated_ramp_row(row, RAMP_OUTCOME_ROW_LABEL)?;
+            if row.actor == crate::receipt::ERASED_CALL_IDENTITY {
+                continue;
+            }
             let outcome = ProposalOutcome::parse(&row.outcome)
                 .ok_or(Error::CorruptedIndex(RAMP_OUTCOME_ROW_LABEL))?;
             events.push(RampFoldEvent {
@@ -391,6 +398,9 @@ impl Vault {
 
         for ((_, id), row) in RAMP_DEMOTION.scan(&self.store, rtxn)? {
             let row = validated_ramp_row(row, RAMP_DEMOTION_ROW_LABEL)?;
+            if row.actor == crate::receipt::ERASED_CALL_IDENTITY {
+                continue;
+            }
             events.push(RampFoldEvent {
                 key: (row.after_seq, FOLD_RANK_RAMP_ROW, id),
                 scope: stored_row_scope(

@@ -200,17 +200,35 @@ pub(super) fn stored_row_scope(
     RampScope::new(op_kind, target_class, actor).map_err(|_| Error::CorruptedIndex(label))
 }
 
-/// Erasing `actor` from the demotion log (FIX 3520; review of #7514): each
-/// demotion it made keeps its scope, reason, grant and times, and its
-/// `demoted_by` reads [`ERASED_CALL_IDENTITY`](crate::receipt::ERASED_CALL_IDENTITY).
-/// The receipt the row projects then names no erased demoter. One-way, in
-/// the erase's own transaction. An id whose entity is no actor scans
-/// nothing.
+/// Erasing `actor` from the ramp (FIX 3520; review of #7514;
+/// RAMP-SCOPE-ACTOR-ERASE, Engine RULING NEXT-ROW-18 = A1, 14 Nov), in the
+/// erase's own transaction and one-way, so no ramp row or receipt names the
+/// erased actor afterwards:
+/// - each scope whose actor is `actor` loses its stats row and its
+///   streak-floor override;
+/// - each demotion and door-recorded outcome in such a scope keeps its act,
+///   reason, grant and times, and its scope actor reads
+///   [`ERASED_CALL_IDENTITY`](crate::receipt::ERASED_CALL_IDENTITY), so its
+///   receipt's `actor` does too;
+/// - each demotion `actor` made keeps its row, and its `demoted_by` reads
+///   [`ERASED_CALL_IDENTITY`](crate::receipt::ERASED_CALL_IDENTITY);
+/// - the offer answers and threshold overrides of those scopes go the same
+///   way, and each answer `actor` gave as an owner keeps its row, and its
+///   `answerer` reads
+///   [`ERASED_CALL_IDENTITY`](crate::receipt::ERASED_CALL_IDENTITY)
+///   ([`crate::edit_distance::graduation::erase_scope_actor_in_txn`]).
+///
+/// The fold reads no row whose actor is erased, so an erased actor's history
+/// forms no shared scope. An id whose entity is no actor scans nothing. Each
+/// ramp table that spells an actor names this scrub; the first run does them
+/// all, and a later one finds nothing left. A floor dialed on a scope that has
+/// no stats, outcome, demotion or answer row is keyed only by the scope's
+/// digest and spells no actor: this erase cannot find it, and it stays.
 ///
 /// # Errors
 ///
 /// Storage errors, or a row that cannot be read.
-pub(crate) fn erase_demotion_actor_in_txn(
+pub(crate) fn erase_ramp_actor_in_txn(
     vault: &crate::Vault,
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
@@ -219,15 +237,58 @@ pub(crate) fn erase_demotion_actor_in_txn(
         return Ok(());
     }
     let hex = actor.to_hex();
-    let mut rows = Vec::new();
-    for (key, mut row) in RAMP_DEMOTION.scan(&vault.store, wtxn)? {
-        if row.demoted_by.as_deref() == Some(hex.as_str()) {
-            row.demoted_by = Some(crate::receipt::ERASED_CALL_IDENTITY.to_owned());
-            rows.push((key, row));
+    let erased = crate::receipt::ERASED_CALL_IDENTITY;
+    let scope_key = |op_kind: &str, target_class: &str| {
+        RampScope {
+            op_kind: op_kind.to_owned(),
+            target_class: target_class.to_owned(),
+            actor: hex.clone(),
+        }
+        .key()
+    };
+    let mut scopes = std::collections::BTreeSet::new();
+    for (key, row) in RAMP_STATS.scan(&vault.store, wtxn)? {
+        if row.actor == hex {
+            scopes.insert(key);
         }
     }
-    for (key, row) in rows {
+    let mut demotions = Vec::new();
+    for (key, mut row) in RAMP_DEMOTION.scan(&vault.store, wtxn)? {
+        let in_scope = row.actor == hex;
+        let by_actor = row.demoted_by.as_deref() == Some(hex.as_str());
+        if in_scope {
+            scopes.insert(scope_key(&row.op_kind, &row.target_class));
+            row.actor = erased.to_owned();
+        }
+        if by_actor {
+            row.demoted_by = Some(erased.to_owned());
+        }
+        if in_scope || by_actor {
+            demotions.push((key, row));
+        }
+    }
+    for (key, row) in demotions {
         RAMP_DEMOTION.put(&vault.store, wtxn, &key, &row)?;
+    }
+    let mut outcomes = Vec::new();
+    for (key, mut row) in RAMP_OUTCOME.scan(&vault.store, wtxn)? {
+        if row.actor == hex {
+            scopes.insert(scope_key(&row.op_kind, &row.target_class));
+            row.actor = erased.to_owned();
+            outcomes.push((key, row));
+        }
+    }
+    for (key, row) in outcomes {
+        RAMP_OUTCOME.put(&vault.store, wtxn, &key, &row)?;
+    }
+    for scope in
+        crate::edit_distance::graduation::erase_scope_actor_in_txn(&vault.store, wtxn, &hex)?
+    {
+        scopes.insert(scope.key());
+    }
+    for key in scopes {
+        RAMP_STATS.delete(&vault.store, wtxn, &key)?;
+        RAMP_FLOOR.delete(&vault.store, wtxn, &key)?;
     }
     Ok(())
 }
