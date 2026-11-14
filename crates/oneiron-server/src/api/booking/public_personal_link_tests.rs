@@ -377,10 +377,36 @@ async fn facade_verb(
     (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
 }
 
+/// The fixture with its page published by the vault's own owner, the actor
+/// an owner door's proof admits: the embedded owner, bound to the host key
+/// again (the fixture moved that binding to its stand-in owner `id(0x77)`)
+/// and publishing the page in its own name.
+fn fixture_of_the_vault_owner() -> (Fixture, EntityId) {
+    let fixture = Fixture::new();
+    let owner = fixture.owner_actor();
+    crate::test_credentials::bind_owner(&fixture.server.vault, "owner-fixture-secret", owner);
+    let memory = fixture.server.vault.memory(owner, EdgeActorClass::Human);
+    let receipt = memory
+        .claim_upsert(&publication_input(
+            fixture.page,
+            true,
+            1,
+            now_secs().expect("clock") + 86_400,
+        ))
+        .expect("the vault owner publishes the page");
+    if receipt.approval == "proposed" {
+        memory
+            .confirm_booking_publication(&receipt.claim_short_id, now_secs().expect("clock"))
+            .expect("the vault owner confirms the revision");
+    }
+    (fixture, owner)
+}
+
 #[tokio::test]
 async fn the_owner_mints_lists_and_revokes_personal_links_through_its_verbs() {
-    let fixture = Fixture::new();
+    let (fixture, owner) = fixture_of_the_vault_owner();
     let page_ref = fixture.page.to_hex();
+    let _ = page_json(&fixture, &fixture.token).await;
 
     // Only the owner mints.
     let (status, _) = facade_verb(
@@ -394,7 +420,7 @@ async fn the_owner_mints_lists_and_revokes_personal_links_through_its_verbs() {
 
     let (status, minted) = facade_verb(
         &fixture,
-        id(0x77),
+        owner,
         "vault.booking.personal_link.mint",
         json!({"page_ref": page_ref, "recipient_email": "A@Example.test", "recipient_name": "Ada"}),
     )
@@ -417,7 +443,7 @@ async fn the_owner_mints_lists_and_revokes_personal_links_through_its_verbs() {
     // The list names it without its token.
     let (status, listed) = facade_verb(
         &fixture,
-        id(0x77),
+        owner,
         "vault.booking.personal_link.list",
         json!({"page_ref": page_ref}),
     )
@@ -430,7 +456,7 @@ async fn the_owner_mints_lists_and_revokes_personal_links_through_its_verbs() {
     // Revoked, it is a dead link, and the list says why.
     let (status, revoked) = facade_verb(
         &fixture,
-        id(0x77),
+        owner,
         "vault.booking.personal_link.revoke",
         json!({"link_ref": link_ref}),
     )
@@ -447,7 +473,7 @@ async fn the_owner_mints_lists_and_revokes_personal_links_through_its_verbs() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     let (_, listed) = facade_verb(
         &fixture,
-        id(0x77),
+        owner,
         "vault.booking.personal_link.list",
         json!({"page_ref": page_ref}),
     )
