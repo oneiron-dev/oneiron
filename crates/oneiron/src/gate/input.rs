@@ -269,6 +269,10 @@ pub(crate) struct ExternalEffectGateContext {
     /// A matching contact is owner-revoked. GATE-INTERNAL like the override:
     /// hydration fills it at the same seam.
     pub(crate) counterparty_contact_revoked: bool,
+    /// The registry ids of the overridable claim classes whose heads hold the
+    /// send, so the evaluator reads each class's posture (ARCH-0057 §3.1).
+    /// GATE-INTERNAL like the override: hydration fills it at the same seam.
+    pub(crate) counterparty_hold_classes: Vec<EntityId>,
     pub(crate) has_opted_in: bool,
     pub(crate) has_permission: bool,
     pub(crate) policy_risk: ExternalEffectPolicyRisk,
@@ -335,6 +339,7 @@ impl ExternalEffectGateInput {
                 counterparty_opt_out_receipt_reason: self.counterparty_opt_out_receipt_reason,
                 counterparty_send_override: None,
                 counterparty_contact_revoked: false,
+                counterparty_hold_classes: Vec::new(),
                 has_opted_in: self.has_opted_in,
                 has_permission: self.has_permission,
                 policy_risk: self.policy_risk,

@@ -10,7 +10,9 @@ use crate::gate::ceiling::{
 use crate::gate::decision::{GateDecision, GateReasonCode, external_effect_receipt_reasons};
 use crate::gate::grants::external_effect_grant_matches;
 use crate::gate::input::{GateContentKind, GateEvaluatorInput, consent_ladder_reasons};
-use crate::gate::policy_values::{PolicyEvaluationScope, PolicyValue, PolicyValueKey};
+use crate::gate::policy_values::{
+    PolicyEvaluationScope, PolicyValue, PolicyValueKey, PolicyValueRow,
+};
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl PolicyManifestResolution {
@@ -226,11 +228,17 @@ impl PolicyManifestResolution {
             }
             // The posture answers the counterparty's opt-out. An owner-revoked
             // contact is the owner's own word, so it holds under any posture
-            // and no posture row decides it.
+            // and no posture row decides it. Otherwise each holding class
+            // answers under its own posture row, else the vault's.
             let (posture, posture_row) = if effect.counterparty_contact_revoked {
                 (CommOptOutPosture::Escalate, None)
             } else {
-                (posture, effective_posture.deciding_row)
+                self.held_class_posture(
+                    &effect.counterparty_hold_classes,
+                    scope,
+                    posture,
+                    effective_posture.deciding_row,
+                )
             };
             match (effect.counterparty_send_override, posture) {
                 (Some(_), _) => {}
@@ -370,6 +378,43 @@ impl PolicyManifestResolution {
     // The declared-only form's one production caller is the federated
     // admission path, which exists only under `sync`.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    /// The posture that answers a counterparty hold (ARCH-0057 §3.1:
+    /// per-class posture is deployment-local). Each holding class reads its
+    /// own `claim_class_posture` row, else the vault's `comm_opt_out_posture`
+    /// (`vault_posture`, decided by `vault_row`). The hold escalates unless
+    /// every holding class allows with receipt. The row returned is the one
+    /// that set the outcome: the first escalating class's, else the first
+    /// allowing class's. A hold with no class (an opt-out the caller
+    /// asserted) answers to the vault's posture alone.
+    fn held_class_posture<'a>(
+        &'a self,
+        classes: &[crate::entity_id::EntityId],
+        scope: &PolicyEvaluationScope,
+        vault_posture: CommOptOutPosture,
+        vault_row: Option<&'a PolicyValueRow>,
+    ) -> (CommOptOutPosture, Option<&'a PolicyValueRow>) {
+        if classes.is_empty() {
+            return (vault_posture, vault_row);
+        }
+        let mut allowing_row = None;
+        for class in classes {
+            let resolved = self.resolved_policy_value(
+                PolicyValueKey::ClaimClassPosture(*class),
+                scope,
+                PolicyValue::CommOptOutPosture(vault_posture),
+            );
+            let PolicyValue::CommOptOutPosture(posture) = resolved.value else {
+                unreachable!("typed policy key")
+            };
+            let row = resolved.deciding_row.or(vault_row);
+            if posture == CommOptOutPosture::Escalate {
+                return (CommOptOutPosture::Escalate, row);
+            }
+            allowing_row = allowing_row.or(row);
+        }
+        (CommOptOutPosture::AllowWithReceipt, allowing_row)
+    }
+
     pub(in crate::gate) fn source_trust_allows_auto(
         &self,
         source: Option<ClaimSource>,
