@@ -245,9 +245,10 @@ fn run(case: fn() -> Result<Case>) -> std::result::Result<&'static str, String> 
         loosening,
         dirs,
     } = case().map_err(|error| format!("setting up: {error}"))?;
-    let restore = |name: &str| {
+    let restore = |name: &str| -> Result<()> {
         Vault::restore_checkpoint_keeping_authority(
             &image,
+            &vault.checkpoint_key()?,
             &dirs.1.path().join(name),
             vault.config.clone(),
             &vault,
@@ -273,13 +274,16 @@ fn run(case: fn() -> Result<Case>) -> std::result::Result<&'static str, String> 
 /// The decisions whose readers fail outright between `vault` and an
 /// unguarded restore of `image`, for a refusal that names none.
 fn unread(vault: &Vault, image: &std::path::Path, destination: &std::path::Path) -> String {
-    let restored = match Vault::restore_checkpoint(
-        image,
-        destination,
-        vault.config.clone(),
-        super::super::RestoreReason::Restore,
-        1_000,
-    ) {
+    let restored = match vault.checkpoint_key().and_then(|key| {
+        Vault::restore_checkpoint(
+            image,
+            &key,
+            destination,
+            vault.config.clone(),
+            super::super::RestoreReason::Restore,
+            1_000,
+        )
+    }) {
         Ok((restored, _)) => restored,
         Err(error) => return format!(" (an unguarded restore fails too: {error})"),
     };

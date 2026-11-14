@@ -134,13 +134,72 @@ pub fn redacted_memory_payload(bytes: Vec<u8>) -> Result<Vec<u8>> {
     }
 }
 
-/// Release one scoped record with the partial archive's typed Nulled rule.
-/// If that rule and the raw release check change nothing, keep the record
-/// byte-exact. Otherwise keep its id and original metadata header around the
-/// Nulled typed body's bytes, only if the raw check leaves those bytes alone.
-/// A changed ASSET or proof-bound body is withheld, never rewritten. Also
-/// withhold a changed body that is Nulled, is a file reference, cannot encode,
-/// or no longer decodes as its native CLAIM or SKILL record.
+/// What the partial archive's typed Nulled rule releases of one stored body
+/// to a reader whose grant admits no credential: the one rule of the scoped
+/// export and the contact bundle ([`released_body`]).
+pub(crate) enum ReleasedBody {
+    /// The rule and the raw release check change nothing: the stored body
+    /// goes as it is.
+    Unchanged,
+    /// The Nulled typed body, and its bytes, which the raw check leaves alone.
+    Rewritten {
+        body: crate::serialize::ExportBody,
+        bytes: Vec<u8>,
+    },
+    /// Nothing of the body goes.
+    Withheld,
+}
+
+/// One stored body under the partial archive's typed Nulled rule. If that
+/// rule and the raw release check change nothing, the body is
+/// [`ReleasedBody::Unchanged`]. Otherwise it is the Nulled typed body, only if
+/// the raw check leaves that body's bytes alone. A changed ASSET or
+/// proof-bound body is withheld, never rewritten. So is a changed body that is
+/// Nulled, is a file reference, cannot encode, or no longer decodes as its
+/// native CLAIM or SKILL record.
+///
+/// # Errors
+/// A failed raw release check.
+pub(crate) fn released_body(entity_type: u8, body: &[u8]) -> Result<ReleasedBody> {
+    use crate::serialize::{ExportBody, ExportSecrets};
+
+    let nulled = ExportBody::from_bytes(body, entity_type);
+    let included = ExportBody::from_bytes_with(body, entity_type, ExportSecrets::Included);
+    let raw_unchanged = redacted_memory_payload(body.to_vec())? == body;
+    if nulled == included && raw_unchanged {
+        return Ok(ReleasedBody::Unchanged);
+    }
+    if entity_type == crate::registry::ENTITY_TYPE_ASSET
+        || proof_bound_body(entity_type, body)
+        || matches!(nulled, ExportBody::Nulled | ExportBody::File(_))
+    {
+        return Ok(ReleasedBody::Withheld);
+    }
+    let Ok(rewritten) = nulled.to_bytes() else {
+        return Ok(ReleasedBody::Withheld);
+    };
+    if redacted_memory_payload(rewritten.clone())? != rewritten {
+        return Ok(ReleasedBody::Withheld);
+    }
+    if entity_type == crate::registry::ENTITY_TYPE_CLAIM
+        && crate::write_envelope::claim_body::decode_claim_body(&rewritten, true).is_err()
+    {
+        return Ok(ReleasedBody::Withheld);
+    }
+    if entity_type == crate::registry::ENTITY_TYPE_SKILL
+        && crate::skill::decode_skill_record(&rewritten).is_err()
+    {
+        return Ok(ReleasedBody::Withheld);
+    }
+    Ok(ReleasedBody::Rewritten {
+        body: nulled,
+        bytes: rewritten,
+    })
+}
+
+/// Release one scoped record with [`released_body`]: an unchanged body keeps
+/// the record byte-exact; a rewritten one goes as its bytes inside the
+/// record's id and original metadata header; a withheld one leaves no record.
 ///
 /// # Errors
 /// A record shorter than its header, or a failed raw release check.
@@ -148,43 +207,51 @@ pub(crate) fn export_released_record(
     entity_type: u8,
     mut record: Vec<u8>,
 ) -> Result<Option<Vec<u8>>> {
-    use crate::serialize::{ExportBody, ExportSecrets};
-
     if record.len() < ENTITY_METADATA_HEADER_LEN {
         return Err(Error::CorruptedIndex("scoped export record header"));
     }
     let body = record.split_off(ENTITY_METADATA_HEADER_LEN);
-    let nulled = ExportBody::from_bytes(&body, entity_type);
-    let included = ExportBody::from_bytes_with(&body, entity_type, ExportSecrets::Included);
-    let raw_unchanged = redacted_memory_payload(body.clone())? == body;
-    if nulled == included && raw_unchanged {
-        record.extend_from_slice(&body);
-        return Ok(Some(record));
+    match released_body(entity_type, &body)? {
+        ReleasedBody::Unchanged => record.extend_from_slice(&body),
+        ReleasedBody::Rewritten { bytes, .. } => record.extend_from_slice(&bytes),
+        ReleasedBody::Withheld => return Ok(None),
     }
-    if entity_type == crate::registry::ENTITY_TYPE_ASSET
-        || proof_bound_body(entity_type, &body)
-        || matches!(nulled, ExportBody::Nulled | ExportBody::File(_))
-    {
-        return Ok(None);
-    }
-    let Ok(rewritten) = nulled.to_bytes() else {
-        return Ok(None);
-    };
-    if redacted_memory_payload(rewritten.clone())? != rewritten {
-        return Ok(None);
-    }
-    if entity_type == crate::registry::ENTITY_TYPE_CLAIM
-        && crate::write_envelope::claim_body::decode_claim_body(&rewritten, true).is_err()
-    {
-        return Ok(None);
-    }
-    if entity_type == crate::registry::ENTITY_TYPE_SKILL
-        && crate::skill::decode_skill_record(&rewritten).is_err()
-    {
-        return Ok(None);
-    }
-    record.extend_from_slice(&rewritten);
     Ok(Some(record))
+}
+
+/// A contact bundle's body for a stored body that [`released_body`] changes,
+/// and whether a credential was nulled from it; `None` when the rule changes
+/// nothing, and the body keeps the bundle's JSON reading. A rewritten
+/// MessagePack body goes as its Nulled typed tree's JSON, only if the JSON
+/// read of that JSON nulls nothing more; a credential was nulled when that
+/// JSON differs from the Included tree's, so a body whose only change is an
+/// opaque binary, which JSON never carries, names none. Any other changed
+/// body goes as null.
+fn released_bundle_body(entity_type: u8, body: &[u8]) -> Result<Option<(Value, bool)>> {
+    use crate::serialize::{ExportBody, ExportSecrets};
+
+    let value = match released_body(entity_type, body)? {
+        ReleasedBody::Unchanged => return Ok(None),
+        ReleasedBody::Rewritten {
+            body: ExportBody::MessagePack(value),
+            ..
+        } => value,
+        ReleasedBody::Rewritten { .. } | ReleasedBody::Withheld => {
+            return Ok(Some((Value::Null, true)));
+        }
+    };
+    let Ok(json) = value.to_released_json() else {
+        return Ok(Some((Value::Null, true)));
+    };
+    if crate::batch::secret_scan::sanitize_read_credentials(&mut json.clone(), true) {
+        return Ok(Some((Value::Null, true)));
+    }
+    let included = match ExportBody::from_bytes_with(body, entity_type, ExportSecrets::Included) {
+        ExportBody::MessagePack(value) => value.to_released_json().ok(),
+        _ => None,
+    };
+    let nulled = included.as_ref() != Some(&json);
+    Ok(Some((json, nulled)))
 }
 
 fn proof_bound_body(entity_type: u8, body: &[u8]) -> bool {
@@ -270,7 +337,10 @@ impl Vault {
 
     /// Serializes an entity bundle through the whole-vault export boundary.
     /// Off-record rows and unpublished LFS chunks are excluded; custody
-    /// containers are always nulled.
+    /// containers are always nulled. Every other body is read by the scoped
+    /// export's typed Nulled rule ([`released_body`]): a body it changes goes
+    /// as the JSON of its Nulled typed tree, or as null when the rule
+    /// withholds it.
     /// The manifest is derived from the bytes, not a caller's declaration.
     pub fn export_entity_bundle_json(&self, ids: &[EntityId]) -> Result<Vec<u8>> {
         self.entity_bundle_json(ids, ExportScope::Records)
@@ -330,10 +400,26 @@ impl Vault {
             {
                 continue;
             }
+            // A contact bundle (Records scope) releases each body by the
+            // scoped export's typed Nulled rule (ARCH-0038 CONS-06/09): a
+            // body the rule changes goes as its Nulled typed tree's JSON or
+            // as null, and one it leaves unchanged keeps the reading below.
+            // The owner's whole-vault JSON keeps that reading alone.
+            let released = match scope {
+                ExportScope::Records
+                    if header.entity_type != crate::registry::ENTITY_TYPE_SECRET_CUSTODY =>
+                {
+                    released_bundle_body(header.entity_type, bytes)?
+                }
+                _ => None,
+            };
             let mut cursor = std::io::Cursor::new(bytes);
             let mut body = if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
                 nulled = true;
                 Value::Null
+            } else if let Some((value, removed)) = released {
+                nulled |= removed;
+                value
             } else if let Ok(value) = rmpv::decode::read_value(&mut cursor)
                 && cursor.position() == bytes.len() as u64
             {
