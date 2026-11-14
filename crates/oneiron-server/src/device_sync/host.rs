@@ -1,4 +1,5 @@
-//! The existing served host, or an app's already-open device vault.
+//! The existing served host, or the macOS app's device-mode server over its
+//! already-open vault (L7-47).
 
 use std::sync::Arc;
 
@@ -9,27 +10,23 @@ use crate::server::SyncServer;
 pub(super) enum Host<'a> {
     Served(&'a Arc<SyncServer>),
     #[cfg(feature = "mesh")]
-    Device {
-        vault: &'a Arc<oneiron::Vault>,
-        windows: Arc<oneiron::sync::WindowManager>,
-        transport: Option<Arc<dyn oneiron_mesh_transport::MeshTransport>>,
-    },
+    Device(&'a Arc<SyncServer>),
 }
 
 impl Host<'_> {
     pub(super) fn vault(&self) -> &Arc<oneiron::Vault> {
         match self {
-            Self::Served(server) => &server.vault,
             #[cfg(feature = "mesh")]
-            Self::Device { vault, .. } => vault,
+            Self::Served(server) | Self::Device(server) => &server.vault,
+            #[cfg(not(feature = "mesh"))]
+            Self::Served(server) => &server.vault,
         }
     }
 
     #[cfg(feature = "mesh")]
     pub(super) fn windows(&self) -> Arc<oneiron::sync::WindowManager> {
         match self {
-            Self::Served(server) => Arc::clone(&server.reassert_manager),
-            Self::Device { windows, .. } => Arc::clone(windows),
+            Self::Served(server) | Self::Device(server) => Arc::clone(&server.reassert_manager),
         }
     }
 
@@ -39,8 +36,7 @@ impl Host<'_> {
         mesh: Option<&crate::handler::mesh::MeshHost>,
     ) -> Option<Arc<dyn oneiron_mesh_transport::MeshTransport>> {
         match self {
-            Self::Served(_) => mesh.map(|mesh| mesh.transport()),
-            Self::Device { transport, .. } => transport.clone(),
+            Self::Served(_) | Self::Device(_) => mesh.map(|mesh| mesh.transport()),
         }
     }
 
@@ -52,7 +48,7 @@ impl Host<'_> {
                 primary,
                 macro_ready: server.ai.dreamer_runs(),
             }),
-            Self::Device { .. } => None,
+            Self::Device(_) => None,
         }
     }
 
@@ -75,94 +71,35 @@ impl Host<'_> {
                     freeze.admission(),
                 )
             }),
-            Self::Device { .. } => None,
+            Self::Device(_) => None,
         }
     }
 }
+
+/// The macOS app's home, resolved before its device-mode server is built, so
+/// a vault with no home to dial builds none (L7-47).
+#[cfg(feature = "mesh")]
+pub(crate) struct DeviceDial(super::Dial);
 
 #[cfg(feature = "mesh")]
 impl DeviceSyncHost {
-    /// The app has already opened, keyed and profiled this vault. Its only
-    /// background host is this device's ordinary connection to home.
-    pub(crate) async fn start_device(
+    /// What the app's already-open vault dials, or `None` with the ordinary
+    /// line that says why (L7-47).
+    pub(crate) fn device_dial(
         vault: &Arc<oneiron::Vault>,
         config: &crate::config::ServeConfig,
-    ) -> Option<(
-        Self,
-        Option<Arc<oneiron_mesh_transport::iroh_transport::IrohTransport>>,
-    )> {
-        let dial = Self::dial_for_vault(vault, config, super::EnrolmentSource::Plain)?;
-        let transport = device_transport(vault).await;
-        let windows = Arc::new(oneiron::sync::WindowManager::new(
-            Arc::clone(vault),
-            Arc::new(oneiron::sync::bridge::Materializer::with_lease_vault_id(
-                config.lease_vault_id,
-            )),
-            "device",
-        ));
-        windows.attach_to_vault();
-        let host = Self::open_logged(
-            Host::Device {
-                vault,
-                windows,
-                transport: transport.as_ref().map(|transport| {
-                    Arc::clone(transport) as Arc<dyn oneiron_mesh_transport::MeshTransport>
-                }),
-            },
-            dial,
-            None,
-            super::ReapFreeze::never(),
-        )
-        .await;
-        if let Some(host) = host {
-            Some((host, transport))
-        } else {
-            if let Some(transport) = transport {
-                let _ = transport.shutdown().await;
-            }
-            None
-        }
+    ) -> Option<DeviceDial> {
+        Self::dial_for_vault(vault, config, super::EnrolmentSource::Plain).map(DeviceDial)
     }
-}
 
-#[cfg(feature = "mesh")]
-async fn device_transport(
-    vault: &Arc<oneiron::Vault>,
-) -> Option<Arc<oneiron_mesh_transport::iroh_transport::IrohTransport>> {
-    use oneiron_mesh_transport::iroh_transport::{IrohTransport, private_relay_map};
-    use oneiron_mesh_transport::transport_key::TransportKey;
-    use oneiron_mesh_transport::{
-        AcceptPolicy, PairedMachineGrants, SYNC_ALPN, VaultMachineRoster, VaultPathReceipts,
-    };
-
-    let result: anyhow::Result<_> = async {
-        let config = crate::handler::mesh::MeshConfig::from_env()?;
-        let Some((bind, relays)) = config.outbound_settings() else {
-            return Ok(None);
-        };
-        let (_, key) = TransportKey::for_install(vault)?
-            .ok_or(oneiron_mesh_transport::MeshError::Unavailable)?;
-        let policy = AcceptPolicy {
-            roster: Arc::new(VaultMachineRoster(Arc::clone(vault))),
-            grants: Arc::new(PairedMachineGrants(Arc::clone(vault))),
-        };
-        let transport = IrohTransport::bind_outbound_paired(
-            key,
-            policy,
-            vec![SYNC_ALPN.to_vec()],
-            bind,
-            private_relay_map(relays)?,
-            Arc::new(VaultPathReceipts(Arc::clone(vault))),
-        )
-        .await?;
-        Ok(Some(Arc::new(transport)))
-    }
-    .await;
-    match result {
-        Ok(transport) => transport,
-        Err(error) => {
-            tracing::warn!(%error, "device mesh unavailable; keeping the ordinary home URL path");
-            None
-        }
+    /// The link over the app's device-mode server, whose vault the app already
+    /// opened, keyed and profiled: its ordinary connection to home, and, while
+    /// the home is down, to its peers through the listener (L7-47).
+    pub(crate) async fn start_device(
+        server: &Arc<SyncServer>,
+        DeviceDial(dial): DeviceDial,
+        mesh: Option<&crate::handler::mesh::MeshHost>,
+    ) -> Option<Self> {
+        Self::open_logged(Host::Device(server), dial, mesh, super::ReapFreeze::never()).await
     }
 }

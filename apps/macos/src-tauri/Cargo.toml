@@ -32,10 +32,10 @@ asr-mlx = []
 # the ordinary vault doors and never touches the sync wire itself; replication
 # to the elected home node is the existing device-sync path.
 oneiron = { path = "../../../crates/oneiron" }
-# Reuse the server's config resolver and device-sync connection over the
-# already-open vault. `mesh` enables that connection and, with the explicit
-# existing mesh bind setting, its outbound-only endpoint; the recorder starts
-# no server, inbound application service or model workers.
+# Reuse the server's config resolver and device-sync link over the
+# already-open vault. `mesh` enables that link and, with the explicit mesh
+# bind setting, its sync-only listener, served as a peer to machines marked
+# mine; the recorder starts no TCP listener, organ host or model workers.
 oneiron-server = { path = "../../../crates/oneiron-server", default-features = false, features = ["mesh"] }
 # Every subprocess starts with only the descriptors it is named.
 oneiron-spawn = { path = "../../../crates/oneiron-spawn" }

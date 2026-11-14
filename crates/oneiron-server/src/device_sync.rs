@@ -91,6 +91,10 @@ pub(crate) struct DeviceSyncHost {
     task: JoinHandle<()>,
     /// The archive receiver, kept after membership loss (FIX 3396).
     removal: Option<removal_delivery::Receiver>,
+    /// Whether the link dials the vault's other machines while its home is
+    /// down, read by the test door (L7-47).
+    #[cfg(oneiron_test_support)]
+    dials_peers: bool,
 }
 
 impl DeviceSyncHost {
@@ -200,6 +204,13 @@ impl DeviceSyncHost {
                 removal.map(Self::receiving)
             }
         }
+    }
+
+    /// Whether the link dials the vault's other machines while its home is
+    /// down: exactly when it opened with a mesh listener here (L7-47).
+    #[cfg(all(oneiron_test_support, feature = "mesh"))]
+    pub(crate) fn dials_peers(&self) -> bool {
+        self.dials_peers
     }
 
     /// Stops the connection and waits for its loop, and any credential
@@ -315,6 +326,8 @@ async fn open(
             Arc::clone(&resolve),
         )) as Arc<dyn SyncPeerDialer>
     });
+    #[cfg(oneiron_test_support)]
+    let dials_peers = peer_dialer.is_some();
     let mesh_dialer = match transport.as_ref() {
         Some(transport) => Some(
             Arc::new(MeshSyncDialer::resolving(Arc::clone(transport), resolve))
@@ -364,6 +377,8 @@ async fn open(
         stop,
         task,
         removal: None,
+        #[cfg(oneiron_test_support)]
+        dials_peers,
     })
 }
 

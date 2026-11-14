@@ -7,6 +7,10 @@
 pub mod big_rung;
 pub mod build_server;
 pub mod coach_round;
+#[cfg(feature = "mesh")]
+pub mod embedded_peer_fixture;
+#[cfg(feature = "mesh")]
+pub mod embedded_peer_path;
 #[cfg(unix)]
 pub mod hosted_import;
 pub mod lfs_install_line;

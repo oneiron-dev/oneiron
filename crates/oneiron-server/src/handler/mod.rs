@@ -44,6 +44,10 @@ mod window_sync;
 pub(crate) use self::connection::ws_routes;
 pub(crate) use self::leaf_keys::LeafKeyRelay;
 pub(crate) use self::mcp_socket::{MCP_RPC_METHOD, MCP_SUBPROTOCOL};
+// The peer check every inbound sync socket meets, for the macOS app's test
+// door (L7-47).
+#[cfg(all(oneiron_test_support, feature = "mesh"))]
+pub(crate) use self::peer_serve::serves_as_peer;
 pub(crate) use self::selector_scope::selector_grant_scope;
 
 #[cfg(test)]
