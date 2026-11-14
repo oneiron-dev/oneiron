@@ -69,6 +69,7 @@ button.sl-crew-member:focus-visible > .sl-portrait[data-form="disc"],
    together, as one member's does in the stack of buttons. */
 .sl-crew-stack[data-form="button"] {
   display: inline-flex;
+  width: fit-content;
   padding: 4px 4px 4px 5px;
   border-radius: var(--sl-radius);
   transition: transform 120ms var(--sl-ease-out);
