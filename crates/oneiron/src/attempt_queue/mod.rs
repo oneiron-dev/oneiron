@@ -14,6 +14,7 @@
 
 mod annotation_hold;
 mod borrowed_lease;
+mod boundary_pause;
 pub mod browser_admission;
 mod budget_hold;
 mod cancel;
@@ -54,6 +55,7 @@ mod tests;
 
 pub use annotation_hold::{ANNOTATION_HOLD_ACTOR, AnnotationHold, AnnotationHoldSweep};
 pub use borrowed_lease::BorrowedAttemptLease;
+pub(crate) use boundary_pause::PauseAtBoundary;
 pub use budget_hold::{BUDGET_HOLD_ACTOR, HoldAttemptForBudget};
 pub use cancel::{
     ATTEMPT_RUNTIME_ACTOR, AcceptAttemptLanding, AttemptCancelPressure, AttemptCancelReceipt,

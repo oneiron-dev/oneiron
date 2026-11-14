@@ -2,7 +2,7 @@
 //! admission never runs a step or cancels a leased worker.
 
 use crate::attempt_queue::{
-    AttemptId, AttemptState, CancelRequestOutcome, CancelStanding, LandingTrigger,
+    AttemptId, AttemptState, CancelRequestOutcome, CancelStanding, LandingTrigger, PauseAtBoundary,
     RequestAttemptCancel,
 };
 use crate::batch::secret_scan::{admitted_from, named_tree};
@@ -36,6 +36,26 @@ fn measure_questions(watch: &LimitWatch, questions: &[RunAskQuestion]) {
 
 fn live(state: AttemptState) -> bool {
     matches!(state, AttemptState::Leased | AttemptState::Landing)
+}
+
+/// Whether a Pause no step has taken yet stands on `record`'s branch.
+pub(crate) fn pause_pending(record: &crate::attempt_queue::AttemptRecord) -> bool {
+    record.signals.iter().any(|signal| {
+        signal.state == RunSignalState::Pending
+            && matches!(signal.kind, RunSignalKind::Pause { .. })
+    })
+}
+
+/// Whether a person's pause reaches `record` at its next step boundary: a
+/// running agent run of a run, whose executor takes the branch's Pause
+/// signal once its step's checkpoint commits (`engine_executor::run_signals`),
+/// and no pause is pending on it already. A landing branch takes no more
+/// steps, a branch of no run takes no signal, and a send runs no step.
+pub(crate) fn takes_boundary_pause(record: &crate::attempt_queue::AttemptRecord) -> bool {
+    record.state == AttemptState::Leased
+        && record.run_id.is_some()
+        && record.kind == crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND
+        && !pause_pending(record)
 }
 
 impl RunTreeAdapter<'_> {
@@ -100,7 +120,15 @@ impl RunTreeAdapter<'_> {
     /// returns its original pending/settled receipt, as stored; conflicting
     /// reuse fails. A signal the side-row wall masked matches its identical
     /// retry by the keyed fingerprint kept beside it (FIX 10066).
+    ///
+    /// A Pause is refused here: only the engine's pause doors post it, in
+    /// their own writer ([`Self::signal_in_txn`]).
     pub fn signal(&self, input: RunSignalInput) -> Result<RunBranchSignal> {
+        if matches!(input.kind, RunSignalKind::Pause { .. }) {
+            return Err(Error::InvalidConfig(
+                "a Pause signal is posted only by a pause door".into(),
+            ));
+        }
         let mut txn = self.vault.store.env.write_txn()?;
         let (stored, landed) = self.signal_in_txn(&mut txn, input)?;
         if landed {
@@ -147,6 +175,11 @@ impl RunTreeAdapter<'_> {
                 field(who)?;
                 field(answer)?;
             }
+            RunSignalKind::Pause { note } => {
+                if let Some(note) = note {
+                    field(note)?;
+                }
+            }
         }
         let mut record = self
             .queue
@@ -167,6 +200,19 @@ impl RunTreeAdapter<'_> {
         }
         if !live(record.state) {
             return Err(Error::InvalidConfig("Signal branch not live".into()));
+        }
+        if matches!(input.kind, RunSignalKind::Pause { .. }) {
+            // A landing run takes no more steps: no boundary would take it.
+            if record.state != AttemptState::Leased {
+                return Err(Error::InvalidConfig("Pause branch is landing".into()));
+            }
+            // One boundary takes one pause: a second would pause the run
+            // again after its resume.
+            if pause_pending(&record) {
+                return Err(Error::InvalidConfig(
+                    "a Pause is already pending on this branch".into(),
+                ));
+            }
         }
         if let RunSignalKind::AskAnswer {
             handle,
@@ -453,6 +499,108 @@ impl RunTreeAdapter<'_> {
             self.vault.store.notify_attempt_observers();
         }
         Ok(resolved)
+    }
+
+    /// Takes the Pause signal `key` a step of the run took, once that
+    /// step's checkpoint has committed: in one writer, fenced by the run's
+    /// lease, the row moves to `Paused` under a person's pause, its event
+    /// naming the signal's actor and note, and the signal settles. A signal
+    /// no longer pending (withdrawn by a resume, or settled before) pauses
+    /// nothing and answers `false`.
+    ///
+    /// # Errors
+    ///
+    /// A missing branch, a run or lease that does not match, a key that is
+    /// no Pause; the queue's refusal; storage errors. Each writes nothing.
+    pub(crate) fn pause_at_boundary(
+        &self,
+        branch: AttemptId,
+        run_id: &str,
+        lease_owner: &str,
+        attempt_count: u32,
+        key: &str,
+    ) -> Result<bool> {
+        field(key)?;
+        let mut txn = self.vault.store.env.write_txn()?;
+        let record = self
+            .queue
+            .get_in_txn(&txn, branch)?
+            .ok_or_else(|| Error::InvalidConfig("missing Signal branch".into()))?;
+        if record.run_id.as_deref() != Some(run_id)
+            || !live(record.state)
+            || record.lease_owner.as_deref() != Some(lease_owner)
+            || record.attempt_count != attempt_count
+        {
+            return Err(Error::InvalidConfig(
+                "Signal boundary pause lease mismatch".into(),
+            ));
+        }
+        let Some(signal) = record.signals.iter().find(|s| s.key == key) else {
+            return Ok(false);
+        };
+        let RunSignalKind::Pause { note } = &signal.kind else {
+            return Err(Error::InvalidConfig("Signal is no Pause".into()));
+        };
+        if signal.state != RunSignalState::Pending {
+            return Ok(false);
+        }
+        let now = crate::ports::recorded_at_in_txn(&self.vault.store, &mut txn)?;
+        self.queue.pause_at_boundary_in_txn(
+            &mut txn,
+            PauseAtBoundary {
+                id: branch,
+                lease_owner: lease_owner.to_owned(),
+                attempt_count,
+                actor: signal.actor.clone(),
+                note: note.clone(),
+                now,
+            },
+        )?;
+        // The queue rewrote this same row: settle the signal on its write.
+        let mut record = self
+            .queue
+            .get_in_txn(&txn, branch)?
+            .ok_or_else(|| Error::InvalidConfig("missing Signal branch".into()))?;
+        for signal in &mut record.signals {
+            if signal.key == key {
+                signal.state = RunSignalState::Settled;
+            }
+        }
+        self.save(&mut txn, &mut record)?;
+        txn.commit()?;
+        self.vault.store.notify_attempt_observers();
+        Ok(true)
+    }
+
+    /// Withdraws the Pause signal `key` from `branch` in the caller's
+    /// writer while it is still pending: no step has taken it, and none
+    /// will. Its kept intent goes with it. Answers whether it was pending;
+    /// one a step took, or one never posted, is left as it is.
+    pub(crate) fn withdraw_pause_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        branch: AttemptId,
+        key: &str,
+    ) -> Result<bool> {
+        let Some(mut record) = self.queue.get_in_txn(txn, branch)? else {
+            return Ok(false);
+        };
+        // An ended branch keeps its signals as they were.
+        if record.state.is_terminal() {
+            return Ok(false);
+        }
+        let pending = record.signals.iter().any(|signal| {
+            signal.key == key
+                && signal.state == RunSignalState::Pending
+                && matches!(signal.kind, RunSignalKind::Pause { .. })
+        });
+        if !pending {
+            return Ok(false);
+        }
+        record.signals.retain(|signal| signal.key != key);
+        record.signal_intents.retain(|intent| intent.key != key);
+        self.save(txn, &mut record)?;
+        Ok(true)
     }
 
     /// Confirms one steer/interject only after the worker has applied it.
