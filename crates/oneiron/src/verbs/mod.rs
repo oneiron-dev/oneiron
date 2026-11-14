@@ -603,6 +603,8 @@ pub use self::self_model_read::*;
 pub use self::self_verbs::*;
 pub use self::share::*;
 pub use self::shared::*;
+// The doors outside `verbs` that apply a check-in parse its id here (2k8a).
+pub(crate) use self::shared::check_in_ref;
 pub use self::shared_admin::*;
 pub use self::shared_members::*;
 pub use self::shared_policy::*;

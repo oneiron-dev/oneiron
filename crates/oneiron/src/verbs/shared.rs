@@ -312,7 +312,7 @@ fn person_id(field: &str, hex: &str) -> MemoryResult<EntityId> {
 }
 
 /// The settled check-in a call names, when it names one.
-pub(super) fn check_in_ref(hex: Option<&str>) -> MemoryResult<Option<EntityId>> {
+pub(crate) fn check_in_ref(hex: Option<&str>) -> MemoryResult<Option<EntityId>> {
     hex.map(|hex| {
         EntityId::from_hex(hex)
             .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))

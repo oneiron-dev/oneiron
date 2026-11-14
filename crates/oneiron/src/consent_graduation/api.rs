@@ -10,7 +10,7 @@ use crate::edit_distance::graduation::{
 };
 use crate::identity_topology::ProposalOutcome;
 use crate::memory::Memory;
-use oneiron_contracts::memory::MemoryResult;
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 /// The exact operation kind × target class × skill/agent tuple.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -246,6 +246,12 @@ pub enum GraduationAnswer {
 pub struct GraduationAnswerRequest {
     pub scope: GraduationScope,
     pub answer: GraduationAnswer,
+    /// Another asker's approved check-in for this scope's auto answer, 32
+    /// hex: the owner applies it on their own proof, and the accept's writer
+    /// spends it (ROLES-CHECKIN 2k8). Only an auto answer applies one.
+    /// Omitted: the owner's own answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -368,20 +374,53 @@ pub fn offers(vault: &Vault, owner: &AuthenticatedOwner) -> MemoryResult<Vec<Gra
     Ok(offers)
 }
 
+/// `vault.consent.graduation.answer`. An auto answer mints the scope's
+/// standing grant, the owner's own grant widen (ARCH-0082 #act-table "Widen
+/// another's grant"): it goes on their own proof, never gated, and the
+/// grant's receipt records that decision (`grant.check_in`). With
+/// `check_in_ref` the owner applies another asker's approved check-in for
+/// this scope's auto answer, spent in the accept's writer (ROLES-CHECKIN
+/// 2k8; Engine RULING P25-SHAPE Q1 = A). A decline widens nothing and
+/// records no decision.
+///
+/// # Errors
+///
+/// `BAD_REQUEST` for a malformed `check_in_ref` or one on a decline; the
+/// offer's refusals; a check-in that is not an approved ask for this auto
+/// answer.
 pub fn answer(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: GraduationAnswerRequest,
 ) -> MemoryResult<GraduationAnswerReceipt> {
+    let applied = match crate::verbs::check_in_ref(input.check_in_ref.as_deref())? {
+        Some(id) => Some(crate::check_in::AppliedCheckIn {
+            id,
+            verb: "vault.consent.graduation.answer",
+            effect_digest: graduation_answer_effect_digest(&input)?,
+        }),
+        None => None,
+    };
     let answer = match input.answer {
         GraduationAnswer::Auto => OfferAnswer::GoAuto(owner),
         GraduationAnswer::NotNow => OfferAnswer::NotNow,
         GraduationAnswer::ManualPinned => OfferAnswer::ManualPinned,
     };
-    let result =
-        graduation::answer_graduation_offer_as_owner(vault, owner, &input.scope.scope(), answer)?;
+    let (result, decision) = graduation::answer_graduation_offer_with_check_in(
+        vault,
+        owner,
+        &input.scope.scope(),
+        answer,
+        applied.as_ref(),
+    )?;
     let (grant, snooze) = match result {
-        OfferAnswerOutcome::Graduated(receipt) => (Some(receipt.into()), GraduationSnooze::None),
+        OfferAnswerOutcome::Graduated(receipt) => (
+            Some(ConsentActReceipt {
+                check_in: decision,
+                ..receipt.into()
+            }),
+            GraduationSnooze::None,
+        ),
         OfferAnswerOutcome::Snoozed(state) => (None, state.into()),
     };
     Ok(GraduationAnswerReceipt {
@@ -390,6 +429,28 @@ pub fn answer(
         grant,
         snooze,
     })
+}
+
+/// The digest of an auto answer `request`: the effect an asker's
+/// `vault.check_in.open` names for `vault.consent.graduation.answer`, and
+/// the one the owner's accept spends (2k8; P25-SHAPE Q1 = A). It is
+/// [`crate::check_in::standing_grant_effect_digest`] over the standing grant
+/// the scope graduates to.
+///
+/// # Errors
+///
+/// `BAD_REQUEST` for a decline, which widens nothing; a scope whose grant
+/// bound does not build.
+pub fn graduation_answer_effect_digest(
+    request: &GraduationAnswerRequest,
+) -> MemoryResult<[u8; 32]> {
+    if !matches!(request.answer, GraduationAnswer::Auto) {
+        return Err(MemoryError::bad_request(
+            "only an auto answer widens a grant, so only it applies a check-in",
+        ));
+    }
+    let bound = request.scope.scope().to_grant_bound()?;
+    Ok(crate::check_in::standing_grant_effect_digest(&bound))
 }
 
 pub fn unpin(

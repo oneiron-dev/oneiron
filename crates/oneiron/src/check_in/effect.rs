@@ -648,3 +648,17 @@ pub fn agent_grant_restore_effect_digest(agent: &EntityId) -> [u8; 32] {
     hasher.update(agent.as_bytes());
     *hasher.finalize().as_bytes()
 }
+
+/// The digest of minting the standing consent grant over `bound`: the
+/// effect an asker's `vault.check_in.open` names for
+/// `vault.consent.create_standing_grant` or for an auto answer to
+/// `vault.consent.graduation.answer`, and the one the Owner's mint spends
+/// (2k8; P25-SHAPE Q1 = A). BLAKE3, key derived from `oneiron check_in
+/// standing grant v1`, over the bound's own digest, the grant ref its
+/// receipt names: two requests that normalize to one bound are one effect.
+#[must_use]
+pub fn standing_grant_effect_digest(bound: &crate::consent::GrantBound) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in standing grant v1");
+    hasher.update(bound.digest().as_bytes());
+    *hasher.finalize().as_bytes()
+}

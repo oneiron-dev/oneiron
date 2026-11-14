@@ -150,6 +150,8 @@ pub use self::answers::{
     OfferAnswer, OfferAnswerOutcome, SnoozeState, answer_graduation_offer,
     answer_graduation_offer_as_owner, snooze_state, unpin_scope, unpin_scope_as_owner,
 };
+// The auto answer's check-in decision (ROLES-CHECKIN 2k8a).
+pub(crate) use self::answers::answer_graduation_offer_with_check_in;
 pub use self::pattern::{WILDCARD_PATTERN, exact_pattern};
 pub use self::posterior::{guard_evidence, posterior_lower_bound};
 pub use self::receipts::is_graduation_answer_receipt;

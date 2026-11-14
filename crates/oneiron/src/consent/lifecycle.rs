@@ -36,6 +36,11 @@ pub struct DenyConsentRequest {
 #[serde(deny_unknown_fields)]
 pub struct CreateStandingGrantRequest {
     pub bound: StandingGrantBound,
+    /// Another asker's approved check-in for this exact grant, 32 hex: the
+    /// owner applies it on their own proof, and the mint's writer spends it
+    /// (ROLES-CHECKIN 2k8). Omitted: the owner's own mint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// Action and disclosure bounds are disjoint, including on the wire.
@@ -180,14 +185,76 @@ pub fn deny(
     Ok(vault.deny_consent(owner, digest)?.into())
 }
 
+/// `vault.consent.create_standing_grant`: the owner's own mint widens
+/// another's grant (ARCH-0082 #act-table "Widen another's grant"). It goes
+/// on their own proof, never gated, and the receipt records that decision
+/// (`check_in`). With `check_in_ref` the owner applies another asker's
+/// approved check-in for this exact grant: the mint's writer spends it after
+/// every check of the mint, so a refusal leaves it eligible and stands no
+/// grant (ROLES-CHECKIN 2k8; Engine RULING P25-SHAPE Q1 = A).
+///
+/// # Errors
+///
+/// `BAD_REQUEST` for a malformed `check_in_ref`; the bound's and the mint's
+/// refusals; a check-in that is not an approved ask for this grant.
 pub fn create_standing_grant(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: CreateStandingGrantRequest,
 ) -> MemoryResult<ConsentActReceipt> {
-    Ok(vault
-        .create_standing_grant(owner, input.bound.into_bound()?)?
-        .into())
+    let bound = input.bound.into_bound()?;
+    let applied = crate::verbs::check_in_ref(input.check_in_ref.as_deref())?.map(|id| {
+        crate::check_in::AppliedCheckIn {
+            id,
+            verb: "vault.consent.create_standing_grant",
+            effect_digest: crate::check_in::standing_grant_effect_digest(&bound),
+        }
+    });
+    Ok(vault.with_write_txn_grouped(|wtxn| {
+        create_standing_grant_with_decision_in_txn(vault, wtxn, owner, bound, applied.as_ref())
+    })?)
+}
+
+/// The owner's standing grant over `bound`, minted in `wtxn` on their own
+/// proof, with the decision it ran on in its receipt: with `applied`,
+/// another asker's approved check-in for it, spent after every check of the
+/// mint (ROLES-CHECKIN 2k8; P25-SHAPE Q1 = A). Each owner door that mints a
+/// standing grant mints it here.
+pub(crate) fn create_standing_grant_with_decision_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    owner: &AuthenticatedOwner,
+    bound: GrantBound,
+    applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+) -> crate::Result<ConsentActReceipt> {
+    let receipt = vault.create_standing_grant_in_txn(wtxn, owner, bound)?;
+    let decision = crate::check_in::owner_act_decision_in_txn(
+        vault,
+        wtxn,
+        crate::check_in::ActClass::GrantWiden,
+        applied,
+    )?;
+    Ok(ConsentActReceipt {
+        check_in: Some(decision),
+        ..receipt.into()
+    })
+}
+
+/// The digest of the owner's standing grant `request`: the effect an
+/// asker's `vault.check_in.open` names for
+/// `vault.consent.create_standing_grant`, and the one the owner's mint
+/// spends (2k8; P25-SHAPE Q1 = A). It is
+/// [`crate::check_in::standing_grant_effect_digest`] over the bound the
+/// request normalizes to, the one the grant stores.
+///
+/// # Errors
+///
+/// A bound the mint would refuse as malformed.
+pub fn create_standing_grant_effect_digest(
+    request: &CreateStandingGrantRequest,
+) -> MemoryResult<[u8; 32]> {
+    let bound = request.bound.clone().into_bound()?;
+    Ok(crate::check_in::standing_grant_effect_digest(&bound))
 }
 
 pub fn registry(

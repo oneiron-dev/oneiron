@@ -131,3 +131,5 @@ pub use effect::sign_effect_digest;
 // `verbs::engine_controls_grant_effect_digest` and
 // `verbs::git_push_grant_mint_effect_digest` (2k7c).
 pub use effect::{agent_grant_from_slip_effect_digest, agent_grant_restore_effect_digest};
+// The standing consent grant mints' effect (2k8a).
+pub use effect::standing_grant_effect_digest;
