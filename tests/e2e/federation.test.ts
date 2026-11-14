@@ -1717,8 +1717,11 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
     await receiver.restart();
     const restored = await receiver.client.call("vault.federation.burst.disposition", { peer, batch_ref: deferReceipt.batch_ref });
     expect(restored.batch_ref).toBe(deferReceipt.batch_ref);
-    expect(restored.principal).toBe(pact.receiverGrant.guest_actor);
-    expect(restored.grant).toBe(pact.receiverGrant.grant);
+    expect(restored.peer).toEqual({
+      kind: "federated",
+      principal: pact.receiverGrant.guest_actor,
+      grant: pact.receiverGrant.grant,
+    });
     expect(restored.window_key).toBe(deferWindow);
     expect(restored.state).toBe("pending");
     expect(restored.disposition.outcome).toBe("defer");
