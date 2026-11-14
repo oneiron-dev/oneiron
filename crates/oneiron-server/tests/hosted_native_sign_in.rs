@@ -282,8 +282,10 @@ impl SignedIn {
         self.authorize
             .query_pairs()
             .find(|(key, _)| key == name)
-            .map(|(_, value)| value.into_owned())
-            .unwrap_or_else(|| panic!("the authorize URL names {name}: {}", self.authorize))
+            .map_or_else(
+                || panic!("the authorize URL names {name}: {}", self.authorize),
+                |(_, value)| value.into_owned(),
+            )
     }
 
     /// The one recorded vault.
