@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { inflateRawSync } from "node:zlib";
@@ -13,7 +13,7 @@ import type { McpClient } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { ScriptedProviders, openaiText } from "./support/providers.ts";
 import type { ProviderStep } from "./support/providers.ts";
-import { Artifacts, defineFile, redactor } from "./support/run.ts";
+import { Artifacts, defineFile, expect, redactor } from "./support/run.ts";
 
 const recipeDefaults = JSON.parse(await Bun.file(new URL("../../crates/oneiron/src/dreamer_wake/recipe_policy_defaults.json", import.meta.url)).text());
 const extractionPrompt = JSON.parse(await Bun.file(new URL("../../crates/oneiron/src/dreamer_consolidation/executor/extraction_prompt.json", import.meta.url)).text());
