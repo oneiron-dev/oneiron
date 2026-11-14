@@ -7,8 +7,9 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
+use super::super::at_token_boundaries;
 use super::text_log::TextSpans;
-use super::{HANDLE_OPEN, Masker, secret_spans};
+use super::{HANDLE_OPEN, Masker, secret_spans_kept};
 use crate::error::Result;
 
 /// Each text a tracked pass masked, by the BLAKE3 of the text as given:
@@ -72,7 +73,13 @@ impl Masker {
                     handle
                 }
                 TextHit::Shape(reason) => {
-                    if self.is_kept(text[span.clone()].as_bytes()) {
+                    // A kept value is left as written where it stands as its
+                    // own token; inside a longer one, such as a blocklist
+                    // entry the rules place alone there, it is masked
+                    // (L6-03-RULED-SCREEN-MERGED-SPAN).
+                    if at_token_boundaries(text.as_bytes(), &span)
+                        && self.is_kept(text[span.clone()].as_bytes())
+                    {
                         continue;
                     }
                     self.handle(text[span.clone()].as_bytes(), reason)?
@@ -114,11 +121,13 @@ impl Masker {
             None => Vec::new(),
         };
         // The switch is off: no shape span is discovered (FIX 8644). A text
-        // the door's scan read clean holds none.
+        // the door's scan read clean holds none. A value the owner kept in
+        // the record is read as the door's scan reads it, filled, so a key
+        // next to it is placed on its own (L6-03-RULED-SCREEN-MERGED-SPAN).
         let shapes = if self.known_only || self.shapes_read {
             Vec::new()
         } else {
-            secret_spans(text)
+            secret_spans_kept(text, |value| self.is_kept(value))
         };
         let spans = TextSpans { known, shapes };
         self.text_log.record(text.as_bytes(), &spans);
