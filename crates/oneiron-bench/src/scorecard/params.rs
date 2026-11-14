@@ -17,6 +17,8 @@ pub(crate) struct ResolvedParams {
     pub(crate) source: BlendWeightsSource,
     /// The digest over the resolved params file.
     pub(crate) digest: String,
+    /// The exact JSON object the digest is computed over.
+    pub(crate) resolved: serde_json::Value,
 }
 
 /// The pinned object form of `blend_weights`: all five signals.
@@ -53,6 +55,7 @@ pub(crate) fn resolve(params: Option<&str>) -> Result<ResolvedParams, ScorecardF
         return Ok(ResolvedParams {
             source: BlendWeightsSource::LearnedTable,
             digest: params_digest(&resolved)?,
+            resolved,
         });
     };
     let bytes = std::fs::read(path)
@@ -119,6 +122,7 @@ pub(crate) fn resolve(params: Option<&str>) -> Result<ResolvedParams, ScorecardF
     Ok(ResolvedParams {
         source,
         digest: params_digest(&resolved)?,
+        resolved,
     })
 }
 

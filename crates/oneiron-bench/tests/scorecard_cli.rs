@@ -4,13 +4,16 @@
     reason = "a test process starts its own subprocesses; the rule covers the server's crates"
 )]
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use oneiron_ruler::pack::{Slice, load_slice};
+use oneiron_ruler::proposal::{HeldOutProposal, PROPOSAL_CONTRACT, ProposalStore, proposal_id};
+use oneiron_ruler::sealed::ExperimentIdentity;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -54,10 +57,10 @@ fn read_json(path: &Path) -> Value {
     serde_json::from_slice(&bytes).expect("fixture file is JSON")
 }
 
-/// Write the hand-built `search` slice: two corpora of three records at the
+/// Write the hand-built `slice` slice: two corpora of three records at the
 /// same time, one query per corpus graded 2 on one record, each query vector
 /// equal to its graded record's vector.
-fn write_search_slice(dir: &Path, pinned: bool) {
+fn write_slice(dir: &Path, slice: &str, pinned: bool) {
     let mut bytes = Vec::with_capacity(ROWS.len() * 16);
     for row in ROWS {
         for value in row {
@@ -79,7 +82,7 @@ fn write_search_slice(dir: &Path, pinned: bool) {
         "contract": "oneiron.retrieval_pack.v1",
         "pack_id": "fixture-pack",
         "revision": "r1",
-        "slice": "search",
+        "slice": slice,
         "source": {
             "dataset": "LongMemEval-S",
             "dataset_sha256": sha256_hex(b"fixture-dataset"),
@@ -104,22 +107,22 @@ fn write_search_slice(dir: &Path, pinned: bool) {
             ]},
         ],
         "queries": [
-            {"query_id": "query-owen", "slice": "search", "corpus_id": "corpus-owen", "category": "single-session-user", "text": "harbour crossing", "now": "2026-01-02T00:00:00Z", "qrels": {"fixture-a0": 2}, "expect_empty": false},
-            {"query_id": "query-yuki", "slice": "search", "corpus_id": "corpus-yuki", "category": "single-session-user", "text": "mountain snowfall", "now": "2026-01-02T00:00:00Z", "qrels": {"fixture-b0": 2}, "expect_empty": false},
+            {"query_id": "query-owen", "slice": slice, "corpus_id": "corpus-owen", "category": "single-session-user", "text": "harbour crossing", "now": "2026-01-02T00:00:00Z", "qrels": {"fixture-a0": 2}, "expect_empty": false},
+            {"query_id": "query-yuki", "slice": slice, "corpus_id": "corpus-yuki", "category": "single-session-user", "text": "mountain snowfall", "now": "2026-01-02T00:00:00Z", "qrels": {"fixture-b0": 2}, "expect_empty": false},
         ],
     });
     let mut pretty = serde_json::to_vec_pretty(&manifest).expect("manifest JSON");
     pretty.push(b'\n');
-    std::fs::write(dir.join("search.json"), pretty).expect("manifest write");
+    std::fs::write(dir.join(format!("{slice}.json")), pretty).expect("manifest write");
     if pinned {
-        std::fs::write(dir.join("search.vectors.f32"), bytes).expect("vectors write");
+        std::fs::write(dir.join(format!("{slice}.vectors.f32")), bytes).expect("vectors write");
     }
 }
 
 #[test]
 fn scorecard_run_writes_a_v1_scorecard() {
     let dir = tempfile::tempdir().expect("scorecard fixture dir");
-    write_search_slice(dir.path(), true);
+    write_slice(dir.path(), "search", true);
     let pack_dir = dir.path().to_str().expect("fixture dir").to_owned();
     let out = dir.path().join("scorecard.json");
     let out_arg = out.to_str().expect("scorecard path").to_owned();
@@ -326,7 +329,7 @@ async fn stub_embeddings(
 fn scorecard_pack_embed_pins_finished_vectors() {
     let stub = Stub::start();
     let dir = tempfile::tempdir().expect("embed fixture dir");
-    write_search_slice(dir.path(), false);
+    write_slice(dir.path(), "search", false);
     let pack_dir = dir.path().to_str().expect("fixture dir").to_owned();
     let result = scorecard(&[
         "pack-embed",
@@ -406,4 +409,227 @@ fn scorecard_convert_writes_the_split_and_the_slices() {
         assert_eq!(slice["slice"], json!(name));
         assert!(slice["embedding"].is_null(), "{file} stays unpinned");
     }
+}
+
+/// Write a dominance campaign whose sealed ref is (`fixture-pack`, `sealed_revision`).
+fn write_run_campaign(dir: &Path, sealed_revision: &str) -> PathBuf {
+    let body = json!({
+        "campaign_id": "fixture-campaign",
+        "search_axes": [{"name": "fanout", "values": ["4", "8"]}],
+        "metric_set": {"set_id": "retrieval-scorecard", "revision": "r1", "axes": [
+            {"name": "ndcg_at_10", "direction": "higher", "role": "primary"},
+            {"name": "recall_at_5", "direction": "higher", "role": "floor", "tolerance": 0.001},
+            {"name": "search_p95_us", "direction": "lower", "role": "cost", "tolerance": 50.0},
+        ]},
+        "splits": {
+            "search": {"dataset_id": "fixture-pack", "revision": "search-1"},
+            "held_out": {"dataset_id": "fixture-pack", "revision": "held-out-1"},
+            "sealed": {"dataset_id": "fixture-pack", "revision": sealed_revision},
+        },
+        "budget": {"budget_id": "lease-1", "max_units": 10, "exploration_units": 2},
+        "decide": {"kind": "dominance"},
+    });
+    let path = dir.join("campaign.json");
+    std::fs::write(&path, serde_json::to_vec(&body).expect("campaign JSON"))
+        .expect("campaign write");
+    path
+}
+
+#[test]
+fn scorecard_run_sealed_spends_its_claim_before_reading() {
+    let dir = tempfile::tempdir().expect("sealed fixture dir");
+    write_slice(dir.path(), "sealed", true);
+    let digest = load_slice(dir.path(), Slice::Sealed)
+        .expect("sealed slice loads")
+        .pack_digest;
+    let campaign = write_run_campaign(dir.path(), &digest);
+    let pack_dir = dir.path().to_str().expect("fixture dir").to_owned();
+    let campaign_arg = campaign.to_str().expect("campaign path").to_owned();
+    let ledger = dir.path().join("ledger");
+    let ledger_arg = ledger.to_str().expect("ledger path").to_owned();
+    let out = dir.path().join("sealed.json");
+    let out_arg = out.to_str().expect("sealed path").to_owned();
+    let result = scorecard(&[
+        "run",
+        "--pack-dir",
+        &pack_dir,
+        "--slice",
+        "sealed",
+        "--engine-commit",
+        ENGINE_COMMIT,
+        "--out",
+        &out_arg,
+        "--sealed-ledger",
+        &ledger_arg,
+        "--campaign",
+        &campaign_arg,
+        "--incumbent",
+        "true",
+    ]);
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(result.status.success(), "sealed run failed: {stderr}");
+    let summary: Value = serde_json::from_slice(&result.stdout).expect("run prints JSON");
+    assert_eq!(summary["slice"], json!("sealed"));
+    let claim = summary["sealed_claim"].as_str().expect("sealed claim");
+    assert!(Path::new(claim).is_file(), "claim marker exists");
+    assert!(out.is_file(), "sealed scorecard exists");
+    let out_two = dir.path().join("sealed-two.json");
+    let out_two_arg = out_two.to_str().expect("second path").to_owned();
+    let again = scorecard(&[
+        "run",
+        "--pack-dir",
+        &pack_dir,
+        "--slice",
+        "sealed",
+        "--engine-commit",
+        ENGINE_COMMIT,
+        "--out",
+        &out_two_arg,
+        "--sealed-ledger",
+        &ledger_arg,
+        "--campaign",
+        &campaign_arg,
+        "--incumbent",
+        "true",
+    ]);
+    assert_eq!(again.status.code(), Some(2));
+    assert!(!out_two.exists(), "writes no second scorecard");
+}
+
+#[test]
+fn scorecard_run_sealed_for_a_proposal_checks_its_record_first() {
+    let dir = tempfile::tempdir().expect("proposal run fixture dir");
+    write_slice(dir.path(), "sealed", true);
+    let digest = load_slice(dir.path(), Slice::Sealed)
+        .expect("sealed slice loads")
+        .pack_digest;
+    let campaign = write_run_campaign(dir.path(), &digest);
+    let pack_dir = dir.path().to_str().expect("fixture dir").to_owned();
+    let campaign_arg = campaign.to_str().expect("campaign path").to_owned();
+    let ledger = dir.path().join("ledger");
+    let ledger_arg = ledger.to_str().expect("ledger path").to_owned();
+    let proposals = dir.path().join("proposals");
+    let proposals_arg = proposals.to_str().expect("proposals path").to_owned();
+    let out = dir.path().join("sealed.json");
+    let out_arg = out.to_str().expect("sealed path").to_owned();
+    let unknown = "ab".repeat(32);
+    let missing = scorecard(&[
+        "run",
+        "--pack-dir",
+        &pack_dir,
+        "--slice",
+        "sealed",
+        "--engine-commit",
+        ENGINE_COMMIT,
+        "--out",
+        &out_arg,
+        "--sealed-ledger",
+        &ledger_arg,
+        "--campaign",
+        &campaign_arg,
+        "--proposal",
+        &unknown,
+        "--proposals",
+        &proposals_arg,
+    ]);
+    assert_eq!(missing.status.code(), Some(2));
+    assert!(
+        !ledger.join("sealed-once").exists(),
+        "no sealed-once marker without a record"
+    );
+    let incumbent = ExperimentIdentity {
+        engine_commit: ENGINE_COMMIT.to_owned(),
+        params_digest: "dd".repeat(32),
+        pack_digest: digest,
+    };
+    let candidate = ExperimentIdentity {
+        engine_commit: ENGINE_COMMIT.to_owned(),
+        params_digest: "cc".repeat(32),
+        pack_digest: incumbent.pack_digest.clone(),
+    };
+    let id = proposal_id("fixture-campaign", &incumbent, &candidate).expect("proposal id");
+    let store = ProposalStore::open(&proposals).expect("proposals open");
+    let record = HeldOutProposal {
+        contract: PROPOSAL_CONTRACT.to_owned(),
+        proposal_id: id.clone(),
+        campaign_id: "fixture-campaign".to_owned(),
+        incumbent,
+        candidate,
+        candidate_params: json!({"contract": "oneiron.retrieval_eval_params.v1"}),
+        incumbent_scorecard_sha256: "ee".repeat(32),
+        candidate_scorecard_sha256: "ff".repeat(32),
+        axes: Vec::new(),
+        bootstrap: Vec::new(),
+        decided_at: 1_700_000_000,
+    };
+    store.put_held_out(&record).expect("record writes");
+    let mismatch = scorecard(&[
+        "run",
+        "--pack-dir",
+        &pack_dir,
+        "--slice",
+        "sealed",
+        "--engine-commit",
+        ENGINE_COMMIT,
+        "--out",
+        &out_arg,
+        "--sealed-ledger",
+        &ledger_arg,
+        "--campaign",
+        &campaign_arg,
+        "--proposal",
+        &id,
+        "--proposals",
+        &proposals_arg,
+    ]);
+    assert_eq!(mismatch.status.code(), Some(2));
+    assert!(
+        !ledger.join("sealed-once").exists(),
+        "no sealed-once marker on a params mismatch"
+    );
+}
+
+#[test]
+fn scorecard_run_sealed_on_the_wrong_pack_spends_the_run() {
+    let dir = tempfile::tempdir().expect("wrong pack fixture dir");
+    write_slice(dir.path(), "sealed", true);
+    let digest = load_slice(dir.path(), Slice::Sealed)
+        .expect("sealed slice loads")
+        .pack_digest;
+    let mut wrong = digest.clone();
+    let first = if digest.starts_with('a') { "b" } else { "a" };
+    wrong.replace_range(0..1, first);
+    let campaign = write_run_campaign(dir.path(), &wrong);
+    let pack_dir = dir.path().to_str().expect("fixture dir").to_owned();
+    let campaign_arg = campaign.to_str().expect("campaign path").to_owned();
+    let ledger = dir.path().join("ledger");
+    let ledger_arg = ledger.to_str().expect("ledger path").to_owned();
+    let out = dir.path().join("sealed.json");
+    let out_arg = out.to_str().expect("sealed path").to_owned();
+    let result = scorecard(&[
+        "run",
+        "--pack-dir",
+        &pack_dir,
+        "--slice",
+        "sealed",
+        "--engine-commit",
+        ENGINE_COMMIT,
+        "--out",
+        &out_arg,
+        "--sealed-ledger",
+        &ledger_arg,
+        "--campaign",
+        &campaign_arg,
+        "--incumbent",
+        "true",
+    ]);
+    assert_eq!(result.status.code(), Some(1));
+    let body: Value = serde_json::from_slice(&result.stdout).expect("spent prints JSON");
+    let error = body["error"].as_str().expect("spent names its error");
+    assert!(
+        error.contains("spent"),
+        "the error says the run was spent: {error}"
+    );
+    assert!(ledger.join("sealed-once").is_dir(), "claim marker spent");
+    assert!(ledger.join("incumbent-once").is_dir(), "incumbent spent");
 }

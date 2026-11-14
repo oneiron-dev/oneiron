@@ -1,7 +1,9 @@
 //! `scorecard run`: replay one pack slice through fresh throwaway vaults, grade the run.
 //!
 //! Each corpus gets its own vault, each query runs `--repeats` times under the
-//! eval clock and weights, and the run is graded into a scorecard file.
+//! eval clock and weights, and the run is graded into a scorecard file. The
+//! sealed slice runs once per experiment: its claim is spent before the slice
+//! is opened, so a crash spends it.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -10,13 +12,17 @@ use std::time::Instant;
 use oneiron::pipeline::{BlendWeightsSource, RetrievalEvalSpec};
 use oneiron::registry::ENTITY_TYPE_TURN;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
-use oneiron_ruler::pack::{Corpus, LoadedPack, load_slice};
+use oneiron_ruler::pack::{Corpus, LoadedPack, Slice, load_slice};
+use oneiron_ruler::proposal::ProposalStore;
 use oneiron_ruler::scorecard::{
     Hit, QueryRun, RepeatRun, RunHeader, build_scorecard, write_scorecard,
 };
+use oneiron_ruler::sealed::{
+    ExperimentIdentity, SealedError, claim_incumbent_once, claim_sealed_once,
+};
 use sha2::Digest;
 
-use super::{ScorecardFailure, params, parse_flags, parse_slice, required_flag};
+use super::{ScorecardFailure, campaign, params, parse_flags, parse_slice, required_flag};
 
 /// The flags `scorecard run` takes.
 const KNOWN_FLAGS: &[&str] = &[
@@ -27,6 +33,11 @@ const KNOWN_FLAGS: &[&str] = &[
     "params",
     "budget-rows",
     "repeats",
+    "sealed-ledger",
+    "campaign",
+    "proposal",
+    "proposals",
+    "incumbent",
 ];
 
 /// The text field staged beside each TURN body for the text index.
@@ -41,21 +52,174 @@ const COMMIT_BATCH: usize = 512;
 /// The LMDB map of a pack vault: 256 MiB holds any slice with room to spare.
 const MAP_SIZE: usize = 256 * 1024 * 1024;
 
-/// The refusal when the sealed slice is asked to run.
-const SEALED_MESSAGE: &str = "the sealed slice runs only with --sealed-ledger and a Promote verdict (scorecard compare, not built yet)";
+/// Which sealed run this is: the campaign incumbent's once, or a proposal's once.
+#[derive(Clone, Copy)]
+enum SealedMode<'a> {
+    /// The campaign's one incumbent sealed run.
+    Incumbent,
+    /// A proposal's one sealed run.
+    Proposal {
+        /// The proposal id.
+        id: &'a str,
+        /// The proposals dir.
+        dir: &'a str,
+    },
+}
 
 /// Replay one slice into a scorecard file, and report the summary.
 pub(crate) fn run(args: &[String]) -> Result<serde_json::Value, ScorecardFailure> {
     let flags = parse_flags(args, KNOWN_FLAGS)?;
     let slice_name = required_flag(&flags, "slice")?;
-    if slice_name == "sealed" {
-        return Err(ScorecardFailure::Input(SEALED_MESSAGE.to_owned()));
-    }
     let slice = parse_slice(slice_name)?;
+    if slice == Slice::Sealed {
+        return run_sealed(&flags);
+    }
+    for name in [
+        "sealed-ledger",
+        "campaign",
+        "proposal",
+        "proposals",
+        "incumbent",
+    ] {
+        if flags.contains_key(name) {
+            return Err(ScorecardFailure::Input(
+                "only the sealed slice takes --sealed-ledger/--campaign/--proposal/--incumbent"
+                    .to_owned(),
+            ));
+        }
+    }
     let engine_commit = required_flag(&flags, "engine-commit")?;
     check_commit(engine_commit)?;
-    let pack_dir = required_flag(&flags, "pack-dir")?;
-    let out = required_flag(&flags, "out")?;
+    let (pack_dir, out, budget_rows, repeats) = replay_flags(&flags)?;
+    let loaded = load_slice(Path::new(pack_dir), slice)
+        .map_err(|error| ScorecardFailure::Input(error.to_string()))?;
+    let resolved = params::resolve(flags.get("params").map(String::as_str))?;
+    replay(&loaded, engine_commit, &resolved, budget_rows, repeats, out)
+}
+
+/// Run the sealed slice once, spending its claim before the slice is opened.
+fn run_sealed(flags: &BTreeMap<String, String>) -> Result<serde_json::Value, ScorecardFailure> {
+    let ledger = required_flag(flags, "sealed-ledger")?;
+    let campaign_path = required_flag(flags, "campaign")?;
+    let mode = sealed_mode(flags)?;
+    let engine_commit = required_flag(flags, "engine-commit")?;
+    check_commit(engine_commit)?;
+    let resolved = params::resolve(flags.get("params").map(String::as_str))?;
+    let campaign = campaign::load_campaign(campaign_path)?;
+    let identity = ExperimentIdentity {
+        engine_commit: engine_commit.to_owned(),
+        params_digest: resolved.digest.clone(),
+        pack_digest: campaign.splits.sealed.revision.clone(),
+    };
+    let (pack_dir, out, budget_rows, repeats) = replay_flags(flags)?;
+    if let SealedMode::Proposal { id, dir } = mode {
+        let store = ProposalStore::open(Path::new(dir))
+            .map_err(|error| ScorecardFailure::Input(error.to_string()))?;
+        let listing = store
+            .get(id)
+            .map_err(|error| ScorecardFailure::Input(error.to_string()))?;
+        if listing.sealed.is_some() {
+            return Err(ScorecardFailure::Input(
+                "proposal already has its sealed outcome".to_owned(),
+            ));
+        }
+        if listing.held_out.campaign_id != campaign.campaign_id {
+            return Err(ScorecardFailure::Input(
+                "proposal is for another campaign".to_owned(),
+            ));
+        }
+        if listing.held_out.candidate.engine_commit != engine_commit
+            || listing.held_out.candidate.params_digest != resolved.digest
+        {
+            return Err(ScorecardFailure::Input(
+                "this run is not the proposal's candidate".to_owned(),
+            ));
+        }
+    }
+    let claim = match mode {
+        SealedMode::Incumbent => {
+            claim_incumbent_once(Path::new(ledger), &campaign.campaign_id, &identity)
+        }
+        SealedMode::Proposal { .. } => claim_sealed_once(Path::new(ledger), &identity),
+    }
+    .map_err(map_sealed_error)?;
+    let loaded = load_slice(Path::new(pack_dir), Slice::Sealed).map_err(|error| {
+        ScorecardFailure::Run(format!(
+            "sealed slice load failed: {error}; the sealed run was spent"
+        ))
+    })?;
+    if loaded.pack_digest != campaign.splits.sealed.revision
+        || loaded.slice.pack_id != campaign.splits.sealed.dataset_id
+    {
+        return Err(ScorecardFailure::Run(
+            "sealed pack does not match the campaign: the sealed run was spent".to_owned(),
+        ));
+    }
+    if loaded.vectors.is_none() {
+        return Err(ScorecardFailure::Run(
+            "sealed pack has no vectors: the sealed run was spent".to_owned(),
+        ));
+    }
+    let mut summary = replay(&loaded, engine_commit, &resolved, budget_rows, repeats, out)?;
+    if let serde_json::Value::Object(map) = &mut summary {
+        map.insert(
+            "sealed_claim".to_owned(),
+            serde_json::Value::from(claim.path.to_string_lossy().into_owned()),
+        );
+    }
+    Ok(summary)
+}
+
+/// Which sealed run the flags ask for: exactly one of `--incumbent` or `--proposal` with `--proposals`.
+fn sealed_mode(flags: &BTreeMap<String, String>) -> Result<SealedMode<'_>, ScorecardFailure> {
+    let incumbent = flags.get("incumbent").map(String::as_str);
+    let proposal = flags.get("proposal").map(String::as_str);
+    let proposals = flags.get("proposals").map(String::as_str);
+    match (incumbent, proposal, proposals) {
+        (Some(value), None, None) => {
+            if value != "true" {
+                return Err(ScorecardFailure::Input(format!(
+                    "--incumbent takes only true, got {value:?}"
+                )));
+            }
+            Ok(SealedMode::Incumbent)
+        }
+        (None, Some(id), Some(dir)) => Ok(SealedMode::Proposal { id, dir }),
+        (None, Some(_), None) => Err(ScorecardFailure::Input(
+            "--proposal needs --proposals".to_owned(),
+        )),
+        (None, None, Some(_)) => Err(ScorecardFailure::Input(
+            "--proposals needs --proposal".to_owned(),
+        )),
+        (None, None, None) => Err(ScorecardFailure::Input(
+            "sealed run needs --incumbent true or --proposal ID with --proposals D".to_owned(),
+        )),
+        _ => Err(ScorecardFailure::Input(
+            "sealed run takes exactly one of --incumbent true or --proposal ID with --proposals D"
+                .to_owned(),
+        )),
+    }
+}
+
+/// Map a claim failure: a spent run is bad input, IO is a run failure.
+fn map_sealed_error(error: SealedError) -> ScorecardFailure {
+    let message = error.to_string();
+    if matches!(
+        error,
+        SealedError::AlreadySpent { .. } | SealedError::IncumbentAlreadyMeasured { .. }
+    ) {
+        ScorecardFailure::Input(message)
+    } else {
+        ScorecardFailure::Run(message)
+    }
+}
+
+/// The replay flags every slice takes: pack dir, out path, budget rows, repeats.
+fn replay_flags(
+    flags: &BTreeMap<String, String>,
+) -> Result<(&str, &str, u32, u32), ScorecardFailure> {
+    let pack_dir = required_flag(flags, "pack-dir")?;
+    let out = required_flag(flags, "out")?;
     let budget_rows = flag_u32(
         flags.get("budget-rows").map(String::as_str),
         "budget-rows",
@@ -70,8 +234,18 @@ pub(crate) fn run(args: &[String]) -> Result<serde_json::Value, ScorecardFailure
         1,
         10,
     )?;
-    let loaded = load_slice(Path::new(pack_dir), slice)
-        .map_err(|error| ScorecardFailure::Input(error.to_string()))?;
+    Ok((pack_dir, out, budget_rows, repeats))
+}
+
+/// Replay one loaded slice into a scorecard file, and report the summary.
+fn replay(
+    loaded: &LoadedPack,
+    engine_commit: &str,
+    resolved: &params::ResolvedParams,
+    budget_rows: u32,
+    repeats: u32,
+    out: &str,
+) -> Result<serde_json::Value, ScorecardFailure> {
     if loaded.vectors.is_none() {
         return Err(ScorecardFailure::Input("run pack-embed first".to_owned()));
     }
@@ -82,7 +256,6 @@ pub(crate) fn run(args: &[String]) -> Result<serde_json::Value, ScorecardFailure
         let got = pin.dims;
         ScorecardFailure::Run(format!("pack dims do not fit: {got}"))
     })?;
-    let resolved = params::resolve(flags.get("params").map(String::as_str))?;
     let mut ordinal_of: BTreeMap<&str, usize> = BTreeMap::new();
     for (ordinal, record) in loaded.slice.records.iter().enumerate() {
         ordinal_of.insert(record.record_id.as_str(), ordinal);
@@ -107,14 +280,13 @@ pub(crate) fn run(args: &[String]) -> Result<serde_json::Value, ScorecardFailure
         config.map_size = MAP_SIZE;
         let vault = Vault::open(dir.path(), config)
             .map_err(|error| ScorecardFailure::Run(format!("pack vault open failed: {error}")))?;
-        let ids = ingest(&vault, &loaded, corpus, &ordinal_of)?;
+        let ids = ingest(&vault, loaded, corpus, &ordinal_of)?;
         let Some(wanted) = queries_by_corpus.get(corpus.corpus_id.as_str()) else {
             continue;
         };
         for _ in 0..repeats {
             for &query_index in wanted {
-                let repeat =
-                    run_query(&vault, &loaded, query_index, &ids, &resolved.source, limit)?;
+                let repeat = run_query(&vault, loaded, query_index, &ids, &resolved.source, limit)?;
                 repeats_of[query_index].push(repeat);
             }
         }
@@ -128,7 +300,7 @@ pub(crate) fn run(args: &[String]) -> Result<serde_json::Value, ScorecardFailure
     }
     let header = RunHeader {
         engine_commit: engine_commit.to_owned(),
-        params_digest: resolved.digest,
+        params_digest: resolved.digest.clone(),
         budget_rows,
     };
     let scorecard = build_scorecard(&loaded.slice, &loaded.pack_digest, &header, &runs)
@@ -137,9 +309,10 @@ pub(crate) fn run(args: &[String]) -> Result<serde_json::Value, ScorecardFailure
         .map_err(|error| ScorecardFailure::Run(error.to_string()))?;
     let metrics = serde_json::to_value(&scorecard.metrics)
         .map_err(|error| ScorecardFailure::Run(error.to_string()))?;
+    let slice = loaded.slice.slice.as_str();
     Ok(serde_json::json!({
         "scorecard": out,
-        "slice": slice.as_str(),
+        "slice": slice,
         "pack_digest": loaded.pack_digest,
         "params_digest": scorecard.params_digest,
         "engine_commit": scorecard.engine_commit,
@@ -173,7 +346,7 @@ fn flag_u32(
 }
 
 /// Refuse an engine commit that is not 40 lowercase hex.
-fn check_commit(commit: &str) -> Result<(), ScorecardFailure> {
+pub(crate) fn check_commit(commit: &str) -> Result<(), ScorecardFailure> {
     let hex = commit.len() == 40
         && commit
             .bytes()

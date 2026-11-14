@@ -215,6 +215,19 @@ fn print_help() {
           scorecard run --pack-dir D --slice S --engine-commit SHA --out F\n\
                                        [--params F] [--budget-rows N] [--repeats N]\n\
                                        replay a slice into a retrieval scorecard\n\
+          scorecard run ... --slice sealed --sealed-ledger L --campaign C\n\
+                                       (--incumbent true | --proposals D --proposal ID)\n\
+                                       replay the sealed slice once, spending its claim\n\
+          scorecard compare --campaign C [--repo R] [--candidate-params F]\n\
+                                       [--proposals D --at T] BASE CAND\n\
+                                       judge a candidate on held_out, recording a Promote\n\
+          scorecard compare --sealed --campaign C --proposals D\n\
+                                       --proposal ID --at T BASE CAND\n\
+                                       run the sealed check once, withdrawing or passing\n\
+          scorecard proposals --proposals D\n\
+                                       list every proposal, withdrawn included\n\
+          scorecard stamp --proposals D --proposal ID --at T [--note TEXT]\n\
+                                       record the owner's stamp and its pin calls\n\
           vector                      ARCH-0019 vector perf/recall harness\n\
                                        [--n 1k|10k] [--dim 1024|4096] [--seed N]\n\
                                        [--queries N] [--churn none|refresh|delete|both]\n\
