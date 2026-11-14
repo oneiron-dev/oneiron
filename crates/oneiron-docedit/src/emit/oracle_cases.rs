@@ -627,7 +627,7 @@ fn options(mut args: impl Iterator<Item = String>) -> Result<Options, String> {
 
 /// A recorded source revision: 40 hex digits.
 fn is_source(given: &str) -> bool {
-    given.len() == 40 && given.bytes().all(u8::is_ascii_hexdigit)
+    given.len() == 40 && given.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// Run the engine half from `args` (the program name skipped) as `name`. Exit status: 0 when every case has a candidate, 1 when some case was refused, 2 when no manifest was written.
