@@ -16,7 +16,9 @@
 //! keeps both tiers as archive data. Each row lands on its node through a cfg
 //! door: the shipped manifest parks an owner's Approved grant with no owner
 //! proof at the criticality floor, and no production door writes one yet
-//! (census L2-56).
+//! (census L2-56). A same-vault peer's MACHINE claim history comes from a
+//! real write on a second vault, through a cfg door that lists its control
+//! rows (`test_doors::machine_history`).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --no-fail-fast --test world_access_local_authority`.
@@ -27,11 +29,14 @@ mod sync_harness;
 
 use loro::LoroDoc;
 use oneiron::edge::EdgeActorClass;
-use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
+use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
 use oneiron::sync::client::ImportTier;
 use oneiron::sync::replay::{ReplicatedEntity, replay_entity};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, WindowExport};
+use oneiron::test_doors::machine_history::{
+    PEER_MACHINE_CLAIM_PREDICATE, PeerMachineHistory, peer_machine_history,
+};
 use oneiron::test_doors::world_access::put_world_access_row;
 use oneiron::write_envelope::claim_body::encode_claim_body;
 use oneiron::write_envelope::{
@@ -46,7 +51,7 @@ use oneiron_contracts::record_layout::EntityMetadataHeader;
 
 use crate::sync_harness::{
     ENTITY_METADATA_HEADER_LEN, T0, TestNode, WINDOW, exchange, make_entity_blob, map_insert_bytes,
-    sync_through_doors, time_range, vault_pair,
+    sync_through_doors, test_config, time_range, vault_pair,
 };
 
 /// One agent, the world its owner grants beside base reality, and the ids of
@@ -475,4 +480,152 @@ fn a_peers_tombstone_never_deletes_a_local_grant() {
         "the tombstone is skipped, not refused into quarantine"
     );
     g.assert_governed_by_grant(&b.vault);
+}
+
+/// Base reality alone.
+fn base_only() -> WorldAuthoritySet {
+    WorldAuthoritySet::new(true, []).unwrap()
+}
+
+/// The owner's grant of base reality alone to `agent`, under `id` on `vault`:
+/// narrower than [`Grant::put_grant`]'s, so the two meet at base reality.
+fn put_base_only_grant(vault: &Vault, agent: EntityId, id: &EntityId) {
+    let body = world_access_claim_body(
+        PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+        agent,
+        &base_only(),
+        ClaimSource::UserStated,
+        ClaimApprovalStatus::Approved,
+        None,
+        None,
+    )
+    .unwrap();
+    put_world_access_row(vault, id, &body, time_range(T0), T0).unwrap();
+}
+
+/// A MACHINE claim at `target`, written on a second vault whose own host
+/// root signs its history.
+fn peer_history_at(target: EntityId) -> (tempfile::TempDir, PeerMachineHistory) {
+    let dir = tempfile::tempdir().unwrap();
+    let origin = Vault::open(dir.path(), test_config()).unwrap();
+    let history = peer_machine_history(&origin, target).unwrap();
+    assert!(
+        history.controls.len() >= 2,
+        "the write minted a birth and a handoff: {} control rows",
+        history.controls.len()
+    );
+    (dir, history)
+}
+
+/// Makes `vault` a node of the peer's vault: it imports the peer's signed
+/// authority history and holds the peer's MACHINE entity.
+fn join_peer_vault(vault: &Vault, history: &PeerMachineHistory) {
+    vault
+        .import_signed_authority_history(&history.authority_history)
+        .unwrap();
+    vault
+        .put_entity(
+            &history.machine,
+            ENTITY_TYPE_MACHINE,
+            time_range(T0),
+            T0,
+            b"machine",
+        )
+        .unwrap();
+}
+
+/// Replays the history's control rows on `vault` through the explicit-tier
+/// replay door, the birth first, as an own device's rows land.
+fn replay_peer_controls(vault: &Vault, history: &PeerMachineHistory) {
+    for (id, raw) in &history.controls {
+        let header = EntityMetadataHeader::parse(raw).expect("control header");
+        replay_entity(
+            vault,
+            ReplicatedEntity {
+                id: *id,
+                entity_type: header.entity_type,
+                occurred: TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                learned_at: header.learned_at,
+                row_version: header.row_version,
+                body: &raw[ENTITY_METADATA_HEADER_LEN..],
+            },
+            ImportTier::OwnDevice,
+        )
+        .unwrap();
+    }
+}
+
+/// The agent is governed on `vault` by both of its grants, which meet at
+/// base reality.
+fn assert_governed_by_both(g: &Grant, narrow: EntityId, vault: &Vault, when: &str) {
+    let here = g.authority(vault);
+    let mut ids = here.allowed_claim_ids.clone();
+    ids.sort();
+    let mut both = vec![g.grant, narrow];
+    both.sort();
+    assert_eq!(ids, both, "{when}: both grants govern the agent");
+    assert_eq!(
+        here.allowed_set,
+        base_only(),
+        "{when}: the grants meet at base reality"
+    );
+}
+
+/// Control: the fixture's history reaches adoption. Replayed on a node of
+/// the same vault that holds nothing at its target, the peer's birth and
+/// owner-signed handoff build the target's row from the verified history
+/// (FIX 11926). Passes on main too.
+#[test]
+fn a_peers_machine_history_builds_its_row_here() {
+    let here = TestNode::new("here", 3);
+    let target = EntityId::now();
+    let (_origin, history) = peer_history_at(target);
+    join_peer_vault(&here.vault, &history);
+
+    replay_peer_controls(&here.vault, &history);
+
+    let built = here
+        .vault
+        .get_claim(&target)
+        .unwrap()
+        .expect("the adopted history built its row");
+    assert_eq!(built.predicate, PEER_MACHINE_CLAIM_PREDICATE);
+}
+
+/// A same-vault peer's MACHINE claim history whose target is a grant stored
+/// here never replaces the grant (REVIEW-7793 round 2). Its control rows
+/// carry ids of their own, so the replay door's stored-row check passes
+/// them; the pin exchange they reach adopts nothing over a world-access
+/// tier, so the narrower grant still meets the wider one. Window ingest
+/// reaches the same exchange. Red on #7793's second head 52dc436eda93: the
+/// adopted history put the peer's ordinary claim over the narrower grant,
+/// and the agent read the wider grant's world.
+#[test]
+fn a_peers_machine_history_never_replaces_a_local_grant() {
+    let here = TestNode::new("here", 4);
+    let g = Grant::new();
+    let narrow = EntityId::now();
+    g.put_agent(&here.vault);
+    g.put_grant(&here.vault);
+    put_base_only_grant(&here.vault, g.agent, &narrow);
+    let stored = here
+        .vault
+        .get_raw(&narrow)
+        .unwrap()
+        .expect("narrower grant here");
+    let (_origin, history) = peer_history_at(narrow);
+    join_peer_vault(&here.vault, &history);
+    assert_governed_by_both(&g, narrow, &here.vault, "joined");
+
+    replay_peer_controls(&here.vault, &history);
+
+    assert_eq!(
+        here.vault.get_raw(&narrow).unwrap().as_deref(),
+        Some(stored.as_slice()),
+        "the narrower grant stored here stands"
+    );
+    assert_governed_by_both(&g, narrow, &here.vault, "replayed");
 }

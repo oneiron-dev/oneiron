@@ -23,6 +23,13 @@
 //! withholds machine-history rows
 //! (`federation::foreign_world::guest_claim_withheld`).
 //!
+//! Local authority (RULING L2-53-CEILING): a world-access tier stands only on
+//! the node that wrote it. No received history adopts onto a target stored
+//! here as an ALLOWED-SET grant or a DEFAULT-SUBSET row, and none whose
+//! signed birth names either predicate: the pin and the live row stay
+//! ([`PinExchangeOutcome::Refused`]). Both landing hooks and the owed-history
+//! advance reach adoption only through this exchange.
+//!
 //! Succession: the newest connected tip of the target's resident chain is
 //! adopted in ONE step, never packet by packet. The stored pin, if any, must
 //! lie on that tip's chain, so the trusted prefix is kept. Only the tip's
@@ -46,6 +53,7 @@ use crate::authority::AuthorityFold;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{ClaimError, Error, Result};
 use crate::store::Store;
+use crate::write_envelope::world_access_predicates::is_world_access_tier_predicate;
 use crate::{EntityId, Vault};
 use oneiron_authority::authority::ROLE_OWNER;
 
@@ -74,7 +82,8 @@ pub(crate) enum PinExchangeOutcome {
     /// A signed fork, or a stored pin off the tip's chain: the stored pin
     /// stays.
     Conflict(EntityId),
-    /// The newest owner-signed chain does not verify; the stored pin stays.
+    /// The newest owner-signed chain does not verify, or the target is local
+    /// world-access authority (module doc); the stored pin stays.
     Refused(EntityId),
 }
 
@@ -139,6 +148,23 @@ fn settle(error: Error, target: EntityId) -> Result<PinExchangeOutcome> {
         }
         other => Err(other),
     }
+}
+
+/// Whether the row stored at `target` is a world-access tier: an ALLOWED-SET
+/// grant or a DEFAULT-SUBSET row. Both are this node's own authority, so a
+/// received history never replaces one, whatever its controls carry.
+fn world_access_tier_stored_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    target: EntityId,
+) -> Result<bool> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &target)? else {
+        return Ok(false);
+    };
+    Ok(EntityMetadataHeader::parse(&raw)
+        .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+        && super::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+            .is_ok_and(|body| is_world_access_tier_predicate(&body.predicate)))
 }
 
 /// The target's resident handoff packets by content hash, read through
@@ -322,6 +348,9 @@ impl Vault {
         target: EntityId,
         landed: Option<EntityId>,
     ) -> Result<PinExchangeOutcome> {
+        if world_access_tier_stored_in(&self.store, txn, target)? {
+            return Ok(PinExchangeOutcome::Refused(target));
+        }
         let fold = self.authority_fold_readonly_in_txn(txn)?;
         let Some(vault_id) = fold.vault_id else {
             return Ok(PinExchangeOutcome::Pending(target));
@@ -429,10 +458,13 @@ impl Vault {
         if rows.birth.vault_id != vault_id || rows.birth.target != target {
             return Ok(PinExchangeOutcome::Refused(target));
         }
-        let scope = machine_history_scope_bytes(&super::decode_claim_body(
-            &rows.birth.initial_body,
-            true,
-        )?)?;
+        let birth = super::decode_claim_body(&rows.birth.initial_body, true)?;
+        // The projection keeps the birth's predicate: a history that would
+        // put a world-access tier here is not adopted (module doc).
+        if is_world_access_tier_predicate(&birth.predicate) {
+            return Ok(PinExchangeOutcome::Refused(target));
+        }
+        let scope = machine_history_scope_bytes(&birth)?;
         let previous_handoff_hash = rows
             .chain
             .iter()
