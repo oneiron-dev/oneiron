@@ -90,6 +90,8 @@ pub fn ingest_peer_author_redaction(
         blob.extend_from_slice(&at.to_be_bytes());
         blob.extend_from_slice(&at.to_be_bytes());
         blob.extend_from_slice(&at.to_be_bytes());
+        // The row version: zero on every native kind but a CLAIM.
+        blob.extend_from_slice(&0_u64.to_be_bytes());
         blob.extend_from_slice(&body);
         let header = EntityMetadataHeader::parse(&blob)
             .ok_or(Error::CorruptedIndex("peer redaction door: row header"))?;
