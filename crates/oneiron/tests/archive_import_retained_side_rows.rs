@@ -300,6 +300,11 @@ pub(crate) fn source_with_rows() -> Source {
             .is_some_and(|row| row.is_active()),
         "the source holds the active grant row"
     );
+    // The emitter signs each receipt with this install's device key, as a
+    // host's would: the vault needs a keystore first.
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     let oversight = vault
         .emit_healer_oversight(1_700_000_000)
         .expect("the host emits oversight");
