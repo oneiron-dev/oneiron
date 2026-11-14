@@ -493,7 +493,6 @@ pub(crate) use principal_standing::{
     principal_standing_in, principal_standing_in_txn, principal_standing_or_lapse_in_txn,
 };
 pub(crate) use readonly_fold::AuthorityView;
-use readonly_fold::authority_log_rows_in_txn;
 pub(crate) use readonly_fold::authority_view_readonly_for_store_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use readonly_fold::folded_vault_id_of_records;
@@ -502,6 +501,7 @@ pub(crate) use readonly_fold::{
     AuthorityCachedFold, advance_authority_cache_generation, authority_cache_generation,
     authority_fold_readonly_for_store_in_txn,
 };
+use readonly_fold::{authority_log_rows_in_txn, decode_stored_authority_log_body};
 pub(crate) use retired_signers::{authority_row_resident, door_ancestor_row, stored_authority_row};
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;
 

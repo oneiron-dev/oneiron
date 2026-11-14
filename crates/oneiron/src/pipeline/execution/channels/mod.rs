@@ -365,7 +365,7 @@ impl PipelineBuilder<'_> {
             if let Some(codes) = &self.phonetic_search
                 && let Some(phonetic_results) =
                     self.run_stage(RetrievalSignal::Phonetic, stages.next(), || {
-                        execute_phonetic(&self.read, rtxn, codes)
+                        execute_phonetic(&self.read, rtxn, codes, self.deadline)
                     })?
             {
                 diagnostics.succeeded.push(RetrievalSignal::Phonetic);
