@@ -476,6 +476,7 @@ fn an_answered_offer_waits_on_no_label() {
             offer: offer.id,
             digest: offer.digest.clone(),
             answer: OfferAnswer::Decline,
+            check_in_ref: None,
         },
     )
     .expect("the owner declines the offer");

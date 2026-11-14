@@ -21,4 +21,8 @@ pub struct OfferAnswerRequest {
     pub action: OfferAnswer,
     /// The answerer's idempotency key: one or more printable bytes.
     pub intent_key: String,
+    /// For a join answer that waits on its check-in: the approved check-in
+    /// it spends (ROLES-CHECKIN P2.6a). Not now adds no one and takes none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }

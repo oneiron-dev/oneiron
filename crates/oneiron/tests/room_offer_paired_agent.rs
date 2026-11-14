@@ -316,6 +316,7 @@ fn a_paired_agent_on_a_rooted_vault_files_its_offer_card_and_the_host_admits_it_
         offer_id: card.offer_id.clone(),
         action: OfferAnswer::Join,
         intent_key: intent_key.to_owned(),
+        check_in_ref: None,
     };
     let self_admit = asker
         .rooms_offer_answer(&answer("paired-agent-self-admit"))

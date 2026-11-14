@@ -203,6 +203,7 @@ fn join_room(vault: &Vault, owen: EntityId, room: EntityId, agent: EntityId) -> 
             offer_id: card.offer_id.clone(),
             action: OfferAnswer::Join,
             intent_key: format!("{FIXTURE_PATH}:answer:{}:{}", room.to_hex(), agent.to_hex()),
+            check_in_ref: None,
         })?;
     let join = accepted.join.ok_or("the host's answer carries no join")?;
     if join.decision.state != JoinDecision::Ready {

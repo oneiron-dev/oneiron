@@ -117,6 +117,7 @@ impl OfferAnswerIntent {
                 "card:{}:{}",
                 self.origin_component_id, self.origin_action_id
             ),
+            check_in_ref: None,
         }
     }
 }
