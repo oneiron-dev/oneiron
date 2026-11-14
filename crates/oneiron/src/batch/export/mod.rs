@@ -88,8 +88,8 @@ mod snapshot_body;
 pub(crate) use document_snapshot::{ExportSnapshotBody, ExportSnapshotEntity, ExportSnapshotRun};
 pub use document_types::*;
 pub(crate) use snapshot_body::ExportSnapshotEntityBody;
-// FIX [LIBTEST-QUARANTINE-BATCH-EXPORT-DOCUMENT-TESTS]: the lib test target's type check fails here (27 errors: E0599 x17, E0308 x10); port it, then drop this gate
-#[cfg(any())]
+#[cfg(test)]
+pub(crate) mod archive_rewrite_fixture;
 #[cfg(test)]
 mod document_tests;
 

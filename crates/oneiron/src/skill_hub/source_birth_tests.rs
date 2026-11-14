@@ -1,8 +1,8 @@
 //! New births retain exact source and cannot acquire archive authority from a format tag.
 use super::{HubFile, HubPackage, SkillPackageFormat, decode_hub_package, encode_hub_package};
+use crate::batch::export::archive_rewrite_fixture::rewrite_archive_rows;
 use crate::batch::export::{ExportSkillBundle, ImportOmissionReason, WholeVaultDocument};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::context_pack::PackFormat;
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, Result};
 use crate::skill::{SkillLifecycle, SkillRecord, canonical_skill_tree_hash};
@@ -81,8 +81,8 @@ fn convert(vault: &Vault, message: EntityId) -> Result<EntityId> {
 }
 
 fn snapshot(vault: &Vault) -> Result<WholeVaultDocument> {
-    let export = vault.export_whole_vault(PackFormat::Json)?;
-    vault.read_whole_vault_json(export.bytes())
+    let export = vault.export_whole_vault(false)?;
+    vault.read_whole_vault_archive(export.bytes())
 }
 
 fn bundle(document: &WholeVaultDocument, id: EntityId) -> &ExportSkillBundle {
@@ -276,7 +276,14 @@ fn fork_reidentifies_exact_source_and_supported_json_reimports_only_candidates()
                 .commit(),
             _ => vault
                 .batch()
-                .put_replicated(&parent, crate::registry::ENTITY_TYPE_SKILL, at(2), 2, &body)
+                .put_replicated(
+                    &parent,
+                    crate::registry::ENTITY_TYPE_SKILL,
+                    at(2),
+                    2,
+                    None,
+                    &body,
+                )
                 .commit(),
         };
         assert_eq!(
@@ -318,8 +325,8 @@ fn fork_reidentifies_exact_source_and_supported_json_reimports_only_candidates()
         Some("version: \"1\"")
     );
 
-    let export = vault.export_whole_vault(PackFormat::Json)?;
-    let document = vault.read_whole_vault_json(export.bytes())?;
+    let export = vault.export_whole_vault(false)?;
+    let document = vault.read_whole_vault_archive(export.bytes())?;
     // The seeded root project row (structural kind, no owning import adapter)
     // is the only expected refusal; the fork pair itself must not refuse.
     let root = vault
@@ -359,7 +366,7 @@ fn fork_reidentifies_exact_source_and_supported_json_reimports_only_candidates()
     // home room map onto the target's own root (ARCH-0067: the vault itself
     // is the root project), and identical seed rows count as unchanged
     // rather than inserted.
-    let receipt = target.import_whole_vault_json(export.bytes())?;
+    let receipt = target.import_whole_vault_archive(export.bytes())?;
     assert_eq!(receipt.inserted_entities, 2);
     assert_eq!(target.get(&policies[0])?, Some(local_policy));
     for id in [parent, fork_id] {
@@ -394,21 +401,23 @@ fn fork_reidentifies_exact_source_and_supported_json_reimports_only_candidates()
     }
     assert_eq!(
         target
-            .import_whole_vault_json(export.bytes())?
+            .import_whole_vault_archive(export.bytes())?
             .inserted_entities,
         0
     );
 
     // A native tree with incomplete frontmatter is not a portable Folder.
     // Relabelling it must fail validation before any entity lands.
-    let mut forged = document;
-    forged.skills[0].source_format = Some(SkillPackageFormat::Folder);
+    let forged = rewrite_archive_rows(
+        export.bytes(),
+        "records/entity/skill.jsonl",
+        |mut rows: Vec<ExportSkillBundle>| {
+            rows[0].source_format = Some(SkillPackageFormat::Folder);
+            rows
+        },
+    )?;
     let (_reject_dir, rejected) = open();
-    assert!(
-        rejected
-            .import_whole_vault_json(&serde_json::to_vec(&forged).expect("JSON"))
-            .is_err()
-    );
+    assert!(rejected.import_whole_vault_archive(&forged).is_err());
     assert!(rejected.get_skill_record(&parent)?.is_none());
     assert!(rejected.get_skill_record(&fork_id)?.is_none());
     Ok(())

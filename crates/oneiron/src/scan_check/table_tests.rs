@@ -61,6 +61,7 @@ fn gate_decision(index: usize) -> crate::store::GateDecisionRecord {
         grant_ref: None,
         diff_handle: vec![0xA5],
         read_frontier_hash: [0xB6; 32],
+        context: Default::default(),
         redacted_at: None,
     }
 }
@@ -300,20 +301,42 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         }
         EngineScan::MinerArtifactRows => {
             for index in 0..PAST {
-                let byte = u8::try_from(index).expect("fits");
-                crate::edit_distance::put_finalized_proposal_text(
-                    vault,
-                    &crate::edit_distance::FinalizedProposalText {
-                        artifact_ref: crate::edit_distance::ProposalArtifactRef::mint(),
-                        proposed_ref: crate::edit_distance::LoroOpRef::from_bytes(vec![1, byte]),
-                        final_ref: crate::edit_distance::LoroOpRef::from_bytes(vec![2, byte]),
-                        ops_by_actor: Vec::new(),
-                        proposed_text: format!("draft {index}"),
-                        final_text: format!("final {index}"),
-                        source_turn_ref: None,
-                    },
+                let artifact_ref = crate::edit_distance::ProposalArtifactRef::mint();
+                let actor = crate::write_envelope::WriteActor::new(
+                    EntityId::now(),
+                    crate::edge::EdgeActorClass::Human,
+                );
+                let stamp = crate::provenance::ActorStamp {
+                    token: EntityId::now(),
+                    class: crate::edge::EdgeActorClass::Human,
+                };
+                let mut document = crate::entity_doc::EntityDoc::open(
+                    artifact_ref.entity_id(),
+                    &format!("draft {index}"),
+                    (actor, stamp),
+                    1,
                 )
-                .expect("artifact");
+                .expect("document");
+                let proposed_ref = crate::edit_distance::LoroOpRef::from_bytes(document.frontier());
+                document
+                    .edit_as(stamp, 2, |text| {
+                        text.delete(0, text.len_unicode()).expect("clear draft");
+                        text.insert(0, &format!("final {index}"))
+                            .expect("final text");
+                        Ok(())
+                    })
+                    .expect("final endpoint");
+                let record = crate::edit_distance::FinalizedProposalText {
+                    artifact_ref,
+                    proposed_ref,
+                    final_ref: crate::edit_distance::LoroOpRef::from_bytes(document.frontier()),
+                    ops_by_actor: Vec::new(),
+                    source_turn_ref: None,
+                    birth_attempt: None,
+                    made_by_inputs: Vec::new(),
+                };
+                crate::edit_distance::put_finalized_proposal_text(vault, &record, &document)
+                    .expect("artifact");
             }
             // No judgment names them, so no cluster forms; each is indexed.
             Some((
@@ -376,7 +399,7 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
                 0,
                 Box::new(move || {
                     Ok(vault
-                        .authorized_companion_profile_personas(&id(0x59, 0), &id(0x59, 1))?
+                        .authorized_companion_profile_facets(&id(0x59, 0), &id(0x59, 1))?
                         .len())
                 }),
             ))
@@ -476,6 +499,8 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
                             read_frontier_hash: decision.read_frontier_hash,
                             reason_codes: decision.reason_codes.clone(),
                             dreamer_run_id: None,
+                            predicate: None,
+                            expires_at: None,
                         };
                         vault.store.append_gate_decision_in_txn(wtxn, &decision)?;
                         vault
@@ -569,10 +594,7 @@ fn a_canonical_receipt_window_reads_past_the_old_cap() {
     const PAST_THE_OLD_CAP: usize = 100_001;
     const CHUNK: usize = 10_000;
     let dir = tempfile::tempdir().expect("vault dir");
-    let config = crate::VaultConfig {
-        map_size: 1024 * 1024 * 1024,
-        ..crate::VaultConfig::default()
-    };
+    let config = crate::VaultConfig::device();
     let vault = Vault::open(dir.path(), config).expect("open");
     for start in (0..PAST_THE_OLD_CAP).step_by(CHUNK) {
         vault
@@ -603,10 +625,8 @@ fn a_canonical_receipt_window_reads_past_the_old_cap() {
 fn a_memory_timeline_reads_past_the_old_cap() {
     const PAST_THE_OLD_CAP: usize = 10_001;
     let dir = tempfile::tempdir().expect("vault dir");
-    let config = crate::VaultConfig {
-        map_size: 256 * 1024 * 1024,
-        ..crate::VaultConfig::default()
-    };
+    let mut config = crate::VaultConfig::device();
+    config.map_size = 256 * 1024 * 1024;
     let vault = Vault::open(dir.path(), config).expect("open");
     vault
         .with_write_txn(|wtxn| supersession_chain(&vault, wtxn, 0x56, PAST_THE_OLD_CAP))

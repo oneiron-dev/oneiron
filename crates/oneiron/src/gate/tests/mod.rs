@@ -62,8 +62,6 @@ mod gate_door;
 mod isolation_persona;
 mod manifest_authenticity;
 mod manifest_auto;
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-POLICY-INPUTS]: the lib test target's type check fails here (8 errors: E0308 x8); port it, then drop this gate
-#[cfg(any())]
 mod policy_inputs;
 mod posture_override;
 mod replicated_critical_confirm;
