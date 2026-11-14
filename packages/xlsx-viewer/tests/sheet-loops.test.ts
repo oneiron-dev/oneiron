@@ -130,15 +130,16 @@ describe("xlsx preview: the loops SheetJS runs over what a read gathers are boun
       // it once per two of them, 12 billion characters.
       const unfinished = partTexts(text(unfinishedCdataSheet(40_000, 600_000)));
       refusedWith("sheetTextChars", () => checkSheetExpansion(unfinished, PREVIEW_BUDGET, true));
-      expect(readInChild("unfinished-cdata-master").answer).toEqual({ refused: "sheetTextChars" });
-      // A CDATA section that ends previews, its text as SheetJS keeps it.
+      // A read refuses the part at its take, before this walk, as it refuses
+      // any part holding a CDATA marker (tests/cdata-parts.test.ts).
+      expect(readInChild("unfinished-cdata-master").answer).toEqual({ refused: "structure" });
+      // A CDATA section that ends: the walk charges its master at about its
+      // length, so its followers pass the walk.
       const closed = worksheet(
         `<row r="1"><c r="A1"><f t="shared" ref="A1:A2" si="0">A1+<![CDATA[B1]]>+C1</f><v>1</v></c></row>` +
           `<row r="2"><c r="A2"><f t="shared" si="0"/><v>1</v></c></row>`,
       );
-      expect(cell(readSheet(sheetsPackage([text(closed)]), "S1"), 1, 0)?.custom).toEqual({
-        oneironFormula: "=A2+B2+C2",
-      });
+      expect(() => checkSheetExpansion(partTexts(text(closed)), PREVIEW_BUDGET, true)).not.toThrow();
     },
     TEST_LIMIT_MS,
   );
