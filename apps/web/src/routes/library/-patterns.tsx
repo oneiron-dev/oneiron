@@ -33,7 +33,7 @@ import {
   type Step,
 } from '~/design-system'
 import { Section, Specimen } from './-gallery-frame'
-import { ChartCard, TableCard, TasksFlow } from './-cards'
+import { ArrivingCard, ChartCard, TableCard, TasksFlow } from './-cards'
 
 /* Pattern sections of the /library gallery: each demo works, on fixture
    data from the app's cast. */
@@ -1004,6 +1004,9 @@ export function PatternSections() {
           <div className="lib-column" data-specimen="chart-card-normal">
             <ChartCard defaultReading="normal" />
           </div>
+        </Specimen>
+        <Specimen name="still arriving: the live mark stands where the i is, the action shows and does not press; let it arrive and nothing moves" full>
+          <ArrivingCard />
         </Specimen>
         <Specimen name="bare, for the pane and for a view: the title at the section size, the note as text under the body" full>
           <div className="lib-stack lib-column lib-cards-bare" data-specimen="cards-bare">
