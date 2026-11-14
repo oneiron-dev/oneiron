@@ -16,8 +16,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::batch::{
-    DerivationBatch, DerivationItem, DerivedArchive, DerivedClaim, DerivedEvidence, DerivedSameAs,
-    DerivedSettle, DerivedSettlement, DerivedSupersede, DerivedTopology, ItemRef,
+    DerivationBatch, DerivationItem, DerivedArchive, DerivedClaim, DerivedEvidence, DerivedPerson,
+    DerivedSameAs, DerivedSettle, DerivedSettlement, DerivedSupersede, DerivedTopology, ItemRef,
 };
 use super::commit::{DerivationReceipt, ItemOutcome};
 use super::revert::DeriveRevertReceipt;
@@ -29,8 +29,8 @@ use crate::verbs::IdentityProposedOp;
 
 /// A row an item names: `{"stored": "<id>"}` for a stored row, or
 /// `{"local": "<name>"}` for the row an earlier item of the batch creates.
-/// Only a claim, a settlement, a SameAs and a topology item create a row
-/// that can be named; a stored row is always named as stored.
+/// Only a claim, a settlement, a SameAs, a topology and a person item create
+/// a row that can be named; a stored row is always named as stored.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DeriveRef {
@@ -178,6 +178,22 @@ pub struct DeriveTopologyInput {
     pub apply: bool,
 }
 
+/// A PERSON named in TURNs the caller reads: the engine derives its id,
+/// checks that the name is a bounded span of the words a TURN serves, and
+/// mints it where those words are read. The request names no id, target,
+/// audience or body.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DerivePersonInput {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The person's name, as the TURNs spell it.
+    pub name: String,
+    /// The stored TURNs that name the person, each with its version in the
+    /// batch's `sources`.
+    pub evidence: Vec<DeriveRef>,
+}
+
 /// One wire item: `{"kind": "<kind>", "spec": {...}}`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
@@ -194,6 +210,7 @@ pub enum DeriveItemInput {
     SameAs(DeriveSameAsInput),
     Topology(DeriveTopologyInput),
     Archive(DeriveArchiveInput),
+    Person(DerivePersonInput),
 }
 
 impl DeriveItemInput {
@@ -258,6 +275,11 @@ impl DeriveItemInput {
                 observation_pin: archive.observation_pin,
                 policy_pin: archive.policy_pin,
                 config_pin: archive.config_pin,
+            }),
+            Self::Person(person) => DerivationItem::Person(DerivedPerson {
+                local: person.local,
+                name: person.name,
+                evidence: refs(person.evidence),
             }),
         })
     }
