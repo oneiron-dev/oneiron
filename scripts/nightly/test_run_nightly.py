@@ -1,0 +1,244 @@
+"""Tests of scripts/nightly/run_nightly.sh against a stub `cargo` (no real build).
+
+The stub answers `cargo nextest --version`, `cargo metadata` and `cargo nextest
+run` (with and without --no-run) from a fixture workspace, logs each call with
+its CARGO_BUILD_JOBS, and writes the JUnit nextest would write. It fails to
+compile the test targets named in STUB_FAIL_TESTS.
+
+Run: python3 -m unittest discover -s scripts/nightly -p 'test_*.py' -v
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+import textwrap
+import unittest
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+
+STUB_CARGO = textwrap.dedent(
+    """\
+    #!/usr/bin/env python3
+    import json, os, sys
+    from pathlib import Path
+
+    args = sys.argv[1:]
+    target = Path(os.environ["STUB_TARGET"])
+    with open(os.environ["STUB_LOG"], "a") as log:
+        log.write(os.environ.get("CARGO_BUILD_JOBS", "-") + " " + " ".join(args) + "\\n")
+    if args[:2] == ["nextest", "--version"]:
+        if os.environ.get("STUB_NO_NEXTEST"):
+            print("error: no such command: `nextest`", file=sys.stderr)
+            sys.exit(101)
+        print("cargo-nextest 0.9.137 (stub)")
+        sys.exit(0)
+    if args[0] == "metadata":
+        metadata = json.loads(Path(os.environ["STUB_METADATA"]).read_text())
+        metadata["target_directory"] = str(target)
+        print(json.dumps(metadata))
+        sys.exit(0)
+    assert args[:2] == ["nextest", "run"], args
+    tests = [args[i + 1] for i, arg in enumerate(args) if arg == "--test"]
+    deps = target / "debug" / "deps"
+    deps.mkdir(parents=True, exist_ok=True)
+    if "--no-run" in args:
+        broken = [t for t in tests if t in os.environ.get("STUB_FAIL_TESTS", "").split(",")]
+        for t in broken:
+            print(f'error: could not compile `oneiron` (test "{t}") due to 1 previous error')
+        if broken:
+            sys.exit(101)
+        for t in tests:
+            (deps / f"{t}-0123456789abcdef").write_text("test binary")
+        if "--lib" in args:
+            door = target / "debug" / "oneiron-testkit-pending-door"
+            door.write_text(
+                "#!/bin/sh\\necho '{\\"pending\\": 0, \\"expired\\": 0, \\"pending_filter\\": \\"none()\\", "
+                "\\"expired_filter\\": \\"none()\\"}'\\n"
+            )
+            door.chmod(0o755)
+        sys.exit(0)
+    for t in tests:
+        if not (deps / f"{t}-0123456789abcdef").exists():
+            print(f"stub: the {t} test binary is gone before its run", file=sys.stderr)
+            sys.exit(102)
+    profile = args[args.index("--profile") + 1]
+    expression = args[args.index("-E") + 1]
+    cases = []
+    if profile == "nightly" and expression.startswith("(kind(lib)"):
+        if "--lib" in args:
+            cases.append(("oneiron", "tests::a_row_is_kept"))
+    elif profile == "nightly":
+        cases += [(f"oneiron::{t}", "a_case_runs") for t in tests]
+    junit = target / "nextest" / profile / "junit.xml"
+    junit.parent.mkdir(parents=True, exist_ok=True)
+    body = "".join(
+        f'<testsuite name="{binary}"><testcase name="{name}" classname="{binary}"/></testsuite>' for binary, name in cases
+    )
+    junit.write_text(f'<?xml version="1.0"?><testsuites name="nextest-run">{body}</testsuites>')
+    """
+)
+
+
+def target(name: str, kind: str) -> dict:
+    return {"name": name, "kind": [kind], "test": True}
+
+
+METADATA = {
+    "workspace_members": ["oneiron 0.1.0", "oneiron-testkit 0.1.0"],
+    "packages": [
+        {
+            "id": "oneiron 0.1.0",
+            "name": "oneiron",
+            "targets": [
+                target("oneiron", "lib"),
+                target("alpha", "test"),
+                target("beta", "test"),
+                target("shared", "test"),
+            ],
+        },
+        {
+            "id": "oneiron-testkit 0.1.0",
+            "name": "oneiron-testkit",
+            "targets": [target("oneiron_testkit", "lib"), target("kit", "test"), target("pending_door", "test")],
+        },
+    ],
+}
+
+LIB_RS = """\
+// FIX [LIBTEST-QUARANTINE-ROOT-TESTS]: the lib test target's type check fails here; port it, then drop this gate
+#[cfg(any())]
+#[cfg(test)]
+mod tests;
+"""
+
+
+class RunNightlyTest(unittest.TestCase):
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        base = Path(tmp.name)
+        self.repo = base / "repo"
+        (self.repo / "scripts/nightly").mkdir(parents=True)
+        for name in ("run_nightly.sh", "nightly_report.py"):
+            shutil.copy(HERE / name, self.repo / "scripts/nightly" / name)
+        (self.repo / "crates/core/src").mkdir(parents=True)
+        (self.repo / "crates/core/Cargo.toml").write_text('[package]\nname = "oneiron"\n')
+        (self.repo / "crates/core/src/lib.rs").write_text(LIB_RS)
+        baseline = subprocess.run(
+            ["python3", str(self.repo / "scripts/nightly/nightly_report.py"), "census", str(self.repo)],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        (self.repo / "scripts/nightly/libtest-quarantine-baseline.tsv").write_text(baseline)
+        git = [
+            "git",
+            "-C",
+            str(self.repo),
+            "-c",
+            "user.name=owen",
+            "-c",
+            "user.email=owen@example.com",
+            "-c",
+            "commit.gpgsign=false",
+        ]
+        subprocess.run([*git, "init", "-q"], check=True)
+        subprocess.run([*git, "add", "."], check=True)
+        subprocess.run([*git, "commit", "-q", "-m", "fixture"], check=True)
+        stub_dir = base / "bin"
+        stub_dir.mkdir()
+        (stub_dir / "cargo").write_text(STUB_CARGO)
+        (stub_dir / "cargo").chmod(0o755)
+        (base / "metadata.json").write_text(json.dumps(METADATA))
+        self.target = base / "target"
+        self.calls = base / "cargo-calls.log"
+        self.out = base / "out"
+        self.env = {
+            **os.environ,
+            "PATH": f"{stub_dir}{os.pathsep}{os.environ['PATH']}",
+            "STUB_TARGET": str(self.target),
+            "STUB_LOG": str(self.calls),
+            "STUB_METADATA": str(base / "metadata.json"),
+        }
+        self.env.pop("CARGO_BUILD_JOBS", None)
+        self.env.pop("NIGHTLY_LIB_JOBS", None)
+
+    def run_nightly(self, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
+        command = [
+            "bash",
+            str(self.repo / "scripts/nightly/run_nightly.sh"),
+            "--out",
+            str(self.out),
+            "--date",
+            "2026-11-15",
+            *args,
+        ]
+        return subprocess.run(command, env={**self.env, **env}, capture_output=True, text=True, timeout=120)
+
+    def summary_line(self, result: subprocess.CompletedProcess[str]) -> str:
+        lines = [line for line in result.stdout.splitlines() if line.startswith("## NIGHTLY SUMMARY ")]
+        self.assertEqual(len(lines), 1, result.stdout + result.stderr)
+        return lines[0].removeprefix("## NIGHTLY SUMMARY ")
+
+    def builds(self) -> list[str]:
+        return [line for line in self.calls.read_text().splitlines() if " --no-run " in line]
+
+    def test_a_sharded_green_night_runs_every_shard_and_deletes_its_test_binaries(self) -> None:
+        result = self.run_nightly("--shard-files", "2")
+        line = self.summary_line(result)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(line.startswith("NIGHTLY 2026-11-15 head="), line)
+        # the four integration tests in two shards, plus the pending-door tool's own test in libs
+        self.assertIn(" GREEN build=ok shards=2 passed=5 failed=0 ", line)
+        self.assertIn(" libtest_passed=1 libtest_failed=0 quarantine_gated=1 ", line)
+        self.assertEqual(
+            [line.split(" --all-features ")[1] for line in self.builds()],
+            [
+                "--workspace --exclude oneiron-bench --lib --bins --test pending_door",
+                "--workspace --exclude oneiron-bench --test alpha --test beta",
+                "--workspace --exclude oneiron-bench --test kit --test shared",
+            ],
+        )
+        left = sorted(path.name for path in (self.target / "debug/deps").iterdir())
+        self.assertEqual(left, ["pending_door-0123456789abcdef"])
+        for name in ("summary.json", "summary.txt", "results.json", "flake-row.json"):
+            self.assertTrue((self.out / name).is_file(), name)
+
+    def test_a_test_file_that_does_not_compile_is_left_out_and_the_night_is_red(self) -> None:
+        result = self.run_nightly(STUB_FAIL_TESTS="beta")
+        line = self.summary_line(result)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(" RED build=partial shards=1 passed=4 failed=0 ", line)
+        self.assertIn('## NIGHTLY failed-unit `oneiron` (test "beta") due to 1 previous error', result.stdout)
+        self.assertEqual(
+            [line.split(" --all-features ")[1] for line in self.builds()[1:]],
+            [
+                "--workspace --exclude oneiron-bench --test alpha --test beta --test kit --test shared",
+                "--workspace --exclude oneiron-bench --test alpha --test kit --test shared",
+            ],
+        )
+        self.assertIn(
+            "unselected: tests-01 oneiron test beta (did not compile)", (self.out / "summary.txt").read_text()
+        )
+        self.assertTrue(
+            (self.target / "debug/deps/alpha-0123456789abcdef").exists(), "an unsharded night keeps its binaries"
+        )
+
+    def test_the_lib_job_count_applies_to_the_lib_selection_build_only(self) -> None:
+        result = self.run_nightly(NIGHTLY_LIB_JOBS="1", CARGO_BUILD_JOBS="4")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([line.split(" ")[0] for line in self.builds()], ["1", "4"])
+
+    def test_a_host_without_cargo_nextest_cannot_start_the_night(self) -> None:
+        result = self.run_nightly(STUB_NO_NEXTEST="1")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("## NIGHTLY nextest rc=missing", result.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()
