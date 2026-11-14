@@ -240,7 +240,9 @@ pub struct OwnerWorkGetRequest {
 /// `BAD_REQUEST` for a malformed target, root, machine or `check_in_ref`,
 /// or a change that is not pin, restore (each with root), anchor (with root
 /// and machine) or activate (with neither); a stale owner proof; a check-in
-/// that does not apply; storage errors.
+/// that does not apply to a recorded request (a target this install cannot
+/// name records nothing, so it answers no decision and spends no check-in);
+/// storage errors.
 pub fn create_root_request_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
