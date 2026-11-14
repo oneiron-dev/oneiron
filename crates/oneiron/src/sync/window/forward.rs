@@ -180,6 +180,8 @@ fn forward_with_recovery(
     // rewrite a carrier with them.
     let _import = crate::sync::manager::import_scope();
     let (tombstones, native_documents) = open(vault, doc, window_key, trusted)?;
+    #[cfg(oneiron_test_support)]
+    run_index_built_hook();
     let _guard = materializer.lock();
     let mut run = ForwardRun::begin(
         vault,
@@ -194,6 +196,26 @@ fn forward_with_recovery(
         if let Some(count) = run.page(vault, doc, window_key, trusted, usize::MAX)? {
             return Ok(count);
         }
+    }
+}
+
+#[cfg(oneiron_test_support)]
+thread_local! {
+    static INDEX_BUILT_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `hook` once, on this thread, as the next forward pass here has built
+/// its tombstone index and not yet read a carrier (L7-45).
+#[cfg(oneiron_test_support)]
+pub(crate) fn arm_index_built_hook(hook: impl FnOnce() + 'static) {
+    INDEX_BUILT_HOOK.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+}
+
+#[cfg(oneiron_test_support)]
+fn run_index_built_hook() {
+    if let Some(hook) = INDEX_BUILT_HOOK.with(|slot| slot.borrow_mut().take()) {
+        hook();
     }
 }
 

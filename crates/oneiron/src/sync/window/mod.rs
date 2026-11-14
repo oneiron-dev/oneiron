@@ -80,6 +80,8 @@ pub(in crate::sync) use self::egress::{
 pub use self::egress::{
     history_free_window_required, replay_pending_mirrors, require_history_free_window,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::forward::arm_index_built_hook;
 #[cfg(test)]
 pub(crate) use self::forward::forward_recovery;
 pub use self::forward::forward_rematerialize;
@@ -512,6 +514,18 @@ pub(crate) fn prune_subsumed_window_updates_in_txn(
         )?;
     }
     Ok(())
+}
+
+/// Imports `bytes` from a peer into `doc`, a registered window's document that
+/// other threads reach, with its Observer callbacks. Every peer import into a
+/// live window goes through here (L7-45).
+pub(crate) fn import_into_live_window(
+    materializer: &Materializer,
+    doc: &LoroDoc,
+    bytes: &[u8],
+) -> std::result::Result<loro::ImportStatus, loro::LoroError> {
+    let _ = materializer;
+    doc.import(bytes)
 }
 
 /// Import-merges the persisted sync_state record for `key` — the
