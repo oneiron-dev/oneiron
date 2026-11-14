@@ -161,9 +161,13 @@ impl<'a> Ledgers<'a> {
     }
 
     /// The text of the file `handle` names, with its number `source`: its
-    /// note's words at the ledger's revision, cut to
-    /// [`FILES_ASK_FILE_CHARS`]. `None` for a file with no text: held by
-    /// name only, gone from its folder, or its note archived.
+    /// note's words, cut to [`FILES_ASK_FILE_CHARS`], when they are the
+    /// file's text at the ledger's revision. `None` for a file with no text:
+    /// held by name only, gone from its folder, its note archived, or its
+    /// note holding other words than that revision's (an edit since the
+    /// rescan that took the file, or a change of the file waiting as a
+    /// proposal): a citation names the revision, so its quote must be the
+    /// revision's own text.
     fn text(&mut self, handle: &FileHandle, source: u32) -> MemoryResult<Option<FilesAskText>> {
         let Some(folder) = self.folders.get(&handle.source) else {
             return Err(MemoryError::new(
@@ -195,6 +199,9 @@ impl<'a> Ledgers<'a> {
         let Some(body) = self.vault.read_note(&note)? else {
             return Ok(None);
         };
+        if !row.holds_file_text(&body.markdown) {
+            return Ok(None);
+        }
         Ok(Some(FilesAskText {
             file: FilesAskedFile {
                 source,
@@ -237,7 +244,10 @@ pub fn files_ask_read(
             return Err(MemoryError::new(
                 MEMORY_CODE_NOT_FOUND,
                 format!("{} holds no text to ask about", file.path),
-                &["List the source's files and their readiness: vault.files.sources.files."],
+                &[
+                    "List the source's files and their readiness: vault.files.sources.files.",
+                    "A file whose note was edited since its rescan is not asked about: the note no longer holds the file's text.",
+                ],
             ));
         };
         return Ok(vec![text]);

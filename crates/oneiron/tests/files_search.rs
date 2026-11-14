@@ -10,6 +10,11 @@
 //! setting has a live machine marked Yours to name; the folder's files are
 //! handed to `rescan_folder_source` as a host's walk would, with no walk.
 //!
+//! The ask's read of the files a question names or a search finds
+//! (`files_ask_read`, `vault.files.sources.ask`) is checked here on the same
+//! fixture: it reads a file's note only while the note holds the file's text
+//! at the revision the ledger names, which its citations name.
+//!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron --all-features --test files_search`.
 
@@ -17,15 +22,17 @@ use std::collections::HashMap;
 
 use oneiron::authority::{ActSurface, MachineOwnership, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::memory::MEMORY_CODE_NOT_FOUND;
 use oneiron::note::{
-    FileFacts, FileReadiness, FolderRescan, ImportedNote, NameMatch, NameOnlyFile, NameOnlyReason,
+    FileFacts, FileHandle, FileReadiness, FolderRescan, ImportedNote, NameMatch, NameOnlyFile,
+    NameOnlyReason, NoteProgramEdit, NoteProgramEditOutcome,
 };
 use oneiron::task_verb::sdk::{
-    FilesMeaningState, FilesSearchHit, FilesSearchMatch, FilesSourceSearchAnswer,
-    FilesSourceSearchRequest, search_files_sources_as,
+    FilesMeaningState, FilesSearchHit, FilesSearchMatch, FilesSourceAskRequest,
+    FilesSourceSearchAnswer, FilesSourceSearchRequest, files_ask_read, search_files_sources_as,
 };
 use oneiron::test_doors::steward;
-use oneiron::{EntityId, Vault};
+use oneiron::{EdgeActorClass, EntityId, Vault, WriteActor};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -396,6 +403,86 @@ fn files_search_skips_retracted_files() -> TestResult {
         paths(&files.search("budget")?),
         vec!["reports/q4-budget.xlsx"],
         "a file that left its folder is not listed"
+    );
+    Ok(())
+}
+
+/// The ask cites a file at the revision the ledger names, so it reads the
+/// file's note only while the note holds that revision's text (REVIEW-7726
+/// P1): once the owner edits the note, neither the file the question names
+/// nor the file a search finds is read, and no quote of the edit can be
+/// certified as the file's.
+#[test]
+fn files_ask_reads_no_note_edited_since_its_file_was_read() -> TestResult {
+    const PATH: &str = "notes/budget.md";
+    let files = files_vault()?;
+    files.rescan(&[(PATH, "Budget = 10\n", 1_780_000_000)], &[], &[])?;
+    let named = FilesSourceAskRequest {
+        query: "What is the budget?".to_owned(),
+        file: Some(FileHandle {
+            source: files.source,
+            path: PATH.to_owned(),
+        }),
+        sources: None,
+    };
+    let before = files_ask_read(&files.vault, &files.owner, &named, None)
+        .map_err(at("read the file before the edit"))?;
+    assert_eq!(before.len(), 1, "the file is read: {before:?}");
+    assert_eq!(
+        before[0].text, "Budget = 10\n",
+        "the note holds the file's text as the rescan took it"
+    );
+    let note = before[0].file.note;
+
+    let owner = files
+        .vault
+        .ensure_embedded_owner_actor()
+        .map_err(at("the owner's actor"))?;
+    let base = files
+        .vault
+        .note_program_document(note)
+        .map_err(at("read the note's document"))?
+        .map(|doc| doc.version());
+    let outcome = files
+        .vault
+        .edit_note(
+            note,
+            &NoteProgramEdit::WholeText {
+                text: "Budget = 99\n".to_owned(),
+                timeout_ms: 2_000,
+                base,
+            },
+            WriteActor::new(owner, EdgeActorClass::Human),
+        )
+        .map_err(at("the owner edits the note"))?;
+    assert!(
+        matches!(outcome, NoteProgramEditOutcome::Edited { .. }),
+        "the owner's edit lands: {outcome:?}"
+    );
+
+    let refused = match files_ask_read(&files.vault, &files.owner, &named, None) {
+        Ok(read) => {
+            return Err(format!("the edited note is read as the file's text: {read:?}").into());
+        }
+        Err(refused) => refused,
+    };
+    assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND, "{refused:?}");
+
+    let searched = files.search("budget")?;
+    assert_eq!(
+        paths(&searched),
+        vec![PATH],
+        "the search still finds the file by its name: {searched:?}"
+    );
+    let found = FilesSourceAskRequest {
+        file: None,
+        ..named
+    };
+    let read = files_ask_read(&files.vault, &files.owner, &found, Some(&searched))
+        .map_err(at("read the files the search found"))?;
+    assert!(
+        read.is_empty(),
+        "the edited note is not read as the file's text: {read:?}"
     );
     Ok(())
 }
