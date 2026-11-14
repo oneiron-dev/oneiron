@@ -333,6 +333,9 @@ impl CampaignConfig {
                         } else {
                             MetricRole::Floor
                         },
+                        // OF-366 decides through its own report and
+                        // verdict_epsilon; its axes count every change.
+                        tolerance: 0.0,
                     })
                     .collect(),
             },
