@@ -116,23 +116,35 @@ impl SyncClient {
             {
                 let catch_up = self.setup_catch_up(window_key);
                 // A followed world's window is granted on each socket with no
-                // promotion marker; its vector went out with the request.
+                // promotion marker.
                 let followed = self.follows_full_window(window_key);
-                if !payload.is_empty()
-                    || (!catch_up
-                        && !followed
-                        && self
-                            .vault
-                            .sync_state_get(&format!("rp:w:{window_key}"))
-                            .map_err(|e| TransportError::Storage(e.to_string()))?
-                            .is_none())
-                {
+                let promoted = self
+                    .vault
+                    .sync_state_get(&format!("rp:w:{window_key}"))
+                    .map_err(|e| TransportError::Storage(e.to_string()))?
+                    .is_some();
+                if !payload.is_empty() || (!catch_up && !followed && !promoted) {
                     return Err(TransportError::InvalidPayload("unpromoted window control"));
                 }
                 // The home's grant on this socket, which a per-window
                 // re-bootstrap waits for before it asks for the window (FIX 20202).
                 if sub_tag == window_sub_tags::PROMOTION_GRANTED {
                     self.promotions_granted.insert(key.clone());
+                }
+                // A followed window asked as a follow asks for its vector once
+                // the home granted it, as its first-frame request would.
+                if sub_tag == window_sub_tags::PROMOTION_GRANTED && followed && !promoted {
+                    if !self.home_may_request(&key) {
+                        return Ok(Vec::new());
+                    }
+                    let vv = self
+                        .window_vv_for_initial_sync(&key)
+                        .map_err(|e| TransportError::Storage(e.to_string()))?;
+                    self.schedule_world_pad_repair(&key);
+                    return Ok(vec![
+                        transport::encode_window_sync(window_key, window_sub_tags::VV_REQUEST, &vv)
+                            .into_own_frame()?,
+                    ]);
                 }
                 // The setup window's catch-up asks for the window only once the home granted it.
                 if sub_tag == window_sub_tags::PROMOTION_GRANTED && !catch_up {
@@ -152,6 +164,18 @@ impl SyncClient {
                     )
                     .into_own_frame()?,
                 ])
+            }
+            window_sub_tags::FOLLOW_REFUSED
+                if self.config.residence_mode == SyncResidenceMode::Opened =>
+            {
+                // The home does not grant this followed window on this
+                // socket: nothing of it goes here, its queued writes stay
+                // owed, and the next connection asks again.
+                if !payload.is_empty() {
+                    return Err(TransportError::InvalidPayload("invalid follow refusal"));
+                }
+                self.follows_refused.insert(key.clone());
+                Ok(Vec::new())
             }
             window_sub_tags::RESIDENCE_ACK | window_sub_tags::RESIDENCE_HELD
                 if self.config.residence_mode == SyncResidenceMode::Opened =>

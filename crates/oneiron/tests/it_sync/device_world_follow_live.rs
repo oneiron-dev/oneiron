@@ -178,7 +178,10 @@ impl FakeHome {
                         sub_tag,
                     });
                 }
-                if sub_tag == window_sub_tags::PROMOTION_REQUEST {
+                if matches!(
+                    sub_tag,
+                    window_sub_tags::PROMOTION_REQUEST | window_sub_tags::FOLLOW_REQUEST
+                ) {
                     vec![
                         transport::encode_window_sync(
                             window,
@@ -424,7 +427,7 @@ async fn pick_change_renegotiates_live() {
                     synced(sync) >= 2
                         && world_asks(home, 2).contains(&(
                             founder.as_str().to_owned(),
-                            window_sub_tags::PROMOTION_REQUEST,
+                            window_sub_tags::FOLLOW_REQUEST,
                         ))
                 },
             )
