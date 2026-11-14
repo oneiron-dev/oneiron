@@ -1,6 +1,6 @@
 //! ROLES-CHECKIN P2.5, row 2k8a (ARCH-0082 #act-table "Widen another's
 //! grant" and #owner-own-acts; Engine ruling P25-SHAPE Q1 = A, 14 Nov
-//! 13:39): two Owner-proof doors that mint a standing consent grant take
+//! 13:39): four Owner-proof doors that mint a standing consent grant take
 //! the 2j apply shape.
 //!
 //! - `vault.consent.create_standing_grant`: the Owner's mint is never
