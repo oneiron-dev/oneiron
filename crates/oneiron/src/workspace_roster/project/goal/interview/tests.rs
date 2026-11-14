@@ -185,8 +185,13 @@ fn opened_interview() -> Result<Interview> {
     spec.roster.push(human.to_hex());
     vault.put_project(project, &spec, 2)?;
     let room = EntityId::from_hex(&spec.home_room)?;
-    // Membership reads nothing; the agent reads the room through its grant.
-    vault.install_read_permit_for_test(crate::WriteActor::new(agent, AGENT))?;
+    // Membership reads nothing: the agent and the owner each read the room
+    // through a grant. The opening finds the owner's header on the owner's
+    // own read.
+    vault.install_read_permits_for_test(&[
+        crate::WriteActor::new(agent, AGENT),
+        crate::WriteActor::new(human, HUMAN),
+    ])?;
     let owner = vault.authenticate_owner(
         human,
         &human.to_hex(),
