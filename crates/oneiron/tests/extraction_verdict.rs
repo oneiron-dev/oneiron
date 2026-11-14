@@ -29,7 +29,7 @@ use std::sync::Arc;
 type ExtractionVerdictTestResult<T> = Result<T, Box<dyn std::error::Error>>;
 
 /// The bound verdict verb under test, invoked by name with plain JSON, so this file
-/// compiles while the handler is still missing and fails at runtime on the unknown verb.
+/// compiles without naming the handler and fails at runtime below its facet allow-list.
 const AI_VERDICT_VERB: &str = "ai.verdict";
 
 /// The inputs page an extraction attempt reads its turns and pins through.

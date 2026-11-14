@@ -33,10 +33,11 @@ use super::super::support::invalid_consolidation;
 use super::super::value_projection::rmpv_to_json;
 use super::BoundBranchRead;
 use crate::attempt_queue::AttemptId;
-use crate::claim::{ClaimCandidate, ClaimSource, ScopedRead, validate_predicate};
+use crate::claim::{ClaimSource, ScopedRead, validate_predicate};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::verbs::{ExtractionPack, ExtractionPart, PackQuestion};
+use crate::write_envelope::ClaimCandidate;
 
 /// One pack candidate as the rebuild checked it: its native id, the flat
 /// facts correction states read, and the assembled proposal grouping reads.

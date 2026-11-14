@@ -29,7 +29,7 @@ impl DreamerAttemptBinding {
         self.check_in_txn(&txn)?;
         memory.prove_read_authority_in_txn(&txn)?;
         let reader_scope = extraction_reader_scope_in_txn(&memory, &txn, None)?;
-        read.read_projected_in_txn(&txn, &[], None, |txn, _| {
+        let _ = read.read_projected_in_txn(&txn, &[], None, |txn, _| {
             let (scope, branch) = queued_extraction_branch_in_txn(vault, txn, self.attempt())?;
             check_pack_rows(
                 &memory,
@@ -49,7 +49,8 @@ impl DreamerAttemptBinding {
                     caller: None,
                     destination: None,
                 },
-            )?;
+            )
+            .map_err(bound_branch_error)?;
             check_pack_subjects(&read, txn, reader_scope.as_ref(), pack)?;
             let rebuilt = rebuild_checked_pack(
                 pack,
@@ -152,8 +153,9 @@ fn check_pack_subjects(
         if !observed_claim_reads_in_txn(read.vault(), txn, read, reader_scope, subject)? {
             return Err(extraction_not_served());
         }
-        crate::claim::validate_predicate(&candidate.predicate, false)
-            .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+        crate::claim::validate_predicate(&candidate.predicate, false).map_err(|_| {
+            MemoryError::bad_request("extracted candidate's predicate breaks the claim grammar")
+        })?;
         if candidate.value.is_null() || candidate.evidence.is_empty() {
             return Err(MemoryError::bad_request(
                 "an extraction operand needs a non-null proposed value and TURN evidence",
@@ -243,6 +245,20 @@ fn extraction_not_served() -> MemoryError {
         "every extraction pack row must be served under the Dreamer attempt's live read",
         &["Use only rows served to this attempt and their current source versions."],
     )
+}
+
+/// Maps the bound branch read's readability refusals (bound_read.rs) to the unserved-row
+/// refusal; every other projection failure keeps its own memory code.
+fn bound_branch_error(error: crate::Error) -> MemoryError {
+    match error {
+        crate::Error::InvalidClaimBody(
+            "branch source is not readable"
+            | "branch document read refused"
+            | "prior head exact read refused"
+            | "witnessed turn message read refused",
+        ) => extraction_not_served(),
+        error => error.into(),
+    }
 }
 
 /// Preserves the existing derive source-moved refusal and its structured reason.
