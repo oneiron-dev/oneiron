@@ -52,11 +52,13 @@ pub enum ActClass {
     GrantWiden,
     /// Widening one's own grant: never answered by the actor itself.
     GrantWidenOwn,
+    /// A force-push, history rewrite or delete of a protected ref (L8-51).
+    ProtectedRefRewriteOrDelete,
 }
 
 impl ActClass {
     /// Every act class, in table order.
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::ReversibleWork,
         Self::Spawn,
         Self::SpendOverCap,
@@ -77,6 +79,7 @@ impl ActClass {
         Self::WorldWiden,
         Self::GrantWiden,
         Self::GrantWidenOwn,
+        Self::ProtectedRefRewriteOrDelete,
     ];
 
     /// The stable token for receipts and policy rows.
@@ -103,6 +106,7 @@ impl ActClass {
             Self::WorldWiden => "world_widen",
             Self::GrantWiden => "grant_widen",
             Self::GrantWidenOwn => "grant_widen_own",
+            Self::ProtectedRefRewriteOrDelete => "protected_ref_rewrite_or_delete",
         }
     }
 
@@ -197,7 +201,7 @@ pub struct ActClassRow {
     /// The F row: fixed, not a default. Nobody answers their own ask.
     pub fixed: bool,
     /// The built catastrophe-floor class this row is, where one exists
-    /// ([`crate::consent::CATASTROPHE_FLOOR_V2`]).
+    /// ([`crate::consent::CATASTROPHE_FLOOR_V3`]).
     pub floor_class: Option<CatastropheClass>,
 }
 
@@ -244,7 +248,7 @@ const fn catastrophe(
 /// canon lists outside the main table (key and recovery, security-control
 /// disable, mass secret export, an agent's widen of a world) state no undo
 /// class, so they hold on silence.
-pub static ACT_CLASS: [ActClassRow; 20] = [
+pub static ACT_CLASS: [ActClassRow; 21] = [
     row(
         ActClass::ReversibleWork,
         UndoClass::Undoable,
@@ -391,4 +395,13 @@ pub static ACT_CLASS: [ActClassRow; 20] = [
             ModelCheck::Never,
         )
     },
+    // One-way (DEC-0006 undo classes); inside its scope the owner's bypass
+    // replaces the ask (DEC-0006 invariant 7, ARCH-0068 RC4).
+    catastrophe(
+        ActClass::ProtectedRefRewriteOrDelete,
+        UndoClass::OneWay,
+        CONFIRM_KEY_QUORUM,
+        ModelCheck::AfterOwnerRow,
+        Some(CatastropheClass::ProtectedRefRewriteOrDelete),
+    ),
 ];

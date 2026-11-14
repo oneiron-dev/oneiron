@@ -1,9 +1,10 @@
 //! The receive-pack intent's recorder: the one write that journals an
 //! admitted push while pre-receive still blocks every ref effect. A push
 //! admitted with its keys marked (FIX 7608) writes those marks in the same
-//! transaction, so marks and intent commit together or not at all. The
-//! owner's leave for each deletion or rewrite of the protected ref the door
-//! let pass (L8-51) is spent there too, last, so one leave lands one move.
+//! transaction, so marks and intent commit together or not at all. Each
+//! deletion or rewrite of the protected ref the door let pass (L8-51) is
+//! settled there too, last: its leave spent, so one leave lands one move, or
+//! the bypass that covered it read again and the act receipted as bypassed.
 
 use std::path::Path;
 
@@ -13,6 +14,7 @@ use super::super::evidence::{
     RECEIVE_PACK_ADMISSION_PREDICATE, ReceivePackScanSummary, receive_pack_field,
     receive_pack_provenance_refused,
 };
+use super::super::protected_ref_confirm::ProtectedRefPasses;
 use super::super::serve_cmd::path_arg;
 #[cfg(test)]
 use super::count_journal_bytes;
@@ -21,7 +23,6 @@ use super::{
     push_admission, receive_pack_repo_identity_hex,
 };
 use crate::Vault;
-use crate::consent::EffectDigest;
 use crate::error::Result;
 use crate::origin::git_ref_change::GitPushRefChange;
 use crate::origin::residence::OriginAuthorityStamp;
@@ -35,7 +36,7 @@ impl Vault {
         stamp: &DoorAdmissionStamp,
         door: &DoorWindowReport,
         changes: Option<&[GitPushRefChange]>,
-        approved: &[EffectDigest],
+        protected_ref_passes: &ProtectedRefPasses,
     ) -> Result<()> {
         let RepoRef::LocalFolder { path, .. } = repo else {
             return Err(receive_pack_provenance_refused("intent is not local"));
@@ -147,11 +148,15 @@ impl Vault {
                 Some(_) => ReceivePackScanSummary::Marked { mark_count },
                 None => ReceivePackScanSummary::Clean,
             };
-            // Last, after every other check: the owner's leave for each
-            // rewrite of the protected ref, spent with the intent or not at
-            // all, and the question it answered withdrawn.
-            let withdrawn =
-                self.spend_protected_ref_leaves_in_txn(wtxn, stamp.principal_ref(), approved)?;
+            // Last, after every other check: each deletion or rewrite of the
+            // protected ref, settled with the intent or not at all: the
+            // owner's leave spent and the question it answered withdrawn, or
+            // the covering bypass read again and the act receipted.
+            let withdrawn = self.settle_protected_ref_passes_in_txn(
+                wtxn,
+                stamp.principal_ref(),
+                protected_ref_passes,
+            )?;
             INTENTS.put(&self.store, wtxn, &key, &intent)?;
             Ok(withdrawn)
         })?;

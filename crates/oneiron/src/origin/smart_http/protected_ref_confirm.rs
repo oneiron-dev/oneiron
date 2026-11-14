@@ -22,16 +22,24 @@
 //! Git refuses a deletion that names the branch HEAD names, for every pusher,
 //! so a leave for that deletion meets git's own refusal, which the pusher
 //! reads as git's.
+//!
+//! Inside its scope, the owner's live bypass grant replaces the question
+//! (DEC-0006 invariant 7; the floor's `protected_ref_rewrite_or_delete`): a
+//! bypass scoped to the repository's PROJECT whose bound names the pusher and
+//! the ref lets the move pass unasked. The intent's writer reads it again and
+//! receipts the act as bypassed, with the intent or not at all.
 
 use super::door_window::{DoorWindowRequest, DoorWindowVerdict, printable_ref_name};
 use super::retained_reasons::RetainedReasons;
 use crate::Vault;
 use crate::consent::{
-    ComposedEffect, EffectDigest, EffectFacts, UndoFidelity, approve_once_authorization_in_txn,
-    spend_approve_once_in_txn,
+    ActionClass, ActionEnvelope, ActorBound, CatastropheClass, ComposedEffect, EffectDigest,
+    EffectFacts, EffectPlace, GrantBound, UndoFidelity, approve_once_authorization_in_txn,
+    covering_bypass_ref_in_txn, spend_approve_once_in_txn,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
+use crate::federation::GitPushRepo;
 use crate::git_wire::GitOid;
 use crate::llm::decision::{
     AnswerContract, AskTo, DecisionClass, DecisionQuestion, DecisionRung, HumanAskReason,
@@ -75,12 +83,12 @@ struct ProtectedRefMove<'a> {
 }
 
 impl ProtectedRefMove<'_> {
-    /// The approve-once digest of exactly this move: the repository, the ref,
-    /// the old tip, the new tip (empty for a deletion), and the pusher. Each
-    /// part is length-prefixed, so a deletion never shares a rewrite's
-    /// digest. The transport's operation id is not in it, so the same push
-    /// sent again names the same digest.
-    fn approval_digest(&self) -> Result<EffectDigest> {
+    /// The facts of exactly this move: one operation kind that binds the
+    /// repository, the ref, the old tip, the new tip (empty for a deletion),
+    /// and the pusher. Each part is length-prefixed, so a deletion never
+    /// shares a rewrite's kind. The transport's operation id is not in it, so
+    /// the same push sent again names the same move.
+    fn facts(&self) -> Result<EffectFacts> {
         let mut hasher = blake3::Hasher::new();
         hasher.update(MOVE_DIGEST_DOMAIN);
         for part in [
@@ -100,7 +108,33 @@ impl ProtectedRefMove<'_> {
         // The commits the deletion or rewrite drops stay in the object store
         // only until it is pruned.
         facts.undo_fidelity = UndoFidelity::Partial;
-        Ok(ComposedEffect::new(facts).digest())
+        Ok(facts)
+    }
+
+    /// The approve-once digest of exactly this move, over its facts alone.
+    fn approval_digest(&self) -> Result<EffectDigest> {
+        Ok(ComposedEffect::new(self.facts()?).digest())
+    }
+
+    /// The effect a live bypass grant is matched against (DEC-0006 invariant
+    /// 7): this move's facts on the catastrophe floor, the pusher acting on
+    /// the ref (`ref:<name>`) of the repository's CODE anchor, inside the
+    /// anchor's PROJECT. It is composed apart from the approve-once digest,
+    /// whose key it never is; its digest goes on the Bypassed receipt.
+    fn coverage_effect(&self, repo: &GitPushRepo) -> Result<ComposedEffect> {
+        let class = CatastropheClass::ProtectedRefRewriteOrDelete;
+        let action = GrantBound::action(
+            ActorBound::new(self.pusher)?,
+            ActionClass::new(class.as_str())?,
+            ActionEnvelope::new([format!("ref:{}", self.protected.name)])?
+                .with_target(repo.repo.to_hex())?,
+        )?;
+        Ok(ComposedEffect::new(self.facts()?.with_catastrophe(class))
+            .with_action_requirement(action)?
+            .in_place(EffectPlace {
+                project: Some(repo.project),
+                thread: None,
+            }))
     }
 
     /// The state the owner's question carries: native identifiers only (a
@@ -172,23 +206,38 @@ pub(super) struct ProtectedRefDecision {
     /// The refused deletions and rewrites the owner is asked about if
     /// nothing else refuses the push, each with its digest.
     unasked: Vec<(EffectDigest, serde_json::Value, String)>,
-    /// The digests of the deletions and rewrites the owner left once, still
-    /// unspent: the intent's writer spends each.
+    /// The deletions and rewrites that pass, and on what.
+    passes: ProtectedRefPasses,
+}
+
+/// The deletions and rewrites of the protected ref the door let pass, and on
+/// what. The intent's writer spends each leave and reads each bypass again,
+/// with the intent or not at all.
+#[derive(Default)]
+pub(super) struct ProtectedRefPasses {
+    /// The digests of the moves the owner left once, still unspent.
     approved: Vec<EffectDigest>,
+    /// The coverage effects of the moves a live bypass of the owner's
+    /// covered.
+    bypassed: Vec<ComposedEffect>,
 }
 
 impl ProtectedRefDecision {
     /// Reads, for each move of `protected` in `request`, whether it may land:
-    /// a creation and a fast-forward pass; a deletion or a rewrite passes
-    /// only on the owner's unspent leave for exactly it. An update naming a
-    /// symbolic ref whose referent is `protected` is such a move, since git
-    /// moves the referent: it is judged, asked and left as that move.
-    /// `pusher` is the principal the push was admitted for.
+    /// a creation and a fast-forward pass; a deletion or a rewrite passes on
+    /// a live bypass of the owner's that covers it, or else only on the
+    /// owner's unspent leave for exactly it. An update naming a symbolic ref
+    /// whose referent is `protected` is such a move, since git moves the
+    /// referent: it is judged, covered, asked and left as that move. `pusher`
+    /// is the principal the push was admitted for, and `repo` the CODE anchor
+    /// and PROJECT its authority names; with no `repo`, no bypass covers the
+    /// move.
     pub(super) fn read(
         vault: &Vault,
         protected: &ProtectedRef,
         request: &DoorWindowRequest,
         pusher: Option<&str>,
+        repo: Option<&GitPushRepo>,
     ) -> Result<Self> {
         let mut decision = Self::default();
         for update in (request.ref_updates.iter())
@@ -229,13 +278,27 @@ impl ProtectedRefDecision {
                 new_oid,
                 pusher,
             };
-            let digest = protected_move.approval_digest()?;
             let rtxn = vault.store.env.read_txn()?;
+            // Inside its scope, the owner's live bypass replaces the
+            // question: the move passes unasked, and the intent's writer
+            // receipts it as bypassed.
+            if let Some(repo) = repo {
+                let coverage = protected_move.coverage_effect(repo)?;
+                if covering_bypass_ref_in_txn(&vault.store, &rtxn, &coverage)?.is_some() {
+                    // One move named twice, through a symbolic ref and its
+                    // referent, is receipted once.
+                    if !decision.passes.bypassed.contains(&coverage) {
+                        decision.passes.bypassed.push(coverage);
+                    }
+                    continue;
+                }
+            }
+            let digest = protected_move.approval_digest()?;
             match approve_once_authorization_in_txn(&vault.store, &rtxn, &digest) {
                 // A symbolic ref and its referent named together for one move
                 // are one move: its leave is spent once.
-                Ok(Some(_)) if decision.approved.contains(&digest) => {}
-                Ok(Some(_)) => decision.approved.push(digest),
+                Ok(Some(_)) if decision.passes.approved.contains(&digest) => {}
+                Ok(Some(_)) => decision.passes.approved.push(digest),
                 Ok(None) => {
                     refuse(
                         &mut decision,
@@ -261,18 +324,18 @@ impl ProtectedRefDecision {
         Ok(decision)
     }
 
-    /// The window's verdict with this decision applied, and the digests of
-    /// the owner's leaves the intent's writer must spend. A refusal here
-    /// refuses the push. When nothing else refused it, the owner is asked
-    /// about each refused move, once per digest: a push the door would
-    /// refuse anyway costs the owner no question.
+    /// The window's verdict with this decision applied, and the passes the
+    /// intent's writer must settle. A refusal here refuses the push. When
+    /// nothing else refused it, the owner is asked about each refused move,
+    /// once per digest: a push the door would refuse anyway costs the owner
+    /// no question.
     pub(super) fn apply(
         self,
         vault: &Vault,
         scanned: DoorWindowVerdict,
-    ) -> (DoorWindowVerdict, Vec<EffectDigest>) {
+    ) -> (DoorWindowVerdict, ProtectedRefPasses) {
         if self.refused.is_empty() {
-            return (scanned, self.approved);
+            return (scanned, self.passes);
         }
         let mut reasons = self.refused;
         match scanned {
@@ -300,7 +363,7 @@ impl ProtectedRefDecision {
         let refused = DoorWindowVerdict::Rejected {
             reasons: reasons.into_reasons(),
         };
-        (refused, Vec::new())
+        (refused, ProtectedRefPasses::default())
     }
 }
 
@@ -346,19 +409,26 @@ impl Vault {
         })
     }
 
-    /// Spends, in the intent's writer, the owner's leave for each deletion or
-    /// rewrite of the protected ref the door let pass (`approved`), and
-    /// withdraws the question each was asked as. A leave spent since the door
-    /// read it refuses the intent. Returns the withdrawn questions' numbers,
-    /// whose waiters wake once the write commits.
-    pub(super) fn spend_protected_ref_leaves_in_txn(
+    /// Settles, in the intent's writer, each deletion or rewrite of the
+    /// protected ref the door let pass. A bypassed move's bypass is read
+    /// again on this write and the act receipted as bypassed; a bypass
+    /// revoked since the door read it refuses the intent. Each leave is spent
+    /// and the question it was asked as withdrawn; a leave spent since the
+    /// door read it refuses the intent. Returns the withdrawn questions'
+    /// numbers, whose waiters wake once the write commits.
+    pub(super) fn settle_protected_ref_passes_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         pusher: &str,
-        approved: &[EffectDigest],
+        passes: &ProtectedRefPasses,
     ) -> Result<Vec<u64>> {
+        for coverage in &passes.bypassed {
+            if !self.record_covering_bypass_in_txn(wtxn, coverage)? {
+                return Err(Error::Gate(GateError::ConsentGrantRevoked));
+            }
+        }
         let mut withdrawn = Vec::new();
-        for digest in approved {
+        for digest in &passes.approved {
             let authorization = approve_once_authorization_in_txn(&self.store, wtxn, digest)?
                 .ok_or(Error::Gate(GateError::ConsentApproveOnceSpent(
                     "the owner's leave for this protected-ref move is gone",

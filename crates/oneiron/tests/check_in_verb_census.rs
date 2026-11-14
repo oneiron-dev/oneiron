@@ -18,8 +18,9 @@ use oneiron::check_in::{
 };
 use oneiron::verb_names::VERB_ACT_CLASSES;
 
-/// The 20 act-class names VS-CHECKIN-NAMES = A rules, in table order.
-const RULED_NAMES: [&str; 20] = [
+/// The 20 act-class names VS-CHECKIN-NAMES = A rules, and the protected ref's
+/// rewrite or delete (L8-51), in table order.
+const RULED_NAMES: [&str; 21] = [
     "reversible_work",
     "spawn",
     "spend_over_cap",
@@ -40,6 +41,7 @@ const RULED_NAMES: [&str; 20] = [
     "world_widen",
     "grant_widen",
     "grant_widen_own",
+    "protected_ref_rewrite_or_delete",
 ];
 
 /// Every verb file: its name, its `scope` and its `act_class`, as written.
