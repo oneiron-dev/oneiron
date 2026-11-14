@@ -23,6 +23,10 @@ pub struct SharedAddOwnerRequest {
     pub vault_id: u64,
     /// The new Owner's PERSON id, hex: a live person not yet an Owner.
     pub owner: String,
+    /// An asker's approved check-in for this add, 32 hex: the starting Owner
+    /// applies it on their own proof, and the act names its asker.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
 
 /// `vault.shared.owner_change_wait.set`'s input: whole days, or `null` to

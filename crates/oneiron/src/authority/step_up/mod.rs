@@ -613,18 +613,38 @@ impl Vault {
     /// step-up they made with one (FIX 17553): the way back for a person
     /// who lost each passkey, since adding one needs a current step-up. The
     /// person then enrolls a first passkey again on their own live slip.
-    /// The owner proof is revalidated in the writer that removes them.
+    /// The owner proof is revalidated in the writer that removes them. With
+    /// `check_in_ref` the Owner applies an asker's approved check-in for
+    /// this reset ([`crate::check_in::step_up_reset_effect_digest`]) on
+    /// their own proof: it is spent in the same writer, and the answer names
+    /// its requester (2k3; P25-SHAPE Q1 = A).
     ///
     /// # Errors
-    /// The owner proof's refusal when it no longer holds; a storage fault as
-    /// itself.
+    /// The owner proof's refusal when it no longer holds; a `check_in_ref`
+    /// that names no approved, unspent check-in for this reset; a storage
+    /// fault as itself.
     pub fn reset_step_up_passkeys_as_owner(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         person: EntityId,
+        check_in_ref: Option<EntityId>,
     ) -> Result<StepUpPasskeysReset> {
+        let applied = check_in_ref.map(|id| crate::check_in::AppliedCheckIn {
+            id,
+            verb: "vault.step_up.passkeys.reset",
+            effect_digest: crate::check_in::step_up_reset_effect_digest(
+                &person,
+                StepUpFactor::Passkey,
+            ),
+        });
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        let decision = crate::check_in::owner_act_decision_in_txn(
+            self,
+            &mut txn,
+            crate::check_in::ActClass::KeyRecovery,
+            applied.as_ref(),
+        )?;
         let removed = PASSKEYS
             .scan_from(&self.store, &txn, person.as_bytes())?
             .into_iter()
@@ -636,6 +656,7 @@ impl Vault {
         Ok(StepUpPasskeysReset {
             person: person.to_hex(),
             removed,
+            check_in: Some(decision),
         })
     }
 

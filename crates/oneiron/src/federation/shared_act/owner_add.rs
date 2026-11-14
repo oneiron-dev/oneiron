@@ -20,6 +20,28 @@ impl Vault {
         vault_id: u64,
         owner: EntityId,
     ) -> Result<PendingAuthorityAct> {
+        self.propose_add_owner_with_check_in(starter, vault_id, owner, None)
+    }
+
+    /// [`Self::propose_add_owner`], judged by check-in (2k1; P25-SHAPE Q1 and
+    /// Q4 = A; the door names the act class `ownership_transfer`): the act
+    /// records the Owner's decision, and with `check_in_ref`, an asker's
+    /// approved check-in for making `owner` an Owner
+    /// ([`crate::check_in::owner_add_effect_digest`]), which the Owner applies
+    /// on their own proof: it is spent in the start's writer and the act
+    /// names its requester. The add rule, the policy row's wait and the Owner
+    /// executors stay.
+    ///
+    /// # Errors
+    /// As [`Self::propose_add_owner`]; a `check_in_ref` that names no
+    /// approved, unspent check-in for this add.
+    pub fn propose_add_owner_with_check_in(
+        &self,
+        starter: &AuthenticatedOwner,
+        vault_id: u64,
+        owner: EntityId,
+        check_in_ref: Option<EntityId>,
+    ) -> Result<PendingAuthorityAct> {
         {
             let txn = self.store.env.read_txn()?;
             let starter = starter.revalidate_person_in_txn(self, &txn)?;
@@ -28,7 +50,7 @@ impl Vault {
                 self.live_act_holders(&txn, vault_id, self.store.clock.now_recorded_at())?;
             self.check_add_owner_in_txn(&txn, &live_owners(&holders, None), starter, owner)?;
         }
-        self.start_authority_act(
+        self.start_authority_act_checked(
             starter,
             vault_id,
             SharedActKind::AddOwner.as_str(),
@@ -36,6 +58,12 @@ impl Vault {
                 v: PLAN_VERSION,
                 owner: owner.to_hex(),
             })?,
+            crate::federation::pending_act::StartCheckIn {
+                verb: "vault.shared.propose_add_owner",
+                act: crate::check_in::ActClass::OwnershipTransfer,
+                effect_digest: crate::check_in::owner_add_effect_digest(vault_id, &owner),
+                applies: check_in_ref,
+            },
         )
     }
 

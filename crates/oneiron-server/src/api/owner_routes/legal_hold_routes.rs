@@ -255,7 +255,8 @@ async fn confirm_copy(
 /// keeps, or one whose erase waits on its receipt, says so and is not
 /// reported erased. The engine checks the `shown_state` the request carries,
 /// as received: a stale one changes nothing and answers with the current
-/// one, which this route never prepares itself (FIX 1462).
+/// one, which this route never prepares itself (FIX 1462). A `check_in_ref`
+/// applies an asker's approved check-in for this confirm (2k2).
 async fn lift_and_erase(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -271,12 +272,18 @@ async fn lift_and_erase(
             "vault.legal_holds.lift_and_erase",
             request,
             |request: LegalHoldLiftAndEraseRequest| {
+                let check_in_ref = request
+                    .check_in_ref
+                    .as_deref()
+                    .map(|id| entity_id("check_in_ref", id))
+                    .transpose()?;
                 Ok(LegalHoldLiftAndErased::from(
-                    vault.confirm_lift_legal_hold_and_erase(
+                    vault.confirm_lift_legal_hold_and_erase_with_check_in(
                         &owner,
                         &request.records,
                         request.claim_free_partition,
                         &request.shown_state,
+                        check_in_ref,
                     )?,
                 ))
             },

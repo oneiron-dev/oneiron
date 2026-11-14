@@ -79,6 +79,7 @@ use crate::authority::{
     ended_request_wait, invalid_authority, read_pin_row_in_txn, root_work_witness_in_txn,
     write_awaited_root_in_txn,
 };
+use crate::check_in::{ActClass, AppliedCheckIn, CheckInDecision, owner_act_decision_in_txn};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::store::recovery_kit::{KitIssue, KitPassphrase, KitPiece};
@@ -355,12 +356,50 @@ impl Vault {
         target: EntityId,
         change: RootChange,
     ) -> Result<OwnerWorkReceipt> {
+        self.request_root_change_with_check_in(owner, surface, target, change, None)
+            .map(|(receipt, _)| receipt)
+    }
+
+    /// [`Self::request_root_change`], judged by check-in (2k3; P25-SHAPE Q1
+    /// = A): a recorded request answers the Owner's decision, and with
+    /// `check_in_ref` an asker's approved check-in for this change
+    /// ([`crate::check_in::root_request_effect_digest`]), which the Owner
+    /// applies on their own proof: it is spent in the request's writer, and
+    /// the decision names its requester. A target this install cannot name
+    /// records nothing, so it spends nothing and answers no decision.
+    ///
+    /// # Errors
+    /// As [`Self::request_root_change`]; a `check_in_ref` that names no
+    /// approved, unspent check-in for this change.
+    pub fn request_root_change_with_check_in(
+        &self,
+        owner: &AuthenticatedOwner,
+        surface: ActSurface,
+        target: EntityId,
+        change: RootChange,
+        check_in_ref: Option<EntityId>,
+    ) -> Result<(OwnerWorkReceipt, Option<CheckInDecision>)> {
+        let applied = check_in_ref.map(|id| AppliedCheckIn {
+            id,
+            verb: "vault.roots.requests.create",
+            effect_digest: crate::check_in::root_request_effect_digest(&target, change),
+        });
         self.with_write_txn(|txn| {
             let fold = self.authority_view_readonly_in_txn(txn)?;
             let basis = root_work_witness_in_txn(&self.store, txn, &fold, target, change)?;
             let seen = basis.revision();
             let work = OwnerWorkBody::Root { change, basis };
-            self.record_owner_work_in_txn(txn, owner, surface, target, seen, work)
+            let receipt = self.record_owner_work_in_txn(txn, owner, surface, target, seen, work)?;
+            let decision = match receipt.request {
+                Some(_) => Some(owner_act_decision_in_txn(
+                    self,
+                    txn,
+                    ActClass::KeyRecovery,
+                    applied.as_ref(),
+                )?),
+                None => None,
+            };
+            Ok((receipt, decision))
         })
     }
 

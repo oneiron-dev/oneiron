@@ -62,7 +62,10 @@ pub(crate) use asker::{AskVerdict, judge_ask_in_txn};
 // The chain 2e's host builds; until then only `test_doors::check_in` does.
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use chain::{AgentHolderVerdict, NoAgentVerdict, VerifiedChain};
-pub use effect::{CheckInDecision, record_erase_effect_digest, vault_delete_effect_digest};
+pub use effect::{
+    CheckInDecision, owner_add_effect_digest, owner_remove_effect_digest,
+    ownership_transfer_effect_digest, record_erase_effect_digest, vault_delete_effect_digest,
+};
 pub(crate) use effect::{
     DoorAct, DoorCheckIn, owner_own_proof_decision, person_door_check_in_in_txn,
     spend_applied_check_in_in_txn,
@@ -101,3 +104,16 @@ pub(crate) use waits::advance_pending_check_in_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use wake::due_rows;
 pub(crate) use wake::next_check_in_due_at;
+
+// The erase doors' apply shape (2k2; P25-SHAPE Q1 = A).
+pub(crate) use effect::{AppliedCheckIn, owner_act_decision_in_txn};
+pub use effect::{
+    legal_hold_erase_effect_digest, outbound_call_request_erase_effect_digest,
+    text_history_erase_effect_digest,
+};
+// The key-recovery doors' effects (2k3; P25-SHAPE Q1 = A).
+pub(crate) use effect::owner_act_decision_in_own_writer;
+pub use effect::{
+    custody_drain_effect_digest, custody_reenrol_effect_digest, root_request_effect_digest,
+    step_up_reset_effect_digest,
+};

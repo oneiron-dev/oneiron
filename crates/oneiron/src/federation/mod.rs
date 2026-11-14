@@ -101,7 +101,7 @@ pub use shared_act::{
     AddOwnerPlan, DELETED_VAULT_BACKUP_RETENTION_SECS, DeleteVaultPlan, DetachRemainder,
     DetachRemainderReason, DetachReport, EraseAskKind, EraseAskStatus, MemberAskChange,
     MemberAskStatus, NOTIFICATION_PRODUCER_ERASE_ASK, NOTIFICATION_PRODUCER_MEMBER_ASK,
-    OwnerRecoveryAuthorization, REMOVAL_EXPORT_RETAIN_SECS, ReceivedRemovalArchive,
+    OwnerRecoveryAuthorization, OwnerRemoval, REMOVAL_EXPORT_RETAIN_SECS, ReceivedRemovalArchive,
     ReceivedRemovalArchiveState, RemovalExportCopy, RemovalExportDelivery, RemovalExportFile,
     RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN, SHARED_INVITATION_TTL_SECS,
     SharedActExecution, SharedActExecutionReceipt, SharedActExport, SharedActKind,
