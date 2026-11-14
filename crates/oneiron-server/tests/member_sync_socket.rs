@@ -995,6 +995,37 @@ fn a_narrowed_member_slip_gets_no_member_lane() {
     });
 }
 
+/// Astra T3 on MEMBER-SYNC PR 1: the member's whole slip handed to another
+/// key (`attenuate_to`, a shorter lifetime its only narrowing) still names
+/// the member and the grant, but whoever proves it is not the member. It
+/// opens no member lane; the member's own slip still does.
+#[test]
+fn a_member_slip_handed_to_another_key_gets_no_member_lane() {
+    run_on_engine_stack(|| async {
+        let fx = fixture(WindowFixture::Selected).await;
+        let before = durable_rows(&fx);
+        let next = SigningKey::from_bytes(blake3::hash(EntityId::now().as_bytes()).as_bytes());
+        let mut slip = fx.caller.slip.clone();
+        slip.attenuate_to(
+            oneiron::authority::SlipCaveat {
+                ttl_secs: Some(3600),
+                ..Default::default()
+            },
+            &fx.caller.key,
+            next.verifying_key().to_bytes(),
+        )
+        .unwrap();
+        let handed = Caller { slip, key: next };
+        expect_status(&fx, &handed, 403).await;
+        let mut own = bound_member(&fx, transport::PROTOCOL_VERSION).await;
+        let answer = rpc(&mut own, 2, "residence.index", json!({
+            "window": fx.window.as_str(), "selector": encoded_selector(&fx.selector), "limit": 16
+        })).await;
+        assert_eq!(answer["items"][0]["entity_id"], fx.item.to_hex());
+        assert_eq!(durable_rows(&fx), before);
+    });
+}
+
 #[test]
 fn a_member_window_vv_needs_the_whole_window() {
     run_on_engine_stack(|| async {

@@ -431,12 +431,14 @@ pub(super) async fn handle_window_sync(
                 )
                 .map_err(map_selector_filter_err)?;
                 // A member lane's rows are judged again in the committing
-                // transaction (MEMBER-SYNC threat F3).
+                // transaction (MEMBER-SYNC threat F3), with each world's
+                // privacy for the machine this socket proved (Astra T2).
                 if conn_state.selector_lane.member().is_some() {
                     member_write = Some(super::member_lane::MemberPromotedWrite {
                         rows,
                         scope,
                         selector: selector.clone(),
+                        peer: conn_state.peer_machine(server.vault()),
                     });
                 }
                 write_auth = Some(auth);
