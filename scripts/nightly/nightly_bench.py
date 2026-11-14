@@ -19,8 +19,10 @@ A job's metrics (bench_metrics: every perf p99, the beam smoke's pack query
 p99, in seconds) are timed in the budget band by the `job` rows of
 scripts/nightly/budget-set.tsv. The promises of the bench tests the NO-DOOR
 register retired (ND-015 perf, ND-025 beam; BENCH_PROMISES) are checked on the
-jobs' output wherever a job shows one. A job that ends otherwise than
-expected, prints no report, or breaks a promise makes the night red.
+jobs' output wherever a job shows one; a promise its job's output cannot show
+tonight (an override cohort whose memory was never measured) is not checked.
+A job that ends otherwise than expected, prints no report, or breaks a promise
+makes the night red.
 """
 
 from __future__ import annotations
@@ -252,7 +254,7 @@ def promise_precision_rows(reports: dict, receipt: str) -> tuple[bool, str] | No
     )
 
 
-def promise_override_child_never_claims_residency(reports: dict, receipt: str) -> tuple[bool, str] | None:
+def promise_override_child_never_claims_residency(reports: dict, receipt: str) -> tuple[bool | None, str] | None:
     report = reports.get("perf-smoke-child-override")
     if report is None:
         return None
@@ -260,14 +262,22 @@ def promise_override_child_never_claims_residency(reports: dict, receipt: str) -
     harness = (reports.get("perf-smoke") or {}).get("resident_memory") or {}
     claims = axis.get("child_holds_open_vault")
     evidence = str(axis.get("vault_residency_evidence", ""))
+    rss = axis.get("per_child_rss_bytes")
     # the harness-owned run may claim residency only with harness-owned evidence
     harness_claim = harness.get("child_holds_open_vault")
     harness_ok = not harness_claim or str(harness.get("vault_residency_evidence", "")).startswith("harness-owned")
-    ok = claims is False and "ONEIRON_BENCH_PERF_CHILD" in evidence and harness_ok
-    return ok, (
-        f"override child_holds_open_vault={claims}, rss {'measured' if cell_measured(axis.get('per_child_rss_bytes')) else 'not measured'};"
+    detail = (
+        f"override child_holds_open_vault={claims}, rss {'measured' if cell_measured(rss) else 'not measured'};"
         f" harness-owned child_holds_open_vault={harness_claim}"
     )
+    if claims is not False or not harness_ok:
+        return False, detail
+    if not cell_measured(rss):
+        # No complete cohort was measured (a host without /proc/<pid>/status, or a child that never came up): the
+        # override run claims nothing, and shows no override evidence either, so the promise is not checked tonight.
+        reason = rss.get("reason", "") if isinstance(rss, dict) else ""
+        return None, detail + "; not checked: " + (reason or "no complete child cohort was measured")
+    return "ONEIRON_BENCH_PERF_CHILD" in evidence, detail
 
 
 def promise_infra_cards_beside_the_measurement(reports: dict, receipt: str) -> tuple[bool, str] | None:
@@ -409,10 +419,9 @@ def bench_report(out: Path, chosen: dict, date: str, head: str) -> dict:
             )
             continue
         kept, detail = result
-        promises.append(
-            {"promise": promise, "retired": retired, "state": "kept" if kept else "broken", "detail": detail}
-        )
-        if not kept:
+        state = "not-checked" if kept is None else "kept" if kept else "broken"
+        promises.append({"promise": promise, "retired": retired, "state": state, "detail": detail})
+        if kept is False:
             reasons.append(f"bench promise {promise} broken: {detail}")
     states = [entry["state"] for entry in promises]
     return {

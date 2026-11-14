@@ -26,6 +26,8 @@ HEAD = "0123456789abcdef0123456789abcdef01234567"
 RECEIPT = f"nightly://2026-11-15/{HEAD[:12]}/bench"
 HARNESS_EVIDENCE = "harness-owned perf wake-child opens the assigned vault before its TCP connect"
 OVERRIDE_EVIDENCE = "the ready-child program was substituted through ONEIRON_BENCH_PERF_CHILD: readiness only"
+UNMEASURED_EVIDENCE = "no complete child cohort was measured, so no process is claimed to hold an open vault"
+NO_PROC = {"status": "not_ready", "reason": "per-child RSS needs /proc/<pid>/status, which this host does not have"}
 REFUSAL = (
     "perf: a full run needs >=1000 indexed docs and >=100 queries for latency/recall; the plan asks for 48 docs and"
     " 8 queries"
@@ -350,6 +352,19 @@ class BenchPromiseTest(unittest.TestCase):
         night["perf-smoke"]["resident_memory"]["child_holds_open_vault"] = False
         self.assertTrue(self.check("P-oneiron-bench-53839f47", night)[0], "a cohort that never came up claims nothing")
 
+    def test_an_override_cohort_whose_memory_was_never_measured_is_not_checked_unless_it_claims_residency(self) -> None:
+        night = reports()
+        for job in ("perf-smoke", "perf-smoke-child-override"):  # resident_memory.rs not_ready(): a host without /proc
+            night[job]["resident_memory"].update(
+                child_holds_open_vault=False, vault_residency_evidence=UNMEASURED_EVIDENCE, per_child_rss_bytes=NO_PROC
+            )
+        kept, detail = self.check("P-oneiron-bench-53839f47", night)
+        self.assertIsNone(kept, detail)
+        self.assertIn("rss not measured", detail)
+        self.assertIn("not checked: per-child RSS needs /proc/<pid>/status", detail)
+        night["perf-smoke-child-override"]["resident_memory"]["child_holds_open_vault"] = True
+        self.assertFalse(self.check("P-oneiron-bench-53839f47", night)[0], "an unmeasured cohort still claims nothing")
+
 
 BUDGET_SET = "".join(
     "\t".join(row) + "\n"
@@ -444,6 +459,20 @@ class BenchSummaryTest(unittest.TestCase):
             {"id": "perf-p99", "reason": "the bench job perf-smoke did not run (exit 1, expected 0)"},
             record["budget"]["not_run"],
         )
+
+    def test_an_unmeasured_override_cohort_leaves_the_night_green_and_its_promise_not_checked(self) -> None:
+        night = reports()
+        night["perf-smoke-child-override"]["resident_memory"].update(
+            child_holds_open_vault=False, vault_residency_evidence=UNMEASURED_EVIDENCE, per_child_rss_bytes=NO_PROC
+        )
+        write_job_outputs(self.out, report_of=night)
+        code, line = self.summarize()
+        self.assertEqual(code, 0, line)
+        self.assertIn(" bench_jobs=6/6 bench_promises=5/5", line)
+        record = json.loads((self.out / "summary.json").read_text())
+        states = {p["promise"]: p["state"] for p in record["bench"]["promises"]}
+        self.assertEqual(states["P-oneiron-bench-53839f47"], "not-checked")
+        self.assertEqual(record["reasons"], [])
 
     def test_a_report_missing_or_a_broken_promise_makes_the_night_red(self) -> None:
         night = reports()
