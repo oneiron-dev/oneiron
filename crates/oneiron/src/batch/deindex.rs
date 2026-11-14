@@ -379,13 +379,13 @@ pub(crate) fn drop_seeded_actor_row(
         return Ok(());
     };
     let (entity_type, occurred, learned_at) = parse_entity_metadata(&record)?;
+    crate::store::person_party_keys::reindex_person_party_keys(store, wtxn, id, None)?;
     delete_entity_index_rows(store, wtxn, id, entity_type, occurred, learned_at)?;
     crate::vault::entity_revision::remove_entity_revisions(store, wtxn, id)?;
     delete_short_id_rows_for_id(store, wtxn, id)?;
     store.scope_stamps.retire_stamp(store, wtxn, *id)?;
     crate::store::identity_hints::reindex_identity_hints(store, wtxn, id, None)?;
     crate::ports::reindex_named_entities(store, wtxn, id, None)?;
-    crate::store::person_party_keys::reindex_person_party_keys(store, wtxn, id, None)?;
     store.port_remove_entity_row(wtxn, id)?;
     Ok(())
 }

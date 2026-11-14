@@ -80,11 +80,11 @@ impl CapturedEntityDeindex {
         crate::llm::deindex_dreamer_step_claim(store, wtxn, id)?;
         crate::store::identity_hints::reindex_identity_hints(store, wtxn, id, None)?;
         crate::ports::reindex_named_entities(store, wtxn, id, None)?;
-        crate::store::person_party_keys::reindex_person_party_keys(store, wtxn, id, None)?;
         crate::store::blob_fingerprint::invalidate_blob_fingerprint(store, wtxn, id)?;
         TRUSTED_MANIFEST_ORIGIN.delete(store, wtxn, &HexId(*id))?;
         SEEDED_MANIFEST_CONFIDENCE.delete(store, wtxn, &HexId(*id))?;
         crate::store::claim_projection::remove_claim_projection_index(store, wtxn, *id)?;
+        crate::store::person_party_keys::reindex_person_party_keys(store, wtxn, id, None)?;
         // The change log's delete names no type; a change feed judges the withdrawal by it.
         crate::feeds::remember_withdrawn_type_in_txn(store, wtxn, id, entity_type)?;
         store.port_remove_entity_row(wtxn, id)?;

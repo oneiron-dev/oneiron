@@ -97,12 +97,12 @@ pub(super) fn stage_session_delete(
     )?;
     crate::store::identity_hints::reindex_identity_hints(view, wtxn, id, None)?;
     crate::ports::reindex_named_entities(view, wtxn, id, None)?;
-    crate::store::person_party_keys::reindex_person_party_keys(view, wtxn, id, None)?;
     crate::store::text_index::deindex_text(view, wtxn, id)?;
     crate::vault::entity_revision::remove_entity_revisions(view, wtxn, id)?;
     super::delete_from_phonetic_postings(view, wtxn, id)?;
     super::delete_short_id_rows_for_id(view, wtxn, id)?;
     crate::ports::remove_dependency_rows_for_dependent_in_txn(view, wtxn, id)?;
+    crate::store::person_party_keys::reindex_person_party_keys(view, wtxn, id, None)?;
     if view.vectors.stages_row(id.as_bytes()) {
         crate::hnsw::hnsw_deindex(view, wtxn, id)?;
         view.vectors.delete(wtxn, id.as_bytes())?;
