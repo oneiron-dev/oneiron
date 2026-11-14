@@ -173,7 +173,28 @@ fn open_vault(dir: &tempfile::TempDir) -> Arc<Vault> {
             .with_labels(BTreeMap::from([("PERSON".to_owned(), ENTITY_TYPE_PERSON)]))
             .with_mode(TaggingMode::Save),
     );
-    Arc::new(open_dreamer_vault_with(dir.path(), READER, config).expect("vault"))
+    let vault = Arc::new(open_dreamer_vault_with(dir.path(), READER, config).expect("vault"));
+    embed_seeded_rows(&vault);
+    vault
+}
+
+/// Room for every row a fresh vault queues for itself in one embed pass.
+const SEEDED_BATCH: usize = 4096;
+
+/// Embeds the rows a fresh vault queues for itself (skills, models) in one
+/// pass with room for all of them. A pass leases at most 32 rows, oldest
+/// first, so without this the test's one pass leases only seeded rows and
+/// never reaches the turn or either Owen.
+fn embed_seeded_rows(vault: &Arc<Vault>) {
+    let embedder: Arc<dyn Embedder> = Arc::new(LineVectors);
+    let report = PendingEmbeddingReconciler::new(Arc::clone(vault), embedder)
+        .with_batch_size(SEEDED_BATCH)
+        .reconcile_once()
+        .expect("the seeded rows' embed pass");
+    assert!(
+        report.leased < SEEDED_BATCH,
+        "FIXTURE: one pass leases every seeded row: {report:?}"
+    );
 }
 
 /// A PERSON named Owen, with one stated, approved, public fact about him.
