@@ -951,3 +951,19 @@ pub fn mail_reply_approve_effect_digest(
     hasher.update(plan_ref.as_bytes());
     *hasher.finalize().as_bytes()
 }
+
+/// The digest of pushing served repository `repo` to its mirror now: the
+/// effect `vault.code.origin.mirror.push` spends an asker's approved
+/// check-in over (2k9b; P25-SHAPE Q1 = A). The asker reads neither the
+/// mirror's target nor the tips the push will read under its hold, so the
+/// digest binds the repository the push names; the Owner's run reads the
+/// tips, and its answer names what it pushed. BLAKE3, key derived from
+/// `oneiron check_in origin mirror push v1`, over the served name's length
+/// as eight big-endian bytes and its bytes.
+#[must_use]
+pub fn origin_mirror_push_effect_digest(repo: &str) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in origin mirror push v1");
+    hasher.update(&(repo.len() as u64).to_be_bytes());
+    hasher.update(repo.as_bytes());
+    *hasher.finalize().as_bytes()
+}

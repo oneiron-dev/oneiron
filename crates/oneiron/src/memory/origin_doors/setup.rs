@@ -108,14 +108,27 @@ impl Memory<'_> {
         })
     }
 
+    /// `vault.code.origin.mirror.push` as the Owner's proof; with
+    /// `check_in_ref` the Owner applies an asker's approved check-in for
+    /// this repository's push (2k9b).
     pub fn origin_mirror_push_as(
         &self,
         owner: &AuthenticatedOwner,
-        input: OriginRepoRequest,
+        input: OriginMirrorPushRequest,
     ) -> MemoryResult<OriginMirrorRun> {
+        let check_in_ref = input
+            .check_in_ref
+            .as_deref()
+            .map(|hex| {
+                EntityId::from_hex(hex)
+                    .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))
+            })
+            .transpose()?;
         self.origin_owner(owner)?;
-        Ok(self
-            .vault
-            .push_served_origin_mirror_as_owner(owner, &input.repo)?)
+        Ok(self.vault.push_served_origin_mirror_as_owner(
+            owner,
+            &input.repo,
+            check_in_ref.as_ref(),
+        )?)
     }
 }

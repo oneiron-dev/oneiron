@@ -76,6 +76,8 @@ pub const ORIGIN_MIRROR_IMPORTED_PREFIX: &str = "refs/imported/";
 /// still reads every one.
 pub const ORIGIN_MIRROR_NAMED_LFS_OBJECTS: usize = 8;
 
+/// The door that pushes a served repository to its mirror now.
+const MIRROR_PUSH_VERB: &str = "vault.code.origin.mirror.push";
 const MAX_URL_BYTES: usize = 2048;
 const MAX_USER_BYTES: usize = 128;
 
@@ -280,10 +282,27 @@ impl Vault {
     }
 
     /// Pushes now as the caller's owner proof, rechecked when its run is written.
+    ///
+    /// The push checks in first (2k9b; P25-SHAPE Q1 = A): it goes on the
+    /// Owner's own proof, and with `check_in_ref` the Owner applies an
+    /// asker's approved check-in for this repository's push
+    /// ([`crate::check_in::origin_mirror_push_effect_digest`]). The ask is
+    /// spent in a writer of its own on the Owner's live proof before anything
+    /// leaves, as the custody doors spend theirs (2k3): a push that then
+    /// fails, or finds the mirror changed, leaves it spent, and the Owner
+    /// pushes again on their own proof. The run answers the decision; the
+    /// run the target keeps does not carry it.
+    ///
+    /// # Errors
+    ///
+    /// No such repository or mirror; an `ask_me` mirror; a host that is not
+    /// the repository's origin; the Owner's proof no longer holds; a
+    /// check-in that does not apply; the mirror changed before its push.
     pub fn push_served_origin_mirror_as_owner(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         repo_name: &str,
+        check_in_ref: Option<&EntityId>,
     ) -> Result<OriginMirrorRun> {
         let repo_id = self.served_mirror_repo_id(repo_name)?;
         let (actor, target) = {
@@ -294,6 +313,17 @@ impl Vault {
         let target = target.ok_or(Error::EntityNotFound)?;
         require_whole_ref_strategy(repo_name, &target)?;
         self.require_mirror_pusher(repo_name)?;
+        let applied = check_in_ref.map(|id| crate::check_in::AppliedCheckIn {
+            id: *id,
+            verb: MIRROR_PUSH_VERB,
+            effect_digest: crate::check_in::origin_mirror_push_effect_digest(repo_name),
+        });
+        let decision = crate::check_in::owner_act_decision_in_own_writer(
+            self,
+            owner,
+            crate::check_in::ActClass::OutboundSend,
+            applied.as_ref(),
+        )?;
         let run = self
             .attempt_mirror_target(repo_id, &target, MirrorTrigger::PushNow(Some(actor)))
             .ok_or(Error::ConcurrentWrite("the mirror changed before its push"))?;
@@ -301,7 +331,10 @@ impl Vault {
         owner.revalidate_in_txn(self, &txn)?;
         self.record_mirror_run_in_txn(&mut txn, repo_id, &target.url, &run)?;
         txn.commit()?;
-        Ok(run)
+        Ok(OriginMirrorRun {
+            check_in: Some(decision),
+            ..run
+        })
     }
 
     /// One pass over every mirror target: each `schedule` mirror that is
@@ -381,6 +414,7 @@ impl Vault {
                 failure: None,
                 readiness: Some(landed.readiness),
                 lfs_transfer: landed.lfs_transfer,
+                check_in: None,
             },
             Err(error) => OriginMirrorRun {
                 at,
@@ -389,6 +423,7 @@ impl Vault {
                 failure: Some(error.to_string()),
                 readiness: None,
                 lfs_transfer: None,
+                check_in: None,
             },
         })
     }

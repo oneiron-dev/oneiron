@@ -390,7 +390,7 @@ async fn push_origin_mirror(
     let run = blocking(move || {
         Ok(server
             .vault()
-            .push_served_origin_mirror_as_owner(&owner, &repo)?)
+            .push_served_origin_mirror_as_owner(&owner, &repo, None)?)
     })
     .await?;
     Ok(Json(run))

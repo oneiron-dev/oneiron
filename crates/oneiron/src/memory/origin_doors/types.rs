@@ -9,10 +9,10 @@ use crate::EntityId;
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::origin_doors::types::{
     CheckoutDoorBindRequest, CheckoutDoorBinding, CodeExportRequest, CodeExportResult,
-    OriginAuthoritySetRequest, OriginAuthorityView, OriginMirrorCleared, OriginMirrorSetRequest,
-    OriginMirrorStrategyRequest, OriginMirrorView, OriginPublicationState, OriginPublicationView,
-    OriginPublicationsRequest, OriginPublicationsView, OriginRegisterRequest, OriginRegistered,
-    OriginRepoRequest,
+    OriginAuthoritySetRequest, OriginAuthorityView, OriginMirrorCleared, OriginMirrorPushRequest,
+    OriginMirrorSetRequest, OriginMirrorStrategyRequest, OriginMirrorView, OriginPublicationState,
+    OriginPublicationView, OriginPublicationsRequest, OriginPublicationsView,
+    OriginRegisterRequest, OriginRegistered, OriginRepoRequest,
 };
 
 /// `vault.code.origin.lfs_path_policy.set`: replaces one served origin's

@@ -253,7 +253,7 @@ pub(crate) async fn vault_code_origin_mirror_clear(
 pub(crate) async fn vault_code_origin_mirror_push(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
-    input: OriginRepoRequest,
+    input: OriginMirrorPushRequest,
 ) -> Listed<oneiron::origin::mirror::OriginMirrorRun> {
     as_owner(
         server,

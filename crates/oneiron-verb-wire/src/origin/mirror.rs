@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/origin/mirror.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use crate::check_in::CheckInDecision;
 use crate::origin::mirror_auto::OriginMirrorAutomation;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_model::llm::BrokerIsolation;
@@ -71,6 +72,12 @@ pub struct OriginMirrorRun {
     /// push failed, the census did not finish, or it met none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lfs_transfer: Option<OriginMirrorLfsTransfer>,
+    /// The check-in decision the Owner's push now ran on (2k9b; P25-SHAPE
+    /// Q1 = A): the Owner's own proof, naming the asker's check-in when the
+    /// Owner applied one. Only the push's answer carries it: absent on a
+    /// scheduled run and on the run the target keeps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 /// How one mirror run's Git-LFS upload went out (FIX 19876): the route its

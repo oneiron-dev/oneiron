@@ -15,6 +15,19 @@ pub struct OriginRepoRequest {
     pub repo: String,
 }
 
+/// `vault.code.origin.mirror.push`'s input: one served repository, and the
+/// check-in an asker opened for its push (2k9b).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OriginMirrorPushRequest {
+    /// The served name, with no `.git` suffix.
+    pub repo: String,
+    /// The check-in an asker opened for this repository's push, 32 hex,
+    /// once approved: the vault Owner applies it on their own proof (2k9b).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
+}
+
 /// The owner cutover of one existing served repository. It installs the next
 /// authority epoch; it never creates a repository.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
