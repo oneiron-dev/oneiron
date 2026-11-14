@@ -384,8 +384,9 @@ pub(crate) fn raise_found_key_notices_in_txn(vault: &Vault, txn: &mut RwTxn<'_>)
 }
 
 /// What the owner did about each key a mask found in `record`, in the order
-/// they were found; `None` for one not answered yet. The historical lift
-/// sweep closes a proposal on a record whose keys are all answered (OF-067).
+/// they were found, then about each file sealed whole there; `None` for one
+/// not answered yet. The historical lift sweep closes a proposal on a record
+/// whose keys and seals are all answered (OF-067; REVIEW-7887 F5).
 pub(crate) fn found_key_actions_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -397,7 +398,9 @@ pub(crate) fn found_key_actions_in_txn(
             found
                 .keys
                 .iter()
-                .map(|key| key.settled.as_ref().map(|settled| settled.action))
+                .map(|key| key.settled.as_ref())
+                .chain(found.seals.iter().map(|seal| seal.settled.as_ref()))
+                .map(|settled| settled.map(|settled| settled.action))
                 .collect()
         }))
 }
