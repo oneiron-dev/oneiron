@@ -34,6 +34,8 @@ mod read;
 pub use read::{
     DecisionReadGate, DecisionReadObserver, DecisionReadOutcome, DecisionReadProvider, GatedRead,
 };
+mod role_bound;
+pub use role_bound::ManifestBoundRung;
 mod routine;
 pub use routine::*;
 mod rules;

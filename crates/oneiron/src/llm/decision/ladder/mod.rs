@@ -287,7 +287,8 @@ pub(super) enum Read {
     TokenCap,
 }
 
-fn abstained() -> ProviderDecision {
+/// An answer of nothing: the ladder takes the question on to the next rung.
+pub(super) fn abstained() -> ProviderDecision {
     ProviderDecision {
         answer: DecisionAnswer::Abstain,
         probability: None,
