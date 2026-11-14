@@ -13,11 +13,15 @@
 //! (`store::claim_projection::maintain_claim_projection_index`) moves a
 //! claim's rows here on every claim body write, and its removal
 //! (`remove_claim_projection_index`) drops them, so these rows are as complete
-//! as the predicate posting list they are rebuilt from. A row a path left
-//! behind re-reads as no claim, or as another campaign's, and is skipped.
+//! as the predicate posting list they are rebuilt from. A rebuild reads each
+//! stored body as the put chokepoint saw it, with no visibility filter: a
+//! claim a live use limit hides today is indexed, and reads again on the
+//! pages once the limit lifts, with no rewrite. A row a path left behind
+//! re-reads as no claim, or as another campaign's, and is skipped.
 
 use std::collections::BTreeSet;
 
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::campaign::claims::{PREDICATE_CAMPAIGN_MEMBER, decode_campaign_member_value};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
@@ -137,6 +141,20 @@ fn indexed_member(body: &ClaimBody) -> Option<IndexedMember> {
     })
 }
 
+/// A stored CLAIM row's body, read as the put chokepoint indexed it: no
+/// deletion, use-limit or source filter applies. The page's own read admits
+/// or skips each claim the indexes nominate.
+fn stored_claim_body(raw: &[u8]) -> Result<ClaimBody> {
+    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != ENTITY_TYPE_CLAIM {
+        return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
+    }
+    let body = raw
+        .get(ENTITY_METADATA_HEADER_LEN..)
+        .ok_or(Error::CorruptedIndex("entity header"))?;
+    crate::claim::decode_claim_body(body, true)
+}
+
 fn put_member_rows(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -240,19 +258,26 @@ impl Vault {
         if !force && index_complete_in_txn(&self.store, &wtxn) {
             return Ok(());
         }
+        let rtxn: &heed::RoTxn<'_> = &wtxn;
         let ids = crate::claim::claim_ids_for_predicate_in_txn(
             &self.store,
-            &wtxn,
+            rtxn,
             PREDICATE_CAMPAIGN_MEMBER,
         )?;
         let mut members = Vec::new();
         for id in ids {
-            // A body that does not decode fails the scan's own read too: the
-            // pages keep the scan while it is stored.
-            let member = match self.get_claim_in_txn(&wtxn, &id) {
-                Ok(Some(body)) => indexed_member(&body),
-                Ok(None) => None,
-                Err(_) => Some(IndexedMember::Undecodable),
+            // The stored body, never the visibility-filtered read: a claim a
+            // cooperative-review restriction hides now (a restore keeps the
+            // restriction live) reads again when the restriction lifts, and
+            // the lift rewrites no claim (REVIEW-7578 P1). A body that does
+            // not decode keeps the pages on the scan while it is stored.
+            let stored = EntityStoreRead::port_entity_with_raw(&self.store, rtxn, &id, |raw| {
+                Ok(stored_claim_body(raw))
+            })?;
+            let member = match stored {
+                Some(Ok(body)) => indexed_member(&body),
+                Some(Err(_)) => Some(IndexedMember::Undecodable),
+                None => None,
             };
             if let Some(member) = member {
                 members.push((id, member));
@@ -409,4 +434,51 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         Ok(index_complete_in_txn(&self.store, &rtxn))
     }
+
+    /// Restricts `record` under one fixed courtesy ask, in the row the
+    /// cooperative-deletion answer writes (`deletion::coop_delivery`): every
+    /// visibility-filtered read hides the record while the row stands.
+    pub(crate) fn restrict_record_for_test(&self, record: EntityId) -> Result<()> {
+        let marker = crate::store::legal_hold::CooperativeRestriction {
+            since: 1,
+            reason_code: "under_review".to_owned(),
+            review_at: u64::MAX,
+        };
+        self.with_write_txn(|wtxn| {
+            COOPERATIVE_RESTRICTION_FOR_TEST.put(
+                &self.store,
+                wtxn,
+                &restriction_key_for_test(record),
+                &marker,
+            )
+        })
+    }
+
+    /// Lifts that restriction as the answer's notice-given lift does: the
+    /// row goes, and the record is not rewritten.
+    pub(crate) fn lift_record_restriction_for_test(&self, record: EntityId) -> Result<()> {
+        self.with_write_txn(|wtxn| {
+            COOPERATIVE_RESTRICTION_FOR_TEST.delete(
+                &self.store,
+                wtxn,
+                &restriction_key_for_test(record),
+            )?;
+            Ok(())
+        })
+    }
+}
+
+/// The cooperative-review restriction rows, for the doors above.
+#[cfg(oneiron_test_support)]
+const COOPERATIVE_RESTRICTION_FOR_TEST: SideTable<
+    crate::store::legal_hold::CooperativeRestrictionKey,
+    crate::store::legal_hold::CooperativeRestriction,
+    side_table::Named,
+> = SideTable::new(&side_table::COOPERATIVE_RESTRICTION);
+
+#[cfg(oneiron_test_support)]
+fn restriction_key_for_test(
+    record: EntityId,
+) -> crate::store::legal_hold::CooperativeRestrictionKey {
+    (record, [0x7e; 32], [0x7e; 16])
 }

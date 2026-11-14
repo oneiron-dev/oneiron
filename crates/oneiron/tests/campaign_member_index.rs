@@ -5,8 +5,10 @@
 //! derived one, two campaigns and two queries, every page (two rows at a
 //! time, and at an epoch ceiling) reads as the scan reads it with the index
 //! dropped, and as it reads after a reopen rebuilds the dropped index; the
-//! index serves each read (no fallback). A timing line compares the two
-//! reads beside 2,000 other claims.
+//! index serves each read (no fallback). A rebuild that runs while a
+//! cooperative-review restriction hides a member claim still indexes it, so
+//! the member pages again once the restriction lifts. A timing line compares
+//! the two reads beside 2,000 other claims.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -434,6 +436,70 @@ fn membership_pages_read_the_same_from_the_index_and_from_the_scan() {
         indexed.iter().map(Vec::len).sum::<usize>(),
         row_count(&indexed)
     );
+}
+
+/// REVIEW-7578 P1: a rebuild that runs while a cooperative-review
+/// restriction hides a member claim (a checkpoint restore keeps the
+/// restriction live) indexes the claim all the same. The lift rewrites no
+/// claim, so a rebuild that read through the visibility filter would leave
+/// the member off every indexed page for good.
+#[test]
+fn a_member_a_restriction_hid_during_the_rebuild_pages_again_after_the_lift() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open(dir.path());
+    let cohorts = create_cohorts(&vault);
+    let [first, _] = cohorts.campaigns;
+    let [query_a, _] = cohorts.queries;
+    let person = id(0x77, 1);
+    put_person(&vault, person);
+    let mut epoch = 0;
+    commit(
+        &vault,
+        &mut epoch,
+        (query_a, first),
+        person,
+        MembershipTransition::Entered,
+    );
+    let head = live_head(&vault, person, first);
+
+    doors::restrict_record(&vault, head).expect("restrict the head");
+    assert!(
+        vault.get_claim(&head).expect("get claim").is_none(),
+        "the restriction hides the head"
+    );
+    doors::drop_index(&vault).expect("drop index");
+    drop(vault);
+    let vault = open(dir.path());
+    assert!(
+        doors::index_complete(&vault).expect("flag"),
+        "the reopen rebuilt the index while the head was hidden"
+    );
+
+    doors::lift_restriction(&vault, head).expect("lift the restriction");
+    assert!(
+        vault.get_claim(&head).expect("get claim").is_some(),
+        "the lift shows the head again"
+    );
+    assert!(
+        doors::indexed_campaign_claims(&vault, first)
+            .expect("index serves")
+            .contains(&head),
+        "the rebuild indexed the hidden head on its campaign"
+    );
+    assert!(
+        doors::indexed_saved_query_claims(&vault, query_a)
+            .expect("index serves")
+            .contains(&head),
+        "the rebuild indexed the hidden head on its query"
+    );
+    let indexed = all_pages(&vault, &cohorts);
+    assert!(
+        indexed[0].iter().any(|page| !page.rows.is_empty()),
+        "the campaign pages the member again"
+    );
+    doors::drop_index(&vault).expect("drop index");
+    let scanned = all_pages(&vault, &cohorts);
+    assert_eq!(indexed, scanned, "the index changes no page");
 }
 
 #[test]
