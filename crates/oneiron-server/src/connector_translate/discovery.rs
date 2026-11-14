@@ -249,7 +249,7 @@ impl Service<'_> {
         let mut input = InputSchema::default();
         let mut query = Vec::new();
         let mut path_names = BTreeSet::new();
-        for argument in parameter_order(method, parameters).map_err(&fail)? {
+        for argument in parameter_order(method, parameters).map_err(fail)? {
             let parameter = &parameters[argument];
             let schema = self
                 .parameter_schema(parameter)
@@ -264,11 +264,11 @@ impl Service<'_> {
                         return Err(fail(format!("path parameter {argument} repeats")));
                     }
                     path_names.insert(argument.to_owned());
-                    input.add(argument, schema, true).map_err(&fail)?;
+                    input.add(argument, schema, true).map_err(fail)?;
                 }
                 "query" => {
                     let required = parameter.get("required") == Some(&Value::Bool(true));
-                    input.add(argument, schema, required).map_err(&fail)?;
+                    input.add(argument, schema, required).map_err(fail)?;
                     query.push(argument.to_owned());
                 }
                 other => {
@@ -279,7 +279,7 @@ impl Service<'_> {
                 }
             }
         }
-        check_path_template(&path, &path_names, true).map_err(&fail)?;
+        check_path_template(&path, &path_names, true).map_err(fail)?;
 
         let request = method.get("request");
         let input_schema = match request {
@@ -302,7 +302,7 @@ impl Service<'_> {
                     input.add(BODY_ARGUMENT, body, true)?;
                     Ok(input.into_schema())
                 })
-                .map_err(&fail)?
+                .map_err(fail)?
                 .ok_or_else(|| {
                     fail(
                         "its input schema fits no signature, even with its body untyped".to_owned(),
@@ -499,6 +499,12 @@ impl<'a> Expansion<'a> {
             return self.reference(name, fields, stack, nesting);
         }
         let mut out = words(fields);
+        if nesting >= MAX_NESTING {
+            // Inline fields nest as deep as references do: past the bound a
+            // schema keeps only its own words. This is no cut for depth, as
+            // a deeper expansion stops at the same place.
+            return Ok(Value::Object(out));
+        }
         if let Some(properties) = fields.get("properties") {
             let properties = properties
                 .as_object()
@@ -819,6 +825,44 @@ mod tests {
             json!({"type": "object"})
         );
         assert!(fits_bounds(input));
+    }
+
+    #[test]
+    fn inline_fields_past_the_nesting_bound_keep_their_own_words() {
+        let mut deep = json!({"type": "string"});
+        for _ in 0..26 {
+            deep = json!({"type": "object", "properties": {"p": deep}});
+        }
+        deep["id"] = json!("Deep");
+        let mut document = notes_document();
+        document["schemas"]["Deep"] = deep;
+        document["resources"]["notes"]["methods"]["get"]["response"] = json!({"$ref": "Deep"});
+        document["resources"]["notes"]["methods"]["create"]["request"] = json!({"$ref": "Deep"});
+
+        let translation = translate(&document, &endpoint()).unwrap();
+        // The reference is nesting level 1; each field is one level more.
+        let fields_inlined = |schema: &Value| {
+            let mut node = schema;
+            let mut levels = 0;
+            while let Some(child) = node.get("properties").and_then(|fields| fields.get("p")) {
+                node = child;
+                levels += 1;
+            }
+            (levels, node.clone())
+        };
+        let output = tool(&translation, "notes.get")
+            .output_schema
+            .clone()
+            .unwrap();
+        assert_eq!(
+            fields_inlined(&output),
+            (MAX_NESTING - 1, json!({"type": "object"}))
+        );
+        let input = &tool(&translation, "notes.create").input_schema;
+        assert_eq!(
+            fields_inlined(&input["properties"]["body"]),
+            (MAX_NESTING - 1, json!({"type": "object"}))
+        );
     }
 
     #[test]
