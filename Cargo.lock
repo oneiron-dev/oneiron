@@ -8889,7 +8889,6 @@ dependencies = [
  "rcgen",
  "reqwest 0.12.28",
  "rmp-serde",
- "rmpv",
  "rsa",
  "rustls-pki-types",
  "serde",

@@ -29,10 +29,11 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 png = "0.18"
 crc32fast = "1"
 rmp-serde = { workspace = true }
-rmpv = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]
+# The organ_host bench decodes replies as rmpv values; the organ itself names no rmpv.
+rmpv = { workspace = true }
 # The e2e check runs the organ process through the host over a real vault.
 oneiron = { path = "../oneiron", features = ["test-support"] }
 oneiron-organ-host = { path = "../oneiron-organ-host" }

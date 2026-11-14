@@ -38,7 +38,6 @@ native = [
   "dep:x509-tsp",
   "dep:oneiron-organ-protocol",
   "dep:rmp-serde",
-  "dep:rmpv",
   "dep:serde_json",
 ]
 network-fetch = [
@@ -80,7 +79,6 @@ thiserror = { workspace = true }
 # The organ protocol, the only link to the engine (a socket, not a crate).
 oneiron-organ-protocol = { version = "0.1.0", path = "../oneiron-organ-protocol", optional = true }
 rmp-serde = { workspace = true, optional = true }
-rmpv = { workspace = true, optional = true }
 # The verify report crosses as JSON bytes.
 serde_json = { workspace = true, optional = true }
 
