@@ -86,6 +86,15 @@ pub struct HostedRelayDecision {
     pub outbound_halted: bool,
     pub system_notice: Option<String>,
     pub system_notices: Vec<crate::store::GateSystemNoticeRecord>,
+    /// The same send works from a self-hosted vault through its own
+    /// connector, which no hosted policy evaluates
+    /// (`RelayTrustDomain::LocalViaByoConnector`): true on every decision of
+    /// a hosted relay's own pass (DEC-0005 #will-sweep; RULING
+    /// L9-61-POLICY-SELFHOST = A).
+    pub works_self_hosted: bool,
+    /// What self-hosting changes, as the legal-hold notice's field of the
+    /// same name says it.
+    pub self_hosted_note: String,
 }
 
 /// Enforce the relay's own pass, including its fail-closed outage and notice.
@@ -200,6 +209,8 @@ pub async fn enforce_hosted_relay(
         outbound_halted: halted,
         system_notice: super::notice::default_system_notice(&system_notices),
         system_notices,
+        works_self_hosted: true,
+        self_hosted_note: super::notice::HOSTED_RELAY_SELF_HOSTED_NOTE.to_owned(),
     })
 }
 
