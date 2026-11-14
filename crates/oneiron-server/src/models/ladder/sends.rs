@@ -190,28 +190,15 @@ impl OfferLadder {
         loop {
             let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
             let warmth = cache_warmth::Sending::of(&self.rests, &rung, &call);
-            // The caller's own deadline ends a stream still out, as it ends
-            // a generation's send (census L9-23): `None` once it passed.
             let ended = match gate.stream(call, permit.lease()) {
                 Ok(stream) => {
                     let budgets = self.rests.reply_budgets();
-                    context
-                        .deadline
-                        .bound(super::http::holding_chat_replies(
-                            budgets,
-                            forward(stream, events),
-                        ))
-                        .await
+                    super::http::holding_chat_replies(budgets, forward(stream, events)).await
                 }
-                Err(error) => Some(Ended::Failed {
+                Err(error) => Ended::Failed {
                     error,
                     spoken: false,
-                }),
-            };
-            let Some(ended) = ended else {
-                settle_failed(permit);
-                let _ = events.send(Err(CallDeadline::expiry())).await;
-                return Flow::Ended;
+                },
             };
             return match ended {
                 Ended::Done {
