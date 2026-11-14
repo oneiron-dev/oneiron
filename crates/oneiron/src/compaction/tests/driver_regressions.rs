@@ -291,8 +291,6 @@ fn working_outputs_decay_and_compaction_restores_exact_bytes() -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-COMPACTION-TESTS-DRIVER-REGRESSIONS-ITEMS]: the lib test target's type check fails here (5 errors: E0061 x4, E0308 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn marker_failure_rolls_back_summary_and_leaves_request_retryable() -> Result<()> {
     use crate::code_run::{
@@ -338,6 +336,7 @@ fn marker_failure_rolls_back_summary_and_leaves_request_retryable() -> Result<()
             crate::compaction::GatedCompaction::ungated_for_test(&request, product.clone()),
             &[],
             &span.fail_after_write_for_test(),
+            None,
         )
         .expect_err("coverage write failure rolls back both coverage and SUMMARY");
     assert_eq!(summary_row_count(&vault), before);
@@ -360,12 +359,18 @@ fn marker_failure_rolls_back_summary_and_leaves_request_retryable() -> Result<()
             crate::compaction::GatedCompaction::ungated_for_test(&request, product.clone()),
             &[],
             &span.wrong_range_for_test(),
+            None,
         )
         .expect_err("a mismatched run-step range cannot bind this SUMMARY");
     assert_eq!(summary_row_count(&vault), before);
     assert!(vault.code_run_compaction_coverage(run)?.is_empty());
 
-    let different_run = CodeRunReplayRecord::new(entity(0xB9), replay.determinism);
+    let different_run = CodeRunReplayRecord::new(
+        entity(0xB9),
+        replay
+            .determinism
+            .expect("fixture replay carries its determinism"),
+    );
     let wrong = ExecutorOutputSpan::from_replay(
         &CodeRunReplayRecord {
             step_checkpoints: replay.step_checkpoints.clone(),
@@ -381,6 +386,7 @@ fn marker_failure_rolls_back_summary_and_leaves_request_retryable() -> Result<()
             crate::compaction::GatedCompaction::ungated_for_test(&request, product.clone()),
             &[],
             &wrong,
+            None,
         )
         .expect_err("a different run's span cannot bind this SUMMARY");
     assert_eq!(summary_row_count(&vault), before);
@@ -393,6 +399,7 @@ fn marker_failure_rolls_back_summary_and_leaves_request_retryable() -> Result<()
         crate::compaction::GatedCompaction::ungated_for_test(&request, product),
         &[],
         &span,
+        None,
     )?;
     assert_eq!(summary_row_count(&vault), before + 1);
     outputs.compact_span(request.turn_start, request.window.last().unwrap().turn);
@@ -414,8 +421,6 @@ fn marker_failure_rolls_back_summary_and_leaves_request_retryable() -> Result<()
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-COMPACTION-TESTS-DRIVER-REGRESSIONS-ITEMS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 /// agent-runtime-v1 §d7: a host-numbered window cut short of its watermark
 /// (a backend that takes less) completes only through its last step, so the
 /// same position crosses again and the rest compacts: a run parked at its
@@ -440,7 +445,17 @@ fn a_window_cut_short_of_its_watermark_leaves_the_rest_to_compact() -> Result<()
     };
     assert!(begins(&mut driver));
     let cut = host_window(&vault, 0x80, 0, 2);
-    let first = driver.request_for_log(&vault, &session, cut, Vec::new(), Vec::new(), None)?;
+    let first = driver.request_for_log(
+        vault.new_entity_id()?,
+        &session,
+        cut,
+        Vec::new(),
+        Vec::new(),
+        None,
+        0,
+        None,
+        entity(0x61),
+    )?;
     assert_eq!(first.watermark.turn, Some(1));
     let product = driver
         .backend()
@@ -455,12 +470,15 @@ fn a_window_cut_short_of_its_watermark_leaves_the_rest_to_compact() -> Result<()
     )?;
     assert!(begins(&mut driver), "the same position compacts the rest");
     let rest = driver.request_for_log(
-        &vault,
+        vault.new_entity_id()?,
         &session,
         host_window(&vault, 0x90, 2, 4),
         Vec::new(),
         Vec::new(),
         Some(PriorEpoch::new(1, 1)),
+        0,
+        None,
+        entity(0x61),
     )?;
     assert_eq!(rest.watermark.turn, Some(5));
     Ok(())
