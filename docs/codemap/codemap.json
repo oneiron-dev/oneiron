@@ -5262,7 +5262,7 @@
      "path": "src/authority/machine_write.rs",
      "purpose": "MACHINE origin signatures for claim writes; enrollment is `machine_enroll`",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 17,
       "fn": 4
      }
     },
@@ -17477,7 +17477,7 @@
      "path": "src/claim/transition/mod.rs",
      "purpose": "Signed, causally ordered claim state transitions",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -22767,7 +22767,7 @@
      "path": "src/commitment/lapse_batch.rs",
      "purpose": "Crate-private Open-to-Lapsed batch grounding and apply halves",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -46210,13 +46210,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/housekeeping/lapse_writer.rs",
+     "purpose": "The engine writer a host-run commitment lapse lands under (ARCH-0005a #housekeeping-open; Engine ruling on…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/housekeeping/mod.rs",
      "purpose": "The engine's housekeeping pass: every sweep the engine relies on, run when due",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 5,
       "re-export": 3
      }
@@ -102416,8 +102426,24 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/commitment_instance_lapse.rs",
+     "purpose": "FIX LAPSE-PROJECTED-INSTANCE-MACHINE-PROOF: a commitment instance the schedule projection mints is a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/commitment_instance_withdrawal.rs",
      "purpose": "FIX 22383 (COMMITMENT-INSTANCE): a commitment instance withdrawn by a generic retraction neither wakes nor…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/commitment_lapse_writer.rs",
+     "purpose": "L9-42 (ARCH-0005a #housekeeping-open; Engine ruling L9-42-LAPSE-WRITER = A): the housekeeping pass lapses an…",
      "surface": {}
     },
     {
@@ -104308,6 +104334,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/receipts_credential_pin.rs",
+     "purpose": "FIX RECEIPTS-CREDENTIAL-PIN-TEST (slice 6.4c): `vault.receipts` is screened by the caller's read credential",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/relay_attestation_compilefail/a_witness_no_universal_mint.rs",
      "purpose": "(a.2) Out-of-boundary construction of `AttestedRelayDomain` must fail: there is no absent-constructor…",
      "surface": {}
@@ -106109,7 +106143,7 @@
      "purpose": "The host floor guests' network work charges (FIX 5978, FIX 5979, FIX 6299, FIX 6304)"
     },
     "housekeeping": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -107035,8 +107069,8 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7513,
-   "test_files": 1233
+   "source_files": 7514,
+   "test_files": 1236
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -114683,7 +114717,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 104,
+      "const": 105,
       "crate-vis": 1
      }
     },
@@ -125760,11 +125794,45 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "AxisComparison",
+      "AxisDirection",
+      "AxisError",
+      "AxisRole"
+     ],
+     "path": "src/axes.rs",
+     "purpose": "The scorecard axis values one campaign judges (RESEARCH-0651 Tier 0)",
+     "surface": {
+      "enum": 3,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AxisBound",
+      "BootstrapError",
+      "SplitMix64"
+     ],
+     "path": "src/bootstrap.rs",
+     "purpose": "The paired bootstrap over per-query differences (RESEARCH-0651 Tier 0)",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/lib.rs",
      "purpose": "The retrieval ruler of the oneiron engine (RESEARCH-0651 Tier 0)",
      "surface": {
-      "mod": 4
+      "mod": 9
      }
     },
     {
@@ -125828,6 +125896,45 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "HeldOutProposal",
+      "ProposalError",
+      "ProposalListing",
+      "ProposalStatus",
+      "ProposalStore",
+      "SealedCheck",
+      "SealedOutcome",
+      "SealedVerdict",
+      "Stamp"
+     ],
+     "path": "src/proposal.rs",
+     "purpose": "Write-once proposal records: the held_out Promote, the sealed check, the owner's stamp (RESEARCH-0651 Tier 0)",
+     "surface": {
+      "const": 3,
+      "enum": 4,
+      "fn": 8,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RulerPaths",
+      "RulerPathsError"
+     ],
+     "path": "src/ruler_paths.rs",
+     "purpose": "The ruler paths: commits that touch them cannot be judged by the ruler (RESEARCH-0651 Tier 0)",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "CategoryMetrics",
       "CategoryMin",
       "Hit",
@@ -125848,6 +125955,39 @@
       "fn": 3,
       "struct": 10
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExperimentIdentity",
+      "SealedClaim",
+      "SealedError"
+     ],
+     "path": "src/sealed.rs",
+     "purpose": "The sealed-once markers: one sealed run per experiment (RESEARCH-0651 Tier 0)",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/acceptance.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/interrupted_write.rs",
+     "purpose": "An interrupted record write (a full disk, a crash) leaves the proposal readable and the write retryable…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -125875,6 +126015,20 @@
     }
    ],
    "modules": {
+    "axes": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The scorecard axis values one campaign judges (RESEARCH-0651 Tier 0)"
+    },
+    "bootstrap": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The paired bootstrap over per-query differences (RESEARCH-0651 Tier 0)"
+    },
     "longmemeval": {
      "files": 1,
      "impl_vault": false,
@@ -125896,18 +126050,39 @@
      "layout": "file",
      "purpose": "The `oneiron.retrieval_pack.v1` pack format: one manifest per slice, plus an optional little-endian f32…"
     },
+    "proposal": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Write-once proposal records: the held_out Promote, the sealed check, the owner's stamp (RESEARCH-0651 Tier 0)"
+    },
+    "ruler_paths": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The ruler paths: commits that touch them cannot be judged by the ruler (RESEARCH-0651 Tier 0)"
+    },
     "scorecard": {
      "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The `oneiron.retrieval_scorecard.v1` scorecard: one retrieval run, graded (RESEARCH-0651 Tier 0)"
+    },
+    "sealed": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The sealed-once markers: one sealed run per experiment (RESEARCH-0651 Tier 0)"
     }
    },
    "over_bar": 1,
    "purpose": "The retrieval ruler of the oneiron engine (RESEARCH-0651 Tier 0)",
-   "source_files": 5,
-   "test_files": 3
+   "source_files": 10,
+   "test_files": 5
   },
   "oneiron-run-budget": {
    "files": [

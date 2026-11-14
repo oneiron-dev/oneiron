@@ -452,7 +452,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/machine_profile/mod.rs` | src | m | 4 struct · 2 enum · 15 fn · 14 crate-vis | FoldedMachine, MachineAdmitter, MachineRevision, PinnedRoot, SignerClass, TrustedMachine | Folds `MachineProfile` entries into each physical machine's standing |
 | `src/authority/machine_profile/owner_answers.rs` | src | m | 2 fn · 11 crate-vis | — | The owner's machine answers (mesh PR1b): a profile revision that carries his act ([`OwnerAct`]), signed by… |
 | `src/authority/machine_standing.rs` | src | m | 23 crate-vis | — | A machine's standing as the owner-act fold reads it: each chain's revisions, the carrier rule and its… |
-| `src/authority/machine_write.rs` | src | L | 4 fn · 15 crate-vis | — | MACHINE origin signatures for claim writes; enrollment is `machine_enroll` |
+| `src/authority/machine_write.rs` | src | L | 4 fn · 17 crate-vis | — | MACHINE origin signatures for claim writes; enrollment is `machine_enroll` |
 | `src/authority/machine_write/after_mask.rs` | src | s | 1 crate-vis | — | Renewing a MACHINE claim's proof after the write door's secret mask rewrote it in the same transaction (FIX… |
 | `src/authority/machine_write/history_anchor.rs` | src | s | 1 crate-vis | — | The host history handoff's causal anchor (FIX 11241, ported from the bel build: 9f46db33fa, then… |
 | `src/authority/machine_write/successor.rs` | src | s | 1 crate-vis | — | Re-signing a MACHINE claim's successor with its writer's retained signer |
@@ -1466,7 +1466,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/tests.rs` | test | XL | — | — | — |
 | `src/claim/transition/event.rs` | src | m | 10 crate-vis | — | Canonical MessagePack and Ed25519 proof for claim transition events |
 | `src/claim/transition/fold.rs` | src | m | 5 crate-vis | — | Deterministic causal fold |
-| `src/claim/transition/mod.rs` | src | s | 1 fn · 8 crate-vis | — | Signed, causally ordered claim state transitions |
+| `src/claim/transition/mod.rs` | src | s | 1 fn · 9 crate-vis | — | Signed, causally ordered claim state transitions |
 | `src/claim/transition/tests.rs` | test | m | — | — | — |
 | `src/claim/transition/write.rs` | src | m | 1 crate-vis | — | Host-authorized issuance of one immutable machine-claim transition |
 | `src/claim/world_access.rs` | src | s | 2 fn · 1 const · 2 re-export | — | World-access authority values and their strict claim-value codecs |
@@ -1904,7 +1904,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commitment/codec.rs` | src | m | 5 fn · 4 crate-vis | — | Commitment claim codec: candidate builders and closed-schema helpers |
 | `src/commitment/codec_tests.rs` | test | s | 6 crate-vis | — | Commitment schema, codec and transition tests plus shared test helpers |
 | `src/commitment/instance_state.rs` | src | s | 5 crate-vis | — | One commitment instance's joint state (FIX 22383) |
-| `src/commitment/lapse_batch.rs` | src | m | 4 crate-vis | — | Crate-private Open-to-Lapsed batch grounding and apply halves |
+| `src/commitment/lapse_batch.rs` | src | m | 5 crate-vis | — | Crate-private Open-to-Lapsed batch grounding and apply halves |
 | `src/commitment/mod.rs` | src | s | 2 re-export · 3 crate-vis | — | Commitment claim substrate (CMT-1) |
 | `src/commitment/types.rs` | src | m | 4 struct · 5 enum · 16 fn · 4 const · 17 crate-vis | CommitmentBirthKind, CommitmentBirthProvenance, CommitmentContent, CommitmentObligor, CommitmentObligorKind, CommitmentRecord, CommitmentStatus, CommitmentStrength +1 | Pinned commitment schema consts, key sets, bounds, and domain types |
 | `src/commitment/verbs_tests.rs` | test | s | — | — | Commitment vault-verb, stale-target, rejection and dispatch tests |
@@ -3808,7 +3808,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/host_memory.rs` | src | s | 1 re-export | — | The process-wide physical-memory admission line |
 | `src/host_net_floor.rs` | src | s | 2 struct · 5 fn | ProcessDescriptorFloor, VaultHostFloor | The host floor guests' network work charges (FIX 5978, FIX 5979, FIX 6299, FIX 6304) |
 | `src/housekeeping/claim_vad_payment.rs` | src | s | 3 fn · 1 re-export · 4 crate-vis | — | The claim VAD payment worker's wake (FIX 11702, Engine 10-31 04:1x) |
-| `src/housekeeping/mod.rs` | src | m | 5 fn · 3 re-export · 5 crate-vis | — | The engine's housekeeping pass: every sweep the engine relies on, run when due |
+| `src/housekeeping/lapse_writer.rs` | src | s | 3 crate-vis | — | The engine writer a host-run commitment lapse lands under (ARCH-0005a #housekeeping-open; Engine ruling on… |
+| `src/housekeeping/mod.rs` | src | m | 5 fn · 3 re-export · 6 crate-vis | — | The engine's housekeeping pass: every sweep the engine relies on, run when due |
 | `src/housekeeping/report.rs` | src | s | 1 re-export | — | Housekeeping report vocabulary |
 | `src/housekeeping/schedule.rs` | src | s | 10 crate-vis | — | The housekeeping schedule: one LIVE row per engine sweep |
 | `src/housekeeping/sweeps.rs` | src | m | 2 crate-vis | — | Each engine sweep, called through its own door, within its own bound |
@@ -8391,7 +8392,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/code_secret_remediation_owner_attribution.rs` | test | s | — | — | NO-DOOR CODE-PROPOSAL-ATTRIBUTION, the fifth owner door (Engine CODECUSTODY-ATTRIB Q1 = A, Q2 = A): the… |
 | `tests/code_view_edit.rs` | test | m | — | — | Row 6 WORKING-VIEW-EDIT, ruled CODECUSTODY-VIEW = A and CODECUSTODY-VIEW-BUILD Q1 = A, Q2 = A, Q3 = A… |
 | `tests/comm_unprojected_stop_clear.rs` | test | s | — | — | A STOP recorded after an opt-out-clear request supersedes that request whether or not the projector has… |
+| `tests/commitment_instance_lapse.rs` | test | s | — | — | FIX LAPSE-PROJECTED-INSTANCE-MACHINE-PROOF: a commitment instance the schedule projection mints is a… |
 | `tests/commitment_instance_withdrawal.rs` | test | s | — | — | FIX 22383 (COMMITMENT-INSTANCE): a commitment instance withdrawn by a generic retraction neither wakes nor… |
+| `tests/commitment_lapse_writer.rs` | test | s | — | — | L9-42 (ARCH-0005a #housekeeping-open; Engine ruling L9-42-LAPSE-WRITER = A): the housekeeping pass lapses an… |
 | `tests/common/mod.rs` | test | s | 7 crate-vis | — | Shared fixture helpers for `oneiron` integration tests |
 | `tests/connector_key_suspend_admission.rs` | test | s | — | — | FIX 22392 CONNECTOR-KEY: the one writer of a connector key's suspension admits Active -> Suspended alone |
 | `tests/consent_guard_compilefail/a_owner_stamp_struct_literal_private_fields.rs` | test | s | — | — | (a) A guard holding a `ConsentProposal` must not be able to struct-literal an `AuthenticatedOwner`: every… |
@@ -8625,6 +8628,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/recall_light_render_text.rs` | test | s | — | — | E2E MUSE-RECALL-08: light recall must return witnessed message text in both structured items and every… |
 | `tests/recall_now_anchor_query_slots.rs` | test | s | — | — | A light recall keeps every TURN its query matched before the rows only the effort's now anchor found… |
 | `tests/recall_zero_match_returns_no_memory.rs` | test | s | — | — | E2E MUSE-RECALL-04: recall without query evidence returns no memory and records an empty serving run… |
+| `tests/receipts_credential_pin.rs` | test | s | — | — | FIX RECEIPTS-CREDENTIAL-PIN-TEST (slice 6.4c): `vault.receipts` is screened by the caller's read credential |
 | `tests/relay_attestation_compilefail/a_witness_no_universal_mint.rs` | test | s | — | — | (a.2) Out-of-boundary construction of `AttestedRelayDomain` must fail: there is no absent-constructor… |
 | `tests/relay_attestation_compilefail/a_witness_struct_literal_private_field.rs` | test | s | — | — | (a.1) Out-of-boundary construction of `AttestedRelayDomain` must fail: BOTH fields are private — the trust… |
 | `tests/relay_attestation_compilefail/b_identity_construction_outside_edge_auth.rs` | test | s | — | — | (b) `AuthenticatedConnectionIdentity` must not be constructible outside the edge-auth path: both fields are… |
