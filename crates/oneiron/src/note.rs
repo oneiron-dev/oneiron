@@ -410,8 +410,8 @@ mod files;
 pub use files::{
     DEFAULT_FILES_EXCLUDE, FILES_DEFAULT_KIND, FILES_PART_MARK, FILES_SNIPPET_CHARS,
     FILES_TEXT_EXTENSIONS, FILES_WORLD_NAME, FileFacts, FileHandle, FileMeta, FileReadiness,
-    FilesPlacement, FilesWorld, NameMatch, NameOnlyFile, NameOnlyReason, file_path_of, name_match,
-    text_excerpt,
+    FilesPlacement, FilesWorld, NameMatch, NameOnlyFile, NameOnlyReason, name_match,
+    part_file_path, text_excerpt,
 };
 mod folder_source;
 pub(crate) use folder_source::erase_folder_source_actor_in_txn;

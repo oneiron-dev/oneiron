@@ -486,3 +486,84 @@ fn files_ask_reads_no_note_edited_since_its_file_was_read() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn files_search_finds_a_file_named_like_a_part() -> TestResult {
+    // REVIEW-7705 P1: a real file named `#part<n>` in a folder has a
+    // continuation part's path, but the ledger holds no file at the folder's
+    // path, so it is a file of its own: found by its name and by its text,
+    // under its own path.
+    let files = files_vault()?;
+    files.rescan(
+        &[(
+            "drafts/#part3",
+            "# Draft\n\nThe invoice for the quarter is late.\n",
+            1_780_000_000,
+        )],
+        &[("reports/#part2", 1_780_000_100)],
+        &[],
+    )?;
+
+    let named = files.search("#part2")?;
+    let found = hit(&named, "reports/#part2")?;
+    assert_eq!(
+        found.matched,
+        FilesSearchMatch::Name {
+            class: NameMatch::Exact
+        },
+        "its whole name is the query: {named:?}"
+    );
+    assert_eq!(named.hits[0].handle.path, "reports/#part2");
+
+    let meant = files.search("invoice")?;
+    assert_eq!(meant.meaning, FilesMeaningState::Ran, "{meant:?}");
+    let found = hit(&meant, "drafts/#part3")?;
+    assert!(
+        matches!(found.matched, FilesSearchMatch::Meaning { .. }),
+        "its text finds it: {meant:?}"
+    );
+    assert!(
+        !paths(&meant).contains(&"drafts"),
+        "no hit names the folder as a file: {meant:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn files_search_lists_a_continuation_part_as_its_file() -> TestResult {
+    let files = files_vault()?;
+    files.rescan(
+        &[
+            (
+                "notes/long.md",
+                "# Long\n\nThe first part holds the plan.\n",
+                1_780_000_000,
+            ),
+            (
+                "notes/long.md/#part2",
+                "The invoice closes the second part.\n",
+                1_780_000_000,
+            ),
+        ],
+        &[],
+        &[],
+    )?;
+
+    let named = files.search("#part2")?;
+    assert!(
+        !paths(&named).contains(&"notes/long.md/#part2"),
+        "a part is never listed by its own path: {named:?}"
+    );
+
+    let meant = files.search("invoice")?;
+    assert_eq!(
+        paths(&meant),
+        vec!["notes/long.md"],
+        "the part's text finds the file it is a part of: {meant:?}"
+    );
+    assert!(
+        matches!(meant.hits[0].matched, FilesSearchMatch::Meaning { .. }),
+        "{meant:?}"
+    );
+    Ok(())
+}
