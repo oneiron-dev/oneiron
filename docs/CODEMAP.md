@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7559 | 1281 | 274 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7559 | 1281 | 272 |
 | [oneiron-agent-runtime](codemap/oneiron-agent-runtime.md) | `oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1) | 22 | 10 | 1 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 68 | 1 | 0 |
@@ -71,7 +71,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-testkit](codemap/oneiron-testkit.md) | `oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09… | 28 | 12 | 3 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 40 | 0 | 2 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 61 | 2 | 1 |
-| [oneiron-verb-wire](codemap/oneiron-verb-wire.md) | The wire types of the engine's public verbs below `oneiron` (lib split, stage A): every request, response… | 781 | 0 | 0 |
+| [oneiron-verb-wire](codemap/oneiron-verb-wire.md) | The wire types of the engine's public verbs below `oneiron` (lib split, stage A): every request, response… | 966 | 0 | 0 |
 | [oneiron-vm-outbox](codemap/oneiron-vm-outbox.md) | `oneiron-vm-outbox`: a vault VM's root outbox companion, started by `oneiron-vm-init` beside the engine… | 1 | 0 | 0 |
 | [oneiron-wake-contract](codemap/oneiron-wake-contract.md) | The Dreamer wake contract below core (core split slice 3): wake triggers, requests and pass reports… | 40 | 0 | 1 |
 | [oneiron-web-fetch](codemap/oneiron-web-fetch.md) | Web acquisition of the oneiron engine | 14 | 1 | 0 |
@@ -1279,17 +1279,20 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|
 | `access_grant` | dir | 2 | s | — |
 | `actor_claims` | dir | 2 | s | — |
-| `agent_def` | dir | 4 | s | — |
+| `agent_def` | dir | 5 | s | — |
 | `agent_dispatch` | dir | 11 | s | — |
 | `agent_inbox_lens` | dir | 3 | s | — |
+| `anchored_annotation` | dir | 2 | s | — |
 | `artifact_hosting` | dir | 2 | s | Moved from `crates/oneiron/src/artifact_hosting/mod.rs` (lib split W1: wire types below the lib) |
 | `attempt_queue` | dir | 4 | s | — |
 | `authority` | dir | 18 | s | — |
 | `autoreason_campaign` | dir | 12 | s | — |
 | `batch` | dir | 3 | s | — |
-| `blob_artifact` | dir | 2 | s | — |
+| `blob_artifact` | dir | 16 | s | — |
 | `booking` | dir | 3 | s | — |
 | `build_cache` | file+dir | 2 | s | Moved from `crates/oneiron/src/build_cache.rs` (lib split W1: wire types below the lib) |
+| `calendar` | dir | 25 | s | — |
+| `campaign` | dir | 5 | s | — |
 | `channel_identity` | dir | 2 | s | — |
 | `channel_identity_autonomy` | dir | 2 | s | — |
 | `channel_identity_selection` | dir | 3 | s | — |
@@ -1302,13 +1305,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `code_sandbox` | dir | 3 | s | — |
 | `code_view` | dir | 1 | s | Moved from `crates/oneiron/src/code_view/mod.rs` (lib split W1: wire types below the lib) |
 | `compaction` | dir | 5 | s | — |
+| `connect_delivery` | file | 1 | s | Moved from `crates/oneiron/src/connect_delivery.rs` (lib split W3: wire types below the lib) |
 | `connector_key` | dir | 13 | s | — |
+| `consent` | dir | 4 | s | — |
+| `consent_graduation` | dir | 2 | s | — |
 | `context_board` | dir | 13 | m | — |
 | `conversation` | dir | 3 | s | — |
 | `conversation_dag` | dir | 2 | s | — |
 | `counterparty_contact` | dir | 3 | s | — |
 | `critic` | dir | 4 | s | — |
 | `deletion` | dir | 5 | s | — |
+| `derive` | dir | 2 | s | — |
 | `disclosure` | dir | 3 | s | — |
 | `dispatch_byoa` | dir | 4 | s | — |
 | `drafter` | dir | 6 | m | — |
@@ -1317,13 +1324,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `dreamer_runner` | dir | 34 | m | — |
 | `dreamer_wake` | dir | 8 | s | — |
 | `edit_distance` | dir | 5 | s | — |
+| `edit_roundtrip` | dir | 5 | s | — |
 | `edit_settle` | dir | 3 | s | — |
 | `embed` | dir | 4 | s | — |
 | `engine_executor` | dir | 4 | s | — |
 | `entity_doc` | dir | 2 | s | — |
 | `failure_ladder` | dir | 2 | s | — |
 | `failure_signals` | dir | 3 | s | — |
-| `federation` | dir | 7 | s | — |
+| `federation` | dir | 8 | s | — |
 | `feedback` | dir | 12 | s | — |
 | `feeds` | dir | 1 | s | Moved from `crates/oneiron/src/feeds/mod.rs` (lib split W1: wire types below the lib) |
 | `gate` | dir | 14 | s | — |
@@ -1341,12 +1349,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `memory` | dir | 124 | m | — |
 | `merge_queue` | dir | 2 | s | — |
 | `note` | dir | 13 | s | — |
+| `off_record` | dir | 3 | s | — |
 | `office_body` | dir | 8 | s | — |
 | `origin` | dir | 16 | s | — |
 | `outbound` | dir | 3 | s | — |
 | `outbound_consent` | dir | 3 | s | — |
 | `persona_snapshot` | dir | 2 | s | — |
 | `pipeline` | dir | 3 | s | — |
+| `policy_model` | dir | 9 | s | — |
 | `query_expansion` | file+dir | 2 | s | Moved from `crates/oneiron/src/query_expansion.rs` (lib split W1: wire types below the lib) |
 | `reaction` | dir | 2 | s | — |
 | `receipt` | dir | 12 | s | — |
@@ -1377,6 +1387,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `training_pack` | dir | 2 | s | Moved from `crates/oneiron/src/training_pack/mod.rs` (lib split W1: wire types below the lib) |
 | `vault_cleanup` | dir | 3 | s | — |
 | `vault_shape` | dir | 12 | s | Moved from `crates/oneiron/src/vault_shape/mod.rs` (lib split W1: wire types below the lib) |
+| `verbs` | dir | 111 | m | Moved from `crates/oneiron/src/verbs/mod.rs` (lib split W3: wire types below the lib) |
 | `web_connector` | dir | 1 | s | Moved from `crates/oneiron/src/web_connector/mod.rs` (lib split W1: wire types below the lib) |
 | `workspace_roster` | dir | 29 | s | — |
 | `world_keys` | dir | 6 | s | — |
