@@ -78621,9 +78621,9 @@
      "path": "src/skill_optimize/gate/goal_axis.rs",
      "purpose": "Goal-axis replay scores",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 3
      }
     },
@@ -93081,7 +93081,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 85,
+      "mod": 86,
       "re-export": 1
      }
     },
@@ -93289,6 +93289,16 @@
      "surface": {
       "fn": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/skill_gate.rs",
+     "purpose": "A human-authored Standard skill for skill-gate integration fixtures",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -104921,6 +104931,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/skill_gate_coach_narrowed.rs",
+     "purpose": "Owner skill-goal work does not borrow the Coach's read grant",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -107006,7 +107024,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 88,
+     "files": 89,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -107183,8 +107201,8 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7520,
-   "test_files": 1241
+   "source_files": 7521,
+   "test_files": 1242
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -124374,7 +124392,7 @@
      "path": "src/slot.rs",
      "purpose": "One installed organ: its process, its crash history, its condition",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 17,
       "enum": 1,
       "struct": 1
      }
@@ -124442,6 +124460,14 @@
      "notable": [],
      "path": "tests/host_fds.rs",
      "purpose": "A stopped organ gives its descriptors back: hosts whose organ was unloaded, revoked or crashed hold no more…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/host_recycle.rs",
+     "purpose": "The organ code `internal` names a bug, and the host recycles the live process after three in a row…",
      "surface": {}
     },
     {
@@ -124627,7 +124653,7 @@
    "over_bar": 2,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
    "source_files": 50,
-   "test_files": 5
+   "test_files": 6
   },
   "oneiron-organ-protocol": {
    "files": [
@@ -146551,7 +146577,7 @@
      "path": "src/replay_judge/axis_bandit.rs",
      "purpose": "The goal-axis bandit's live arm attribution for one open optimizer proposal, on the serve judge's arms: each…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
