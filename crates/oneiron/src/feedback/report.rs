@@ -18,7 +18,7 @@ pub use delivery::{
 };
 pub use disclosure::{ReportDisclosureBasis, ReportTextSendBinding};
 pub use routing::{ReportDisclosureChoice, ReportRoute, ReportRoutedPayload, ReportSignature};
-pub(crate) use store::ReportRestoreOutcome;
+pub(crate) use store::{ReportRestoreOutcome, restorable_archived_report};
 
 use super::{FEEDBACK_REF_MAX_BYTES, FeedbackProposal};
 use crate::{Error, Result};
