@@ -732,6 +732,11 @@ fn named_client_read_outside_its_world_is_refused_without_the_world_name() {
 /// At the propose tier a new claim lands as a proposal, not a claim, and a
 /// rewrite in place, which would act at once, needs the full tier: the call
 /// is refused and the owner's claim keeps its value.
+///
+/// The proposal names world A's claim as its subject. The client's slip
+/// reads world A alone, and every record that is not a claim, the owner's
+/// PERSON among them, is base reality, which that read cannot prove
+/// in-world, so a reference to it does not resolve for this writer.
 #[test]
 fn named_client_propose_lands_under_the_ceiling() {
     run_on_engine_stack("named-client-propose", || async {
@@ -739,10 +744,10 @@ fn named_client_propose_lands_under_the_ceiling() {
         let signed_in = served.sign_in(GROK_BOT).await;
         let scope = serde_json::to_value(claim_scope(&served.vault, served.world_a))
             .expect("the claim scope as JSON");
-        let spec = |id: Option<EntityId>, text: &str| {
+        let spec = |id: Option<EntityId>, subject: EntityId, text: &str| {
             let mut spec = json!({
                 "predicate": "profile.preference",
-                "subject_ref": served.owner_id.to_hex(),
+                "subject_ref": subject.to_hex(),
                 "value": text,
                 "confidence": 1.0,
                 "source": "user_stated",
@@ -758,7 +763,7 @@ fn named_client_propose_lands_under_the_ceiling() {
             .call(
                 &served,
                 "vault.claims.upsert",
-                spec(None, "quiet desk lamp"),
+                spec(None, served.claim_a, "quiet desk lamp"),
             )
             .await;
         assert_eq!(
@@ -772,7 +777,11 @@ fn named_client_propose_lands_under_the_ceiling() {
             .call(
                 &served,
                 "vault.claims.upsert",
-                spec(Some(served.claim_a), "rewritten by the client"),
+                spec(
+                    Some(served.claim_a),
+                    served.owner_id,
+                    "rewritten by the client",
+                ),
             )
             .await;
         assert_eq!(rewrite.body["error"]["code"], -32001, "{}", rewrite.body);
