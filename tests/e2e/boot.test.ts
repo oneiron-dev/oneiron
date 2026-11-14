@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, test } from "bun:test";
 import { resolve } from "node:path";
 import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
 import type { MemoryPack, WitnessReceipt } from "oneiron";
@@ -7,7 +7,7 @@ import type { PairedActor } from "./support/engine.ts";
 import { McpClient, PublicHttpClient } from "./support/clients.ts";
 import type { JsonRpcReply, SdkDriverResult, SdkOperation, SdkTarget } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope, requireAsset } from "./support/fixtures.ts";
-import { defineFile, redactor, runProcess } from "./support/run.ts";
+import { defineFile, expect, redactor, runProcess } from "./support/run.ts";
 import { ScriptedProviders, openaiText } from "./support/providers.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
