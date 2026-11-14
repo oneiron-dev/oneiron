@@ -339,6 +339,7 @@ pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()>
                 records,
                 claim_free_partition,
                 shown_state,
+                check_in_ref: None,
             };
             hooked_row(
                 &vault,

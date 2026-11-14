@@ -283,3 +283,88 @@ pub(crate) fn spend_applied_check_in_in_txn(
     consume_pending_check_in_in_txn(vault, txn, id, effect_digest, now)?;
     Ok(row.asker)
 }
+
+/// Another asker's approved check-in an Owner applies to their own act on a
+/// catastrophe row (2j apply shape; P25-SHAPE Q1 = A): its id, the verb and
+/// the exact effect it was asked for.
+pub(crate) struct AppliedCheckIn<'a> {
+    pub(crate) id: EntityId,
+    pub(crate) verb: &'a str,
+    pub(crate) effect_digest: [u8; 32],
+}
+
+/// The decision an Owner's own act on a catastrophe row runs on, in `txn`,
+/// the act's own writer: the Owner on their own proof, and with `applied`
+/// the asker's approved check-in, spent here and named with its requester
+/// (2k2; P25-SHAPE Q1 = A). The answer is no proof of its own: every gate
+/// of the act's door still holds.
+///
+/// # Errors
+///
+/// As [`spend_applied_check_in_in_txn`].
+pub(crate) fn owner_act_decision_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    act: ActClass,
+    applied: Option<&AppliedCheckIn<'_>>,
+) -> Result<CheckInDecision> {
+    let mut decision = owner_own_proof_decision(act);
+    if let Some(applied) = applied {
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        let requester = spend_applied_check_in_in_txn(
+            vault,
+            txn,
+            &applied.id,
+            applied.verb,
+            act,
+            &applied.effect_digest,
+            now,
+        )?;
+        decision.check_in = Some(applied.id.to_hex());
+        decision.requester = Some(requester.to_hex());
+    }
+    Ok(decision)
+}
+
+/// The digest of the Owner's one "Lift the hold and erase?" confirm over
+/// `records`, and the claim-free gate-decision partition with
+/// `claim_free_partition`: the effect an asker's `vault.check_in.open` names
+/// for `vault.legal_holds.lift_and_erase`, and the one the confirm spends
+/// (2k2; P25-SHAPE Q1 = A). The order of `records` and a repeat do not
+/// change it. BLAKE3, key derived from `oneiron check_in legal hold erase
+/// v1`, over the count of distinct records as eight big-endian bytes, their
+/// 16 id bytes each in id order, and one byte, 1 when the confirm releases
+/// the claim-free partition.
+#[must_use]
+pub fn legal_hold_erase_effect_digest(
+    records: &[EntityId],
+    claim_free_partition: bool,
+) -> [u8; 32] {
+    let records: std::collections::BTreeSet<&EntityId> = records.iter().collect();
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in legal hold erase v1");
+    hasher.update(
+        &u64::try_from(records.len())
+            .unwrap_or(u64::MAX)
+            .to_be_bytes(),
+    );
+    for record in records {
+        hasher.update(record.as_bytes());
+    }
+    hasher.update(&[u8::from(claim_free_partition)]);
+    *hasher.finalize().as_bytes()
+}
+
+/// The digest of erasing the frozen request of outbound call `call_seq` of
+/// attempt `attempt`: the effect an asker's `vault.check_in.open` names for
+/// `vault.outbound_calls.request.erase`, and the one the Owner's erase
+/// spends (2k2; P25-SHAPE Q1 = A). BLAKE3, key derived from `oneiron
+/// check_in outbound call request erase v1`, over the attempt's 16 id bytes
+/// and the call's sequence as eight big-endian bytes.
+#[must_use]
+pub fn outbound_call_request_erase_effect_digest(attempt: &EntityId, call_seq: u64) -> [u8; 32] {
+    let mut hasher =
+        blake3::Hasher::new_derive_key("oneiron check_in outbound call request erase v1");
+    hasher.update(attempt.as_bytes());
+    hasher.update(&call_seq.to_be_bytes());
+    *hasher.finalize().as_bytes()
+}

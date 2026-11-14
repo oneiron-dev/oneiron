@@ -333,6 +333,11 @@ pub struct LiftAndEraseOutcome {
     /// lifted or erased, and this is what the confirm shows now, to confirm
     /// again in one step (FIX 1462).
     pub changed: Option<super::LiftAndEraseShownState>,
+    /// The check-in decision the confirm ran on (2k2; P25-SHAPE Q1 = A): the
+    /// Owner on their own proof, and the approved check-in of another asker
+    /// it applied, with its requester. Each `erase` act a veto window starts
+    /// records it too. None when nothing was lifted or erased (`changed`).
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 /// A record kept after a refused privacy erasure: it serves only the legal

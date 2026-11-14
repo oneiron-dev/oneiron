@@ -55,6 +55,11 @@ pub struct LegalHoldLiftAndEraseRequest {
     /// every standing customer hold on them, whole, as the hold list reads
     /// them. The engine acts only when it reads the same.
     pub shown_state: LiftAndEraseShownState,
+    /// An asker's approved check-in for this confirm, 32 hex
+    /// (`legal_hold_erase_effect_digest`): the Owner applies it on their own
+    /// proof, and the answer names its asker.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
 
 /// What the owner's one confirm did to one record, by one rule wherever the
@@ -116,6 +121,11 @@ pub struct LegalHoldLiftAndErased {
     /// nothing was lifted or erased; confirm again with this (FIX 1462).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub changed: Option<LiftAndEraseShownState>,
+    /// The check-in decision the confirm ran on (2k2): the Owner on their
+    /// own proof, and the approved check-in of another asker it applied,
+    /// with its requester. None when nothing was lifted or erased.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 impl From<LiftAndEraseOutcome> for LegalHoldLiftAndErased {
@@ -131,6 +141,7 @@ impl From<LiftAndEraseOutcome> for LegalHoldLiftAndErased {
                 })
                 .collect(),
             changed: outcome.changed,
+            check_in: outcome.check_in,
         }
     }
 }
@@ -196,18 +207,22 @@ pub fn read_legal_hold_log(
 /// `input.claim_free_partition`. The engine takes the owner's proof, the
 /// targets and the state the confirm showed, unchanged, and checks that
 /// state itself: there is no second press, token or expiry, and nothing
-/// here prepares a state the owner was not shown (FIX 1462).
+/// here prepares a state the owner was not shown (FIX 1462). With
+/// `input.check_in_ref` the Owner applies an asker's approved check-in for
+/// this confirm (2k2).
 pub fn lift_legal_hold_and_erase_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: LegalHoldLiftAndEraseRequest,
 ) -> MemoryResult<LegalHoldLiftAndErased> {
+    let check_in_ref = super::shared::check_in_ref(input.check_in_ref.as_deref())?;
     Ok(vault
-        .confirm_lift_legal_hold_and_erase(
+        .confirm_lift_legal_hold_and_erase_with_check_in(
             owner,
             &input.records,
             input.claim_free_partition,
             &input.shown_state,
+            check_in_ref,
         )?
         .into())
 }
