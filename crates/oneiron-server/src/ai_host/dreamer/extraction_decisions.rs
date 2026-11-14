@@ -4,11 +4,11 @@
 //! server, under the host's pause or off the home node neither lends. The
 //! settlement loan lends the host's live ladder and bands, while the
 //! extraction gate re-reads the owner's route defaults for the prepared
-//! verdict route. The prepared model and run never switch.
+//! verdict and extraction routes. The prepared models and runs never switch.
 
 use std::sync::Arc;
 
-use oneiron::dreamer_consolidation::DREAMER_VERDICT_ROLE;
+use oneiron::dreamer_consolidation::{DREAMER_EXTRACTION_ROLE, DREAMER_VERDICT_ROLE};
 use oneiron::dreamer_runner::DreamerDecisionLender;
 use oneiron::llm::decision::{DecisionBandPolicy, DecisionLadder, TypedDecision};
 use oneiron::llm::manifest::ModelRole;
@@ -74,11 +74,11 @@ impl DreamerDecisionLender for ConflictSettleLender {
     }
 }
 
-/// Rechecks live permission for one pass's prepared extraction verdict route.
+/// Rechecks live permission for one pass's prepared verdict and extraction routes.
 ///
-/// The pass's model and run never switch: every loan re-reads the owner's
-/// route defaults for the verdict route the pass prepared, and refuses when
-/// the bound server is gone, paused, off the home node, unrouted or blocked.
+/// The pass's models and runs never switch: every loan re-reads the owner's
+/// route defaults for its prepared route, and refuses when the bound server
+/// is gone, paused, off the home node, unrouted or blocked.
 pub(super) struct ExtractionLoanGate {
     /// Holds the bound server's weak handle, upgraded on every admission check.
     question_timer: QuestionTimer,
@@ -86,14 +86,16 @@ pub(super) struct ExtractionLoanGate {
     admission: PassAdmission,
     /// Holds the prepared verdict purpose and locality, or `None` when it was unrouted.
     verdict: Option<(CallPurpose, ModelLocality)>,
+    /// Holds the prepared extraction purpose and locality, or `None` when it was unrouted.
+    extraction: Option<(CallPurpose, ModelLocality)>,
     /// Retains the startup host permission for extraction to leave the device.
     allow_egress: bool,
 }
 
 impl ExtractionLoanGate {
-    /// Captures the prepared verdict route's purpose and locality from the pass's routes.
+    /// Captures the prepared verdict and extraction purposes and localities from the pass's routes.
     ///
-    /// Keeps `None` when the pass routed no verdict role, which every later admission refuses.
+    /// Keeps `None` for each unrouted role, which every later admission of that route refuses.
     pub(super) fn new(
         question_timer: QuestionTimer,
         admission: PassAdmission,
@@ -104,24 +106,30 @@ impl ExtractionLoanGate {
             .iter()
             .find(|(role, _)| *role == DREAMER_VERDICT_ROLE)
             .map(|(role, route)| (dreamer_role_purpose(*role), route.locality));
+        let extraction = routes
+            .iter()
+            .find(|(role, _)| *role == DREAMER_EXTRACTION_ROLE)
+            .map(|(_, route)| {
+                (
+                    dreamer_role_purpose(DREAMER_EXTRACTION_ROLE),
+                    route.locality,
+                )
+            });
         Self {
             question_timer,
             admission,
             verdict,
+            extraction,
             allow_egress,
         }
     }
-}
 
-impl ExtractionDecisionGate for ExtractionLoanGate {
-    /// Re-reads the owner's route defaults for the prepared verdict route.
-    ///
-    /// Returns `true` when the bound server may still lend and the owner defaults allow the route.
-    fn admits(&self) -> oneiron::Result<bool> {
+    /// Rechecks the bound server, then the prepared route and the owner's live route defaults.
+    fn admits_route(&self, route: Option<&(CallPurpose, ModelLocality)>) -> oneiron::Result<bool> {
         let Some(server) = loan_server(&self.question_timer, &self.admission)? else {
             return Ok(false);
         };
-        let Some((purpose, locality)) = &self.verdict else {
+        let Some((purpose, locality)) = route else {
             return Ok(false);
         };
         match dreamer_route(
@@ -132,5 +140,19 @@ impl ExtractionDecisionGate for ExtractionLoanGate {
             DreamerRoute::Ready { .. } => Ok(true),
             DreamerRoute::Blocked(_) => Ok(false),
         }
+    }
+}
+
+impl ExtractionDecisionGate for ExtractionLoanGate {
+    /// Re-reads the owner's route defaults for the prepared verdict route.
+    ///
+    /// Returns `true` when the bound server may still lend and the owner defaults allow the route.
+    fn admits(&self) -> oneiron::Result<bool> {
+        self.admits_route(self.verdict.as_ref())
+    }
+
+    /// Re-reads the owner's route defaults for the prepared extraction route at every step loan.
+    fn admits_step(&self) -> oneiron::Result<bool> {
+        self.admits_route(self.extraction.as_ref())
     }
 }
