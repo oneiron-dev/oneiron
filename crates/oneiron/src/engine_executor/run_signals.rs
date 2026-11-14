@@ -28,6 +28,11 @@
 //! None of it enters the guest's output, the step's result digests or its
 //! state hash. A steer is its spawner's or owner's control; a message is
 //! foreign data, claims and not instructions, and it never gives authority.
+//! A person's pause of the branch (`vault.agents.pause_tree`) is taken at
+//! the same boundary and never read to the model: once the step's
+//! checkpoint commits, one lease-fenced writer settles it and moves the
+//! run's row to Paused, and the run returns before its next model request
+//! (`attempt_queue::boundary_pause`).
 //! A signal's soft cancel and ask answers are not taken here. The copy is
 //! best effort: a read or acknowledgment that fails is logged and the step
 //! goes on, as it would with no signal.
@@ -96,12 +101,13 @@ struct SignalBranch {
     attempt_count: u32,
 }
 
-/// What one step took: its branch and the keys to acknowledge once the
-/// step's checkpoint commits.
+/// What one step took: its branch, the keys to acknowledge once the step's
+/// checkpoint commits, and the key of the Pause it takes then.
 #[derive(Default)]
 pub(super) struct TakenSignals {
     branch: Option<SignalBranch>,
     keys: Vec<String>,
+    pause: Option<String>,
 }
 
 impl TakenSignals {
@@ -109,6 +115,9 @@ impl TakenSignals {
     pub(super) fn join(&mut self, other: TakenSignals) {
         if self.branch.is_none() {
             self.branch = other.branch;
+        }
+        if self.pause.is_none() {
+            self.pause = other.pause;
         }
         for key in other.keys {
             if !self.keys.contains(&key) {
@@ -159,10 +168,14 @@ impl EngineNativeExecutor<'_> {
         })
     }
 
-    /// Acknowledges what a step took, once its checkpoint has committed.
-    pub(super) fn acknowledge_step_signals(&self, taken: TakenSignals) {
+    /// Acknowledges what a step took, once its checkpoint has committed, then
+    /// takes the person's pause it took, if any: `true` when the run's row
+    /// is now paused at this boundary, so the run stops before its next
+    /// model request. A pause that does not take is logged and stays pending
+    /// for the next boundary.
+    pub(super) fn acknowledge_step_signals(&self, taken: TakenSignals) -> bool {
         let (Some(branch), Some(vault)) = (taken.branch, self.signal_vault()) else {
-            return;
+            return false;
         };
         let adapter = RunTreeAdapter::new(vault);
         for key in &taken.keys {
@@ -176,6 +189,21 @@ impl EngineNativeExecutor<'_> {
                 tracing::warn!(%error, "a run signal a step took was not acknowledged");
             }
         }
+        let Some(key) = taken.pause else {
+            return false;
+        };
+        adapter
+            .pause_at_boundary(
+                branch.attempt,
+                &branch.run_id,
+                &branch.lease_owner,
+                branch.attempt_count,
+                &key,
+            )
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "a pause a step took did not pause its run");
+                false
+            })
     }
 
     /// The steers and messages taken after step `seq`, as the model reads
@@ -236,6 +264,7 @@ impl EngineNativeExecutor<'_> {
         else {
             return Ok(TakenSignals::default());
         };
+        let mut pause = None;
         let pending: Vec<KeptSignal> = signals
             .into_iter()
             .filter(|signal| signal.state == RunSignalState::Pending)
@@ -243,6 +272,14 @@ impl EngineNativeExecutor<'_> {
                 let (kind, text) = match signal.kind {
                     RunSignalKind::Steer { instruction } => (KeptSignalKind::Steer, instruction),
                     RunSignalKind::Interject { content } => (KeptSignalKind::Message, content),
+                    // A person's pause is a control, never read to the
+                    // model: it is taken once the checkpoint commits.
+                    RunSignalKind::Pause { .. } => {
+                        if pause.is_none() {
+                            pause = Some(signal.key);
+                        }
+                        return None;
+                    }
                     RunSignalKind::Cancel { .. } | RunSignalKind::AskAnswer { .. } => {
                         return None;
                     }
@@ -255,7 +292,11 @@ impl EngineNativeExecutor<'_> {
             })
             .collect();
         if pending.is_empty() {
-            return Ok(TakenSignals::default());
+            return Ok(TakenSignals {
+                branch: pause.is_some().then_some(branch),
+                keys: Vec::new(),
+                pause,
+            });
         }
         let kept = self.kept_signal_keys(record)?;
         let keys = pending.iter().map(|signal| signal.key.clone()).collect();
@@ -271,6 +312,7 @@ impl EngineNativeExecutor<'_> {
         Ok(TakenSignals {
             branch: Some(branch),
             keys,
+            pause,
         })
     }
 
@@ -357,7 +399,8 @@ impl EngineNativeExecutor<'_> {
                 }),
                 RunSignalKind::Steer { .. }
                 | RunSignalKind::Cancel { .. }
-                | RunSignalKind::AskAnswer { .. } => None,
+                | RunSignalKind::AskAnswer { .. }
+                | RunSignalKind::Pause { .. } => None,
             })
             .filter(|signal| message_class(signal).as_deref() == Some(INTERRUPT_CLASS))
             .collect();
@@ -378,6 +421,7 @@ impl EngineNativeExecutor<'_> {
         Ok(Some(TakenSignals {
             branch: Some(watch.branch.clone()),
             keys,
+            pause: None,
         }))
     }
 

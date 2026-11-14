@@ -13,8 +13,8 @@ use super::step_claim::{step_index_lookup, step_index_lookup_in_txn};
 use super::step_state::step_state_read;
 use super::submission_custody::{SUBMISSIONS, Submission, erased, put_submission_in_txn};
 use super::{
-    DREAMER_STEP_RETRY_BACKOFF_MS, DreamerTrapState, DurableStepContext, DurableStepError,
-    StepOutcome, StepProgression, StepSpendScope,
+    DreamerTrapState, DurableStepContext, DurableStepError, StepOutcome, StepProgression,
+    StepSpendScope,
 };
 use crate::agent_def::{AgentDefinition, ensure_listed};
 use crate::agent_dispatch::{
@@ -45,14 +45,6 @@ pub use crate::store::model_step_submission::{
     ModelStepSubmit, StepBudgetRefusal,
 };
 const WORKER: &str = "model-step-door";
-
-impl Default for ModelStepRetryPolicy {
-    fn default() -> Self {
-        Self {
-            max_attempts: (DREAMER_STEP_RETRY_BACKOFF_MS.len() + 1) as u8,
-        }
-    }
-}
 
 /// What `ai.steps.submit` takes: one step, and the live run a run's own
 /// actor submits it on. The vault owner names no run.
