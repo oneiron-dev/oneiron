@@ -134,6 +134,9 @@ pub(crate) async fn start_desktop_workers(
     crate::managed_owner_check::ServerManagedOwnerCheck::install(&sync_server);
     // Served sends reach this host's provider APIs and mail server (FIX 4435).
     crate::builtin_host::install_served_transports(&sync_server, config.models.as_ref());
+    // A one-liner `tasks.create` is composed by this server's
+    // `[models.roles.local_reasoner]` seat, once the seats are built (L8-07).
+    crate::ai_host::HostTaskBriefModel::install(&sync_server);
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // The skill-edit gate's replay judge, on the ladder the server just built (OF-495).
