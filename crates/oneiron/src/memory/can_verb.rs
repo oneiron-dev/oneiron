@@ -8,9 +8,12 @@
 //! (`AgentVerb::takes_person_proof`) answers `person` for any actor that is
 //! not a person, since the dispatch refuses that call before its door runs.
 //! The room pin doors, the pin policy and the room invitation are read
-//! through their own admission functions; every other verb answers
-//! `unchecked`. A refusal answers with the call's own refusal, so the app
-//! shows the words the call would.
+//! through their own admission functions; a room's speech through the
+//! precheck its witness meets first (the witness checks the turn's own
+//! messages when it lands); an ask's answer through every check the word
+//! meets before it is recorded. Every other verb answers `unchecked`, and so
+//! does an answer on an ask a verb hook's session holds. A refusal answers
+//! with the call's own refusal, so the app shows the words the call would.
 //!
 //! Who may be judged: the caller, or, for the vault's owner, any of the
 //! vault's own agents. The owner reads the vault whole already; an agent or
@@ -18,15 +21,19 @@
 //! agent reads its standing in the vault, not one credential's narrower
 //! scope, which the call itself checks when it runs.
 
-use super::{CanVerbAnswer, CanVerbGate};
+use super::{CanVerbAnswer, CanVerbGate, WitnessTurn};
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryResult};
 use crate::error::Error;
-use crate::verbs::{AgentVerb, CanVerb};
+use crate::verbs::{AgentVerb, CanVerb, TaskAnswerRequest};
 use crate::workspace_roster::{JoinRequest, RoomPinPolicySet, RoomPinRequest};
 use crate::{EdgeActorClass, EntityId};
 
 /// The reason `person` carries for a verb whose row asks a person's proof.
 const PERSON_PROOF: &str = "this verb's door takes the owner's credential or a person's proof, which no agent's call presents; a person acts instead";
+
+/// The reason `unchecked` carries for an answer on a session-held ask.
+const SESSION_ASK: &str =
+    "a verb hook's session holds this ask and admits its words itself, not the vault's answer door";
 
 impl Memory<'_> {
     /// `can({verb})`: `request`'s verb gate for its actor, dated.
@@ -113,6 +120,19 @@ impl Memory<'_> {
                 self.rooms_invite_admission(&verb_input::<JoinRequest>(name, params)?),
                 true,
             ),
+            "vault.rooms.speak" => (
+                self.rooms_speak_admission(&verb_input::<WitnessTurn>(name, params)?),
+                false,
+            ),
+            "tasks.answer" => {
+                let input = verb_input::<TaskAnswerRequest>(name, params)?;
+                match self.tasks_answer_admission(&input.handle, &input.word) {
+                    Ok(false) => {
+                        return Ok((CanVerbGate::Unchecked, vec![SESSION_ASK.to_owned()]));
+                    }
+                    checked => (checked.map(drop), false),
+                }
+            }
             _ => return Ok((CanVerbGate::Unchecked, Vec::new())),
         };
         match admission {
