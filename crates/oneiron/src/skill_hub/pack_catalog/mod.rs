@@ -4,6 +4,8 @@ mod agent_admission;
 mod agent_facets;
 mod builtin;
 pub use builtin::CheckedBuiltinConnection;
+#[cfg(oneiron_test_support)]
+pub(crate) use builtin::forget_builtin_pack_seed_in_test;
 pub(crate) use builtin::{builtin_pack_seed_ids, seed_builtin_packs};
 mod codec;
 mod doors;

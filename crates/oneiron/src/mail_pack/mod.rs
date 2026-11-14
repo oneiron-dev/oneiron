@@ -123,6 +123,8 @@ pub use microsoft365_calendar::{HttpGraphCalendarWire, MICROSOFT365_CALENDAR_CON
 pub use pack::{
     MAIL_CALENDAR_PACK_NAME, install_mail_calendar_pack_embedded, mail_calendar_pack_files,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use reply::hold_draft_in_test;
 pub use reply::{
     MailReplyApproveRequest, MailReplyDraftPage, MailReplyDraftRef, MailReplyDraftRequest,
     MailReplyDraftState, MailReplyDraftView, MailReplyDraftsRequest,
