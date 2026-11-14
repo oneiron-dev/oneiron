@@ -21,6 +21,35 @@ second (ARCH-0027 #files-world).
 The answer names each file by its source and path, with its install, ledger state, readiness,
 note, revision, size and the time it was last written.
 
+## Searching across the owner's devices
+
+`devices` asks the owner's other devices too, over the mesh (ARCH-0027 #files-world:
+"Cross-device search over the iroh mesh"): `"devices": "all"` asks every machine this vault holds
+the Files search grant for, and `"devices": { "only": [<machine id>, ...] }` the named ones. Without
+`devices` the search stays on this device.
+
+- **The grant.** A device answers another only while the owner's vault holds that machine's live
+  `mesh:alpn:oneiron/files-search/1` grant: the owner grants it per machine with
+  `vault.mesh.set_alpn_grant` (alpn `oneiron/files-search/1`) and revokes it the same way. Device
+  enrolment grants sync only. Each device checks the grant at every connection and again before it
+  searches. The grant is the whole gate: a device sends its files' metadata and snippets to any
+  machine holding it, whatever its Files world's read setting (ruling L2-16-MESH-SNIPPETS = B).
+- **Each device ranks its own files.** A device answers with its own name tier and its own meaning
+  tier (the owner's recall of that device's Files world, read on that device, with no query
+  vector). `sources` may name a source of any device; each device searches the named sources it
+  holds.
+- **One merge.** Every name hit comes before any meaning hit. Name hits from all devices are ordered
+  by match class, then the file written last first: a class is the same test on every device.
+  Meaning hits are interleaved by each device's own recall rank (reciprocal-rank fusion: a file is on
+  one device, so its fused score orders by its own rank, and no device's scores are compared with
+  another's); a tie goes to this device first. Each hit's `machine` names its device; `limit` cuts
+  the merged list. `meaning` is `ran` when any device's meaning tier ran.
+- **Devices that do not answer.** The devices are asked at once and given 8 seconds. Each one that
+  refused (`refused`), had no path or no mesh endpoint here (`unavailable`), did not answer in time
+  (`timed_out`) or failed (`failed`) is listed in `unreached` with that reason; its files are not
+  in `hits`. A server serves and asks over its mesh listener (`ONEIRON_MESH_BIND`); without it, and
+  on an embedded handle, every device asked is `unavailable`.
+
 # Asking about files
 
 The vault owner asks a question of the Files world with `vault.files.sources.ask`

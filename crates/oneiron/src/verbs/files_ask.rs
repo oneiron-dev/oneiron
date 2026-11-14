@@ -133,6 +133,7 @@ pub fn files_ask_search(input: &FilesSourceAskRequest) -> Option<FilesSourceSear
         query: input.query.clone(),
         sources: input.sources.clone(),
         limit: Some(DEFAULT_FILES_SEARCH_LIMIT),
+        devices: None,
     })
 }
 
