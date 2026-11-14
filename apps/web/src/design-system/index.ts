@@ -311,6 +311,23 @@ export {
 } from './lib/info-note'
 export { rovingMoveForKey, rovingTarget, setRovingStop, type RovingMove, type RovingItem } from './lib/roving-focus'
 export { accessibleName, accessibleRole, isTextField } from './lib/accessible-name'
+export {
+  affordance,
+  readAffordances,
+  findAffordance,
+  affordanceState,
+  affordanceRegion,
+  parseVerbParams,
+  paramsContain,
+  gateOf,
+  AFFORDANCE_GATES,
+  type Affordance,
+  type AffordanceAttributes,
+  type AffordanceGate,
+  type AffordanceParams,
+  type AffordanceSpec,
+  type AffordanceState,
+} from './lib/affordance'
 export { placeFloating, anchorInViewport, type Side, type Align, type Placement, type PlacementOptions } from './lib/placement'
 export { bayerThreshold, easeOutQuart, develop, BAYER_8X8 } from './lib/dither'
 export { useResolvedScheme, resolveScheme, type Scheme } from './lib/scheme'
