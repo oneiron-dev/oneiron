@@ -53,7 +53,7 @@ fn open_vault(
     Ok((vault, WriteActor::new(actor, EdgeActorClass::Human), owner))
 }
 
-fn custody_records(vault: &Vault) -> oneiron::Result<usize> {
+fn custody_records(vault: &Vault) -> oneiron::Result<u64> {
     vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)
 }
 

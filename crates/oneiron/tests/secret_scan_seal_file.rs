@@ -61,7 +61,7 @@ fn put_asset(vault: &Vault, body: &[u8]) -> oneiron::Result<EntityId> {
     Ok(id)
 }
 
-fn custody_records(vault: &Vault) -> oneiron::Result<usize> {
+fn custody_records(vault: &Vault) -> oneiron::Result<u64> {
     vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)
 }
 
