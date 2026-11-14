@@ -23,7 +23,8 @@ pub(super) fn session_short_ref_string((short_id, content_hash): &(String, u8)) 
 const WITNESS_TURN_SPEAKER_KEY: &str = "speaker";
 
 /// The canonical TURN speaker string for one author bucket; `None` for the
-/// `System` bucket, which is interleave and never a grouping speaker.
+/// `System` bucket, which is interleave and never a grouping speaker. A
+/// `Counterparty` turn groups as its own `counterparty` speaker.
 ///
 /// These are the ROLE strings the consolidation scanner reads
 /// (`dreamer_turn_role`), not the MESSAGE-body `author` vocabulary: a turn
@@ -34,7 +35,20 @@ const fn canonical_turn_speaker(author: WitnessAuthor) -> Option<&'static str> {
         WitnessAuthor::User => Some("user"),
         WitnessAuthor::Companion => Some("assistant"),
         WitnessAuthor::System => None,
+        WitnessAuthor::Counterparty => Some("counterparty"),
     }
+}
+
+/// The author bucket whose canonical TURN speaker is `speaker`, the inverse
+/// of [`canonical_turn_speaker`]; `None` for a speaker no bucket stamps.
+pub(super) fn turn_speaker_author(speaker: &str) -> Option<WitnessAuthor> {
+    [
+        WitnessAuthor::User,
+        WitnessAuthor::Companion,
+        WitnessAuthor::Counterparty,
+    ]
+    .into_iter()
+    .find(|author| canonical_turn_speaker(*author) == Some(speaker))
 }
 
 /// Whether a stored TURN admits the canonical MESSAGE `bodies` the way it
@@ -56,6 +70,7 @@ pub(crate) fn turn_admits_message_bodies(
             crate::gate::WitnessMessageBodyAuthor::User => WitnessAuthor::User,
             crate::gate::WitnessMessageBodyAuthor::Companion => WitnessAuthor::Companion,
             crate::gate::WitnessMessageBodyAuthor::System => WitnessAuthor::System,
+            crate::gate::WitnessMessageBodyAuthor::Counterparty => WitnessAuthor::Counterparty,
         };
         if canonical_turn_speaker(author).is_some_and(|speaker| speaker != stored) {
             return Ok(false);

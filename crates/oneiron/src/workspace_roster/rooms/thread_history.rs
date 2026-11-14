@@ -11,22 +11,8 @@
 
 use super::*;
 
-/// One page of a room's turns, or of one thread of it.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomMessagesRequest {
-    pub room_ref: String,
-    /// The `next_after` of the page before.
-    #[serde(default)]
-    pub after: Option<String>,
-    /// Rows per page, positive; 256 when unset. A page holds at most 256;
-    /// the rest follow through `next_after`.
-    #[serde(default)]
-    pub limit: Option<usize>,
-    /// A thread of the room, by its root turn; `None` reads the room itself.
-    #[serde(default)]
-    pub thread_ref: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::rooms::thread_history::RoomMessagesRequest;
 
 impl Memory<'_> {
     /// `vault.rooms.messages`: one page of the turns of the room this reader
@@ -48,6 +34,8 @@ impl Memory<'_> {
             Some(root) => self.thread_messages_page(room, EntityId::from_hex(root)?, after, limit),
         }?;
         page.for_org = self.turns_for_org(&page.rows)?;
+        page.actors =
+            self.actor_attributions(page.rows.iter().map(|turn| turn.actor.clone()).collect())?;
         Ok(page)
     }
 
@@ -171,5 +159,6 @@ fn page_after(
         next_after,
         scope,
         for_org: std::collections::BTreeMap::new(),
+        actors: std::collections::BTreeMap::new(),
     })
 }
