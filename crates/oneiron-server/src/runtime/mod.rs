@@ -21,6 +21,7 @@ pub use gpu_pool::{
 mod defaults;
 mod mode;
 mod routes;
+pub mod runner_fence;
 mod usage;
 pub use usage::VaultUsage;
 mod seat_helpers;

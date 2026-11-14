@@ -272,6 +272,7 @@ impl ByoaCliExecutor for CheckoutSeat<'_> {
             stop: self.stop.clone(),
             helper_env: None,
             model_env: None,
+            runner_fence: self.server.runner_fence(),
         };
         let ttl_secs = budget.wall_clock_secs.clamp(1, SECRET_GRANT_MAX_TTL_SECS);
         let grants = match &self.destinations {

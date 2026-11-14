@@ -10,7 +10,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -36,6 +36,7 @@ use oneiron::{
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::runner_fence::{HostRunnerFence, runner_session_manifest};
 use super::secret_destinations::RunSecretDestinations;
 
 mod drain;
@@ -60,6 +61,10 @@ pub(super) const SEAT_ENV_REMOVED: [&str; 5] = [
     "CODEX_API_KEY",
 ];
 
+/// The backend a seat CLI's session manifest names: a runner the daemon
+/// starts on the host (canon `#runner-fence`).
+pub const SEAT_RUNNER_BACKEND: &str = "runner:seat";
+
 /// Runs an official signed-in CLI (`claude`, `codex`, `opencode`) as a
 /// local argv-only process in a checkout directory the host resolved.
 ///
@@ -70,7 +75,9 @@ pub(super) const SEAT_ENV_REMOVED: [&str; 5] = [
 /// process cannot be mediated that way. A hosted deployment must run the
 /// seat behind the microVM executor instead; placement rules keep only the
 /// logins a provider's terms bar off hosted nodes, and this executor must not
-/// be the one serving a hosted login.
+/// be the one serving a hosted login. It starts the CLI under the runner
+/// fence it is given (canon `#runner-fence`: the vault's data and control
+/// trees out of reach), and its exhaust carries the session manifest.
 #[derive(Clone)]
 pub struct OfficialCliSeatExecutor {
     /// Directory the host resolved the live checkout into.
@@ -98,6 +105,9 @@ pub struct OfficialCliSeatExecutor {
     /// removes, so the reference is the one key the CLI holds. `None` for a
     /// run offered no slot.
     pub model_env: Option<super::SeatModelEnv>,
+    /// The runner fence the CLI starts under, with its proof on this host
+    /// (L8-27). `None` starts it unfenced, with no session manifest.
+    pub runner_fence: Option<Arc<HostRunnerFence>>,
 }
 
 impl std::fmt::Debug for OfficialCliSeatExecutor {
@@ -108,6 +118,7 @@ impl std::fmt::Debug for OfficialCliSeatExecutor {
             .field("floor", &self.floor.is_some())
             .field("helper_env", &self.helper_env)
             .field("model_env", &self.model_env)
+            .field("runner_fence", &self.runner_fence)
             .finish()
     }
 }
@@ -140,7 +151,14 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
                 "official seat executor does not inject credential handles".to_owned(),
             ));
         }
-        let mut command = Command::new(&spec.program);
+        // `_scratch` is the fenced CLI's TMPDIR: it stays until the run ends.
+        let (mut command, fence_outcome, _scratch) = match &self.runner_fence {
+            Some(fence) => {
+                let runner = fence.command(&spec.program, &self.workdir);
+                (runner.command, Some(runner.outcome), runner.scratch)
+            }
+            None => (oneiron_spawn::command(&spec.program), None, None),
+        };
         command
             .args(&spec.argv)
             .current_dir(&self.workdir)
@@ -213,6 +231,9 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
         let mut exhaust = ByoaExhaust {
             stdout: stdout.stream(deadline)?,
             stderr: stderr.stream(deadline)?,
+            session_manifest: fence_outcome.map(|outcome| {
+                runner_session_manifest(&outcome, SEAT_RUNNER_BACKEND, &spec.program, &spec.argv)
+            }),
             ..ByoaExhaust::default()
         };
         if !status.success() && exhaust.stderr.is_empty() {
