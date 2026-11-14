@@ -1,6 +1,6 @@
 {
   "name": "vault.agents.pause_tree",
-  "description": "The owner pauses what one agent made that waits, in one act with one receipt: saved agents off; queued and scheduled branches, runs and sends paused; watcher ticks held; hooks off. Running branches and Grants stay. resume_tree undoes it.",
+  "description": "The owner pauses what one agent made, in one act with one receipt: saved agents off; queued and scheduled branches, runs and sends paused; running runs paused at their next step; watcher ticks held; hooks off. resume_tree undoes it.",
   "input": "crate::task_verb::sdk::AgentTreePauseRequest",
   "output": "crate::task_verb::sdk::AgentTreePauseReceipt",
   "call": "crate::task_verb::sdk::pause_agent_tree_as(memory.vault(), &memory.embedded_owner(\"vault.agents.pause_tree\")?, input)?",
