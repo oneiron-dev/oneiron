@@ -166,6 +166,7 @@ fn a_hold_that_names_future_messages_copies_a_new_message() -> TestResult {
             record: message,
             preview_digest: preview.preview_digest,
             also_same_bytes: false,
+            check_in_ref: None,
         },
     )
     .map_err(at("erase confirm"))?;
