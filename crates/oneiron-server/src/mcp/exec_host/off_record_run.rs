@@ -392,9 +392,12 @@ fn run_in_off_record_session(
     if let Some(feedback) = provider.code_check() {
         executor = executor.with_code_check(feedback);
     }
-    reactor
-        .block_on(executor.run(&config))
-        .map_err(|error| McpCodeExecutionError::Run(error.to_string()))
+    reactor.block_on(executor.run(&config)).map_err(|error| {
+        if let oneiron::engine_executor::EngineExecutorError::ResumeDivergence(report) = &error {
+            return McpCodeExecutionError::ResumeDivergence(report.to_string());
+        }
+        McpCodeExecutionError::Run(error.to_string())
+    })
 }
 
 /// The model list a session run and its reader children are held to (FIX

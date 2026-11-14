@@ -20,6 +20,7 @@ mod campaign_split;
 mod can;
 mod catalog_fragment;
 mod check_in;
+mod code_run_resume_divergence;
 mod comm_widen;
 mod connect_proposal;
 mod connector;
@@ -360,6 +361,7 @@ pub use self::catalog_fragment::{
     CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,
 };
 pub use self::check_in::*;
+pub use self::code_run_resume_divergence::*;
 pub use self::comm_widen::*;
 pub use self::connect_proposal::*;
 pub use self::connector::*;

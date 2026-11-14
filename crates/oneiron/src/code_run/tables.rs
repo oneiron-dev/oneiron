@@ -115,6 +115,14 @@ crate::side_table::side_tables! {
         // Payload family: A code run's response owner and wait holder hold ids, status and an
         // actor's id or its erasure, never the reply (FIX 6589).
         [restore: content] [family: structure] [tier: canonical];
+    /// One run's resume-divergence ask (L8-23): the held step, the walk's report, the report's
+    /// effect digest, when asked and the owner's answer. Only `engine_executor::resume_divergence`
+    /// writes it. Key: id16(run).
+    CODE_RUN_RESUME_DIVERGENCE: VaultMeta b"code_run:resume_divergence:v1:" Named Engine
+        // Restore class: A resume-divergence ask entangles a one-shot owner release of an effect
+        // with the replay it releases: a rollback could unspend it, and keeping it live alone
+        // would point into a rolled-back replay. Its family refuses a restore instead.
+        [restore: refuse "resume divergence answers"] [family: unclassified] [tier: canonical];
     /// The owner's value-free dismissal of one code-run secret lift proposal. The
     /// occurrence's secret/taint marks stay unchanged. Key: string(handle/occurrence).
     CODE_RUN_SECRET_LIFT_DISMISSED: VaultMeta b"code_run:secret_lift:dismissed:v1:" Named Engine

@@ -75,6 +75,8 @@ pub(crate) use super::uncertain_send_doors::*;
 pub(crate) use super::undo_send_doors::*;
 // The owner's answer to a call a moved agent run replays (FIX 4747) too.
 pub(crate) use super::agent_run_effect_doors::*;
+// The owner's answer to a resumed step whose program changed an effect step (L8-23) too.
+pub(crate) use super::code_run_resume_divergence_doors::*;
 // The owner's git_push Grant doors (FIX 6867, G1-PUSH) too.
 pub(crate) use super::git_push_doors::*;
 // The public run repo doors (FIX 6867, G1 PR3b): no owner proof, so none is

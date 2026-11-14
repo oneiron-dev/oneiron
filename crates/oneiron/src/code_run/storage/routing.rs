@@ -290,8 +290,9 @@ impl SessionBinding<'_> {
 /// accessors route by mode — overlay while `OffRecord`, ordinary base after
 /// the room flips `OnRecord`. Adding a method here is adding a way for the
 /// executor to reach storage, so the set below is closed: identity, policy,
-/// search, and the four replay/raw-output accessors. The memory-write verbs
-/// are NOT here; they route inside their own dispatch bodies.
+/// search, the four replay/raw-output accessors, and the two resume-divergence
+/// ask accessors (L8-23). The memory-write verbs are NOT here; they route
+/// inside their own dispatch bodies.
 pub(crate) enum ExecutorStorage<'a> {
     Canonical(&'a Vault),
     Session(SessionBinding<'a>),
@@ -961,6 +962,42 @@ impl<'a> ExecutorStorage<'a> {
                 line,
                 credit,
             ),
+        }
+    }
+
+    /// One run's resume-divergence ask (L8-23): the held step, the walk's report and the owner's
+    /// answer. A session-bound run reads none: an off-record run never writes an ask into the base
+    /// vault, so its divergence stays a plain hold.
+    pub(crate) fn resume_divergence_ask(
+        &self,
+        run: EntityId,
+    ) -> Result<Option<crate::engine_executor::resume_divergence::ResumeDivergenceAsk>> {
+        match self {
+            Self::Canonical(vault) => {
+                let txn = vault.store.env.read_txn()?;
+                crate::engine_executor::resume_divergence::read_resume_divergence_ask_in_txn(
+                    vault, &txn, run,
+                )
+            }
+            Self::Session(_) => Ok(None),
+        }
+    }
+
+    /// Raises the owner's ask on `report`'s drift, in one write on the canonical vault (L8-23).
+    /// A session-bound run writes none: an off-record run never writes an ask into the base vault,
+    /// so its divergence stays a plain hold.
+    pub(crate) fn raise_resume_divergence_ask(
+        &self,
+        run: EntityId,
+        report: &crate::engine_executor::ResumePreflightReport,
+    ) -> Result<()> {
+        match self {
+            Self::Canonical(vault) => vault.with_write_txn_grouped(|wtxn| {
+                crate::engine_executor::resume_divergence::raise_resume_divergence_ask_in_txn(
+                    vault, wtxn, run, report,
+                )
+            }),
+            Self::Session(_) => Ok(()),
         }
     }
 }
