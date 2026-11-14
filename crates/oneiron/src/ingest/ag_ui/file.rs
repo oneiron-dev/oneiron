@@ -23,16 +23,8 @@ use crate::{EntityId, Error, Result, TimeRange, Vault};
 
 pub const AG_UI_FILE_PREDICATE: &str = "ingest.ag_ui.file";
 
-/// Registration is snapshotted with this file. It grants no app or training authority.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgUiFileImport {
-    pub claim_ref: Option<String>,
-    pub project_ref: String,
-    pub app_id: String,
-    pub custom_mappings: Vec<AgUiCustomMapping>,
-    pub jsonl: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::ingest::ag_ui::file::{AgUiFileImport, AgUiFileReadInput};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -49,12 +41,6 @@ pub struct AgUiFileReceipt {
     pub claim_ref: String,
     pub source_hash: String,
     pub event_count: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct AgUiFileReadInput {
-    pub claim_ref: String,
-    pub source_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

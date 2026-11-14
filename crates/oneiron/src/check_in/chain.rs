@@ -28,7 +28,10 @@
 //! (every world, when the effect names none) and it is narrowed on no axis
 //! the pending row cannot place the effect on: facets, bands, audience,
 //! sensitivity. A grant has no project axis; a project's act is placed by
-//! its world (review round 1 of #7112). A person's answer
+//! its world (review round 1 of #7112). A holder's role is read as an
+//! asker's is ([`grant_role`]): an Owner-issued agent Grant carries the
+//! agent's delegated Owner powers, and the agent's live membership row on
+//! the vault gives its role (P24-SHAPE Q1 = A). A person's answer
 //! is their own judgment (Q4), so the unsure test and the model check, which
 //! bound a model, do not apply to it; an agent's verdict is its model's
 //! judgment, so its own check-in must go. Standing rows are not read for a
@@ -49,8 +52,8 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::{
-    AgentVerbClasses, FederationGrant, FederationGrantScope, ScopeAxis, ScopeId,
-    SensitivityCeiling, decode_federation_grant_body,
+    AgentVerbClasses, FederationGrant, FederationGrantRole, FederationGrantScope, ScopeAxis,
+    ScopeId, SensitivityCeiling, decode_federation_grant_body,
 };
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -219,16 +222,60 @@ fn asker_grant_in_txn(
     let Ok(id) = EntityId::from_hex(&pending.grant_ref) else {
         return Ok(None);
     };
+    Ok(grant_in_txn(vault, txn, &id)?.filter(|grant| grant.member_ref == pending.asker))
+}
+
+/// The live FederationGrant row `id`, decoded; `None` for any other row.
+pub(super) fn grant_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<FederationGrant>> {
     let LiveEntityRow::Live {
         entity_type: ENTITY_TYPE_FEDERATION_GRANT,
         body,
-    } = live_entity_row_in_txn(&vault.store, txn, &id)?
+    } = live_entity_row_in_txn(&vault.store, txn, id)?
     else {
         return Ok(None);
     };
-    Ok(decode_federation_grant_body(&body)
-        .ok()
-        .filter(|grant| grant.member_ref == pending.asker))
+    Ok(decode_federation_grant_body(&body).ok())
+}
+
+/// `member`'s live membership role on the vault `scope` names, delegate
+/// grants aside (an Owner-issued agent Grant is a Delegate row); `None` when
+/// it holds none, or `scope` is no vault.
+pub(super) fn membership_role_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    member: EntityId,
+    scope: &FederationGrantScope,
+) -> Result<Option<FederationGrantRole>> {
+    match *scope {
+        FederationGrantScope::Vault { vault_id } => vault.member_role_in_txn(txn, vault_id, member),
+        _ => Ok(None),
+    }
+}
+
+/// The role `grant` reads in check-in, given its holder's `membership` role
+/// on the grant's vault ([`membership_role_in_txn`]). An Owner-issued agent
+/// Grant (`owner_agent`) carries the agent's delegated Owner powers, not its
+/// role: a Deputy's role comes from its live membership row, a house link or
+/// an Owner-given membership (P24-SHAPE Q1 = A, Engine 13 Nov 19:32), so a
+/// Deputy whose Grant names an act reads the Deputy column. An agent with no
+/// membership reads the Grant's own role, Delegate. An agent at the Owner
+/// role reads it too: an agent's own proof as Owner comes with canon's PR 4
+/// (agent Owner keys), so it does not act on its own proof here. Any other
+/// grant reads its own role.
+pub(super) fn grant_role(
+    grant: &FederationGrant,
+    membership: Option<FederationGrantRole>,
+) -> RolePreset {
+    match membership {
+        Some(role) if grant.owner_agent && role != FederationGrantRole::Owner => {
+            RolePreset::of_grant_role(role)
+        }
+        _ => RolePreset::of_grant_role(grant.role),
+    }
 }
 
 /// The grantor of the asker's `grant`: its `delegated_by`, else the
@@ -330,9 +377,9 @@ fn owner_members(
 
 /// The roles `holder` holds at `now` for the act, each with whether it holds
 /// the power for the exact effect: Owner when it is a live owner; else each
-/// live grant naming it on the asker's vault, whose verbs (or verb classes)
-/// admit the verb and whose bounds cover where the effect sits
-/// ([`covers_effect`]), or not.
+/// live grant naming it on the asker's vault, at the role it reads
+/// ([`grant_role`]), whose verbs (or verb classes) admit the verb and whose
+/// bounds cover where the effect sits ([`covers_effect`]), or not.
 fn holder_standing_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -371,6 +418,7 @@ fn holder_standing_in_txn(
         }
     }
     let classes = AgentVerbClasses::for_grants_in_txn(&vault.store, txn, grants.iter())?;
+    let membership = membership_role_in_txn(vault, txn, holder, &asker_grant.scope)?;
     Ok(grants
         .iter()
         .filter(|grant| grant.confers_with_classes_at(now, &classes))
@@ -378,7 +426,7 @@ fn holder_standing_in_txn(
             let holds_power = covers_effect(grant, &pending.scope)
                 && (grant.authority_scope.verbs.contains(&pending.verb)
                     || grant.class_admits_verb(&pending.verb, &classes));
-            (RolePreset::of_grant_role(grant.role), holds_power)
+            (grant_role(grant, membership), holds_power)
         })
         .collect())
 }
@@ -388,7 +436,7 @@ fn holder_standing_in_txn(
 /// (or names one that is no world id), and it is narrowed on no axis the
 /// pending row cannot place the effect on. A grant has no project axis; a
 /// project's act is placed by its world.
-fn covers_effect(grant: &FederationGrant, scope: &CheckInScope) -> bool {
+pub(super) fn covers_effect(grant: &FederationGrant, scope: &CheckInScope) -> bool {
     let bounds = &grant.authority_scope;
     let world = matches!(bounds.worlds, ScopeAxis::All)
         || scope

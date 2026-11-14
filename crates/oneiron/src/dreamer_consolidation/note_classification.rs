@@ -10,7 +10,7 @@ use super::executor::ConsolidationExecutor;
 use super::executor::extraction::{ExtractedPerson, ExtractionReply, contract_reply, reply_json};
 use super::extracted_people::MintNamespace;
 use super::neighbourhood::Neighbourhood;
-use super::roles::RoleCall;
+use super::roles::DREAMER_EXTRACTION_ROLE;
 use crate::{EntityId, Result};
 use oneiron_model::llm::{LlmRequest, LlmResponse};
 
@@ -41,8 +41,9 @@ pub(super) struct NoteClassificationReply {
 }
 
 impl ConsolidationExecutor<'_> {
-    /// The extraction request over one NOTE (OF-073): the same prompt and
-    /// reply contract, with the NOTE's markdown as the only source, after
+    /// The extraction request over one NOTE (OF-073) on the extraction role:
+    /// the same prompt and reply contract, the host's prompt when it words
+    /// one, with the NOTE's markdown as the only source, after
     /// the entities `listed` it names. The call names each by a label
     /// (FIX 7506): the note is `N1`, each listed entity `P<n>`. A citation
     /// quotes the note's words, and the review binds each quote to the exact
@@ -52,7 +53,7 @@ impl ConsolidationExecutor<'_> {
     /// request and the label map its reply is read through, bound into the
     /// request's identity with the person-mint `namespace`.
     pub(super) fn note_request(
-        call: &RoleCall<'_>,
+        &self,
         note: EntityId,
         listed: &Neighbourhood,
         markdown: &str,
@@ -97,7 +98,8 @@ impl ConsolidationExecutor<'_> {
             None => {}
         }
         let mut request = Self::request_over(
-            call,
+            &self.role(DREAMER_EXTRACTION_ROLE),
+            &self.decisions.extraction_prompt,
             Some(rule),
             format!("{listing}note {id}\n{markdown}"),
             scope,
