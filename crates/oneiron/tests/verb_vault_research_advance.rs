@@ -837,23 +837,26 @@ fn scorer_runs(fixture: &Fixture, root: &Root) -> Vec<AttemptId> {
 /// are claimed oldest first, so rows queued before it are claimed past.
 fn complete_run(fixture: &Fixture, run: AttemptId) {
     let queue = AttemptQueue::new(&fixture.vault);
-    let leased = (0..64)
-        .find_map(|_| {
-            match queue
-                .claim_kind(
-                    DREAMER_RUNNER_ATTEMPT_KIND,
-                    ClaimAttempt {
-                        lease_owner: WORKER.to_owned(),
-                        now: u64::MAX,
-                    },
-                )
-                .expect("claim the next queued row")
-            {
-                ClaimOutcome::Claimed(row) => Some(row).filter(|row| row.id == run),
-                _ => panic!("the queue ran out before the run was claimed"),
-            }
-        })
-        .expect("the run is claimed");
+    let claimed = (0..64).any(|_| {
+        match queue
+            .claim_kind(
+                DREAMER_RUNNER_ATTEMPT_KIND,
+                ClaimAttempt {
+                    lease_owner: WORKER.to_owned(),
+                    now: u64::MAX,
+                },
+            )
+            .expect("claim the next queued row")
+        {
+            ClaimOutcome::Claimed(row) => row.id == run,
+            _ => panic!("the queue ran out before the run was claimed"),
+        }
+    });
+    assert!(claimed, "the run is claimed");
+    let leased = queue
+        .get(run)
+        .expect("read the leased run")
+        .expect("the leased run reads back");
     queue
         .complete(CompleteAttempt {
             id: run,
