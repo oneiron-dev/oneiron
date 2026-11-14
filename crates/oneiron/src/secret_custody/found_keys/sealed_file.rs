@@ -13,10 +13,12 @@
 //! ([`clear_file_seal_in_txn`]), so a masked reader is served the file as its
 //! marks leave it, and a put of the same bytes is not sealed again. A seal of
 //! bytes the record held before stays, and its card offers no answer: the
-//! owner did not see those bytes (REVIEW-7887 F1). No value goes back,
-//! because the bytes never changed, and nothing is revoked or carried. Only
-//! the owner answers it: the mark is the bytes', which another person's
-//! record may hold too.
+//! owner did not see those bytes (REVIEW-7887 F1). The card says so, and the
+//! open list leaves it out, since nothing waits on the owner (Engine RULING
+//! 14 Nov 15:27: "the card must not look like an unanswered question"). No
+//! value goes back, because the bytes never changed, and nothing is revoked
+//! or carried. Only the owner answers it: the mark is the bytes', which
+//! another person's record may hold too.
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
@@ -38,6 +40,11 @@ use crate::vault::{LiveEntityRow, Vault, live_entity_row_in_txn};
 
 /// Where a sealed file's card says its key sat.
 const SEALED_FILE_PLACE: &str = "file";
+
+/// What a seal of bytes the file no longer holds says on its card (Engine
+/// RULING 14 Nov 15:27).
+const EARLIER_BYTES_NOTE: &str =
+    "an earlier version of this file held a sealed value; it stays withheld; no answer is needed";
 
 /// One file the write door sealed whole in a record. It holds no value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,20 +102,29 @@ impl FileSeal {
             .unwrap_or(&self.reason)
     }
 
-    /// The seal as the owner's notice shows it: no custody name or label,
-    /// and not a secret while it is open and the file still holds its bytes.
+    /// Whether the owner may answer it: it is open, and `live`, the hash of
+    /// the bytes the file holds now, is its own.
+    pub(super) fn is_answerable(&self, live: Option<[u8; 32]>) -> bool {
+        self.settled.is_none() && live == Some(self.hash)
+    }
+
+    /// The seal as the owner's notice shows it, `live` being the hash of the
+    /// bytes the file holds now: no custody name or label; not a secret
+    /// while it is open and the file still holds its bytes; once the file
+    /// holds others, a note that no answer is needed and no action.
     pub(super) fn card_in_txn(
         &self,
         store: &Store,
         txn: &RoTxn<'_>,
         record: &EntityId,
+        live: Option<[u8; 32]>,
     ) -> Result<FoundKeyCard> {
-        let answerable =
-            self.settled.is_none() && live_file_hash_in_txn(store, txn, record)? == Some(self.hash);
-        let actions = if answerable {
-            vec![FoundKeyAction::NotASecret]
+        let (actions, note) = if self.is_answerable(live) {
+            (vec![FoundKeyAction::NotASecret], None)
+        } else if self.settled.is_none() {
+            (Vec::new(), Some(EARLIER_BYTES_NOTE.to_owned()))
         } else {
-            Vec::new()
+            (Vec::new(), None)
         };
         Ok(FoundKeyCard {
             handle: file_handle_in_txn(store, txn, record)?,
@@ -120,6 +136,7 @@ impl FileSeal {
             found_at: self.found_at,
             settled: self.settled.clone(),
             actions,
+            note,
         })
     }
 }
@@ -134,7 +151,7 @@ fn file_handle_in_txn(store: &Store, txn: &RoTxn<'_>, record: &EntityId) -> Resu
 
 /// The BLAKE3 hash of the bytes `record` holds now, which keys their mark;
 /// `None` when it holds none.
-fn live_file_hash_in_txn(
+pub(super) fn live_file_hash_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     record: &EntityId,
@@ -210,7 +227,7 @@ impl Vault {
             let seal = found
                 .seals
                 .iter_mut()
-                .find(|seal| seal.settled.is_none() && Some(seal.hash) == live)
+                .find(|seal| seal.is_answerable(live))
                 .ok_or(Error::Gate(GateError::InvalidConsentBound(
                     "the file as it is stored now holds no open seal: a seal of bytes it held \
                      before is not answered here",

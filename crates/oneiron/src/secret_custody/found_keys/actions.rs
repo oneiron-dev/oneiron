@@ -524,6 +524,7 @@ pub(super) fn card_in_txn(
         found_at: key.found_at,
         settled: key.settled.clone(),
         actions,
+        note: None,
     })
 }
 
