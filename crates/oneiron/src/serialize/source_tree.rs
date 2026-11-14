@@ -276,24 +276,6 @@ impl ExportFileTree {
             .collect())
     }
 
-    /// Whether this archived tree is the tree `stored` exports to under
-    /// `secrets`. A complete tree compares by the members it imports. A
-    /// redacted tree names no content, so it compares with the redacted tree
-    /// the same export of `stored` writes: each safe member by its content
-    /// and digest, each redacted one by its path.
-    pub(crate) fn matches_stored_in_with(
-        &self,
-        files: &dyn ArchiveFiles,
-        stored: &[HubFile],
-        secrets: ExportSecrets,
-    ) -> Result<bool> {
-        if self.content_hash.is_some() {
-            return Ok(self.import_files_in_with(files, secrets)? == stored);
-        }
-        self.validate_in_with(files, secrets)?;
-        Ok(export_source_tree_for(stored, secrets)? == *self)
-    }
-
     /// A tainted row's tree: no content, no identity claim.
     pub(crate) fn strip(&mut self) {
         self.content_hash = None;
