@@ -73,6 +73,7 @@ pub mod provenance_body_checkpoint;
 pub mod re_root_stale_sweep;
 pub mod repo_base_manifest;
 pub mod repo_secret_marks;
+pub mod research_continuation;
 pub mod resident_wake_hold;
 pub mod retrieval_policy_default_floor;
 pub mod room_turn_backfill;

@@ -944,6 +944,33 @@ impl Memory<'_> {
         Ok(self.vault().organ_waits(&entity(&input.artifact_ref)?)?)
     }
 
+    /// What a host runs an organ edit of an artifact under
+    /// (`vault.artifacts.image.edit`, L4-15): the artifact, read through this
+    /// handle's own lane as an artifact ask reads its target (FIX 1533), and
+    /// the actor its proposal is made by. The proposal's `run_ref` is checked
+    /// as its landing checks it, before any organ runs.
+    ///
+    /// # Errors
+    ///
+    /// A malformed `artifact_ref`; an artifact the lane does not read, as
+    /// absent; a `run_ref` that is empty, past the run-ref bound, or holds a
+    /// secret.
+    pub fn artifacts_edit_admission(
+        &self,
+        artifact_ref: &str,
+        run_ref: &str,
+    ) -> MemoryResult<(EntityId, WriteActor)> {
+        let artifact = entity(artifact_ref)?;
+        if run_ref.trim().is_empty() || run_ref.len() > super::BLOB_ARTIFACT_RUN_REF_MAX_BYTES {
+            return Err(
+                invalid("run_ref must be non-empty and within the run-ref length bound").into(),
+            );
+        }
+        crate::batch::secret_scan::scan_metadata_field(run_ref)?;
+        self.require_credential_reads(&[artifact])?;
+        Ok((artifact, self.artifact_actor()))
+    }
+
     /// `vault.artifacts.release_wait`: lets one held organ call go, by its
     /// run ref (`proposal_ref`), under the consent a Discard needs, judged
     /// in the writer that drops it (FIX 9621).
