@@ -40,6 +40,11 @@ fn read(
 fn asset_text_read_reports_validity_flags() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    // A delete needs this install's keystore, as a host installs it after each open.
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    vault.prepare_install_signing().expect("install signing");
 
     // Live text, matching hashes.
     let live = EntityId::now();
