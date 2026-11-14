@@ -338,6 +338,7 @@ fn person_carries_party_key_in_txn(
     id: &EntityId,
     party_key: &str,
 ) -> Result<bool> {
+    note_person_party_key_read();
     let Some(raw) = store.port_entity_record(txn, id)? else {
         return Ok(false);
     };
@@ -351,6 +352,29 @@ fn person_carries_party_key_in_txn(
     Ok(entries.iter().any(|(key, value)| {
         key.as_str() == Some(COMM_PARTY_KEY_FIELD) && value.as_str() == Some(party_key)
     }))
+}
+
+// Test-door tally of the PERSON rows the do-not-contact scan reads, per
+// thread (L6-22, ARCH-0057 H174): a party-key index lets the scan read only
+// the PERSONs whose body carries the key.
+#[cfg(oneiron_test_support)]
+thread_local! {
+    static PERSON_PARTY_KEY_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(oneiron_test_support)]
+fn note_person_party_key_read() {
+    PERSON_PARTY_KEY_READS.with(|reads| reads.set(reads.get().saturating_add(1)));
+}
+
+#[cfg(not(oneiron_test_support))]
+const fn note_person_party_key_read() {}
+
+/// The PERSON rows the do-not-contact scan read on this thread since the
+/// last call.
+#[cfg(oneiron_test_support)]
+pub(crate) fn take_person_party_key_reads() -> usize {
+    PERSON_PARTY_KEY_READS.with(|reads| reads.replace(0))
 }
 
 /// The external-effect gate's do-not-contact leg.
