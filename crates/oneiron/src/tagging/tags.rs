@@ -266,17 +266,16 @@ impl TurnTags {
     }
 
     /// The coreference as entities rather than span indices: each in-turn
-    /// link as the entities its span names beside those its antecedent
-    /// names. An edit that moves offsets leaves it as it was.
-    fn coreference(&self) -> BTreeSet<(Vec<EntityId>, Vec<EntityId>)> {
+    /// link as the set of entities its span names beside the set its
+    /// antecedent names. An edit that moves offsets leaves it as it was, and
+    /// so does a new order of one link's candidates (the vector rung's).
+    fn coreference(&self) -> BTreeSet<(BTreeSet<EntityId>, BTreeSet<EntityId>)> {
+        let set = |link: &MentionLink| link.entities().iter().copied().collect::<BTreeSet<_>>();
         self.mentions
             .iter()
             .filter_map(|mention| {
                 let antecedent = self.mentions.get(mention.antecedent?)?;
-                Some((
-                    mention.link.entities().to_vec(),
-                    antecedent.link.entities().to_vec(),
-                ))
+                Some((set(&mention.link), set(&antecedent.link)))
             })
             .collect()
     }
