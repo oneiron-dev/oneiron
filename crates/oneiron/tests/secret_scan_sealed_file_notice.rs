@@ -244,3 +244,115 @@ fn a_person_and_kept_as_text_cannot_clear_the_seal() -> TestResult {
     );
     Ok(())
 }
+
+/// Another key block one line per item, with other filler lines: other
+/// bytes the door seals whole.
+const OTHER_KEY_LINES: [&str; 4] = [
+    "-----BEGIN PRIVATE KEY-----",
+    "Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ND",
+    "RERERERERERERERERERERERERERERERERERERERE",
+    "-----END PRIVATE KEY-----",
+];
+
+/// Each seal card of `record`'s notice, open or ruled.
+fn seal_cards(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    record: &EntityId,
+) -> oneiron::Result<Vec<FoundKeyCard>> {
+    Ok(notice_cards(vault, owner, record, false)?
+        .into_iter()
+        .filter(|card| card.place == "file" && card.name.is_empty())
+        .collect())
+}
+
+/// A file put again with other bytes the door also seals whole holds two
+/// seals under one handle. The owner's answer reaches only the seal of the
+/// bytes the file holds now; the earlier bytes stay sealed, so a put of them
+/// elsewhere is withheld from a masked reader (REVIEW-7887 F1).
+#[test]
+fn the_answer_clears_only_the_seal_of_the_bytes_the_file_holds_now() -> TestResult {
+    let (_dir, vault, owner) = open_vault()?;
+    let (id, before) = put_sealed_file(&vault)?;
+    let now = serde_json::to_vec(&OTHER_KEY_LINES)?;
+    put_asset(&vault, &id, 2, &now)?;
+    let cards = seal_cards(&vault, &owner, &id)?;
+    assert_eq!(
+        cards.len(),
+        2,
+        "FIXTURE: each version's bytes are sealed: {cards:?}"
+    );
+    let answerable: Vec<&FoundKeyCard> = cards
+        .iter()
+        .filter(|card| card.actions == vec![FoundKeyAction::NotASecret])
+        .collect();
+    assert_eq!(
+        answerable.len(),
+        1,
+        "only the seal of the bytes the file holds now offers the answer: {cards:?}"
+    );
+    vault.rule_found_key_not_a_secret(&owner, ActSurface::ThisInstall, &answerable[0].handle)?;
+    assert_eq!(
+        masked_read(&vault, &id)?,
+        Ok(now),
+        "the file as it is now is served once its seal is cleared"
+    );
+    let other = EntityId::now();
+    put_asset(&vault, &other, 1, &before)?;
+    assert!(
+        matches!(
+            masked_read(&vault, &other)?,
+            Err(ErrorKind::SealedFileWithheld)
+        ),
+        "the earlier bytes, which the owner did not see, stay sealed"
+    );
+    let open = notice_cards(&vault, &owner, &id, true)?;
+    assert_eq!(
+        open.len(),
+        1,
+        "the earlier bytes' seal stays open: {open:?}"
+    );
+    Ok(())
+}
+
+/// A file holding a key in custody and a seal is deleted through the key's
+/// handle: the seal closes with it, so no open notice names a deleted file
+/// (REVIEW-7887 F2).
+#[test]
+fn deleting_a_file_through_its_key_closes_its_seal_too() -> TestResult {
+    let (_dir, vault, owner) = open_vault()?;
+    let id = EntityId::now();
+    put_asset(
+        &vault,
+        &id,
+        1,
+        b"deploy notes\nTOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz\n",
+    )?;
+    put_asset(&vault, &id, 2, &serde_json::to_vec(&KEY_LINES)?)?;
+    let cards = notice_cards(&vault, &owner, &id, true)?;
+    let key = cards
+        .iter()
+        .find(|card| card.handle.starts_with("sc"))
+        .ok_or("FIXTURE: the token is a key in custody")?;
+    assert!(
+        cards
+            .iter()
+            .any(|card| card.place == "file" && card.name.is_empty()),
+        "FIXTURE: the file is sealed whole too: {cards:?}"
+    );
+    let settled = vault.delete_found_key_record(&owner, &key.handle)?;
+    assert_eq!(settled.action, FoundKeyAction::Delete);
+    assert!(
+        notice_cards(&vault, &owner, &id, true)?.is_empty(),
+        "no open notice is left for the deleted file"
+    );
+    let seals = seal_cards(&vault, &owner, &id)?;
+    assert!(
+        seals
+            .iter()
+            .all(|card| card.settled.as_ref().map(|settled| settled.action)
+                == Some(FoundKeyAction::Delete)),
+        "the seal closes as deleted: {seals:?}"
+    );
+    Ok(())
+}
