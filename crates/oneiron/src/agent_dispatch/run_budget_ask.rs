@@ -409,7 +409,7 @@ impl AgentDispatcher<'_> {
             return Ok(Some(overdraft.cap_units));
         }
         let queue = AttemptQueue::new(self.vault);
-        let Some(record) = queue.get(attempt)? else {
+        let Some(record) = queue.get_in_txn(&txn, attempt)? else {
             return Ok(None);
         };
         let Some(run) = record.run_id.as_deref() else {
