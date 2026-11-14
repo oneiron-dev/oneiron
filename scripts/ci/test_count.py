@@ -13,7 +13,8 @@ answer on any host. It counts what the test census counted:
   e2e   cases registered through the E2E runner (`suite.test(test, ...)`,
         `.skip`, `.todo`, `.pendingDoor`) in tests/e2e/*.test.ts
   js    test()/it() calls with a literal name in other *.test.* / *.spec.* files
-  py    `def test*` functions in test_*.py / *_test.py files
+  py    `def test*` functions in test_*.py / *_test.py files (strings and
+        comments are skipped: Python's own tokenizer reads the file)
 Paths with a vendor, node_modules, target, dist or third_party component are
 not counted. A macro that emits several tests counts once; the growth is a
 delta of the same counter, so that does not bias it.
@@ -26,9 +27,11 @@ Usage: test_count.py [--repo DIR] [--base REV] [--head REV] [--body-file FILE] [
 Exit: 0 pass; 1 growth with no reason line; 2 scan error (fails closed).
 """
 import argparse
+import io
 import re
 import subprocess
 import sys
+import tokenize
 from pathlib import Path
 
 KINDS = ("rust", "e2e", "js", "py")
@@ -60,7 +63,7 @@ _JS_TOKEN = re.compile(
     r"|(?P<str>\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`)",
     re.S,
 )
-_PY_TEST = re.compile(r"(?m)^[ \t]*(?:async[ \t]+)?def[ \t]+test\w*[ \t]*\(")
+_PY_TEST = re.compile(r"(?m)^[ \t]*(?:async[ \t]+)?def[ \t]+test\w*[ \t]*\(")  # fallback: a file tokenize refuses
 
 
 class ScanError(Exception):
@@ -124,13 +127,21 @@ def count_js(text, e2e):
     return sum(1 for m in _JS_TOKEN.finditer(text) if m.lastgroup == group)
 
 
+def count_py(text):
+    try:
+        names = [t.string for t in tokenize.generate_tokens(io.StringIO(text).readline) if t.type == tokenize.NAME]
+    except (tokenize.TokenError, SyntaxError):
+        return len(_PY_TEST.findall(text))
+    return sum(1 for a, b in zip(names, names[1:]) if a == "def" and b.startswith("test"))
+
+
 def count_blob(kind, data):
     text = data.decode("utf-8", errors="replace")
     if kind == "rust":
         return count_rust(text)
     if kind in ("e2e", "js"):
         return count_js(text, kind == "e2e")
-    return len(_PY_TEST.findall(text))
+    return count_py(text)
 
 
 def git(repo, *args, data=None):

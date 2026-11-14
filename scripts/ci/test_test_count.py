@@ -67,6 +67,12 @@ class T(unittest.TestCase):
 
     def helper(self):
         pass
+
+FIXTURE = '''
+def test_in_a_string():
+    pass
+'''
+# def test_in_a_comment():
 """
 
 
