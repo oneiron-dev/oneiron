@@ -1372,6 +1372,7 @@ mod tests {
                 &key,
                 &export_snapshot(&state)?,
                 &doc_version_vector(&state),
+                true,
             )?;
             // As a vault written before the backfill existed.
             crate::deletion::ROW_DELETION_FENCE_BACKFILLED.delete(&vault.store, txn, &())?;

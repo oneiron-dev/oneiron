@@ -8,8 +8,13 @@
 //! deferred it past the 30-day erasure deadline. The sweep now takes a
 //! registered window from its holders first: no new handle is issued, the
 //! issued ones have until the drain bound to drop, and the window is then
-//! persisted, deregistered and kept closed through its compaction. A window
-//! still held at the bound is deferred, as before, and stays its holder's.
+//! persisted, deregistered and kept closed through its compaction.
+//!
+//! A window still held at the bound is compacted while its holder keeps it
+//! (census L6-05): the pass pins it history-free, so the holder's next
+//! persist stores a history-free snapshot rather than the history its doc
+//! still holds, and then cuts its persisted rows. A refused late re-put of an
+//! erased row owes its window a compaction, which the next pass runs.
 //!
 //! Run: `cargo test --locked -p oneiron --all-features --test
 //! held_window_erasure_drain`.
@@ -19,7 +24,8 @@
 use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
-use loro::LoroDoc;
+use loro::json::{JsonOpContent, MapOp};
+use loro::{ContainerID, ContainerType, ExportMode, LoroDoc, LoroValue, ValueOrContainer};
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::types::WindowKey;
@@ -56,9 +62,18 @@ fn open_vault() -> (tempfile::TempDir, Arc<Vault>) {
 }
 
 /// A registered window over one row with persisted history, and the erasure
-/// obligation that row's GDPR delete queued. Returns the manager, the
-/// window's handle and the obligation's queue key.
-fn window_with_obligation(vault: &Arc<Vault>) -> (Arc<WindowManager>, Arc<LoadedWindow>, Vec<u8>) {
+/// obligation that row's GDPR delete queued.
+struct HeldWindow {
+    manager: Arc<WindowManager>,
+    window: Arc<LoadedWindow>,
+    /// The obligation's queue key.
+    sweep_key: Vec<u8>,
+    erased: EntityId,
+    /// The erased row's bytes as the window carried them.
+    erased_blob: Vec<u8>,
+}
+
+fn window_with_obligation(vault: &Arc<Vault>) -> HeldWindow {
     let erased = EntityId::now();
     vault
         .batch()
@@ -86,13 +101,27 @@ fn window_with_obligation(vault: &Arc<Vault>) -> (Arc<WindowManager>, Arc<Loaded
         !before.is_shallow(),
         "fixture: the window's persisted state carries its history"
     );
+    let erased_blob = match window.doc.get_map("entities").get(&erased.to_hex()) {
+        Some(ValueOrContainer::Value(LoroValue::Binary(blob))) => blob.to_vec(),
+        _ => panic!("fixture: the window carries the row's bytes"),
+    };
     let outcome = vault
         .delete_entity_with_reason(&erased, DeleteReason::GdprDelete)
         .unwrap();
     let sweep_key = outcome
         .sweep_key
         .expect("the delete queues an erasure obligation");
-    (manager, window, sweep_key)
+    assert!(
+        carries_erased_row(vault, &erased),
+        "fixture: the window's stored history still carries the erased row"
+    );
+    HeldWindow {
+        manager,
+        window,
+        sweep_key,
+        erased,
+        erased_blob,
+    }
 }
 
 fn persisted_snapshot(vault: &Vault) -> LoroDoc {
@@ -101,6 +130,36 @@ fn persisted_snapshot(vault: &Vault) -> LoroDoc {
         .unwrap()
         .expect("the window's persisted snapshot");
     LoroDoc::from_snapshot(&snapshot).unwrap()
+}
+
+/// Whether the window's persisted snapshot carries `erased`: live in its
+/// entities map, or put there by an operation it keeps.
+fn carries_erased_row(vault: &Vault, erased: &EntityId) -> bool {
+    let doc = persisted_snapshot(vault);
+    let hex = erased.to_hex();
+    if doc.get_map("entities").get(&hex).is_some() {
+        return true;
+    }
+    let entities = ContainerID::new_root("entities", ContainerType::Map);
+    doc.export_json_updates(&doc.shallow_since_vv().to_vv(), &doc.oplog_vv())
+        .changes
+        .iter()
+        .flat_map(|change| &change.ops)
+        .any(|op| {
+            op.container == entities
+                && matches!(
+                    &op.content,
+                    JsonOpContent::Map(MapOp::Insert { key, .. }) if key.to_string() == hex
+                )
+        })
+}
+
+fn owed_compaction_queued(vault: &Vault) -> bool {
+    vault
+        .sync_queue_rows_with_prefix(format!("hc:{WINDOW}").as_bytes())
+        .unwrap()
+        .iter()
+        .any(|(key, _)| key.as_slice() == format!("hc:{WINDOW}").as_bytes())
 }
 
 fn obligation_queued(vault: &Vault, sweep_key: &[u8]) -> bool {
@@ -117,7 +176,12 @@ fn obligation_queued(vault: &Vault, sweep_key: &[u8]) -> bool {
 #[test]
 fn a_window_a_frame_holds_is_compacted_once_the_frame_ends() {
     let (_dir, vault) = open_vault();
-    let (manager, window, sweep_key) = window_with_obligation(&vault);
+    let HeldWindow {
+        manager,
+        window,
+        sweep_key,
+        ..
+    } = window_with_obligation(&vault);
     let key = WindowKey::new(WINDOW);
 
     let (started_tx, started_rx) = mpsc::channel();
@@ -154,25 +218,42 @@ fn a_window_a_frame_holds_is_compacted_once_the_frame_ends() {
     drop(reopened);
 }
 
-/// A handle held through the whole pass keeps its window: the pass defers
-/// it once the drain bound passes, the manager hands the holder's window out
-/// again at once, and the holder's later persist lands. Once the holder lets
-/// go, the next pass discharges the obligation. The same on main.
+/// A handle held through the whole pass keeps its window, and the pass still
+/// compacts it: once the drain bound passes, the window is pinned
+/// history-free and its persisted rows are cut while the holder keeps it.
+/// The obligation is discharged, the stored window no longer carries the
+/// erased row, and the manager hands the holder's window out again at once.
+/// On main the pass deferred the held window as live and kept the
+/// obligation.
 #[test]
-fn a_window_held_through_the_pass_is_deferred_and_stays_with_its_holder() {
+fn a_window_held_through_the_pass_is_compacted_and_stays_with_its_holder() {
     let (_dir, vault) = open_vault();
-    let (manager, window, sweep_key) = window_with_obligation(&vault);
+    let HeldWindow {
+        manager,
+        window,
+        sweep_key,
+        erased,
+        ..
+    } = window_with_obligation(&vault);
     let key = WindowKey::new(WINDOW);
 
     let report = vault.maintain().run_hard_erase_sweep().run().unwrap();
-    assert!(report.sweep_windows_deferred_live >= 1, "{report:?}");
-    assert_eq!(report.sweep_jobs_processed, 0, "{report:?}");
+    assert_eq!(
+        report.sweep_windows_deferred_live, 0,
+        "the held window was deferred as live: {report:?}"
+    );
+    assert!(report.sweep_windows_compacted >= 1, "{report:?}");
+    assert_eq!(report.sweep_jobs_processed, 1, "{report:?}");
     assert!(
-        obligation_queued(&vault, &sweep_key),
-        "the obligation stays while the window is held"
+        !obligation_queued(&vault, &sweep_key),
+        "the erasure obligation is discharged"
+    );
+    assert!(
+        !carries_erased_row(&vault, &erased),
+        "the stored window still carries the erased row"
     );
 
-    // The pass left no mark on the window: a lookup returns the same doc.
+    // The pass left the window with its holder: a lookup returns the same doc.
     let (lookup_tx, lookup_rx) = mpsc::channel();
     let lookup_manager = Arc::clone(&manager);
     let lookup_key = key.clone();
@@ -184,12 +265,78 @@ fn a_window_held_through_the_pass_is_deferred_and_stays_with_its_holder() {
         .expect("a lookup of the held window returns after the pass")
         .expect("the held window stays registered");
     assert!(Arc::ptr_eq(&again, &window));
-    window.persist_state(&vault).unwrap();
-    drop(again);
-    drop(window);
+}
 
-    assert!(manager.unload_window(&key).unwrap());
+/// The holder's doc still holds the erased row's history in memory after
+/// the pass. Its next persist stores a history-free snapshot under the pin,
+/// so the cut stays a cut. On main the window was neither compacted nor
+/// pinned, and the persist stored the whole history.
+#[test]
+fn a_held_windows_later_persist_brings_no_erased_history_back() {
+    let (_dir, vault) = open_vault();
+    let HeldWindow { window, erased, .. } = window_with_obligation(&vault);
+
+    vault.maintain().run_hard_erase_sweep().run().unwrap();
+    window.persist_state(&vault).unwrap();
+
+    assert!(
+        persisted_snapshot(&vault).is_shallow(),
+        "the holder's persist stored its full history"
+    );
+    assert!(
+        !carries_erased_row(&vault, &erased),
+        "the holder's persist brought the erased row back"
+    );
+}
+
+/// A re-put of the erased row reaches the window after the pass compacted
+/// it, from a peer that never saw the delete. Ingest refuses it, but its
+/// insert is now in the window's history: the window owes the sweep a
+/// compaction, and the next pass runs it. On main the refusal raised no
+/// owed compaction, and the re-put's insert stayed in the window's history.
+#[test]
+fn a_late_reput_of_an_erased_row_owes_its_window_a_compaction() {
+    let (_dir, vault) = open_vault();
+    let HeldWindow {
+        manager,
+        window,
+        sweep_key,
+        erased,
+        erased_blob,
+    } = window_with_obligation(&vault);
+    let key = WindowKey::new(WINDOW);
+    drop(window);
     let report = vault.maintain().run_hard_erase_sweep().run().unwrap();
     assert_eq!(report.sweep_jobs_processed, 1, "{report:?}");
     assert!(!obligation_queued(&vault, &sweep_key));
+    assert!(!owed_compaction_queued(&vault), "fixture: nothing owed yet");
+
+    let window = manager.open_window(&key).unwrap();
+    let peer = window.doc.fork();
+    peer.get_map("entities")
+        .insert(&erased.to_hex(), erased_blob)
+        .unwrap();
+    peer.commit();
+    let reput = peer
+        .export(ExportMode::updates(&window.doc.oplog_vv()))
+        .unwrap();
+    window.doc.import(&reput).unwrap();
+    window.persist_state(&vault).unwrap();
+    assert!(
+        owed_compaction_queued(&vault),
+        "the refused re-put owes its window no compaction"
+    );
+
+    drop(window);
+    assert!(manager.unload_window(&key).unwrap());
+    let report = vault.maintain().run_hard_erase_sweep().run().unwrap();
+    assert!(report.sweep_windows_compacted >= 1, "{report:?}");
+    assert!(
+        !owed_compaction_queued(&vault),
+        "the owed compaction is settled"
+    );
+    assert!(
+        !carries_erased_row(&vault, &erased),
+        "the stored window still carries the re-put"
+    );
 }

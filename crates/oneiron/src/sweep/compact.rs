@@ -32,6 +32,12 @@ mod documents;
 #[cfg(feature = "sync")]
 pub(super) const WINDOW_DRAIN_BOUND: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// How many times a pass compacts a window a holder still keeps when a write
+/// raced the compaction (census L6-05): a live holder persists more often
+/// than a closed window changes.
+#[cfg(feature = "sync")]
+const HELD_WINDOW_TRIES: usize = 3;
+
 /// Per-window outcome of [`compact_window`].
 #[cfg(feature = "sync")]
 pub(super) enum CompactOutcome {
@@ -221,26 +227,8 @@ pub(super) fn compact_all_windows(
         }
         let key = WindowKey::new(label);
 
-        // OPEN or retained-handle windows are deferred (pinned): the live doc
-        // keeps the full history in memory and its next full-snapshot persist
-        // would resurrect the carrier over the shallow row, even after forced
-        // deregistration removed the manager registry entry. A registered
-        // window is first taken from its holders, who have until the drain
-        // bound to let it go (census L9-41); one still held then is deferred.
-        // A closed window stays closed while it compacts: an open waits, then
-        // reads the compacted window, rather than registering the history
-        // dropped here.
-        let compact = || compact_window_with(vault, &key, erased, withdrawn, full_carriers);
-        let Some(compacted) = vault.while_window_drained_closed(&key, WINDOW_DRAIN_BOUND, compact)
-        else {
-            tracing::warn!("sweep: window live or retained — deferred");
-            run.windows_deferred_live += 1;
-            if matches!(state, WindowSweepState::AllCompacted) {
-                state = WindowSweepState::Deferred;
-            }
-            continue;
-        };
-
+        let compacted =
+            compact_registered_window(vault, &key, erased, withdrawn, full_carriers, run);
         match compacted {
             Ok(CompactOutcome::Compacted) => run.windows_compacted += 1,
             Ok(CompactOutcome::Unchanged) => run.windows_unchanged += 1,
@@ -324,6 +312,70 @@ pub(super) fn compact_all_windows(
     Ok(WindowSweepState::AllCompacted)
 }
 
+/// Compacts window `key` for a pass. A registered window is first taken from
+/// its holders, who have until the drain bound to let it go (census L9-41),
+/// and stays closed while it compacts: an open waits, then reads the
+/// compacted window, rather than registering the history dropped here.
+///
+/// A window still held at the bound, or that the drain cannot take (its
+/// persist failed, an orphaned handle, a manager gone while attached), is
+/// compacted while its holder keeps it ([`compact_held_window`], census
+/// L6-05), and counted in `windows_compacted_held` when it is cut.
+#[cfg(feature = "sync")]
+pub(super) fn compact_registered_window(
+    vault: &Vault,
+    key: &crate::sync::types::WindowKey,
+    erased: &BTreeSet<EntityId>,
+    withdrawn: &mut WithdrawnSweep,
+    full_carriers: bool,
+    run: &mut HardEraseSweepRun,
+) -> Result<CompactOutcome> {
+    let compact = || compact_window_with(vault, key, erased, withdrawn, full_carriers);
+    if let Some(compacted) = vault.while_window_drained_closed(key, WINDOW_DRAIN_BOUND, compact) {
+        return compacted;
+    }
+    tracing::warn!("sweep: window still held at the drain bound — compacted under its pin");
+    let compacted = compact_held_window(vault, key, erased, withdrawn, full_carriers);
+    if matches!(compacted, Ok(CompactOutcome::Compacted)) {
+        run.windows_compacted_held += 1;
+    }
+    compacted
+}
+
+/// Compacts window `key` while a holder keeps it (census L6-05, ARCH-0038
+/// `#housekeeping-sla-open`). The holder's doc keeps the full history in
+/// memory, and an unpinned persist of it would store that history over the
+/// cut. So the window is pinned history-free first
+/// ([`crate::sync::window::require_history_free_window`]): from then on every
+/// persist of the holder's doc stores a history-free snapshot, and every
+/// export checks the history it ships, which holds back a value whose key a
+/// hard delete took out. Then its persisted rows are cut as a closed
+/// window's are ([`compact_window_with`]); the holder keeps its window and
+/// sees no error.
+///
+/// A write that lands between the read and the compaction write defers the
+/// cut as raced; it is tried again, up to [`HELD_WINDOW_TRIES`] times in all.
+/// A legal hold, an unproved cut or a window that holds no history settles
+/// as on a closed window. The pin is never lifted.
+#[cfg(feature = "sync")]
+fn compact_held_window(
+    vault: &Vault,
+    key: &crate::sync::types::WindowKey,
+    erased: &BTreeSet<EntityId>,
+    withdrawn: &mut WithdrawnSweep,
+    full_carriers: bool,
+) -> Result<CompactOutcome> {
+    crate::sync::window::require_history_free_window(vault, key)?;
+    let mut tries = 1;
+    loop {
+        let outcome = compact_window_with(vault, key, erased, withdrawn, full_carriers)?;
+        if !matches!(outcome, CompactOutcome::RacedDefer) || tries == HELD_WINDOW_TRIES {
+            return Ok(outcome);
+        }
+        tries += 1;
+    }
+}
+
 /// [`compact_window_with`] with no withdrawn generation to rewrite.
 #[cfg(all(feature = "sync", test))]
 fn compact_window(
@@ -334,7 +386,8 @@ fn compact_window(
     compact_window_with(vault, key, erased, &mut WithdrawnSweep::default(), false)
 }
 
-/// Compacts one CLOSED window: load `d:w:` + pending `u:w:` rows, scrub
+/// Compacts one window from its persisted rows (a closed one, or one a
+/// holder keeps under its history-free pin): load `d:w:` + pending `u:w:` rows, scrub
 /// live-map residue for erased ids, rewrite withdrawn generations' carriers
 /// to their keyframes, export a shallow snapshot at the latest frontiers,
 /// and atomically replace the persistence triple, prune the subsumed `u:w:`

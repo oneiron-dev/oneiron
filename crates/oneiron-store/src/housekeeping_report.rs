@@ -285,6 +285,9 @@ pub struct HardEraseWork {
     /// Windows that hold no history and that no scrub changed, left as they
     /// are rather than cut again (census L6-07).
     pub windows_unchanged: u64,
+    /// Of `windows_compacted`, the windows cut while a holder kept them, under
+    /// their history-free pin (census L6-05).
+    pub windows_compacted_held: u64,
     pub windows_deferred_live: u64,
     pub windows_deferred_raced: u64,
     /// Windows whose cut was not proved to root at their tip (FIX 6520).

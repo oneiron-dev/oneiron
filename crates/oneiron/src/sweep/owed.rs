@@ -6,8 +6,9 @@
 //! compaction: one `hc:{window}` row in the sweep queue, written in its
 //! transaction. A pass that compacts every window settles each row. Any other
 //! pass compacts each owed window on its own and settles it once it has; a
-//! window still open, raced or held, or whose cut was not proved to root at
-//! its tip (FIX 6520), keeps its row for the next pass.
+//! window a holder still keeps is compacted under its history-free pin
+//! (census L6-05), and one raced or held, or whose cut was not proved to root
+//! at its tip (FIX 6520), keeps its row for the next pass.
 //!
 //! A row may also name the erase receipts that wait on its compaction (FIX
 //! 10234): an audience edit erased in place leaves its earlier revisions in
@@ -16,7 +17,7 @@
 
 use std::collections::BTreeSet;
 
-use super::compact::{CompactOutcome, WINDOW_DRAIN_BOUND, compact_window_with};
+use super::compact::{CompactOutcome, compact_registered_window};
 use super::run::{HardEraseSweepRun, WindowSweepState, WithdrawnSweep};
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -188,7 +189,8 @@ fn complete_receipts_in_txn(
 /// let it go, within the drain bound: a host keeps every window it served
 /// registered, and sync traffic holds one a frame at a time. Whether it
 /// compacted or holds no state. A window still held at the bound, or whose
-/// unload fails, stays as it was, and it waits as an open one does.
+/// unload fails, is compacted while its holder keeps it, under its
+/// history-free pin (census L6-05), as every pass that compacts does.
 fn compact_owed_window(
     vault: &Vault,
     key: &WindowKey,
@@ -198,30 +200,23 @@ fn compact_owed_window(
 ) -> bool {
     // A registered window is taken from its holders first, as every pass
     // that compacts takes it (census L9-41).
-    let compact = || compact_window_with(vault, key, erased, withdrawn, false);
-    let compacted = vault.while_window_drained_closed(key, WINDOW_DRAIN_BOUND, compact);
-    match compacted {
-        Some(Ok(CompactOutcome::Compacted)) => {
+    match compact_registered_window(vault, key, erased, withdrawn, false, run) {
+        Ok(CompactOutcome::Compacted) => {
             run.windows_compacted += 1;
             true
         }
         // Its stored root is its tip and nothing came since: no cut is owed.
-        Some(Ok(CompactOutcome::Unchanged)) => {
+        Ok(CompactOutcome::Unchanged) => {
             run.windows_unchanged += 1;
             true
         }
-        Some(Ok(CompactOutcome::Empty)) => true,
-        None => {
-            tracing::warn!("sweep: owed window live or retained — deferred");
-            run.windows_deferred_live += 1;
-            false
-        }
-        Some(Ok(CompactOutcome::RacedDefer)) => {
+        Ok(CompactOutcome::Empty) => true,
+        Ok(CompactOutcome::RacedDefer) => {
             tracing::warn!("sweep: owed window raced before its compaction write — deferred");
             run.windows_deferred_raced += 1;
             false
         }
-        Some(Ok(CompactOutcome::HeldDefer)) => {
+        Ok(CompactOutcome::HeldDefer) => {
             tracing::warn!(
                 "sweep: a legal hold names a row the owed window would erase — deferred"
             );
@@ -229,11 +224,11 @@ fn compact_owed_window(
             false
         }
         // Nothing was written: the row stays until a cut is proved.
-        Some(Ok(CompactOutcome::UnprovedDefer)) => {
+        Ok(CompactOutcome::UnprovedDefer) => {
             run.windows_deferred_unproved += 1;
             false
         }
-        Some(Err(err)) => {
+        Err(err) => {
             tracing::error!(
                 kind = ?err.kind(),
                 "sweep: owed window compaction FAILED — obligation kept"

@@ -40,6 +40,11 @@ pub(crate) struct HardEraseSweepRun {
     /// and no scrub changed them, so a cut would store what they hold
     /// (census L6-07). They count as compacted for the completion gate.
     pub windows_unchanged: u64,
+    /// Of `windows_compacted`, the windows cut while a holder kept them, under
+    /// their history-free pin (census L6-05).
+    pub windows_compacted_held: u64,
+    /// Entity documents a resident holds, deferred as live. A window is never
+    /// deferred so since census L6-05: one still held is compacted.
     pub windows_deferred_live: u64,
     /// Windows deferred because a `u:w:` row appeared/vanished or the
     /// `d:w:` snapshot changed between the read phase and the compaction

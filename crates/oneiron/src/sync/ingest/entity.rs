@@ -481,6 +481,22 @@ fn admit(
         }
     }
     if !delete_protected && deleted_here(ctx, wtxn, &id) {
+        // A late re-put of a row hard-deleted here is refused, but its insert
+        // is now in this window's history, which only a compaction drops: the
+        // window owes the erasure sweep one, run on its next pass (ARCH-0038
+        // #housekeeping-sla-open, census L6-05). A soft delete keeps its bytes
+        // for its restore window, so it owes none. A marker that cannot be
+        // read owes one: a compaction too many costs one cut.
+        if vault
+            .local_hard_delete_marker_exists_in_txn(wtxn, &id)
+            .unwrap_or(true)
+        {
+            crate::deletion::owed_window_compaction::owe_window_compaction_in_txn(
+                vault,
+                wtxn,
+                &crate::window_key::WindowKey::new(ctx.window_key),
+            )?;
+        }
         crate::task_authority::note_suppressed_fact_in_txn(
             &vault.store,
             wtxn,

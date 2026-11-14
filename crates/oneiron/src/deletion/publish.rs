@@ -51,6 +51,10 @@ struct TombstonePersistence<'a> {
     /// A history-free cut that failed its proof (FIX 6520): stored as
     /// before, and this txn owes the erasure sweep the window.
     owes_compaction: bool,
+    /// Whether `snapshot` was exported history-free, as
+    /// [`Vault::resolve_window_snapshot_mode`] resolved it: the window's pin
+    /// read before the export (census L6-05).
+    history_free: bool,
 }
 
 /// What a write does when the pad tombstones it staged fail to publish after
@@ -313,6 +317,7 @@ impl Vault {
                         delete_update: delete_update.as_ref(),
                         scrubbed_update_keys: &merged_update_keys,
                         owes_compaction,
+                        history_free,
                     },
                 )?;
                 wtxn.commit()?;
@@ -391,6 +396,7 @@ impl Vault {
                 delete_update: delete_update.as_ref(),
                 scrubbed_update_keys: &merged_update_keys,
                 owes_compaction,
+                history_free,
             },
         )?;
         wtxn.commit()?;
@@ -886,6 +892,7 @@ impl Vault {
             window_key,
             persistence.snapshot,
             persistence.version_vector,
+            persistence.history_free,
         )?;
         if persistence.owes_compaction {
             crate::deletion::owed_window_compaction::owe_window_compaction_in_txn(

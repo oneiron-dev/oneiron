@@ -289,6 +289,8 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     reverse_rematerialize(vault, &candidate, key)?;
     forward_rematerialize(vault, &candidate, materializer, key)?;
 
+    // Read before the export, which consults it (census L6-05).
+    let history_free = super::egress::history_free_window_required(vault, key)?;
     let state = export_scrubbed_window_snapshot(vault, key, &candidate)?;
     // The candidate is final once its snapshot is cut: the forward pass and the export scrubs can
     // still take a value out. A queued send retires only once each value it wrote is in the
@@ -312,7 +314,7 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     };
     let _position_bodies = positions.as_ref().map(|_| vault.pin_all_result_bodies());
     vault.with_write_txn_grouped(|wtxn| {
-        persist_window_doc_in_txn(vault, wtxn, key, &state, &vv)?;
+        persist_window_doc_in_txn(vault, wtxn, key, &state, &vv, history_free)?;
         // The old generation's pending updates and the queued sends it took in depend on history
         // the candidate does not hold; their effects are in it as its own operations. A peer's
         // copy keeps the queued sends for the home, which has not taken them (FIX 4748).

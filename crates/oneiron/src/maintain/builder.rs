@@ -94,8 +94,12 @@ pub struct MaintenanceReport {
     /// hold no history and no scrub changed them, so a cut would store what
     /// they hold (census L6-07). No `fr:w:` is asserted for them again.
     pub sweep_windows_unchanged: u64,
-    /// Windows skipped because they are OPEN in a window registry — a live
-    /// doc's next full-snapshot persist would resurrect the carrier.
+    /// Of `sweep_windows_compacted`, the windows cut while a holder kept them
+    /// past the drain bound, under their history-free pin (census L6-05).
+    pub sweep_windows_compacted_held: u64,
+    /// Entity documents a resident holds, skipped as live. A window still
+    /// held at the drain bound is compacted under its pin instead (census
+    /// L6-05), so no window counts here.
     pub sweep_windows_deferred_live: u64,
     /// Windows deferred because a `u:w:` row appeared/vanished or the `d:w:`
     /// snapshot changed between the read phase and the compaction write txn
@@ -379,6 +383,7 @@ impl<'a> MaintenanceBuilder<'a> {
             report.sweep_jobs_failed = run.jobs_failed;
             report.sweep_windows_compacted = run.windows_compacted;
             report.sweep_windows_unchanged = run.windows_unchanged;
+            report.sweep_windows_compacted_held = run.windows_compacted_held;
             report.sweep_windows_deferred_live = run.windows_deferred_live;
             report.sweep_windows_deferred_raced = run.windows_deferred_raced;
             report.sweep_windows_deferred_unproved = run.windows_deferred_unproved;

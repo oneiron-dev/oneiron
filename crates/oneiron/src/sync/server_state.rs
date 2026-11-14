@@ -118,6 +118,8 @@ pub fn persist_admitted_window_update(
 /// tombstones delete is fenced as an observed import would fence it, so the
 /// persisted deletes read deleted at once.
 pub fn persist_window_snapshot(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<Vec<u8>> {
+    // Read before the export, which consults it (census L6-05).
+    let history_free = crate::sync::window::history_free_window_required(vault, key)?;
     let state = crate::sync::window::export_scrubbed_window_snapshot(vault, key, doc)?;
     let vv = doc_version_vector(doc);
     // Its pads persist by reference where custody here holds them (FIX 7107).
@@ -125,6 +127,12 @@ pub fn persist_window_snapshot(vault: &Vault, key: &WindowKey, doc: &LoroDoc) ->
 
     vault.with_write_txn_grouped(|wtxn| {
         vault.fence_published_deletes_in_txn(wtxn, key.as_str(), doc)?;
+        crate::sync::window::owe_compaction_if_pinned_since_export_in_txn(
+            vault,
+            wtxn,
+            key,
+            history_free,
+        )?;
         WINDOW_SNAPSHOT.put(
             &vault.store,
             wtxn,

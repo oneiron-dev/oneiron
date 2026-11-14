@@ -246,6 +246,8 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
     // Live vs transient doc routing — `write_crdt_tombstone`'s dual path.
     let live = manager.window(window_key);
     let ids: Vec<_> = markers.iter().map(|(key, _)| key.id).collect();
+    // Read before either arm exports, which consults the pin (census L6-05).
+    let history_free = crate::sync::window::history_free_window_required(vault, window_key)?;
     let (delete_update, snapshot, vv) = match &live {
         Some(window) => {
             // Clobber guard OUTSIDE the materializer lock: importing into
@@ -328,7 +330,7 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
     // deletions. An empty delta (every apply was downgrade-blocked / no-op)
     // skips the queue push — nothing new to propagate.
     vault.with_write_txn_grouped(|wtxn| {
-        persist_window_doc_in_txn(vault, wtxn, window_key, &snapshot, &vv)?;
+        persist_window_doc_in_txn(vault, wtxn, window_key, &snapshot, &vv, history_free)?;
         if let Some(update) = &delete_update {
             crate::sync::queue::push_delete_bearing_in_txn(
                 vault,

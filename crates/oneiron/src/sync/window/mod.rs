@@ -362,16 +362,18 @@ impl LoadedWindow {
     /// the doc rather than shipping an `sv:w:` VV that omits the survivor's
     /// ops. It is never assumed fresh just because a snapshot was persisted.
     pub fn persist_state(&self, vault: &Vault) -> Result<Vec<u8>> {
+        // Read before the export: a pin is never lifted, so a pin read here
+        // held for the export too (census L6-05, [`persist_window_doc_in_txn`]).
+        let history_free = history_free_window_required(vault, &self.key)?;
         let subsumed_update_keys = merge_persisted_state_into_doc(vault, &self.doc, &self.key)?;
 
         // Scrub after merging persisted updates: a raw update may carry a
         // local-only claim even when the live doc was already clean.
         let state = export_scrubbed_window_snapshot(vault, &self.key, &self.doc)?;
-        let history_free = history_free_window_required(vault, &self.key)?;
         let vv = doc_version_vector(&self.doc);
 
         vault.with_write_txn_grouped(|wtxn| {
-            persist_window_doc_in_txn(vault, wtxn, &self.key, &state, &vv)?;
+            persist_window_doc_in_txn(vault, wtxn, &self.key, &state, &vv, history_free)?;
             if history_free {
                 HISTORY_FREE_WINDOW.put(
                     &vault.store,
@@ -388,6 +390,25 @@ impl LoadedWindow {
 
         Ok(state)
     }
+}
+
+/// The pin guard of [`persist_window_doc_in_txn`], for every writer that
+/// stores a window snapshot (census L6-05): when window `key` is pinned
+/// history-free in `wtxn` and the snapshot was not exported under the pin,
+/// the window owes the erasure sweep a compaction, raised in `wtxn`.
+pub(crate) fn owe_compaction_if_pinned_since_export_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &WindowKey,
+    exported_history_free: bool,
+) -> Result<()> {
+    if exported_history_free
+        || !HISTORY_FREE_WINDOW.contains(&vault.store, wtxn, &key.as_str().to_owned())?
+    {
+        return Ok(());
+    }
+    tracing::warn!("window persist: exported before its pin — compaction owed");
+    crate::deletion::owed_window_compaction::owe_window_compaction_in_txn(vault, wtxn, key)
 }
 
 /// `svf:*` byte meaning "the persisted `sv:*` reflects the FULL durable
@@ -407,13 +428,26 @@ const SVF_FRESH: u8 = 1;
 /// snapshot persist that leaves a surviving `u:w:` row on top of `sv:w:`
 /// would lie "fresh" and the fast-reconnect reader would omit that row's
 /// ops from the VV (ONE-1151 svf-freshness fix).
+///
+/// Pin guard (census L6-05): `exported_history_free` says whether `state` was
+/// exported under the window's history-free pin. The erasure sweep pins a
+/// window a holder keeps and then cuts its rows; a snapshot exported before
+/// the pin and stored after the cut puts back the history the cut dropped.
+/// So the pin is read here, in the caller's transaction: a pinned window
+/// stores a snapshot not exported under it as before, and owes the erasure
+/// sweep a compaction in the same transaction, as a pinned persist whose cut
+/// an import raced does. The next pass cuts it again, and every later export
+/// runs under the pin. A pin is never lifted, so one read before an export
+/// that consults it proves the export pinned.
 pub(crate) fn persist_window_doc_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     key: &WindowKey,
     state: &[u8],
     vv: &[u8],
+    exported_history_free: bool,
 ) -> Result<()> {
+    owe_compaction_if_pinned_since_export_in_txn(vault, wtxn, key, exported_history_free)?;
     // The owner's discard of a world copy takes what it owns from a BASE
     // window's state before that state persists (FIX 14534 part E).
     let state = discard_ingress::project_snapshot_in_txn(vault, wtxn, key, state)?;
