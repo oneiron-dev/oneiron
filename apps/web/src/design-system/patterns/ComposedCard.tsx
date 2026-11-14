@@ -4,6 +4,7 @@ import { InfoMark } from '../primitives/InfoMark'
 import { Verb } from '../primitives/Verb'
 import { PickDiamond } from '../marks/PickDiamond'
 import { StatusDot } from '../marks/StatusDot'
+import type { AffordanceAttributes } from '../lib/affordance'
 import { soundPress } from '../lib/press'
 import { cx, useControllableState, useSafeId } from '../lib/react-utils'
 
@@ -219,16 +220,18 @@ export interface ComposedCardFootProps extends React.ComponentPropsWithRef<'div'
   /* The action cannot run yet (the card is still arriving, or waits on an
      answer): the chip shows and does not press. */
   actionDisabled?: boolean
+  /* The verbs `more` and the action run (see affordance()). */
+  affordances?: Partial<Record<'more' | 'action', AffordanceAttributes>>
 }
 
 /* The foot line: a count, a verb that shows more, then at the right one
    tone chip with a check and a word. */
-function ComposedCardFoot({ count, more, onMore, action, onAction, actionDisabled = false, className, children, ...props }: ComposedCardFootProps) {
+function ComposedCardFoot({ count, more, onMore, action, onAction, actionDisabled = false, affordances = {}, className, children, ...props }: ComposedCardFootProps) {
   return (
     <div className={cx('sl-composed-foot', className)} {...props}>
       {count !== undefined ? <span className="sl-composed-foot-count">{count}</span> : null}
       {more ? (
-        <Verb className="sl-composed-foot-more" onClick={onMore}>
+        <Verb className="sl-composed-foot-more" onClick={onMore} {...affordances.more}>
           {more}
         </Verb>
       ) : null}
@@ -238,6 +241,7 @@ function ComposedCardFoot({ count, more, onMore, action, onAction, actionDisable
           type="button"
           className="sl-composed-chip sl-composed-foot-action"
           disabled={actionDisabled}
+          {...affordances.action}
           onClick={(event) => {
             soundPress(event)
             onAction?.(event)

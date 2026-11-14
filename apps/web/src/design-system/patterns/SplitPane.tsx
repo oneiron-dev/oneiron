@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { Icon } from '../primitives/Icon'
 import { IconAction } from '../primitives/IconAction'
+import type { AffordanceAttributes } from '../lib/affordance'
 import { cx, mergeRefs, useControllableState, useIsomorphicLayoutEffect } from '../lib/react-utils'
 import { Composer, type ComposerTools } from './Composer'
 import { paneBounds, paneLiesOver, paneOverWidth, paneTrack, paneWidth, thingPlaceholder, type PaneKind } from './pane-width'
@@ -366,13 +367,15 @@ export interface SplitPaneHeadProps extends Omit<React.ComponentPropsWithRef<'di
      opened from. */
   onClose?: () => void
   closeLabel?: string
+  /* The verb the close control runs (see affordance()). */
+  affordances?: Partial<Record<'close', AffordanceAttributes>>
 }
 
 /* The head line of a pane: its title, its actions, and the close control.
    Place it first in a SplitPane.Pane. Escape in the pane closes it unless
    another part took the key first (an undo window) or focus is in a menu
    or popover opened from the pane. */
-function SplitPaneHead({ ref, title, titleLines = 1, actions, onClose, closeLabel = 'Close', className, ...props }: SplitPaneHeadProps) {
+function SplitPaneHead({ ref, title, titleLines = 1, actions, onClose, closeLabel = 'Close', affordances = {}, className, ...props }: SplitPaneHeadProps) {
   const headRef = React.useRef<HTMLDivElement | null>(null)
   const latest = React.useRef(onClose)
   useIsomorphicLayoutEffect(() => {
@@ -406,7 +409,7 @@ function SplitPaneHead({ ref, title, titleLines = 1, actions, onClose, closeLabe
         <div className="sl-split-head-actions">
           {actions}
           {onClose ? (
-            <IconAction label={closeLabel} className="sl-split-head-close" onClick={onClose}>
+            <IconAction label={closeLabel} className="sl-split-head-close" onClick={onClose} {...affordances.close}>
               <Icon name="x" />
             </IconAction>
           ) : null}
@@ -445,6 +448,9 @@ export interface SplitPaneThingProps extends Omit<React.ComponentPropsWithRef<'d
   writeBox?: SplitPaneThingWriteBox
   /* Further head actions before close. */
   actions?: React.ReactNode
+  /* The verbs the pane's own controls run (see affordance()): close, and
+     the write box's field, send and dictation. */
+  affordances?: Partial<Record<'close' | 'field' | 'send' | 'dictate', AffordanceAttributes>>
 }
 
 /* The pane for one thing, opened beside the room: the head (the title and
@@ -453,12 +459,19 @@ export interface SplitPaneThingProps extends Omit<React.ComponentPropsWithRef<'d
    the small write box. Place it second in a SplitPane with pane="thing".
    In a work area too narrow for the column and the pane side by side it
    lies over the room from the right edge instead. */
-function SplitPaneThing({ title, onClose, note, thread, onSend, writeBox, actions, className, children, ...props }: SplitPaneThingProps) {
+function SplitPaneThing({ title, onClose, note, thread, onSend, writeBox, actions, affordances = {}, className, children, ...props }: SplitPaneThingProps) {
   const hasThread = React.Children.toArray(thread).length > 0
   const placeholder = thingPlaceholder(hasThread)
   return (
     <div className={cx('sl-split-pane-pane sl-split-thing', className)} data-thread={hasThread ? '' : undefined} {...props}>
-      <SplitPaneHead title={title} titleLines={2} onClose={onClose} actions={actions} className="sl-split-thing-head" />
+      <SplitPaneHead
+        title={title}
+        titleLines={2}
+        onClose={onClose}
+        actions={actions}
+        className="sl-split-thing-head"
+        affordances={{ close: affordances.close }}
+      />
       <div className="sl-split-thing-body">
         <div className="sl-split-thing-item">{children}</div>
         {note !== undefined ? <div className="sl-split-thing-note">{note}</div> : null}
@@ -471,6 +484,7 @@ function SplitPaneThing({ title, onClose, note, thread, onSend, writeBox, action
         tools={writeBox?.tools}
         onDictate={writeBox?.onDictate}
         onSend={(text) => onSend?.(text)}
+        affordances={{ field: affordances.field, send: affordances.send, dictate: affordances.dictate }}
       >
         {writeBox?.add}
       </Composer>

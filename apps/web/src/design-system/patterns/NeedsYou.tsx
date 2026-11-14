@@ -9,6 +9,7 @@ import { PickDiamond } from '../marks/PickDiamond'
 import { soundPress } from '../lib/press'
 import { cx, mergeRefs, useControllableState, useIsomorphicLayoutEffect, useSafeId } from '../lib/react-utils'
 import { pushPendingUndo } from '../lib/pending-undo'
+import type { AffordanceAttributes } from '../lib/affordance'
 import { SETTLE_OPEN, settleReducer } from './settle-reducer'
 import { formatAnswerTime } from './answer-time'
 
@@ -626,6 +627,8 @@ export interface NeedsYouYesNoProps extends React.ComponentPropsWithRef<'div'> {
   /* The accessible names, and the tooltips. */
   yesLabel?: string
   noLabel?: string
+  /* The verbs the check and the cross run (see affordance()). */
+  affordances?: Partial<Record<'yes' | 'no', AffordanceAttributes>>
 }
 
 /* The answers of a yes-or-no ask: a chip with a check (it carries the
@@ -636,6 +639,7 @@ function NeedsYouYesNo({
   noWord = 'denied',
   yesLabel = 'Approve',
   noLabel = 'Do not',
+  affordances = {},
   ...props
 }: NeedsYouYesNoProps) {
   const scope = useAnswerScope('NeedsYou.YesNo')
@@ -647,6 +651,7 @@ function NeedsYouYesNo({
           aria-label={figure ? `${yesLabel}, ${figure}` : yesLabel}
           className="sl-needs-you-answer"
           data-kind="yes"
+          {...affordances.yes}
           onClick={(event) => {
             soundPress(event)
             scope.answerWith('yes', yesWord, 'check')
@@ -662,6 +667,7 @@ function NeedsYouYesNo({
           aria-label={noLabel}
           className="sl-needs-you-answer"
           data-kind="no"
+          {...affordances.no}
           onClick={(event) => {
             soundPress(event)
             scope.answerWith('no', noWord, 'cross')

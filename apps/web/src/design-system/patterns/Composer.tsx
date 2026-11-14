@@ -6,6 +6,7 @@ import { PrimaryButton } from '../primitives/PrimaryButton'
 import { Verb } from '../primitives/Verb'
 import { Menu } from '../overlays/Menu'
 import { Tooltip } from '../overlays/Tooltip'
+import type { AffordanceAttributes } from '../lib/affordance'
 import { cx, useControllableState, useIsomorphicLayoutEffect } from '../lib/react-utils'
 import { composerKeySends, composerSendText } from './composer-keys'
 import { findBoostWord } from './find-boost-word'
@@ -71,6 +72,10 @@ export interface ComposerProps extends Omit<React.ComponentPropsWithRef<'form'>,
      until the text changes. */
   boostWords?: readonly string[]
   onBoostChange?: (boost: boolean) => void
+  /* The verbs the box's own controls run (see affordance()): the field,
+     the button while it sends, the button while it is the voice mark,
+     dictation. */
+  affordances?: Partial<Record<'field' | 'send' | 'voice' | 'dictate', AffordanceAttributes>>
 }
 
 /* The write box. Above the box: the crossing line, then Composer.Carry
@@ -102,6 +107,7 @@ function ComposerRoot({
   fieldLabel,
   boostWords,
   onBoostChange,
+  affordances = {},
   className,
   children,
   ...props
@@ -199,6 +205,7 @@ function ComposerRoot({
       value={value}
       onChange={(event) => setValue(event.target.value)}
       onKeyDown={onKeyDown}
+      {...affordances.field}
     />
   ) : (
     <span className="sl-composer-field-box">
@@ -214,6 +221,7 @@ function ComposerRoot({
         value={value}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={onKeyDown}
+        {...affordances.field}
       />
       {value === '' && placeholder ? (
         <span className="sl-composer-placeholder" aria-hidden="true">
@@ -231,6 +239,7 @@ function ComposerRoot({
         aria-label={buttonLabel}
         data-mode={talk ? 'talk' : 'send'}
         onClick={talk ? () => onVoice?.() : undefined}
+        {...(talk ? affordances.voice : affordances.send)}
       >
         <Icon name={talk ? 'voice' : 'arrowUp'} size={small ? 16 : 18} />
       </PrimaryButton>
@@ -261,7 +270,7 @@ function ComposerRoot({
           {tools === 'on focus' ? addSlot : null}
           {actions}
           {onDictate ? (
-            <IconAction label="Dictate" tooltipSide="top" className="sl-composer-dictate" onClick={onDictate}>
+            <IconAction label="Dictate" tooltipSide="top" className="sl-composer-dictate" onClick={onDictate} {...affordances.dictate}>
               <Icon name="mic" />
             </IconAction>
           ) : null}
