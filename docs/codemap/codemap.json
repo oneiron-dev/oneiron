@@ -30293,7 +30293,7 @@
      "purpose": "Partition executor: runs one prepared consolidation partition end to end",
      "surface": {
       "crate-vis": 7,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 1
      }
     },
@@ -30344,11 +30344,15 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ExtractionPrompt"
+     ],
      "path": "src/dreamer_consolidation/executor/extraction.rs",
      "purpose": "Extraction request/response projection for one admitted branch; the typed pack that decides which listed…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 9,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -138458,7 +138462,7 @@
      "purpose": "`[models.dreamer.wording]`: the host's wording of what the engine asks a model in its own words today (FIX…",
      "surface": {
       "crate-vis": 2,
-      "fn": 17,
+      "fn": 20,
       "struct": 1
      }
     },
@@ -148612,6 +148616,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/dreamer_host_wording.rs",
+     "purpose": "The host words the Dreamer's extraction prompt and its consolidation questions (ARCH-0026…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -149624,7 +149636,7 @@
    "over_bar": 62,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1869,
-   "test_files": 242
+   "test_files": 243
   },
   "oneiron-skill-attribution": {
    "files": [
