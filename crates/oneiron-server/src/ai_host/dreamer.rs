@@ -21,9 +21,7 @@ use oneiron::dreamer_consolidation::{
     WEAVE_LENS_UNLENT_PARK_REASON, resident_of_dream_input, run_resident_dream,
 };
 use oneiron::dreamer_promotion::AttemptPromotionSink;
-use oneiron::dreamer_runner::DreamerDecisionLender;
 use oneiron::dreamer_runner::maintenance::ContributionReplayHost;
-use oneiron::llm::decision::{DecisionBandPolicy, DecisionLadder, TypedDecision};
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::llm::{HostInferenceContext, WorkCancel, WorkClass, WorkContext};
@@ -48,6 +46,7 @@ mod claim_authoring;
 mod claim_source_recheck;
 mod compaction_check;
 mod destination_bound;
+mod extraction_decisions;
 mod free_time;
 mod pause;
 mod request_sources;
@@ -60,6 +59,7 @@ use crate::config::models::{DreamerSettings, ModelsConfig, role_key};
 use crate::decision_host::DecisionHost;
 use crate::models::{ModelRuntime, OfferLadder, RoleRefusal, RoleRoute, Seat};
 use crate::runtime::wall_clock_ms as now_ms;
+use extraction_decisions::ConflictSettleLender;
 use request_sources::SourcedRunBackend;
 use task_lend::TaskLend;
 
@@ -134,41 +134,6 @@ pub(super) type PassAdmission = Option<DreamerControl>;
 /// When a conflict settlement ask the host withholds its ladder from may ask
 /// again, in seconds: the next home-timer pass or so.
 const CONFLICT_SETTLE_RETRY_AFTER_SECS: u64 = 60;
-
-/// The host's live ladder loan for one admitted conflict settlement ask.
-/// The attempt's binding proves the lease; this loan also checks the host's
-/// current pause and home election before every next ask starts (FIX 7376).
-/// With no bound server, under the pause or off the home node it lends no
-/// ladder: the ask refuses `MODEL_UNAVAILABLE` and the job stops there,
-/// landing what it ruled before.
-struct ConflictSettleLender {
-    question_timer: QuestionTimer,
-    admission: PassAdmission,
-}
-
-impl DreamerDecisionLender for ConflictSettleLender {
-    fn lend(
-        &self,
-        decide: &mut dyn FnMut(
-            &DecisionLadder<'_>,
-            &DecisionBandPolicy,
-        ) -> oneiron::Result<TypedDecision>,
-    ) -> oneiron::Result<TypedDecision> {
-        let withheld = oneiron::Error::ProviderUnavailable {
-            retry_after: CONFLICT_SETTLE_RETRY_AFTER_SECS,
-        };
-        let Some(server) = self.question_timer.get().and_then(std::sync::Weak::upgrade) else {
-            return Err(withheld);
-        };
-        if paused(pause(&self.admission).as_ref())
-            || !crate::decision_graph::at_home(&server, now_ms() / 1_000)?
-        {
-            return Err(withheld);
-        }
-        let host = server.decision_host();
-        decide(&host.ladder().ladder(), &host.bands())
-    }
-}
 
 /// What the gate returns for one pass, held until that pass ends; `None`
 /// when the gate refuses.
@@ -757,6 +722,15 @@ impl ObservedFactory {
                     admission: self.admission.clone(),
                 }),
                 self.settle_after.clone(),
+            )
+            .with_extraction_decisions(
+                Arc::new(extraction_decisions::ExtractionLoanGate::new(
+                    Arc::clone(&self.question_timer),
+                    self.admission.clone(),
+                    &routes,
+                    self.egress,
+                )),
+                self.serve.clone(),
             );
         if let Some(instruction) = &self.person_about_instruction {
             factory = factory.with_person_about_instruction(instruction.clone());

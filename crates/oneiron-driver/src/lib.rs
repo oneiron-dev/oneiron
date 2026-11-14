@@ -73,10 +73,10 @@ pub use supervisor::{
 };
 pub use supervisor::{
     AttachedPassFuture, ConflictSettleCursor, ConsolidationExecutorFactory, DreamerJobsExecutor,
-    LinkedShutdown, NowSeconds, PassAttachment, PassAttachmentSource, PassExecutorFactory,
-    ProgramExecutorFactory, RestartBackoffConfig, ShutdownHandle, SkillOptimizerLoan,
-    WakePassFuture, WakeSupervisor, WakeSupervisorConfig, WakeSupervisorReport,
-    WaveReadyDispatcher,
+    ExtractionAttemptLender, ExtractionDecisionGate, ExtractionDecisionResources, LinkedShutdown,
+    NowSeconds, PassAttachment, PassAttachmentSource, PassExecutorFactory, ProgramExecutorFactory,
+    RestartBackoffConfig, ShutdownHandle, SkillOptimizerLoan, WakePassFuture, WakeSupervisor,
+    WakeSupervisorConfig, WakeSupervisorReport, WaveReadyDispatcher,
 };
 pub use tick::{
     AppOpenApplyHandle, ArmedLane, AttemptQueueDeadlines, CommitmentDeadline,
