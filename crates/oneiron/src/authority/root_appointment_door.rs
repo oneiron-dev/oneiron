@@ -164,7 +164,7 @@ fn parent_set(
 
 /// The parent sets the door tries, in order (PLAN v3 section 7): for each
 /// closed conflict, smallest first, its two smallest rows, then all of its
-/// rows when they fit beside a head, each first with this install's heads
+/// rows when they fit in [`MAX_PARENTS`], each first with this install's heads
 /// and then with the root's record alone; last, the heads alone, for a
 /// roster no conflict left rootless (a handoff to a key without
 /// `ROLE_OWNER`, a revocation).
@@ -180,7 +180,7 @@ fn candidate_parents(
     for conflict in conflicts {
         let pair: Vec<AuthorityEntryHash> = conflict.iter().take(2).copied().collect();
         let mut witnesses = vec![pair];
-        if conflict.len() > 2 && conflict.len() < MAX_PARENTS {
+        if conflict.len() > 2 && conflict.len() <= MAX_PARENTS {
             witnesses.push(conflict.iter().copied().collect());
         }
         for witnesses in witnesses {

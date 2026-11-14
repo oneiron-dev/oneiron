@@ -261,10 +261,13 @@ impl<'a> StructureBuilder<'a> {
             } else if let AuthorityOp::RootAppointment(appointment) = &entry.op {
                 // The pinned root's anchor's appointment admits its
                 // successor, a root key (OWNER-ANCHOR-ROOT-RECOVERY); the
-                // anchor itself stays no admitter and no issuer. Another
+                // anchor itself stays no admitter and no issuer, and an
+                // appointment out of shape (its successor its own signer, or
+                // not in the one successor shape) admits nothing. Another
                 // anchor's admits nothing: only this install's pin counts one.
                 if self.structure.is_own_anchor(entry.signer_key())
                     && entry.cosigns.is_empty()
+                    && entry.validate_shape().is_ok()
                     && verify_entry_signatures(entry).is_ok()
                 {
                     self.admit_key(&appointment.successor, &mut admitted, &mut issued);
