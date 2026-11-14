@@ -62,6 +62,12 @@ pub struct EsignCreateRequest {
     /// the document, its trail and its held sign acts to that project, for
     /// one of its members or a vault owner only.
     pub draft: EsignDocument,
+    /// Whether the QR capability the sealed certificate prints also
+    /// downloads the sealed PDF (ARCH-0064a section 6). Off by default: each
+    /// party's own signing link stays the way to the PDF. Only the vault
+    /// owner turns it on; the owner can turn it off again at any time.
+    #[serde(default)]
+    pub qr_pdf_download: bool,
 }
 
 /// A drafted signing document, as it landed.
