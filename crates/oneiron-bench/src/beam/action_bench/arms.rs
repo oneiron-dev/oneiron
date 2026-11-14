@@ -1,5 +1,7 @@
 //! The memory arms (ARCH-0042 #action-bench): no memory, raw-history
-//! retrieval, derived only, raw plus derived, and gold-memory injection.
+//! retrieval, derived only, raw plus derived, and gold-memory injection; and
+//! the extraction arms, which read claims the vault's own Dreamer extracted
+//! from the raw turns (`extraction.rs`).
 //!
 //! The vault arms read through the agent's own read, `Memory::recall` (the
 //! `vault.recall` verb), with `RecallScope::kinds` naming what the arm may
@@ -44,6 +46,14 @@ pub(super) enum MemoryArm {
     RawPlusDerived,
     /// The follow-up's gold memory as the context; the vault is never read.
     Gold,
+    /// Online extraction only: the Dreamer's Micro lane after each turn.
+    /// Reads claims, as `derived` does, from a vault holding only the turns.
+    ExtractOnline,
+    /// Background extraction only: the Meso lane at each sitting's end and
+    /// the timer Macro lane at the freeze.
+    ExtractBackground,
+    /// Both, the shipped schedule.
+    ExtractCombined,
 }
 
 impl MemoryArm {
@@ -53,9 +63,50 @@ impl MemoryArm {
         match self {
             Self::None | Self::Gold => None,
             Self::Raw => Some(RAW_KINDS.to_vec()),
-            Self::Derived => Some(DERIVED_KINDS.to_vec()),
+            Self::Derived
+            | Self::ExtractOnline
+            | Self::ExtractBackground
+            | Self::ExtractCombined => Some(DERIVED_KINDS.to_vec()),
             Self::RawPlusDerived => Some(RAW_KINDS.iter().chain(&DERIVED_KINDS).copied().collect()),
         }
+    }
+
+    /// Whether the arm's claims come from the vault's own extraction of the
+    /// turns, not from the history's authored claims.
+    pub(super) fn extracts(self) -> bool {
+        matches!(
+            self,
+            Self::ExtractOnline | Self::ExtractBackground | Self::ExtractCombined
+        )
+    }
+}
+
+/// What an arm's recall reads: one vault, its owner and its worlds.
+pub(super) struct VaultView<'v> {
+    pub(super) vault: &'v Vault,
+    pub(super) owner: EntityId,
+    pub(super) worlds: &'v BTreeMap<String, EntityId>,
+}
+
+impl VaultView<'_> {
+    fn memory(&self) -> Memory<'_> {
+        self.vault.memory(self.owner, EdgeActorClass::Human)
+    }
+
+    /// The follow-up's world as a recall names it; none for base reality.
+    fn world_ref(&self, follow_up: &FollowUp) -> BeamResult<Option<String>> {
+        follow_up
+            .world
+            .as_ref()
+            .map(|name| {
+                self.worlds.get(name).map(EntityId::to_hex).ok_or_else(|| {
+                    BeamError::InvalidFixture {
+                        fixture_id: follow_up.id.clone(),
+                        reason: format!("action bench world `{name}` is not in the vault"),
+                    }
+                })
+            })
+            .transpose()
     }
 }
 
@@ -117,30 +168,18 @@ impl HistoryVault {
         self.worlds.len()
     }
 
-    fn memory(&self) -> Memory<'_> {
-        self.vault.memory(self.owner, EdgeActorClass::Human)
-    }
-
-    /// The follow-up's world as a recall names it; none for base reality.
-    fn world_ref(&self, follow_up: &FollowUp) -> BeamResult<Option<String>> {
-        follow_up
-            .world
-            .as_ref()
-            .map(|name| {
-                self.worlds.get(name).map(EntityId::to_hex).ok_or_else(|| {
-                    BeamError::InvalidFixture {
-                        fixture_id: follow_up.id.clone(),
-                        reason: format!("action bench world `{name}` is not in the vault"),
-                    }
-                })
-            })
-            .transpose()
+    pub(super) fn view(&self) -> VaultView<'_> {
+        VaultView {
+            vault: &self.vault,
+            owner: self.owner,
+            worlds: &self.worlds,
+        }
     }
 }
 
 /// Creates the history's worlds as its owner, with the proof the server's
 /// `local_owner` builds: the embedded owner, authenticated on this open.
-fn create_worlds(
+pub(super) fn create_worlds(
     vault: &Vault,
     owner: EntityId,
     names: &[String],
@@ -310,7 +349,11 @@ fn events(history: &History) -> Vec<Event<'_>> {
 }
 
 /// Witnesses one turn of one message: the message's id.
-fn witness(memory: &Memory<'_>, conversation: EntityId, turn: &Turn) -> Result<EntityId, String> {
+pub(super) fn witness(
+    memory: &Memory<'_>,
+    conversation: EntityId,
+    turn: &Turn,
+) -> Result<EntityId, String> {
     let message = EntityId::now();
     memory
         .witness(&WitnessTurn {
@@ -375,7 +418,7 @@ fn delete(vault: &Vault, id: &EntityId) -> Result<bool, String> {
 
 /// The owner's delete of a message they wrote, as a user's delete of what
 /// they said runs: whether the message stood.
-fn delete_message(
+pub(super) fn delete_message(
     vault: &Vault,
     conversation: EntityId,
     message: EntityId,
@@ -392,7 +435,7 @@ fn delete_message(
         .map_err(|error| error.to_string())
 }
 
-fn memory_failure(history: &str, reason: &str) -> BeamError {
+pub(super) fn memory_failure(history: &str, reason: &str) -> BeamError {
     BeamError::InvalidFixture {
         fixture_id: history.to_owned(),
         reason: format!("action bench history write refused: {reason}"),
@@ -408,7 +451,7 @@ pub(super) struct ArmContext {
 }
 
 pub(super) fn context(
-    seeded: &HistoryVault,
+    view: &VaultView<'_>,
     arm: MemoryArm,
     follow_up: &FollowUp,
     recall_limit: usize,
@@ -432,12 +475,12 @@ pub(super) fn context(
     // A follow-up in a world reads that world and base reality, as an agent
     // acting in it does; one with no world reads base reality only.
     let scope = RecallScope {
-        world_ref: seeded.world_ref(follow_up)?,
+        world_ref: view.world_ref(follow_up)?,
         kinds: Some(kinds.iter().map(|kind| (*kind).to_owned()).collect()),
         ..RecallScope::default()
     };
     let started = Instant::now();
-    let pack = seeded
+    let pack = view
         .memory()
         .recall(
             &follow_up.prompt,

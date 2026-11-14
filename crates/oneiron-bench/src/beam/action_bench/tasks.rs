@@ -491,6 +491,38 @@ fn lines<S: AsRef<str>>(items: impl Iterator<Item = S>) -> String {
     })
 }
 
+/// When the history's correction happened, as an extraction arm probes it
+/// (ARCH-0042 #action-bench, "probed right after a correction"): the time of
+/// the first claim before the freeze whose slot (predicate and world) an
+/// earlier claim already holds, when a user turn was said at that time. That
+/// turn is the correcting turn. An extraction arm needs one: with none, the
+/// history fails the trace check's world part.
+pub(super) fn correction_point(history: &History) -> BeamResult<u64> {
+    let mut held: Vec<&DerivedClaim> = history
+        .claims
+        .iter()
+        .filter(|claim| claim.at < history.frozen_at)
+        .collect();
+    held.sort_by_key(|claim| claim.at);
+    let mut slots = BTreeSet::new();
+    for claim in held {
+        let fresh = slots.insert((claim.predicate.as_str(), claim.world.as_deref()));
+        if !fresh
+            && history
+                .turns
+                .iter()
+                .any(|turn| turn.at == claim.at && matches!(turn.author, TurnAuthor::User))
+        {
+            return Ok(claim.at);
+        }
+    }
+    Err(invalid(
+        &history.id,
+        "world",
+        "an extraction arm needs a correction: a later claim on a slot an earlier claim holds, said in a user turn",
+    ))
+}
+
 /// The question the reader sees: the follow-up's prompt and its tools, each
 /// field with its options, and nothing else of the follow-up.
 pub(super) fn question(follow_up: &FollowUp) -> String {

@@ -115,103 +115,126 @@ pub(super) struct ModelSession {
     pins: PinnedModelConfig,
     pub prices: PriceTable,
 }
-impl ModelSession {
-    pub(super) fn connect(config: HostConfig, models: &[ModelPin]) -> BeamResult<Self> {
-        let url =
-            reqwest::Url::parse(&config.endpoint).map_err(|_| refusal("invalid LLM endpoint"))?;
-        let loopback = url
-            .host_str()
-            .is_some_and(|h| matches!(h, "localhost" | "127.0.0.1" | "[::1]" | "::1"));
-        if (!loopback && url.scheme() != "https")
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.query().is_some()
+/// One pinned model the shipped adapter serves over this host's transport,
+/// at the locality its catalog row names.
+pub(super) struct ServedModel {
+    pub(super) model_id: ModelId,
+    pub(super) provider_model: String,
+    pub(super) max_output_tokens: Option<u64>,
+    pub(super) locality: ModelLocality,
+}
+/// The shipped OpenAI-compatible adapter over this host's HTTP transport,
+/// its catalog holding exactly `models`, each priced from the host's table.
+pub(super) fn served_backend(
+    config: &HostConfig,
+    models: &[ServedModel],
+) -> BeamResult<Box<dyn LlmBackend>> {
+    let url = reqwest::Url::parse(&config.endpoint).map_err(|_| refusal("invalid LLM endpoint"))?;
+    let loopback = url
+        .host_str()
+        .is_some_and(|h| matches!(h, "localhost" | "127.0.0.1" | "[::1]" | "::1"));
+    if (!loopback && url.scheme() != "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+    {
+        return Err(refusal(
+            "LLM endpoint requires HTTPS (except loopback), and no URL credentials",
+        ));
+    }
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Some(name) = &config.api_key_env {
+        let key =
+            std::env::var(name).map_err(|_| refusal("LLM key environment variable is missing"))?;
+        let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {key}"))
+            .map_err(|_| refusal("invalid authorization value"))?;
+        value.set_sensitive(true);
+        headers.insert(reqwest::header::AUTHORIZATION, value);
+    }
+    let client = reqwest::Client::builder()
+        .default_headers(headers)
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|_| refusal("LLM HTTP client creation failed"))?;
+    let mut mappings = BTreeMap::new();
+    let mut catalog = Vec::new();
+    for model in models {
+        let Some(price) = config.prices.models.get(&model.model_id) else {
+            return Err(refusal("model pin, params or price missing"));
+        };
+        if model.provider_model.is_empty() {
+            return Err(refusal("model pin, params or price missing"));
+        }
+        if let Some(previous) = mappings.insert(
+            model.model_id.name().to_owned(),
+            model.provider_model.clone(),
+        ) && previous != model.provider_model
         {
-            return Err(refusal(
-                "LLM endpoint requires HTTPS (except loopback), and no URL credentials",
-            ));
+            return Err(refusal("ambiguous model revision mapping"));
         }
-        let mut headers = reqwest::header::HeaderMap::new();
-        if let Some(name) = &config.api_key_env {
-            let key = std::env::var(name)
-                .map_err(|_| refusal("LLM key environment variable is missing"))?;
-            let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {key}"))
-                .map_err(|_| refusal("invalid authorization value"))?;
-            value.set_sensitive(true);
-            headers.insert(reqwest::header::AUTHORIZATION, value);
-        }
-        let client = reqwest::Client::builder()
-            .default_headers(headers)
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(std::time::Duration::from_secs(120))
-            .build()
-            .map_err(|_| refusal("LLM HTTP client creation failed"))?;
-        let mut mappings = BTreeMap::new();
-        let mut catalog = Vec::new();
-        for pin in models {
-            if pin.provider_model.is_empty()
-                || pin.max_tokens == 0
-                || !pin.temperature.is_finite()
-                || !(0.0..=2.0).contains(&pin.temperature)
-                || !config.prices.models.contains_key(&pin.model_id)
-            {
-                return Err(refusal("model pin, params or price missing"));
-            }
-            if let Some(previous) =
-                mappings.insert(pin.model_id.name().to_owned(), pin.provider_model.clone())
-                && previous != pin.provider_model
-            {
-                return Err(refusal("ambiguous model revision mapping"));
-            }
-            catalog.push(LlmCatalogEntry {
-                model: pin.model_id.clone(),
-                display_name: pin.provider_model.clone(),
-                locality: ModelLocality::ThirdParty,
-                context_window_tokens: 1_000_000,
-                max_output_tokens: Some(pin.max_tokens),
-                cost: None,
-                capabilities: Vec::new(),
-                metadata: BTreeMap::new(),
-            });
-        }
-        // Load only this run's pinned models through the adapter's registry door.
-        let registry_dir = tempfile::tempdir()?;
-        let registry = oneiron::Vault::open(registry_dir.path(), super::util::beam_vault_config())?;
-        for mut entry in catalog {
-            let price = &config.prices.models[&entry.model];
-            entry.cost = Some(LlmCatalogCost {
+        catalog.push(LlmCatalogEntry {
+            model: model.model_id.clone(),
+            display_name: model.provider_model.clone(),
+            locality: model.locality,
+            context_window_tokens: 1_000_000,
+            max_output_tokens: model.max_output_tokens,
+            cost: Some(LlmCatalogCost {
                 input_per_million: price.input_per_million.to_string(),
                 output_per_million: price.output_per_million.to_string(),
                 cache_read_per_million: Some(price.cache_read_per_million.to_string()),
                 cache_write_per_million: Some(price.cache_write_per_million.to_string()),
                 // The run's price table is in US dollars (`cost_usd`).
                 currency: Some("USD".to_owned()),
-            });
-            registry.put_model_registry_row(&ModelRegistryRow {
-                version: 1,
-                wire: ModelWireFormat::OpenaiCompat,
-                catalog: entry,
-                scores: BTreeMap::new(),
-                fetched_at: BTreeMap::new(),
-                tokens_per_o200k: None,
-                stale_since: None,
-                source_rows: None,
-            })?;
+            }),
+            capabilities: Vec::new(),
+            metadata: BTreeMap::new(),
+        });
+    }
+    // Load only this run's pinned models through the adapter's registry door.
+    let registry_dir = tempfile::tempdir()?;
+    let registry = oneiron::Vault::open(registry_dir.path(), super::util::beam_vault_config())?;
+    for entry in catalog {
+        registry.put_model_registry_row(&ModelRegistryRow {
+            version: 1,
+            wire: ModelWireFormat::OpenaiCompat,
+            catalog: entry,
+            scores: BTreeMap::new(),
+            fetched_at: BTreeMap::new(),
+            tokens_per_o200k: None,
+            stale_since: None,
+            source_rows: None,
+        })?;
+    }
+    Ok(Box::new(OpenAiCompatBackend::new(
+        OpenAiCompatConfig::from_registry(&registry)?,
+        HttpTransport {
+            client,
+            endpoint: config.endpoint.clone(),
+            models: mappings,
+        },
+    )))
+}
+impl ModelSession {
+    pub(super) fn connect(config: HostConfig, models: &[ModelPin]) -> BeamResult<Self> {
+        if models.iter().any(|pin| {
+            pin.max_tokens == 0
+                || !pin.temperature.is_finite()
+                || !(0.0..=2.0).contains(&pin.temperature)
+        }) {
+            return Err(refusal("model pin, params or price missing"));
         }
-        let backend = OpenAiCompatBackend::new(
-            OpenAiCompatConfig::from_registry(&registry)?,
-            HttpTransport {
-                client,
-                endpoint: config.endpoint,
-                models: mappings,
-            },
-        );
-        Self::with_backend(
-            Box::new(backend),
-            config.prices,
-            models,
-            config.token_budget,
-        )
+        let served: Vec<ServedModel> = models
+            .iter()
+            .map(|pin| ServedModel {
+                model_id: pin.model_id.clone(),
+                provider_model: pin.provider_model.clone(),
+                max_output_tokens: Some(pin.max_tokens),
+                locality: ModelLocality::ThirdParty,
+            })
+            .collect();
+        let backend = served_backend(&config, &served)?;
+        Self::with_backend(backend, config.prices, models, config.token_budget)
     }
     pub(super) fn with_backend(
         backend: Box<dyn LlmBackend>,
