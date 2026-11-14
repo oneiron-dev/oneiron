@@ -100,8 +100,8 @@ impl Vault {
 
     /// Deletes the record or file a found key sits in, through the owner's
     /// delete door ([`crate::Memory::safe_delete`], a hard delete with its
-    /// redaction receipt), and settles every key found there. The key's
-    /// custody record stays: rotate or revoke it on its own.
+    /// redaction receipt), and settles every key and file seal found there.
+    /// The key's custody record stays: rotate or revoke it on its own.
     ///
     /// # Errors
     /// What the delete door returns; [`GateError::ConsentOwnerNotAuthenticated`]
@@ -142,6 +142,11 @@ impl Vault {
             if let Some(mut found) = FOUND.get(&self.store, txn, &record)? {
                 for key in found.keys.iter_mut().filter(|key| !key.kept_by_owner()) {
                     key.settled = Some(settled.clone());
+                }
+                // A file the record held sealed whole goes with it: its seal
+                // closes, and its bytes' mark stays (REVIEW-7887 F2).
+                for seal in found.seals.iter_mut().filter(|seal| seal.settled.is_none()) {
+                    seal.settled = Some(settled.clone());
                 }
                 FOUND.put(&self.store, txn, &record, &found)?;
             }
