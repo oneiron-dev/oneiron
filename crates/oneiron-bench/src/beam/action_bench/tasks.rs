@@ -165,7 +165,7 @@ fn check(file: &TaskFile) -> BeamResult<()> {
 }
 
 /// The four parts (world, intent, tools, grader), then the leak clause:
-/// RULING L9-34-TRACE-LEAK option A, pending. The workspace is the
+/// RULING L9-34-TRACE-LEAK = A (Engine 14 Nov 09:31). The workspace is the
 /// follow-up's own inputs (its prompt and tool descriptions; an option list
 /// may name the answer among others), and each expected value is stated in
 /// the frozen history and the gold memory, else memory cannot answer.
