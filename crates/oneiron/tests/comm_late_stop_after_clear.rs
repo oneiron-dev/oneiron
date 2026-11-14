@@ -5,9 +5,14 @@
 //! provider webhook, a peer's copy by sync) used to be retracted at the
 //! clear's ruling, so the outcome depended on the order of arrival.
 //!
+//! Sync imports the head a clear closed and the clear's receipt as separate
+//! rows. A late STOP that finds the closed head here before the receipt
+//! stands: no receipt says the clear answers it (review round 1).
+//!
 //! The vault is unseeded, as in `comm_unprojected_stop_clear.rs`, so the
-//! unseeded opener needs the test-support feature. The peer leg reaches a
-//! crate-private door, so it also needs `--cfg oneiron_test_support`.
+//! unseeded opener needs the test-support feature. The peer and in-flight
+//! receipt legs reach crate-private doors, so they also need
+//! `--cfg oneiron_test_support`.
 #![cfg(feature = "test-support")]
 
 use oneiron::comm::{
@@ -89,7 +94,7 @@ fn late_stop_before_the_request_is_cleared_by_the_approval() {
 #[cfg(oneiron_test_support)]
 #[test]
 fn peer_late_stop_after_the_request_keeps_holding() {
-    use oneiron::test_doors::comm_peer_stop::{
+    use oneiron::test_doors::comm_late_stop::{
         mark_recorded_stop_peer_projected, recorded_stop_holds,
     };
 
@@ -108,5 +113,42 @@ fn peer_late_stop_after_the_request_keeps_holding() {
         recorded_stop_holds(&vault, &stop).expect("read the hold"),
         "the clear requested at 20 does not answer the peer's STOP@30: it holds until the \
          peer's opt-out arrives"
+    );
+}
+
+#[cfg(oneiron_test_support)]
+#[test]
+fn late_stop_before_the_clear_receipt_arrives_stands() {
+    use oneiron::test_doors::comm_late_stop::{
+        deliver_withheld_clear_receipts, withhold_clear_receipts,
+    };
+
+    let (_directory, vault) = open_vault();
+    clear_an_opt_out_requested_at_20_and_approved_at_40(&vault);
+    // Sync has imported STOP@10's head, closed at 40, and not yet the
+    // clear's receipt, which says the clear was requested at 20.
+    assert_eq!(
+        withhold_clear_receipts(&vault, PARTY, CHANNEL).expect("withhold the receipt"),
+        1
+    );
+    record_comm_inbound_stop(&vault, PARTY, CHANNEL, 30).expect("record STOP@30 late");
+    run_comm_projector(&vault).expect("project STOP@30 before the receipt");
+
+    assert_eq!(
+        standing_opt_outs(&vault),
+        1,
+        "no receipt says the close at 40 answers STOP@30: STOP@30 stands"
+    );
+
+    assert_eq!(
+        deliver_withheld_clear_receipts(&vault, PARTY, CHANNEL).expect("deliver the receipt"),
+        1
+    );
+    run_comm_projector(&vault).expect("run the pass with the receipt");
+
+    assert_eq!(
+        standing_opt_outs(&vault),
+        1,
+        "the receipt says the clear was requested at 20, before STOP@30: STOP@30 still stands"
     );
 }

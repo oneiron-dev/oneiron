@@ -184,7 +184,7 @@ pub(super) fn peer_stop_projection_in_txn(
     Ok(answered_later.then_some(false))
 }
 
-/// Test door (`test_doors::comm_peer_stop`): rewrites the STOP recorded on
+/// Test door (`test_doors::comm_late_stop`): rewrites the STOP recorded on
 /// `party`'s `channel_class` at `occurred_at` as a peer's copy whose peer has
 /// already projected it, keeping the hold its first sighting here armed.
 /// Answers the event id.
@@ -227,4 +227,82 @@ pub(crate) fn mark_recorded_stop_peer_projected(
 pub(crate) fn recorded_stop_holds(vault: &Vault, event_id: &EntityId) -> CommResult<bool> {
     let rtxn = vault.store.env.read_txn()?;
     Ok(holds_pending_stop_in_txn(&vault.store, &rtxn, event_id)?)
+}
+
+/// The outcome the test door gives an approved clear's receipt it keeps from
+/// this replica's reads, as sync leaves a receipt that is still in flight.
+#[cfg(oneiron_test_support)]
+const WITHHELD_CLEAR_RECEIPT_OUTCOME: &str = "test_withheld_comm_opt_out_clear_approved";
+
+/// Test door: rewrites the outcome `from` of each receipt on `party`'s
+/// `channel_class` slot to `to`. Answers how many it rewrote.
+#[cfg(oneiron_test_support)]
+fn rewrite_clear_receipt_outcomes(
+    vault: &Vault,
+    party: &str,
+    channel_class: &str,
+    from: &str,
+    to: &str,
+) -> CommResult<usize> {
+    let party_ref = super::parties::resolve_party(vault, party)?.ok_or(CommError::InvalidRecord)?;
+    let channel = crate::counterparty_contact::normalize_channel_class(channel_class);
+    vault.try_with_write_txn_grouped(|wtxn| {
+        let mut rewritten = 0_usize;
+        for (receipt_id, mut record) in super::records::comm_records_in_txn(vault, &*wtxn)? {
+            let CommRecord::Receipt {
+                party_ref: receipt_party,
+                channel_class: receipt_channel,
+                outcome,
+                ..
+            } = &mut record
+            else {
+                continue;
+            };
+            if *receipt_party != party_ref
+                || crate::counterparty_contact::normalize_channel_class(receipt_channel) != channel
+                || outcome.as_str() != from
+            {
+                continue;
+            }
+            to.clone_into(outcome);
+            super::records::put_comm_record_in_txn(vault, wtxn, receipt_id, &record)?;
+            rewritten += 1;
+        }
+        Ok(rewritten)
+    })
+}
+
+/// Test door: keeps each approved clear's receipt on `party`'s
+/// `channel_class` slot from this replica's reads, as a receipt sync has not
+/// imported yet. Answers how many it withheld.
+#[cfg(oneiron_test_support)]
+pub(crate) fn withhold_clear_receipts(
+    vault: &Vault,
+    party: &str,
+    channel_class: &str,
+) -> CommResult<usize> {
+    rewrite_clear_receipt_outcomes(
+        vault,
+        party,
+        channel_class,
+        super::consent::OPT_OUT_CLEAR_APPROVED,
+        WITHHELD_CLEAR_RECEIPT_OUTCOME,
+    )
+}
+
+/// Test door: delivers the receipts `withhold_clear_receipts` withheld.
+/// Answers how many it delivered.
+#[cfg(oneiron_test_support)]
+pub(crate) fn deliver_withheld_clear_receipts(
+    vault: &Vault,
+    party: &str,
+    channel_class: &str,
+) -> CommResult<usize> {
+    rewrite_clear_receipt_outcomes(
+        vault,
+        party,
+        channel_class,
+        WITHHELD_CLEAR_RECEIPT_OUTCOME,
+        super::consent::OPT_OUT_CLEAR_APPROVED,
+    )
 }
