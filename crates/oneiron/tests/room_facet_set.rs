@@ -10,6 +10,12 @@
 //! written through the `room_facet_set` door (the owner's door), or signed by
 //! the host in a row it puts.
 //!
+//! PR 3, the owner's verb `vault.projects.room_facets.set`: its host door
+//! runs the owner's door from the verb's request with the host's signer, and
+//! the embedded handle, which holds no host issuer, sends the call to that
+//! door. A writer's own signed set needs no new argument: the roster write's
+//! `record` is the whole signed row.
+//!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test room_facet_set`.
 #![cfg(oneiron_test_support)]
@@ -20,9 +26,15 @@ use oneiron::federation::{ScopeAxis, ScopeId};
 use oneiron::registry::ENTITY_TYPE_FACET;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::room_facet_limit::room_facet_axis;
-use oneiron::test_doors::room_facet_set::{set_room_facets, with_room_facets};
-use oneiron::workspace_roster::{OwnerProjectSigner, ProjectRecord, ProjectWriteProof};
-use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::test_doors::room_facet_set::{
+    set_room_facets, set_room_facets_by_request, with_room_facets,
+};
+use oneiron::workspace_roster::{
+    OwnerProjectSigner, ProjectProofVersion, ProjectRecord, ProjectRosterWriteRequest,
+    ProjectWriteProof,
+};
+use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -51,6 +63,16 @@ impl Fixture {
             &self.signer()?,
             project,
             facets,
+        )?)
+    }
+
+    /// The owner's verb as its host door runs it, from `request`.
+    fn set_by_request(&self, request: Value) -> TestResult<Value> {
+        Ok(set_room_facets_by_request(
+            &self.vault,
+            &self.owner_proof,
+            &self.signer()?,
+            request,
         )?)
     }
 
@@ -313,5 +335,95 @@ fn a_set_outside_the_writers_slip_facets_is_refused() -> TestResult {
         "a slip that reaches only the slice facet signs no wider set"
     );
     assert_eq!(fixture.reads(home)?, axis([work]));
+    Ok(())
+}
+
+#[test]
+fn the_owners_verb_sets_and_drops_a_set() -> TestResult {
+    let fixture = open()?;
+    let (work, health) = (facet(&fixture)?, facet(&fixture)?);
+    let (id, home) = project(&fixture, None, work, 1, true)?;
+    let set = fixture.set_by_request(json!({
+        "project": id,
+        "room_facets": [work, health],
+    }))?;
+    assert_eq!(
+        set["room_facets"],
+        json!(facets([work, health])),
+        "the answer names the set the room now reads through"
+    );
+    assert_eq!(fixture.reads(home)?, axis([work, health]));
+
+    let dropped = fixture.set_by_request(json!({ "project": id }))?;
+    assert!(
+        dropped["room_facets"].is_null(),
+        "a request naming no set drops it"
+    );
+    assert_ne!(
+        set["revision"], dropped["revision"],
+        "each set lands as its own signed state"
+    );
+    assert_eq!(fixture.reads(home)?, axis([work]));
+
+    assert!(
+        fixture
+            .set_by_request(json!({ "project": id, "room_facets": [health] }))
+            .is_err(),
+        "the verb keeps the door's rules: a set holds its project's own facet"
+    );
+    assert!(
+        fixture
+            .set_by_request(json!({ "project": id, "facets": [work] }))
+            .is_err(),
+        "a request field the verb does not name is refused"
+    );
+    assert_eq!(fixture.reads(home)?, axis([work]));
+    Ok(())
+}
+
+#[test]
+fn the_embedded_handle_sends_the_owners_verb_to_the_host() -> TestResult {
+    let fixture = open()?;
+    let (work, health) = (facet(&fixture)?, facet(&fixture)?);
+    let (id, home) = project(&fixture, None, work, 1, true)?;
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let refused = oneiron::task_verb::sdk::invoke(
+        &memory,
+        "vault.projects.room_facets.set",
+        json!({ "project": id, "room_facets": [work, health] }),
+    )
+    .map(drop)
+    .map_err(|error| format!("{error:?}"))
+    .err()
+    .ok_or("the embedded handle holds no host signer, so it sets no room facet set")?;
+    assert!(
+        refused.contains("authenticated owner and owner signer"),
+        "the refusal sends the owner to the host's door, not an unknown verb: {refused}"
+    );
+    assert_eq!(fixture.reads(home)?, axis([work]));
+    Ok(())
+}
+
+#[test]
+fn a_roster_write_request_carries_a_writers_signed_set() -> TestResult {
+    let fixture = open()?;
+    let (work, health) = (facet(&fixture)?, facet(&fixture)?);
+    let (id, _) = project(&fixture, None, work, 1, true)?;
+    let mut body = fixture.vault.project(id)?.ok_or("the project reads")?;
+    sign_as_host(&fixture, id, &mut body, Some(facets([work, health])), None)?;
+    let request: ProjectRosterWriteRequest = serde_json::from_value(json!({
+        "project": id,
+        "record": serde_json::to_value(&body)?,
+    }))?;
+    assert_eq!(
+        request.record.room_facets,
+        Some(facets([work, health])),
+        "vault.projects.roster.write's record carries the writer's set as signed"
+    );
+    assert_eq!(
+        request.record.write_proof.map(|proof| proof.version),
+        Some(ProjectProofVersion::V4),
+        "with the v4 proof that signs it"
+    );
     Ok(())
 }
