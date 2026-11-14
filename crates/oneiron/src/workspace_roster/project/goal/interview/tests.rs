@@ -202,10 +202,19 @@ fn opened_interview() -> Result<Interview> {
     let header = say(&vault, room, human, HUMAN, "A goal", None, 3);
     let card = EntityId::now().to_hex();
     vault.put_minted_card_for_test(&card, project, agent, human, (room, EntityId::now()))?;
-    let Some(AgentDispatchOutcome::Dispatched(first)) =
-        vault.open_project_goal_interview(&owner, &card, project, room, agent, 4)?
-    else {
-        panic!("the opening dispatches the leader's first intake run");
+    // The opening anchors on the header as the owner reads it: the owner's
+    // own trunk turn.
+    let read = vault.memory(human, HUMAN).rooms_messages(room).unwrap();
+    assert!(
+        read.iter().any(|turn| turn.turn_id == header.to_hex()
+            && turn.actor == human.to_hex()
+            && turn.thread_of.is_none()
+            && turn.reply_to.is_none()),
+        "the owner reads the header as their own trunk turn: {read:?}"
+    );
+    let first = match vault.open_project_goal_interview(&owner, &card, project, room, agent, 4)? {
+        Some(AgentDispatchOutcome::Dispatched(first)) => first,
+        other => panic!("the opening dispatches the leader's first intake run, not {other:?}"),
     };
     let context = vault.project_goal_interview_context(project, true)?;
     let thread = context
