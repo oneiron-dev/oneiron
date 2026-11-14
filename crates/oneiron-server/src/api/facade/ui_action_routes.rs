@@ -64,7 +64,7 @@ use oneiron::claim::ScopedReadResult;
 use oneiron::code_run::live_run::is_live_run_verb;
 use oneiron::lens::{
     GeneratedUiActionEvent, GeneratedUiStreamProfile, GeneratedUiSurfaceCapabilities,
-    GeneratedUiValidatedAction, LensDefaultRequest, LensFrameCard, LensRenderId,
+    GeneratedUiValidatedAction, HostedLensRender, LensDefaultRequest, LensFrameCard, LensRenderId,
 };
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, MemoryError,
@@ -131,27 +131,44 @@ pub(crate) async fn vault_lenses_default(
     let Ok((rendered, listed)) = rendered else {
         return (Err(internal("vault.lenses.default")), Vec::new());
     };
-    let answer = rendered.and_then(|ScopedReadResult { value, receipt }| {
-        let (frame, card) = value.lower(&surface)?;
-        match owner {
-            Some(owner) => {
-                server.lens_frames.replace_for_subscription(
-                    auth,
-                    frame,
-                    card.render.clone(),
-                    owner,
-                )?;
-            }
-            None => server
-                .lens_frames
-                .record(auth, frame, card.render.clone())?,
+    let answer = match rendered {
+        Ok(ScopedReadResult { value, receipt }) => {
+            hold_default_card(server, auth, owner, value, &surface)
+                .await
+                .map(|card| ScopedReadResult {
+                    value: card,
+                    receipt,
+                })
         }
-        Ok(ScopedReadResult {
-            value: card,
-            receipt,
-        })
-    });
+        Err(refusal) => Err(refusal),
+    };
     (answer, listed)
+}
+
+/// Lowers the default lens for `surface` and holds its frame for the
+/// card's events: a run-held render (`owner`) replaces the card its run
+/// last rendered for the subscription and carries that card's `$state`,
+/// so the card answered is the render as held.
+async fn hold_default_card(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    owner: Option<CardOwner>,
+    hosted: HostedLensRender,
+    surface: &GeneratedUiSurfaceCapabilities,
+) -> MemoryResult<LensFrameCard> {
+    let (frame, mut card) = hosted.lower(surface)?;
+    match owner {
+        Some(owner) => {
+            card.render = server
+                .lens_frames
+                .replace_for_subscription(auth, frame, card.render.clone(), owner)
+                .await?;
+        }
+        None => server
+            .lens_frames
+            .record(auth, frame, card.render.clone())?,
+    }
+    Ok(card)
 }
 
 /// One event's body: the client's event, the key its dispatch replays

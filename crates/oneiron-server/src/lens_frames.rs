@@ -37,7 +37,10 @@
 //! creating run and the subscription key, both host-only. A successful
 //! re-render replaces that run's previous card for the same subscription
 //! ([`LensFrameStore::replace_for_subscription`]); a failed one never calls
-//! it, so the last good card stays. When the run ends, its retirement hook
+//! it, so the last good card stays. The new card carries the replaced
+//! card's `$state` key by key, where it declares the key with the same kind
+//! and its `$bind`s accept the value (GENUI-STATE-PERSIST, Engine ruling
+//! 14 Nov 05:40). When the run ends, its retirement hook
 //! (L09: settle, prune, cancel) closes every card it created
 //! ([`LensFrameStore::close_run`]); a durably parked run is not ended, so it
 //! keeps its cards. Concurrent renders of other runs or subscriptions are
@@ -183,16 +186,20 @@ impl LensFrameStore {
     /// [`Self::record`] for a run's successful render of a live
     /// subscription: holds the new card with its `owner`, then closes every
     /// other card the same caller holds from the same run for the same
-    /// subscription. A card the retained line cannot hold replaces nothing,
-    /// so the last good card stays. Answers how many cards it replaced.
-    pub(crate) fn replace_for_subscription(
+    /// subscription. The new card carries the `$state` of the card it
+    /// replaces ([`GeneratedUiRender::carry_state`]). A card the retained
+    /// line cannot hold replaces nothing, so the last good card stays.
+    /// Answers the render as held, its `$state` carried: the render the
+    /// caller hands its client.
+    pub(crate) async fn replace_for_subscription(
         &self,
         auth: &CoreAuth,
         frame: LensRenderFrame,
         render: GeneratedUiRender,
         owner: CardOwner,
-    ) -> MemoryResult<usize> {
+    ) -> MemoryResult<GeneratedUiRender> {
         self.replace_held(Custody::of(auth), frame, render, owner)
+            .await
     }
 
     /// [`Self::replace_for_subscription`] for a card a pumped run rendered
@@ -200,28 +207,44 @@ impl LensFrameStore {
     /// custody is the run's own, which no credential's matches. No
     /// credential closes it; its run's retirement does
     /// ([`Self::close_run`]).
-    pub(crate) fn replace_for_run(
+    pub(crate) async fn replace_for_run(
         &self,
         run: EntityId,
         frame: LensRenderFrame,
         render: GeneratedUiRender,
         owner: CardOwner,
-    ) -> MemoryResult<usize> {
+    ) -> MemoryResult<GeneratedUiRender> {
         self.replace_held(Custody::of_run(run), frame, render, owner)
+            .await
     }
 
     /// Holds a card with `owner` under `custody`, then closes every other
     /// card the same custody holds for the same owner and subscription.
-    fn replace_held(
+    ///
+    /// The new card carries the `$state` of the newest of those cards. Its
+    /// state lock is held from the read of that state until the card is
+    /// closed: an event in flight on it finishes first, so the state it
+    /// leaves is the one carried, and an event after it finds the card gone
+    /// and answers the re-render refusal.
+    async fn replace_held(
         &self,
         custody: Custody,
         frame: LensRenderFrame,
-        render: GeneratedUiRender,
+        mut render: GeneratedUiRender,
         owner: CardOwner,
-    ) -> MemoryResult<usize> {
+    ) -> MemoryResult<GeneratedUiRender> {
         let card = render.card_id.clone();
+        let previous = self.newest_superseded(&custody, &owner, &card);
+        let previous_state = match &previous {
+            Some(held) => Some(held.state.lock().await),
+            None => None,
+        };
+        if let Some(state) = &previous_state {
+            render.carry_state(state);
+        }
+        let answered = render.clone();
         if !self.hold(custody.clone(), frame, render, Some(owner.clone()))? {
-            return Ok(0);
+            return Ok(answered);
         }
         let mut frames = self.lock();
         let superseded: Vec<u64> = frames
@@ -239,7 +262,31 @@ impl LensFrameStore {
             frames.evict(*arrival);
         }
         frames.settle(&self.line, &self.questions);
-        Ok(superseded.len())
+        drop(frames);
+        drop(previous_state);
+        Ok(answered)
+    }
+
+    /// The newest card other than `card` that `custody` holds for `owner`'s
+    /// subscription: the card a replace for it supersedes last. `None` for
+    /// a one-off owner, which no re-render replaces.
+    fn newest_superseded(
+        &self,
+        custody: &Custody,
+        owner: &CardOwner,
+        card: &LensRenderId,
+    ) -> Option<Arc<HeldCard>> {
+        if owner.subscription.is_none() {
+            return None;
+        }
+        self.lock()
+            .cards
+            .iter()
+            .filter(|(held, entry)| {
+                entry.custody == *custody && *held != card && entry.owner.as_ref() == Some(owner)
+            })
+            .max_by_key(|(_, entry)| entry.arrival)
+            .map(|(_, entry)| Arc::clone(&entry.card))
     }
 
     /// Closes every card the run `creator_run` created, whoever's caller it
