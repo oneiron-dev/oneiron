@@ -110,6 +110,7 @@ fn owner_hold_never_refuses_the_owners_erase() -> TestResult {
             record: id,
             preview_digest: preview.preview_digest,
             also_same_bytes: false,
+            check_in_ref: None,
         },
     )
     .map_err(at("erase confirm"))?;
