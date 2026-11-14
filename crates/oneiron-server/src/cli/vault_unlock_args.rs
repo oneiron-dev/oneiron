@@ -20,7 +20,7 @@ use super::{SecretSourceArgs, UnlockMethod};
 pub struct VaultUnlockArgs {
     /// How the vault key unlocks: `device` (this install's keystore),
     /// `password`, `passkey`, `escrow` (a wrap the vault carries, or a
-    /// registry's capsule with `--unlock-capsule`) or `kit`.
+    /// registry's capsule with `--unlock-capsule`), `kit` or `sheet`.
     #[arg(long = "unlock", value_enum, default_value_t = UnlockMethod::Device)]
     pub unlock: UnlockMethod,
 

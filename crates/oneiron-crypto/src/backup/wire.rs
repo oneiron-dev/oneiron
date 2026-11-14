@@ -60,17 +60,21 @@ pub enum VaultKeyWrapKind {
     Passkey { credential: String },
     /// A hybrid capsule to a recovery or transfer key, by the owner's label.
     Escrow { label: String },
+    /// The printed recovery sheet: a KEK derived from the sheet's random
+    /// code. One per vault; the "Nobody but me" recovery preset issues it.
+    Sheet,
 }
 
 impl VaultKeyWrapKind {
-    /// The wrap's id: one wrap per device, per passkey and per escrow label, and
-    /// one password.
+    /// The wrap's id: one wrap per device, per passkey and per escrow label, one
+    /// password and one sheet.
     pub fn id(&self) -> String {
         match self {
             Self::Device { install } => format!("device:{install}"),
             Self::Password => "password".to_owned(),
             Self::Passkey { credential } => format!("passkey:{credential}"),
             Self::Escrow { label } => format!("escrow:{label}"),
+            Self::Sheet => "sheet".to_owned(),
         }
     }
 
@@ -81,7 +85,31 @@ impl VaultKeyWrapKind {
             Self::Password => WrapType::Passphrase,
             Self::Passkey { .. } => WrapType::Passkey,
             Self::Escrow { .. } => WrapType::HybridCapsule,
+            Self::Sheet => WrapType::SymmetricKek,
         }
+    }
+}
+
+/// The owner's recovery preset: which ways may restore the vault data key.
+/// The vault keeps it, and a sealed artifact's key header names the one in
+/// force when it was sealed.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryPreset {
+    /// Every wrap kind may be added (PQC-KIT A, the default).
+    #[default]
+    Standard,
+    /// "Nobody but me": the printed sheet alone restores the vault. No
+    /// password, passkey or escrow wrap, and nobody else holds a piece.
+    NobodyButMe,
+}
+
+impl RecoveryPreset {
+    /// Whether this is the default preset, which a key header leaves out.
+    pub fn is_standard(&self) -> bool {
+        *self == Self::Standard
     }
 }
 
@@ -110,6 +138,11 @@ pub struct KeyHeaderWrap {
 pub struct KeyHeader {
     pub commitment: [u8; 32],
     pub wraps: Vec<KeyHeaderWrap>,
+    /// The recovery preset in force when the artifact was sealed: under
+    /// "Nobody but me" a presented escrow capsule opens nothing. Left out on
+    /// the standard preset, so a standard header reads as it did before.
+    #[serde(default, skip_serializing_if = "RecoveryPreset::is_standard")]
+    pub recovery: RecoveryPreset,
 }
 
 impl KeyHeader {

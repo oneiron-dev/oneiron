@@ -253,6 +253,9 @@ pub enum UnlockMethod {
     /// opens the `world-kit` escrow wrap; the data-key kit's pieces rebuild
     /// the vault key itself, checked against its commitment.
     Kit,
+    /// The printed recovery sheet's code, read as a secret: the way a vault
+    /// under the "Nobody but me" recovery preset restores.
+    Sheet,
 }
 
 /// Where a secret is read, and the recovery box that keeps escrow seeds. A
@@ -306,6 +309,39 @@ pub enum VaultKeyCommand {
     /// released recipient's secret, and print the new capsule's report. No
     /// vault opens, and the data key never leaves the process.
     ResealCapsule(Box<VaultKeyResealArgs>),
+    /// The recovery preset: `standard`, or `nobody-but-me`, where the
+    /// printed sheet alone restores the vault. Shown, or set with `--set`.
+    RecoveryPreset(Box<VaultKeyRecoveryPresetArgs>),
+}
+
+/// The owner's recovery preset, as `vault-key recovery-preset --set` names
+/// it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum RecoveryPresetArg {
+    /// Every wrap kind may be added (the default).
+    Standard,
+    /// "Nobody but me": the printed sheet alone restores the vault. Entering
+    /// it issues the sheet and removes every password, passkey and escrow
+    /// wrap but the world kit's.
+    NobodyButMe,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct VaultKeyRecoveryPresetArgs {
+    /// Set the preset instead of showing it.
+    #[arg(long, value_enum, value_name = "PRESET")]
+    pub set: Option<RecoveryPresetArg>,
+
+    /// With `--set nobody-but-me`: the new owner-only file the printed
+    /// sheet's code is written to, once. Print it and keep it offline.
+    #[arg(long, value_name = "FILE")]
+    pub sheet_out: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub unlock: VaultUnlockArgs,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -341,9 +377,9 @@ pub struct VaultKeyArgs {
 #[derive(Args, Clone, Debug)]
 pub struct VaultKeyAddDeviceArgs {
     /// How a sealed vault's pages unlock before it opens: `device` (this
-    /// install's keystore), `password`, `passkey`, `escrow` or `kit` (the
-    /// world kit's `world-kit` escrow wrap, or the data-key kit's pieces),
-    /// its secret read as `oneiron restore --unlock` reads it.
+    /// install's keystore), `password`, `passkey`, `escrow`, `kit` (the
+    /// world kit's `world-kit` escrow wrap, or the data-key kit's pieces) or
+    /// `sheet`, its secret read as `oneiron restore --unlock` reads it.
     #[arg(long, value_enum, default_value_t = UnlockMethod::Device)]
     pub unlock: UnlockMethod,
 

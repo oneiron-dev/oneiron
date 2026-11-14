@@ -9,6 +9,11 @@
 //! holding only a backup asks for the same output (`oneiron restore --inspect`
 //! prints it). The engine rechecks the owner in the transaction that adds or
 //! removes a wrap. An unlock holds the key on this server's handle only.
+//!
+//! The recovery preset (`/vault-key/recovery-preset`) is the owner's choice
+//! of which ways restore the vault: `standard`, or `nobody_but_me`, where the
+//! printed sheet alone restores it. Entering `nobody_but_me` answers the
+//! sheet's code once; the vault keeps only its wrap.
 
 use std::fmt;
 use std::sync::Arc;
@@ -18,9 +23,9 @@ use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{FromRequest, Query, Request, State};
 use axum::http::header;
 use axum::response::Json;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use oneiron::inference_snapshot::SnapshotLockReceipt;
-use oneiron::world_keys::{EscrowRetirement, NewVaultKeyWrap, VaultKeyWrapInfo};
+use oneiron::world_keys::{EscrowRetirement, NewVaultKeyWrap, RecoveryPreset, VaultKeyWrapInfo};
 use serde::de::{DeserializeOwned, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -30,7 +35,10 @@ use crate::api::body_spool::{OwnerJsonBody, invalid_json};
 use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
-use crate::owner::vault_key::{self as view, PrfInput, SignerPin, VaultKeyReport, secret32};
+use crate::owner::vault_key::{
+    self as view, PrfInput, RecoveryPresetSet, RecoveryPresetView, SignerPin, VaultKeyReport,
+    secret32,
+};
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
@@ -147,6 +155,29 @@ pub(super) fn owner_table() -> OwnerTable {
                 )),
             },
             post(retire_escrow),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/vault-key/recovery-preset",
+                summary: "The owner's recovery preset: standard, or nobody_but_me, where the printed sheet alone restores the vault.",
+                row: None,
+                shape: None,
+            },
+            get(recovery_preset),
+        ),
+        (
+            OwnerRoute {
+                method: "put",
+                path: "/vault-key/recovery-preset",
+                summary: "Sets the recovery preset; entering nobody_but_me answers the printed sheet's code once and removes every password, passkey and escrow wrap but the world kit's.",
+                row: None,
+                shape: Some(RestShape::json(
+                    set_recovery_preset_body_schema,
+                    recovery_preset_set_schema,
+                )),
+            },
+            put(set_recovery_preset),
         ),
     ]
 }
@@ -461,8 +492,8 @@ async fn add_device(
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RemoveRequest {
-    /// The wrap's id: `password`, `passkey:<name>`, `escrow:<label>` or
-    /// `device:<install>`.
+    /// The wrap's id: `password`, `passkey:<name>`, `escrow:<label>`,
+    /// `sheet` or `device:<install>`.
     id: String,
 }
 
@@ -515,6 +546,68 @@ async fn retire_escrow(
     })
     .await?;
     Ok(Json(retired))
+}
+
+/// `GET /v1/owner/vault-key/recovery-preset`: the owner's recovery preset.
+async fn recovery_preset(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<RecoveryPresetView> {
+    owner(&auth, &server)?;
+    let view = blocking(move || {
+        Ok(RecoveryPresetView {
+            preset: server.vault().recovery_preset()?,
+        })
+    })
+    .await?;
+    Ok(Json(view))
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct RecoveryPresetRequest {
+    /// `standard` or `nobody_but_me`.
+    preset: RecoveryPreset,
+}
+
+/// `PUT /v1/owner/vault-key/recovery-preset`: sets the owner's recovery
+/// preset, the owner rechecked in the write. Entering `nobody_but_me` needs
+/// the vault key held, an owner-held key custody and this install's device
+/// wrap, which stays; its answer carries the printed sheet's code, once.
+async fn set_recovery_preset(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<RecoveryPresetRequest>,
+) -> OwnerReply<RecoveryPresetSet> {
+    let owner = owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let set = blocking(move || -> OwnerResult<RecoveryPresetSet> {
+        let vault: &oneiron::Vault = match request.preset {
+            RecoveryPreset::NobodyButMe => held(server.vault())?,
+            RecoveryPreset::Standard => server.vault().as_ref(),
+        };
+        // The answer is the sheet's only hand-over: the engine enters the
+        // preset only while this install's device wrap stays, so a lost
+        // answer locks no one out (review of #7766, round 2).
+        let change = vault.set_recovery_preset_answered_as(&owner, request.preset)?;
+        let (mut set, sheet) = RecoveryPresetSet::of(&vault.vault_key_vault_id(), change);
+        set.sheet_code = sheet.map(|sheet| sheet.code().as_str().to_owned());
+        Ok(set)
+    })
+    .await?;
+    Ok(Json(set))
+}
+
+/// The OpenAPI schema of `PUT /v1/owner/vault-key/recovery-preset`'s body:
+/// [`RecoveryPresetRequest`].
+pub(crate) fn set_recovery_preset_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RecoveryPresetRequest>()
+}
+
+/// The OpenAPI schema of `PUT /v1/owner/vault-key/recovery-preset`'s answer:
+/// [`RecoveryPresetSet`].
+pub(crate) fn recovery_preset_set_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RecoveryPresetSet>()
 }
 
 /// The OpenAPI schema of `POST /v1/owner/vault-key/remove`'s body (FIX 11611):

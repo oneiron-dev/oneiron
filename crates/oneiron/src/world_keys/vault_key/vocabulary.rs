@@ -81,6 +81,8 @@ pub enum VaultKeyUnlock<'a> {
         capsule: &'a [u8],
         secret: &'a HybridSecretKey,
     },
+    /// The printed recovery sheet, which opens the carried `sheet` wrap.
+    Sheet(&'a RecoverySheet),
     /// The data-key kit's pieces, two or one and the kit passphrase (FIX
     /// 5614): they rebuild the vault data key itself, bound to `vault_id`,
     /// the id the owner names, which must be the artifact's or the vault's.
