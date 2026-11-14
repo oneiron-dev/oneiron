@@ -24,10 +24,7 @@ use crate::agent_def::{AgentModel, list_admits, listed_entry, no_listed_model};
 use crate::authority::WorldModelRoutes;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, LegacyJson, SideTable};
-use crate::{
-    EntityId, Vault,
-    error::{Error, Result},
-};
+use crate::{EntityId, Vault, error::Result};
 
 /// One revision-pinned model description. Key: string (model id).
 const DESCRIPTIONS: SideTable<String, ModelDescription, LegacyJson> =

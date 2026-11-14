@@ -2,8 +2,7 @@
 use super::{
     ForeignSkillPublisher, HubPackage, HubRef, SkillCapabilitySurface, SkillHubAdapter,
     install_transition::{
-        InstallBinding, InstallDisposition, InstallHoldReason, InstallLifecycle, InstallPlan,
-        InstallResult,
+        InstallBinding, InstallDisposition, InstallHoldReason, InstallPlan, InstallResult,
     },
     package_codec::invalid,
 };

@@ -88,5 +88,4 @@ impl Vault {
     }
 }
 
-pub(crate) use crate::teacher_probe_policy::valid_holder_ref;
 pub use crate::teacher_probe_policy::{TEACHER_PROBE_ID, TeacherProbePolicy};
