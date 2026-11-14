@@ -166,8 +166,25 @@ impl Scratch {
     }
 
     /// Runs `oneiron hosted login --origin` with no credential and plays the
-    /// browser and the owner, as the module docs say.
+    /// browser and the owner, as the module docs say; the login is recorded.
     async fn sign_in(&self, served: &Served) -> SignedIn {
+        let (authorize, output) = self.login(served, &[]).await;
+        assert!(
+            output.status.success(),
+            "hosted login exits 0: {}",
+            stderr(&output)
+        );
+        SignedIn {
+            authorize,
+            status: last_json_line(&output),
+        }
+    }
+
+    /// Runs `oneiron hosted login --origin` with no credential and `extra`
+    /// arguments, plays the browser and the owner up to the browser's return,
+    /// and answers the authorize URL and the command's output.
+    async fn login(&self, served: &Served, extra: &[&str]) -> (reqwest::Url, Output) {
+        let _ = std::fs::remove_file(self.path("opened.txt"));
         let child = self
             .command(&[
                 "hosted",
@@ -179,6 +196,7 @@ impl Scratch {
                 "--timeout-secs",
                 "60",
             ])
+            .args(extra)
             .spawn()
             .expect("start hosted login");
         let login = tokio::task::spawn_blocking(move || child.wait_with_output());
@@ -240,15 +258,7 @@ impl Scratch {
             .expect("hosted login ends")
             .expect("join")
             .expect("hosted login output");
-        assert!(
-            output.status.success(),
-            "hosted login exits 0: {}",
-            stderr(&output)
-        );
-        SignedIn {
-            authorize,
-            status: last_json_line(&output),
-        }
+        (authorize, output)
     }
 
     /// The URL the stand-in opener was handed, once it is there.
@@ -531,5 +541,92 @@ fn the_oauth_bridge_refreshes_an_expired_token_and_logout_revokes_the_sign_in() 
             400,
             "the revoked sign-in no longer refreshes"
         );
+    });
+}
+
+/// A second `hosted login` at the same origin that is not recorded (it
+/// names a vault the origin does not answer for) leaves the recorded
+/// sign-in as it was: the selection still names its file, the file holds
+/// the same tokens, and `oneiron mcp` still reaches the vault with it. A
+/// second login that is recorded takes its place, and the sign-in it
+/// replaced is revoked at the vault.
+#[test]
+fn a_second_oauth_login_replaces_the_recorded_sign_in_only_once_admitted() {
+    run_on_engine_stack("hosted-native-sign-in-relogin", || async {
+        let served = Served::start().await;
+        let scratch = Scratch::new();
+        let first = scratch.sign_in(&served).await;
+        let file = first.sign_in_file();
+        let held = read_json(&file);
+
+        let other_vault = "ab".repeat(32);
+        assert_ne!(other_vault, served.vault_id(), "FIXTURE: another vault id");
+        let (_, refused) = scratch.login(&served, &["--vault-id", &other_vault]).await;
+        assert!(
+            !refused.status.success(),
+            "a login for another vault is not recorded"
+        );
+        assert!(
+            stderr(&refused).contains(&format!("not {other_vault}")),
+            "{}",
+            stderr(&refused)
+        );
+        let status = scratch
+            .command(&["hosted", "status"])
+            .output()
+            .expect("hosted status");
+        let kept = SignedIn {
+            authorize: first.authorize.clone(),
+            status: last_json_line(&status),
+        };
+        assert_eq!(kept.vault()["vault_id"], served.vault_id().as_str());
+        assert_eq!(
+            kept.sign_in_file(),
+            file,
+            "the selection names the same file"
+        );
+        assert_eq!(
+            read_json(&file),
+            held,
+            "the recorded sign-in keeps its tokens"
+        );
+        let mut staged = file.as_os_str().to_owned();
+        staged.push(".staged");
+        assert!(
+            !Path::new(&staged).exists(),
+            "the sign-in that was not recorded is removed"
+        );
+        let answer = initialize_over_oauth(&scratch, &served, &file);
+        assert_eq!(
+            answer["result"]["vault_id"],
+            served.vault_id().as_str(),
+            "the recorded sign-in still reaches the vault: {answer}"
+        );
+
+        let second = scratch.sign_in(&served).await;
+        assert_eq!(second.sign_in_file(), file, "one sign-in file per origin");
+        let replacing = read_json(&file);
+        assert_ne!(
+            replacing["refresh_token"], held["refresh_token"],
+            "the recorded login's sign-in took the file"
+        );
+        let old_refresh = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("client")
+            .post(format!("{}/oauth/token", served.origin))
+            .form(&[
+                ("grant_type", "refresh_token"),
+                (
+                    "refresh_token",
+                    held["refresh_token"].as_str().expect("refresh"),
+                ),
+                ("client_id", held["client_id"].as_str().expect("client")),
+                ("resource", RESOURCE),
+            ])
+            .send()
+            .await
+            .expect("try the replaced refresh token");
+        assert_eq!(old_refresh.status(), 400, "the replaced sign-in is revoked");
     });
 }
