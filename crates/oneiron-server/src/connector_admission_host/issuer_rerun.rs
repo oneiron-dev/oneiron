@@ -21,7 +21,7 @@ use oneiron::connector_key::{
     ConnectorIssuerRerunStage as Stage, ConnectorKeyStatus, ELICITATION_ROW_KEY,
 };
 
-use super::{HttpQualificationConnector, ListedTool, client, discover, with_credential};
+use super::{HttpQualificationConnector, ListedTool, client, list_tools, with_credential};
 use crate::config::connectors::normalize_name;
 use crate::server::SyncServer;
 
@@ -107,15 +107,16 @@ fn rerun_connector(server: &SyncServer, binding: &ConnectorCredentialBinding) ->
         }
     };
     let name = binding.connector.as_str();
-    let Some(endpoint) = server
+    let Some(installed) = server
         .config
         .connectors
         .iter()
         .find(|(section, _)| normalize_name(section) == name)
-        .map(|(_, installed)| installed.endpoint.clone())
+        .map(|(_, installed)| installed.clone())
     else {
         return Some(Rerun::failed(Stage::NotInstalled));
     };
+    let endpoint = installed.endpoint.clone();
     let Some(revision) = catalog.protocol_revision.clone() else {
         return Some(Rerun::failed(Stage::Unpinned));
     };
@@ -128,8 +129,9 @@ fn rerun_connector(server: &SyncServer, binding: &ConnectorCredentialBinding) ->
     };
     let ran = with_credential(vault, catalog.secret_ref.as_deref(), name, |auth| {
         let client = client().map_err(|_| Stage::Discovery)?;
+        // An HTTP API's document is listed again; it keeps no kit.
         let discovery =
-            discover(&client, &endpoint, auth, Some(&revision)).map_err(|_| Stage::Discovery)?;
+            list_tools(&client, &installed, auth, Some(&revision)).map_err(|_| Stage::Discovery)?;
         let screened: Vec<_> = discovery.tools.iter().map(ListedTool::screened).collect();
         if !matches!(vault.screen_connector_tools(&screened, name), Ok(None)) {
             return Err(Stage::Screening);

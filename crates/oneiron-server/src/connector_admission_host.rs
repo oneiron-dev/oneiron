@@ -24,7 +24,7 @@ use oneiron::connector_key::qualification::{
     QualificationFailure,
 };
 use oneiron::connector_key::{
-    ConnectorToolSchema, ResolvedConnectorManifest, SlateDataClass, SlateManifest,
+    ConnectorToolSchema, HttpOperation, ResolvedConnectorManifest, SlateDataClass, SlateManifest,
     SlateToolManifest,
 };
 use oneiron::skill_hub::pack_catalog::PackObservedTool;
@@ -32,6 +32,8 @@ use reqwest::blocking::{Client, Request, Response};
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 use serde::Deserialize;
 use serde_json::{Value, json};
+
+use crate::connector_translate::TranslatedTool;
 
 /// The MCP revision discovery asks for.
 const REQUESTED_REVISION: &str = "2026-07-28";
@@ -56,8 +58,10 @@ const METHOD_HEADER: &str = "mcp-method";
 const NAME_HEADER: &str = "mcp-name";
 const ACCEPT_BOTH: &str = "application/json, text/event-stream";
 
+mod api_document;
 mod issuer_rerun;
 mod reply_read;
+pub(crate) use api_document::list_tools;
 pub(crate) use issuer_rerun::rerun_issuer_dependents;
 use reply_read::read_reply;
 
@@ -151,6 +155,9 @@ pub(crate) struct ListedTool {
     idempotent: bool,
     /// The result types the connector declares for the probe suite.
     result_types: BTreeSet<String>,
+    /// Where a call goes, for a tool translated from an API document
+    /// (L8-31); `None` for an MCP tool, whose call is a `tools/call`.
+    http: Option<HttpOperation>,
 }
 
 impl ListedTool {
@@ -200,7 +207,26 @@ impl ListedTool {
             open_world: hint("openWorldHint") != Some(false),
             idempotent: hint("idempotentHint") == Some(true),
             result_types,
+            http: None,
         })
+    }
+
+    /// An operation an API document declares (L8-31). The document is the
+    /// declaration: its method sets the hints, as `connector_translate`
+    /// reads them, and no probe result type is declared.
+    pub(crate) fn translated(tool: TranslatedTool) -> Self {
+        Self {
+            name: tool.name,
+            description: tool.description,
+            input_schema: tool.input_schema,
+            output_schema: tool.output_schema,
+            read_only: tool.read_only,
+            destructive: tool.destructive,
+            open_world: true,
+            idempotent: tool.idempotent,
+            result_types: BTreeSet::new(),
+            http: Some(tool.http),
+        }
     }
 
     /// What the suite lists: the literal schema, the declared result types,
@@ -271,9 +297,13 @@ pub(crate) fn self_declared_hints_warning(tools: &[ListedTool]) -> Option<String
 
 /// What one discovery found.
 pub(crate) struct Discovery {
-    /// The revision `initialize` negotiated.
+    /// The revision `initialize` negotiated, or an API document's OpenAPI
+    /// version (`openapi-3.1`).
     pub(crate) revision: String,
     pub(crate) tools: Vec<ListedTool>,
+    /// What an API document holds that became no tool, each with why
+    /// (L8-31); empty for an MCP listing.
+    pub(crate) skipped: Vec<String>,
 }
 
 /// Lists the connector's tools at `endpoint`: at `pinned` once the key has
@@ -289,6 +319,7 @@ pub(crate) fn discover(
     Ok(Discovery {
         revision: std::mem::take(&mut session.revision),
         tools,
+        skipped: Vec::new(),
     })
 }
 
@@ -296,10 +327,13 @@ pub(crate) fn discover(
 /// the elicitation declaration MCP admission makes for every connector it
 /// admits (ARCH-0072). Elicitation is a client capability: `initialize`
 /// carries no server flag for it, and the call host decides per revision
-/// whether to declare it on the wire.
+/// whether to declare it on the wire. Tools an API document declares
+/// (L8-31) are each one HTTP request, which never asks a question: they
+/// declare none.
 pub(crate) fn resolve(tools: &[ListedTool]) -> oneiron::Result<ResolvedConnectorManifest> {
+    let asks = !tools.iter().any(|tool| tool.http.is_some());
     ResolvedConnectorManifest::resolve(tools.iter().map(ListedTool::schema_row).collect())
-        .map(|manifest| manifest.with_elicitation(true))
+        .map(|manifest| manifest.with_elicitation(asks))
 }
 
 /// What the owner names for one tool at registration. MCP declares none of it.
@@ -358,6 +392,7 @@ pub(crate) fn slate_manifest(
                 read_only: listed.read_only,
                 idempotent: listed.idempotent,
                 price: class.price,
+                http: listed.http.clone(),
             })
         })
         .collect();

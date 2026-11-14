@@ -33,7 +33,16 @@ pub(crate) fn qualify_connector(
     request: &QualifyRequest,
 ) -> OwnerResult<KeyView> {
     let vault = server.vault();
-    let (name, endpoint) = installed(server, &request.connector)?;
+    let (name, installed) = installed_host(server, &request.connector)?;
+    // The suite grades MCP probe evidence, which an HTTP API never answers
+    // with (L8-31, CONNECTOR-QUALIFY = A): the owner attests one instead.
+    if installed.transport == ConnectorTransport::HttpApi {
+        return Err(OwnerError::Invalid(
+            "the connector is an HTTP API, which the probe suite cannot qualify; activate it \
+             with POST /v1/owner/connectors/attest"
+                .to_owned(),
+        ));
+    }
     let catalog = catalog(vault, &name)?;
     let revision =
         catalog.record.protocol_revision.clone().ok_or_else(|| {
@@ -60,7 +69,7 @@ pub(crate) fn qualify_connector(
                 vault,
                 owner,
                 &catalog,
-                &endpoint,
+                &installed,
                 &revision,
                 auth,
                 &request.kit,
@@ -105,7 +114,7 @@ fn attest_connector(
     request: &AttestRequest,
 ) -> OwnerResult<KeyView> {
     let vault = server.vault();
-    let (name, endpoint) = installed(server, &request.connector)?;
+    let (name, installed) = installed_host(server, &request.connector)?;
     let catalog = catalog(vault, &name)?;
     let revision =
         catalog.record.protocol_revision.clone().ok_or_else(|| {
@@ -120,7 +129,7 @@ fn attest_connector(
     let resolved =
         host::with_credential(vault, catalog.record.secret_ref.as_deref(), &name, |auth| {
             let client = host::client().map_err(engine)?;
-            listed_as_stamped(vault, &catalog, &client, &endpoint, &revision, auth)
+            listed_as_stamped(vault, &catalog, &client, &installed, &revision, auth)
         })
         .map_err(engine)??;
     let now = unix_seconds_now();
@@ -149,16 +158,17 @@ fn attest_connector(
 
 /// The connector's tools, listed again at `revision` and resolved, when
 /// they are still the ones the owner stamped on the slate this run admits:
-/// the one staged beside an admitted key's routing slate, if any.
+/// the one staged beside an admitted key's routing slate, if any. An HTTP
+/// API's are its document translated again (L8-31).
 fn listed_as_stamped(
     vault: &Vault,
     catalog: &Catalog,
     client: &reqwest::blocking::Client,
-    endpoint: &str,
+    installed: &ConnectorHostConfig,
     revision: &str,
     auth: Option<&HeaderValue>,
 ) -> OwnerResult<ResolvedConnectorManifest> {
-    let discovery = host::discover(client, endpoint, auth, Some(revision)).map_err(engine)?;
+    let discovery = host::list_tools(client, installed, auth, Some(revision)).map_err(engine)?;
     let slate = match staged_slate_of(vault, &catalog.record)? {
         Some((_, staged)) => staged,
         None => slate_of(vault, &catalog.record)?.1,
@@ -194,16 +204,16 @@ fn probe(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     catalog: &Catalog,
-    endpoint: &str,
+    installed: &ConnectorHostConfig,
     revision: &str,
     auth: Option<&HeaderValue>,
     kit: &QualificationKit,
 ) -> OwnerResult<()> {
     let client = host::client().map_err(engine)?;
-    let resolved = listed_as_stamped(vault, catalog, &client, endpoint, revision, auth)?;
+    let resolved = listed_as_stamped(vault, catalog, &client, installed, revision, auth)?;
     let connector = host::HttpQualificationConnector::new(
         &client,
-        endpoint,
+        &installed.endpoint,
         auth,
         revision,
         &kit.effect_state_uri,

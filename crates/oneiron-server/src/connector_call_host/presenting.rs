@@ -52,6 +52,13 @@ enum Door {
     Unresolved,
 }
 
+/// What one send runs inside its credential door, with the `Authorization`
+/// header the door built and the value it presented: an MCP exchange, or
+/// one request to an HTTP API a document declares (L8-31).
+pub(super) trait CallExchange {
+    fn run(&self, auth: Option<HeaderValue>, value: Option<&SentValue<'_>>) -> Sent;
+}
+
 /// One send's credential, known before its exchange is declared.
 pub(super) struct Presenting {
     effector: String,
@@ -187,7 +194,7 @@ impl Presenting {
     pub(super) fn send(
         self,
         vault: &Vault,
-        exchange: &Exchange<'_>,
+        exchange: &impl CallExchange,
         row: Option<(&EntityId, &str)>,
         presented: &mut Option<SentPresentation>,
     ) -> Sent {
