@@ -399,6 +399,31 @@ pub fn admit_promoted_window_rows_in_txn(
     })
 }
 
+/// Whether every row of `rows` may still go to the machine `peer` proved,
+/// judged in `txn` (MEMBER-SYNC Astra T2): the promotion's pre-write check
+/// read each world's privacy for that machine before the writer opened, so a
+/// world whose read setting came to keep it off that machine since refuses
+/// the write at commit, as [`crate::claim::ResidenceReadContext::rows_may_leave`]
+/// refuses a read.
+///
+/// # Errors
+///
+/// A credential, grant or member the residence read refuses in `txn`;
+/// storage errors.
+pub fn promoted_window_rows_may_leave_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    rows: &PromotedWindowRows,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    proof: &crate::authority::VerifiedSlip,
+    peer: crate::machine_destination::PeerMachine,
+) -> Result<bool> {
+    let ids: Vec<EntityId> = rows.0.iter().map(|(id, _)| *id).collect();
+    crate::claim::ResidenceReadContext::load_in(vault, txn, proof, peer, scope, selector)?
+        .rows_may_leave(txn, &ids)
+}
+
 /// The item rows `update` writes on `source`: every operation an item-body
 /// insert into `entities`, or a birth write restating the carrier `source`
 /// already holds; anything else is refused.
