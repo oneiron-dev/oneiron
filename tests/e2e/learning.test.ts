@@ -430,9 +430,11 @@ async function learning09Scenario(): Promise<Learning09Scenario> {
   if (!row) throw new Error("Missing LEARNING-09 fixture scenario");
   return row as Learning09Scenario; // Fixture discriminant, not an invented wire DTO.
 }
-/** An attempt id as the archive carries it (its 16 bytes), in hex as the advance view names it. */
-function learning09Hex(id: { readonly bytes: readonly number[] }): string {
-  return Array.from(id.bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+/** An attempt id as the archive carries it (`{"bytes": [16 numbers]}`), in hex as the advance view names it. */
+function learning09Hex(id: unknown): string {
+  const bytes = (id as { bytes?: unknown } | null)?.bytes;
+  if (!Array.isArray(bytes) || bytes.length !== 16) throw new Error(`Not an attempt id: ${JSON.stringify(id)}`);
+  return bytes.map(byte => Number(byte).toString(16).padStart(2, "0")).join("");
 }
 async function learning09Agent(owner: PublicHttpClient, label: string): Promise<string> {
   const agent_def_ref = learning09Id(label);
@@ -621,7 +623,7 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
     expect(selected.round).toBe(0);
     const step: unknown = selected.step;
     if (step === null || typeof step !== "object" || !("fork" in step)) throw new Error(`Round 0 did not fork: ${JSON.stringify(step)}`);
-    expect(learning09Hex((step as { fork: { parent: { bytes: number[] } } }).fork.parent)).toBe(root);
+    expect(learning09Hex((step as { fork: { parent: unknown } }).fork.parent)).toBe(root);
 
     // ---- Hold 1: the round runs to the confirmation, which holds on the exposure line. ----
     const exposureHold = await learning09AdvanceUntil(owner, root, "LEARNING-09 confirmation holds on the exposure line",
