@@ -277,9 +277,12 @@ impl Memory<'_> {
     }
 
     /// Publishes a candidate result identity, not a Git head or an approval.
+    /// Completion checks a reused check's tree again; a changed tree voids the
+    /// reuse (ARCH-0068 RC5).
     pub fn checkout_publish(&self, input: CheckoutPublishInput) -> MemoryResult<CheckoutPublished> {
         let f = fence(self, &input.checkout, input.epoch)?;
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let completion = crate::check_record::reuse::completion_tree(self.vault(), f.checkout_id)?;
         self.with_verified_actor_write_txn(|txn| {
             let now = self.vault().instant_in_write_txn(txn)?.secs();
             let act = transition::fenced_in_txn(self.vault(), txn, &f).map_err(refusal)?;
@@ -307,6 +310,15 @@ impl Memory<'_> {
                         self.checkout_receipt_in(txn, &act, "checkout.publish", &identity, now)?
                     }
                 };
+            if let Some(tree) = &completion {
+                crate::check_record::reuse::void_changed_reuses_in_txn(
+                    &self.vault().store,
+                    txn,
+                    f.checkout_id,
+                    f.epoch,
+                    tree.as_deref(),
+                )?;
+            }
             Ok(CheckoutPublished {
                 checkout: input.checkout.clone(),
                 epoch: act.epoch,

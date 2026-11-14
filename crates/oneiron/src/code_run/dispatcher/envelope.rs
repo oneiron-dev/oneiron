@@ -169,6 +169,7 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::RepoExport
             | SelfEffect::RepoChecksStart
             | SelfEffect::RepoChecksFinish
+            | SelfEffect::RepoChecksReuse
                 if self.external_effect_seen.get() =>
             {
                 SourceLineage::of(self.source()).with(ClaimSource::ToolOutput)
@@ -421,7 +422,8 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         | SelfEffect::RepoExport
         | SelfEffect::RepoSymbolsObserve
         | SelfEffect::RepoChecksStart
-        | SelfEffect::RepoChecksFinish => false,
+        | SelfEffect::RepoChecksFinish
+        | SelfEffect::RepoChecksReuse => false,
     }
 }
 

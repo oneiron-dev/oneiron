@@ -3,9 +3,9 @@
 //! one attempt made in its own checkout.
 //!
 //! Lists the attempt's records with producer, command, output, observed pass,
-//! stability, request revision, engine-captured input versions and stated
-//! limits. An attempt with no records answers an empty list, not an error.
-//! Owner only.
+//! stability, request revision, engine-captured input versions, the reuse
+//! source, the completion void and stated limits. An attempt with no records
+//! answers an empty list, not an error. Owner only.
 
 use std::collections::BTreeMap;
 
@@ -15,7 +15,7 @@ use super::*;
 use crate::attempt_queue::AttemptId;
 use crate::check_record::{
     AttemptCheckRecord, CHECK_RECORD_DECLARED, CHECK_RECORD_LIMITS, CHECK_RECORDS, CheckAfter,
-    CheckInputVersions,
+    CheckInputVersions, CheckReuseSourceView,
 };
 use crate::entity_id::bytes_to_hex_lower;
 
@@ -79,6 +79,10 @@ pub struct CodeCheckRecordView {
     pub passed: Option<bool>,
     /// Whether the inputs held still; `None` while the check runs.
     pub stable: Option<bool>,
+    /// The check this record reused instead of running; `None` for a check the run ran.
+    pub reused_from: Option<CheckReuseSourceView>,
+    /// Whether the completion found the published tree differed from the reused one.
+    pub voided: bool,
     /// The four canon limits the record states.
     pub limits: Vec<String>,
     /// What the producer states as declared.
@@ -120,6 +124,8 @@ fn record_view(record: &AttemptCheckRecord) -> CodeCheckRecordView {
         output: finish.map(|finished| finished.output.as_str().to_owned()),
         passed: finish.map(|finished| finished.passed),
         stable: finish.map(|finished| finished.stable),
+        reused_from: record.reused_from.as_ref().map(CheckReuseSourceView::from),
+        voided: record.voided,
         limits: CHECK_RECORD_LIMITS.map(str::to_owned).to_vec(),
         declared: CHECK_RECORD_DECLARED.map(str::to_owned).to_vec(),
     }

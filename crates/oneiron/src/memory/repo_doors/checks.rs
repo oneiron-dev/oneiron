@@ -9,7 +9,8 @@
 //! Finish captures the tree and the revision again and stores the observed pass
 //! and output. Environment values are never stored: only their names and the
 //! whole map's digest. A world check is recorded with its flag; reuse never
-//! takes one (WORLD-REUSE = A, enforced by PR 3).
+//! takes one (WORLD-REUSE = A, enforced by the reuse door: a world check is
+//! never indexed).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -17,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{RepoRunAnswer, RepoRunBinding};
 use crate::EntityId;
+use crate::check_record::reuse::index_reusable_in_txn;
 use crate::check_record::{
     AttemptCheckRecord, CHECK_RECORDS, CheckAfter, CheckFinish, CheckInputVersions, CheckProducer,
 };
@@ -117,7 +119,7 @@ const MAX_TOOLCHAIN_VALUE_BYTES: usize = 512;
 
 /// The start's command, within its bounds: 1 to 64 argv entries, each at most
 /// 4096 bytes with no NUL.
-fn validate_command(command: &[String]) -> MemoryResult<()> {
+pub(super) fn validate_command(command: &[String]) -> MemoryResult<()> {
     if command.is_empty() || command.len() > MAX_COMMAND_ARGS {
         return Err(MemoryError::bad_request(
             "command must hold 1 to 64 arguments",
@@ -135,7 +137,7 @@ fn validate_command(command: &[String]) -> MemoryResult<()> {
 }
 
 /// A declared toolchain or environment within its bounds: at most 64 entries, keys 1 to 128 bytes.
-fn validate_declared(map: &BTreeMap<String, String>, what: &str) -> MemoryResult<()> {
+pub(super) fn validate_declared(map: &BTreeMap<String, String>, what: &str) -> MemoryResult<()> {
     if map.len() > MAX_DECLARED_ENTRIES {
         return Err(MemoryError::bad_request(format!(
             "{what} must hold at most 64 entries"
@@ -153,7 +155,7 @@ fn validate_declared(map: &BTreeMap<String, String>, what: &str) -> MemoryResult
 }
 
 /// The start's toolchain within its bounds: the declared bounds, and values at most 512 bytes.
-fn validate_toolchain(toolchain: &BTreeMap<String, String>) -> MemoryResult<()> {
+pub(super) fn validate_toolchain(toolchain: &BTreeMap<String, String>) -> MemoryResult<()> {
     validate_declared(toolchain, "toolchain")?;
     if toolchain
         .values()
@@ -276,6 +278,8 @@ impl Memory<'_> {
                     world: input.world,
                     inputs: inputs.clone(),
                     finish: None,
+                    reused_from: None,
+                    voided: false,
                 },
             )?;
             Ok((check, inputs))
@@ -355,6 +359,7 @@ impl Memory<'_> {
             };
             record.finish = Some(finish);
             CHECK_RECORDS.put(&self.vault.store, txn, &key, &record)?;
+            index_reusable_in_txn(&self.vault.store, txn, &record)?;
             Ok(Ok(output))
         })?;
         let output = output?;

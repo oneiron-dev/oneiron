@@ -6,13 +6,16 @@
 //! request revision and the scoped input versions. The engine captures every
 //! input version it can see before the command starts and compares them again
 //! after it ends; the agent never supplies them. Reuse needs every input
-//! pinned; this module only records (PR 3 reuses).
+//! pinned; [`reuse`] files a reusable record under its reuse key for another
+//! attempt in the same PROJECT, and the checkout's publication voids a reuse
+//! whose tree changed.
 //!
 //! Environment values are never stored: the record keeps the sorted names and
 //! the digest of the whole map only. Toolchain values are stored. The record
 //! states its limits through [`CHECK_RECORD_LIMITS`], shown by the owner read,
 //! never stored.
 
+pub mod reuse;
 pub(crate) mod tables;
 
 use std::collections::BTreeMap;
@@ -50,6 +53,34 @@ pub struct CheckProducer {
     pub executor_run: EntityId,
     pub task: EntityId,
     pub project: EntityId,
+}
+
+/// The source check a reused record names (canon "names the source attempt").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckReuseSource {
+    pub attempt: AttemptId,
+    pub generation: u32,
+    pub check: EntityId,
+}
+
+/// The source check a reused record names, as the wire carries it: ids lower hex.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CheckReuseSourceView {
+    /// The source attempt id, 32 lower-hex characters.
+    pub attempt_id: String,
+    pub generation: u32,
+    /// The source check id, 32 lower-hex characters.
+    pub check: String,
+}
+
+impl From<&CheckReuseSource> for CheckReuseSourceView {
+    fn from(source: &CheckReuseSource) -> Self {
+        Self {
+            attempt_id: crate::entity_id::bytes_to_hex_lower(source.attempt.as_bytes()),
+            generation: source.generation,
+            check: source.check.to_hex(),
+        }
+    }
 }
 
 /// The input versions the engine captured around a native check: HEAD's tree
@@ -105,6 +136,13 @@ pub struct AttemptCheckRecord {
     pub inputs: CheckInputVersions,
     /// What the finish observed; `None` while the check runs.
     pub finish: Option<CheckFinish>,
+    /// The check this record reused instead of running; `None` for a check the run ran.
+    #[serde(default)]
+    pub reused_from: Option<CheckReuseSource>,
+    /// Whether the completion found the published tree differed from the reused one,
+    /// so the reuse is void.
+    #[serde(default)]
+    pub voided: bool,
 }
 
 /// What a finished check observed: the captured-again inputs, the exit status,

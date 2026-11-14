@@ -1,0 +1,9 @@
+{
+  "name": "self.code.checks.reuse",
+  "input": "crate::memory::repo_doors::RepoCheckReuseInput",
+  "output": "crate::memory::repo_doors::RepoCheckReuseOutput",
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "context": "run",
+  "effect": "RepoChecksReuse"
+}
