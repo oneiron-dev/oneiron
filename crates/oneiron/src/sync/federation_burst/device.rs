@@ -42,6 +42,16 @@ impl DevicePeer {
         }
     }
 
+    /// The machine its connection proved, as the home's own-device import
+    /// reads it; [`PeerMachine::Unknown`] for a slip or an unproven device.
+    #[must_use]
+    pub fn machine(&self) -> PeerMachine {
+        match *self {
+            Self::Machine { machine, key } => PeerMachine::Proven { machine, key },
+            Self::Slip { .. } | Self::Unproven => PeerMachine::Unknown,
+        }
+    }
+
     /// The baseline its writes count against. A machine keeps its baseline
     /// across a new key.
     pub(super) fn digest(&self) -> [u8; 32] {
@@ -255,6 +265,17 @@ pub fn admit_device_window_update(
             }
         }
     })
+}
+
+/// Counts an own device's window update its home refused as the device's
+/// own bytes before the burst core judged it: a structural failure on the
+/// device's streak, as a federated peer's refused update is one on its own
+/// (arch-0023b `#decision-federation-26`: rate and streak; L7-41).
+///
+/// # Errors
+/// A store error.
+pub fn record_device_refusal(vault: &Vault, peer: &DevicePeer) -> Result<()> {
+    super::record_outcome(vault, BurstPeer::Device(peer), true)
 }
 
 /// Every own device's oldest retained update that is due now, for its home

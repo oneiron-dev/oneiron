@@ -34,7 +34,7 @@ mod selector;
 
 pub use device::{
     DeviceBurstAdmission, DeviceBurstWork, DevicePeer, admit_device_window_update,
-    ready_device_work,
+    ready_device_work, record_device_refusal,
 };
 pub use selector::{PreparedSelectorFetch, prepare_selector_fetch, replay_selector_fetch};
 
@@ -348,13 +348,24 @@ fn admit_work_at(
             None => None,
         };
         if let Some(saved) = saved {
-            let decision = if saved.isolated_update.is_some()
-                && !observations::replay_ready_in_txn(vault, txn, peer, now)?
-            {
-                FederationBurstDecision::IsolateAndPropose {
-                    request_id: saved.id,
-                    bundle_id: peer.digest(),
-                    inputs: saved.inputs,
+            // An isolated update waits for its peer's rate to come back to
+            // its baseline, and so does any retained update of an own
+            // device, as `find_update` holds them: a device that sends the
+            // held bytes again before then is answered as held again, and
+            // its home's drain lands them (L7-41).
+            let waits = saved.isolated_update.is_some() || saved.kind == WorkKind::DeviceUpdate;
+            let decision = if waits && !observations::replay_ready_in_txn(vault, txn, peer, now)? {
+                if saved.isolated_update.is_some() {
+                    FederationBurstDecision::IsolateAndPropose {
+                        request_id: saved.id,
+                        bundle_id: peer.digest(),
+                        inputs: saved.inputs,
+                    }
+                } else {
+                    FederationBurstDecision::Defer {
+                        request_id: saved.id,
+                        inputs: saved.inputs,
+                    }
                 }
             } else {
                 FederationBurstDecision::Allow(saved.inputs)
