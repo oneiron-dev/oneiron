@@ -231,6 +231,7 @@ fn stop_in_txn(
         super::super::outage_due::unindex_outage_due_in_txn(vault, wtxn, &park)?;
         super::hold_index::unindex_program_hold_in_txn(vault, wtxn, &park)?;
         super::super::seat_wait::unindex_seat_wait_in_txn(vault, wtxn, &park)?;
+        super::super::policy_wait::unindex_policy_wait_in_txn(vault, wtxn, &park)?;
     }
     PARKED.delete(&vault.store, wtxn, &attempt)?;
     abandon_stopped_sends_in_txn(vault, wtxn, attempt, now);

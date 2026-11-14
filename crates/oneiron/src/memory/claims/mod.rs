@@ -81,6 +81,10 @@ const DECLARED_CARDINALITY: &[(&str, ClaimCardinality)] = &[
     ("character.backstory", ClaimCardinality::Set),
     // ARCH-0022 predicate registry additions, line 282 (multi).
     ("character.dynamic", ClaimCardinality::Set),
+    // Engine ruling 13 Nov 12:58 (the linker's role edges): a person holds
+    // many relationships of one word, so a second `relationship.friend`
+    // stands beside the first and never supersedes it.
+    ("relationship.*", ClaimCardinality::Set),
 ];
 
 /// Exact rows beat namespace wildcards regardless of table order. A wildcard
@@ -338,8 +342,10 @@ pub struct MemoryReceipt {
     pub claim: Option<crate::lens::RecordRef>,
     /// A receipt's own fields (a hook run's hook, CODE id, body hash
     /// and run key), with its trigger, job and principal refs. A code capture
-    /// names its repo artifact and retained snapshot hash; otherwise empty on a
-    /// gate-ledger row.
+    /// names its repo artifact and retained snapshot hash; the owner's ruling
+    /// over their own agent's claim names the superseded claim and its author
+    /// (`superseded`, `superseded_author`, `superseded_author_class`);
+    /// otherwise empty on a gate-ledger row.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub fields: std::collections::BTreeMap<String, String>,
 }
@@ -360,6 +366,7 @@ pub(in crate::memory) use self::commit::{BatchClaim, BatchRefusal};
 mod prompted;
 mod settle;
 
+pub(in crate::memory) use settle::ConflictHeadIndex;
 pub use settle::{
     ClaimChangeVerdict, ClaimProposalReview, ClaimProposalReviewRequest, ClaimSettleDecision,
     ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer, ClaimSettlementReason,

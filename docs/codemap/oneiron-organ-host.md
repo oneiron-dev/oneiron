@@ -24,7 +24,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/host/shutdown.rs` | src | m | 1 struct · 8 fn · 11 crate-vis | MeshCancel | The mesh's stop, as the organ work it admitted sees it (FIX 4755, 4756) |
 | `src/host/sized.rs` | src | s | 3 struct · 5 fn · 8 crate-vis | CallMeasure, CallSize, LentRegion | A call its caller sizes from what it lends (Rule 5): a booking and a process grant that grow with the input… |
 | `src/isolation.rs` | src | s | 1 struct · 2 enum | DescendantFence, NamespaceFact, OrganIsolation | What the kernel isolated an organ process with, as its start found it (`sandbox`): plain facts, read on the… |
-| `src/landing.rs` | src | m | 4 fn | — | An organ's results onto the artifact family's one landing (ARCH-0078 "A proposal landing"): each export file… |
+| `src/landing.rs` | src | m | 4 fn · 1 crate-vis | — | An organ's results onto the artifact family's one landing (ARCH-0078 "A proposal landing"): each export file… |
 | `src/lib.rs` | src | s | 2 mod · 19 re-export | — | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) |
 | `src/measure.rs` | src | s | 1 crate-vis | — | The organ host's `[limits]` rows (OF-520, Rule 5): what a call counted and carried, measured where the host… |
 | `src/mesh/client.rs` | src | m | 3 crate-vis | — | The asking side of a mesh organ call: stage the inputs, send the call, answer the organ's asks while it… |
@@ -46,6 +46,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sandbox/landlock.rs` | src | s | 1 crate-vis | — | The filesystem fence on Linux (FIX 7885, ARCH-0075): Landlock, ABI 3 or later |
 | `src/sandbox/scratch.rs` | src | s | 3 crate-vis | — | A third-party organ's scratch dir (FIX 7885): a fresh dir of its own under the system's temp dir, mode 0700… |
 | `src/sandbox/seatbelt.rs` | src | s | 2 crate-vis | — | The filesystem fence on macOS (FIX 7885, ARCH-0075): a third-party organ starts through Seatbelt's… |
+| `src/sandbox/syscall_filter.rs` | src | s | 3 crate-vis | — | The syscall filter on Linux (census L4-09, ARCH-0075 "Syscalls"): a seccomp deny-list that every organ… |
 | `src/seal.rs` | src | m | 5 struct · 1 enum · 1 trait · 5 fn · 9 const · 3 re-export | HostedSealer, SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealSettings, SealTsa | The seal port's host adapter (ARCH-0064 section 7): [`HostedSealer`] implements the engine's [`EsignSealer`]… |
 | `src/seal/binding.rs` | src | m | 9 crate-vis | — | The seal's binding (ARCH-0075 `#organ-host-design-seal-binding`) |
 | `src/seal/custody_keys.rs` | src | s | 1 struct · 2 fn | CustodySealKeys | A seal key held in secret custody (FIX 1297): its PKCS#8 private key is a custody record's value, named by… |
@@ -57,10 +58,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/seal/pdf_work/native.rs` | src | s | 1 crate-vis | — | Trusted native preparation when no first-party prepare organ is selected |
 | `src/seal/producer.rs` | src | s | 1 crate-vis | — | The seal's input is built inside its original admitted host call |
 | `src/seal/verify.rs` | src | s | 2 crate-vis | — | The seal's fresh verification and its suffix gate (OF-415, C032, Engine ruling D) |
-| `src/slot.rs` | src | m | 1 struct · 1 enum · 15 crate-vis | OrganState, OrganStatus | One installed organ: its process, its crash history, its condition |
+| `src/slot.rs` | src | m | 1 struct · 1 enum · 17 crate-vis | OrganState, OrganStatus | One installed organ: its process, its crash history, its condition |
 | `src/spec.rs` | src | s | 9 struct · 2 enum · 3 fn | AskGrant, CallClass, FetchGrant, FetchOrigin, HostConfig, LentInput, OrganCall, OrganInput +3 | What the engine installs and what a caller asks |
 | `src/wait.rs` | src | m | 2 struct · 2 enum · 2 fn | OrganJob, Redrive, Redriven, Submitted | Organ calls that wait for a node, held in the vault (OF-575, owner ruling MESH: "one node is too weak, means… |
 | `tests/host_asks.rs` | test | L | — | — | Protocol 1.1 asks against a real organ process (the probe) |
 | `tests/host_e2e.rs` | test | m | — | — | The host against a real organ process (the probe), over real vault blobs |
 | `tests/host_fds.rs` | test | s | — | — | A stopped organ gives its descriptors back: hosts whose organ was unloaded, revoked or crashed hold no more… |
+| `tests/host_recycle.rs` | test | m | — | — | The organ code `internal` names a bug, and the host recycles the live process after three in a row… |
 | `tests/organ_fence.rs` | test | s | — | — | OF-060 F4: the engine never depends on an organ, and an organ never depends on the engine (ARCH-0075 section… |
+| `tests/organ_syscall_filter.rs` | test | s | — | — | The organ's syscall filter (census L4-09, ARCH-0075 "Syscalls"): an organ that calls ptrace dies by the… |
