@@ -239,6 +239,27 @@ pub(crate) fn chunk_text_in_txn(
     })
 }
 
+/// The words `span` indexes, read as [`chunk_text_in_txn`] reads its source:
+/// `None` when the source no longer reads to the Dreamer, or its text is no
+/// longer the version the span's offsets index.
+pub(crate) fn span_words_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    span: &super::SieveSpan,
+) -> Result<Option<String>> {
+    let Some(text) = chunk_text_in_txn(vault, txn, &span.turn, &span.source)? else {
+        return Ok(None);
+    };
+    let chunk = Chunk::new(span.source, text);
+    if chunk.digest != span.source_digest {
+        return Ok(None);
+    }
+    let (Ok(start), Ok(end)) = (usize::try_from(span.start), usize::try_from(span.end)) else {
+        return Ok(None);
+    };
+    Ok(chunk.text.get(start..end).map(str::to_owned))
+}
+
 /// Whether `turn` still holds each of `sources`, chunks a read of it has
 /// passed, where the Dreamer may still read it, as [`chunk_text_in_txn`]
 /// checks a chunk, without reading its text.
