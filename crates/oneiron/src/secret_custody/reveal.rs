@@ -251,20 +251,48 @@ impl RevealAuthority {
     }
 }
 
+#[cfg(oneiron_test_support)]
+impl RevealAuthority {
+    /// The authority a settled reveal of `secret` would hold, for the
+    /// payment-credential test door (`test_doors::payment_credential`), which
+    /// reads the reveal door without an agent's whole reveal flow.
+    pub(crate) fn for_test_door(
+        secret: EntityId,
+        handle: String,
+        class: CustodyClass,
+        effector: String,
+    ) -> Self {
+        Self {
+            secret,
+            handle,
+            class,
+            effector,
+        }
+    }
+}
+
 /// The value a granted reveal delivers, read under `authority` in the
 /// transaction that stamps its lease; the record must still be active. A
 /// binding's read grant admits every other value read
 /// ([`Vault::get_secret_value_in_txn`]); a reveal holds no binding, and its
-/// consent is what admits this one.
+/// consent is what admits this one. A payment credential is refused with
+/// [`SecretError::PaymentCredentialWithheld`](crate::error::SecretError::PaymentCredentialWithheld)
+/// while this host withholds them (L8-60), whatever the consent said.
 pub(crate) fn reveal_value_in_txn(
-    store: &Store,
+    vault: &Vault,
     txn: &heed::RoTxn<'_>,
     authority: &RevealAuthority,
 ) -> Result<Zeroizing<Vec<u8>>> {
-    let (value, status, _) = value_in_txn(store, txn, &authority.secret, &authority.handle)?;
+    let (value, status, _) = value_in_txn(&vault.store, txn, &authority.secret, &authority.handle)?;
     if status != SecretCustodyStatus::Active {
         return Err(not_active(&authority.handle));
     }
+    super::refuse_withheld_payment_credential_in_txn(
+        vault,
+        txn,
+        &authority.secret,
+        &authority.handle,
+    )?;
     Ok(value)
 }
 

@@ -82,6 +82,7 @@ pub mod own_device_message_replay;
 pub mod pack_encode_work;
 pub mod pad_offer_invalidation;
 pub mod park_typed_wait;
+pub mod payment_credential;
 #[cfg(feature = "sync")]
 pub mod peer_author_redaction;
 pub mod provenance_body_checkpoint;
