@@ -12,8 +12,8 @@
 use std::sync::Arc;
 
 use oneiron::authority::{
-    ActSurface, HostSlipIssuer, MachineRole, PredictedResidenceSet, ReadLocation, ResidenceAct,
-    WorldPrivacy,
+    ActSurface, HostSlipIssuer, MachineOwnership, MachineRole, PredictedResidenceSet, ReadLocation,
+    ResidenceAct, WorldPrivacy,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::registry::ENTITY_TYPE_PERSON;
@@ -35,7 +35,9 @@ const LEARNED_AT_A: u64 = 1_780_000_000;
 const LEARNED_AT_B: u64 = LEARNED_AT_A + 62 * 86_400;
 
 /// A device vault holding a world and a world kept on the owner's machines, which this device is
-/// not. Copied from `it_sync::device_world_follow::Device`, which this target cannot name.
+/// not. Copied from `it_sync::device_world_follow::Device`, which this target cannot name. The
+/// owner answers its machine as a work or school machine: its proof stands here, so it takes the
+/// owner's residence directives (FIX 8888), and it is still never "mine".
 struct Fixture {
     _dir: tempfile::TempDir,
     vault: Vault,
@@ -65,6 +67,15 @@ impl Fixture {
             .expect("the install's machine")
             .expect("a minted machine")
             .id;
+        vault
+            .set_machine_role(
+                &owner,
+                ActSurface::ThisInstall,
+                machine,
+                MachineRole::Owned(MachineOwnership::WorkSchool),
+                None,
+            )
+            .expect("the owner answers the device's machine");
         let world = vault
             .create_world(&owner, "World", vault.now_recorded_at())
             .expect("world");
