@@ -1,5 +1,7 @@
 use super::*;
-use crate::voice_identity::ref_bank::{VoiceRefOrigin, VoiceRefPack};
+use crate::voice_identity::ref_bank::{
+    VoiceRefOrigin, VoiceRefPack, VoiceRefSubjectKind, VoiceRenderDecision,
+};
 use std::sync::Arc;
 
 #[derive(Default)]
@@ -38,6 +40,31 @@ fn epoch(value: u64) -> GenerationEpoch {
         value,
     }
 }
+/// Where the host's worker runs in these tests: its own server, never a
+/// third party, as the reference clip is the person's raw voice.
+const WORKER_LOCALITY: ModelLocality = ModelLocality::OwnServer;
+const GRANT_EVENT: &str = "grant-owner-voice";
+
+/// The subject's render grant the captured refs are banked under, reaching
+/// the host's worker; a captured pack cites its event.
+fn grant_render(vault: &Vault, owner: EntityId) -> Result<()> {
+    vault.record_voice_render_consent(&VoiceRenderDecision {
+        event_id: GRANT_EVENT.into(),
+        voice_id: "owner-voice".into(),
+        subject: owner,
+        subject_kind: VoiceRefSubjectKind::Person,
+        recorded_by: owner,
+        occurred_at: 1,
+        reach: WORKER_LOCALITY,
+        basis: Some(
+            crate::voice_identity::VoiceConsentBasis::ConversationalNotice {
+                notice: "render".into(),
+            },
+        ),
+        state: crate::voice_identity::VoiceConsentState::Granted,
+    })?;
+    Ok(())
+}
 fn bank(vault: &Vault) -> Result<EntityId> {
     let owner = EntityId::now();
     // Ref admission resolves the voice-ref policy rows: seed them first.
@@ -46,12 +73,15 @@ fn bank(vault: &Vault) -> Result<EntityId> {
         crate::gate::default_policy_manifest_id()?,
         &crate::gate::default_policy_manifest().unwrap(),
     )?;
+    grant_render(vault, owner)?;
     vault.store_voice_ref_pack(&VoiceRefPack {
         version: 1,
         id: "banked-owner".into(),
         voice_id: "owner-voice".into(),
         owner,
-        origin: VoiceRefOrigin::Captured,
+        origin: VoiceRefOrigin::Captured {
+            consent_event_ref: GRANT_EVENT.into(),
+        },
         clips: vec![VoiceRegisterClip {
             register: "neutral".into(),
             media_type: "audio/wav".into(),
@@ -66,6 +96,7 @@ fn adapter(vault: &Arc<Vault>) -> Result<VoxCpm2Adapter<Capture>> {
         Arc::clone(vault),
         "owner-voice",
         "neutral",
+        WORKER_LOCALITY,
         Capture {
             ready: true,
             limits: Some(vault.voice_serving_limits(None)?),
@@ -84,6 +115,7 @@ fn ref_withdrawal_cold_worker_queue_failure_and_forged_pcm_fail_closed() -> Resu
         Arc::clone(&vault),
         "owner-voice",
         "neutral",
+        WORKER_LOCALITY,
         Capture::default(),
     )?;
     assert!(cold.submit(TtsCommand::Start { generation }).is_err());
@@ -115,6 +147,7 @@ fn ref_withdrawal_cold_worker_queue_failure_and_forged_pcm_fail_closed() -> Resu
         (1, 1, target.clone(), vec![1, 0]),
         (1, 0, target.clone(), vec![1]),
     ] {
+        let body = Arc::new(VoxCpm2PcmBody::from(bytes));
         assert!(
             tts.handle_pcm(VoxCpm2Audio {
                 generation,
@@ -122,7 +155,7 @@ fn ref_withdrawal_cold_worker_queue_failure_and_forged_pcm_fail_closed() -> Resu
                 chunk_index,
                 target: reported_target,
                 channels: 1,
-                bytes: &bytes
+                body: &body,
             })
             .is_err()
         );
@@ -136,7 +169,7 @@ fn ref_withdrawal_cold_worker_queue_failure_and_forged_pcm_fail_closed() -> Resu
             chunk_index: 0,
             target,
             channels: 1,
-            bytes: &[1, 0]
+            body: &Arc::new(VoxCpm2PcmBody::from(vec![1, 0])),
         })
         .is_err()
     );
@@ -161,7 +194,13 @@ fn missing_banked_register_and_withdrawal_refuse_render() -> Result<()> {
         limits: Some(vault.voice_serving_limits(None)?),
         ..Capture::default()
     };
-    let mut missing = VoxCpm2Adapter::new(Arc::clone(&vault), "owner-voice", "not-banked", queue)?;
+    let mut missing = VoxCpm2Adapter::new(
+        Arc::clone(&vault),
+        "owner-voice",
+        "not-banked",
+        WORKER_LOCALITY,
+        queue,
+    )?;
     assert!(
         missing
             .submit(TtsCommand::Start {
@@ -230,18 +269,23 @@ fn withdrawal_after_start_revokes_even_identical_rebank() -> Result<()> {
             chunk_index: 0,
             target: old.clone(),
             channels: 1,
-            bytes: &[1, 0]
+            body: &Arc::new(VoxCpm2PcmBody::from(vec![1, 0])),
         })
         .is_err()
     );
     assert!(!old.is_current_in(&vault));
     // A rebank of IDENTICAL PCM and transcript must not resurrect old work.
+    // The withdrawal deleted the grant too; re-record the same event so the
+    // pack bytes stay identical.
+    grant_render(&vault, owner)?;
     vault.store_voice_ref_pack(&VoiceRefPack {
         version: 1,
         id: "banked-owner".into(),
         voice_id: "owner-voice".into(),
         owner,
-        origin: VoiceRefOrigin::Captured,
+        origin: VoiceRefOrigin::Captured {
+            consent_event_ref: GRANT_EVENT.into(),
+        },
         clips: vec![VoiceRegisterClip {
             register: "neutral".into(),
             media_type: "audio/wav".into(),
@@ -355,7 +399,7 @@ fn pending_withdrawal_does_not_wait_for_gpu_during_sentence_and_safeguard_submis
             chunk_index: 0,
             target,
             channels: 1,
-            bytes: &[1, 0],
+            body: &Arc::new(VoxCpm2PcmBody::from(vec![1, 0])),
         })
         .is_err()
     );

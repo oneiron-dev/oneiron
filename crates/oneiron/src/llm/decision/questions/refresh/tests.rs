@@ -3,8 +3,8 @@ use super::*;
 use crate::VaultConfig;
 use crate::edge::EdgeActorClass;
 use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion,
-    DecisionRung, ProviderPin,
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial,
+    DecisionQuestionInput, DecisionRung, ProviderPin,
 };
 
 type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -28,11 +28,9 @@ fn fixture() -> Result<(tempfile::TempDir, Vault, EntityId, EntityId, WriteActor
     Ok((dir, vault, owner, unit, actor))
 }
 
-fn definition(unit: EntityId) -> QuestionDefinition {
-    QuestionDefinition {
-        question: DecisionQuestion {
-            id: EntityId::now(),
-            version: 1,
+fn definition(unit: EntityId) -> QuestionDefinitionInput {
+    QuestionDefinitionInput {
+        question: DecisionQuestionInput {
             text: "fixture question".into(),
             class: DecisionClass::Judgment,
             contract: AnswerContract::Noul,
@@ -55,6 +53,12 @@ fn definition(unit: EntityId) -> QuestionDefinition {
         delivery: "now".into(),
         learning: false,
         binding: None,
+        criteria: QuestionCriteria::default(),
+        audience: QuestionAudience::Asker,
+        posture: None,
+        media: QuestionMedia::default(),
+        deadline_ms: None,
+        artifacts: Vec::new(),
     }
 }
 
@@ -68,13 +72,15 @@ fn propose(_: &QuestionRecord, _: EntityId, _: &[u8]) -> AnswerProposal {
             version: "one".into(),
         }],
         paired: Vec::new(),
+        rule: None,
+        cost_per_thousand: None,
     }
 }
 
 #[test]
 fn arrival_schedule_manual_version_and_pause() -> TestResult {
     let (_dir, vault, owner, unit, actor) = fixture()?;
-    let record = create_question(&vault, owner, definition(unit), 2)?;
+    let record = create_question(&vault, actor, definition(unit), 2)?;
     let id = record.definition.question.id;
     assert!(
         refresh_due_questions(&vault, actor, 3, |r, u, s| Ok(propose(r, u, s)))?
@@ -113,7 +119,7 @@ fn arrival_schedule_manual_version_and_pause() -> TestResult {
     );
     let mut changed = definition(unit);
     changed.question.text = "changed".into();
-    edit_question(&vault, owner, id, 1, changed, 13)?;
+    edit_question(&vault, actor, id, 1, changed, 13)?;
     let next = refresh_question(
         &vault,
         actor,
@@ -164,7 +170,7 @@ fn arrival_schedule_manual_version_and_pause() -> TestResult {
 #[test]
 fn concurrent_version_pause_and_source_changes_do_not_land() -> TestResult {
     let (_dir, vault, owner, unit, actor) = fixture()?;
-    let record = create_question(&vault, owner, definition(unit), 2)?;
+    let record = create_question(&vault, actor, definition(unit), 2)?;
     let id = record.definition.question.id;
     let err = refresh_question(
         &vault,
@@ -211,7 +217,7 @@ fn concurrent_version_pause_and_source_changes_do_not_land() -> TestResult {
         |r, u, source| {
             let mut changed = definition(unit);
             changed.question.text = "new version".into();
-            edit_question(&vault, owner, id, 1, changed, 4)?;
+            edit_question(&vault, actor, id, 1, changed, 4)?;
             Ok(propose(r, u, source))
         },
     );
@@ -257,7 +263,7 @@ fn private_note_fixture() -> TestResult<(tempfile::TempDir, Vault, EntityId, Ent
 fn private_note_never_reaches_foreign_provider_or_claim() -> TestResult {
     let (_dir, vault, owner, other, note) = private_note_fixture()?;
     let other_actor = WriteActor::new(other, EdgeActorClass::Human);
-    let denied = create_question(&vault, other, definition(note), 3)?;
+    let denied = create_question(&vault, other_actor, definition(note), 3)?;
     let denied_id = denied.definition.question.id;
     let mut called = false;
     let answers = refresh_question(
@@ -276,7 +282,12 @@ fn private_note_never_reaches_foreign_provider_or_claim() -> TestResult {
     assert!(answers.is_empty());
     assert!(answer_records(&vault, other, denied_id)?.is_empty());
 
-    let allowed = create_question(&vault, owner, definition(note), 3)?;
+    let allowed = create_question(
+        &vault,
+        WriteActor::new(owner, EdgeActorClass::Human),
+        definition(note),
+        3,
+    )?;
     let allowed_id = allowed.definition.question.id;
     let mut called = false;
     let answers = refresh_question(
@@ -306,7 +317,7 @@ fn note_refresh_reads_live_edits_and_refuses_provider_time_change() -> TestResul
     use crate::note::{NoteEdit, NoteEditOutcome};
     let (_dir, vault, owner, _other, note) = private_note_fixture()?;
     let actor = WriteActor::new(owner, EdgeActorClass::Human);
-    let record = create_question(&vault, owner, definition(note), 3)?;
+    let record = create_question(&vault, actor, definition(note), 3)?;
     let question = record.definition.question.id;
     let birth = vault.get_raw(&note)?.expect("birth row");
     let apply = |text: &str| -> TestResult {
@@ -362,7 +373,7 @@ fn note_refresh_reads_live_edits_and_refuses_provider_time_change() -> TestResul
 #[test]
 fn concurrent_arrival_cannot_settle_twice() -> TestResult {
     let (_dir, vault, owner, unit, actor) = fixture()?;
-    let record = create_question(&vault, owner, definition(unit), 2)?;
+    let record = create_question(&vault, actor, definition(unit), 2)?;
     let id = record.definition.question.id;
     vault.put_entity(
         &unit,
@@ -404,7 +415,7 @@ fn relationship_message_requires_principal_grant_before_provider_and_at_settle()
         AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
     };
     use crate::claim::ScopedReadActorKey;
-    use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+    use crate::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
     let owner = EntityId::now();
@@ -425,16 +436,20 @@ fn relationship_message_requires_principal_grant_before_provider_and_at_settle()
         .witness(&WitnessTurn {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: None,
+            thread_audience: None,
             occurred_at: 1,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,
                 message_type: "dialogue".into(),
                 content: "relationship source".into(),
+                parts: None,
                 metadata: Some(serde_json::json!({"rel": space.to_hex()})),
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
+            assertions: WitnessAssertions::default(),
         })?;
     crate::test_util::authorize_readers(
         &vault,
@@ -452,9 +467,9 @@ fn relationship_message_requires_principal_grant_before_provider_and_at_settle()
             .value
             .is_none()
     );
-    let record = create_question(&vault, principal, definition(message), 2)?;
-    let question = record.definition.question.id;
     let actor = WriteActor::new(principal, EdgeActorClass::Human);
+    let record = create_question(&vault, actor, definition(message), 2)?;
+    let question = record.definition.question.id;
     let mut called = 0;
     let without = refresh_question(
         &vault,
@@ -482,6 +497,7 @@ fn relationship_message_requires_principal_grant_before_provider_and_at_settle()
         revoked_at: None,
         expires_at: Some(u64::MAX),
         authority_scope: crate::federation::scope_codec::read_preset(),
+        companion_bounds: None,
     };
     vault.create_access_grant(&grant_id, &grant)?;
     assert!(
