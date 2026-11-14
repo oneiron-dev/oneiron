@@ -657,7 +657,7 @@ fn a_held_feed_move_lands_the_rest_of_the_pass_and_moves_the_booking_once_the_de
             .vault
             .get_occurred(&standup)
             .expect("standup occurrence"),
-        inclusive(moves.standup_moved),
+        moves.standup_moved,
         "every other item of the held pass lands"
     );
     assert_eq!(
