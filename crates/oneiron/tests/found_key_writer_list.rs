@@ -27,8 +27,14 @@ use serde_json::json;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-/// A GitHub token the door's text rules place by its span.
-const TOKEN: &str = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+/// GitHub tokens the door's text rules place by their span, one per EVENT:
+/// a value custody already holds comes back under its old handle and is
+/// lifted into no new key (OF-560 C).
+const TOKENS: [&str; 3] = [
+    "ghp_0123456789abcdefghijklmnopqrstuvwxyz",
+    "ghp_1123456789abcdefghijklmnopqrstuvwxyz",
+    "ghp_2123456789abcdefghijklmnopqrstuvwxyz",
+];
 
 /// The shipped default policy pack, whose manifest the read grants join.
 const SHIPPED_POLICY_PACK: &str = "oneiron-default-policy";
@@ -64,8 +70,8 @@ fn person(vault: &Vault) -> Result<(EntityId, AuthenticatedOwner), Box<dyn std::
     Ok((id, proof))
 }
 
-/// An EVENT `writer` writes in their own name, whose notes hold the token.
-fn write_event(vault: &Vault, writer: EntityId) -> EntityId {
+/// An EVENT `writer` writes in their own name, whose notes hold `token`.
+fn write_event(vault: &Vault, writer: EntityId, token: &str) -> EntityId {
     let receipt = vault
         .memory(writer, EdgeActorClass::Human)
         .put_structural(&StructuralPutInput {
@@ -73,7 +79,7 @@ fn write_event(vault: &Vault, writer: EntityId) -> EntityId {
             kind: "EVENT".to_owned(),
             body: json!({
                 "name": "release",
-                "notes": format!("deploy with token={TOKEN}"),
+                "notes": format!("deploy with token={token}"),
             }),
             text_fields: None,
             edges: None,
@@ -174,8 +180,8 @@ fn a_person_lists_only_the_keys_they_wrote() -> TestResult {
     let (writer, writer_proof) = person(&vault)?;
     let (other, other_proof) = person(&vault)?;
     let (_, stranger_proof) = person(&vault)?;
-    let mine = write_event(&vault, writer);
-    let theirs = write_event(&vault, other);
+    let mine = write_event(&vault, writer, TOKENS[0]);
+    let theirs = write_event(&vault, other, TOKENS[1]);
     let mine_card = owner_card(&vault, &owner, &mine)?;
     let theirs_card = owner_card(&vault, &owner, &theirs)?;
 
@@ -209,8 +215,11 @@ fn the_writer_filter_runs_before_the_page_limit() -> TestResult {
     let (_dir, vault, owner) = open_vault()?;
     let (writer, writer_proof) = person(&vault)?;
     let (other, other_proof) = person(&vault)?;
-    let older = write_event(&vault, writer);
-    let newer = [write_event(&vault, other), write_event(&vault, other)];
+    let older = write_event(&vault, writer, TOKENS[0]);
+    let newer = [
+        write_event(&vault, other, TOKENS[1]),
+        write_event(&vault, other, TOKENS[2]),
+    ];
     let older_handle = owner_card(&vault, &owner, &older)?.handle;
 
     let page = vault.found_keys_written_by_page(&writer_proof, false, None, 1)?;
@@ -261,8 +270,8 @@ fn the_writer_filter_runs_before_the_page_limit() -> TestResult {
 fn open_only_keeps_the_keys_no_one_answered() -> TestResult {
     let (_dir, vault, owner) = open_vault()?;
     let (writer, writer_proof) = person(&vault)?;
-    let answered = write_event(&vault, writer);
-    let open = write_event(&vault, writer);
+    let answered = write_event(&vault, writer, TOKENS[0]);
+    let open = write_event(&vault, writer, TOKENS[1]);
     let answered_handle = owner_card(&vault, &owner, &answered)?.handle;
     let open_handle = owner_card(&vault, &owner, &open)?.handle;
     let ruled = vault
@@ -300,7 +309,7 @@ fn open_only_keeps_the_keys_no_one_answered() -> TestResult {
 fn a_record_moved_out_of_the_writers_read_scope_lists_the_key_with_no_place() -> TestResult {
     let (_dir, vault, owner) = open_vault()?;
     let (writer, writer_proof) = person(&vault)?;
-    let record = write_event(&vault, writer);
+    let record = write_event(&vault, writer, TOKENS[0]);
     let owner_view = owner_card(&vault, &owner, &record)?;
 
     set_reads(&vault, writer, None)?;

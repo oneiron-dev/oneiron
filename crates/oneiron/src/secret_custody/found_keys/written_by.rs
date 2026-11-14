@@ -20,11 +20,11 @@ use std::cmp::Ordering;
 use heed::RoTxn;
 
 use super::{FOUND, FoundKey, FoundKeyAction, actions};
-use crate::claim::ScopedReadActorKey;
+use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{ClaimError, Error, Result};
 use crate::secret_custody::doors::read_secret_custody_admission_in_txn;
 use crate::vault::Vault;
 
@@ -116,12 +116,16 @@ impl Vault {
     /// The person is rechecked live in the reading transaction, owner of
     /// this vault or not; an owner reads the keys they wrote themselves
     /// here, and every key through [`Self::found_keys_page`]. A writer's
-    /// keys carry one custody record each, minted where their value was
-    /// written, so a handle names one card in this list.
+    /// keys carry one custody record each, minted once per distinct value
+    /// and noted on the one record it was written in (a moved row's keys
+    /// merge by custody; a known value's file note names no writer), so a
+    /// handle names one card in this list.
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
-    /// when the proof is not a live person's of this vault. Storage errors.
+    /// when the proof is not a live person's of this vault.
+    /// [`ClaimError::ScopedReadOwnerNotLive`] when the owner binding cannot
+    /// be read. Storage errors.
     pub fn found_keys_written_by_page(
         &self,
         person: &AuthenticatedOwner,
@@ -213,11 +217,14 @@ fn written_card_in_txn(
 }
 
 /// Which of `records` `person` can read now, in `txn`, one answer each: the
-/// lane the Memory facade opens for a person with no credential bound, the
-/// vault owner's own key for an owner and otherwise their identity as a
-/// human, admitted only through their grants (`Memory::read_lane`). Each
-/// record is judged as a point read admits it. An id that names no entity,
-/// such as a side row's, is not readable.
+/// lane `get_entity` opens for a person with no credential bound
+/// (`Memory::read_lane`). The vault owner's own key goes to the person the
+/// Memory facade's owner test passes (the embedded owner, or a human whose
+/// owner binding verifies), the test the owner key's own recheck runs;
+/// anyone else reads as a human, admitted only through their grants. Each
+/// record is judged as a point read of a record verb admits it, a claim of
+/// any status included. An id that names no entity, such as a side row's,
+/// is not readable.
 fn readable_records_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -227,7 +234,10 @@ fn readable_records_in_txn(
     if records.is_empty() {
         return Ok(Vec::new());
     }
-    let key = if crate::policy_model::is_live_vault_owner_in_txn(vault, txn, person)? {
+    let owner =
+        crate::memory::actor_is_vault_owner_in_txn(vault, txn, *person, EdgeActorClass::Human)
+            .map_err(|error| Error::Claim(ClaimError::ScopedReadOwnerNotLive(Box::new(error))))?;
+    let key = if owner {
         ScopedReadActorKey::vault_owner(*person)
     } else {
         let Some(key) = ScopedReadActorKey::with_actor_class(
@@ -240,5 +250,6 @@ fn readable_records_in_txn(
     };
     vault
         .scoped_read(key)
+        .with_claim_status(ClaimReadStatus::Recorded)
         .entities_readable_in_txn(txn, records)
 }
