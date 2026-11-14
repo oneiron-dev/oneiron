@@ -36,7 +36,12 @@ const MAX_SOURCE_BYTES: usize = 1_048_576;
 pub struct GraphContextSource {
     pub id: EntityId,
     pub entity_type: u8,
+    /// The body as its asker is shown it: as stored to the owner, as the
+    /// typed Nulled rule releases it to every other asker, and empty when
+    /// that rule withholds it (ruling EXPORTDOORS Q4 = A).
     pub body: Vec<u8>,
+    /// The BLAKE3 of the stored body the read admitted, which every recheck
+    /// compares.
     pub hash: [u8; 32],
 }
 
@@ -192,8 +197,8 @@ fn omission_notice(omitted: usize) -> String {
     format!("answered using compatible sources; {omitted} neighbours omitted")
 }
 
-/// A stored body as the served JSON text a reader sees; a body that is not
-/// one MessagePack value shows nothing.
+/// A source's body as the served JSON text its asker sees; a body that is
+/// not one MessagePack value, a withheld one among them, shows nothing.
 fn body_text(body: &[u8]) -> String {
     let mut cursor = body;
     match rmpv::decode::read_value(&mut cursor) {
@@ -622,8 +627,9 @@ pub(super) fn unit_context(
         return Ok(None);
     };
     let txn = vault.store.env.read_txn()?;
-    let unit_source = source(unit, kind, body);
-    let eligible = eligible_sources(vault, &txn, neighbors)?;
+    let reads_stored = lane.reads_stored_bodies_in(&txn)?;
+    let unit_source = source(reads_stored, unit, kind, body)?;
+    let eligible = eligible_sources(vault, &txn, reads_stored, neighbors)?;
     let Some((kept, omitted)) = fit_neighbors(lane, &txn, &unit_source, eligible)? else {
         return Ok(None);
     };
@@ -648,8 +654,9 @@ pub(super) fn recipe_context(
     evidence: &[EntityId],
 ) -> Result<Option<GraphUnitContext>> {
     let txn = lane.vault().store.env.read_txn()?;
+    let reads_stored = lane.reads_stored_bodies_in(&txn)?;
     let mut sources = Vec::with_capacity(evidence.len() + 1);
-    sources.push(source(unit, kind, body));
+    sources.push(source(reads_stored, unit, kind, body)?);
     for id in evidence {
         let Some((kind, _, body)) = lane.graph_ask_parts_in_txn(&txn, id)? else {
             return Ok(None);
@@ -659,7 +666,7 @@ pub(super) fn recipe_context(
         if !kind_is_graph_evidence(kind) || body.is_empty() || body.len() > MAX_SOURCE_BYTES {
             return Ok(None);
         }
-        sources.push(source(*id, kind, body));
+        sources.push(source(reads_stored, *id, kind, body)?);
     }
     Ok(Some(GraphUnitContext {
         unit,
@@ -727,6 +734,7 @@ pub(crate) fn trial_unit_context_in_txn(
     let read_lane = super::saved_reader::answer_lane_in_txn(vault, txn, principal, answer)?;
     let key = super::saved_reader::saved_reader_in_txn(vault, txn, principal, &read_lane)?;
     let lane = super::reader_authority::question_lane(vault, key.at(locality));
+    let reads_stored = lane.reads_stored_bodies_in(txn)?;
     let mut sources = Vec::new();
     for pin in &answer.decision.receipt.evidence_versions {
         let raw = lane
@@ -745,7 +753,7 @@ pub(crate) fn trial_unit_context_in_txn(
                 "model trial source frontier changed",
             ));
         }
-        sources.push(source(pin.id, header.entity_type, body));
+        sources.push(source(reads_stored, pin.id, header.entity_type, body)?);
     }
     if sources
         .first()
@@ -764,13 +772,34 @@ pub(crate) fn trial_unit_context_in_txn(
     })
 }
 
-fn source(id: EntityId, entity_type: u8, body: Vec<u8>) -> GraphContextSource {
-    GraphContextSource {
+/// The source a read admitted with `stored` as its body, shown to an asker
+/// that reads stored bodies (the owner) or not
+/// ([`crate::claim::ScopedRead::reads_stored_bodies_in`]): its hash pins
+/// `stored`, and its body is what that asker is served of it
+/// ([`crate::batch::export::released_body_for`]), empty when withheld.
+///
+/// # Errors
+/// A failed raw release check.
+pub(super) fn source(
+    reads_stored: bool,
+    id: EntityId,
+    entity_type: u8,
+    stored: Vec<u8>,
+) -> Result<GraphContextSource> {
+    let hash = *blake3::hash(&stored).as_bytes();
+    let body = if reads_stored {
+        stored
+    } else {
+        crate::batch::export::released_body_for(false, entity_type, &stored)?
+            .map(std::borrow::Cow::into_owned)
+            .unwrap_or_default()
+    };
+    Ok(GraphContextSource {
         id,
         entity_type,
-        hash: *blake3::hash(&body).as_bytes(),
         body,
-    }
+        hash,
+    })
 }
 
 /// A bare prediction in the engine's receipt: the default band, every

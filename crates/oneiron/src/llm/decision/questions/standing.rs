@@ -350,7 +350,7 @@ fn sources_with_caller_in_txn(
         {
             return Err(Error::EntityNotFound);
         }
-        if caller.is_some() {
+        if let Some(caller) = caller {
             let body = &raw[ENTITY_METADATA_HEADER_LEN..];
             if !super::graph_ask::kind_is_graph_evidence(header.entity_type)
                 || body.is_empty()
@@ -358,12 +358,14 @@ fn sources_with_caller_in_txn(
             {
                 return Err(Error::EntityNotFound);
             }
-            context.push(super::GraphContextSource {
-                id: *id,
-                entity_type: header.entity_type,
-                hash: *blake3::hash(body).as_bytes(),
-                body: body.to_vec(),
-            });
+            // The caller's answerer is shown the body as the caller is
+            // served it (ruling EXPORTDOORS Q4 = A).
+            context.push(super::graph_ask::source(
+                caller.reads_stored_bodies_in(txn)?,
+                *id,
+                header.entity_type,
+                body.to_vec(),
+            )?);
         }
         sources.push(Source::of_row(header.entity_type, &raw, &scope)?);
     }
@@ -474,12 +476,12 @@ pub(super) fn prepare_graph_answer(
         {
             return Err(Error::EntityNotFound);
         }
-        sources.push(super::GraphContextSource {
-            id: *id,
-            entity_type: kind,
-            hash: *blake3::hash(&body).as_bytes(),
+        sources.push(super::graph_ask::source(
+            lane.reads_stored_bodies_in(&txn)?,
+            *id,
+            kind,
             body,
-        });
+        )?);
     }
     Ok((
         record,
