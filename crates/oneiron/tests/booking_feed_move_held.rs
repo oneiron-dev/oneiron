@@ -593,6 +593,12 @@ fn booking_fenced_by_a_pending_emergency(fixture: &Fixture) -> (ConfirmReceipt, 
     .expect("the page's invite grant");
     oneiron::test_support::bind_host_owner(&fixture.vault, &fixture.issuer, fixture.host)
         .expect("bind the host as the owner");
+    // The apology goes out on `email`, which a seeded vault refuses until its
+    // built-in pack is installed and checked (OF-519): "the channel's
+    // built-in pack is not installed". The pack is not what this test
+    // covers, so the vault drops the seed marker, as an unseeded open has none.
+    oneiron::test_doors::builtin_pack_seed::remove_builtin_pack_seed_marker(&fixture.vault)
+        .expect("remove the built-in pack seed marker");
 
     // The owner's RequestUpdate instruction over the booked slot: it keeps
     // the booking confirmed at its slot and revision, and proposes others.

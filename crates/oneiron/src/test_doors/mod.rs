@@ -9,6 +9,7 @@ pub mod approval_target_round_trip;
 pub mod archive_import;
 pub mod authority_view_grant;
 pub mod authority_world_undo;
+pub mod builtin_pack_seed;
 pub mod callable_skill;
 pub mod check_in;
 pub mod checkpoint_registry;
