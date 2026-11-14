@@ -6,12 +6,12 @@
 //! owner's nearest reason on record pre-filled.
 
 use super::{HumanDecisionQueue, HumanDecisionRequest};
+use crate::Result;
 use crate::consent::{
     CatastropheClass, ComposedEffect, EffectFacts, EffectPlace, GrantBound, UndoFidelity,
 };
 use crate::llm::decision::types::invalid;
 use crate::vault_shape::ShapeGrantBound;
-use crate::{EntityId, Result};
 use serde::{Deserialize, Serialize};
 
 /// The host's undo-fidelity finding, as an ask carries it.
@@ -81,20 +81,8 @@ pub struct AskConsent {
     pub bound: ShapeGrantBound,
 }
 
-/// A requirement's plain form; one with no plain form (a contact clearance's Scope
-/// envelope) cannot ride an ask.
-fn plain(bound: &GrantBound) -> Result<ShapeGrantBound> {
-    ShapeGrantBound::of(bound)
-        .ok_or_else(|| invalid("an ask carries a requirement only in its plain form"))
-}
-
-/// `hex` as an entity id, when it is one.
-fn entity(hex: Option<&str>) -> Result<Option<EntityId>> {
-    hex.map(|hex| {
-        EntityId::from_hex(hex).map_err(|_| invalid("an ask names a place by entity id hex"))
-    })
-    .transpose()
-}
+#[doc(hidden)]
+use oneiron_verb_wire::llm::decision::ladder::ask_consent::{entity, plain};
 
 impl AskConsent {
     /// The consent `effect` asks for, drafting `bound` on an owner's reason.
