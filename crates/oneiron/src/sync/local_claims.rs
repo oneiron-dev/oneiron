@@ -36,7 +36,8 @@ pub(super) fn claim_sync_allowed(raw: &[u8]) -> bool {
 /// owner never granted them. No sync door ships one, and every door that
 /// replays a peer's rows drops one: dropped, not refused, so the rest of an
 /// older peer's window still lands. Every row the world-authority fold reads
-/// was therefore written on this node.
+/// was therefore written on this node, or restored from this vault's own
+/// checkpoint (RULING L2-53-CHECKPOINT = B).
 pub(super) fn world_access_claim(data: &[u8]) -> bool {
     decode_claim_body(data, true).is_ok_and(|body| is_world_access_tier_predicate(&body.predicate))
 }

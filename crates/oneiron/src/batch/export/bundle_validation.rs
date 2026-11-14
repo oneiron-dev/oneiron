@@ -699,7 +699,7 @@ pub(crate) enum ReservedClaimImport {
 /// A test names every reserved family and fails on such a `None`. The two
 /// world-access tiers are not reserved, yet stay archive data too: they are
 /// local authority (RULING L2-53-CEILING), so the importing node's owner
-/// grants its own agents their worlds.
+/// grants its own agents their worlds (`vault.agents.worlds.set`).
 pub(crate) fn reserved_claim_import(predicate: &str) -> Option<ReservedClaimImport> {
     use ImportOmissionReason as Omit;
     use ReservedClaimImport::{ArchiveOnly, Restore};
