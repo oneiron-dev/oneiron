@@ -122,6 +122,11 @@ pub struct CheckpointKey {
     /// The signers the vault's mode roots delegated, trusted beside `trust`
     /// (`trusting_mode_roots`, FIX 968).
     pub(super) delegated: Option<Box<super::signer_delegation::DelegatedSigners>>,
+    /// An escrow capsule opened this key ([`CheckpointKey::unlock`] with
+    /// [`VaultKeyUnlock::EscrowCapsule`]). Such a key opens no artifact whose
+    /// signed key header carries "Nobody but me", whichever artifact it was
+    /// unlocked from (review of #7766).
+    capsule_opened: bool,
 }
 
 impl std::fmt::Debug for CheckpointKey {
@@ -179,6 +184,7 @@ impl CheckpointKey {
             wake_floor: None,
             artifact_host_holds: None,
             delegated: None,
+            capsule_opened: matches!(unlock, VaultKeyUnlock::EscrowCapsule { .. }),
         })
     }
 
@@ -218,6 +224,7 @@ impl CheckpointKey {
             wake_floor: None,
             artifact_host_holds: None,
             delegated: None,
+            capsule_opened: false,
         })
     }
 
@@ -317,6 +324,7 @@ impl Vault {
             wake_floor: None,
             artifact_host_holds: None,
             delegated: None,
+            capsule_opened: false,
         })
     }
 
@@ -339,6 +347,7 @@ impl Vault {
                 wake_floor: None,
                 artifact_host_holds: None,
                 delegated: None,
+                capsule_opened: false,
             },
         ))
     }
@@ -513,6 +522,12 @@ pub(super) fn open_artifact_file(
         || commitment.key_header_blake3 != Some(*blake3::hash(&prelude.key_header).as_bytes())
     {
         return Err(codec());
+    }
+    // The header is the signed one now: a key an escrow capsule opened
+    // stops at an artifact sealed under "Nobody but me", even when it was
+    // unlocked from an earlier artifact sealed under "Standard".
+    if key.capsule_opened {
+        carried.admit_capsule_opened_key()?;
     }
     // The prelude's registry binding is the one the signature covers (FIX
     // 5826), compared after the signature verifies and never with where the

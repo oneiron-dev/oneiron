@@ -25,7 +25,7 @@
 
 use std::path::Path;
 
-use oneiron::recovery::checkpoint::CheckpointKey;
+use oneiron::recovery::checkpoint::{CheckpointKey, RestoreReason};
 use oneiron::recovery::{CodeKeeping, KitIssue, KitPiece, PassphraseCost, PieceHome};
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
 use oneiron::world_keys::{
@@ -337,6 +337,35 @@ fn a_checkpoint_sealed_under_nobody_but_me_refuses_an_earlier_capsule() {
     refused_by_preset(
         presented(&after),
         "the earlier capsule on a checkpoint sealed under the preset",
+    );
+
+    // A key the capsule opened from the earlier checkpoint stops at the
+    // later one too: the refusal reads the header its signature covers, not
+    // the header the key was unlocked from (review of #7766, round 1).
+    let signer = vault
+        .checkpoint_signer()
+        .expect("the vault's checkpoint signer");
+    let earlier_key = CheckpointKey::unlock(
+        &before,
+        &VaultKeyUnlock::EscrowCapsule {
+            label: "box",
+            capsule: &capsule,
+            secret: &recipient,
+        },
+    )
+    .expect("the capsule opens the earlier checkpoint")
+    .trusting(vec![signer]);
+    refused_by_preset(
+        Vault::restore_checkpoint(
+            &after,
+            &earlier_key,
+            &directory.path().join("restored"),
+            VaultConfig::device(),
+            RestoreReason::Restore,
+            200,
+        )
+        .map(|_| ()),
+        "a key the earlier capsule opened, restoring a checkpoint sealed under the preset",
     );
 }
 

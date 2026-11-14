@@ -62,14 +62,18 @@ pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
         let _ = std::fs::remove_file(path);
         anyhow::bail!("write {}: {error}", path.display());
     }
-    // The new entry lasts once the directory is on disk too.
-    let dir = path
-        .parent()
-        .filter(|dir| !dir.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
+    // The new entry lasts once the directory is on disk too; until then the
+    // file is not kept.
     #[cfg(unix)]
-    if let Ok(dir) = File::open(dir) {
-        let _ = dir.sync_all();
+    {
+        let dir = path
+            .parent()
+            .filter(|dir| !dir.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        if let Err(error) = File::open(dir).and_then(|dir| dir.sync_all()) {
+            let _ = std::fs::remove_file(path);
+            anyhow::bail!("sync the directory of {}: {error}", path.display());
+        }
     }
     Ok(())
 }
