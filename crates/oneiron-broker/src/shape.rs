@@ -138,6 +138,28 @@ pub enum Shape {
     /// Slides v1 edits: `POST …/v1/presentations/{id}:batchUpdate`, JSON,
     /// Bearer.
     SlidesBatchUpdate,
+    /// Google Drive v3 (L3-17), read only: the change log's present page
+    /// token, `GET …/drive/v3/changes/startPageToken`, no body, Bearer. The
+    /// query holds only `supportsAllDrives` and `driveId`.
+    DriveChangesStartPageToken,
+    /// One page of Drive's change log, `GET …/drive/v3/changes`, no body,
+    /// Bearer. The query holds only `pageToken`, `pageSize`,
+    /// `includeRemoved`, `restrictToMyDrive`, `driveId`,
+    /// `supportsAllDrives`, `includeItemsFromAllDrives` and `fields`.
+    DriveChangesList,
+    /// One file's metadata, `GET …/drive/v3/files/{id}`, no body, Bearer.
+    /// The query holds only `supportsAllDrives` and `fields`, so no `alt`
+    /// asks for the file's content.
+    DriveFileGet,
+    /// One stored file's content, `GET …/drive/v3/files/{id}`, no body,
+    /// Bearer, with the one query `alt=media&supportsAllDrives=true` and no
+    /// other: no `acknowledgeAbuse` fetches a file Google flagged. The reply
+    /// is the file's bytes, buffered up to [`crate::MAX_BODY`].
+    DriveFileDownload,
+    /// One Google file's content in one format,
+    /// `GET …/drive/v3/files/{id}/export`, no body, Bearer. The query holds
+    /// only `mimeType`. The reply is the export's bytes, buffered as above.
+    DriveFileExport,
     /// Microsoft Graph v1.0, Excel workbooks (L3-17): a workbook session,
     /// `POST …/v1.0/me/drive/items/{id}/workbook/createSession`, JSON, Bearer.
     ExcelCreateSession,
@@ -261,7 +283,8 @@ const fn gemini(
 }
 
 /// A workspace REST row (Google Workspace, Microsoft Graph): the user's
-/// OAuth access token as Bearer, no model on the wire, a buffered JSON reply.
+/// OAuth access token as Bearer, no model on the wire, a buffered reply: JSON,
+/// or a Drive file's content.
 const fn workspace(
     method: &'static str,
     endpoint: &'static [&'static str],
@@ -577,6 +600,55 @@ const SLIDES_BATCH_UPDATE: Row = workspace(
     Body::Json,
 );
 
+const DRIVE_CHANGES_START_PAGE_TOKEN: Row = workspace(
+    "GET",
+    &["drive", "v3", "changes", "startPageToken"],
+    None,
+    &["supportsAllDrives", "driveId"],
+    Body::Empty,
+);
+
+const DRIVE_CHANGES_LIST: Row = workspace(
+    "GET",
+    &["drive", "v3", "changes"],
+    None,
+    &[
+        "pageToken",
+        "pageSize",
+        "includeRemoved",
+        "restrictToMyDrive",
+        "driveId",
+        "supportsAllDrives",
+        "includeItemsFromAllDrives",
+        "fields",
+    ],
+    Body::Empty,
+);
+
+const DRIVE_FILE_GET: Row = workspace(
+    "GET",
+    &["drive", "v3", "files", "{id}"],
+    None,
+    &["supportsAllDrives", "fields"],
+    Body::Empty,
+);
+
+const DRIVE_FILE_DOWNLOAD: Row = workspace(
+    "GET",
+    &["drive", "v3", "files", "{id}"],
+    Some("alt=media&supportsAllDrives=true"),
+    &[],
+    Body::Empty,
+);
+
+const DRIVE_FILE_EXPORT: Row = workspace(
+    "GET",
+    &["drive", "v3", "files", "{id}", "export"],
+    None,
+    &["mimeType"],
+    Body::Empty,
+);
+
 /// The workbook of one drive item, under the signed-in user's drive.
 const EXCEL_CREATE_SESSION: Row = workspace(
     "POST",
@@ -692,6 +764,11 @@ impl Shape {
             Self::DocsBatchUpdate => &DOCS_BATCH_UPDATE,
             Self::SlidesPresentationGet => &SLIDES_PRESENTATION_GET,
             Self::SlidesBatchUpdate => &SLIDES_BATCH_UPDATE,
+            Self::DriveChangesStartPageToken => &DRIVE_CHANGES_START_PAGE_TOKEN,
+            Self::DriveChangesList => &DRIVE_CHANGES_LIST,
+            Self::DriveFileGet => &DRIVE_FILE_GET,
+            Self::DriveFileDownload => &DRIVE_FILE_DOWNLOAD,
+            Self::DriveFileExport => &DRIVE_FILE_EXPORT,
             Self::ExcelCreateSession => &EXCEL_CREATE_SESSION,
             Self::ExcelRangeGet => &EXCEL_RANGE_GET,
             Self::ExcelRangeUpdate => &EXCEL_RANGE_UPDATE,
@@ -765,6 +842,15 @@ impl Shape {
     #[must_use]
     pub const fn streams(self) -> bool {
         self.row().streams
+    }
+
+    /// Whether the reply is one file's content, answered whole or not at
+    /// all: Drive's download and export. The strip would hand back other
+    /// bytes as the file, so a reply it would change fails with
+    /// [`crate::Failure::ReplyHoldsKey`] instead of being redacted.
+    #[must_use]
+    pub const fn answers_file_content(self) -> bool {
+        matches!(self, Self::DriveFileDownload | Self::DriveFileExport)
     }
 
     /// The path prefix of the one redirect this shape follows, under the same
