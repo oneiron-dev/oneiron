@@ -115,4 +115,6 @@ pub use effect::{
     step_up_reset_effect_digest,
 };
 // The security-control doors' effects (2k4; P25-SHAPE Q1 = A).
-pub use effect::{mail_compliance_set_effect_digest, policy_row_change_effect_digest};
+pub use effect::{
+    CHECK_IN_OPEN_ROUTE_REASON, mail_compliance_set_effect_digest, policy_row_change_effect_digest,
+};

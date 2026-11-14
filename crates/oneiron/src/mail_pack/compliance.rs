@@ -188,8 +188,26 @@ enum SetOutcome {
     Unchanged,
     /// The change waits on this pending check-in, committed alone.
     Waits(EntityId),
-    /// The change landed on this decision.
-    Set(CheckInDecision),
+    /// The change landed: the setting as its writer left it, with the
+    /// decision it ran on.
+    Set(MailComplianceSettingView),
+}
+
+/// A pen's change of the setting, refused: it is an agent's act, not its
+/// PERSON's (Engine ruling PEN-COMPLIANCE-SET = A). The reason code names
+/// the route the change takes instead.
+fn pen_change_refusal() -> MemoryError {
+    MemoryError {
+        reason_codes: vec![crate::check_in::CHECK_IN_OPEN_ROUTE_REASON.to_owned()],
+        ..MemoryError::new(
+            crate::memory::MEMORY_CODE_FORBIDDEN,
+            "a pen's change of org compliance search is an agent's act: it asks through \
+             vault.check_in.open, and the vault's Owner applies it",
+            &[
+                "Open a check-in for this change with vault.check_in.open; the vault's Owner applies it once approved.",
+            ],
+        )
+    }
 }
 
 /// The check-in decision `actor`'s change of the setting runs on, in `txn`,
@@ -198,7 +216,9 @@ enum SetOutcome {
 /// proof, and with `check_in_ref` apply another asker's approved check-in
 /// for this exact change. An Admin's or a Deputy's change is judged under
 /// their membership role (2i): the act always asks, so it waits on the
-/// Owner, and the call that names the approved check-in runs it.
+/// Owner, and the call that names the approved check-in runs it. `actor` is
+/// a PERSON: the door refuses a pen's change before this
+/// ([`pen_change_refusal`]).
 ///
 /// # Errors
 ///
@@ -227,17 +247,14 @@ fn setter_check_in_in_txn(
     }
     let not_member =
         || crate::Error::InvalidConfig("an Admin's change needs their membership grant".into());
-    let at = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
-    let person = crate::workspace_roster::person_of_actor_in_txn(vault, txn, actor, at)?
-        .ok_or_else(not_member)?;
     let creation = vault
         .shared_vault_creation_in_txn(txn)?
         .ok_or_else(not_member)?;
     let (grant, role) = vault
-        .member_grant_in_txn(txn, creation.vault_id, person)?
+        .member_grant_in_txn(txn, creation.vault_id, actor)?
         .ok_or_else(not_member)?;
     let door_act = DoorAct {
-        person,
+        person: actor,
         role: RolePreset::of_grant_role(role),
         grant,
         verb: MAIL_COMPLIANCE_SET_VERB,
@@ -272,15 +289,19 @@ impl Memory<'_> {
     /// changes nothing records nothing. A change checks in first (2k4;
     /// P25-SHAPE Q1 = A): the Owner's goes on their own proof, and an
     /// Admin's or a Deputy's waits on the Owner (`CHECK_IN_PENDING`, naming
-    /// the check-in) until a call names it approved as `check_in_ref`. The
-    /// log entry and the answer record the decision.
+    /// the check-in) until a call names it approved as `check_in_ref`. A
+    /// pen's change is refused: it asks through `vault.check_in.open`. The
+    /// log entry and the answer record the decision; a change's answer is the
+    /// setting as its own writer left it.
     ///
     /// # Errors
     ///
     /// `BAD_REQUEST` for a bad purpose or `check_in_ref`, an actor who is
     /// neither the vault's Owner nor an Admin, or an inactive mail pack;
-    /// `CHECK_IN_PENDING` while the change waits; a check-in that does not
-    /// apply; storage errors.
+    /// `FORBIDDEN` for a pen's change, its reason code
+    /// [`crate::check_in::CHECK_IN_OPEN_ROUTE_REASON`]; `CHECK_IN_PENDING`
+    /// while the change waits; a check-in that does not apply; storage
+    /// errors.
     pub fn mail_compliance_set(
         &self,
         input: &MailComplianceSetRequest,
@@ -305,6 +326,11 @@ impl Memory<'_> {
             }
             if compliance_search_enabled_in(vault, txn)? == input.enabled {
                 return Ok(SetOutcome::Unchanged);
+            }
+            if vault.get_entity_type_in_txn(txn, &actor)?
+                != Some(crate::registry::ENTITY_TYPE_PERSON)
+            {
+                return Err(pen_change_refusal());
             }
             let decision =
                 match setter_check_in_in_txn(vault, txn, actor, input, check_in_ref.as_ref())? {
@@ -339,19 +365,20 @@ impl Memory<'_> {
                     check_in: Some(decision.clone()),
                 },
             )?;
-            Ok(SetOutcome::Set(decision))
+            Ok(SetOutcome::Set(MailComplianceSettingView {
+                enabled: input.enabled,
+                set_by_ref: Some(actor.to_hex()),
+                set_at: Some(at),
+                check_in: Some(decision),
+            }))
         })?;
-        let check_in = match outcome {
+        match outcome {
             SetOutcome::Waits(check_in) => {
-                return Err(crate::Error::CheckInPending(check_in.to_hex()).into());
+                Err(crate::Error::CheckInPending(check_in.to_hex()).into())
             }
-            SetOutcome::Unchanged => None,
-            SetOutcome::Set(decision) => Some(decision),
-        };
-        Ok(MailComplianceSettingView {
-            check_in,
-            ..self.mail_compliance_setting()?
-        })
+            SetOutcome::Unchanged => self.mail_compliance_setting(),
+            SetOutcome::Set(view) => Ok(view),
+        }
     }
 
     /// The compliance log, oldest first: every change to the setting and
@@ -380,8 +407,9 @@ impl Memory<'_> {
     }
 }
 
-/// An actor's erase takes its id out of the setting and the log (FIX 3520);
-/// the entries themselves stay, so the log still shows each change and use.
+/// An actor's erase takes its id out of the setting and the log (FIX 3520),
+/// a change's check-in requester included (2k4); the entries themselves
+/// stay, so the log still shows each change and use.
 pub(crate) fn erase_compliance_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -393,10 +421,21 @@ pub(crate) fn erase_compliance_actor_in_txn(
         row.set_by = None;
         SETTING.put(&vault.store, wtxn, &(), &row)?;
     }
+    let actor_hex = actor.to_hex();
     let entries = LOG.scan(&vault.store, wtxn)?;
     for (sequence, mut row) in entries {
+        let mut scrubbed = false;
         if row.by == Some(*actor) {
             row.by = None;
+            scrubbed = true;
+        }
+        if let Some(decision) = row.check_in.as_mut()
+            && decision.requester.as_deref() == Some(actor_hex.as_str())
+        {
+            decision.requester = None;
+            scrubbed = true;
+        }
+        if scrubbed {
             LOG.put(&vault.store, wtxn, &sequence, &row)?;
         }
     }

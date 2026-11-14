@@ -517,6 +517,12 @@ pub fn policy_row_change_effect_digest(change: &PolicyRowChange) -> Result<[u8; 
     Ok(*hasher.finalize().as_bytes())
 }
 
+/// The reason code of an agent's act refused at a person's door, naming the
+/// route it takes instead: it asks through `vault.check_in.open`, and the
+/// vault's Owner applies the approved ask (Engine ruling PEN-COMPLIANCE-SET
+/// = A; P25-SHAPE Q1: no agent path into an Owner's door before PR 4).
+pub const CHECK_IN_OPEN_ROUTE_REASON: &str = "check_in.route:vault.check_in.open";
+
 /// The digest of turning org compliance search on or off (`enabled`) for
 /// `purpose`: the effect `vault.mail.compliance.set` judges, and the one an
 /// approved check-in for it spends (2k4; P25-SHAPE Q1 = A). BLAKE3, key

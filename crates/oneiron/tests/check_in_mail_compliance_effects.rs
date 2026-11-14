@@ -13,7 +13,14 @@
 //!   call that names it turns the setting, spends it in the same writer and
 //!   records it.
 //! - The Owner may apply a Deputy's approved ask on their own proof: the
-//!   decision names the Deputy as requester.
+//!   decision names the Deputy as requester, and erasing the Deputy takes
+//!   their id out of the logged decision.
+//! - A pen's change is an agent's act, not its PERSON's: it is refused
+//!   `FORBIDDEN` with the reason code naming its route,
+//!   `vault.check_in.open`, and records no own-proof decision and no ask in
+//!   its PERSON's name (review of fa62227e638, P1; Engine ruling
+//!   PEN-COMPLIANCE-SET = A). The Owner's own change still goes on their
+//!   own proof.
 //!
 //! The vault is rooted, and a rooted vault admits only a writer its
 //! authority log binds. The host key holds one live binding, so each
@@ -40,12 +47,19 @@ use oneiron::mail_pack::{
     MailComplianceEventKind, MailComplianceEventView, MailComplianceSetRequest,
     MailComplianceSettingView, mail_calendar_pack_files,
 };
-use oneiron::memory::{CHECK_IN_PENDING_REASON_PREFIX, MEMORY_CODE_CHECK_IN_PENDING, MemoryResult};
+use oneiron::memory::{
+    CHECK_IN_PENDING_REASON_PREFIX, MEMORY_CODE_CHECK_IN_PENDING, MEMORY_CODE_FORBIDDEN,
+    MemoryResult,
+};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
+use oneiron::subject_model::anchor_actor_subject;
 use oneiron::task_verb::sdk::invoke;
+use oneiron::test_doors::inquiry::erase_actor_in_tables_in_order;
+use oneiron::test_doors::membership::stand_member_grant;
 use oneiron::test_support::{bind_host_actor, bind_host_owner};
-use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::verbs::{AgentDefinitionCreateRequest, create_agent_definition_as};
+use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use serde_json::json;
 
 const SHARED: u64 = 43;
@@ -216,6 +230,63 @@ impl Org {
             .expect("stored")
             .consumed_at
             .is_some()
+    }
+
+    /// A pen of `person`: an AGENT_DEF anchored to them, with its own
+    /// Member grant, so the shared vault's content gate admits its write
+    /// and `manages_in` reads its person's standing.
+    fn pen_of(&self, person: EntityId, agent_id: &str) -> EntityId {
+        let pen = EntityId::now();
+        create_agent_definition_as(
+            &self.vault,
+            &proof(&self.vault, self.owner),
+            AgentDefinitionCreateRequest {
+                agent_def_ref: pen,
+                definition: serde_json::from_value(json!({
+                    "agent_id": agent_id,
+                    "desc": "A person's pen agent",
+                    "version": "1.0.0",
+                    "ceiling": "auto",
+                    "enabled": true,
+                }))
+                .expect("typed agent definition"),
+            },
+        )
+        .expect("the Owner creates the pen's agent definition");
+        anchor_actor_subject(
+            &self.vault,
+            pen,
+            person,
+            WriteActor::new(self.owner, EdgeActorClass::Human),
+            self.vault.now_recorded_at(),
+        )
+        .expect("the pen is anchored to its person");
+        stand_member_grant(&self.vault, pen, SHARED, Role::Member)
+            .expect("the pen's own Member grant");
+        pen
+    }
+
+    /// `pen`'s `vault.mail.compliance.set`, with the host key bound to it as
+    /// an agent for the call.
+    fn pen_set(
+        &self,
+        pen: EntityId,
+        enabled: bool,
+        purpose: &str,
+    ) -> MemoryResult<MailComplianceSettingView> {
+        let request = MailComplianceSetRequest {
+            enabled,
+            purpose: purpose.to_owned(),
+            check_in_ref: None,
+        };
+        bind_host_actor(&self.vault, &self.issuer, pen, "agent")
+            .expect("the host key bound to the pen for its change");
+        let answer = self
+            .vault
+            .memory(pen, EdgeActorClass::Agent)
+            .mail_compliance_set(&request);
+        bind_host_owner(&self.vault, &self.issuer, self.owner).expect("the owner's binding again");
+        answer
     }
 }
 
@@ -392,5 +463,84 @@ fn the_owner_applies_a_deputys_approved_change() {
             .check_in,
         None,
         "the Deputy's call finds the setting already off"
+    );
+}
+
+#[test]
+fn erasing_the_asker_takes_their_id_out_of_the_logged_decision() {
+    let org = Org::new();
+    org.set(org.owner, true, "the quarterly audit", None)
+        .expect("the Owner turns it on");
+    let purpose = "the audit closed";
+    let ask = pending_id(org.set(org.deputy, false, purpose, None));
+    org.owner_approves(&ask);
+    org.set(org.owner, false, purpose, Some(&ask))
+        .expect("the Owner applies the Deputy's approved ask");
+    let requester = |log: &[MailComplianceEventView]| {
+        log.last()
+            .and_then(|event| event.check_in.as_ref())
+            .and_then(|decision| decision.requester.clone())
+    };
+    assert_eq!(
+        requester(&org.log()),
+        Some(org.deputy.to_hex()),
+        "the log names the asker"
+    );
+
+    assert_eq!(
+        erase_actor_in_tables_in_order(&org.vault, &org.deputy, &["MAIL_PACK_COMPLIANCE_EVENT"])
+            .expect("the compliance log's actor erase runs"),
+        1,
+        "the compliance log registers an actor erase"
+    );
+    let log = org.log();
+    assert_eq!(log.len(), 2, "the entries stay");
+    let last = log.last().expect("the Owner's change");
+    assert_eq!(
+        last.check_in,
+        Some(decision("owner", None, "own_proof", Some(&ask), None)),
+        "the decision stays, without the erased asker's id"
+    );
+    assert_eq!(
+        last.by_ref,
+        Some(org.owner.to_hex()),
+        "the Owner's own change still names them"
+    );
+}
+
+#[test]
+fn a_pens_change_is_an_agents_act_and_is_refused() {
+    let org = Org::new();
+    for (person, agent_id) in [(org.owner, "owner-pen"), (org.admin, "admin-pen")] {
+        let pen = org.pen_of(person, agent_id);
+        let unchanged = org
+            .pen_set(pen, false, "the quarterly audit")
+            .expect("the pen passes every gate before the judge");
+        assert!(
+            !unchanged.enabled && unchanged.check_in.is_none(),
+            "a call that changes nothing records nothing"
+        );
+        let refused = org
+            .pen_set(pen, true, "the quarterly audit")
+            .expect_err("a pen's change is refused at the door");
+        assert_eq!(
+            (refused.code.as_str(), refused.reason_codes.as_slice()),
+            (
+                MEMORY_CODE_FORBIDDEN,
+                ["check_in.route:vault.check_in.open".to_owned()].as_slice()
+            ),
+            "refused, naming the route, with no ask in the pen's person's name: {refused:?}"
+        );
+    }
+    assert!(!org.enabled(), "no pen turned it on");
+    assert!(org.log().is_empty(), "and nothing was logged");
+
+    let on = org
+        .set(org.owner, true, "the quarterly audit", None)
+        .expect("the Owner's own change");
+    assert_eq!(
+        on.check_in,
+        Some(own_proof()),
+        "the Owner's own change still goes on their own proof"
     );
 }
