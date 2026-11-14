@@ -185,27 +185,43 @@ enum HandedOverReserve {
 
 /// What an agent run another machine dispatched reserves on the machine that
 /// takes it over, from the launch statement its dispatch froze (FIX 4747
-/// slice 6). Engine call (CALLS, FIX 4747): a launch stated unmetered stays
-/// unmetered; a pinned `budget` outside any tree pins the same cap here; a
+/// slice 6) less what every other machine spent of it (FIX 4889). Engine
+/// call (CALLS, FIX 4747): a launch stated unmetered stays unmetered; a
+/// pinned `budget` outside any tree pins what is left of its cap here; a
 /// launch under a tree scope this machine holds open, or books at an open
 /// ancestor (`tree_here`), reserves under it as the dispatch did, a carve of
 /// its budget or a hold of its expected spend. A tree scope this machine
 /// does not hold lives on the machine that opened it, and nothing of it is
-/// seeded here (cross-node budget custody is FIX 4889): the run gets a pinned
-/// hard scope of what its launch reserved from that tree, so it never spends
-/// past what its launch set aside. A launch that reserved nothing there, or
-/// a room-bound one, whose payer only that tree names, is unfunded here.
+/// seeded here: the run gets a pinned hard scope of what its launch reserved
+/// from that tree less what the other machines spent of it
+/// (`spent_elsewhere`, from the run TASK's carry), so the run never spends
+/// past what its launch set aside, counted across the machines that ran it.
+/// A launch that reserved nothing there, a room-bound one, whose payer only
+/// that tree names, or one the other machines spent in full, is unfunded
+/// here, and the take waits (canon CROSS-ARCH-0019 item 04: "If no machine
+/// can take the run, it pauses").
 fn handed_over_launch_reserve(
     statement: &LaunchStatement,
     tree_here: bool,
     room_bound: bool,
+    spent_elsewhere: u64,
 ) -> HandedOverReserve {
     let Some(cap_units) = statement.cap_units else {
         return HandedOverReserve::Reserve(LaunchReserve::Unmetered);
     };
     let unit = statement.unit.clone();
     match &statement.parent_scope {
-        None => HandedOverReserve::Reserve(LaunchReserve::Pinned { unit, cap_units }),
+        None => {
+            let remaining = cap_units.saturating_sub(spent_elsewhere);
+            if remaining == 0 {
+                HandedOverReserve::Unfunded
+            } else {
+                HandedOverReserve::Reserve(LaunchReserve::Pinned {
+                    unit,
+                    cap_units: remaining,
+                })
+            }
+        }
         Some(parent) if tree_here => HandedOverReserve::Reserve(LaunchReserve::Child {
             parent: parent.clone(),
             ask: if statement.hard {
@@ -217,10 +233,17 @@ fn handed_over_launch_reserve(
             },
         }),
         Some(_) if room_bound || statement.reserved_units == 0 => HandedOverReserve::Unfunded,
-        Some(_) => HandedOverReserve::Reserve(LaunchReserve::Pinned {
-            unit,
-            cap_units: statement.reserved_units,
-        }),
+        Some(_) => {
+            let remaining = statement.reserved_units.saturating_sub(spent_elsewhere);
+            if remaining == 0 {
+                HandedOverReserve::Unfunded
+            } else {
+                HandedOverReserve::Reserve(LaunchReserve::Pinned {
+                    unit,
+                    cap_units: remaining,
+                })
+            }
+        }
     }
 }
 
@@ -228,7 +251,9 @@ impl AgentDispatcher<'_> {
     /// Reserves on this machine the spend of `attempt`, the try of an agent
     /// run this machine takes over, in the take's write (FIX 4747 slice 6),
     /// as `handed_over_launch_reserve` rules from the launch statement
-    /// `input` froze. A scope that already stands here for `attempt` is kept.
+    /// `input` froze, less what every other machine spent of it
+    /// (`spent_elsewhere`, from the run TASK's carry). A scope that already
+    /// stands here for `attempt` is kept.
     /// A pinned scope keeps the Grant `input` froze as its funding (FIX
     /// 7766), as the dispatch's own reserve did.
     /// A room-bound run proves its join again under the scope it reserves
@@ -243,6 +268,7 @@ impl AgentDispatcher<'_> {
         txn: &mut heed::RwTxn<'_>,
         attempt: AttemptId,
         input: &AgentDispatchInput,
+        spent_elsewhere: u64,
         now: u64,
     ) -> Result<bool> {
         if SCOPE.contains(
@@ -264,7 +290,12 @@ impl AgentDispatcher<'_> {
             None => false,
         };
         let agent = input.target.agent_definition_ref()?;
-        match handed_over_launch_reserve(statement, tree_here, input.room.is_some()) {
+        match handed_over_launch_reserve(
+            statement,
+            tree_here,
+            input.room.is_some(),
+            spent_elsewhere,
+        ) {
             HandedOverReserve::Unfunded => return Ok(false),
             HandedOverReserve::Reserve(LaunchReserve::Unmetered) => {}
             HandedOverReserve::Reserve(LaunchReserve::Pinned { unit, cap_units }) => {
