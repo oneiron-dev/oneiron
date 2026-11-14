@@ -1,0 +1,24 @@
+[package]
+name = "oneiron-verb-wire"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The wire types of the oneiron engine's public verbs, below the engine: every request, response and value type that carries a JSON schema"
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+
+[features]
+# Forwarded from `oneiron/sync`, `oneiron/test-support` and `oneiron/test-hooks`: a moved item keeps the gate it had
+# in the engine.
+sync = []
+test-support = []
+test-hooks = []
+
+[lints]
+workspace = true
