@@ -9,6 +9,8 @@
 //! out unless the owner set a home clearance for `OTHER` at or above their
 //! band; the unstamped and the public claim stay in; the audience's own
 //! clearance still applies on top, and this vault's own id is this vault.
+//! A pinned revision meets that clearance by its own stamp, not the live
+//! row's (the Sol review of PR 1).
 //!
 //! On main the file does not compile: `ConversationHome`, `homed_in` and the
 //! home-clearance doors do not exist.
@@ -22,6 +24,7 @@ use oneiron::counterparty_contact::{CounterpartyContactRecord, CounterpartyFirst
 use oneiron::disclosure::{DisclosureBand, DisclosureScope};
 use oneiron::federation::{Scope, Sensitivity, SensitivityCeiling};
 use oneiron::interlocutor::{Interlocutor, InterlocutorSet};
+use oneiron::memory::ReadMode;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::{
@@ -86,6 +89,19 @@ fn put_claim(
     stamp: Option<&str>,
 ) -> TestResult<EntityId> {
     let id = EntityId::now();
+    write_claim(vault, id, subject, text, stamp)?;
+    Ok(id)
+}
+
+/// [`put_claim`] at `id`, which may already hold a claim: the write replaces
+/// its body and its indexed text.
+fn write_claim(
+    vault: &Vault,
+    id: EntityId,
+    subject: EntityId,
+    text: &str,
+    stamp: Option<&str>,
+) -> TestResult {
     let mut body = ClaimBody::new(
         "profile.note",
         ClaimSubject::Entity(subject),
@@ -102,7 +118,7 @@ fn put_claim(
     }
     vault.put_claim(&id, &body, at_now(), NOW)?;
     vault.batch().text(&id, &[("body", text)]).commit()?;
-    Ok(id)
+    Ok(())
 }
 
 /// A clearance of every axis, up to `sensitivity`.
@@ -414,6 +430,71 @@ fn the_vaults_own_id_is_homed_here() -> TestResult {
             band: Some(DisclosureBand::Sensitive),
         },
         "the same proof sets another vault's clearance",
+    );
+    Ok(())
+}
+
+#[test]
+fn a_pinned_revision_meets_the_audience_by_its_own_stamp() -> TestResult {
+    let fixture = fixture()?;
+    clear_contact(&fixture.vault, fixture.contact, Sensitivity::Private)?;
+    fixture.set_home_band(DisclosureBand::Sensitive)?;
+    let subject = put_person(&fixture.vault, b"yuki")?;
+    let rewritten = EntityId::now();
+    write_claim(
+        &fixture.vault,
+        rewritten,
+        subject,
+        "lighthouse pinned sensitive note",
+        Some("sensitive"),
+    )?;
+    let revision = fixture.vault.pin_entity_revision(&rewritten)?;
+    write_claim(
+        &fixture.vault,
+        rewritten,
+        subject,
+        "lighthouse pinned public note",
+        Some("public"),
+    )?;
+    let pinned_ids = |ctx: DisclosureContext| -> TestResult<Vec<EntityId>> {
+        let pack = fixture
+            .vault
+            .context_pack()
+            .search_text(WORD, 20)
+            .read_mode(ReadMode::Pinned(revision))
+            .disclosure_context(ctx)
+            .run()?;
+        Ok(pack
+            .results
+            .iter()
+            .chain(pack.neighbors.iter())
+            .map(|entity| entity.id)
+            .collect())
+    };
+    assert!(
+        fixture
+            .pack_ids(fixture.with_contact()?)?
+            .contains(&rewritten),
+        "the live public rewrite reaches the contact",
+    );
+    assert!(
+        pinned_ids(DisclosureContext::resolve(
+            &fixture.vault,
+            InterlocutorSet::owner_alone(),
+        )?)?
+        .contains(&rewritten),
+        "the owner alone is served the pinned sensitive revision",
+    );
+    assert!(
+        !pinned_ids(fixture.with_contact()?)?.contains(&rewritten),
+        "homed here, the pinned sensitive revision is not served under the contact's private clearance",
+    );
+    let elsewhere = fixture
+        .with_contact()?
+        .homed_in(&fixture.vault, ConversationHome::Vault(OTHER))?;
+    assert!(
+        !pinned_ids(elsewhere)?.contains(&rewritten),
+        "homed elsewhere, the home's sensitive clearance does not lift the contact's private one for a pinned revision",
     );
     Ok(())
 }

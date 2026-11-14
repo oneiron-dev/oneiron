@@ -605,8 +605,24 @@ impl DisclosureContext {
         else {
             return Ok(false);
         };
-        Ok(self.disclosable.admits(&record_scope)
-            && super::retained_copy_admits(store, rtxn, id, entity_type, claim_body, &row.body)?)
+        if !self.disclosable.admits(&record_scope) {
+            return Ok(false);
+        }
+        // A pin may serve another CLAIM revision than the live row: the
+        // audience admits the body served as well, by its own stamp, so a
+        // live rewrite to public never carries an older sensitive body out.
+        if entity_type == ENTITY_TYPE_CLAIM
+            && let Some(body) = claim_body
+        {
+            let Some(served) = note_world::claim_body_scope_held_at(store, rtxn, *id, body, &held)?
+            else {
+                return Ok(false);
+            };
+            if !self.disclosable.admits(&served) {
+                return Ok(false);
+            }
+        }
+        super::retained_copy_admits(store, rtxn, id, entity_type, claim_body, &row.body)
     }
 
     /// DEC-0006 `#home-clearance`: homed in another vault, a CLAIM stamped
