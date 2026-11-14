@@ -283,10 +283,21 @@ pub struct QueueCheckReceipt<Exhaust = Vec<u8>> {
     pub run: Option<QueueCheckRun<Exhaust>>,
     pub hold: Option<QueueCheckHold>,
     pub need: Option<QueueCheckNeed>,
-    /// The earlier receipt digest this one reuses, when it ran nothing.
-    pub reused_from: Option<String>,
+    /// The earlier receipt this one reuses, when it ran nothing: the
+    /// attempt and generation that ran the check.
+    pub reused_from: Option<QueueCheckReuseSource>,
     pub tests_passed: Option<bool>,
     pub verdict_ref: Option<String>,
+}
+
+/// The receipt a reused check copied its result from (ARCH-0068
+/// #rc5-check-reuse: a reused check "names the source attempt"). Reuse is
+/// found by the inputs digest, so the source's digest is the reusing
+/// receipt's own; the attempt and its generation name which run it was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueueCheckReuseSource {
+    pub attempt: AttemptId,
+    pub generation: u32,
 }
 
 /// One immutable native artifact version holding an execution output.

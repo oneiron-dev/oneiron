@@ -59,8 +59,9 @@ use crate::{
 pub use check_inputs::{
     QUEUE_CHECK_CANDIDATE_PREFIX, QueueCheckEnvironment, QueueCheckExecution, QueueCheckFile,
     QueueCheckHold, QueueCheckHoldReason, QueueCheckHost, QueueCheckInputs, QueueCheckInvocation,
-    QueueCheckLimits, QueueCheckNeed, QueueCheckOutputRef, QueueCheckReceipt, QueueCheckRun,
-    QueueCheckTarget, QueueCheckTreeSource, QueueCommandReceipt, StoredQueueCheckReceipt,
+    QueueCheckLimits, QueueCheckNeed, QueueCheckOutputRef, QueueCheckReceipt,
+    QueueCheckReuseSource, QueueCheckRun, QueueCheckTarget, QueueCheckTreeSource,
+    QueueCommandReceipt, StoredQueueCheckReceipt,
 };
 pub use check_store::{
     DEFAULT_QUEUE_CHECK_CONCURRENCY, QUEUE_CHECK_ATTEMPT_KIND, QueueCheckConfiguration,

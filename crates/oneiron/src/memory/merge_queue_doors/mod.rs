@@ -31,6 +31,7 @@ mod types;
 
 pub use check_receipt::{
     CodeCheckAttemptView, CodeCheckCommandResult, CodeCheckReceiptRequest, CodeCheckReceiptView,
+    CodeCheckReuseSource,
 };
 pub(crate) use checker::check_work_view;
 pub use checker_types::*;
