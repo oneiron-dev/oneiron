@@ -64441,6 +64441,7 @@
      "surface": {
       "crate-vis": 17,
       "fn": 43,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -64474,6 +64475,22 @@
      "surface": {
       "crate-vis": 4,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BlendWeightsSource",
+      "RetrievalEvalSpec"
+     ],
+     "path": "src/pipeline/builder_eval.rs",
+     "purpose": "Eval-mode inputs for replaying a fixed query pack (RESEARCH-0651 Tier 0)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -64760,7 +64777,7 @@
      "surface": {
       "crate-vis": 6,
       "mod": 2,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -93711,7 +93728,7 @@
      "path": "src/vault/entity_revision/turn_text.rs",
      "purpose": "A TURN's text revision: the revision that pins the words a turn serves",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -100552,7 +100569,7 @@
      "path": "src/world_keys/pads.rs",
      "purpose": "A world key's erasable half, and the world erase that destroys it (world privacy fix 7)",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 22,
       "fn": 2,
       "re-export": 2,
       "struct": 1
@@ -101959,6 +101976,14 @@
      "notable": [],
      "path": "tests/entity_linker_cascade.rs",
      "purpose": "The entity linker's phonetic, role and vector rungs (census item 12; ARCH-0024 signals 2, 3 and 4)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/erase_world_backup_notice.rs",
+     "purpose": "The owner's erase of a world says, in plain words, what its old backups keep (ARCH-0038…",
      "surface": {}
     },
     {
@@ -103729,6 +103754,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/retrieval_eval_spec.rs",
+     "purpose": "Public retrieval-ruler eval inputs refuse nondeterminism and leave serving writes alone",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/retrieval_policy_default_floor.rs",
      "purpose": "Default retrieval-policy updates keep tiny trials as offers; only an explicit owner reward floor admits the…",
      "surface": {}
@@ -104053,6 +104086,14 @@
      "notable": [],
      "path": "tests/short_ref_after_document_pointer.rs",
      "purpose": "The short ref `vault.get` issues for a row whose body became a document resolves through…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/sieve_secret_body_release.rs",
+     "purpose": "The Dreamer's sieve reads a TURN's words into spans, and a rung quotes a span's words as its evidence",
      "surface": {}
     },
     {
@@ -104413,6 +104454,14 @@
      "notable": [],
      "path": "tests/tray_answered_removal.rs",
      "purpose": "FIX 22394 (CONSENT-TRAY): a tray removal that says `Answered` carries the owner's answer",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/turn_embedding_secret_release.rs",
+     "purpose": "The embedding worker sends a TURN's text to its embedder, and an embedder off this device is an egress",
      "surface": {}
     },
     {
@@ -105724,7 +105773,7 @@
      "purpose": "Owner-enabled phone-line metadata and call-bound reads"
     },
     "pipeline": {
-     "files": 69,
+     "files": 70,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -106342,8 +106391,8 @@
    },
    "over_bar": 278,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7535,
-   "test_files": 1255
+   "source_files": 7536,
+   "test_files": 1259
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -155808,7 +155857,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FileIdentity",
@@ -155820,6 +155869,16 @@
       "fn": 13,
       "static": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/root_directory/extended_acl.rs",
+     "purpose": "A macOS directory's extended access-control list, read without following a final link (ARCH-0038…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -158670,6 +158729,14 @@
      "path": "tests/session_overlay_dump_suppression_off.rs",
      "purpose": "Census row L6-18: the operator's off switch",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/shared_path_acl.rs",
+     "purpose": "Census row L6-04 item A (ARCH-0038 #restore-path-open): the check of a restore's path reads each macOS…",
+     "surface": {}
     }
    ],
    "modules": {
@@ -159885,10 +159952,10 @@
      "purpose": "A retained document frontier's opaque reference (`RevisionRef`), the revision a manifest entry and a…"
     },
     "root_directory": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
      "purpose": "Descriptor-bound directory identity shared by store opens and writer leases"
     },
     "run_write_token": {
@@ -160237,8 +160304,8 @@
    },
    "over_bar": 1,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 644,
-   "test_files": 6
+   "source_files": 645,
+   "test_files": 7
   },
   "oneiron-testkit": {
    "files": [
