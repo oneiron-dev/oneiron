@@ -17,6 +17,7 @@
 //! | Tests waiting on a product door, nightly only | [`pending_door`] |
 //! | Private words that must not reach a reader outside their audience | [`canary`]: [`CanaryVault`] |
 //! | One Dreamer wake pass in process, its model scripted | [`dreamer`]: [`DreamerPass`] |
+//! | A scripted day and the normalised dump of its receipts | [`golden_day`] |
 //!
 //! The rules a door test keeps (Fable, section 4):
 //! 1. The test's name is the promise, in one sentence a user or agent would say.
@@ -44,6 +45,7 @@ pub mod dreamer;
 pub mod embedder;
 pub mod fault;
 pub mod fixture;
+pub mod golden_day;
 pub mod lint;
 pub mod pending_door;
 pub mod provider;

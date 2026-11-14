@@ -7,6 +7,7 @@
 pub mod agent_definition_scans;
 pub mod approval_target_round_trip;
 pub mod archive_import;
+pub mod authority_stored_damage;
 pub mod authority_view_grant;
 pub mod authority_world_undo;
 pub mod callable_skill;
@@ -46,6 +47,7 @@ pub mod home_handoff_retire;
 #[cfg(feature = "sync")]
 pub mod home_sections;
 pub mod house_link;
+pub mod hydration_decode_guard;
 pub mod identity_recheck;
 pub mod inquiry;
 pub mod label_writers;
@@ -60,6 +62,7 @@ pub mod meso_extraction_width;
 pub mod model_binding_proposer;
 pub mod note_bm25f_repair;
 pub mod off_record_shell;
+pub mod outbound_grant_index;
 pub mod own_device_message_replay;
 pub mod pad_offer_invalidation;
 pub mod park_typed_wait;
