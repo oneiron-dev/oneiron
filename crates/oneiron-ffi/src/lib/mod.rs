@@ -101,16 +101,18 @@ pub use self::entity::{
     oneiron_subtree_entry_array_free, oneiron_vault_batch_put_entities, oneiron_vault_bind,
     oneiron_vault_delete_entity, oneiron_vault_entity_exists, oneiron_vault_free,
     oneiron_vault_get_entity, oneiron_vault_health_json, oneiron_vault_open,
-    oneiron_vault_put_entity,
+    oneiron_vault_open_with_embedding_model, oneiron_vault_put_entity,
 };
-pub use self::host_root::oneiron_vault_open_with_host_root;
+pub use self::host_root::{
+    oneiron_vault_open_with_host_root, oneiron_vault_open_with_host_root_and_embedding_model,
+};
 pub use self::limit_questions::oneiron_vault_native_limit_questions;
 pub use self::query::{
     oneiron_vault_ancestors, oneiron_vault_context_pack, oneiron_vault_edges_in,
     oneiron_vault_edges_out, oneiron_vault_entities_by_type, oneiron_vault_get_entity_type,
-    oneiron_vault_put_edge, oneiron_vault_put_vector, oneiron_vault_search_text,
-    oneiron_vault_search_vector, oneiron_vault_sources, oneiron_vault_subtree,
-    oneiron_vault_targets, oneiron_vault_would_create_cycle,
+    oneiron_vault_put_edge, oneiron_vault_put_vector, oneiron_vault_put_vector_with_provenance,
+    oneiron_vault_search_text, oneiron_vault_search_vector, oneiron_vault_sources,
+    oneiron_vault_subtree, oneiron_vault_targets, oneiron_vault_would_create_cycle,
 };
 pub use self::types::{
     OneironBuffer, OneironByteSlice, OneironEdgeInfo, OneironEdgeInfoArray, OneironEntityInput,

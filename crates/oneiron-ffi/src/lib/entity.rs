@@ -84,6 +84,10 @@ pub unsafe extern "C" fn oneiron_subtree_entry_array_free(
 /// other value is `InvalidArg`. It is set before the vault opens, so the
 /// install enrols as it, and it is never read off the operating system.
 ///
+/// This open names no embedding model, so every vector put on the vault is
+/// refused `EngineError` (the engine's "embedding model is required before
+/// writing vectors"); `oneiron_vault_open_with_embedding_model` names one.
+///
 /// # Safety
 ///
 /// `path_ptr` covers `path_len` readable bytes. A non-null
@@ -99,12 +103,62 @@ pub unsafe extern "C" fn oneiron_vault_open(
     device_class: u8,
     out_vault: *mut *mut OneironVault,
 ) -> OneironStatus {
+    // SAFETY: the caller keeps this function's contract, and a null model
+    // pointer with length 0 is read as no model.
+    unsafe {
+        oneiron_vault_open_with_embedding_model(
+            path_ptr,
+            path_len,
+            dimensions,
+            dict_search_paths,
+            dict_search_paths_len,
+            device_class,
+            ptr::null(),
+            0,
+            out_vault,
+        )
+    }
+}
+
+/// `oneiron_vault_open`, naming the embedding model that computes this
+/// vault's vectors (census L9-28), so the host's vector puts are stored.
+///
+/// `embedding_model_ptr` and `embedding_model_len` are the model's UTF-8 id,
+/// `org/name@revision`, each part of ASCII letters, digits, `.`, `_` and `-`;
+/// any other id, an empty one included, is `InvalidArg` (bytes that are not
+/// UTF-8 are `Utf8`) and opens nothing. A null pointer with length 0 names
+/// none, and the open is `oneiron_vault_open`'s. The vault records the first
+/// model an open names: a later open naming another model is `EngineError`,
+/// and so is an open naming none once the vault holds vectors.
+///
+/// # Safety
+///
+/// As `oneiron_vault_open`, and a non-null `embedding_model_ptr` covers
+/// `embedding_model_len` readable bytes, borrowed for this call only.
+#[unsafe(no_mangle)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "oneiron_vault_open's arguments, then the model id"
+)]
+pub unsafe extern "C" fn oneiron_vault_open_with_embedding_model(
+    path_ptr: *const u8,
+    path_len: usize,
+    dimensions: usize,
+    dict_search_paths: *const OneironByteSlice,
+    dict_search_paths_len: usize,
+    device_class: u8,
+    embedding_model_ptr: *const u8,
+    embedding_model_len: usize,
+    out_vault: *mut *mut OneironVault,
+) -> OneironStatus {
     ffi_guard(|| {
         write_out(out_vault, ptr::null_mut()).map_or_else(
             |status| status,
             |_| {
                 let result = (|| {
-                    let (path, config) = device_open_config(
+                    let embedding_model =
+                        host_embedding_model(embedding_model_ptr, embedding_model_len)?;
+                    let (path, mut config) = device_open_config(
                         path_ptr,
                         path_len,
                         dimensions,
@@ -112,6 +166,7 @@ pub unsafe extern "C" fn oneiron_vault_open(
                         dict_search_paths_len,
                         device_class,
                     )?;
+                    config.embedding_model = embedding_model;
                     let dimensions = config.dimensions;
                     // Crash output never carries world text: the engine's hook goes in before
                     // any vault opens (owner ruling 2026-10-14, fix 6).
@@ -161,6 +216,20 @@ pub(super) fn device_open_config(
             )
         })?;
     Ok((path, config))
+}
+
+/// The embedding model id a host open names (census L9-28): a null pointer
+/// with length 0 names none; otherwise UTF-8 `org/name@revision`, checked as
+/// every vault open checks it, or `InvalidArg`.
+pub(super) fn host_embedding_model(
+    model_ptr: *const u8,
+    model_len: usize,
+) -> Result<Option<String>, OneironStatus> {
+    let Some(model) = string_from_optional(model_ptr, model_len)? else {
+        return Ok(None);
+    };
+    oneiron::store::validate_embedding_model_id(&model).map_err(|_| OneironStatus::InvalidArg)?;
+    Ok(Some(model))
 }
 
 /// The class a host declares on a raw open (FIX 3833; CALLS:
