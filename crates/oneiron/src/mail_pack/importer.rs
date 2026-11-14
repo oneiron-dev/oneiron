@@ -55,31 +55,8 @@ use crate::{EntityId, Result, Vault};
 /// Seconds in the month a "recent months" setting counts.
 pub(super) const MONTH_SECONDS: u64 = 30 * 86_400;
 
-/// How much one step reads from the provider. The host sets its cadence;
-/// these bound one step so many sources share a host fairly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct MailSyncBudget {
-    /// Change feed pages.
-    pub history_pages: u32,
-    /// Newest-first listing pages.
-    pub list_pages: u32,
-    /// Bodies filled in.
-    pub bodies: u32,
-    /// Opened attachments fetched.
-    pub attachments: u32,
-}
-
-impl Default for MailSyncBudget {
-    fn default() -> Self {
-        Self {
-            history_pages: 10,
-            list_pages: 2,
-            bodies: 50,
-            attachments: 10,
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::mail_pack::importer::MailSyncBudget;
 
 /// What one step did.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
@@ -787,7 +764,7 @@ impl Step<'_> {
     /// Fills in up to `limit` bodies, newest first. A message the provider no
     /// longer holds, or now holds as trash or spam, is deleted at the
     /// provider; a body the write door refuses leaves the message landed by
-    /// its headers and off the queue.
+    /// its headers and off the queue, with a warning that says why.
     fn bodies(&mut self, limit: u32) -> MemoryResult<()> {
         let waiting = {
             let txn = self
@@ -806,6 +783,17 @@ impl Step<'_> {
                     let outcome =
                         self.landing
                             .land(&self.row, &full.headers, Some(&full), false)?;
+                    // A refused body never leaves the queue unseen: the
+                    // message stays landed by its headers, and the warning
+                    // says why.
+                    if let LandOutcome::Refused(reason) = &outcome {
+                        tracing::warn!(
+                            source = %self.source.to_hex(),
+                            provider_id = %provider_id,
+                            %reason,
+                            "a mail body was refused; the message stays landed by its headers"
+                        );
+                    }
                     if matches!(outcome, LandOutcome::Refused(_) | LandOutcome::Same) {
                         self.landing.drop_from_body_queue(&provider_id)?;
                     }

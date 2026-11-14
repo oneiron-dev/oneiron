@@ -127,34 +127,8 @@ pub(super) struct MailRelist {
     pub(super) since: u64,
 }
 
-/// How much of a message has landed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum MailStage {
-    /// Its headers: it is searchable by sender, recipients and subject.
-    Headers,
-    /// Its body too.
-    Body,
-}
-
-/// Whether the provider still holds a message.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum MailPresence {
-    Present,
-    /// Deleted at the provider, kept as a labelled source-deleted copy (the
-    /// source's "keep in memory" setting): out of the live inbox, still in
-    /// the vault.
-    SourceDeleted {
-        at: u64,
-    },
-    /// Deleted at the provider and forgotten in the vault too (the source's
-    /// "forget too" setting). The row stays as a fence: a later listing does
-    /// not bring the message back.
-    Forgotten {
-        at: u64,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::mail_pack::state::{MailPresence, MailStage, MailSyncStatusView};
 
 /// One provider message of one source and the rows it landed as.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -400,42 +374,6 @@ pub(super) fn bodies_waiting_in(
         waiting.push(row?.1);
     }
     Ok(waiting)
-}
-
-/// One source's import, as its readers see it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct MailSyncStatusView {
-    pub source_ref: String,
-    /// Whether the change feed has an anchor: new mail arrives live.
-    pub live: bool,
-    /// Whether the newest-first copy reached the oldest message it keeps.
-    pub copy_done: bool,
-    pub landed: u64,
-    pub bodies: u64,
-    /// Messages waiting for their bodies.
-    pub bodies_waiting: u64,
-    pub deleted_at_provider: u64,
-    /// Messages deleted at the provider and kept whose claims wait to be
-    /// checked again (FIX 15414).
-    pub claim_rechecks_pending: u64,
-    /// Those whose claims were checked again: each stands, or the Dreamer
-    /// moved it down its demotion ladder.
-    pub claim_rechecks_checked: u64,
-    /// Those with a claim whose check waits for the owner's review.
-    pub claim_rechecks_review_needed: u64,
-    /// Checks a restore, a later delete or an erase of the message made
-    /// moot.
-    pub claim_rechecks_obsolete: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_step_at: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_error: Option<String>,
-    /// Until when the source rests, its provider quota spent for the
-    /// minute or the day, or its provider having answered that its rate is
-    /// spent: no step reads the provider before it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub quota_paused_until: Option<u64>,
 }
 
 /// The status view of `source` in `txn`.
