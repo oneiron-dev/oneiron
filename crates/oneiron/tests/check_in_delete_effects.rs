@@ -34,17 +34,32 @@
 //!   it deletes that record and spends it; the same check-in named on another
 //!   record's item, or by `vault.delete`, deletes nothing.
 //!
+//! Row 2k5e: `vault.archive.attempt.delete.confirm`, a vault control-plane
+//! act only the Owner, an Admin or a Deputy reaches, never waits:
+//!
+//! - The Owner's confirm of a cleanup-archived completed attempt goes on
+//!   their own proof, and its receipt records that decision.
+//! - An Admin's and a Deputy's go at once (`never_ask`, `sure`); each
+//!   receipt names the membership role it was judged under, though both are
+//!   admitted as `admin`.
+//!
 //! The vault is rooted, and its human binding is the owner's (H149), so each
 //! other person deletes by the live `human` credential this host mints them,
 //! as a transport binds it (as delete_authority.rs does). A NOTE is written
 //! while the fixture binds the host key to its author, then the key goes back
 //! to the owner.
 //!
+//! The attempt door checks its caller's write binding, so the fixture binds
+//! the host key to each Admin or Deputy for their call, then back to the
+//! owner.
+//!
 //! On the base (d6ad09c4191) this file does not build: a delete's receipt has
 //! no `check_in`, and the memory handle no `safe_delete_with_check_in`. On
 //! 2k5b (517860f30c8) it does not build either: an archive confirm item has
 //! no `check_in_ref`, its receipt no `check_in`, and its error no
-//! `reason_codes`.
+//! `reason_codes`. On 2k5d (7a59dbb2eae) it does not build: an attempt
+//! archive delete's receipt has no `check_in`, and the test doors no
+//! `archive_attempt_as_cleanup`.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test check_in_delete_effects`.
@@ -54,6 +69,10 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
+use oneiron::attempt_queue::{
+    AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
+    EnqueueOutcome,
+};
 use oneiron::authority::{HostSlipIssuer, VerifiedSlip};
 use oneiron::check_in::CheckInDecision;
 use oneiron::consent::AuthenticatedOwner;
@@ -62,15 +81,21 @@ use oneiron::memory::{
     ArchiveDeleteBatchResult, ArchiveDeleteConfirmOutcome, ArchiveDeleteConfirmRequest,
     ArchiveDeleteError, ArchiveDeleteItem, ArchiveDeleteReceiptView,
     CHECK_IN_PENDING_REASON_PREFIX, DeleteReceipt, MEMORY_CODE_BAD_REQUEST,
-    MEMORY_CODE_CHECK_IN_PENDING, MemoryResult, SafeDeleteReason, confirm_archive_delete_wire,
+    MEMORY_CODE_CHECK_IN_PENDING, MEMORY_CODE_INVALID_STATE, Memory, MemoryResult,
+    SafeDeleteReason, confirm_archive_delete_wire,
 };
 use oneiron::note::TakeTarget;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::temporal::TimeRange;
-use oneiron::test_doors::cleanup_archive::archive_as_cleanup;
+use oneiron::test_doors::cleanup_archive::{archive_as_cleanup, archive_attempt_as_cleanup};
 use oneiron::test_support::{bind_host_actor, bind_host_owner};
+use oneiron::vault_cleanup::{
+    AttemptArchiveDeleteConfirmRequest, AttemptArchiveDeletePreviewRequest,
+    AttemptArchiveDeleteReceiptView, confirm_attempt_archive_delete_wire,
+    preview_attempt_archive_delete_wire,
+};
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use serde_json::json;
 
@@ -667,4 +692,163 @@ fn each_archived_note_a_steward_confirms_waits_on_its_own_check_in() {
         second_ask,
         "the other record still waits on its own check-in"
     );
+}
+
+/// The kind and the lease owner of the attempts row 2k5e deletes.
+const ATTEMPT_KIND: &str = "test.check_in.attempt_delete";
+const ATTEMPT_WORKER: &str = "worker:check-in-attempt-delete";
+
+impl Org {
+    /// A completed attempt, archived as a cleanup run archives it, by its
+    /// 32-hex id.
+    fn archived_attempt(&self) -> String {
+        let queue = AttemptQueue::new(&self.vault);
+        let EnqueueOutcome::Enqueued(queued) = queue
+            .enqueue(EnqueueAttempt {
+                kind: ATTEMPT_KIND.to_owned(),
+                payload: b"attempt".to_vec(),
+                dedupe_key: None,
+                run_id: None,
+                now: self.vault.now_recorded_at(),
+            })
+            .expect("enqueue")
+        else {
+            panic!("a fresh attempt is enqueued");
+        };
+        let ClaimOutcome::Claimed(leased) = queue
+            .claim_kind(
+                ATTEMPT_KIND,
+                ClaimAttempt {
+                    lease_owner: ATTEMPT_WORKER.to_owned(),
+                    now: self.vault.now_recorded_at(),
+                },
+            )
+            .expect("claim")
+        else {
+            panic!("the ready attempt is claimed");
+        };
+        let outcome = queue
+            .complete(CompleteAttempt {
+                id: queued.id,
+                lease_owner: ATTEMPT_WORKER.to_owned(),
+                attempt_count: leased.attempt_count,
+                now: self.vault.now_recorded_at(),
+            })
+            .expect("complete");
+        assert!(
+            matches!(outcome, CompleteOutcome::Completed(_)),
+            "the attempt completes: {outcome:?}"
+        );
+        archive_attempt_as_cleanup(&self.vault, queued.id)
+            .expect("the cleanup archives the attempt");
+        queued
+            .id
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    /// `person`'s preview of archived `attempt`, then their
+    /// `vault.archive.attempt.delete.confirm` of what it showed: the
+    /// owner's on the in-process handle under their proof, an Admin's or a
+    /// Deputy's over their own credential while the host key is bound to
+    /// them.
+    fn attempt_confirm(
+        &self,
+        person: EntityId,
+        attempt: &str,
+    ) -> MemoryResult<AttemptArchiveDeleteReceiptView> {
+        let preview = AttemptArchiveDeletePreviewRequest {
+            attempt: attempt.to_owned(),
+        };
+        let confirm = |memory: &Memory<'_>| -> MemoryResult<AttemptArchiveDeleteReceiptView> {
+            let expected = preview_attempt_archive_delete_wire(memory, &preview)?.expected;
+            confirm_attempt_archive_delete_wire(
+                memory,
+                &AttemptArchiveDeleteConfirmRequest {
+                    attempt: attempt.to_owned(),
+                    expected,
+                },
+            )
+        };
+        let memory = self.vault.memory(person, EdgeActorClass::Human);
+        if person == self.owner {
+            return confirm(&memory.with_owner_authorship(&proof(&self.vault, self.owner)));
+        }
+        let credential = self.credential(person);
+        bind_host_actor(&self.vault, &self.issuer, person, "human")
+            .expect("the host key bound to the caller for its confirm");
+        let answer = confirm(
+            &memory
+                .with_transport_invocation()
+                .with_read_proof(&credential),
+        );
+        bind_host_owner(&self.vault, &self.issuer, self.owner).expect("the owner's binding again");
+        answer
+    }
+
+    /// Whether archived `attempt` is gone: the owner's preview no longer
+    /// finds a cleanup-archived completed row.
+    fn attempt_gone(&self, attempt: &str) -> bool {
+        let memory = self
+            .vault
+            .memory(self.owner, EdgeActorClass::Human)
+            .with_owner_authorship(&proof(&self.vault, self.owner));
+        match preview_attempt_archive_delete_wire(
+            &memory,
+            &AttemptArchiveDeletePreviewRequest {
+                attempt: attempt.to_owned(),
+            },
+        ) {
+            Ok(_) => false,
+            Err(error) if error.code == MEMORY_CODE_INVALID_STATE => true,
+            Err(error) => panic!("the owner's preview answers: {error:?}"),
+        }
+    }
+}
+
+#[test]
+fn the_owners_attempt_archive_delete_goes_on_their_own_proof_and_records_it() {
+    let org = Org::new();
+    let attempt = org.archived_attempt();
+    assert!(!org.attempt_gone(&attempt), "the archived attempt is there");
+    let receipt = org
+        .attempt_confirm(org.owner, &attempt)
+        .expect("the Owner deletes the archived attempt");
+    assert_eq!(receipt.attempt, attempt);
+    assert_eq!(receipt.role, "owner");
+    assert!(
+        org.attempt_gone(&attempt),
+        "the archived attempt is deleted"
+    );
+    assert_eq!(
+        receipt.check_in,
+        Some(decision("owner", None, "own_proof", None)),
+        "the Owner's confirm records their own proof"
+    );
+}
+
+#[test]
+fn an_admins_and_a_deputys_attempt_archive_delete_go_at_once_and_record_why() {
+    let org = Org::new();
+    let cases = [
+        (org.admin, "admin", "full-access", "never_ask"),
+        (org.deputy, "deputy", "auto", "sure"),
+    ];
+    for (person, role, mode, basis) in cases {
+        let attempt = org.archived_attempt();
+        let receipt = org
+            .attempt_confirm(person, &attempt)
+            .unwrap_or_else(|error| panic!("the {role}'s confirm goes at once: {error:?}"));
+        assert_eq!(receipt.deleted_by, person.to_hex());
+        assert_eq!(receipt.role, "admin", "the {role} is admitted as an Admin");
+        assert!(receipt.grant_ref.is_some(), "the {role}'s grant is named");
+        assert!(org.attempt_gone(&attempt), "the {role}'s confirm applied");
+        assert_eq!(
+            receipt.check_in,
+            Some(decision(role, Some(mode), basis, None)),
+            "the {role}'s receipt names the membership role and why it went"
+        );
+    }
 }
