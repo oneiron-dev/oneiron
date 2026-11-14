@@ -585,6 +585,13 @@ pub enum EngineExecutorStatus {
         next_step_seq: u64,
         reason: super::compaction::WindowFullReason,
     },
+    /// A person's pause the run took at its step boundary (the branch's
+    /// Pause signal). Not terminal: the run's row is already `Paused` and
+    /// its lease released, so its host leaves the row as it is; a resume
+    /// queues the same try, which runs on at `next_step_seq`.
+    Paused {
+        next_step_seq: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -17,9 +17,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::context_projection::ContextSpec;
 use crate::edge::EdgeActorClass;
 use crate::error::GateError;
-use crate::genui::{
-    ConsentActionRequest, ProjectGoalDraft, ProjectProposalCard, ProjectProposalPicks,
-};
+use crate::genui::{ConsentActionRequest, ProjectProposalCard};
 use crate::llm::decision::DecisionReceipt;
 use crate::memory::{Memory, MemoryResult};
 use crate::ports::JobQueue;
@@ -131,27 +129,10 @@ pub struct ProjectCardRecord {
     pub history: bool,
 }
 
-/// What the drafting agent proposes on one source message. The principal and
-/// the thread placement come from the detection, never from the request.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectProposalRequest {
-    pub card_id: String,
-    pub source_message_ref: String,
-    pub goal: ProjectGoalDraft,
-    pub picks: ProjectProposalPicks,
-}
-
-/// A tap on a host-held card. The host binds the authenticated owner, the
-/// actor, the surface and the owner signer; none of them travel here.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectCardConfirmRequest {
-    pub card_id: String,
-    /// The card action tapped (`mint_project`).
-    pub action_id: String,
-    pub occurred_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::project::proposal::{
+    ProjectCardConfirmRequest, ProjectProposalRequest,
+};
 
 fn refused(reason: &str) -> Error {
     Error::InvalidConfig(format!("project card: {reason}"))

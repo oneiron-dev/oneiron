@@ -35,39 +35,12 @@ pub enum UnsetFreeTimePolicy {
 /// for the owner's pack).
 pub const FREE_TIME_WHEN_UNSET: UnsetFreeTimePolicy = UnsetFreeTimePolicy::Disabled;
 
-/// The two owner-facing names of a cycle's one daily clock: one cycle a day
-/// either way, at the policy's local time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum FreeTimeCadence {
-    Daily,
-    Nightly,
-}
-
-/// When each cycle opens: a local time of day in an IANA zone. A local time
-/// a spring-forward gap skips opens no cycle that date; a fall-back fold
-/// opens at its earlier instant. Never UTC by default.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FreeTimeSchedule {
-    pub cadence: FreeTimeCadence,
-    /// 0..=23.
-    pub hour: u8,
-    /// 0..=59.
-    pub minute: u8,
-    /// An IANA zone, by its canonical name.
-    pub zone: String,
-}
-
-/// A split the owner pinned: what each kind may spend of the total, as a
-/// hard share each. Without one, both kinds draw on one shared total and the
-/// agent chooses; no share is a minimum or a target.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FreeTimeSplit {
-    pub for_human_units: u64,
-    pub own_time_units: u64,
-}
+#[doc(hidden)]
+use oneiron_verb_wire::dreamer_runner::free_time::policy::invalid;
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_runner::free_time::policy::{
+    FreeTimeCadence, FreeTimeSchedule, FreeTimeSplit,
+};
 
 /// What the owner sets for one agent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -98,21 +71,35 @@ pub struct FreeTimePolicy {
     pub cap_shown_at_ms: u64,
     /// The owner, as this vault revalidated them in the write; `None` for an
     /// agent's set (`set_by_agent`), and once that owner was erased (FIX
-    /// 8875). Audit only; no rule reads it.
+    /// 8875). A holder's schedule move keeps the setter of the set it moves.
+    /// Audit only; no rule reads it.
     pub set_by: Option<EntityId>,
-    /// The agent whose act set it: within its live Grant (FIX 5660), its
-    /// signed record naming the Grant, or a holder's schedule move, whose
-    /// record is the engine-control receipt; `None` for the owner's own set,
-    /// and once that agent was erased. Audit only; no rule reads it.
+    /// The agent whose act set it: within its live Grant (FIX 5660), with
+    /// its signed record naming the Grant; `None` for the owner's own set,
+    /// and once that agent was erased. A holder's schedule move keeps the
+    /// agent of the set it moves; the move's record is the engine-control
+    /// receipt (FABLE-6918-2). A home move judges it with `set_grant`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub set_by_agent: Option<EntityId>,
-    /// The Grant the agent's set acted under (FIX 11608); `None` for the
-    /// owner's own set, for rows set before grants were stamped, and once
-    /// that agent was erased.
+    /// The Grant the agent's set acted under (FIX 11608): a home move lands
+    /// the row only while that Grant names `free_time_policy_set` at
+    /// `set_at`. `None` for the owner's own set, for rows set before grants
+    /// were stamped, and once that agent was erased. A holder's schedule
+    /// move keeps the Grant of the set it moves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub set_grant: Option<EntityId>,
-    /// Vault clock seconds. No cycle opens at a boundary before this.
+    /// Vault clock seconds of the owner's or the agent's set; a holder's
+    /// schedule move keeps it, and its own time is in the record's act and
+    /// in its receipt. No cycle opens at a boundary before this.
     pub set_at: u64,
+    /// After a holder's schedule move (FABLE-6918-1), vault clock seconds:
+    /// the boundary the schedule in force before the move would have opened
+    /// its next cycle at. No cycle opens at a boundary before it, so a move
+    /// delays the next cycle and never brings it forward, and no move opens
+    /// a second cycle, with a second whole allowance, in one period. Each
+    /// move only raises it; `None` for the owner's or an agent's set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holder_not_before: Option<u64>,
     /// Where the owner said so; `None` also once the linked machine it was
     /// said on was erased. Audit only; no rule reads it.
     pub surface: Option<ActSurface>,
@@ -166,10 +153,6 @@ impl FreeTimePolicyRecord {
             clear_surface: None,
         })
     }
-}
-
-fn invalid(reason: &str) -> Error {
-    Error::InvalidConfig(format!("free-time policy: {reason}"))
 }
 
 impl FreeTimePolicyInput {
@@ -454,6 +437,7 @@ impl Vault {
                     ActBy::Owner => None,
                 },
                 set_at,
+                holder_not_before: None,
                 surface: actor.surface,
                 prior: policy_digest(prior)?,
             };
@@ -479,17 +463,23 @@ impl Vault {
     /// S66B-BUDGETS B2 = A), replacing revision `expected_revision`. The
     /// policy must stand: setting or clearing one chooses a cap, which is the
     /// owner's act. Its `total_units`, `cap_shown_at_ms` and pinned split
-    /// stay as the owner set them. The row stamps the holder and its grant
-    /// (`set_by_agent`, `set_grant`), and the record of the move is the
-    /// engine-control receipt, as for every other holder door. Unlike the
-    /// owner's set or a set by an agent whose Grant names
+    /// stay as the owner set them. The row keeps the authority of the set it
+    /// moves: its setter, agent, Grant, time and surface, so a home move
+    /// judges that set as before (FABLE-6918-2). The record of the move, the
+    /// holder's act, is the engine-control receipt, as for every other holder
+    /// door. No cycle opens before the boundary the schedule in force would
+    /// have opened next (`holder_not_before`): a move delays the next cycle
+    /// and never brings it forward, so it opens no second cycle with a
+    /// second whole allowance on the day one opened (FABLE-6918-1). Unlike
+    /// the owner's set or a set by an agent whose Grant names
     /// `free_time_policy_set`, a holder's move leaves no signed
     /// `PolicySettingSet` (review of #6918). Returns the receipt and the
     /// policy now in force.
     ///
     /// # Errors
     /// `InvalidConfig` when `holder` holds no live `engine.controls` or no
-    /// policy stands; an invalid schedule; an unknown agent;
+    /// policy stands, or when the schedule in force has no next boundary to
+    /// hold the move to; an invalid schedule; an unknown agent;
     /// [`Error::ConcurrentWrite`] for a stale revision; storage errors.
     pub fn set_free_time_schedule_as_holder(
         &self,
@@ -508,17 +498,16 @@ impl Vault {
                 "schedule": &schedule,
             }))?,
             |txn| {
-                let grant = self
-                    .engine_controls_grant_in(
-                        txn,
-                        holder,
-                        crate::federation::EngineControlClass::WakeCadence,
-                    )?
-                    .ok_or_else(|| {
-                        Error::InvalidConfig(
-                            "this holder holds no live engine.controls.wake_cadence".into(),
-                        )
-                    })?;
+                self.engine_controls_grant_in(
+                    txn,
+                    holder,
+                    crate::federation::EngineControlClass::WakeCadence,
+                )?
+                .ok_or_else(|| {
+                    Error::InvalidConfig(
+                        "this holder holds no live engine.controls.wake_cadence".into(),
+                    )
+                })?;
                 self.read_agent_definition_in_txn(txn, &agent)?;
                 let record = current_revision_in_txn(self, txn, agent, expected_revision)?;
                 let Some(prior) = record.as_ref().and_then(|record| record.policy.clone()) else {
@@ -534,22 +523,37 @@ impl Vault {
                     cap_shown_at_ms: prior.cap_shown_at_ms,
                 }
                 .validate()?;
-                let set_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+                let not_before =
+                    super::cycle::next_due_boundary(CLOCK.get(&self.store, txn, &agent)?, &prior)?
+                        .ok_or_else(|| {
+                            Error::InvalidConfig(
+                                "the schedule in force has no next boundary to hold the move to"
+                                    .into(),
+                            )
+                        })?;
+                let moved_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+                // The set it moves keeps its authority: its setter, agent,
+                // Grant, time and surface (FABLE-6918-2).
                 let policy = FreeTimePolicy {
                     revision: expected_revision
                         .checked_add(1)
                         .ok_or(Error::ArithmeticOverflow("free-time policy revision"))?,
                     schedule: schedule.clone(),
-                    set_by: None,
-                    set_by_agent: Some(holder),
-                    set_grant: Some(grant),
-                    set_at,
-                    surface: None,
+                    holder_not_before: Some(
+                        prior
+                            .holder_not_before
+                            .map_or(not_before, |floor| floor.max(not_before)),
+                    ),
                     prior: policy_digest(Some(&prior))?,
                     ..prior.clone()
                 };
-                let record =
-                    FreeTimePolicyRecord::after(record, agent, Some(policy.clone()), holder, set_at)?;
+                let record = FreeTimePolicyRecord::after(
+                    record,
+                    agent,
+                    Some(policy.clone()),
+                    holder,
+                    moved_at,
+                )?;
                 POLICY.put(&self.store, txn, &agent, &record)?;
                 // No signed `PolicySettingSet` here: the authority checker
                 // admits an agent's free-time act only under a grant that
