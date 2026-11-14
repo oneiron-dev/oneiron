@@ -55,8 +55,8 @@ keep their complete journey plans. Do not use native `.skip`, `.only`, `.failing
 unregistered tests, or concurrent tests.
 
 ```ts
-import { afterAll, expect, test } from "bun:test";
-import { defineFile } from "./support/run.ts";
+import { afterAll, test } from "bun:test";
+import { defineFile, expect } from "./support/run.ts";
 import { EngineFixture } from "./support/engine.ts";
 import { loadFixtures } from "./support/fixtures.ts";
 
@@ -427,7 +427,22 @@ the booked fleet job; never run the suite outside that job or on the Mac.
 ## Reports, cleanup and redaction
 
 Every selected planned ID gets PASS, FAIL, BLOCKED or owner-deferred SKIPPED,
-duration and a reason where needed. Coverage includes the pinned row map and
+duration and a reason where needed.
+
+The runner also sets each case's status; nobody types it (E2E rules v2,
+implementation-baseline-v1 #tests-e2e; `caseStatus` in `support/run.ts`).
+`report.json` carries `status` on every result row and `statusCounts`:
+
+- PLANNED: no body ran (not registered, todo, skip, pending door, BLOCKED) or it
+  went red before any assertion;
+- PROBED: the body ran to its end and made no assertion;
+- WRITTEN: the body made at least one assertion, and no red is on record;
+- PROVEN: green with assertions, and `--red-report <earlier report.json>` holds
+  the same ID red on an assertion on another build head (a BLOCKED, deadline,
+  door, harness or cleanup red proves nothing).
+
+Assertions are counted only through the runner's `expect`: import `expect` from
+`./support/run.ts`, never from `bun:test`. Coverage includes the pinned row map and
 explicit exclusions. A run succeeds only if every selected ID is PASS or SKIPPED,
 file declarations/IDs match the plan, each PASS agrees with Bun's JUnit, each
 SKIPPED agrees with a raw JUnit skip, and the whole run (including preflight and

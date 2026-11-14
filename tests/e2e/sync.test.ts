@@ -1,10 +1,10 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, test } from "bun:test";
 import type { FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import type { DevicePeer } from "./support/engine.ts";
 import { PublicHttpError, credentialParts } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
-import { defineFile } from "./support/run.ts";
+import { defineFile, expect } from "./support/run.ts";
 import { SyncLinkProxy } from "./support/sync_link.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
@@ -156,7 +156,7 @@ async function sync01Facts(client: Sync01Client, predicates: readonly string[]):
   return out;
 }
 
-/* SYNC-01 — decision: WRITTEN (partial).
+/* SYNC-01 — covers part of its promise (the runner sets its status).
  * Promise: two machines of one vault, partitioned, each write; after the link
  *   heals and reconnects both machines hold the
  *   authored note text and the authored claim set, each claim once, authored
@@ -422,7 +422,7 @@ async function sync04Search(device: DevicePeer, query: string): Promise<Sync04Se
   return (await device.client.request<Sync04Search>("GET", `/api/search/text?query=${encodeURIComponent(query)}`)).body;
 }
 
-/* SYNC-04 — decision: WRITTEN (partial).
+/* SYNC-04 — covers part of its promise (the runner sets its status).
  * Promise: a device in the default opened mode holds only metadata for the
  *   current window; opening one item fetches exactly that body from home,
  *   which then stays readable with the home link cut and across a device
@@ -594,7 +594,7 @@ async function sync05Standing(client: EngineFixture["client"], predicate: string
   return { count: others.length + (row ? 1 : 0), claim_ref: row?.claim_ref, value: row?.value, source: row?.source, approval: row?.approval, lifecycle: row?.lifecycle };
 }
 
-/* SYNC-05 — decision: WRITTEN (partial).
+/* SYNC-05 — covers part of its promise (the runner sets its status).
  * Promise: switching an enrolled device from opened to sync-all (its own act,
  *   on the device) makes every authorized body local, so both bodies the
  *   device never opened are readable with the home link cut and after a
@@ -849,7 +849,7 @@ async function sync07ForeignState(engine: EngineFixture, claimRef: string): Prom
   };
 }
 
-/* SYNC-07 — decision: WRITTEN (partial).
+/* SYNC-07 — covers part of its promise (the runner sets its status).
  * Promise: a claim delivered from a connected vault enters the receiving vault
  *   only under that vault's own source-trust rule, and there it stays foreign
  *   evidence: foreign world, imported source, zero first-party corroboration,
@@ -1033,7 +1033,7 @@ suite.test(test, "SYNC-07", "A claim from a connected vault lands only under the
  * mesh: it no longer accepts mesh, while ordinary HTTP/WS remains usable.
  * A refused arbitrary UDP packet or an HTTP 401 is not a mesh admission test.
  */
-/* SYNC-08 — decision: TODO (reason string replaced).
+/* SYNC-08 — registered as todo (reason string replaced).
  * Promise: the mesh is off by default; once opted in, only a paired machine
  *   with the sync ALPN grant reaches application data, an unpaired third
  *   machine is refused before any data with a refused path receipt, denied
