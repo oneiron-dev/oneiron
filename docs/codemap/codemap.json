@@ -91141,7 +91141,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 103,
+      "mod": 104,
       "re-export": 1
      }
     },
@@ -91245,6 +91245,16 @@
      "purpose": "Doors for `tests/park_typed_wait.rs` (6.5d-1): the head state of a trap chain, and a soft child spend…",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/peer_author_redaction.rs",
+     "purpose": "Doors for the peer-redaction refusal test (ARCH-0055 author-carrier-open): this vault's own author carrier…",
+     "surface": {
+      "fn": 3
      }
     },
     {
@@ -91498,7 +91508,7 @@
      "surface": {
       "const": 4,
       "enum": 1,
-      "fn": 24,
+      "fn": 25,
       "struct": 1
      }
     },
@@ -100219,6 +100229,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/custody_will_over_substrate.rs",
+     "purpose": "Custody follows the act, not the key (census L7-14; Engine RULING L7-14-CUT = A, 14 Nov 03:02). identity.md…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/dag_append_composed_source.rs",
      "purpose": "The DAG append's source label follows who composed the words (Engine ruling…",
      "surface": {}
@@ -101946,6 +101964,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/peer_redaction_own_attribution.rs",
+     "purpose": "A peer's redaction records the refusal before it erases this vault's own attribution (ARCH-0055:162…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -102313,6 +102339,14 @@
      "notable": [],
      "path": "tests/restore_over_live_compartment_rows.rs",
      "purpose": "Live restores compare refused families with the image's opened compartments",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/retired_key_evidence_own_vault.rs",
+     "purpose": "Retired-key evidence names only this vault's rows (census L7-13, identity.md \"Open, Engine's follow-up\"…",
      "surface": {}
     },
     {
@@ -104811,7 +104845,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 106,
+     "files": 107,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104988,8 +105022,8 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7569,
-   "test_files": 1287
+   "source_files": 7570,
+   "test_files": 1290
   },
   "oneiron-agent-runtime": {
    "files": [
