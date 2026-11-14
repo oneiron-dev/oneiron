@@ -170,6 +170,7 @@ impl<'a> BranchResources<'a> {
             known: known.cloned().unwrap_or_default(),
             rules: vault.consolidation_key_rules()?,
             read_receipt: std::sync::Mutex::new(read_receipt),
+            held: std::cell::RefCell::default(),
         };
         resources.check_axes(&resources.scope)?;
         for parent in &parents {

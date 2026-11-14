@@ -5,6 +5,9 @@
 //! slot's settle lands only while no earlier slot committed and its
 //! admitted priors still hold; else the slot runs again over its branch
 //! re-opened in its place, so the committed rows equal the serial run's.
+//! The open-conflict markers and contradiction gaps such a finish decides
+//! wait on its branch: they are written only with a run that lands as it
+//! ran (review round 1 of #7855).
 //! Split from `partition_run` (FIX 12774); the serial run and its settle
 //! stay there.
 
@@ -170,7 +173,10 @@ impl ConsolidationExecutor<'_> {
     /// admitted priors still hold. Otherwise the slot runs again over its
     /// branch re-opened in its place - the live state a serial pass would
     /// read there, its memoized steps replaying - so the committed rows
-    /// equal the serial run's. A sieve rung job in the window runs whole
+    /// equal the serial run's. The escalation rows that finish decided
+    /// (open-conflict markers, contradiction gaps) are held on its branch
+    /// and written only with a run that lands as it ran: a parked or re-run
+    /// slot leaves none of them. A sieve rung job in the window runs whole
     /// beside the prefixes: its commit touches only its own span's
     /// reading, which no partition's finish reads. The driver gates the
     /// window to these shapes; a slot of any other shape takes the serial
@@ -370,8 +376,9 @@ impl ConsolidationExecutor<'_> {
     /// once that prefix extracted, its finish at once over the branch the
     /// slot opened (FIX 21927), up to the run its settle lands. The finish
     /// commits nothing: the commit stays in the settle, in admission
-    /// order. The tournament arm's finish lands its winner as it runs, so
-    /// it still waits for the slot's place.
+    /// order, and the escalation rows it decides wait on its branch for
+    /// that settle. The tournament arm's finish lands its winner as it
+    /// runs, so it still waits for the slot's place.
     async fn run_window_slot_job(
         &self,
         started: &mut PartitionStarted<'_>,
@@ -403,6 +410,9 @@ impl ConsolidationExecutor<'_> {
                 stages.mark_window_prefixes_ended(prefix_ended);
                 stages.mark_finish_started(prefix_ended);
                 let live = !extracted.steps_decide_finish();
+                // The markers and gaps it decides are rows the serial
+                // order may never write: they wait for the settle.
+                started.resources.hold_escalations();
                 let run = self
                     .boxed_finish_partition_run(
                         *extracted,
@@ -575,6 +585,9 @@ impl ConsolidationExecutor<'_> {
     /// parks, an extracted prefix or a finished run is accounted and
     /// parked (FIX 12487 round 2). Once an earlier slot `committed`, a
     /// finished run that may land runs again in its place (FIX 21927).
+    /// The escalation rows a finished run's branch held are written only
+    /// where that run lands as it ran over an unchanged branch; every
+    /// other arm drops them (review round 1 of #7855).
     async fn finish_window_slot<'w>(
         &mut self,
         slot: WindowSlotRun<'w>,
@@ -624,6 +637,8 @@ impl ConsolidationExecutor<'_> {
                     widened_round,
                     mut charges,
                 } = *started;
+                // Empty unless the slot's job finished early.
+                let held = resources.take_held_escalations();
                 let executed = match work.expect("a running slot's job ran") {
                     // Its job's containment logged it; the shared panic
                     // error stops the window here (FIX 7322).
@@ -644,7 +659,9 @@ impl ConsolidationExecutor<'_> {
                         // A checkpoint, a trap or a seat refusal lands
                         // nothing: it stands whatever an earlier slot
                         // committed, and a re-run would ask the spent seat
-                        // again before its available write.
+                        // again before its available write. Its held rows
+                        // drop: the resumed attempt replays its memoized
+                        // steps and writes them in its place.
                         | (
                             None,
                             run @ Ok(PartitionRun::Checkpoint
@@ -693,12 +710,18 @@ impl ConsolidationExecutor<'_> {
                                 // earlier commit, the same admitted priors.
                                 // It lands as it ran, over the branch it ran
                                 // on (the fallback binding its finish made is
-                                // there).
+                                // there), its held rows first, as its finish
+                                // would have written them.
                                 Ok(fresh)
                                     if !committed
                                         && fresh.admitted_prior_ids()
                                             == resources.admitted_prior_ids() =>
                                 {
+                                    let run = match held.publish(ctx.vault, self.actor, &resources)
+                                    {
+                                        Ok(()) => run,
+                                        Err(error) => Err(error.into()),
+                                    };
                                     self.boxed_settle_partition_run(
                                         &resources,
                                         run,
@@ -718,7 +741,8 @@ impl ConsolidationExecutor<'_> {
                                 // branch re-opened here, as the serial order
                                 // would. Its memoized steps replay, inside the
                                 // finalize window too; its finish already
-                                // accounted the paid steps.
+                                // accounted the paid steps. The rows its
+                                // finish held drop: the re-run writes its own.
                                 Ok(fresh) => {
                                     let rerun = self
                                         .boxed_run_partition_attempt(

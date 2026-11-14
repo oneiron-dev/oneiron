@@ -339,15 +339,8 @@ impl ConsolidationExecutor<'_> {
                 for member in members {
                     join_decisions(&mut decisions, &member.decisions);
                 }
-                super::open_conflict::park_open_conflict(
-                    ctx.vault,
-                    self.actor,
-                    attempt_id,
-                    conflict,
-                    members,
-                    &decisions,
-                    &resources.write_fence(),
-                    ctx.now_ms,
+                resources.park_open_conflict(
+                    ctx.vault, self.actor, attempt_id, conflict, members, &decisions, ctx.now_ms,
                 )?;
                 Err(error)
             }
