@@ -199,3 +199,35 @@ pub(super) fn stored_row_scope(
 ) -> Result<RampScope> {
     RampScope::new(op_kind, target_class, actor).map_err(|_| Error::CorruptedIndex(label))
 }
+
+/// Erasing `actor` from the demotion log (FIX 3520; review of #7514): each
+/// demotion it made keeps its scope, reason, grant and times, and its
+/// `demoted_by` reads [`ERASED_CALL_IDENTITY`](crate::receipt::ERASED_CALL_IDENTITY).
+/// The receipt the row projects then names no erased demoter. One-way, in
+/// the erase's own transaction. An id whose entity is no actor scans
+/// nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a row that cannot be read.
+pub(crate) fn erase_demotion_actor_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if crate::deletion::names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let hex = actor.to_hex();
+    let mut rows = Vec::new();
+    for (key, mut row) in RAMP_DEMOTION.scan(&vault.store, wtxn)? {
+        if row.demoted_by.as_deref() == Some(hex.as_str()) {
+            row.demoted_by = Some(crate::receipt::ERASED_CALL_IDENTITY.to_owned());
+            rows.push((key, row));
+        }
+    }
+    for (key, row) in rows {
+        RAMP_DEMOTION.put(&vault.store, wtxn, &key, &row)?;
+    }
+    Ok(())
+}

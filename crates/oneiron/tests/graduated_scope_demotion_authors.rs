@@ -13,7 +13,8 @@
 //! Every demotion receipt names who demoted in its `demoted_by` field (Engine
 //! RULING NEXT-ROW-8 = A, Fri 13 Nov 19:21 JST; FIX 24090): the owner, the
 //! policy holder, the spawning parent, the scope's own actor, or the person
-//! whose ruling caused it. The receipt's `actor` stays the scope's.
+//! whose ruling caused it. The receipt's `actor` stays the scope's. A hard
+//! erase of the demoter takes them out of it (review of #7514).
 //!
 //! The shipped grant rows give the `policy.change` verb to no role, so the
 //! owner first lets the Admin role carry it, and a run spawns its child
@@ -25,18 +26,20 @@
 //! --all-features --test graduated_scope_demotion_authors`.
 #![cfg(oneiron_test_support)]
 
+use std::sync::Arc;
+
 use oneiron::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use oneiron::consent_graduation::{
     DemotionReason, RAMP_DEMOTE_GRANT_TARGET, RampScope, RampState, is_ramp_demotion_receipt,
 };
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
 use oneiron::identity_topology::ProposalOutcome;
-use oneiron::receipt::{ReceiptKind, ReceiptQuery};
+use oneiron::receipt::{ERASED_CALL_IDENTITY, ReceiptKind, ReceiptQuery};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consent_graduation_demotion as doors;
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::{DeleteReason, EdgeActorClass, EntityId, Vault, VaultConfig};
 
 const SHARED: u64 = 42;
 
@@ -368,5 +371,47 @@ fn an_owners_rejecting_ruling_names_the_owner_as_the_demoter() {
         demotion_receipts(&vault),
         vec![demotion_by(&scope, owner)],
         "one demotion receipt, naming the owner whose ruling demoted"
+    );
+}
+
+/// A hard erase of the person who demoted takes them out of the demotion
+/// receipt (review of #7514): the demotion stays, with the scope's actor and
+/// the revoked grant, and its `demoted_by` reads `erased`. Red on #7514's
+/// first head: the demotion log declared no actor scrub, so the erase never
+/// visited it and the receipt still named the erased Admin.
+#[test]
+fn a_hard_erase_takes_the_demoter_out_of_the_demotion_receipt() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    let roster = shared_roster(&vault);
+    grant_demotion_power(&vault, roster.owner, roster.admin);
+    let scope = graduated_scope(&vault, roster.owner, &EntityId::now().to_hex());
+    vault
+        .demote_scope_to_propose(
+            &proof(&vault, roster.admin),
+            &scope,
+            DemotionReason::Rejected,
+        )
+        .expect("FIXTURE: the Admin demotes");
+    assert_eq!(
+        demotion_receipts(&vault),
+        vec![demotion_by(&scope, roster.admin)],
+        "FIXTURE: the receipt names the Admin"
+    );
+
+    // Every delete signs as this install first.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault
+        .delete_entity_with_reason(&roster.admin, DeleteReason::UserHardDelete)
+        .expect("FIXTURE: the Admin is hard-erased");
+
+    assert_eq!(
+        demotion_receipts(&vault),
+        vec![Demotion {
+            actor: Some(scope.actor.clone()),
+            grant_ref: Some(scope.grant_ref().expect("grant ref")),
+            demoted_by: Some(ERASED_CALL_IDENTITY.to_owned()),
+        }],
+        "the demotion stays and names no erased demoter"
     );
 }

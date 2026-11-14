@@ -4,7 +4,8 @@
 crate::side_table::side_tables! {
     /// Scope self-demotion log. Key: u64be + id16.
     RAMP_DEMOTION: VaultMeta b"ramp_demote:v1:" Named
-        [restore: live] [family: unclassified] [tier: canonical];
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::consent_graduation::erase_demotion_actor_in_txn;
     /// Clean-streak floor override. Key: id16.
     RAMP_FLOOR: VaultMeta b"ramp_floor:v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
