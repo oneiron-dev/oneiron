@@ -1,14 +1,16 @@
-//! A Sheets write's Gate records (FIX 4862), kept as a secret use keeps
-//! its own: the intent a write commits before its send, its send `pending`,
-//! and the outcome it appends after, linked to that intent. Each is written
-//! in its caller's transaction, beside the write's claim on its invocation
-//! ([`super::invocation`]). A crash between them leaves the intent alone:
-//! sent or not, unknown. Nothing writes an invented outcome for it.
+//! A workspace write's Gate records (FIX 4862; L3-17), kept as a secret use
+//! keeps its own: the intent a write commits before its send, its send
+//! `pending`, and the outcome it appends after, linked to that intent. Each
+//! is written in its caller's transaction, beside the write's claim on its
+//! invocation ([`super::invocation`]). A crash between them leaves the
+//! intent alone: sent or not, unknown. Nothing writes an invented outcome
+//! for it.
 //!
-//! Each record names the tool, the spreadsheet, the request's digest, the
-//! credential's custody name and its effector. The outcome adds what the send
-//! came to, the grant generation the door released, and digests of Google's
-//! reply and of the readback. No token, no cell value and no request body.
+//! Each record names the tool, the connector, the file, the request's
+//! digest, the credential's custody name and its effector. The outcome adds
+//! what the send came to, the grant generation the door released, and
+//! digests of the provider's reply and of the readback. No token, no file
+//! content and no request body.
 
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -16,32 +18,38 @@ use crate::error::Result;
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::vault::Vault;
 
-use super::tools::SheetsTool;
-use super::{SHEETS_CATALOG_NAME, SHEETS_CONNECTOR_EFFECTOR};
+use super::WorkspaceApi;
 
-/// The Gate reason code of every Sheets write's records.
-pub const SHEETS_EFFECT_REASON: &str = "connector.google.sheets.effect";
-
-/// The Gate content kind of every Sheets write's records.
-const SHEETS_EFFECT_CONTENT_KIND: &str = "sheets_effect";
+/// The Gate content kind of every workspace write's records.
+const WORKSPACE_EFFECT_CONTENT_KIND: &str = "workspace_effect";
 
 /// Domain of a record's diff handle: a digest of what was written where,
-/// never of the values.
-const SHEETS_EFFECT_DOMAIN: &[u8] = b"oneiron.sheets_effect.v1";
+/// never of the content.
+const WORKSPACE_EFFECT_DOMAIN: &[u8] = b"oneiron.workspace_effect.v1";
 
-/// The send reached Google, and Google answered with a success.
+/// The send reached the provider, and it answered with a success.
 pub(super) const SEND_DELIVERED: &str = "delivered";
-/// Nothing reached Google.
+/// Nothing reached the provider.
 pub(super) const SEND_NOT_SENT: &str = "not_sent";
-/// The send may have reached Google, and no answer came back.
+/// The send may have reached the provider, and no answer came back.
 pub(super) const SEND_UNCERTAIN: &str = "uncertain";
 
+/// The Gate reason code of every write's records of the connector
+/// `catalog_name`: `connector.google.sheets.effect` for Sheets.
+#[must_use]
+pub fn workspace_effect_reason(catalog_name: &str) -> String {
+    format!("connector.{catalog_name}.effect")
+}
+
 /// One write as its Gate records keep it.
-pub(super) struct SheetsEffect<'a> {
+pub(super) struct WorkspaceEffect<'a> {
     pub(super) actor: EntityId,
     pub(super) actor_class: EdgeActorClass,
-    pub(super) tool: SheetsTool,
-    pub(super) spreadsheet_id: &'a str,
+    pub(super) module: &'static dyn WorkspaceApi,
+    /// The tool's name.
+    pub(super) tool: &'static str,
+    /// The id of the file written.
+    pub(super) target: &'a str,
     /// The request's digest, lower hex.
     pub(super) request: String,
     /// The custody name of the grant the send presents.
@@ -55,13 +63,13 @@ pub(super) struct EffectResult {
     pub(super) send: String,
     /// The grant's generation the door released, when it released one.
     pub(super) generation: Option<u32>,
-    /// The digest of Google's reply, when it answered.
+    /// The digest of the provider's reply, when it answered.
     pub(super) reply: Option<String>,
     /// The digest of the readback, when it read.
     pub(super) readback: Option<String>,
 }
 
-impl SheetsEffect<'_> {
+impl WorkspaceEffect<'_> {
     /// Appends the intent record in `txn`, before the send. Its id, for
     /// [`Self::outcome_in_txn`].
     pub(super) fn intent_in_txn(
@@ -91,10 +99,12 @@ impl SheetsEffect<'_> {
         result: Option<&EffectResult>,
     ) -> Result<GateDecisionId> {
         let decision_id = GateDecisionId::from_bytes(vault.store.clock.ulid()?);
-        let parts: [&[u8]; 4] = [
-            SHEETS_EFFECT_DOMAIN,
-            self.tool.as_str().as_bytes(),
-            self.spreadsheet_id.as_bytes(),
+        let connector = self.module.catalog_name();
+        let parts: [&[u8]; 5] = [
+            WORKSPACE_EFFECT_DOMAIN,
+            connector.as_bytes(),
+            self.tool.as_bytes(),
+            self.target.as_bytes(),
             self.request.as_bytes(),
         ];
         let mut digest = blake3::Hasher::new();
@@ -103,12 +113,12 @@ impl SheetsEffect<'_> {
             digest.update(part);
         }
         let mut details = vec![
-            format!("effect:{}", self.tool.as_str()),
-            format!("connector:{SHEETS_CATALOG_NAME}"),
-            format!("spreadsheet:{}", self.spreadsheet_id),
+            format!("effect:{}", self.tool),
+            format!("connector:{connector}"),
+            format!("{}:{}", self.module.target().kind, self.target),
             format!("request:{}", self.request),
             format!("credential:{}", self.credential),
-            format!("effector:{SHEETS_CONNECTOR_EFFECTOR}"),
+            format!("effector:{}", self.module.connection().effector),
         ];
         match result {
             None => {
@@ -138,15 +148,15 @@ impl SheetsEffect<'_> {
             decision_id,
             created_at,
             outcome: "approved".into(),
-            reason_codes: vec![SHEETS_EFFECT_REASON.into()],
+            reason_codes: vec![workspace_effect_reason(connector)],
             receipt_reasons: Vec::new(),
             system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
-                SHEETS_EFFECT_CONTENT_KIND,
+                WORKSPACE_EFFECT_CONTENT_KIND,
                 details,
             ),
             actor_class: self.actor_class.gate_actor_class().into(),
             actor_ref: Some(self.actor.to_hex()),
-            content_kind: SHEETS_EFFECT_CONTENT_KIND.into(),
+            content_kind: WORKSPACE_EFFECT_CONTENT_KIND.into(),
             policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
             claim_id: None,
             grant_ref: None,

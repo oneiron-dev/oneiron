@@ -22,4 +22,9 @@ pub struct RecordEraseConfirmRequest {
     pub preview_digest: String,
     #[serde(default)]
     pub also_same_bytes: bool,
+    /// An asker's approved check-in for this erase, 32 hex
+    /// (`record_erase_effect_digest`): the Owner applies it on their own
+    /// proof, and the outcome names its asker.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
