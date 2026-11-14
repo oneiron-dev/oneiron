@@ -2,15 +2,16 @@
 use super::research::controller_in_txn;
 use crate::EntityId;
 use crate::autoreason_campaign::archive::axes_job;
+use crate::autoreason_campaign::archive::judge::{self, ArchiveJudgeBrief};
 use crate::autoreason_campaign::archive::records::{self, attempt};
 use crate::autoreason_campaign::archive::{
-    CampaignArchiveAdmission, CampaignArchiveAxesQueued, CampaignArchiveCoverage,
-    CampaignArchiveInstall, CampaignArchiveOutput, CampaignArchiveProposalRequest,
-    CampaignArchiveProposalState, CampaignArchiveProposeAxes, CampaignArchiveRecord,
-    CampaignArchiveReproposal, CampaignArchiveRequest, CampaignArchiveView,
+    ArchiveJudgeHost, CampaignArchiveAdmission, CampaignArchiveAxesQueued, CampaignArchiveCoverage,
+    CampaignArchiveInstall, CampaignArchiveJudge, CampaignArchiveJudged, CampaignArchiveOutput,
+    CampaignArchiveProposalRequest, CampaignArchiveProposalState, CampaignArchiveProposeAxes,
+    CampaignArchiveRecord, CampaignArchiveReproposal, CampaignArchiveRequest, CampaignArchiveView,
 };
 use crate::claim::ClaimReadStatus;
-use crate::memory::{Memory, MemoryResult};
+use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult};
 
 pub fn research_archive_install(
     memory: &Memory<'_>,
@@ -139,4 +140,60 @@ pub fn research_archive_proposal(
         return Err(crate::Error::EntityNotFound.into());
     }
     Ok(record.into_state())
+}
+
+/// One output revision's placement and quality score for its campaign's
+/// controller (ARM05 P3): the owner, or the agent running the root attempt.
+/// `host` asks its decision ladder on the caller's own line, outside any
+/// writer: one typed choice per pinned axis and one typed score under the
+/// pinned judge rubric (an embedding-cluster campaign is placed by its
+/// pinned on-device embedder instead). The engine records the placement and
+/// score producer records the answer names; the caller never supplies its
+/// own. The caller must read the output and the task, since their words go
+/// to the ladder. An answer the archive does not take records nothing and is
+/// refused with its reason.
+pub fn research_archive_judge(
+    memory: &Memory<'_>,
+    input: CampaignArchiveJudge,
+    host: &dyn ArchiveJudgeHost,
+) -> MemoryResult<CampaignArchiveJudged> {
+    let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
+    let vault = memory.vault();
+    let brief = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        controller_in_txn(memory, &txn, Some(attempt(input.root)?))?;
+        let (pin, output_text, rubric) = judge::premises_in_txn(vault, &txn, &input)?;
+        if lane
+            .entities_readable_in_txn(&txn, &[input.output.entity, pin.task()])?
+            .contains(&false)
+        {
+            return Err(crate::Error::EntityNotFound.into());
+        }
+        let task = memory
+            .get_entity_in_txn(&lane, &txn, pin.task())?
+            .value
+            .and_then(|view| view.body)
+            .ok_or(crate::Error::EntityNotFound)?;
+        ArchiveJudgeBrief {
+            pin,
+            task,
+            output_text,
+            rubric,
+        }
+    };
+    // Outside any writer: the ladder and the embedder.
+    let (basis, score) = judge::judgment(&brief, &input, host)?.map_err(|reason| {
+        MemoryError::new(
+            MEMORY_CODE_MODEL_UNAVAILABLE,
+            format!("vault.research.archive.judge recorded nothing: {reason}"),
+            &["Ask again once the decision ladder can answer; no placement or score was kept."],
+        )
+    })?;
+    let principal = memory.actor();
+    vault.try_with_write_txn_grouped(|txn| {
+        controller_in_txn(memory, txn, Some(attempt(input.root)?))?;
+        Ok(judge::mint_in_txn(
+            vault, txn, input, basis, score, principal,
+        )?)
+    })
 }
