@@ -916,7 +916,9 @@ impl Masker {
     /// Registers each found value as its own active custody record, in the
     /// batch's transaction, with no binding: no effector reads it until the
     /// owner grants one. Its `sc` handle is the record's short id. Each value
-    /// maps to its handle and its record.
+    /// maps to its handle and its record. The found key names the person who
+    /// writes in their own name in this transaction, who may answer it as
+    /// the owner may (L6-03-WRITER-MARK); an agent's write names none.
     fn mint(
         self,
         write: &CustodyWrite<'_>,
@@ -924,6 +926,7 @@ impl Masker {
         at: u64,
     ) -> Result<PlanValues<(String, EntityId)>> {
         let floor = SecretCustodyFloor::resolve(write.store, &*wtxn)?;
+        let writer = crate::federation::person_writer_in_txn(write.store, &*wtxn)?;
         let mut handles = PlanValues::default();
         let mut notes = Vec::with_capacity(self.found.len());
         for mut found in self.found {
@@ -976,6 +979,7 @@ impl Masker {
                 handle: handle.clone(),
                 reason: found.reason,
                 place: found.place,
+                writer,
             });
             handles.insert(std::mem::take(&mut *value), (handle, id));
         }
