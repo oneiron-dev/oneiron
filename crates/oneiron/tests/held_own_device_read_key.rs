@@ -9,11 +9,18 @@
 //! judged the grant, and a key held past it read on. Each read under the key
 //! now judges the grant in its own snapshot (`ScopedRead::proof_live_in`).
 //!
-//! Red on main: a held lane, and a key rebuilt from the same verified slip
-//! after the delete, still read the owner's claim. Guard (green on main
-//! too): a held lane whose grant stands reads on after another grant's
-//! delete. The owner's own key reads the claim throughout, so a refused read
-//! is the credential's, not a missing row.
+//! Saved work (a saved question's or a queued summary's lane, OF-506) froze
+//! the device's unrestricted lane as its holder's principal lane, which
+//! keeps no credential: its rebuild over the owner's own key read on after
+//! the delete. The frozen lane now keeps the credential's id, and each
+//! rebuild judges its grant (FrozenReadLane::freeze).
+//!
+//! Red on main: a held lane, a key rebuilt from the same verified slip and
+//! a saved lane rebuilt after the delete all still read the owner's claim.
+//! Guard (green on main too): a held lane whose grant stands reads on after
+//! another grant's delete, and a saved lane rebuilt before the delete reads.
+//! The owner's own key reads the claim throughout, so a refused read is the
+//! credential's, not a missing row.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test held_own_device_read_key`.
 #![cfg(oneiron_test_support)]
@@ -23,7 +30,9 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole, PairingPrincipal, VerifiedSlip};
-use oneiron::claim::{ScopedRead, ScopedReadActorKey, base_world_id, default_project_id};
+use oneiron::claim::{
+    FrozenReadLane, ScopedRead, ScopedReadActorKey, base_world_id, default_project_id,
+};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::graph_fs::GraphFsOptions;
@@ -206,13 +215,27 @@ fn device_key(fixture: &Fixture) -> ScopedReadActorKey {
 }
 
 /// The owner's own in-process key, which no slip backs.
-fn owner_reads(fixture: &Fixture) -> (bool, String) {
-    let key = fixture
+fn owner_key(fixture: &Fixture) -> ScopedReadActorKey {
+    fixture
         .vault
         .memory(fixture.owner, EdgeActorClass::Human)
         .read_key()
-        .expect("owner read key");
-    claim_reads(fixture, &held_lane(fixture, key))
+        .expect("owner read key")
+}
+
+/// What the owner's own key reads of the fixture's claim.
+fn owner_reads(fixture: &Fixture) -> (bool, String) {
+    claim_reads(fixture, &held_lane(fixture, owner_key(fixture)))
+}
+
+/// What `frozen`, rebuilt now over the owner's own key as saved work's
+/// reader is, reads of the fixture's claim. A rebuild that errs reads
+/// nothing.
+fn saved_lane_reads(fixture: &Fixture, frozen: &FrozenReadLane) -> (bool, String) {
+    match frozen.narrow(&fixture.vault, owner_key(fixture)) {
+        Ok(key) => claim_reads(fixture, &held_lane(fixture, key)),
+        Err(error) => (false, format!("rebuild={error:?}")),
+    }
 }
 
 /// The grant row deleted through the vault's public delete: a plain delete
@@ -283,6 +306,38 @@ fn a_read_key_rebuilt_after_its_own_device_grant_is_deleted_reads_nothing() {
         }
         Ok(None) | Err(_) => {}
     }
+    let (owner, seen) = owner_reads(&fixture);
+    assert!(
+        owner,
+        "control: the owner's own key still reads the claim; seen {seen}"
+    );
+}
+
+/// Sol threat read F1 (15 Nov 06:31): the lane rides its stored MessagePack
+/// form, as a saved question's and a queued summary's do.
+#[test]
+fn a_saved_lane_rebuilt_after_its_own_device_grant_is_deleted_reads_nothing() {
+    let fixture = fixture();
+    let frozen = fixture
+        .vault
+        .scoped_read(device_key(&fixture))
+        .freeze()
+        .expect("the paired device's read lane freezes");
+    let stored = rmp_serde::to_vec_named(&frozen).expect("frozen lane encodes");
+    let frozen: FrozenReadLane = rmp_serde::from_slice(&stored).expect("frozen lane decodes");
+    let (before, seen) = saved_lane_reads(&fixture, &frozen);
+    assert!(
+        before,
+        "actor=owner's paired device; expected its saved lane, rebuilt while its own-device grant stands, to read the owner's claim; seen {seen}"
+    );
+
+    delete_grant(&fixture, fixture.device_grant);
+    let (after, seen) = saved_lane_reads(&fixture, &frozen);
+    assert!(
+        !after,
+        "actor=owner's paired device; expected its saved lane, rebuilt after its own-device grant {:?} is deleted, to read nothing; seen {seen}",
+        fixture.device_grant
+    );
     let (owner, seen) = owner_reads(&fixture);
     assert!(
         owner,
