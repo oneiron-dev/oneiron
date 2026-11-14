@@ -12,6 +12,11 @@ pub enum MailComplianceEventKind {
     Disabled,
     /// One search across mailboxes, made while the setting was on.
     Search,
+    /// "Owners can export members' mail" was turned on (fix list row
+    /// 15416).
+    ExportMemberMailEnabled,
+    /// "Owners can export members' mail" was turned off.
+    ExportMemberMailDisabled,
 }
 
 /// The setting as anyone in the vault reads it.
