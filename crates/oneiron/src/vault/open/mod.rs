@@ -633,6 +633,7 @@ impl Vault {
             )),
             config,
             tagging_arm: Default::default(),
+            payment_credential_release: Default::default(),
             analyzer,
             writer_lease: None,
             secret_use_t1_operations: Default::default(),
@@ -820,6 +821,13 @@ impl Vault {
     #[must_use]
     pub fn is_host_readable(&self) -> bool {
         self.privacy.host_readable()
+    }
+
+    /// Who supplies this vault's data key, as the opener validated it: what
+    /// the recovery preset reads before "Nobody but me" is entered.
+    #[must_use]
+    pub(crate) fn data_key_custody(&self) -> &crate::config::VaultDataKeyCustody {
+        &self.privacy.data_key_custody
     }
 
     /// This vault's content-free diagnostic counters.
