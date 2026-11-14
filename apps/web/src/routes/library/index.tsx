@@ -224,6 +224,9 @@ function LibraryPage() {
       <Field key={fieldRun} />
       <header className="lib-head">
         <h1 className="lib-title">Safelight library</h1>
+        <a className="lib-head-page" href="/library/verbs">
+          verbs
+        </a>
         <ThemePicks />
       </header>
 

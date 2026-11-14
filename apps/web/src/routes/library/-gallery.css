@@ -1032,3 +1032,96 @@
   width: 100%;
   height: 100%;
 }
+
+/* ── the verbs page ──────────────────────────────────────────────────── */
+
+.lib-head-link,
+.lib-head-page {
+  font-size: var(--sl-t-do);
+  color: inherit;
+  text-underline-offset: 4px;
+}
+
+.lib-head-link {
+  margin-left: auto;
+}
+
+/* The screen at the left, what can be done on it at the right. */
+.lib-verbs {
+  display: grid;
+  grid-template-columns: minmax(0, 400px) minmax(0, 1fr);
+  gap: 48px;
+  align-items: start;
+}
+
+.lib-verbs-screen,
+.lib-verbs-form,
+.lib-verbs-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.lib-verbs-screen {
+  gap: 16px;
+}
+
+.lib-verbs-form {
+  gap: 14px;
+}
+
+.lib-verbs-list {
+  gap: 10px;
+}
+
+.lib-verbs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lib-verbs-actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.lib-verbs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--sl-t-do);
+  line-height: 1.4;
+  color: var(--sl-ink-2);
+}
+
+.lib-verbs-table th {
+  padding: 0 14px 6px 0;
+  font-size: var(--sl-t-figure);
+  font-weight: 400;
+  color: var(--sl-ink-3);
+  text-align: left;
+}
+
+.lib-verbs-table td {
+  padding: 8px 14px 8px 0;
+  box-shadow: inset 0 1px 0 var(--sl-rule);
+  vertical-align: baseline;
+}
+
+.lib-verbs-table td:first-child {
+  color: var(--sl-ink-1);
+}
+
+.lib-verbs-verb {
+  font-family: var(--sl-mono);
+  font-size: var(--sl-t-figure);
+  font-feature-settings: "tnum" 1;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 900px) {
+  .lib-verbs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
