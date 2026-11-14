@@ -88,3 +88,125 @@ pub(crate) fn folded_vault_id_of_records(
     };
     Ok((!another_root).then_some(image.vault_id))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    #[test]
+    fn a_paired_disk_identity_leaves_out_a_sealed_row_and_refuses_a_sealed_genesis() {
+        let signing = SigningKey::from_bytes(&[41; 32]);
+        let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+        let sign_entry = |vault_id: Option<AuthorityVaultId>,
+                          seq: u64,
+                          parent_hashes: Vec<AuthorityEntryHash>,
+                          op: AuthorityOp| {
+            let overlay_seed = authority_overlay_seed_for(&op).unwrap();
+            let mut entry = AuthorityLogEntry {
+                schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+                vault_id,
+                seq,
+                parent_hashes,
+                op,
+                signer: AuthoritySignature {
+                    suite: key.suite(),
+                    public_key: key.clone(),
+                    signature: vec![0; 64],
+                },
+                cosigns: Vec::new(),
+                ts: 100 + seq,
+                overlay_seed,
+            };
+            let transcript = authority_transcript(&entry).unwrap();
+            entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
+            entry
+        };
+        let device = DeviceAuthority {
+            key: key.clone(),
+            transport_key_binding: [7; 32],
+            attestation: AuthorityAttestation {
+                kind: SOFTWARE_ARGON2ID_ATTESTATION_KIND.to_owned(),
+                evidence: vec![1, 2, 3],
+            },
+            tier: AuthorityTier::Software,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+        };
+        let genesis = sign_entry(
+            None,
+            0,
+            Vec::new(),
+            AuthorityOp::Genesis {
+                device: device.clone(),
+                genesis_nonce: [51; 32],
+                recovery: GenesisRecoveryStep::Saved([1; 32]),
+            },
+        );
+        assert!(genesis.overlay_seed.is_none());
+        let vault_id = genesis_vault_id(&genesis).unwrap();
+        let mut identifying_device = device;
+        identifying_device.attestation.kind = "device-attestation".to_owned();
+        assert!(
+            !NON_IDENTIFYING_ATTESTATION_KINDS
+                .contains(&identifying_device.attestation.kind.as_str())
+        );
+        assert!(!identifying_device.attestation.evidence.is_empty());
+        let mut enrolled_device = identifying_device.clone();
+        enrolled_device.key =
+            AuthorityKey::Ed25519(SigningKey::from_bytes(&[42; 32]).verifying_key().to_bytes());
+        let sealed = sign_entry(
+            Some(vault_id),
+            1,
+            vec![authority_entry_hash(&genesis).unwrap()],
+            AuthorityOp::EnrollDevice {
+                device: enrolled_device,
+            },
+        );
+        assert!(sealed.overlay_seed.is_some());
+        let stored_record = |entry: &AuthorityLogEntry| {
+            let body = encode_authority_log_entry_body(entry).unwrap();
+            let mut raw = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
+            raw.push(ENTITY_TYPE_AUTHORITY_LOG);
+            raw.extend_from_slice(&entry.ts.to_be_bytes());
+            raw.extend_from_slice(&entry.ts.to_be_bytes());
+            raw.extend_from_slice(&entry.ts.to_be_bytes());
+            raw.extend_from_slice(&0u64.to_be_bytes());
+            assert_eq!(raw.len(), ENTITY_METADATA_HEADER_LEN);
+            raw.extend_from_slice(&body);
+            (
+                authority_log_entity_id(entry).unwrap().as_bytes().to_vec(),
+                raw,
+            )
+        };
+        let genesis_record = stored_record(&genesis);
+        let sealed_record = stored_record(&sealed);
+        assert!(authority_body_is_sealed(&sealed_record.1[ENTITY_METADATA_HEADER_LEN..]).unwrap());
+        assert_eq!(
+            folded_vault_id_of_records(std::slice::from_ref(&genesis_record), None, None).unwrap(),
+            Some(vault_id),
+        );
+        assert_eq!(
+            folded_vault_id_of_records(&[genesis_record, sealed_record], None, None).unwrap(),
+            Some(vault_id),
+        );
+
+        let sealed_genesis = sign_entry(
+            None,
+            0,
+            Vec::new(),
+            AuthorityOp::Genesis {
+                device: identifying_device,
+                genesis_nonce: [52; 32],
+                recovery: GenesisRecoveryStep::Saved([1; 32]),
+            },
+        );
+        assert!(sealed_genesis.overlay_seed.is_some());
+        let sealed_genesis_record = stored_record(&sealed_genesis);
+        assert!(
+            authority_body_is_sealed(&sealed_genesis_record.1[ENTITY_METADATA_HEADER_LEN..])
+                .unwrap()
+        );
+        let error = folded_vault_id_of_records(&[sealed_genesis_record], None, None).unwrap_err();
+        assert!(is_authority_overlay_unavailable(&error));
+    }
+}
