@@ -117,10 +117,10 @@ pub(crate) fn topology_delete_reservation_in_txn(
 /// tombstone leaves it nothing to add: a soft deletion, which the hard
 /// tombstone dominates on every replica, or a hard deletion that published or
 /// committed but never completed its local purge. A cooperative restriction
-/// on the partition's claim can defer that purge after publication
-/// (ARCH-0038: every destructive path checks), and the released erasure
-/// must still complete. A Prepared hard request has published nothing yet,
-/// and a completed one keeps its own reservation.
+/// on the entity can defer that purge after publication (ARCH-0038: every
+/// destructive path checks), and the released erasure must still complete.
+/// A Prepared hard request has published nothing yet, and a completed one
+/// keeps its own reservation.
 fn hard_request_subsumes(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -767,7 +767,7 @@ mod tests {
                 .map(|intent| (intent.request_id, intent.phase))
         };
 
-        // A hold refused the purge after publication: the request stays
+        // A restriction refused the purge after publication: the request stays
         // Published with no dt: marker.
         reserve(&deferred, TopologyDeletePhase::Published).unwrap();
         reserve(&retry, TopologyDeletePhase::Prepared).unwrap();
@@ -783,7 +783,7 @@ mod tests {
         );
 
         // The scrub of a GDPR/policy delete commits before its purge, so a
-        // hold refusing that purge leaves Committed without a dt: marker.
+        // restriction refusing that purge leaves Committed without a dt: marker.
         reserve(&retry, TopologyDeletePhase::Committed).unwrap();
         reserve(&later, TopologyDeletePhase::Committed).unwrap();
         assert_eq!(

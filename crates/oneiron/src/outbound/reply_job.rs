@@ -703,7 +703,7 @@ fn is_connector_reply_body_in_txn(
 }
 
 /// A newly reached body uses the same whole tear and publishes its tombstone
-/// only when that tear ran. A hold keeps its bytes and stages nothing.
+/// only when that tear ran. A restriction keeps its bytes and stages nothing.
 fn erase_connector_reply_body_artifact_in_txn(
     write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,

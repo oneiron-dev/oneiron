@@ -21,8 +21,8 @@
 //! A replica can take an intent before it learns of the erase, so the
 //! intent, or its result, can land here after it (FIX 7494). The erase never
 //! met that pair. Its put admits it, and the same writer retires it as that
-//! pass retires an owed pair, or owes it its retirement while a hold keeps
-//! it.
+//! pass retires an owed pair, or owes it its retirement while a restriction
+//! keeps it.
 
 use super::*;
 use crate::deletion::ActorErasureWriter;

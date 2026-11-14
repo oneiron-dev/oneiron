@@ -2,7 +2,7 @@ use super::*;
 
 impl Vault {
     /// Refuse the entire head erase when ANY redirect shell in its atomic
-    /// cascade has an accepted restriction. Called before local scrub and
+    /// cascade has a standing restriction. Called before local scrub and
     /// publication.
     pub(in crate::deletion) fn reject_held_redirect_shells_in_txn(
         &self,

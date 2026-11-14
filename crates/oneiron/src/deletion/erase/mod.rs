@@ -157,7 +157,7 @@ pub(crate) fn owe_held_ask_forward_intents_in_txn(
     )
 }
 
-/// Every relayed ask intent a legal hold kept from an erase, each with the erased holder whose
+/// Every relayed ask intent a restriction kept from an erase, each with the erased holder whose
 /// row records it (FIX 20468).
 pub(crate) fn held_ask_forward_intents_in_txn(
     vault: &Vault,
@@ -182,7 +182,7 @@ pub(crate) fn held_ask_forward_intents_in_txn(
     Ok(owed)
 }
 
-/// Whether the erase of one of `ids` still owes a relayed ask intent a legal hold kept, and its
+/// Whether the erase of one of `ids` still owes a relayed ask intent a restriction kept, and its
 /// result, their retirement (FIX 20468). The erase is not complete while it does.
 pub(super) fn held_ask_forward_intents_owed_in_txn(
     vault: &Vault,

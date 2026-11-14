@@ -411,8 +411,8 @@ fn local_world_windows(vault: &Vault, worlds: &BTreeSet<EntityId>) -> Result<Vec
 /// witnessed its row as of one of `worlds` alone (FIX 14534, Engine 11-06
 /// 08:34 call 5 = A): that copy only, as another fetch or listing of the
 /// same item may witness it shared. A copy with no witness, or a shared or
-/// base one, stays, and so does a cache a legal hold names. Returns the
-/// fetched copies removed and the items held.
+/// base one, stays, and so does a cache a cooperative restriction names.
+/// Returns the fetched copies removed and the items held.
 fn evict_cached_items(vault: &Vault, worlds: &BTreeSet<EntityId>) -> Result<(usize, usize)> {
     vault.with_write_txn_grouped(|txn| {
         let mut items = BTreeSet::new();

@@ -41,7 +41,7 @@ pub(crate) fn entity_doc_slots_in(
 /// `false`, with nothing read past the head, when no head of `entity`
 /// stands: the NOTE and text-plane path compacts it as before. Otherwise its
 /// cached document is held out while one writer checks the head and any
-/// legal hold again (OF-470). An erased entity's document goes through the
+/// cooperative restriction again (OF-470). An erased entity's document goes through the
 /// erase door. A live one keeps its whole history, text, version,
 /// generation and state vector: only its pending updates fold into a full
 /// snapshot. An unerased NOTE is the NOTE purge door's, left as it is.
