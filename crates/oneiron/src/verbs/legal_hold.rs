@@ -1,18 +1,21 @@
 //! The inputs and answers of the owner's legal-hold rows (OF-470):
-//! `vault.legal_holds.place`, `.widen`, `.list`, `.log`, `.lift_and_erase`
-//! and `.withdraw_erase`, each a host door. Each fn passes the engine exactly
-//! what it asks for, under the vault owner's proof: a server mints it from
-//! the request, as `/v1/owner` does; an embedded handle acts as the vault's
-//! embedded owner. Oneiron's host-order doors have no row here, since no
-//! owner, member or agent surface may route to them.
+//! `vault.legal_holds.place`, `.widen`, `.list`, `.log`, `.lift`, `.produce`,
+//! `.lift_and_erase` and `.withdraw_erase`, each a host door. Each fn passes
+//! the engine exactly what it asks for, under the vault owner's proof: a
+//! server mints it from the request, as `/v1/owner` does; an embedded handle
+//! acts as the vault's embedded owner. Oneiron's host-order doors have no row
+//! here, since no owner, member or agent surface may route to them.
+use base64::Engine as _;
+use oneiron_crypto::HybridPublicKey;
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{
-    ErasePendingReason, EraseWithdrawal, LegalHold, LegalHoldEvent, LegalHoldTarget,
-    LiftAndEraseOutcome, LiftAndEraseShownState, LiftAndEraseStatus,
+    ErasePendingReason, EraseWithdrawal, LegalHold, LegalHoldEvent, LegalHoldProduction,
+    LegalHoldTarget, LiftAndEraseOutcome, LiftAndEraseShownState, LiftAndEraseStatus,
 };
-use crate::memory::MemoryResult;
+use crate::entity_id::bytes_to_hex_lower;
+use crate::memory::{MemoryError, MemoryResult};
 use crate::{EntityId, Vault};
 
 /// `vault.legal_holds.place`'s input: what the owner's customer hold names,
@@ -37,6 +40,71 @@ pub struct LegalHoldWidenRequest {
     pub hold_id: EntityId,
     /// As [`LegalHoldPlaceRequest::targets`].
     pub targets: Vec<LegalHoldTarget>,
+}
+
+/// `vault.legal_holds.lift`'s input: the owner's customer hold to lift. The
+/// lift destroys its sealed copy; nothing in the vault is erased by it.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldLiftRequest {
+    pub hold_id: EntityId,
+}
+
+/// `vault.legal_holds.produce`'s input: the standing customer hold to
+/// re-seal, and the recipient public key the owner names.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldProduceRequest {
+    pub hold_id: EntityId,
+    /// The recipient's `HybridPublicKey::to_bytes`, as STANDARD base64.
+    pub recipient_public_key: String,
+}
+
+/// One produced capture: its sealed frames, as STANDARD base64.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldProducedCapture {
+    pub capture: EntityId,
+    /// The capture's fingerprint, as 64 hex.
+    pub fingerprint: String,
+    /// The capture file's bytes.
+    pub frames: String,
+}
+
+/// `vault.legal_holds.produce`'s answer: the hold's seed sealed to the named
+/// recipient, and each capture's sealed frames byte for byte.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldProduced {
+    pub hold_id: EntityId,
+    pub production_id: EntityId,
+    /// The blake3 of the recipient public key's bytes, as 64 hex.
+    pub recipient_fingerprint: String,
+    /// The hold's seed sealed to the recipient, as STANDARD base64.
+    pub sealed_hold_key: String,
+    /// The hold's captures, oldest first.
+    pub captures: Vec<LegalHoldProducedCapture>,
+}
+
+impl From<LegalHoldProduction> for LegalHoldProduced {
+    fn from(production: LegalHoldProduction) -> Self {
+        Self {
+            hold_id: production.hold_id,
+            production_id: production.production_id,
+            recipient_fingerprint: bytes_to_hex_lower(&production.recipient_fingerprint),
+            sealed_hold_key: base64::engine::general_purpose::STANDARD
+                .encode(&production.sealed_hold_key),
+            captures: production
+                .captures
+                .into_iter()
+                .map(|capture| LegalHoldProducedCapture {
+                    capture: capture.capture,
+                    fingerprint: bytes_to_hex_lower(&capture.fingerprint),
+                    frames: base64::engine::general_purpose::STANDARD.encode(&capture.frames),
+                })
+                .collect(),
+        }
+    }
 }
 
 /// `vault.legal_holds.lift_and_erase`'s input: the records the owner's one
@@ -176,6 +244,35 @@ pub fn widen_legal_hold_as(
     input: LegalHoldWidenRequest,
 ) -> MemoryResult<LegalHold> {
     Ok(vault.widen_legal_hold(owner, input.hold_id, input.targets)?)
+}
+
+/// `vault.legal_holds.lift`: lifts the owner's customer hold and destroys
+/// its sealed copy. Nothing in the vault is erased by it.
+pub fn lift_legal_hold_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: LegalHoldLiftRequest,
+) -> MemoryResult<LegalHold> {
+    Ok(vault.lift_legal_hold(owner, input.hold_id)?)
+}
+
+/// `vault.legal_holds.produce`: re-seals the standing customer hold's sealed
+/// copy to the recipient public key the owner names, and logs the access. A
+/// key that does not decode or parse is the caller's error.
+pub fn produce_legal_hold_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: LegalHoldProduceRequest,
+) -> MemoryResult<LegalHoldProduced> {
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(input.recipient_public_key.as_bytes())
+        .map_err(|_| MemoryError::bad_request("recipient_public_key must be standard base64"))?;
+    let recipient = HybridPublicKey::from_bytes(&decoded).map_err(|_| {
+        MemoryError::bad_request("recipient_public_key is not a recipient public key")
+    })?;
+    Ok(vault
+        .produce_legal_hold(owner, input.hold_id, &recipient)?
+        .into())
 }
 
 /// `vault.legal_holds.list`: every hold the owner may see.

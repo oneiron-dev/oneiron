@@ -237,9 +237,9 @@ pub fn widen_proposals(command: crate::cli::WidenProposalsCommand) -> anyhow::Re
 }
 
 /// The owner's legal holds (OF-470) on a stopped vault; `serve` answers the
-/// same at `/v1/owner/legal-holds`. Lifting a hold is only the one "Lift the
-/// hold and erase?" confirm: its title and prompt are printed first, and it
-/// acts only with `--yes`.
+/// same at `/v1/owner/legal-holds`. `lift` lifts a hold and destroys its
+/// sealed copy; "Lift the hold and erase?" prints its title and prompt
+/// first, and acts only with `--yes`.
 pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()> {
     use crate::cli::{LegalHoldPlaceArgs, LegalHoldWidenArgs, LegalHoldsCommand};
     use oneiron::deletion::{LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE};
@@ -251,6 +251,10 @@ pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()>
         LegalHoldsCommand::Place(args) => (&args.serve, "POST /v1/owner/legal-holds --data -"),
         LegalHoldsCommand::Widen(args) => {
             (&args.serve, "POST /v1/owner/legal-holds/widen --data -")
+        }
+        LegalHoldsCommand::Lift(args) => (&args.serve, "POST /v1/owner/legal-holds/lift --data -"),
+        LegalHoldsCommand::Produce(args) => {
+            (&args.serve, "POST /v1/owner/legal-holds/produce --data -")
         }
         LegalHoldsCommand::LiftAndErase(args) => {
             eprintln!("{LIFT_AND_ERASE_TITLE}\n{LIFT_AND_ERASE_PROMPT}");
@@ -320,6 +324,37 @@ pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()>
                 request,
                 |request: sdk::LegalHoldWidenRequest| {
                     Ok(vault.widen_legal_hold(&owner, request.hold_id, request.targets)?)
+                },
+            )?
+        }
+        LegalHoldsCommand::Lift(args) => {
+            let request = sdk::LegalHoldLiftRequest {
+                hold_id: hold_id_arg(&args.hold)?,
+            };
+            hooked_row(
+                &vault,
+                actor,
+                "vault.legal_holds.lift",
+                request,
+                |request: sdk::LegalHoldLiftRequest| {
+                    Ok(vault.lift_legal_hold(&owner, request.hold_id)?)
+                },
+            )?
+        }
+        LegalHoldsCommand::Produce(args) => {
+            let args = *args;
+            let hold_id = hold_id_arg(&args.hold)?;
+            let request = sdk::LegalHoldProduceRequest {
+                hold_id,
+                recipient_public_key: args.recipient_key,
+            };
+            hooked_row(
+                &vault,
+                actor,
+                "vault.legal_holds.produce",
+                request,
+                |request: sdk::LegalHoldProduceRequest| {
+                    sdk::produce_legal_hold_as(&vault, &owner, request).map_err(memory_refusal)
                 },
             )?
         }

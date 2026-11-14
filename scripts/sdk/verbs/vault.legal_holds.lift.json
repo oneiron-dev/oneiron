@@ -1,0 +1,17 @@
+{
+  "name": "vault.legal_holds.lift",
+  "description": "The owner lifts their customer legal hold hold_id and destroys its sealed copy; nothing in the vault is erased by it.",
+  "input": "crate::task_verb::sdk::LegalHoldLiftRequest",
+  "output": "crate::deletion::LegalHold",
+  "call": "crate::task_verb::sdk::lift_legal_hold_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.lift\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "erase",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

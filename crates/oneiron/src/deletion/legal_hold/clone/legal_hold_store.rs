@@ -21,7 +21,7 @@ use oneiron_crypto::{
 };
 use oneiron_keystore::{KeystoreSlot, SlotKind};
 use oneiron_vault_contract::host_legal::{
-    CaptureExtent, CaptureRequest, CaptureScope, CaptureSource,
+    CaptureExtent, CaptureRequest, CaptureScope, CaptureSource, FrameHeader, FrameKind,
 };
 use zeroize::Zeroizing;
 
@@ -44,6 +44,12 @@ const HOLD_SECRET_LABEL: &[u8] = b"oneiron/legal-hold-store/hold-secret/v1";
 
 /// The payload suite of a `hold.key` envelope.
 const HOLD_KEY_SUITE: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
+
+/// The recipient a production envelope binds.
+const PRODUCTION_RECIPIENT: &[u8] = b"oneiron/legal-hold-store/production/v1";
+
+/// The epoch production envelopes seal under.
+const PRODUCTION_KEY_EPOCH: u64 = 1;
 
 /// The install's owner-hold store at its configured root.
 pub(crate) struct LegalHoldStore {
@@ -519,6 +525,20 @@ fn open_hold_secret(
     hold: &EntityId,
     sealed: &[u8],
 ) -> Result<HybridSecretKey> {
+    let seed = open_seed(store_key, vault_id, hold, sealed)?;
+    let failed = || io::Error::new(io::ErrorKind::InvalidData, "legal hold key does not open");
+    HybridSecretKey::from_seed(&seed, HOLD_SECRET_LABEL).map_err(|_| failed())
+}
+
+/// Opens the hold's 32-byte seed from its sealed `hold.key` bytes, under
+/// the hold-store key. What `hold.key` holds is unchanged: the seed opens,
+/// then the pair rebuilds from it.
+fn open_seed(
+    store_key: &[u8; 32],
+    vault_id: &[u8; 32],
+    hold: &EntityId,
+    sealed: &[u8],
+) -> Result<Zeroizing<[u8; 32]>> {
     let binding = hold_key_binding(vault_id, hold);
     let kek = Kek::from_bytes_ref(store_key);
     let policy = OpenPolicy {
@@ -538,8 +558,132 @@ fn open_hold_secret(
         .open_with_aad(OpenKey::SymmetricKek(&kek), &policy, &binding)
         .map_err(|_| failed())?;
     let seed: [u8; 32] = seed.as_slice().try_into().map_err(|_| failed())?;
-    let secret = HybridSecretKey::from_seed(&seed, HOLD_SECRET_LABEL).map_err(|_| failed())?;
-    Ok(secret)
+    Ok(Zeroizing::new(seed))
+}
+
+/// Opens the hold's 32-byte seed from its `hold.key`, under this install's
+/// hold-store key. Never mints: a missing key is an error, not a new pair.
+pub(crate) fn open_hold_seed(vault: &Vault, hold: &EntityId) -> Result<Zeroizing<[u8; 32]>> {
+    let store = configured(vault)?;
+    let sealed = fs::read(store.hold_dir(vault, hold).join("hold.key"))?;
+    let store_key = legal_hold_store_key(vault)?;
+    let vault_id = vault.vault_id();
+    open_seed(&store_key, vault_id.as_bytes(), hold, &sealed)
+}
+
+/// The 64 bytes a production envelope binds: the vault id (32), the hold
+/// id (16), then the production id (16).
+fn production_binding(vault_id: &[u8; 32], hold: &EntityId, production: &EntityId) -> [u8; 64] {
+    let mut binding = [0u8; 64];
+    binding[..32].copy_from_slice(vault_id);
+    binding[32..48].copy_from_slice(hold.as_bytes());
+    binding[48..].copy_from_slice(production.as_bytes());
+    binding
+}
+
+/// Seals the hold's 32-byte seed to `recipient` for production
+/// `production`: a `Purpose::LegalClone` hybrid envelope whose key id and
+/// extra AAD are the vault, hold and production ids, so the seed opens only
+/// as this production of this hold.
+pub(crate) fn seal_production_key(
+    vault_id: &[u8; 32],
+    hold: &EntityId,
+    production: &EntityId,
+    recipient: &HybridPublicKey,
+    seed: &[u8; 32],
+) -> Result<Vec<u8>> {
+    let binding = production_binding(vault_id, hold, production);
+    let params = SealParams {
+        suite: SuiteId::XCHACHA20POLY1305_V1,
+        purpose: Purpose::LegalClone,
+        epoch: PRODUCTION_KEY_EPOCH,
+        key_id: &binding,
+        recipient: PRODUCTION_RECIPIENT,
+        vault_id,
+    };
+    let envelope = seal_with_aad(
+        &params,
+        SealKey::Hybrid {
+            recipient,
+            kem_suite: SuiteId::KEM_X25519_MLKEM1024_V1,
+        },
+        seed,
+        &binding,
+        &mut getrandom::SysRng,
+    )
+    .map_err(|_| io::Error::other("legal hold production seal"))?;
+    Ok(envelope.to_bytes())
+}
+
+/// Destroys the hold's sealed copy: its wrapped key first, then its files.
+/// Removes `<hold dir>/hold.key`, syncs the hold dir, removes the hold dir,
+/// then syncs the vault-level dir. A key or directory already gone is no
+/// error, so a repeat call finishes a removal a crash cut short; every
+/// other io error is returned.
+pub(crate) fn destroy_hold_copy(vault: &Vault, hold: &EntityId) -> Result<()> {
+    let store = configured(vault)?;
+    let dir = store.hold_dir(vault, hold);
+    match fs::remove_file(dir.join("hold.key")) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    // The key unlink, durable in its directory; a hold whose directory is
+    // already gone has nothing to sync.
+    if dir.exists() {
+        crate::store::sync_dir(&dir)?;
+    }
+    match fs::remove_dir_all(&dir) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    // The hold directory's own removal, durable with its vault root.
+    let vault_dir = store
+        .root
+        .join(bytes_to_hex_lower(vault.vault_id().as_bytes()));
+    if vault_dir.exists() {
+        crate::store::sync_dir(&vault_dir)?;
+    }
+    Ok(())
+}
+
+/// Recomputes a capture file's fingerprint the way the collector computed
+/// it: the blake3 transcript over every frame's header and payload but the
+/// Ready frame's, whose payload is the digest itself. Refuses a file that
+/// does not parse, whose last frame is no Ready digest, or whose digest
+/// differs from `expected`.
+pub(crate) fn check_capture_fingerprint(bytes: &[u8], expected: &[u8; 32]) -> Result<()> {
+    let mismatch = || Error::InvariantViolation("a legal hold capture does not match its log");
+    let mut transcript = blake3::Hasher::new();
+    let mut cursor = io::Cursor::new(bytes);
+    while cursor.position() < bytes.len() as u64 {
+        let header = FrameHeader::read_from(&mut cursor).map_err(|_| mismatch())?;
+        let payload_end = cursor
+            .position()
+            .checked_add(header.len)
+            .ok_or_else(mismatch)?;
+        if payload_end > bytes.len() as u64 {
+            return Err(mismatch());
+        }
+        let start = usize::try_from(cursor.position()).map_err(|_| mismatch())?;
+        let end = usize::try_from(payload_end).map_err(|_| mismatch())?;
+        let payload = bytes.get(start..end).ok_or_else(mismatch)?;
+        cursor.set_position(payload_end);
+        if payload_end == bytes.len() as u64 {
+            if header.kind != FrameKind::Ready || payload.len() != 32 {
+                return Err(mismatch());
+            }
+            let digest: [u8; 32] = payload.try_into().map_err(|_| mismatch())?;
+            if digest != *expected || *transcript.finalize().as_bytes() != *expected {
+                return Err(mismatch());
+            }
+            return Ok(());
+        }
+        transcript.update(&header.bytes());
+        transcript.update(payload);
+    }
+    Err(mismatch())
 }
 
 /// Removes the hold's directory with everything under it, ignoring every

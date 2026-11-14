@@ -9,7 +9,10 @@
 //! ordinary backup and key-retirement paths, and the sealed copy outlives
 //! them. GDPR Art. 17 does not erase the legal copy while its lawful hold
 //! runs; it still erases the user's vault fully. Every hold event is logged,
-//! ids only, for the hold's life plus 24 months.
+//! ids only, for the hold's life plus 24 months. The owner lifts a hold
+//! through `vault.legal_holds.lift`, which destroys its sealed copy, and
+//! produces a standing hold through `vault.legal_holds.produce`, which
+//! re-seals the copy to a recipient public key the owner names.
 //!
 //! Only where Oneiron hosts the bytes (posture `Hosted` or `Relay`): host
 //! orders only Oneiron places and lifts, through host-only doors no owner,
@@ -27,6 +30,9 @@ pub(crate) mod prospective;
 mod types;
 
 use std::collections::BTreeSet;
+use std::fs;
+
+use oneiron_crypto::HybridPublicKey;
 
 pub use confirmation::{LiftAndEraseShownState, ShownCustomerHold};
 pub(in crate::deletion) use held_scrubs::held_scrubs_owed_in_txn;
@@ -270,6 +276,179 @@ impl Vault {
             clone::legal_hold_store::remove_unreferenced_captures_best_effort(self, &hold_id);
         }
         outcome
+    }
+
+    /// Lifts the owner's customer hold `hold_id` and destroys its sealed
+    /// copy (LEGAL-HOLD-USE = B, ARCH-0038 #legal-hold-clone-ruling: the
+    /// copy is destroyed when the hold ends). Nothing in the vault is erased
+    /// by it. A host order is lifted only by the host
+    /// ([`Self::lift_host_order_hold`]).
+    ///
+    /// The lift commits first, then the copy goes: a crash between the two
+    /// never leaves a standing hold without its copy; it leaves a lifted
+    /// hold's files, and the repeat lift removes them. `CloneDestroyed` is
+    /// logged once, after the files are gone, by the first lift that finds
+    /// it unlogged, so a crash before that log is logged by the repeat. A
+    /// hold whose row has no captures (written before the sealed copy) logs
+    /// `Lifted` only. A repeat lift answers the first: the same `lifted_at`,
+    /// no second `Lifted`.
+    ///
+    /// # Errors
+    /// The owner proof no longer holds, no customer hold `hold_id`, or the
+    /// store is unset or the copy's files cannot be removed: the hold then
+    /// reads lifted, and a repeat lift finishes the removal.
+    pub fn lift_legal_hold(
+        &self,
+        owner: &AuthenticatedOwner,
+        hold_id: EntityId,
+    ) -> Result<LegalHold> {
+        let lifted = self.with_write_txn_grouped(|txn| {
+            let actor = owner.revalidate_in_txn(self, txn)?;
+            let Some(mut hold) = hold_store::hold_in_txn(&self.store, txn, &hold_id)?
+                .filter(|hold| hold.kind == LegalHoldKind::Customer)
+            else {
+                return Err(Error::EntityNotFound);
+            };
+            if !hold.stands() {
+                return Ok(hold);
+            }
+            let now = self.store.clock.now_recorded_at();
+            hold.lifted_at = Some(now);
+            hold_store::put_hold_in_txn(&self.store, txn, &hold)?;
+            let targets = hold.targets.clone();
+            hold_store::log_in_txn(
+                &self.store,
+                txn,
+                &hold,
+                LegalHoldEventKind::Lifted,
+                LegalHoldReason::OwnerLifted,
+                targets,
+                &HoldActor::owner(actor),
+                now,
+                None,
+            )?;
+            Ok(hold)
+        })?;
+        if !lifted.clone_captures.is_empty() {
+            clone::legal_hold_store::destroy_hold_copy(self, &hold_id)?;
+            self.with_write_txn_grouped(|txn| {
+                let actor = owner.revalidate_in_txn(self, txn)?;
+                let Some(hold) = hold_store::hold_in_txn(&self.store, txn, &hold_id)?
+                    .filter(|hold| hold.kind == LegalHoldKind::Customer)
+                else {
+                    return Err(Error::EntityNotFound);
+                };
+                if hold_store::events::logged_in_txn(
+                    &self.store,
+                    txn,
+                    &hold,
+                    LegalHoldEventKind::CloneDestroyed,
+                )? {
+                    return Ok(());
+                }
+                let targets = hold.targets.clone();
+                hold_store::log_in_txn(
+                    &self.store,
+                    txn,
+                    &hold,
+                    LegalHoldEventKind::CloneDestroyed,
+                    LegalHoldReason::OwnerLifted,
+                    targets,
+                    &HoldActor::owner(actor),
+                    self.store.clock.now_recorded_at(),
+                    None,
+                )?;
+                Ok(())
+            })?;
+        }
+        let txn = self.store.env.read_txn()?;
+        hold_store::hold_in_txn(&self.store, &txn, &hold_id)?
+            .filter(|hold| hold.kind == LegalHoldKind::Customer)
+            .ok_or(Error::EntityNotFound)
+    }
+
+    /// Produces the standing customer hold `hold_id` to the recipient
+    /// `recipient` names (PRODUCE = A): the package carries the hold's
+    /// capture files byte for byte, plus the hold's 32-byte seed sealed to
+    /// the recipient's public key, and the access is logged. Plaintext never
+    /// leaves the engine, and nothing is re-encrypted.
+    ///
+    /// The package is returned only after its `CloneProduced` event commits:
+    /// every access is logged.
+    ///
+    /// # Errors
+    /// The owner proof no longer holds, no standing customer hold `hold_id`,
+    /// the hold has no sealed copy, the store is unset, a capture file is
+    /// missing or altered, or the hold key does not open.
+    pub fn produce_legal_hold(
+        &self,
+        owner: &AuthenticatedOwner,
+        hold_id: EntityId,
+        recipient: &HybridPublicKey,
+    ) -> Result<LegalHoldProduction> {
+        let hold = {
+            let txn = self.store.env.read_txn()?;
+            owner.revalidate_in_txn(self, &txn)?;
+            hold_store::hold_in_txn(&self.store, &txn, &hold_id)?
+                .filter(|hold| hold.kind == LegalHoldKind::Customer && hold.stands())
+                .ok_or(Error::EntityNotFound)?
+        };
+        if hold.clone_captures.is_empty() {
+            return Err(Error::InvalidConfig("this hold has no sealed copy".into()));
+        }
+        let seed = clone::legal_hold_store::open_hold_seed(self, &hold_id)?;
+        let store = clone::legal_hold_store::configured(self)?;
+        let dir = store.hold_dir(self, &hold_id);
+        let mut captures = Vec::with_capacity(hold.clone_captures.len());
+        for named in &hold.clone_captures {
+            let frames = fs::read(dir.join(format!("{}.clone", named.capture.to_hex())))?;
+            clone::legal_hold_store::check_capture_fingerprint(&frames, &named.fingerprint)?;
+            captures.push(ProducedHoldCapture {
+                capture: named.capture,
+                fingerprint: named.fingerprint,
+                frames,
+            });
+        }
+        let production_id = self.store.clock.entity_id()?;
+        let vault_id = self.vault_id();
+        let sealed_hold_key = clone::legal_hold_store::seal_production_key(
+            vault_id.as_bytes(),
+            &hold_id,
+            &production_id,
+            recipient,
+            &seed,
+        )?;
+        let recipient_fingerprint = *blake3::hash(&recipient.to_bytes()).as_bytes();
+        self.with_write_txn_grouped(|txn| {
+            let actor = owner.revalidate_in_txn(self, txn)?;
+            let Some(hold) = hold_store::hold_in_txn(&self.store, txn, &hold_id)?
+                .filter(|hold| hold.kind == LegalHoldKind::Customer && hold.stands())
+            else {
+                return Err(Error::EntityNotFound);
+            };
+            let targets = hold.targets.clone();
+            let row = LegalHoldEvent {
+                recipient_fingerprint: Some(recipient_fingerprint),
+                ..hold_store::events::event_row(
+                    &hold,
+                    LegalHoldEventKind::CloneProduced,
+                    LegalHoldReason::OwnerProduced,
+                    targets,
+                    &HoldActor::owner(actor),
+                    self.store.clock.now_recorded_at(),
+                    None,
+                )
+            };
+            hold_store::events::append_event_in_txn(&self.store, txn, &hold, &row)?;
+            Ok(())
+        })?;
+        Ok(LegalHoldProduction {
+            hold_id,
+            production_id,
+            recipient_fingerprint,
+            sealed_hold_key,
+            captures,
+        })
     }
 
     /// The holds the owner may see, whole, through the one permitted view

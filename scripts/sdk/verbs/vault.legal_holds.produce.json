@@ -1,0 +1,17 @@
+{
+  "name": "vault.legal_holds.produce",
+  "description": "The owner re-seals the sealed copy of their standing customer legal hold hold_id to a named recipient public key; the access is logged.",
+  "input": "crate::task_verb::sdk::LegalHoldProduceRequest",
+  "output": "crate::task_verb::sdk::LegalHoldProduced",
+  "call": "crate::task_verb::sdk::produce_legal_hold_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.produce\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "mass_secret_export",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -1,11 +1,12 @@
 //! The host doors of the owner's legal-hold rows (OF-470):
-//! `vault.legal_holds.place`, `.widen`, `.list`, `.log`, `.lift_and_erase`
-//! and `.withdraw_erase`. `host_doors` re-exports them, so the generated HTTP
-//! facade handler and the MCP dispatcher call them by the name every host
-//! door has, and a tool call, a code-mode call and an SDK call meet one
-//! admission: the vault owner's proof, as `/v1/owner/legal-holds` takes it
-//! (`owner_routes::owner`). Each engine door rechecks that proof in its own
-//! transaction. Oneiron's host-order doors are never routed here.
+//! `vault.legal_holds.place`, `.widen`, `.list`, `.log`, `.lift`, `.produce`,
+//! `.lift_and_erase` and `.withdraw_erase`. `host_doors` re-exports them, so
+//! the generated HTTP facade handler and the MCP dispatcher call them by the
+//! name every host door has, and a tool call, a code-mode call and an SDK
+//! call meet one admission: the vault owner's proof, as
+//! `/v1/owner/legal-holds` takes it (`owner_routes::owner`). Each engine door
+//! rechecks that proof in its own transaction. Oneiron's host-order doors are
+//! never routed here.
 use std::sync::Arc;
 
 use oneiron::EntityId;
@@ -14,8 +15,8 @@ use oneiron::deletion::{LegalHold, LegalHoldEvent, LegalHoldTarget};
 use oneiron::memory::{MemoryResult, ProducerRows};
 use oneiron::task_verb::sdk::{
     self, EmptyRequest, LegalHoldErasesWithdrawn, LegalHoldLiftAndEraseRequest,
-    LegalHoldLiftAndErased, LegalHoldPlaceRequest, LegalHoldWidenRequest,
-    LegalHoldWithdrawEraseRequest,
+    LegalHoldLiftAndErased, LegalHoldLiftRequest, LegalHoldPlaceRequest, LegalHoldProduceRequest,
+    LegalHoldProduced, LegalHoldWidenRequest, LegalHoldWithdrawEraseRequest,
 };
 
 use super::clock_ingress;
@@ -119,6 +120,41 @@ pub(crate) async fn vault_legal_holds_widen(
         "vault.legal_holds.widen",
         move |server, owner| sdk::widen_legal_hold_as(server.vault(), owner, input),
         |hold| hold_targets(&hold.targets).collect(),
+    )
+    .await
+}
+
+/// `vault.legal_holds.lift`: lifts the owner's customer hold and destroys
+/// its sealed copy, listing every record it held.
+pub(crate) async fn vault_legal_holds_lift(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: LegalHoldLiftRequest,
+) -> Listed<LegalHold> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.legal_holds.lift",
+        move |server, owner| sdk::lift_legal_hold_as(server.vault(), owner, input),
+        |hold| hold_targets(&hold.targets).collect(),
+    )
+    .await
+}
+
+/// `vault.legal_holds.produce`: re-seals the standing hold's sealed copy to
+/// the named recipient public key, logging the access. The answer names no
+/// vault record row, so it lists none.
+pub(crate) async fn vault_legal_holds_produce(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: LegalHoldProduceRequest,
+) -> Listed<LegalHoldProduced> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.legal_holds.produce",
+        move |server, owner| sdk::produce_legal_hold_as(server.vault(), owner, input),
+        |_produced| Vec::new(),
     )
     .await
 }

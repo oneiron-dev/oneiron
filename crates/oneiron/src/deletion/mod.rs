@@ -94,8 +94,9 @@ pub use legal_hold::{
     ERASE_COMPLETION_PENDING, ErasePendingReason, EraseWithdrawal, HoldCloneCapture, HostOrderHold,
     LEGAL_HOLD_LOG_RETENTION_MONTHS, LEGAL_HOLD_REFUSAL, LIFT_AND_ERASE_PROMPT,
     LIFT_AND_ERASE_TITLE, LegalHold, LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind,
-    LegalHoldKind, LegalHoldMaintenance, LegalHoldReason, LegalHoldTarget, LegalHoldUseLimit,
-    LiftAndEraseOutcome, LiftAndEraseShownState, LiftAndEraseStatus, ShownCustomerHold,
+    LegalHoldKind, LegalHoldMaintenance, LegalHoldProduction, LegalHoldReason, LegalHoldTarget,
+    LegalHoldUseLimit, LiftAndEraseOutcome, LiftAndEraseShownState, LiftAndEraseStatus,
+    ProducedHoldCapture, ShownCustomerHold,
 };
 // A source's dependents go in bounded batches (`Vault::finish_dependent_walks`).
 pub use crate::ports::{

@@ -3,7 +3,7 @@
 
 use std::fs;
 use std::io::{self, Read};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use oneiron_crypto::legal_clone::{
     CaptureBinding, ContentBinding, ContentSource, SourceComponent, live_session_ref_digest,
@@ -18,6 +18,7 @@ use oneiron_vault_contract::host_legal::{
 };
 
 use crate::Vault;
+use crate::deletion::LegalHoldProduction;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 
@@ -63,12 +64,63 @@ pub fn open_clone(vault: &Vault, hold_id: EntityId) -> Result<Vec<OpenedHoldComp
     let mut components = Vec::new();
     for (name, stem) in &files {
         let capture = EntityId::from_hex(stem).map_err(|_| invalid("legal hold capture name"))?;
+        let bytes = fs::read(dir.join(name))?;
+        open_capture(vault, &hold_id, &secret, &bytes, &capture, &mut components)?;
+    }
+    Ok(components)
+}
+
+/// Opens a production to `recipient`: its sealed hold key under the
+/// recipient's secret key, the hold's pair rebuilt from the seed, then each
+/// produced capture in order. Mirrors the production seal in the hold store,
+/// which no test door reaches: the values below must stay identical to it.
+/// A key that does not open is an error.
+///
+/// # Errors
+/// The sealed key does not open under `recipient`, the seed rebuilds no key
+/// pair, or a produced capture does not parse.
+pub fn open_production(
+    vault: &Vault,
+    production: &LegalHoldProduction,
+    recipient: &HybridSecretKey,
+) -> Result<Vec<OpenedHoldComponent>> {
+    let vault_id = *vault.vault_id().as_bytes();
+    // The production binding: the vault id (32), the hold id (16), then the
+    // production id (16), as the hold store seals it.
+    let mut binding = [0u8; 64];
+    binding[..32].copy_from_slice(&vault_id);
+    binding[32..48].copy_from_slice(production.hold_id.as_bytes());
+    binding[48..].copy_from_slice(production.production_id.as_bytes());
+    let policy = OpenPolicy {
+        purpose: Purpose::LegalClone,
+        vault_id: &vault_id,
+        // `PRODUCTION_RECIPIENT`, mirrored (see above).
+        recipient: b"oneiron/legal-hold-store/production/v1",
+        key_id: &binding,
+        wraps: &[WrapType::HybridCapsule],
+        aead_suites: &[SuiteId::XCHACHA20POLY1305_V1],
+        kem_suites: &[SuiteId::KEM_X25519_MLKEM1024_V1],
+        // `PRODUCTION_KEY_EPOCH`, mirrored (see above).
+        min_epoch: 1,
+        argon2_max: Argon2Cost::RFC9106_SECOND,
+    };
+    let failed = || invalid("legal hold production does not open");
+    let envelope = Envelope::parse(&production.sealed_hold_key).map_err(|_| failed())?;
+    let seed = envelope
+        .open_with_aad(OpenKey::Hybrid(recipient), &policy, &binding)
+        .map_err(|_| failed())?;
+    let seed: [u8; 32] = seed.as_slice().try_into().map_err(|_| failed())?;
+    // `HOLD_SECRET_LABEL`, mirrored (see above).
+    let secret = HybridSecretKey::from_seed(&seed, b"oneiron/legal-hold-store/hold-secret/v1")
+        .map_err(|_| failed())?;
+    let mut components = Vec::new();
+    for capture in &production.captures {
         open_capture(
             vault,
-            &hold_id,
+            &production.hold_id,
             &secret,
-            &dir.join(name),
-            &capture,
+            &capture.frames,
+            &capture.capture,
             &mut components,
         )?;
     }
@@ -132,13 +184,12 @@ fn open_capture(
     vault: &Vault,
     hold_id: &EntityId,
     secret: &HybridSecretKey,
-    path: &Path,
+    bytes: &[u8],
     capture: &EntityId,
     out: &mut Vec<OpenedHoldComponent>,
 ) -> Result<()> {
-    let bytes = fs::read(path)?;
     let mut frames: Vec<(FrameHeader, Vec<u8>)> = Vec::new();
-    let mut cursor = io::Cursor::new(bytes.as_slice());
+    let mut cursor = io::Cursor::new(bytes);
     while cursor.position() < bytes.len() as u64 {
         let header = FrameHeader::read_from(&mut cursor)?;
         if header.len > bytes.len() as u64 - cursor.position() {
