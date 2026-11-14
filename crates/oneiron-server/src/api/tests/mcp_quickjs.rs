@@ -401,6 +401,9 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
         oneiron::EdgeActorClass::Human,
     )
     .await;
+    // The claim's writer reads the PERSON it is about (FIX 1214): else the
+    // run's put fails INVENTED_REFERENCE.
+    put_actor_read_grant(&vault, actor_id, None);
     for path in ["/mcp", MCP_TOOL_FIRST_PATH] {
         let (_, listing) =
             route_json(server.clone(), mcp_list_request(path, credential, "list")).await;
@@ -1065,6 +1068,9 @@ async fn quickjs_a_propose_only_slip_runs_code_whose_rows_write_are_refused() {
         oneiron::EdgeActorClass::Human,
     )
     .await;
+    // The claim's writer reads the PERSON it is about (FIX 1214): else the
+    // run's put fails INVENTED_REFERENCE.
+    put_actor_read_grant(&mode.vault, writer, None);
     assert_eq!(
         code_admitted(&mode, "/mcp", "quickjs-writer").await,
         json!(true)

@@ -107,6 +107,11 @@ async fn quickjs_run_rows_need_the_connectors_binding() {
         &["execute_code", "vault.search", "vault.claims.put"],
     )
     .await;
+    // The claim's writer reads the PERSON it is about: a run row's subject
+    // resolves under the writer's own key (FIX 1214), which reads a record
+    // that is not a CLAIM only through a core:read grant. Else the put fails
+    // INVENTED_REFERENCE.
+    put_actor_read_grant(&mode.vault, named, None);
     let (_, body) = route_json(
         mode.server.clone(),
         run_request(named, "quickjs-rows-named", "quickjs-rows-named"),
