@@ -70,7 +70,7 @@ pub(super) async fn generate(
     calls: StepCalls<'_>,
     capture: &(dyn Fn(&LlmRequest, u32) + Sync),
     check: Option<&ReplyCheck>,
-    retries: super::retry::TransportRetries,
+    retries: &super::retry::TransportRetries<'_>,
 ) -> DurableStepResult<LlmResponse> {
     let ResponseFormat::Json { schema } = &request.envelope.response_format else {
         let response = super::retry::generate_with_retry(backend, request, lease, retries).await?;
@@ -169,8 +169,18 @@ pub(super) async fn generate(
             capture(&wire, call);
             &correction.lease
         };
+        // Each correction is its own call with its own retries.
+        let correction_retries;
+        let call_retries = if attempt == 1 {
+            retries
+        } else {
+            correction_retries = retries.for_another_call();
+            &correction_retries
+        };
         let mut response =
-            match super::retry::generate_with_retry(backend, &wire, active_lease, retries).await {
+            match super::retry::generate_with_retry(backend, &wire, active_lease, call_retries)
+                .await
+            {
                 Ok(response) => response,
                 // The first call failed: nothing was answered, nothing spent.
                 Err(source) if attempt == 1 => return Err(DurableStepError::Llm(source)),

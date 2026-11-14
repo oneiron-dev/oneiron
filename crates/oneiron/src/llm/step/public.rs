@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use super::super::{
     BudgetGuard, ContentPart, FallbackRegistry, LlmBackend, LlmError, LlmResponse, ResponseFormat,
+    RetryableLlmError,
 };
 use super::retry::TransportRetries;
 use super::step_claim::{step_index_lookup, step_index_lookup_in_txn};
@@ -56,7 +57,8 @@ pub use oneiron_verb_wire::llm::step::public::{
 /// the step's own checkpoints recover across process restarts. A send the
 /// backend holds unsent while its offer rests for its health spends no
 /// declared attempt: the step waits for the offer back up to `rest_wait`, in
-/// all (FIX 11226).
+/// all, and past it parks ([`ModelStepResult::Parked`]) until a submission
+/// resumes it (FIX 11226).
 pub async fn submit_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -394,6 +396,7 @@ async fn submit(
                     input: input.clone(),
                     step_hash: digest,
                     result: None,
+                    sends: 0,
                 };
                 let payload = encode_dreamer_attempt_payload(&DreamerAttemptPayload {
                     attempt_type: MODEL_STEP_ATTEMPT_KIND.into(),
@@ -416,7 +419,7 @@ async fn submit(
             }
         };
         if terminal_result(vault, txn, &row) {
-            return Ok(Some((row, None, None)));
+            return Ok(Some((row, None, None, 0)));
         }
         // A fresh call is held to the run's model list. Saved work answered
         // above without it, as a model removed since does (FIX 8180), and a
@@ -437,8 +440,11 @@ async fn submit(
         } else {
             None
         };
-        // A consumed budget trap's suspension answers no longer: the SAME
-        // attempt and step hash resume (FIX 9928).
+        // A step resumes with the sends its earlier passes made: its declared
+        // attempts count every send, across parks and traps (FIX 11226).
+        let sent = usize::from(row.sends);
+        // A consumed budget trap's suspension, or a park, answers no longer:
+        // the SAME attempt and step hash resume (FIX 9928).
         if row.result.take().is_some() {
             put_submission_in_txn(vault, txn, &id, &mut row)?;
         }
@@ -460,9 +466,9 @@ async fn submit(
                 );
             }
         };
-        Ok(Some((row, Some(attempt), recovery)))
+        Ok(Some((row, Some(attempt), recovery, sent)))
     })?;
-    let Some((mut row, attempt, recovery)) = prepared else {
+    let Some((mut row, attempt, recovery, sent)) = prepared else {
         return Ok(None);
     };
     let Some(attempt) = attempt else {
@@ -485,17 +491,26 @@ async fn submit(
         spend_scope,
         wake_pass_bound: false,
     };
-    let outcome = if let Some((backend, guard, _, rest_wait)) = execution {
+    // Each retry a failed send spends is kept on the step's row before the
+    // next send may use it, so a stop mid-pass resumes with it counted (FIX
+    // 11226).
+    let keep = move |spent: usize| keep_sends(vault, id, spent);
+    let retries = TransportRetries::resumed(
+        usize::from(row.input.retry.max_attempts - 1),
+        execution
+            .as_ref()
+            .map_or(Duration::ZERO, |(_, _, _, rest_wait)| *rest_wait),
+        sent,
+    )
+    .keeping(&keep);
+    let outcome = if let Some((backend, guard, _, _)) = execution {
         super::execute::call_as_step_with_fallbacks_and_retries(
             &context,
             backend,
             guard,
             row.input.request.clone(),
             &FallbackRegistry::standard(),
-            TransportRetries {
-                max: usize::from(row.input.retry.max_attempts - 1),
-                rest_wait,
-            },
+            &retries,
         )
         .await
     } else {
@@ -506,6 +521,9 @@ async fn submit(
         })?;
         super::execute::recover_step(&context, &row.input.request, recovery, None)
     };
+    // The sends this step has made, its earlier passes' included, stay on
+    // its row for the next pass (FIX 11226).
+    row.sends = u8::try_from(retries.spent()).unwrap_or(u8::MAX);
     row.result = Some(step_result(vault, id, &row, outcome)?);
     // A run its host let go, or whose lease lapsed, while the call ran gets
     // no answer, and its try is not settled under a standing it no longer
@@ -555,6 +573,25 @@ async fn submit(
     view(vault, id, &row).map(Some).map_err(MemoryError::from)
 }
 
+/// Keeps `spent` retries on step `id`'s row (FIX 11226): what its next pass
+/// starts from. Whether they kept: a row that is gone, or a write that
+/// faulted, keeps nothing.
+fn keep_sends(vault: &Vault, id: AttemptId, spent: usize) -> bool {
+    let sends = u8::try_from(spent).unwrap_or(u8::MAX);
+    let kept = vault.with_write_txn(|txn| {
+        let Some(mut row) = SUBMISSIONS.get(&vault.store, txn, &id)? else {
+            return Ok(false);
+        };
+        row.sends = row.sends.max(sends);
+        put_submission_in_txn(vault, txn, &id, &mut row)?;
+        Ok(true)
+    });
+    kept.unwrap_or_else(|error| {
+        tracing::warn!(%error, "a model step's spent sends did not keep; it sends no more");
+        false
+    })
+}
+
 /// The result a step's outcome is saved as. A persistence fault is no
 /// result: it leaves the engine's recoverable payload intact, and a later
 /// submission must be allowed to finish that write path.
@@ -583,6 +620,16 @@ fn step_result(
         }
         Ok(StepOutcome::Trapped { trap, .. }) => ModelStepResult::BudgetDenied {
             trap_ref: trap.trap_claim_id.to_hex(),
+        },
+        // Its offer rests for its health past this submission's wait (FIX
+        // 11226): the step parks, unsent and unfailed, until the offer is
+        // back, keeping the sends it made.
+        Err(DurableStepError::Llm(LlmError::Retryable(RetryableLlmError::HealthRest {
+            resets_at,
+            ..
+        }))) => ModelStepResult::Parked {
+            until: resets_at.first().copied(),
+            sends: row.sends,
         },
         Err(DurableStepError::Engine(error)) => return Err(error.into()),
         Err(DurableStepError::Canonical(error)) => {
@@ -662,10 +709,11 @@ fn saved_terminal(
 /// Whether the row's saved result answers a submission. Finished and Failed
 /// are terminal. A budget trap is a suspension (FIX 9928): it answers while
 /// its trap is unanswered, or its trap does not read, and gives way once the
-/// trap is consumed, so the SAME attempt and step hash resume.
+/// trap is consumed, so the SAME attempt and step hash resume. A park on its
+/// offer's health never answers: a submission resumes it (FIX 11226).
 fn terminal_result(vault: &Vault, txn: &heed::RoTxn<'_>, row: &Submission) -> bool {
     match &row.result {
-        None => false,
+        None | Some(ModelStepResult::Parked { .. }) => false,
         Some(ModelStepResult::BudgetDenied { trap_ref }) => !EntityId::from_hex(trap_ref)
             .and_then(|trap| super::trap::trap_head_in_txn(vault, txn, &trap))
             .is_ok_and(|(_, head)| head.state == DreamerTrapState::Consumed),
