@@ -33,7 +33,7 @@ use super::super::validation::{
     validate_scored_candidates,
 };
 use super::super::working_set::{
-    PackWorkingSetStats, WorkingSetGates, admit_working_set, lead_with_working_set,
+    PackWorkingSetStats, WorkingSetGates, admit_working_set, lead_with_working_set, refuses_one_row,
 };
 use super::super::world_partition::{
     annotate_stale_federated_worlds, partition_pack_claims, partitions_by_world,
@@ -191,8 +191,8 @@ impl<'a> ContextPackBuilder<'a> {
         let l2_pipeline = l2_base.as_ref().map(|_| pipeline.clone());
         let neighbor_pipeline =
             (self.edge_hop > 0 && selected_edge_budget > 0).then(|| pipeline.clone());
-        // The working set passes the type and world selection a neighbor
-        // passes, resolved from this run's pipeline.
+        // The working set passes this run's candidate selection, as a ranked
+        // row does, without the ranking.
         let working_set_pipeline = (!self.working_set.is_empty()).then(|| pipeline.clone());
         let mut pipeline = pipeline.context_pack_budget(retrieval_budget);
         // The world share and the disclosure clamp hold while the rows are
@@ -399,25 +399,20 @@ impl<'a> ContextPackBuilder<'a> {
 
             // CROSS-ARCH-0011 "workingSet": the rows the caller carried across
             // a compaction lead the pack, admitted one ref at a time outside
-            // ranking. A row the ranked fill also found moves to the front as
-            // the fill hydrated it, so it is served once; any other row is
-            // hydrated here, an ASSET as a handle without its body ("assets
-            // cross as stubs").
+            // ranking: the pack's row gates, then this run's candidate
+            // selection. A row the ranked fill also found moves to the front
+            // as the fill hydrated it, so it is served once; any other row is
+            // hydrated and validated here. An ASSET is a handle without its
+            // body either way ("assets cross as stubs").
             let mut working_set_order = Vec::new();
             let mut working_set_overlap = 0_usize;
             if let Some(working_set_pipeline) = working_set_pipeline.as_ref() {
-                let (type_filter, named_types) =
-                    working_set_pipeline.neighbor_type_policy(&rtxn)?;
-                let world_scope = working_set_pipeline.neighbor_world_scope(&rtxn)?;
                 let admitted = admit_working_set(
                     &WorkingSetGates {
                         vault: self.vault,
                         read: &self.read,
                         reader: self.l2_summary_reader,
                         clamp,
-                        world_scope: &world_scope,
-                        type_filter: &type_filter,
-                        named_types,
                         stale_worlds: stale_neighbor_exclusion,
                         device_local: device_local.as_ref(),
                         quarantine: &quarantine_index,
@@ -425,29 +420,38 @@ impl<'a> ContextPackBuilder<'a> {
                     &rtxn,
                     &self.working_set,
                 )?;
-                let working_set_options = HydrateOptions {
-                    read_mode: self.read_mode,
-                    words_pinned: false,
-                    policy: &policy,
-                    criticality: self.criticality,
-                    hydrate_fields: self.hydrate,
-                    include_edges: hydrate_result_edges,
-                    include_vectors: self.include_vectors,
-                    edge_cache: None,
-                    claim_bodies: Some(&claim_bodies),
-                    clamp,
-                    deadline: pack_deadline,
-                };
-                let mut seeded = Vec::with_capacity(admitted.len());
-                let mut hydrated_here = Vec::new();
-                for row in admitted {
+                let admitted_ids: Vec<EntityId> = admitted.iter().map(|row| row.id).collect();
+                let selected: HashSet<EntityId> = working_set_pipeline
+                    .admit_named_rows_in(&rtxn, &admitted_ids)?
+                    .into_iter()
+                    .collect();
+                let mut seeded = Vec::with_capacity(selected.len());
+                for row in admitted
+                    .into_iter()
+                    .filter(|row| selected.contains(&row.id))
+                {
                     if let Some(ranked) = results.iter().position(|entity| entity.id == row.id) {
                         working_set_overlap += 1;
-                        seeded.push(results.remove(ranked));
+                        let mut entity = results.remove(ranked);
+                        if row.entity_type == ENTITY_TYPE_ASSET {
+                            entity.fields = None;
+                        }
+                        seeded.push(entity);
                         continue;
                     }
-                    let mut options = working_set_options;
-                    options.hydrate_fields &= row.entity_type != ENTITY_TYPE_ASSET;
+                    let options = HydrateOptions {
+                        read_mode: self.read_mode,
+                        words_pinned: false,
+                        policy: &policy,
+                        criticality: self.criticality,
+                        hydrate_fields: self.hydrate && row.entity_type != ENTITY_TYPE_ASSET,
+                        include_edges: hydrate_result_edges,
+                        include_vectors: self.include_vectors,
+                        edge_cache: None,
+                        claim_bodies: Some(&claim_bodies),
+                        clamp,
+                        deadline: pack_deadline,
+                    };
                     let hydrated = match hydrate_entity(
                         self.vault,
                         &self.read,
@@ -464,22 +468,35 @@ impl<'a> ContextPackBuilder<'a> {
                             deadline_exceeded = true;
                             break;
                         }
+                        Err(error) if refuses_one_row(&error) => None,
                         Err(error) => return Err(error),
                     };
-                    if let Some(entity) = hydrated {
-                        hydrated_here.push(entity.id);
-                        seeded.push(entity);
-                    }
-                }
-                for id in &hydrated_here {
-                    validate_pack_entity_reference(
+                    let Some(entity) = hydrated else {
+                        continue;
+                    };
+                    // Validated before it is kept: a seed whose references
+                    // the pack cannot serve is dropped, not the whole pack.
+                    match validate_pack_entity_reference(
                         &self.read,
                         &rtxn,
-                        id,
+                        &entity.id,
                         &mut claim_bodies,
                         &quarantine_index,
-                    )?;
+                    ) {
+                        Ok(()) => seeded.push(entity),
+                        Err(error) if refuses_one_row(&error) => {}
+                        Err(error) => return Err(error),
+                    }
                 }
+                // The explicit scopes keep a stale world's rows; a seed is
+                // marked as a ranked row is.
+                annotate_stale_federated_worlds(
+                    &self.read,
+                    &rtxn,
+                    &stale_worlds,
+                    &mut seeded,
+                    &claim_bodies,
+                )?;
                 working_set_order = seeded.iter().map(|entity| entity.id).collect();
                 seeded.append(&mut results);
                 results = seeded;

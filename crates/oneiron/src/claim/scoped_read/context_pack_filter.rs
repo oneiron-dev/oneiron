@@ -154,6 +154,10 @@ impl ScopedRead<'_> {
             // #e5-read-union-open, ROOM-PACK-MEMBER-COUNT).
             pack.stats.entities_hydrated = pack.results.len();
             pack.stats.neighbors_hydrated = pack.neighbors.len();
+            let held = &pack.results;
+            pack.stats
+                .working_set
+                .settle(|id| held.iter().any(|entity| entity.id == *id));
             pack.stats.claims_suppressed +=
                 result_suppressed + neighbor_suppressed + reachability_claims;
             let mut admitted = PackCriticalAccounting::default();

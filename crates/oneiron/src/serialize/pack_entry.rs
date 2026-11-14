@@ -168,8 +168,9 @@ pub fn project_pack_for_json_response_with_tokenizer(
         &mut projected_neighbors,
     );
 
-    pack.results = apply_projected_json_rows(pack.results, projected_results);
-    pack.neighbors = apply_projected_json_rows(pack.neighbors, projected_neighbors);
+    pack.results =
+        apply_projected_json_rows(pack.results, projected_results, &stats.working_set.served);
+    pack.neighbors = apply_projected_json_rows(pack.neighbors, projected_neighbors, &[]);
     pack.stats = stats;
     pack
 }
@@ -196,10 +197,13 @@ fn collect_projected_json_rows(
 fn apply_projected_json_rows(
     entities: Vec<ContextEntity>,
     mut projected_rows: HashMap<[u8; 16], Vec<(String, Value)>>,
+    working_set: &[crate::entity_id::EntityId],
 ) -> Vec<ContextEntity> {
     // A partitioned pack's rows keep their world sections in order, base
     // first (ARCH-0004 #world-scope); the rank is 0 for every row of an
-    // unpartitioned pack, which sorts as before.
+    // unpartitioned pack, which sorts as before. Within a section the rows
+    // sort as the serialized groups do: critical, then the working set in
+    // its order, then by score.
     let sections = WorldSectionOrder::of_rows(&entities, |entity| {
         world_section_label(entity.fields.as_ref())
     });
@@ -208,16 +212,21 @@ fn apply_projected_json_rows(
         .filter_map(|mut entity| {
             let fields = projected_rows.remove(entity.id.as_bytes())?;
             let section = sections.rank(world_section_label(entity.fields.as_ref()));
+            let seed = working_set
+                .iter()
+                .position(|id| *id == entity.id)
+                .unwrap_or(usize::MAX);
             if entity.fields.is_some() {
                 entity.fields = Some(HashMap::from_iter(fields));
             }
-            Some((section, entity))
+            Some(((section, seed), entity))
         })
         .collect();
-    projected.sort_by(|(a_section, a), (b_section, b)| {
+    projected.sort_by(|((a_section, a_seed), a), ((b_section, b_seed), b)| {
         a_section
             .cmp(b_section)
             .then_with(|| b.critical.cmp(&a.critical))
+            .then_with(|| a_seed.cmp(b_seed))
             .then_with(|| b.score.total_cmp(&a.score))
             .then_with(|| a.id.cmp(&b.id))
     });

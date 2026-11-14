@@ -1,20 +1,25 @@
 //! CROSS-ARCH-0011 amendment "workingSet" (CROSS-ARCH-0002b #ep-6-2-3): a
 //! context pack seeded with the rows a host carried across a compaction
 //! serves them first, in the caller's order, before the ranked fill. Each ref
-//! is admitted on its own: a superseded claim resolves forward, a dead or
-//! out-of-scope ref is dropped while the rest still seed, the fill never
-//! repeats a seed, the seeds take at most half of a serialized pack's token
-//! budget, an ASSET crosses as a handle, and an unseeded pack is today's pack.
+//! is admitted on its own: a superseded claim resolves forward (to a CLAIM
+//! alone), a dead, out-of-scope or out-of-query ref is dropped while the rest
+//! still seed, the fill never repeats a seed, the seeds take at most half of a
+//! serialized pack's token budget, an ASSET crosses as a handle, a projected
+//! JSON pack keeps the seeds first, and an unseeded pack is today's pack.
 //!
 //! Public crate surface only: `Vault::put_claim`, `Vault::put_entity`,
-//! `Vault::supersede_claim`, a vector batch, and the context pack builder.
+//! `Vault::put_edge`, `Vault::supersede_claim`, a vector batch, the context
+//! pack builder and `serialize::project_pack_for_json_response`.
 
-use oneiron::context_pack::MAX_WORKING_SET_REFS;
+use oneiron::context_pack::{
+    DEFAULT_MAX_FIELD_CHARS, FieldProfile, MAX_WORKING_SET_REFS, PackFormat, TokenAllocation,
+};
 use oneiron::pipeline::WorldScope;
-use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
+use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
+use oneiron::serialize::{SerializeConfig, project_pack_for_json_response};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    ContextPackBuilder, EntityId, TimeRange, Vault, VaultConfig,
+    ContextPackBuilder, EdgeKind, EntityId, TimeRange, Vault, VaultConfig,
 };
 
 const LEARNED_AT: u64 = 1_780_000_000;
@@ -308,9 +313,19 @@ fn a_seed_the_fill_also_finds_is_served_once() {
 #[test]
 fn no_working_set_is_todays_pack() {
     let fixture = fixture();
-    let today = fixture.builder().run_serialized().expect("today's pack");
+    // Both packs score at one instant: a row's score reads the clock.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock is past the epoch")
+        .as_secs();
+    let today = fixture
+        .builder()
+        .with_temporal_now(now)
+        .run_serialized()
+        .expect("today's pack");
     let empty = fixture
         .seeded(&[])
+        .with_temporal_now(now)
         .run_serialized()
         .expect("pack with an empty working set");
     assert_eq!(
@@ -356,4 +371,86 @@ fn a_working_set_over_the_cap_is_refused() {
     // Duplicates count once: the same ref named past the cap is one ref.
     let repeated = vec![fixture.carried[0]; MAX_WORKING_SET_REFS + 1];
     assert!(fixture.builder().working_set(&repeated).is_ok());
+}
+
+#[test]
+fn a_seed_outside_the_query_selection_is_dropped() {
+    let fixture = fixture();
+    let claims = fixture
+        .seeded(&[fixture.asset, fixture.carried[0]])
+        .filter_types(&[ENTITY_TYPE_CLAIM])
+        .run()
+        .expect("pack of claims");
+    assert_eq!(
+        claims.stats.working_set.served,
+        vec![fixture.carried[0]],
+        "the pack's types hold for a seed"
+    );
+    assert_eq!(claims.stats.working_set.dropped, 1);
+    assert!(!fixture.rows(&claims).contains(&fixture.asset));
+
+    let later = fixture
+        .seeded(&[fixture.carried[0]])
+        .filter_since(LEARNED_AT + 1)
+        .run()
+        .expect("pack of later rows");
+    assert!(
+        !later.stats.working_set.served.contains(&fixture.carried[0]),
+        "the pack's time window holds for a seed: {:?}",
+        later.stats.working_set
+    );
+    assert!(!fixture.rows(&later).contains(&fixture.carried[0]));
+}
+
+#[test]
+fn a_claim_seed_resolves_forward_to_a_claim_alone() {
+    let fixture = fixture();
+    // A `Supersedes` edge from a row that is no CLAIM is no claim's
+    // successor.
+    fixture
+        .vault
+        .put_edge(
+            &fixture.asset,
+            EdgeKind::Supersedes,
+            &fixture.carried[0],
+            1.0,
+        )
+        .expect("an edge from the asset");
+    let pack = fixture
+        .seeded(&[fixture.carried[0]])
+        .run()
+        .expect("seeded pack");
+    assert_eq!(pack.stats.working_set.served, vec![fixture.carried[0]]);
+    assert_eq!(
+        pack.results.first().map(|entity| entity.id),
+        Some(fixture.carried[0])
+    );
+    assert!(!fixture.rows(&pack).contains(&fixture.asset));
+}
+
+#[test]
+fn a_projected_json_pack_keeps_the_working_set_first() {
+    let fixture = fixture();
+    let pack = fixture
+        .seeded(&[fixture.carried[1], fixture.carried[0]])
+        .run()
+        .expect("seeded pack");
+    let config = SerializeConfig {
+        format: PackFormat::Json,
+        profile: FieldProfile::Full,
+        budget: 0,
+        allocation: TokenAllocation::default(),
+        include_stats: true,
+        merge_neighbors: false,
+        max_field_chars: DEFAULT_MAX_FIELD_CHARS,
+        max_item_tokens: 0,
+    };
+    let projected = project_pack_for_json_response(pack, &config);
+    let mut expected = vec![fixture.carried[1], fixture.carried[0]];
+    expected.extend(fixture.fill);
+    assert_eq!(fixture.rows(&projected), expected);
+    assert_eq!(
+        projected.stats.working_set.served,
+        vec![fixture.carried[1], fixture.carried[0]]
+    );
 }

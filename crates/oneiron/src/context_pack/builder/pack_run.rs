@@ -207,13 +207,19 @@ impl UnfinalizedContextPack<'_> {
         results: usize,
         neighbors: usize,
     ) -> bool {
-        crate::pipeline::select_context_pack_rows(
+        let cut_critical = crate::pipeline::select_context_pack_rows(
             &mut self.value.results,
             &mut self.value.neighbors,
             budget,
             (results, neighbors),
             self.world_share.as_ref(),
-        )
+        );
+        let held = &self.value.results;
+        self.value
+            .stats
+            .working_set
+            .settle(|id| held.iter().any(|entity| entity.id == *id));
+        cut_critical
     }
 
     /// Resolves the pack's instruction files afresh over the units it now

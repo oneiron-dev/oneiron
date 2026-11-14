@@ -193,6 +193,9 @@ fn prepare_pack_with_l2(
         prepared.stats.critical_over_budget = true;
     }
     prepared.stats.critical_count = prepared.stats.critical_count.max(pack.stats.critical_count);
+    // The type and section budgets above can cut a working-set row; the
+    // exact measurement below counts the stats as they are served.
+    settle_working_set_served(&mut prepared);
     finalize_pack_token_stats(
         pack,
         config,
@@ -200,6 +203,9 @@ fn prepare_pack_with_l2(
         tokenizer,
         (!skip_budget).then_some(config.budget),
     );
+    // The serialized budget can cut more. The count only falls, so the
+    // stats it measured never grow.
+    settle_working_set_served(&mut prepared);
     // A serialized-token budget can shed the base after initial selection.
     // Rebudget the original ranked rows if the prefix did not survive; typed
     // consumers keep those rows independently of serialized deduplication.
@@ -277,6 +283,28 @@ fn cap_working_set_rows(
     stats.items_dropped.reason =
         crate::serialize::pack_accounting::PackItemAccountingReason::TokenBudget;
     stats.items_dropped.count = stats.items_dropped.count.saturating_add(cut.len());
+}
+
+/// [`crate::context_pack::PackWorkingSetStats::settle`] over the rows a
+/// prepared pack holds, its L2 base prefix's evidence rows included.
+fn settle_working_set_served(prepared: &mut PreparedPack) {
+    let PreparedPack {
+        l2_base,
+        results,
+        neighbors,
+        stats,
+        ..
+    } = prepared;
+    stats.working_set.settle(|id| {
+        results
+            .iter()
+            .chain(neighbors.iter())
+            .flat_map(|(_, rows)| rows)
+            .any(|row| row.source_id == *id.as_bytes())
+            || l2_base
+                .as_ref()
+                .is_some_and(|base| base.evidence_ids().contains(id))
+    });
 }
 
 fn budget_split_sections_with_depth_limit(
