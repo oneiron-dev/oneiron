@@ -1,5 +1,6 @@
 //! Owner-permitted promotion of retained archive envelopes through their owning modules.
-//! Installed policies and digest schedules queue refreshes that run only after commit.
+//! Installed policies, digest schedules and consent rows queue refreshes that run only after
+//! commit.
 
 use super::archive_retained_side_rows::retained_side_row_withholds_credential;
 use super::{
@@ -21,7 +22,7 @@ pub(crate) enum ArchivedSideRowOutcome {
     HeldBack(RetainedSideHeldBackReason),
 }
 
-/// Refreshes required by newly installed policies after the import commits.
+/// Refreshes required by newly installed side rows after the import commits.
 #[derive(Default)]
 pub(crate) struct ArchivedSideRowRefresh {
     /// Serving hosts must observe repaired drafter bindings.
@@ -30,6 +31,8 @@ pub(crate) struct ArchivedSideRowRefresh {
     attempt_observers: bool,
     /// Digest timers must re-read installed schedules and settings.
     proactivity: bool,
+    /// Consent settlers must recheck newly restored answers.
+    consent_answer: bool,
 }
 
 impl ArchivedSideRowRefresh {
@@ -43,6 +46,7 @@ impl ArchivedSideRowRefresh {
                 ArchivedSideGroup::Drafter => self.drafter_serving = true,
                 ArchivedSideGroup::MergeQueue => self.attempt_observers = true,
                 ArchivedSideGroup::WeaveDigest => self.proactivity = true,
+                ArchivedSideGroup::Consent => self.consent_answer = true,
                 _ => {}
             }
         }
@@ -58,6 +62,9 @@ impl ArchivedSideRowRefresh {
         }
         if self.proactivity {
             vault.store.notify_proactivity_changes();
+        }
+        if self.consent_answer {
+            vault.notify_consent_answer();
         }
     }
 }
@@ -131,6 +138,16 @@ pub(crate) enum ArchivedSideGroup {
     Team,
     /// Customer hold protection and its supporting history.
     LegalHold,
+    /// Standing grants, one-use markers and parked widen proposals.
+    Consent,
+    /// Voice identity and reference-render consent.
+    Voice,
+    /// Room role grants backed by current membership and body roles.
+    ConversationRole,
+    /// Connector slates retained as nonportable references.
+    ConnectorSlate,
+    /// Parked gate consent and its rebuilt answer obligation.
+    PendingGateConsent,
 }
 
 /// Selects only the tables with a landing group; every other envelope stays retained-only.
@@ -204,6 +221,7 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         }
         name if name == side_table::CHECK_IN_RECEIPT.name => Some(Group::CheckIn),
         name if name == side_table::ESIGN_AUDIT.name => Some(Group::Esign),
+        name if name == side_table::HOOKS_GRANT.name => Some(Group::RuntimeHooks),
         name if name == side_table::HOOKS_RECEIPT.name => Some(Group::RuntimeHooks),
         name if name == side_table::HOOKS_REGEN_RECEIPT.name => Some(Group::RuntimeHooks),
         name if name == side_table::INQUIRY_RECEIPT.name => Some(Group::Inquiry),
@@ -221,6 +239,20 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         {
             Some(Group::LegalHold)
         }
+        name if name == side_table::CONSENT_STANDING_GRANT.name
+            || name == side_table::CONSENT_APPROVE_ONCE_MARKER.name
+            || name == side_table::CONSENT_WIDEN_PROPOSAL.name =>
+        {
+            Some(Group::Consent)
+        }
+        name if name == side_table::VOICE_IDENTITY_CONSENT.name
+            || name == side_table::VOICE_REF_RENDER_CONSENT.name =>
+        {
+            Some(Group::Voice)
+        }
+        name if name == side_table::CONVERSATION_ROLE_GRANT.name => Some(Group::ConversationRole),
+        name if name == side_table::CONNECTOR_GRANT_SLATE.name => Some(Group::ConnectorSlate),
+        name if name == side_table::PENDING_GATE_CONSENT.name => Some(Group::PendingGateConsent),
         _ => None,
     }
 }
@@ -355,6 +387,31 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::LegalHold => {
             crate::store::legal_hold::archive::land_archived_legal_hold_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::Consent => {
+            crate::consent::archive_restore::land_archived_consent_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::Voice => {
+            crate::voice_identity::archive_restore::land_archived_voice_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::ConversationRole => {
+            crate::conversation::archive_restore::land_archived_conversation_role_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::ConnectorSlate => {
+            crate::connector_key::land_archived_connector_slate_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::PendingGateConsent => {
+            crate::store::pending_gate_consent::archive_restore::land_archived_pending_gate_consent_rows_in_txn(
                 vault, txn, permit, rows,
             )
         }

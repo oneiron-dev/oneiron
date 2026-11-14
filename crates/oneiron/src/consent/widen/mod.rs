@@ -16,6 +16,7 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 
+pub(crate) mod archive_restore;
 mod contact_verdict_index;
 mod offers;
 mod predecessor;

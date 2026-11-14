@@ -826,8 +826,8 @@ fn land_archived_hooks_receipt_row_in_txn(
 }
 
 impl Vault {
-    /// Lands the owner's archived Hook and regen receipts in input order, never touching runs or
-    /// packs.
+    /// Lands the owner's archived Hook grants and Hook/regen receipts in input order, never
+    /// touching runs or packs.
     pub(crate) fn land_archived_runtime_hooks_rows_in_txn(
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
@@ -844,6 +844,10 @@ impl Vault {
                 )?);
             } else if row.source_table.as_str() == crate::side_table::HOOKS_REGEN_RECEIPT.name {
                 outcomes.push(crate::Vault::land_archived_hooks_regen_receipt_row_in_txn(
+                    vault, txn, permit, row,
+                )?);
+            } else if row.source_table.as_str() == crate::side_table::HOOKS_GRANT.name {
+                outcomes.push(super::grant::land_archived_hooks_grant_row_in_txn(
                     vault, txn, permit, row,
                 )?);
             } else {
