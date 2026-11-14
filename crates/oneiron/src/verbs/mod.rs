@@ -320,10 +320,7 @@ pub fn task_create_from_message(
     let spec = task_create_spec(memory, input.create)?;
     memory.tasks_create_from_message(source_ref, &spec)
 }
-fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> MemoryResult<T> {
-    serde_path_to_error::deserialize(value)
-        .map_err(|error| MemoryError::bad_request(format!("invalid SDK request: {error}")))
-}
+use oneiron_verb_wire::verb_input::decode;
 fn encode<T: Serialize>(value: T) -> MemoryResult<serde_json::Value> {
     serde_json::to_value(value).map_err(|_| MemoryError::bad_request("SDK result encoding failed"))
 }

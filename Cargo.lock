@@ -9133,6 +9133,7 @@ dependencies = [
  "oneiron-policy-vocabulary",
  "oneiron-retrieval",
  "oneiron-run-budget",
+ "oneiron-sdk-build",
  "oneiron-skill-attribution",
  "oneiron-store",
  "oneiron-vault-contract",
@@ -9144,6 +9145,7 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "serde_json",
+ "serde_path_to_error",
  "thiserror 2.0.20",
  "zeroize",
 ]
