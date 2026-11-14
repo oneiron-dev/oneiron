@@ -222,7 +222,7 @@ fn archived_check_in_holds(key: &str, receipt: &ReceiptRecord) -> bool {
     }
     match receipt.outcome.as_str() {
         "opened" | "climbed" | "skipped" | "extended" | "answered" | "let_go" | "held"
-        | "proceed_with_undo" | "window_passed" | "objection_held" => {}
+        | "proceed_with_undo" | "window_passed" | "objection_held" | "consumed" => {}
         _ => return false,
     }
     if receipt.on_behalf_of.is_some() {

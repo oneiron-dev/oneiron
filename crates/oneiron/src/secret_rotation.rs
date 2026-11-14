@@ -585,9 +585,31 @@ fn archived_secret_rotation_holdback(
     }
 }
 
-/// Lands one archived `SECRET_ROTATION_RECEIPT` envelope: the receipt body must decode with byte
-/// roundtrip and its kind/generation must match its writer before install via the shared collision
-/// rule.
+/// Whether `value` is the body a writer wrote for `receipt`: the current form with its cause, or
+/// the form written before causes were recorded, which has no `cause` key and reads as the
+/// owner's (`rotation_cause_at`). Any other bytes, extra or reordered keys included, are not.
+fn archived_rotation_body_is_written_form(receipt: &RotationReceipt, value: &[u8]) -> bool {
+    let Ok(encoded) = encode_rotation_receipt_body(receipt) else {
+        return false;
+    };
+    if encoded == value {
+        return true;
+    }
+    if receipt.cause != RotationCause::Owner {
+        return false;
+    }
+    let Ok(Value::Map(mut entries)) = rmpv::decode::read_value(&mut encoded.as_slice()) else {
+        return false;
+    };
+    entries.retain(|(key, _)| key.as_str() != Some(ROTATION_RECEIPT_BODY_KEYS[5]));
+    let mut before_causes = Vec::new();
+    rmpv::encode::write_value(&mut before_causes, &Value::Map(entries)).is_ok()
+        && before_causes == value
+}
+
+/// Lands one archived `SECRET_ROTATION_RECEIPT` envelope: the receipt body must decode as a form
+/// its writer wrote ([`archived_rotation_body_is_written_form`]) and its kind/generation must
+/// match its writer before install via the shared collision rule.
 ///
 /// # Errors
 /// Storage faults; validation stays in the returned outcome.
@@ -609,15 +631,7 @@ fn land_archived_secret_rotation_row_in_txn(
             ));
         }
     };
-    let encoded = match encode_rotation_receipt_body(&receipt) {
-        Ok(encoded) => encoded,
-        Err(_) => {
-            return Ok(ArchivedSideRowOutcome::HeldBack(
-                RetainedSideHeldBackReason::InvalidEncoding,
-            ));
-        }
-    };
-    if encoded != value {
+    if !archived_rotation_body_is_written_form(&receipt, &value) {
         return Ok(ArchivedSideRowOutcome::HeldBack(
             RetainedSideHeldBackReason::InvalidEncoding,
         ));

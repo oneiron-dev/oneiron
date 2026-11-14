@@ -1,7 +1,9 @@
 //! Doors for `tests/archive_side_catalogue_coverage.rs`: the whole-vault
 //! archive's coverage of the canonical side-table catalogue (SIDE-1); and for
 //! `tests/archive_import_retained_side_rows.rs`: the export's credential
-//! judgement of one retained row.
+//! judgement of one retained row; and for
+//! `tests/archive_import_owner_installs_side_receipts.rs`: a rotation receipt
+//! body as an earlier writer stored it.
 
 use crate::batch::export::archive_retained_side_rows::{
     retained_side_row_key, retained_side_row_withholds_credential,
@@ -12,7 +14,25 @@ use crate::batch::export::archive_side_dispositions::{
 };
 use crate::batch::export::{ArchiveRetainedSideRow, ArchiveSideFamily, SideRowBytes};
 use crate::error::{Error, Result};
-use crate::side_table::{Named, SideCodec, StorageTier};
+use crate::side_table::{self, HexId, Named, Raw, SideCodec, SideTable, StorageTier};
+use crate::{EntityId, Vault};
+
+/// Stores `body` as the secret-rotation receipt `receipt_id`, as the
+/// rotation writers store it (raw bytes under the id in hex). A test writes
+/// the body an earlier writer wrote, which today's writers no longer write.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn put_secret_rotation_receipt_body(
+    vault: &Vault,
+    receipt_id: EntityId,
+    body: &[u8],
+) -> Result<()> {
+    const RECEIPTS: SideTable<HexId, Vec<u8>, Raw> =
+        SideTable::new(&side_table::SECRET_ROTATION_RECEIPT);
+    vault.with_write_txn(|txn| RECEIPTS.put(&vault.store, txn, &HexId(receipt_id), &body.to_vec()))
+}
 
 /// Whether the export holds out of every archive, as a credential, the
 /// retained row of `source_table` whose stored key suffix is `source_key`
