@@ -103,8 +103,16 @@ impl Vault {
         let at = self.store.clock.now_recorded_at();
         let counters = self.with_write_txn_grouped(|wtxn| {
             scope.validate()?;
-            owner.revalidate_as_vault_owner_in_txn(self, &*wtxn)?;
-            record_outcome_for_scope_in_txn(self, wtxn, scope, outcome, at, OutcomeWitness::Door)
+            let ruler = owner.revalidate_as_vault_owner_in_txn(self, &*wtxn)?;
+            record_outcome_for_scope_in_txn(
+                self,
+                wtxn,
+                scope,
+                outcome,
+                at,
+                OutcomeWitness::Door,
+                Some(ruler),
+            )
         })?;
         let rtxn = self.store.env.read_txn()?;
         let state = derive_state_in_txn(self, &rtxn, scope, counters)?;
@@ -233,7 +241,8 @@ impl Vault {
     /// Every way the act is said out loud, which is the unconditional receipt
     /// (oracle `ms06_self_demotion_is_receipted_never_silent`): a scope with no
     /// live grant still records the act, so a demotion is never inferred from
-    /// an absence.
+    /// an absence. The receipt's `demoted_by` field names the proof's person,
+    /// the owner or the holder, so the owner sees who acted.
     ///
     /// # Errors
     ///
@@ -251,12 +260,11 @@ impl Vault {
         let at = self.store.clock.now_recorded_at();
         self.with_write_txn_grouped(|wtxn| {
             scope.validate()?;
-            if let Err(refusal) = owner.revalidate_as_vault_owner_in_txn(self, &*wtxn)
-                && !holds_ramp_demote_power_in_txn(self, &*wtxn, owner)?
-            {
-                return Err(refusal);
-            }
-            append_demotion_in_txn(self, wtxn, scope, reason, at)
+            let demoter = match owner.revalidate_as_vault_owner_in_txn(self, &*wtxn) {
+                Ok(person) => person,
+                Err(refusal) => ramp_demote_holder_in_txn(self, &*wtxn, owner)?.ok_or(refusal)?,
+            };
+            append_demotion_in_txn(self, wtxn, scope, reason, at, Some(demoter))
         })
     }
 
@@ -273,7 +281,7 @@ impl Vault {
     /// Storage failures.
     pub fn holds_ramp_demote_power(&self, holder: &AuthenticatedOwner) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
-        holds_ramp_demote_power_in_txn(self, &txn, holder)
+        Ok(ramp_demote_holder_in_txn(self, &txn, holder)?.is_some())
     }
 
     /// Overrides one scope's graduation streak floor (ED-05's seam; the
@@ -348,26 +356,27 @@ impl Vault {
     }
 }
 
-/// Whether `proof` is a policy holder's own person proof over
+/// The person of `proof` when it is a policy holder's own person proof over
 /// [`RAMP_DEMOTE_GRANT_TARGET`] now, in `txn`: the person proof still holds,
 /// and its person is a live Owner or an Admin or Delegate whose Owner-minted
 /// `policy.change` grant names the target (FIX 8177's holder check). A proof
-/// that no longer holds is no holder.
-fn holds_ramp_demote_power_in_txn(
+/// that no longer holds is no holder, and answers `None`.
+fn ramp_demote_holder_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     proof: &AuthenticatedOwner,
-) -> Result<bool> {
+) -> Result<Option<crate::entity_id::EntityId>> {
     let Ok(actor) = proof.revalidate_person_in_txn(vault, txn) else {
-        return Ok(false);
+        return Ok(None);
     };
-    crate::policy_model::holds_vault_policy_power_in_txn(
+    Ok(crate::policy_model::holds_vault_policy_power_in_txn(
         vault,
         txn,
         actor,
         RAMP_DEMOTE_GRANT_TARGET,
         crate::unix_seconds_now(),
-    )
+    )?
+    .then_some(actor))
 }
 
 /// Whether the agent `parent` spawned the actor `child` names: `child` is an
@@ -402,7 +411,8 @@ fn spawned_by_in_txn(
 impl crate::memory::Memory<'_> {
     /// The scope's own actor, or the agent that spawned it, steps the scope
     /// back to the propose lane on its own judgment
-    /// ([`DemotionReason::AgentJudgment`]), receipted like any demotion.
+    /// ([`DemotionReason::AgentJudgment`]), receipted like any demotion; the
+    /// receipt's `demoted_by` names this actor, the scope's own or its parent.
     /// Narrowing one's own authority, or a child's, needs no owner proof
     /// (ARCH-0082 `#changing`: "Tighten a child's row ...: the parent or
     /// grantor, nothing. Narrowing is delegation."). The child is the
@@ -441,8 +451,15 @@ impl crate::memory::Memory<'_> {
                 self.actor(),
                 self.actor_class(),
             )?;
-            append_demotion_in_txn(vault, wtxn, scope, DemotionReason::AgentJudgment, at)
-                .map_err(oneiron_contracts::memory::MemoryError::from)
+            append_demotion_in_txn(
+                vault,
+                wtxn,
+                scope,
+                DemotionReason::AgentJudgment,
+                at,
+                Some(self.actor()),
+            )
+            .map_err(oneiron_contracts::memory::MemoryError::from)
         })
     }
 }

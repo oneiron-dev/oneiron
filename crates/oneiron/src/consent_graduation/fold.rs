@@ -175,12 +175,15 @@ pub(super) fn stats_view(
 /// [`demotion_receipts`] projects. Revoking and recording land in the caller's
 /// transaction together, so no reader can observe a revoked grant with no
 /// receipt explaining it — that is what "never silent" means mechanically.
+/// `demoted_by` is who acted, written to the row and named on its receipt, so
+/// the owner sees who demoted when another actor's scope steps back.
 pub(super) fn append_demotion_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     scope: &RampScope,
     reason: DemotionReason,
     at: u64,
+    demoted_by: Option<EntityId>,
 ) -> Result<()> {
     let grant_ref = scope.grant_ref()?;
     let grant_ref = crate::consent::revoke_standing_grant_in_txn(&vault.store, wtxn, &grant_ref)?
@@ -192,6 +195,7 @@ pub(super) fn append_demotion_in_txn(
         actor: scope.actor.clone(),
         reason: reason.as_str().to_owned(),
         grant_ref,
+        demoted_by: demoted_by.map(|id| id.to_hex()),
         after_seq: vault.read_identity_topology_seq_in_txn(&*wtxn)?,
         at,
     };
@@ -266,6 +270,9 @@ pub(super) enum OutcomeWitness {
 /// to be stale ABOUT, so lagging counters are fail-closed (it keeps proposing).
 /// Surfacing offers on a replica from replicated rulings would be a design
 /// amendment: fold at the sync reconcile chokepoint, as redirect does.
+///
+/// `ruled_by` is who gave the ruling; a demotion the ruling causes names
+/// them as its demoter.
 pub(super) fn record_outcome_for_scope_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -273,6 +280,7 @@ pub(super) fn record_outcome_for_scope_in_txn(
     outcome: ProposalOutcome,
     at: u64,
     witness: OutcomeWitness,
+    ruled_by: Option<EntityId>,
 ) -> Result<Counters> {
     if witness == OutcomeWitness::Door {
         append_door_outcome_in_txn(vault, wtxn, scope, outcome, at)?;
@@ -284,7 +292,7 @@ pub(super) fn record_outcome_for_scope_in_txn(
     if let Some(reason) = DemotionReason::for_outcome(outcome)
         && active_grant_ref_in_txn(vault, &*wtxn, scope)?.is_some()
     {
-        append_demotion_in_txn(vault, wtxn, scope, reason, at)?;
+        append_demotion_in_txn(vault, wtxn, scope, reason, at, ruled_by)?;
         // The demotion folded exactly this into the store: our own counters,
         // demoted. No re-read needed.
         counters.apply_demotion(at);
@@ -305,8 +313,17 @@ pub(crate) fn record_ramp_outcome_in_txn(
     scope: &RampScope,
     outcome: ProposalOutcome,
     at: u64,
+    ruled_by: Option<EntityId>,
 ) -> Result<()> {
-    record_outcome_for_scope_in_txn(vault, wtxn, scope, outcome, at, OutcomeWitness::Ledger)?;
+    record_outcome_for_scope_in_txn(
+        vault,
+        wtxn,
+        scope,
+        outcome,
+        at,
+        OutcomeWitness::Ledger,
+        ruled_by,
+    )?;
     Ok(())
 }
 
@@ -320,9 +337,18 @@ pub(crate) fn record_door_ramp_outcome_in_txn(
     scope: &RampScope,
     outcome: ProposalOutcome,
     at: u64,
+    ruled_by: EntityId,
 ) -> Result<()> {
     scope.validate()?;
-    record_outcome_for_scope_in_txn(vault, wtxn, scope, outcome, at, OutcomeWitness::Door)?;
+    record_outcome_for_scope_in_txn(
+        vault,
+        wtxn,
+        scope,
+        outcome,
+        at,
+        OutcomeWitness::Door,
+        Some(ruled_by),
+    )?;
     Ok(())
 }
 
