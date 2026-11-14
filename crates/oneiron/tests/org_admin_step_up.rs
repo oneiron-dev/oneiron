@@ -100,7 +100,9 @@ fn refused_for_step_up<T: std::fmt::Debug, E: std::fmt::Debug>(result: Result<T,
 }
 
 /// A rooted shared vault: its embedded owner as Owner and an Admin, who
-/// accepted its founding invitation.
+/// accepted its founding invitation. The host key stays bound to the owner;
+/// a test binds it to the Admin before the Admin acts
+/// ([`Shared::admin_acts`]).
 struct Shared {
     _dir: tempfile::TempDir,
     vault: Vault,
@@ -139,6 +141,12 @@ fn shared() -> Shared {
 }
 
 impl Shared {
+    /// Binds the host key to the Admin, as its own device binding does: the
+    /// rooted vault's gate admits a writer only on a live binding.
+    fn admin_acts(&self) {
+        admin_step_up::bind_human_writer(&self.vault, &self.issuer, self.admin);
+    }
+
     /// A new live PERSON with no role.
     fn newcomer(&self) -> EntityId {
         let id = EntityId::now();
@@ -151,6 +159,7 @@ impl Shared {
 fn an_admins_act_without_a_step_up_is_refused() {
     let shared = shared();
     let member = shared.newcomer();
+    shared.admin_acts();
     let credential = admin_step_up::credential(&shared.vault, &shared.issuer, shared.admin);
     let admin = admin_step_up::proof_on(&shared.vault, shared.admin, &credential);
 
@@ -170,6 +179,7 @@ fn an_admins_act_without_a_step_up_is_refused() {
 fn an_admins_acts_land_after_a_step_up_on_its_own_credential() {
     let shared = shared();
     let member = shared.newcomer();
+    shared.admin_acts();
     let admin = admin_step_up::stepped_up_proof(&shared.vault, &shared.issuer, shared.admin);
 
     shared
@@ -191,6 +201,7 @@ fn an_admins_acts_land_after_a_step_up_on_its_own_credential() {
 fn a_step_up_on_another_credential_counts_for_nothing() {
     let shared = shared();
     let [first_member, second_member] = [shared.newcomer(), shared.newcomer()];
+    shared.admin_acts();
     let first = admin_step_up::credential(&shared.vault, &shared.issuer, shared.admin);
     admin_step_up::step_up_with_totp(&shared.vault, &first);
     let second = admin_step_up::credential(&shared.vault, &shared.issuer, shared.admin);
@@ -238,6 +249,7 @@ fn the_owners_act_needs_no_step_up() {
 fn a_managed_admins_act_stands_on_the_supervisors_mfa_claim() {
     let shared = shared();
     let [refused_member, admitted_member] = [shared.newcomer(), shared.newcomer()];
+    shared.admin_acts();
 
     let without =
         managed_person_proof(&shared.vault, shared.admin, false).expect("a managed person's proof");

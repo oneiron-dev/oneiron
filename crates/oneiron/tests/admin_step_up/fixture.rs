@@ -3,6 +3,11 @@
 //! a transport verifies the slip a request presents, and a TOTP step-up on
 //! that credential with the RFC 6238 code an authenticator app shows.
 //!
+//! A rooted vault's membership gate admits a writer only on a live binding,
+//! and the host key holds one: [`bind_human_writer`] binds it to the person
+//! about to act, and an owner acts again after
+//! `oneiron::test_support::bind_host_owner`.
+//!
 //! One person steps up once per test: a person's second TOTP enrollment
 //! needs a step-up already (`STEP_UP_REQUIRED`), and a code's 30-second
 //! step is spent by its first use. Keep the stepped-up proof and reuse it.
@@ -26,6 +31,15 @@ pub(crate) fn rooted_vault(dir: &std::path::Path) -> (Vault, HostSlipIssuer, Ent
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     oneiron::test_support::bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
     (vault, issuer, owner)
+}
+
+/// Binds the host key to `person` at class `human`, as a served person's
+/// own device binding does, so the rooted vault's membership gate admits
+/// that person's writes. The owner, or whoever the key bound before, is
+/// unbound until bound again.
+pub(crate) fn bind_human_writer(vault: &Vault, issuer: &HostSlipIssuer, person: EntityId) {
+    oneiron::test_support::bind_host_actor(vault, issuer, person, "human")
+        .expect("the host key bound to the acting person");
 }
 
 /// A distinct slip id for each credential a test binary mints.
