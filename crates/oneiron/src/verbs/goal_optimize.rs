@@ -340,8 +340,7 @@ pub fn skill_optimize_goal_as_owner(
     owner: &AuthenticatedOwner,
     input: &SkillOptimizeGoalRequest,
 ) -> MemoryResult<SkillOptimizeGoalView> {
-    owner.revalidate(vault)?;
-    let goal = optimize::skill_edit_goal(vault, &input.skill)?;
+    let goal = optimize::skill_edit_goal_as_owner(vault, owner, &input.skill)?;
     Ok(SkillOptimizeGoalView {
         goal_id: goal.goal_id,
         goal_revision: goal.revision,
