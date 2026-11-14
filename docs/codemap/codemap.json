@@ -40248,7 +40248,7 @@
      "path": "src/federation/agent_grant.rs",
      "purpose": "The owner's grant of an explicit verb list to a named agent (FIX 5628): `vault.agents.grants.mint` and…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "re-export": 2
      }
     },
@@ -46511,6 +46511,28 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ArchiveBounds",
+      "ArchiveRefusal",
+      "CheckedArchive",
+      "CheckedEntry",
+      "CheckedRead",
+      "EntryReader",
+      "SkipReason",
+      "SkippedEntry"
+     ],
+     "path": "src/ingest/archive_precheck.rs",
+     "purpose": "The pass an import makes over an archive's own entry list before it reads or writes anything of it…",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 8,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "ImportAudience",
       "ImportAudienceCluster",
       "ImportAudienceOption",
@@ -46768,6 +46790,7 @@
      "path": "src/ingest/history/hosted.rs",
      "purpose": "A hosted import (ARCH-0027 #hosted-import): an export staged inside the vault's own data directory, landed…",
      "surface": {
+      "const": 1,
       "crate-vis": 1,
       "enum": 3,
       "fn": 19,
@@ -47334,7 +47357,7 @@
      "purpose": "Ingest source registry and source-local normalization",
      "surface": {
       "crate-vis": 11,
-      "mod": 4,
+      "mod": 5,
       "re-export": 18
      }
     },
@@ -64106,7 +64129,7 @@
      "path": "src/pipeline/world_authority.rs",
      "purpose": "Per-turn world authority, bound to the host's executing principal",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 12,
       "fn": 1
      }
     },
@@ -73567,9 +73590,26 @@
       "crate-vis": 10,
       "enum": 2,
       "fn": 13,
-      "mod": 5,
+      "mod": 6,
       "re-export": 7,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AgentWorldAccess",
+      "AgentWorldAccessChange",
+      "AgentWorldAccessRequest",
+      "AgentWorldAccessSetRequest",
+      "Worlds"
+     ],
+     "path": "src/settings/agent_world_access.rs",
+     "purpose": "The owner's writer of one agent's world access (ARCH-0067 #tiers; census L2-56; rulings L2-56-VERB-SHAPE = A…",
+     "surface": {
+      "fn": 4,
+      "struct": 5
      }
     },
     {
@@ -85155,7 +85195,7 @@
      "path": "src/sync/local_claims.rs",
      "purpose": "Egress exclusion for claims whose authority exists only in the local vault",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -91172,6 +91212,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PeerMachineHistory"
+     ],
+     "path": "src/test_doors/machine_history.rs",
+     "purpose": "A door for `tests/world_access_local_authority.rs`: a MACHINE claim that a peer device of the same vault…",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -91254,7 +91308,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 110,
+      "mod": 112,
       "re-export": 1
      }
     },
@@ -91754,6 +91808,16 @@
      "notable": [],
      "path": "src/test_doors/workspace_token.rs",
      "purpose": "Door for `tests/microsoft_excel_wire.rs` (L3-17-EXCEL-CONNECTION = B): the access token a workspace module's…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/world_access.rs",
+     "purpose": "Doors for `tests/world_access_local_authority.rs` and `tests/world_access_owner_writer.rs`: one lands a…",
      "surface": {
       "fn": 2
      }
@@ -101833,6 +101897,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/mail_takeout_archive_precheck.rs",
+     "purpose": "The archive pre-check under `vault.mail.sources.import_mbox` for a Google Takeout `.zip` (ARCH-0027…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -103549,6 +103621,22 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/world_access_local_authority.rs",
+     "purpose": "The world-access tiers are local authority (ARCH-0067 #phasing; RULING L2-53-CEILING, 14 Nov 2026)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/world_access_owner_writer.rs",
+     "purpose": "The owner's writer of an agent's world access (ARCH-0067 #tiers; census L2-56; rulings L2-56-VERB-SHAPE = A…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -104372,7 +104460,7 @@
      "purpose": "A vault-owned inference snapshot at rest: its body sealed under its own erasable data key, the key wrapped…"
     },
     "ingest": {
-     "files": 77,
+     "files": 78,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -104869,7 +104957,7 @@
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…"
     },
     "settings": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -105058,7 +105146,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 113,
+     "files": 115,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105235,8 +105323,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7582,
-   "test_files": 1300
+   "source_files": 7586,
+   "test_files": 1303
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -129358,6 +129446,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/agent_world_access_doors.rs",
+     "purpose": "Typed doors over one agent's world access (ARCH-0067 #tiers; census L2-56): the worlds its owner grants it…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/aging_doors.rs",
      "purpose": "Class-aging profile reads and edits under the caller's own owner credential",
      "surface": {
@@ -130271,7 +130369,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 197
+      "crate-vis": 198
      }
     },
     {
@@ -136351,7 +136449,7 @@
      "path": "src/commands/history_import/hosted_import.rs",
      "purpose": "The hosted import's job (ARCH-0027 #hosted-import, CROSS-ARCH-0024 #onboarding-import): an export staged…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -137269,7 +137367,7 @@
      "purpose": "The `[import]` section: whether a running `serve` imports the session logs queued for it (`oneiron import…",
      "surface": {
       "crate-vis": 2,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -147674,11 +147772,27 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/history_import_archive_precheck.rs",
+     "purpose": "The archive pre-check under `oneiron import chatgpt <zip>`, through the shipped binary (ARCH-0027…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/host_init_fresh_node.rs",
      "purpose": "`oneiron host init` on a fresh node path (FIX-LIST [T0I-HOST-INIT-SYSTEMD-DIR-TWICE]): the reference…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/hosted_import_archive_precheck.rs",
+     "purpose": "The archive pre-check under a hosted import (ARCH-0027 #archive-precheck: the pass \"skips and lists an…",
      "surface": {}
     },
     {
@@ -148339,7 +148453,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 785,
+     "files": 786,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -148894,8 +149008,8 @@
    },
    "over_bar": 63,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1883,
-   "test_files": 256
+   "source_files": 1884,
+   "test_files": 258
   },
   "oneiron-skill-attribution": {
    "files": [
@@ -149757,7 +149871,7 @@
      "purpose": "A ZIP archive's members: each entry in central-directory order, Stored or Deflated, read whole against its…",
      "surface": {
       "const": 2,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -158050,7 +158164,8 @@
      "path": "src/write_envelope/world_access_predicates.rs",
      "purpose": "World-access authority claim predicates",
      "surface": {
-      "const": 2
+      "const": 2,
+      "fn": 1
      }
     },
     {
