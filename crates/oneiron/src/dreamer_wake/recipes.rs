@@ -1,5 +1,11 @@
 //! Row-backed spending for the three wake recipes.
 
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::conversation_dag::{ScopePath, ScopeSelector};
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerRunnerStore};
 use crate::scope_summary::{ScopeSummaryRequest, ScopeSummaryTarget};
@@ -110,4 +116,25 @@ pub(crate) fn weave_in_txn(
         sieve::enqueue_window_audit_in_txn(&store, txn, &attempt.status, &window, &policy, now)?;
     }
     Ok(())
+}
+
+/// Lands one archived `DREAMER_WAKE_RECIPE_POLICY` envelope: the writer's
+/// [`WakeRecipePolicy::validate`] rules, then an absent-key exact-bytes install. Every recipe path
+/// re-reads the row per transaction.
+pub(super) fn land_archived_dreamer_wake_recipe_policy_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&POLICY, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.validate().is_err() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&POLICY, vault, txn, permit, &key, row)
 }

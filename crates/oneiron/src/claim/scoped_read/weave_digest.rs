@@ -24,6 +24,8 @@ use crate::ports::TombstoneStoreRead;
 use crate::store::Store;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
+
+mod archive_restore;
 // The test module reaches this through `use super::*`; the wire rows that
 // named it outside tests moved to `wire.rs`, so tests resolve as before.
 #[cfg(test)]

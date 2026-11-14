@@ -375,11 +375,13 @@ fn land_archived_policy_change_event_row_in_txn(
 
 impl Vault {
     /// Lands the owner's archived owner-policy envelopes in input order, one outcome per row:
-    /// `OWNER_POLICY_CHANGE_EVENT` rows install as passive history and
-    /// `OWNER_POLICY_SECRET_SCAN_RECEIPT` rows through the switch's own checks. An absent row
+    /// `OWNER_POLICY_CHANGE_EVENT` rows install as passive history,
+    /// `OWNER_POLICY_SECRET_SCAN_RECEIPT` rows through the switch's own checks, and the
+    /// `OWNER_POLICY_SECRET_SCAN_MODE` row through the switch's mode check. An absent row
     /// installs, an identical row is unchanged, and a different row stays live. No ruling,
-    /// sequence row, mode row, lift run or notification is written here: the ledger's
-    /// `SEQUENCE` allocates ruling revisions, not event keys, so no counter is repaired.
+    /// sequence row, lift run or notification is written here: the mode lands without minting
+    /// its receipt, event or lift run, and the ledger's `SEQUENCE` allocates ruling revisions,
+    /// not event keys, so no counter is repaired.
     ///
     /// # Errors
     /// Storage faults; validation stays in the returned outcomes.
@@ -394,6 +396,11 @@ impl Vault {
             let outcome = match row.source_table.as_str() {
                 name if name == side_table::OWNER_POLICY_CHANGE_EVENT.name => {
                     land_archived_policy_change_event_row_in_txn(vault, txn, permit, row)?
+                }
+                name if name == side_table::OWNER_POLICY_SECRET_SCAN_MODE.name => {
+                    super::secret_scan_switch::land_archived_secret_scan_mode_row_in_txn(
+                        vault, txn, permit, row,
+                    )?
                 }
                 name if name == side_table::OWNER_POLICY_SECRET_SCAN_RECEIPT.name => {
                     super::secret_scan_switch::land_archived_secret_scan_receipt_row_in_txn(

@@ -6,6 +6,10 @@
 //! vault's rows. The Responses `store` switch (OF-602) lives here too.
 
 use crate::Vault;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{ArchiveRetainedSideRow, OwnerArchiveRestorePermit};
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::side_table::{self, Named, Raw, SideTable};
@@ -57,4 +61,36 @@ impl Vault {
             RESPONSES_STORE.put(&self.store, txn, &(), &on)
         })
     }
+}
+
+/// Lands one archived `MODEL_OWNER_FALLBACK` envelope: the writer checks nothing, so canonical
+/// decode plus the archive seam is the whole check. Any decodable key and model id installs; an
+/// unknown model id simply matches no live ladder rung at use.
+pub(super) fn land_archived_model_fallback_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, _) = match decode_archived_row(&FALLBACKS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    install_archived_row(&FALLBACKS, vault, txn, permit, &key, row)
+}
+
+/// Lands one archived `MODEL_OWNER_RESPONSES_STORE` envelope: a bare bool, so canonical decode
+/// plus the archive seam is the whole check. No refresh: imports run on a stopped vault, so the
+/// next serve rebinds the server cache from the restored row.
+pub(super) fn land_archived_responses_store_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, _) = match decode_archived_row(&RESPONSES_STORE, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    install_archived_row(&RESPONSES_STORE, vault, txn, permit, &key, row)
 }

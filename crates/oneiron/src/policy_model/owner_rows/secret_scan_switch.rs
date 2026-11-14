@@ -13,8 +13,8 @@ use crate::batch::export::{
     ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
 };
 use crate::batch::secret_scan::{
-    LiftTrigger, SecretScanMode, enqueue_lift_in_txn, put_secret_scan_mode_in_txn,
-    secret_scan_mode_in_txn,
+    LiftTrigger, SECRET_SCAN_MODE, SecretScanMode, enqueue_lift_in_txn,
+    put_secret_scan_mode_in_txn, secret_scan_mode_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -148,6 +148,26 @@ pub(super) fn land_archived_secret_scan_receipt_row_in_txn(
         ));
     }
     install_archived_row(&RECEIPTS, vault, txn, permit, &key, row)
+}
+
+/// Lands one archived `OWNER_POLICY_SECRET_SCAN_MODE` envelope in `txn`: canonical decode and
+/// the credential predicate, then an absent-key exact-bytes install. No receipt, event or lift
+/// run is written here: the mode lands alone, and the next live `set_` call re-anchors its
+/// receipt chain.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+pub(super) fn land_archived_secret_scan_mode_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, _) = match decode_archived_row(&SECRET_SCAN_MODE, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    install_archived_row(&SECRET_SCAN_MODE, vault, txn, permit, &key, row)
 }
 
 #[cfg(test)]

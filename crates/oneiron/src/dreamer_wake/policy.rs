@@ -1,5 +1,11 @@
 //! Row-backed wake admission. The host supplies liveness; the vault owns the decision.
 use crate::Vault;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::claim::{ClaimLifecycleStatus, ClaimSource, decode_claim_body};
 use crate::dreamer_runner::{
     DreamerRunnerStore, DreamerTurnRole, EnqueueDreamerAttemptOutcome, dreamer_turn_role,
@@ -606,6 +612,27 @@ impl Vault {
         }
         Ok(rows)
     }
+}
+
+/// Lands one archived `DREAMER_WAKE_POLICY` envelope: the writer's
+/// [`DreamerWakePolicy::validate`] rules, then an absent-key exact-bytes install, never recording
+/// an act. Each evaluation re-reads the row, so nothing goes stale.
+pub(super) fn land_archived_dreamer_wake_policy_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&POLICY, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.validate().is_err() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&POLICY, vault, txn, permit, &key, row)
 }
 
 #[cfg(test)]

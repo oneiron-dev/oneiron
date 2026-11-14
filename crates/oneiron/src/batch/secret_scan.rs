@@ -93,7 +93,7 @@ const REASON_MESSAGEPACK_TOO_DEEP: &str = "gate.secret_scan.messagepack_depth_ov
 pub use oneiron_verb_wire::batch::secret_scan::SecretScanMode;
 
 /// The owner's switch row. Key: ().
-const SECRET_SCAN_MODE: SideTable<(), SecretScanMode, Named> =
+pub(crate) const SECRET_SCAN_MODE: SideTable<(), SecretScanMode, Named> =
     SideTable::new(&side_table::OWNER_POLICY_SECRET_SCAN_MODE);
 
 /// The switch as the write door reads it. An absent row reads as on, and so

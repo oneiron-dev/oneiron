@@ -18,6 +18,7 @@ pub(super) mod admissions;
 pub(super) mod sieve_score;
 // The live projection core, a due Owner schedule's binding too (FIX 1259).
 mod projection;
+pub(crate) use projection::validate_weave_recipe_for;
 // The moves an agent-health card keeps, served past the reader's floor (FIX 8536).
 mod card_moves;
 // The weave Admin's lane and live report, under its current proof (OF-499 A3).

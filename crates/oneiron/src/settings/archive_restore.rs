@@ -3,6 +3,9 @@
 
 use super::backup::land_archived_backup_policy_row_in_txn;
 use super::board_layout::land_archived_board_layout_row_in_txn;
+use super::models::{
+    land_archived_model_fallback_row_in_txn, land_archived_responses_store_row_in_txn,
+};
 use super::non_base_world_claim_fraction::land_archived_non_base_world_claim_fraction_row_in_txn;
 use super::room_threads::land_archived_room_threads_admin_delete_row_in_txn;
 use super::room_threads::land_archived_room_threads_admin_walk_in_row_in_txn;
@@ -43,6 +46,12 @@ pub(crate) fn land_archived_settings_rows_in_txn(
             }
             name if name == side_table::CUSTOMIZATION_SETTINGS.name => {
                 land_archived_customization_settings_row_in_txn(vault, txn, permit, row)?
+            }
+            name if name == side_table::MODEL_OWNER_FALLBACK.name => {
+                land_archived_model_fallback_row_in_txn(vault, txn, permit, row)?
+            }
+            name if name == side_table::MODEL_OWNER_RESPONSES_STORE.name => {
+                land_archived_responses_store_row_in_txn(vault, txn, permit, row)?
             }
             name if name == side_table::NON_BASE_WORLD_CLAIM_FRACTION.name => {
                 land_archived_non_base_world_claim_fraction_row_in_txn(vault, txn, permit, row)?

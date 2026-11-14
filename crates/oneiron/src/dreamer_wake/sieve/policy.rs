@@ -6,6 +6,12 @@ use serde::{Deserialize, Serialize};
 
 use super::rules::RuleClass;
 use crate::Vault;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, SideTable};
 
@@ -188,6 +194,27 @@ impl Vault {
             budgets,
         )
     }
+}
+
+/// Lands one archived `DREAMER_SIEVE_POLICY` envelope: the writer's [`SievePolicy::validate`]
+/// rules, then an absent-key exact-bytes install. The next sieve pass reads it; spans already
+/// queued keep the score they were given.
+pub(crate) fn land_archived_dreamer_sieve_policy_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&POLICY, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.validate().is_err() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&POLICY, vault, txn, permit, &key, row)
 }
 
 /// The sieve's three per-pass work budgets, the part of its policy a holder

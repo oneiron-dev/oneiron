@@ -1,5 +1,5 @@
 //! Owner-permitted promotion of retained archive envelopes through their owning modules.
-//! Installed drafter and merge-queue policies queue refreshes that run only after commit.
+//! Installed policies and digest schedules queue refreshes that run only after commit.
 
 use super::archive_retained_side_rows::retained_side_row_withholds_credential;
 use super::{
@@ -11,7 +11,7 @@ use crate::side_table::{self, Named, SideCodec, SideKey, SideTable};
 
 /// The live disposition of one source envelope; retained-only rows have no live outcome.
 pub(crate) enum ArchivedSideRowOutcome {
-    /// The absent live key now holds the source bytes.
+    /// The absent live key now holds validated archive bytes, adapted for restore if needed.
     Installed,
     /// The live key already holds the source bytes.
     Unchanged,
@@ -28,6 +28,8 @@ pub(crate) struct ArchivedSideRowRefresh {
     drafter_serving: bool,
     /// Queue attempts must observe the installed review policy.
     attempt_observers: bool,
+    /// Digest timers must re-read installed schedules and settings.
+    proactivity: bool,
 }
 
 impl ArchivedSideRowRefresh {
@@ -40,6 +42,7 @@ impl ArchivedSideRowRefresh {
             match group {
                 ArchivedSideGroup::Drafter => self.drafter_serving = true,
                 ArchivedSideGroup::MergeQueue => self.attempt_observers = true,
+                ArchivedSideGroup::WeaveDigest => self.proactivity = true,
                 _ => {}
             }
         }
@@ -53,6 +56,9 @@ impl ArchivedSideRowRefresh {
         if self.attempt_observers {
             vault.store.notify_attempt_observers();
         }
+        if self.proactivity {
+            vault.store.notify_proactivity_changes();
+        }
     }
 }
 
@@ -65,10 +71,14 @@ pub(crate) enum ArchivedSideGroup {
     AgentDef,
     /// Consolidation strength policy.
     DreamerConsolidation,
-    /// Projector wake policy.
+    /// Projector, sieve, wake and recipe policies.
     DreamerWake,
+    /// Digest schedules, owner settings and change records.
+    WeaveDigest,
     /// Description routing policy.
     Llm,
+    /// Web provider and key-selection choices.
+    WebConnector,
     /// Dependent walk bounds.
     Ports,
     /// Passive housekeeping wake notes.
@@ -131,6 +141,8 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
             || name == side_table::BOARD_LAYOUT_SETTINGS.name
             || name == side_table::CUSTOMIZATION_EVENT.name
             || name == side_table::CUSTOMIZATION_SETTINGS.name
+            || name == side_table::MODEL_OWNER_FALLBACK.name
+            || name == side_table::MODEL_OWNER_RESPONSES_STORE.name
             || name == side_table::NON_BASE_WORLD_CLAIM_FRACTION.name
             || name == side_table::PLUGIN_SUGGESTIONS_ENABLED.name
             || name == side_table::ROOM_THREADS_ADMIN_DELETE.name
@@ -144,8 +156,21 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::DREAMER_CONSOLIDATION_STRENGTH_POLICY.name => {
             Some(Group::DreamerConsolidation)
         }
-        name if name == side_table::DREAMER_PROJECTOR_POLICY.name => Some(Group::DreamerWake),
+        name if name == side_table::DREAMER_PROJECTOR_POLICY.name
+            || name == side_table::DREAMER_SIEVE_POLICY.name
+            || name == side_table::DREAMER_WAKE_POLICY.name
+            || name == side_table::DREAMER_WAKE_RECIPE_POLICY.name =>
+        {
+            Some(Group::DreamerWake)
+        }
+        name if name == side_table::WEAVE_DIGEST_SCHEDULE.name
+            || name == side_table::WEAVE_DIGEST_SETTINGS.name
+            || name == side_table::WEAVE_DIGEST_SETTING_CHANGE.name =>
+        {
+            Some(Group::WeaveDigest)
+        }
         name if name == side_table::LLM_DESCRIPTION_POLICY.name => Some(Group::Llm),
+        name if name == side_table::WEB_CONNECTOR_SETTING.name => Some(Group::WebConnector),
         name if name == side_table::PORTS_DEPENDENT_WALK_POLICY.name => Some(Group::Ports),
         name if name == side_table::HOUSEKEEPING_WAKE.name => Some(Group::HousekeepingWake),
         name if name == side_table::AUTHORITY_WITHDRAWN_GRANT.name => Some(Group::WithdrawnGrant),
@@ -168,7 +193,9 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::ACCESS_GRANT_OWNER_ACT.name => Some(Group::AccessGrant),
         name if name == side_table::POLICY_SETTING_ACT.name => Some(Group::PolicySetting),
         name if name == side_table::OWNER_POLICY_CHANGE_EVENT.name => Some(Group::PolicyModel),
-        name if name == side_table::OWNER_POLICY_SECRET_SCAN_RECEIPT.name => {
+        name if name == side_table::OWNER_POLICY_SECRET_SCAN_RECEIPT.name
+            || name == side_table::OWNER_POLICY_SECRET_SCAN_MODE.name =>
+        {
             Some(Group::PolicyModel)
         }
         name if name == side_table::ATTEMPT_HOLD_OVERRIDE_RECEIPT.name => Some(Group::AttemptQueue),
@@ -225,6 +252,14 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::DreamerWake => {
             crate::dreamer_wake::archive_restore::land_archived_dreamer_wake_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::WeaveDigest => {
+            crate::Vault::land_archived_weave_digest_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::WebConnector => {
+            crate::web_connector::archive_restore::land_archived_web_connector_rows_in_txn(
                 vault, txn, permit, rows,
             )
         }
@@ -377,6 +412,32 @@ pub(crate) fn install_archived_row<K: SideKey, V, C: SideCodec<V>>(
         Some(_) => Ok(ArchivedSideRowOutcome::KeptLive),
         None => {
             match table.put_archived_as_stored_in_txn(vault, txn, permit, key, &row.source_value) {
+                Ok(()) => Ok(ArchivedSideRowOutcome::Installed),
+                Err(Error::Store(StoreError::SideTableRow { .. })) => Ok(
+                    ArchivedSideRowOutcome::HeldBack(RetainedSideHeldBackReason::InvalidEncoding),
+                ),
+                Err(error) => Err(error),
+            }
+        }
+    }
+}
+
+/// Compares against the source bytes, but installs validated rewritten bytes at an absent key.
+/// A repeat import of a rewritten row keeps its destination-adapted live value.
+pub(crate) fn install_archived_row_with_rewrite<K: SideKey, V, C: SideCodec<V>>(
+    table: &SideTable<K, V, C>,
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    key: &K,
+    row: &ArchiveRetainedSideRow,
+    rewritten_value: &[u8],
+) -> Result<ArchivedSideRowOutcome> {
+    match table.get_bytes(vault, txn, key)? {
+        Some(stored) if stored == row.source_value => Ok(ArchivedSideRowOutcome::Unchanged),
+        Some(_) => Ok(ArchivedSideRowOutcome::KeptLive),
+        None => {
+            match table.put_archived_as_stored_in_txn(vault, txn, permit, key, rewritten_value) {
                 Ok(()) => Ok(ArchivedSideRowOutcome::Installed),
                 Err(Error::Store(StoreError::SideTableRow { .. })) => Ok(
                     ArchivedSideRowOutcome::HeldBack(RetainedSideHeldBackReason::InvalidEncoding),

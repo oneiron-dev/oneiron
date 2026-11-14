@@ -71,6 +71,7 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) use chunks::span_words_in_txn;
 use chunks::{Admission, ChunkRef};
+pub(crate) use policy::land_archived_dreamer_sieve_policy_row_in_txn;
 pub use policy::{SievePassBudgets, SievePolicy};
 pub use rules::RuleClass;
 
