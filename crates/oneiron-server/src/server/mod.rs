@@ -3,6 +3,7 @@ mod agent_wait_settle;
 mod artifact_previews;
 mod board_publisher;
 mod booking_calls;
+mod booking_turn_lines;
 mod browser_seats;
 mod claim_vad_payment;
 mod cloud_registration_revokes;
@@ -57,6 +58,7 @@ mod windows;
 
 pub(crate) use self::artifact_previews::ArtifactPreviews;
 pub(crate) use self::board_publisher::ServeBackground;
+pub(crate) use self::booking_turn_lines::LinePlace;
 pub(crate) use self::browser_seats::{BrowserSeat, BrowserSeats, HandleLine};
 pub(crate) use self::core::BroadcastPayload;
 pub(crate) use self::core::ManagedIssuer;

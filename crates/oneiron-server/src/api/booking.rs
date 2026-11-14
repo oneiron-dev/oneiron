@@ -101,6 +101,9 @@ pub(crate) use self::transport::{
     BookingAdmissionContext, booking_payer_verbs, credential_transport_context,
     is_booking_payer_door,
 };
+// The integration tests' door to the booking turn's line (census L3-11).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::turn::Turn as BookingTurn;
 use self::validate::validate_operation_shape;
 
 // The pre-split root path stays callable. Minting and resolution both live in
