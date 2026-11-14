@@ -1281,7 +1281,9 @@ Operations:
   `constraint` (`null`, `{"kind":"object","value":{...}}`, or `{"kind":"free_text","value":"..."}`),
   `session_ref`. Free text is normalized into a canonical constraint before any solve; the original
   sentence never reaches the oracle. Response: `slots` (UTC `start_utc`/`end_utc`/`rank`) plus
-  `flex_used`.
+  `flex_used`. A caller whose live calendar grants name every calendar a host binds also gets
+  `busy`: per host, its `calendar_refs` and opaque `busy` blocks (`start_utc`/`end_utc`) inside the
+  host's working hours. The field is absent for every other caller.
 - `book` — body is tagged by `stage`. `hold` takes `event_type`, `selected_slot`, `visitor_tz`,
   `constraint`, `session_ref`, `checkout_lease_token`, `idempotency_key`, and returns
   `hold_token`, `selected_slot`, and a server-capped `expires_at`. There is no TTL field: a longer

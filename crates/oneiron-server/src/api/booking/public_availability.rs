@@ -3,6 +3,7 @@ use super::super::booking_anti_abuse::{cached_slot_list_body, remember_slot_list
 use super::helpers::domain_digest;
 use super::*;
 use oneiron::booking::BookingPagePublication;
+use oneiron::booking::agent_api::GrantedBusyView;
 use oneiron::booking::publication::PublicBookingAuthority;
 use serde::{Deserialize, Serialize};
 
@@ -186,7 +187,11 @@ pub(super) fn solve(
     let SolveResult {
         slots, flex_used, ..
     } = solved;
-    let response = BookingOperationResponse::Availability { slots, flex_used };
+    let response = BookingOperationResponse::Availability {
+        slots,
+        flex_used,
+        busy: None,
+    };
     remember_response(
         server,
         page_ref,
@@ -196,6 +201,51 @@ pub(super) fn solve(
         &sources,
     )?;
     Ok((response, sources))
+}
+
+/// The caller's own grant view for one availability request (ARCH-0062
+/// #grant-view; owner ruling BOOKING-GRANT-VIEW = A, 2026-10-20), beside the
+/// rows it read: the calendar grants that decided it and the rows its busy
+/// union read. It is judged for `caller` at `now` on every answer, outside the
+/// slot cache, whose entries stay caller-free and never hold it. `None` when
+/// no host's every bound calendar is named by one of `caller`'s live grants.
+pub(super) fn granted_view(
+    server: &Arc<SyncServer>,
+    page_ref: EntityId,
+    input: &BookingAvailabilityInput,
+    caller: EntityId,
+    now: u64,
+) -> Result<(Option<Vec<GrantedBusyView>>, Vec<EntityId>), ApiError> {
+    let request = SolveRequest {
+        event_type: input.event_type.clone(),
+        window: input.window,
+        // A constraint narrows which slots are offered, never which time is
+        // busy, so the view is solved without it.
+        constraint: None,
+        visitor_tz: input.visitor_tz.clone(),
+    };
+    let producers = oneiron::memory::ProducerRows::default();
+    let (oracle, _) = lifecycle::booking_oracle_listing(server, page_ref, None, now, &producers)?;
+    let view = oracle.granted_busy(&request, &caller)?;
+    Ok((view, producers.take()))
+}
+
+/// `response` with `view` as its grant view, when it is an availability
+/// answer; any other answer unchanged.
+pub(super) fn with_granted_view(
+    response: BookingOperationResponse,
+    view: Option<Vec<GrantedBusyView>>,
+) -> BookingOperationResponse {
+    match response {
+        BookingOperationResponse::Availability {
+            slots, flex_used, ..
+        } => BookingOperationResponse::Availability {
+            slots,
+            flex_used,
+            busy: view,
+        },
+        other => other,
+    }
 }
 
 /// Replaces caller-supplied constraint input with a canonical object.

@@ -172,12 +172,8 @@ pub struct TitledEventRow {
     pub title: Option<String>,
 }
 
-/// A `Busy`-rung row: an opaque interval carrying no event material at all.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct BusyBlockRow {
-    pub start_utc: u64,
-    pub end_utc: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::booking::disclosure_rung::BusyBlockRow;
 
 /// What crosses a vault or public boundary. Never source event bytes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -227,7 +223,7 @@ pub fn project_at_rung(
             events.iter().map(TitledEventRow::redacted_from).collect(),
         )),
         DisclosureRung::Busy => Ok(RungProjection::Busy(
-            events.iter().map(BusyBlockRow::opaque_from).collect(),
+            events.iter().map(opaque_busy_block).collect(),
         )),
         DisclosureRung::Slots => {
             let mask = slot_mask.ok_or_else(|| {
@@ -275,13 +271,11 @@ impl TitledEventRow {
     }
 }
 
-impl BusyBlockRow {
-    /// Builds a fresh opaque interval, dropping the event's identity entirely.
-    fn opaque_from(row: &EventRow) -> Self {
-        Self {
-            start_utc: row.start_utc,
-            end_utc: row.end_utc,
-        }
+/// Builds a fresh opaque interval, dropping the event's identity entirely.
+fn opaque_busy_block(row: &EventRow) -> BusyBlockRow {
+    BusyBlockRow {
+        start_utc: row.start_utc,
+        end_utc: row.end_utc,
     }
 }
 

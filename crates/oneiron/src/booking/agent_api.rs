@@ -76,7 +76,8 @@ mod time_range_serde {
 #[doc(hidden)]
 pub use oneiron_verb_wire::booking::agent_api::{
     BookingAgentOperation, BookingBookResult, BookingCancelInput, BookingConfirmInput,
-    BookingIntakeAnswer, BookingOperationResponse, BookingRescheduleInput, SelectedSlot,
+    BookingIntakeAnswer, BookingOperationResponse, BookingRescheduleInput, GrantedBusyView,
+    SelectedSlot,
 };
 
 /// One advertised operation endpoint. `path` is relative and same-origin: a
