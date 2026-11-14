@@ -26,6 +26,8 @@ export interface PackageLayout {
   readonly listed?: number;
   /** The workbook's content type. */
   readonly workbookType?: string;
+  /** Whether the content types give the workbook's type as the `xml` default, with no override naming it. */
+  readonly workbookTypeByDefault?: boolean;
   /** Content-type elements after the workbook's and the sheets' overrides. */
   readonly contentTypes?: string;
   /** Workbook relationships after the sheets'. */
@@ -49,6 +51,7 @@ export function sheetsPackage(sheets: readonly Part["body"][], layout: PackageLa
   const {
     listed = sheets.length,
     workbookType = WORKBOOK_TYPE,
+    workbookTypeByDefault = false,
     contentTypes = "",
     workbookRelationships = "",
     sheetName = (n: number) => `S${n}`,
@@ -62,7 +65,7 @@ export function sheetsPackage(sheets: readonly Part["body"][], layout: PackageLa
     {
       name: "[Content_Types].xml",
       body: text(
-        `<Types xmlns="${CONTENT_TYPES}"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="${workbookType}"/>${each(sheets.length, (n) => `<Override PartName="/xl/worksheets/sheet${n}.xml" ContentType="${WORKSHEET_TYPE}"/>`)}${contentTypes}</Types>`,
+        `<Types xmlns="${CONTENT_TYPES}"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>${workbookTypeByDefault ? `<Default Extension="xml" ContentType="${workbookType}"/>` : `<Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="${workbookType}"/>`}${each(sheets.length, (n) => `<Override PartName="/xl/worksheets/sheet${n}.xml" ContentType="${WORKSHEET_TYPE}"/>`)}${contentTypes}</Types>`,
       ),
     },
     {

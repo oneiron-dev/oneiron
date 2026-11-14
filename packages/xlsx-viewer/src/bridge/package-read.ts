@@ -10,18 +10,18 @@
  * reads throw, so a refusal is kept, every later take throws it again, and it
  * is thrown once the read returns.
  *
- * A real package has SheetJS take each part once per read, and one part
- * twice: before it parses any sheet, a sheet read takes
- * `xl/worksheets/sheet.xml`, when the package has it, only to see that it is
- * there (a Numbers export names its sheet so), and then parses it if it is the
- * sheet asked for. A crafted package can make SheetJS take a part again and
- * again, and parse it each time: a workbook listing one sheet name thousands
- * of times, all pointing at one sheet part, has SheetJS read that part once
- * per listed sheet (its `sheets` option matches names without case), and
- * relationships whose targets differ only in case have it read one comments
- * part once per relationship. So a part taken more often than that is
- * refused; the second take of `xl/worksheets/sheet.xml` reads the bytes its
- * first take checked.
+ * A real package has SheetJS take each part once per read, and two parts
+ * twice, each first only to see that it is there: `xl/workbook.xml`, when the
+ * content types name no workbook part (a `Default` can give its type), and,
+ * in a sheet read, `xl/worksheets/sheet.xml` (a Numbers export names its
+ * sheet so). SheetJS then parses each of them. A crafted package can make
+ * SheetJS take a part again and again, and parse it each time: a workbook
+ * listing one sheet name thousands of times, all pointing at one sheet part,
+ * has SheetJS read that part once per listed sheet (its `sheets` option
+ * matches names without case), and relationships whose targets differ only
+ * in case have it read one comments part once per relationship. So a part
+ * taken more often than that is refused; the second take of a probed part
+ * reads the bytes its first take checked.
  *
  * Each take (`ReadTally.take`) checks, in order:
  * - a part SheetJS would read with its binary reader is refused. SheetJS picks
@@ -73,20 +73,29 @@ interface SheetJsZipSteps {
 /** A CFB file entry, as opposed to a folder or the root. */
 const CFB_FILE = 2;
 
-/** The part a sheet read takes once only to see that it is there (`parse_zip`'s Numbers check). */
-const PROBED_PART = "xl/worksheets/sheet.xml";
+/**
+ * The parts `parse_zip` takes once only to see that they are there: the
+ * workbook it falls back to when the content types name none, and the sheet
+ * a Numbers export names (its Numbers check).
+ */
+const PROBED_PARTS: readonly string[] = ["xl/workbook.xml", "xl/worksheets/sheet.xml"];
 
 /**
- * The entry SheetJS finds for `PROBED_PART`, as `safegetzipfile` finds a part:
- * the first path that equals the name without case, its segments parted by
- * slashes or by backslashes; -1 when there is none.
+ * The entries SheetJS finds for `PROBED_PARTS`, as `safegetzipfile` finds a
+ * part: the first path that equals the name without case, its segments
+ * parted by slashes or by backslashes.
  */
-function probedEntry(paths: readonly string[]): number {
-  const backslashed = PROBED_PART.replace(/\//g, "\\");
-  return paths.findIndex((path) => {
-    const name = path.replace(/^Root Entry[\/]/, "").toLowerCase();
-    return name === PROBED_PART || name === backslashed;
-  });
+function probedEntries(paths: readonly string[]): Set<number> {
+  const names = paths.map((path) => path.replace(/^Root Entry[\/]/, "").toLowerCase());
+  const entries = new Set<number>();
+  for (const part of PROBED_PARTS) {
+    const backslashed = part.replace(/\//g, "\\");
+    const index = names.findIndex((name) => name === part || name === backslashed);
+    if (index !== -1) {
+      entries.add(index);
+    }
+  }
+  return entries;
 }
 
 /**
@@ -194,14 +203,14 @@ export function readPackage(bytes: Uint8Array, budget: PreviewBudget, options: X
   let refusal: WorkbookBudgetError | undefined;
   /** The part of the last access, while the second access of its take may follow. */
   let takeOpen: ContainerEntry | undefined;
-  const probed = probedEntry(zip.FullPaths);
+  const probed = probedEntries(zip.FullPaths);
   for (const [index, entry] of zip.FileIndex.entries()) {
     const content = entry.content;
     if (entry.type !== CFB_FILE || content === undefined) {
       continue;
     }
-    /** Takes left for this part: one, and one more for the part SheetJS also probes. */
-    let takesLeft = index === probed ? 2 : 1;
+    /** Takes left for this part: one, and one more for a part SheetJS also probes. */
+    let takesLeft = probed.has(index) ? 2 : 1;
     let checked = false;
     Object.defineProperty(entry, "content", {
       configurable: true,

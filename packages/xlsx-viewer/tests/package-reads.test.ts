@@ -101,6 +101,17 @@ describe("xlsx preview: every door reads the package through one guarded read", 
     expect((caught as WorkbookBudgetError).line).toBe("structure");
   });
 
+  it("previews a workbook whose type only the content types' xml default gives, which SheetJS probes before it parses", () => {
+    // With no override naming a workbook part, SheetJS takes xl/workbook.xml
+    // once to see that it is there, then parses it.
+    const bytes = sheetsPackage([text(worksheet(`<row r="1"><c r="A1"><v>42</v></c></row>`))], {
+      workbookTypeByDefault: true,
+    });
+    expect(readWorkbookOutline(bytes).sheetOrder).toHaveLength(1);
+    expect(readSheetMetas(bytes).map((meta) => meta.name)).toEqual(["S1"]);
+    expect(cell(readSheet(bytes, "S1"), 0, 0)?.v).toBe(42);
+  });
+
   it("refuses a comments part two relationships name; sheet names that differ in case still preview", () => {
     let caught: unknown;
     try {
