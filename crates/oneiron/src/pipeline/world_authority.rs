@@ -447,9 +447,9 @@ fn newer_default(
 /// The owner tier's extra bar on top of [`claim_surfaceable`]: a grant counts
 /// only when the OWNER stated it and it carries explicit approval. An
 /// agent-authored `auto` row under the same predicate is ignored, so authoring
-/// one is not a self-widen path. The claim door takes a grant from a live vault
-/// owner only (`batch::claim_candidate_apply`), so no other writer's proposal
-/// is there for a holder to approve under a review Grant.
+/// one is not a self-widen path. The claim door and the off-record save take a
+/// grant from a live vault owner only (`claim::world_access`), so no other
+/// writer's proposal is there for a holder to approve under a review Grant.
 fn owner_stated_row(body: &ClaimBody) -> bool {
     body.approval == ClaimApprovalStatus::Approved && body.source == Some(ClaimSource::UserStated)
 }

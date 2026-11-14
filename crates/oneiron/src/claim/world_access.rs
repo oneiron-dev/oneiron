@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 pub use crate::store::world_authority::{
     ActiveWorldSelection, ResolvedWorldAuthority, WorldAuthoritySet,
 };
+use crate::write_envelope::world_access_predicates::is_world_access_tier_predicate;
 pub use crate::write_envelope::world_access_predicates::{
     PREDICATE_WORLD_ACCESS_ALLOWED_SET, PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
 };
@@ -103,18 +104,57 @@ fn encode_world_access_claim_value(value: &WorldAuthoritySet) -> Value {
     ])
 }
 
-/// The claim door's check of a row under either world-access tier predicate
-/// (FIX [WORLD-ACCESS-GENERIC-DOOR-UNDECODABLE]): an ACTIVE row carries the
-/// pinned strict value. The fold decodes every row it honours and fails the
-/// agent's reads closed on one it cannot read, and a claim door builds its
-/// value from JSON, which has no binary world id, so such a row would land and
-/// then block every read of its agent. A closed row is never read, so closing
-/// a stored row whose value does not decode stays open.
+/// The write rules of the two world-access tiers, checked where a principal's
+/// row enters base reality: the claim candidate door
+/// (`batch::claim_candidate_apply`) and the save of an off-record room row
+/// (`Vault::put_saved_claim_in_txn`). `writer` is the row's writer: the
+/// candidate's envelope actor, or the stamped writer of a saved row. The raw
+/// `Vault` door is owner authority and keeps landing rows as given, and the
+/// fold still fails a read closed on a stored row it cannot read.
+///
+/// - An ALLOWED-SET grant is the owner's (ARCH-0067 #tiers: "a grant = an
+///   owner-tiered-confirm receipt"), so its writer is a live vault owner at
+///   the write (FIX [WORLD-ACCESS-GRANT-HOLDER-SETTLE]). Another writer's
+///   proposal would govern its subject once a holder approved it under a
+///   review Grant, with no owner decision on the grant. The owner is read once
+///   here, never at each fold, so an owner who later leaves never drops a
+///   grant from the meet.
+/// - An ACTIVE row under either tier carries the pinned strict value (FIX
+///   [WORLD-ACCESS-GENERIC-DOOR-UNDECODABLE]). The fold decodes every row it
+///   honours and fails the agent's reads closed on one it cannot read, and a
+///   claim door builds its value from JSON, which has no binary world id. A
+///   closed row is never read.
 ///
 /// # Errors
 ///
-/// [`Error::InvalidConfig`] from [`decode_world_access_claim_value`].
-pub(crate) fn validate_world_access_claim(body: &ClaimBody) -> Result<()> {
+/// [`Error::InvalidClaimBody`] for a grant whose writer is no live owner,
+/// [`Error::InvalidConfig`] from [`decode_world_access_claim_value`], and the
+/// owner census's own read error.
+pub(crate) fn admit_world_access_write(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    writer: Option<EntityId>,
+    body: &ClaimBody,
+) -> Result<()> {
+    if !is_world_access_tier_predicate(&body.predicate) {
+        return Ok(());
+    }
+    if body.predicate == PREDICATE_WORLD_ACCESS_ALLOWED_SET {
+        let owner_writes = match writer {
+            Some(writer) => crate::policy_model::is_live_vault_owner_for_store_in_txn(
+                store,
+                store.privacy_posture,
+                txn,
+                &writer,
+            )?,
+            None => false,
+        };
+        if !owner_writes {
+            return Err(Error::InvalidClaimBody(
+                "world access grant must be written by a vault owner",
+            ));
+        }
+    }
     if body.lifecycle != ClaimLifecycleStatus::Active {
         return Ok(());
     }
