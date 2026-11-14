@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::guard::BudgetGuard;
 use super::ledger::LeaseState;
-use super::types::{BudgetAdmission, BudgetExhaustionPolicy, BudgetRead};
+use super::types::{BudgetAdmission, BudgetRead};
 use crate::llm::{BudgetDenied, BudgetLease, CallPurpose, LlmUsage, ModelLocality};
 
 /// What one bound admission grants its lease for. The guard records it and
@@ -245,30 +245,6 @@ impl BudgetGuard {
     pub fn revise_line(&self, limit_units: u64, reserve_units: u64) -> BudgetRead {
         let mut state = self.lock_state();
         state.revise_line(limit_units, reserve_units);
-        state.read()
-    }
-
-    /// Moves the hard line no admission passes, whatever the exhaustion
-    /// policy adds to the limit: a live spend scope's room, so an overdraft
-    /// widens the meter's own line and never the scope's (`None` bounds
-    /// nothing). Spend and open reservations stay; a lower ceiling only
-    /// refuses later admissions.
-    pub fn revise_ceiling(&self, ceiling_units: Option<u64>) -> BudgetRead {
-        let mut state = self.lock_state();
-        state.ceiling_units = ceiling_units;
-        state.read()
-    }
-
-    /// Moves what this meter does at its limit: an owner's answer that
-    /// reaches a meter already running, such as one restored from its
-    /// checkpoint. Spend, reservations, row tallies and fired thresholds
-    /// stay.
-    pub fn revise_exhaustion_policy(
-        &self,
-        on_budget_exhausted: BudgetExhaustionPolicy,
-    ) -> BudgetRead {
-        let mut state = self.lock_state();
-        state.on_budget_exhausted = on_budget_exhausted;
         state.read()
     }
 

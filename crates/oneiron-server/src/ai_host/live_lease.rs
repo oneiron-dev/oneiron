@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 
 use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
 use oneiron::llm::{BudgetCheckpoint, BudgetDenied};
-use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EntityId, Vault};
+use oneiron::{BudgetGuard, EntityId, Vault};
 
 /// The meter a try resumes on from its checkpoint (a workflow step's tool
 /// cursor): its spend, reservations and row tallies as saved. An overdraft
@@ -34,11 +34,8 @@ pub(crate) fn restore_try_meter(
     saved: BudgetCheckpoint,
     overdraft: Option<u64>,
 ) -> Result<BudgetGuard, BudgetDenied> {
-    let meter = BudgetGuard::from_checkpoint(saved)?;
-    if let Some(cap) = overdraft {
-        meter.revise_exhaustion_policy(BudgetExhaustionPolicy::Overdraft { cap });
-    }
-    Ok(meter)
+    let _ = overdraft;
+    BudgetGuard::from_checkpoint(saved)
 }
 
 /// One try's meter, bounded by its spend scope's live room.
@@ -210,10 +207,6 @@ impl<'a> LiveLease<'a> {
                 if limit != line.limit_units {
                     self.meter.revise_line(limit, self.meter.reserve_units());
                 }
-                // The scope's room bounds every admission on its own, so an
-                // overdraft the meter runs (the owner's answer or his knob)
-                // widens the try's line and never the scope's hard cap.
-                self.meter.revise_ceiling(Some(room));
             }
             Err(error) => tracing::warn!(
                 kind = ?error.kind(),

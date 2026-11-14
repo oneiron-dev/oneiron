@@ -19,11 +19,6 @@ pub(super) struct BudgetState {
     pub(super) limit_units: u64,
     pub(super) reserve_units: u64,
     pub(super) on_budget_exhausted: BudgetExhaustionPolicy,
-    /// A hard line no admission passes, whatever the exhaustion policy adds
-    /// to the limit: a live spend scope's room as its lease last read it
-    /// (`BudgetGuard::revise_ceiling`). `None` bounds nothing. It is not
-    /// checkpointed: a restored meter's lease reads it again.
-    pub(super) ceiling_units: Option<u64>,
     pub(super) used_units: u64,
     pub(super) reserved_units: u64,
     pub(super) next_lease_seq: u64,
@@ -65,7 +60,6 @@ impl BudgetState {
             limit_units,
             reserve_units,
             on_budget_exhausted,
-            ceiling_units: None,
             used_units: 0,
             reserved_units: 0,
             next_lease_seq: 0,
@@ -320,8 +314,7 @@ impl BudgetState {
     }
 
     pub(super) fn cap_units(&self) -> u64 {
-        let cap = self.on_budget_exhausted.admission_cap(self.limit_units);
-        self.ceiling_units.map_or(cap, |ceiling| cap.min(ceiling))
+        self.on_budget_exhausted.admission_cap(self.limit_units)
     }
 
     /// An unreserved lease (free local work). A parked meter refuses it.
