@@ -959,6 +959,23 @@ mod carrier_tests {
             "a debt for an unknown ref stands",
         );
     }
+
+    #[test]
+    fn a_retirement_after_the_export_check_refuses_the_seal() {
+        let (_dir, vault, subject, key_ref) = vault_with_one_ready_overlay_key();
+        let machine = EntityId::now();
+        let (_session, target) = live_session(machine, [0x11; 32], [0x22; 32]);
+        let exported = super::export_key_checked(&vault.store, &subject, &key_ref, &target, || {
+            vault.with_write_txn_grouped(|txn| {
+                super::retire_subject_keys_in_txn(&vault.store, txn, &subject, &[], &[])
+            })
+        });
+        assert!(
+            exported.is_err(),
+            "a retirement that commits after the export's first check must refuse the seal"
+        );
+        assert!(super::export_key(&vault.store, &subject, &key_ref, &target).is_err());
+    }
 }
 
 /// The fence (census L5-22 1a-iii commit 7): the home handoff's carrier
