@@ -76,6 +76,11 @@ fn assert_index_answers_as_walk(vault: &Vault, key: [u8; 32], expected: Option<E
 fn index_answers_as_the_walk_through_writes_a_delete_and_a_reopen() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    // The delete below signs its receipt: install this device's keystore, as a
+    // host does after each open.
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     assert!(
         doors::index_complete(&vault).expect("flag"),
         "open builds the index"
