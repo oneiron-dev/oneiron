@@ -1,0 +1,18 @@
+{
+  "name": "vault.schedules.run",
+  "description": "Ask one armed job to run now: it is due from now, whatever its trigger says, until a run starts.",
+  "input": "crate::task_verb::sdk::ScheduleRef",
+  "output": "crate::schedule::ScheduleView",
+  "call": "crate::task_verb::sdk::schedule_run_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "facade_actor"
+}

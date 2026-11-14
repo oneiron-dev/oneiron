@@ -1,0 +1,15 @@
+[package]
+name = "oneiron-schedule-contract"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The Schedule vocabulary below the oneiron engine: when a job fires, the next occurrence after now, and the retry after a failure, as pure arithmetic with no store"
+repository.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+schemars = "=0.8.22"
+serde = { workspace = true }

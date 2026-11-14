@@ -89,6 +89,7 @@ pub mod room_turn_backfill;
 pub mod run_changes;
 pub mod run_hold;
 pub mod run_lifecycle;
+pub mod schedule;
 pub mod scope_summary;
 pub mod seat_park_model_step;
 pub mod shared_act_family;

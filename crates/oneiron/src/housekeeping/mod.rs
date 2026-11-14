@@ -121,6 +121,7 @@ impl Vault {
         release_ticks_and_prune_hook_feeds(self, &deadline);
         evict_ended_inquiry_answers(self, &deadline);
         advance_due_check_ins(self, &deadline);
+        run_due_schedules(self, &deadline);
         #[cfg(feature = "sync")]
         admit_carried_turn_program_wakes(self, &deadline);
         self.housekeeping_pass(Selection::Due, budget, access)
@@ -151,6 +152,7 @@ impl Vault {
         release_ticks_and_prune_hook_feeds(self, &deadline);
         evict_ended_inquiry_answers(self, &deadline);
         advance_due_check_ins(self, &deadline);
+        run_due_schedules(self, &deadline);
         #[cfg(feature = "sync")]
         admit_carried_turn_program_wakes(self, &deadline);
         self.housekeeping_pass(Selection::All, budget, access)
@@ -237,6 +239,10 @@ impl Vault {
             let due = schedule::due_at(self, sweep, states.get(&sweep), every)?;
             let wake = at.max(due);
             earliest = Some(earliest.map_or(wake, |seen| seen.min(wake)));
+        }
+        // The first due armed job that wakes its host (DESIGN 15-setting-primitive, stage 0.2).
+        if let Some(at) = self.schedule_wake_at()? {
+            earliest = Some(earliest.map_or(at, |seen| seen.min(at)));
         }
         Ok(earliest)
     }
@@ -509,6 +515,18 @@ fn evict_ended_inquiry_answers(vault: &Vault, deadline: &Deadline) {
     }
     if let Err(error) = vault.evict_inquiry_answers() {
         tracing::warn!(%error, "housekeeping: ended inquiry answers wait for the next pass");
+    }
+}
+
+/// Runs the armed schedules due by now (DESIGN 15-setting-primitive, stage 0.2), beside the
+/// sweeps of this pass until they move onto it. A failure to read or write the schedule is logged
+/// and waits for the next pass; a job's own failure is retried by its own backoff.
+fn run_due_schedules(vault: &Vault, deadline: &Deadline) {
+    if deadline.stopped() {
+        return;
+    }
+    if let Err(error) = vault.run_due_until(deadline) {
+        tracing::warn!(%error, "housekeeping: due schedules wait for the next pass");
     }
 }
 

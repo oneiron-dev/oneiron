@@ -8031,6 +8031,7 @@ dependencies = [
  "oneiron-retrieval",
  "oneiron-run-budget",
  "oneiron-sandbox-contract",
+ "oneiron-schedule-contract",
  "oneiron-sdk-build",
  "oneiron-skill-attribution",
  "oneiron-spawn",
@@ -8847,6 +8848,14 @@ dependencies = [
 [[package]]
 name = "oneiron-sandbox-contract"
 version = "0.1.0"
+
+[[package]]
+name = "oneiron-schedule-contract"
+version = "0.1.0"
+dependencies = [
+ "schemars 0.8.22",
+ "serde",
+]
 
 [[package]]
 name = "oneiron-sdk-build"
