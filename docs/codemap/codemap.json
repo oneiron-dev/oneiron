@@ -5037,7 +5037,7 @@
      "path": "src/authority/log_structure.rs",
      "purpose": "The authority log's consent structure, read from its signed rows alone, so the fold's bounds and the store…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -5134,7 +5134,7 @@
      "path": "src/authority/machine_profile/mod.rs",
      "purpose": "Folds `MachineProfile` entries into each physical machine's standing",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 17,
       "enum": 2,
       "fn": 15,
       "struct": 4
@@ -5277,7 +5277,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 58,
+      "crate-vis": 59,
       "mod": 2,
       "re-export": 76
      }
@@ -83047,7 +83047,7 @@
      "purpose": "Observer A/B registration and the shared Materializer/OutboundSink state",
      "surface": {
       "const": 1,
-      "crate-vis": 19,
+      "crate-vis": 21,
       "fn": 13,
       "re-export": 1,
       "struct": 4
@@ -83081,7 +83081,7 @@
      "path": "src/sync/bridge/recovery.rs",
      "purpose": "Recovery preflight through the existing replay doors, in an aborted transaction",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -87274,7 +87274,7 @@
      "path": "src/sync/window/forward.rs",
      "purpose": "Forward rematerialization of window state into the CRDT doc",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 1
      }
     },
@@ -87359,8 +87359,8 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 37,
-      "fn": 6,
+      "crate-vis": 39,
+      "fn": 7,
       "mod": 1,
       "re-export": 10,
       "struct": 1
@@ -90478,7 +90478,7 @@
      "path": "src/test_doors/authority_stored_damage.rs",
      "purpose": "L9-50 (ARCH-0006a #list-read-built): damage one stored authority row in place, past every write door, so a…",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -90985,6 +90985,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/host_node_seals.rs",
+     "purpose": "Doors for the host node's engine seals on a paired replica (L7-34; ARCH-0055 `#seal-standing-open`): another…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/house_link.rs",
      "purpose": "The house link's bind-interval read (HOUSE-BIND = A, S3) for the test that reads it on both sides of an…",
      "surface": {
@@ -91072,6 +91082,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RacedPass"
+     ],
+     "path": "src/test_doors/live_window_import.rs",
+     "purpose": "L7-45 (ARCH-0023b `#tombstone-index-built`, the H15 follow-up): a forward pass over a window document other…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -91141,7 +91164,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 104,
+      "mod": 107,
       "re-export": 1
      }
     },
@@ -91326,6 +91349,16 @@
      "notable": [],
      "path": "src/test_doors/retrieval_policy_default_floor.rs",
      "purpose": "The finalized-run writer needed by `tests/retrieval_policy_default_floor.rs`",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/room_facet_limit.rs",
+     "purpose": "Door for `tests/room_of_unheld_project_reads_bottom.rs` (L7-39 guard): the facets a room limits its reads…",
      "surface": {
       "fn": 1
      }
@@ -99588,6 +99621,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/authority_rows_never_applied.rs",
+     "purpose": "Canonical recovery and signed-history import leave out the authority rows the source's own fold never…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -100802,6 +100843,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/host_node_engine_seals.rs",
+     "purpose": "The host's own merges count on a paired replica (census L7-34; ARCH-0055 `#seal-standing-open`: \"The host's…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -101631,6 +101680,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/live_window_import_waits_for_pass.rs",
+     "purpose": "L7-45 (ARCH-0023b `#tombstone-index-built`, the H15 follow-up: \"serialize live-window imports with indexed…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/machine_peer_binding_facet.rs",
      "purpose": "A MACHINE's actor bookkeeping lands in the vault default facet (FIX 23050, PRIVACY-02's Dreamer summary…",
      "surface": {}
@@ -102371,6 +102428,14 @@
      "notable": [],
      "path": "tests/retrieval_policy_default_floor.rs",
      "purpose": "Default retrieval-policy updates keep tiny trials as offers; only an explicit owner reward floor admits the…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/room_of_unheld_project_reads_bottom.rs",
+     "purpose": "L7-39 guard (Engine RULING L7-39-OLDER-PEER = A, 14 Nov 17:31): a room whose project this vault does not…",
      "surface": {}
     },
     {
@@ -104845,7 +104910,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 107,
+     "files": 110,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105022,8 +105087,8 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7570,
-   "test_files": 1290
+   "source_files": 7573,
+   "test_files": 1294
   },
   "oneiron-agent-runtime": {
    "files": [
