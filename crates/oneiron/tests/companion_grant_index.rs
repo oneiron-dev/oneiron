@@ -9,6 +9,8 @@
 //! anywhere makes the reads walk, so they fail closed as before. A persona
 //! list the index serves reads only its own grants, so it raises no
 //! `AccessGrantRows` check; with the index dropped it walks and raises one.
+//! An erase (a GDPR, policy or user delete) leaves no index row naming the
+//! erased grant, at once or after a reopen.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -26,7 +28,7 @@ use oneiron::scan_check::EngineScan;
 use oneiron::settings::ReadDestination;
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::companion_grant_index as doors;
-use oneiron::{AccessGrant, EntityId, Vault, VaultConfig};
+use oneiron::{AccessGrant, DeleteReason, EntityId, Vault, VaultConfig};
 use serde_json::json;
 
 fn put_person(vault: &Vault) -> EntityId {
@@ -371,4 +373,50 @@ fn a_persona_list_reads_only_its_own_grants_from_the_index() {
         1,
         "the walk reads past its threshold row"
     );
+}
+
+#[test]
+fn an_erase_leaves_no_index_row_naming_the_erased_grant() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    let person = put_person(&vault);
+    let indexed = |vault: &Vault, grant_id: EntityId| {
+        doors::index_rows(vault)
+            .expect("index rows")
+            .iter()
+            .any(|(_, _, id)| *id == grant_id)
+    };
+    let mut erased = Vec::new();
+    for reason in [
+        DeleteReason::GdprDelete,
+        DeleteReason::PolicyDelete,
+        DeleteReason::UserDelete,
+    ] {
+        let principal = EntityId::now();
+        let erasing = grant(&vault, principal, person, None);
+        assert!(indexed(&vault, erasing), "the grant write indexes it");
+        vault
+            .delete_entity_with_reason(&erasing, reason)
+            .expect("erase");
+        assert!(
+            !indexed(&vault, erasing),
+            "{reason:?} leaves no index row naming the grant"
+        );
+        assert_eq!(
+            doors::indexed_grants(&vault, &principal, &person).expect("index"),
+            Some(vec![]),
+            "the index serves the pair and names no grant"
+        );
+        erased.push(erasing);
+    }
+    // The flag stays set, so the reopen keeps the index as it stands.
+    drop(vault);
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("reopen");
+    assert!(doors::index_complete(&vault).expect("flag"));
+    for erasing in erased {
+        assert!(!indexed(&vault, erasing), "the reopen keeps no row for it");
+    }
 }

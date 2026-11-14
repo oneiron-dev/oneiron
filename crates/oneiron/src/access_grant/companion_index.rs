@@ -13,10 +13,10 @@
 //! index does not hold) makes the reads walk every ACCESS_GRANT row, which
 //! answers (or fails closed) exactly as it does today. Every entity body
 //! write passes the body stage (`batch::put_apply::stage_entity_body_row`),
-//! which moves the row's key here, and every entity row removal drops it.
-//! A key left behind by a body rewritten in place (a scrub to a shell, an
-//! erased grant's inert history) re-reads as no grant for that pair, and
-//! the reads skip it, as the walk skips that row.
+//! which moves the row's key here (an erased principal's inert history
+//! too), every in-place scrub to a shell
+//! (`EntityStoreMaintenance::port_entity_scrub`, which every erase runs)
+//! drops it, and every entity row removal drops it.
 //!
 //! [`INDEX_VERSION`] is the decoder's version too: a change to what the
 //! grant body decoder accepts bumps it, so the next open rebuilds the index
@@ -285,6 +285,18 @@ impl Vault {
     pub(crate) fn companion_grant_index_complete_for_test(&self) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
         Ok(index_complete_in_txn(&self.store, &rtxn))
+    }
+
+    /// Every `(principal, PERSON, grant)` row the index holds.
+    pub(crate) fn companion_grant_index_rows_for_test(
+        &self,
+    ) -> Result<Vec<(EntityId, EntityId, EntityId)>> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(GRANT_INDEX
+            .scan(&self.store, &rtxn)?
+            .into_iter()
+            .map(|(key, ())| key)
+            .collect())
     }
 
     /// The grant ids the index names for `principal_ref` and `person_ref`:

@@ -34,6 +34,11 @@ pub fn index_complete(vault: &Vault) -> Result<bool> {
     vault.companion_grant_index_complete_for_test()
 }
 
+/// Every `(principal, PERSON, grant)` row the index holds.
+pub fn index_rows(vault: &Vault) -> Result<Vec<(EntityId, EntityId, EntityId)>> {
+    vault.companion_grant_index_rows_for_test()
+}
+
 /// Stores `body` as the ACCESS_GRANT row `id` past the write door's
 /// validation, through the body stage's index writer.
 pub fn put_undecodable_grant(vault: &Vault, id: &EntityId, body: &[u8]) -> Result<()> {
