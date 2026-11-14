@@ -546,9 +546,22 @@ async fn a_held_workflow_continued_on_local_runs_on_the_free_rung() {
             2,
         )
         .unwrap();
-    // The first rung bills a customer account, and the step's line is below
-    // one call's reservation (8,000 units): its admission is refused before
-    // anything is sent. The second rung is free keyless own-server work.
+    // The first rung bills a customer account, and the owner's policy row
+    // caps workflow steps below one call's reservation (8,000 units; the
+    // step's own line may not be): its admission is refused before anything
+    // is sent. The second rung is free keyless own-server work.
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    oneiron::conversation_dag::test_support::put_test_policy_manifest(
+        &vault,
+        oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+        EntityId::now(),
+        &serde_json::json!({
+            "schema_version": "1.2", "pack_id": "step-cap", "pack_version": "1",
+            "min_engine_version": "0.0.0", "defaults": {}, "rules": [], "actor_ceilings": [],
+            "budget_policy": [{"purpose": "workflow_step", "cap": 1000}],
+        }),
+    )
+    .unwrap();
     let mut config = models_toml(&format!(
         r#"
 [providers.paid]
@@ -563,7 +576,7 @@ rungs = [{{ model = "paid:big" }}, {{ model = "free:small" }}]
 enabled = false
 [workflows]
 retry_backoff_secs = 0
-step_budget_units = 1000
+step_budget_units = 8000
 "#,
         paid.base_url, free.base_url
     ));
