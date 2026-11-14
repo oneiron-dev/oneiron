@@ -16,6 +16,7 @@ use oneiron::authority::{
     PredictedResidenceSet, ResidenceAct, ResidenceResultStatus,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::registry::ENTITY_TYPE_TURN;
 use oneiron::store::GateDecisionId;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::client::NoteSyncSession;
@@ -23,6 +24,7 @@ use oneiron::sync::connection::{ConnectionConfig, FetchConditions, SyncConnectio
 use oneiron::sync::{
     SyncClientConfig, SyncResidenceMode, SyncSelector, SyncSelectorWorld, WindowKey, WindowManager,
 };
+use oneiron::temporal::TimeRange;
 use oneiron::test_doors::predicted_residence::{
     append_prediction, apply_residence_directives, run_predicted_pass,
 };
@@ -232,6 +234,34 @@ fn predicted_set(windows: &[WindowKey], documents: &[EntityId]) -> PredictedResi
             .collect(),
         documents: documents.iter().copied().collect(),
     }
+}
+
+/// A TURN row on `device` as a machine holds an entity document before its text arrives: a
+/// canonical MessagePack map holding only `txt`, the text the sync plane births lazily (FIX
+/// 11794). The home predicts only entities that hold a document; a WORLD row holds no text plane.
+fn predicted_turn(device: &Device) -> EntityId {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![(
+            rmpv::Value::from("txt"),
+            rmpv::Value::from("a predicted turn"),
+        )]),
+    )
+    .expect("the turn body encodes");
+    let turn = EntityId::now();
+    let at = now_secs();
+    device
+        .vault
+        .put_entity(
+            &turn,
+            ENTITY_TYPE_TURN,
+            TimeRange { start: at, end: at },
+            at,
+            &body,
+        )
+        .expect("the predicted turn");
+    turn
 }
 
 /// Lowercase hex of `bytes`.
@@ -551,6 +581,7 @@ fn a_followed_world_is_neither_fetched_nor_evicted_by_prediction() {
                     b"thin index anchor",
                 )
                 .expect("the thin index anchor");
+            let turn = predicted_turn(&device);
             let predicted = Arc::new(PredictedHome::default());
             let (url, _seen) = start_home(Arc::clone(&predicted)).await;
             let connection = device_connection(&device, url);
@@ -570,7 +601,7 @@ fn a_followed_world_is_neither_fetched_nor_evicted_by_prediction() {
                     .expect("the level applies"),
                 1
             );
-            let first = predicted_set(&[window.clone()], &[device.granted]);
+            let first = predicted_set(&[window.clone()], &[turn]);
             serve(&predicted, &first);
             let prediction = append_prediction(
                 &device.vault,
@@ -602,7 +633,7 @@ fn a_followed_world_is_neither_fetched_nor_evicted_by_prediction() {
                 predicted.promotes.lock().expect("the promotes").is_empty(),
                 "a followed world is not prefetched"
             );
-            let document = format!("ds:e:{}", device.granted.to_hex());
+            let document = format!("ds:e:{}", turn.to_hex());
             assert!(
                 device
                     .vault
@@ -614,7 +645,7 @@ fn a_followed_world_is_neither_fetched_nor_evicted_by_prediction() {
             assert!(
                 device
                     .vault
-                    .sync_state_get(&format!("pr:e:{}", device.granted.to_hex()))
+                    .sync_state_get(&format!("pr:e:{}", turn.to_hex()))
                     .expect("the marker reads")
                     .is_some(),
                 "the predicted document is marked"
@@ -669,7 +700,7 @@ fn a_followed_world_is_neither_fetched_nor_evicted_by_prediction() {
             assert!(
                 device
                     .vault
-                    .sync_state_get(&format!("pr:e:{}", device.granted.to_hex()))
+                    .sync_state_get(&format!("pr:e:{}", turn.to_hex()))
                     .expect("the marker reads")
                     .is_none(),
                 "the dropped document's marker is gone"
