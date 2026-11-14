@@ -104223,6 +104223,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/phone_line.rs",
+     "purpose": "The agent phone line (OF-605, ARCH-0061 #agent-phone-line): off by default, a stranger's call lands in the…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -107154,7 +107162,7 @@
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7519,
-   "test_files": 1239
+   "test_files": 1240
   },
   "oneiron-agent-runtime": {
    "files": [

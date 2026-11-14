@@ -8612,6 +8612,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/park_seat_model_step.rs` | test | L | — | — | SEAT-PARK-MODEL-STEP-PATH: a Dreamer step that a login-backed model seat refuses parks its try on that… |
 | `tests/park_typed_wait.rs` | test | XL | — | — | 6.5d-1 (budget typed wait): a step refused by its spend scope's hard cap parks typed on that scope, and only… |
 | `tests/pass_budget_wait.rs` | test | m | — | — | Row B2 of BUDGET-TRAP-UNTYPED-NO-SENDER: a step's spent budget waits on the write that refills it, or… |
+| `tests/phone_line.rs` | test | m | — | — | The agent phone line (OF-605, ARCH-0061 #agent-phone-line): off by default, a stranger's call lands in the… |
 | `tests/phonetic_stage_deadline.rs` | test | s | — | — | The phonetic stage checks its deadline inside the stage (census L9-10; the retrieval hub's follow-up "Two… |
 | `tests/plan_mode.rs` | test | m | — | — | Plan mode: an agent's plan waits for the owner's verdict on its revision |
 | `tests/plan_mode_markup.rs` | test | m | — | — | Plan mode's markup: the owner marks up a plan-doc with anchored threads |
