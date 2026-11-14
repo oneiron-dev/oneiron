@@ -4,6 +4,7 @@
 //! frame stays unverified and is named as an overflow.
 //! `cargo test --locked -p oneiron-docedit --all-features --test deck_fit_evidence`.
 
+use oneiron_docedit::contract::DeckCreated;
 use oneiron_docedit::emit::oracle_cases::{self, LoadedCaseSet};
 use oneiron_docedit::emit::{
     Candidate, EvidenceError, FitEvidence, FitTrace, FitUnverified, FitVerdict, Unverified,
@@ -265,4 +266,43 @@ fn receipts_naming_one_candidate_twice_are_refused() {
             second: 1
         })
     );
+}
+
+/// Two rows of one receipt for one unit are ambiguous evidence: the receipt does not read, so a first row that fits
+/// never certifies a unit a later row measured running past its frame.
+#[test]
+fn a_receipt_naming_one_unit_twice_is_refused() {
+    let receipt = edited_receipt(|held| {
+        let rows = held
+            .get_mut("fit")
+            .and_then(Value::as_array_mut)
+            .expect("fit rows");
+        let mut repeat = rows.first().cloned().expect("a fit row");
+        repeat["verdict"] = Value::from("overflows");
+        rows.push(repeat);
+    });
+    assert_eq!(
+        FitEvidence::from_receipts(&[receipt.as_slice()]),
+        Err(EvidenceError::Receipt {
+            index: 0,
+            detail: "two fit rows name slide 1, shape 2, block t-title".to_owned()
+        })
+    );
+}
+
+/// A `DeckCreated` reply written before receipts were read has no `fit_overflows` and no `fit_receipt`; it still
+/// reads, with no overflow and no receipt.
+#[test]
+fn a_deck_created_reply_from_before_receipts_still_reads() {
+    let reply = serde_json::json!({
+        "hash": "00",
+        "slides": [],
+        "write_set": [],
+        "omitted": [],
+        "fit_unverified": [{ "slide": "ppt/slides/slide1.xml", "block": "t-title", "shape": 2 }],
+    });
+    let read: DeckCreated = serde_json::from_value(reply).expect("read the older reply");
+    assert_eq!(read.fit_unverified.len(), 1);
+    assert!(read.fit_overflows.is_empty());
+    assert_eq!(read.fit_receipt, None);
 }

@@ -226,3 +226,32 @@ fn a_deck_with_no_receipt_stays_fit_unverified() -> TestResult {
     assert_eq!(record.fit_receipt, None);
     Ok(())
 }
+
+/// A record stored before receipts were read has no `fit_overflows` and no `fit_receipt` key. It still reads under the
+/// store's encoding (`rmp_serde::to_vec_named`, a map per record), with no overflow and no receipt.
+#[test]
+fn a_record_stored_before_receipts_still_reads() -> TestResult {
+    let fixture = Fixture::open()?;
+    let template = fixture.template()?;
+    let record = fixture.create(&brief_bytes()?, template)?;
+
+    let bytes = rmp_serde::to_vec_named(&record)?;
+    let rmpv::Value::Map(entries) = rmpv::decode::read_value(&mut bytes.as_slice())? else {
+        return Err("a named record is a map".into());
+    };
+    let count = entries.len();
+    let older: Vec<(rmpv::Value, rmpv::Value)> = entries
+        .into_iter()
+        .filter(|(key, _)| !matches!(key.as_str(), Some("fit_overflows" | "fit_receipt")))
+        .collect();
+    assert_eq!(older.len() + 2, count, "the record names both fields");
+    let mut written = Vec::new();
+    rmpv::encode::write_value(&mut written, &rmpv::Value::Map(older))?;
+
+    let read: DeckCreationRecord = rmp_serde::from_slice(&written)?;
+    assert!(read.fit_overflows.is_empty());
+    assert_eq!(read.fit_receipt, None);
+    assert_eq!(read.fit_unverified, record.fit_unverified);
+    assert_eq!(read.content_hash, record.content_hash);
+    Ok(())
+}

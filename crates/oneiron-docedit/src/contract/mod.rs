@@ -603,10 +603,12 @@ pub struct DeckCreated {
     /// Units whose laid-out text has no rendered fit proof.
     pub fit_unverified: Vec<UnverifiedUnit>,
     /// The `fit_unverified` units PowerPoint measured running past their
-    /// frame.
+    /// frame. Absent from a reply written before receipts were read.
+    #[serde(default)]
     pub fit_overflows: Vec<UnverifiedUnit>,
     /// SHA-256 hex of the stored Office receipt that measured this exact
     /// deck, when one does.
+    #[serde(default)]
     pub fit_receipt: Option<String>,
 }
 

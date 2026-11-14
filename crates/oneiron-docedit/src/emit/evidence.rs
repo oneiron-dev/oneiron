@@ -5,7 +5,7 @@
 use super::{EmittedSlide, FitTrace, FitUnverified, Unverified};
 use serde::Deserialize;
 use sha2::Digest as _;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
 /// The committed `deck-create-v1` receipts (`scripts/office/results/deck-create-v1/<case>/receipt.json`), one per case of `scripts/office/deck-create-v1.json`.
@@ -54,6 +54,7 @@ pub struct FitReceipt {
 
 impl FitReceipt {
     /// PowerPoint's verdict for the unit at `slide` (1-based), `shape` and `block`, when the receipt has a row for it.
+    /// A receipt holds at most one row per unit: [`FitEvidence::from_receipts`] refuses a repeat.
     pub fn verdict(&self, slide: usize, shape: u32, block: &str) -> Option<FitVerdict> {
         self.rows
             .iter()
@@ -86,7 +87,7 @@ impl FitEvidence {
         STORED_EVIDENCE.get_or_init(|| Self::from_receipts(&STORED).unwrap_or_default())
     }
 
-    /// Read Office receipts (`receipt.json` bytes) as evidence.
+    /// Read Office receipts (`receipt.json` bytes) as evidence. Two receipts for one candidate, or two rows of one receipt for one unit, are ambiguous and refused.
     pub fn from_receipts(receipts: &[&[u8]]) -> Result<Self, EvidenceError> {
         let mut by_candidate = BTreeMap::new();
         let mut index_of = BTreeMap::new();
@@ -106,19 +107,29 @@ impl FitEvidence {
                     second: index,
                 });
             }
+            let mut units = BTreeSet::new();
+            let mut rows = Vec::with_capacity(read.fit.len());
+            for row in read.fit {
+                if !units.insert((row.slide, row.shape_id, row.block.clone())) {
+                    return Err(EvidenceError::Receipt {
+                        index,
+                        detail: format!(
+                            "two fit rows name slide {}, shape {}, block {}",
+                            row.slide, row.shape_id, row.block
+                        ),
+                    });
+                }
+                rows.push(FitRow {
+                    slide: row.slide,
+                    shape: row.shape_id,
+                    block: row.block,
+                    verdict: row.verdict,
+                });
+            }
             let receipt = FitReceipt {
                 receipt: sha2::Sha256::digest(bytes).into(),
                 clean: read.status == "clean",
-                rows: read
-                    .fit
-                    .into_iter()
-                    .map(|row| FitRow {
-                        slide: row.slide,
-                        shape: row.shape_id,
-                        block: row.block,
-                        verdict: row.verdict,
-                    })
-                    .collect(),
+                rows,
             };
             by_candidate.insert(candidate, receipt);
         }
