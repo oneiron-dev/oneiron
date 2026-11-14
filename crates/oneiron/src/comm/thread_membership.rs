@@ -131,6 +131,7 @@ fn matching_thread_membership_with_boundary_in_txn(
     let canonical = canonical_member_ref(&aliases, thread_ref);
     let mut rows = Vec::new();
     for id in vault.claims_for_subject_in_txn(rtxn, &party_ref)? {
+        note_thread_member_claim_read();
         let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
             continue;
         };
@@ -166,6 +167,29 @@ fn matching_thread_membership_with_boundary_in_txn(
     rows.sort_by_key(|(id, claim)| (std::cmp::Reverse(claim.valid_from), *id));
     rows.truncate(1);
     Ok(rows)
+}
+
+// Test-door tally of the claim reads the membership fold makes, per thread
+// (L6-23, ARCH-0057 membership-history scans): within one projector pass a
+// party's claims are walked once, then each join or leave reads its slot's.
+#[cfg(oneiron_test_support)]
+thread_local! {
+    static THREAD_MEMBER_CLAIM_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(oneiron_test_support)]
+fn note_thread_member_claim_read() {
+    THREAD_MEMBER_CLAIM_READS.with(|reads| reads.set(reads.get().saturating_add(1)));
+}
+
+#[cfg(not(oneiron_test_support))]
+const fn note_thread_member_claim_read() {}
+
+/// The claim reads the membership fold made on this thread since the last
+/// call.
+#[cfg(oneiron_test_support)]
+pub(crate) fn take_thread_member_claim_reads() -> usize {
+    THREAD_MEMBER_CLAIM_READS.with(|reads| reads.replace(0))
 }
 
 pub(crate) fn active_thread_refs_in_txn(
