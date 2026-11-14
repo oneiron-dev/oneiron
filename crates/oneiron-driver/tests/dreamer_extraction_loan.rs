@@ -214,7 +214,7 @@ fn extraction_loan_rechecks_its_gate_each_call() -> ExtractionLoanTestResult<()>
         opened.is_ok(),
         "an open extraction gate must lend the production pack read, not MODEL_UNAVAILABLE: {opened:?}"
     );
-    let answer = opened?["value"].clone();
+    let answer = opened?;
     let pack = answer["pack"]
         .as_array()
         .ok_or("the admitted extraction read answers the whole pack")?;
