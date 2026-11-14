@@ -60,6 +60,7 @@ pub mod live_run_claim_put;
 pub mod mail_counterparty;
 pub mod mail_landing;
 pub mod membership;
+pub mod mesh_machine_endpoint_index;
 pub mod meso_extraction_width;
 pub mod microsoft_token;
 pub mod model_binding_proposer;
