@@ -928,3 +928,26 @@ pub fn share_create_effect_digest(
     }
     *hasher.finalize().as_bytes()
 }
+
+/// The digest of sending revision `revision` of drafted mail reply `draft`,
+/// whose frozen send is `plan_ref`: the effect `vault.mail.reply.approve`
+/// spends an asker's approved check-in over (2k9a; P25-SHAPE Q1 = A). The
+/// asker reads all three on the draft (`vault.mail.reply.drafts`); the
+/// frozen plan holds the recipients and words, so the digest pins exactly
+/// what sends. BLAKE3, key derived from `oneiron check_in mail reply
+/// approve v1`, over the draft's 16 id bytes, the revision as eight
+/// big-endian bytes, and the plan ref's length as eight big-endian bytes and
+/// its bytes.
+#[must_use]
+pub fn mail_reply_approve_effect_digest(
+    draft: &EntityId,
+    revision: u64,
+    plan_ref: &str,
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in mail reply approve v1");
+    hasher.update(draft.as_bytes());
+    hasher.update(&revision.to_be_bytes());
+    hasher.update(&(plan_ref.len() as u64).to_be_bytes());
+    hasher.update(plan_ref.as_bytes());
+    *hasher.finalize().as_bytes()
+}

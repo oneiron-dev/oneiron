@@ -4,6 +4,8 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::check_in::CheckInDecision;
+
 /// Where one drafted reply stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -86,6 +88,12 @@ pub struct MailReplyDraftView {
     pub outcome: Option<String>,
     pub drafted_at: u64,
     pub updated_at: u64,
+    /// The check-in decision this revision's approval ran on (2k9a;
+    /// P25-SHAPE Q1 = A): the vault Owner's own proof, naming the asker's
+    /// check-in when the Owner applied one. Absent before the approval and
+    /// on a member's approval of their own mailbox's reply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 /// One draft named: by its ref.
@@ -104,6 +112,11 @@ pub struct MailReplyApproveRequest {
     /// 32-hex.
     pub draft_ref: String,
     pub revision: u64,
+    /// The check-in an asker opened for exactly this revision's send, 32
+    /// hex, once approved: the vault Owner applies it on their own proof
+    /// (2k9a). A member's approval of their own mailbox's reply names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// `vault.mail.reply.drafts`' input.

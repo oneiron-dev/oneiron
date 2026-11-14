@@ -52,6 +52,7 @@ use super::wire::{MailAddressHeaders, MailProviderWire};
 use crate::channel_identity_provider::gmail::{
     GmailDelegatedAdapter, GmailReplyThread, GmailSendPlan, GmailSendSink, HttpGmailSendWire,
 };
+use crate::check_in::{ActClass, AppliedCheckIn, CheckInDecision};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::derived_domains;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
@@ -66,6 +67,9 @@ use crate::{EntityId, Result, Vault, source_audience};
 /// Each drafted reply, by its draft id.
 const DRAFTS: SideTable<EntityId, MailReplyDraftRow, Named> =
     SideTable::new(&side_table::MAIL_PACK_REPLY_DRAFT);
+
+/// The door whose approval sends a drafted reply.
+const MAIL_REPLY_APPROVE_VERB: &str = "vault.mail.reply.approve";
 
 /// The longest reply body a draft takes, in bytes.
 const MAX_REPLY_BODY_BYTES: usize = 64 * 1024;
@@ -122,6 +126,11 @@ pub(super) struct MailReplyDraftRow {
     /// Gmail reply, whose plan the Gmail plan store keeps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     message: Option<ReplyMessage>,
+    /// The check-in decision this revision's approval ran on: the vault
+    /// Owner's own proof, with the asker's check-in it applied (2k9a).
+    /// `None` before the approval and on a member's own approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    check_in: Option<CheckInDecision>,
 }
 
 fn invalid_state(message: &str) -> MemoryError {
@@ -153,6 +162,36 @@ fn view(id: EntityId, row: &MailReplyDraftRow) -> MailReplyDraftView {
         outcome: row.outcome.clone(),
         drafted_at: row.drafted_at,
         updated_at: row.updated_at,
+        check_in: row.check_in.clone(),
+    }
+}
+
+/// Refuses a check-in a member's approval names: only the vault's Owner
+/// applies an asker's check-in (2k9a; P25-SHAPE Q1 = A).
+fn member_check_in_refused() -> MemoryError {
+    MemoryError::bad_request(
+        "check_in_ref names an asker's check-in, which the vault's Owner applies; a member's \
+         approval of their own mailbox's reply waits on none",
+    )
+}
+
+/// A call naming a check-in on a revision already approved names the one
+/// that approval spent: the retry after a held, failed or interrupted
+/// dispatch answers that approval's decision and spends nothing again.
+fn pressed_check_in(row: &MailReplyDraftRow, applied: Option<&EntityId>) -> MemoryResult<()> {
+    let Some(applied) = applied else {
+        return Ok(());
+    };
+    let spent = row
+        .check_in
+        .as_ref()
+        .and_then(|decision| decision.check_in.as_deref());
+    if spent == Some(applied.to_hex().as_str()) {
+        Ok(())
+    } else {
+        Err(MemoryError::bad_request(
+            "the revision was approved already, and not on that check-in",
+        ))
     }
 }
 
@@ -727,6 +766,7 @@ impl Memory<'_> {
             drafted_at: prior.as_ref().map_or(now, |prior| prior.drafted_at),
             updated_at: now,
             message,
+            check_in: None,
         };
         vault.with_write_txn_grouped(|txn| {
             // The draft lands only over exactly the row this call read, a
@@ -834,7 +874,7 @@ impl Memory<'_> {
         &self,
         input: &MailReplyApproveRequest,
     ) -> MemoryResult<MailReplyDraftView> {
-        let owner = self.embedded_owner("vault.mail.reply.approve")?;
+        let owner = self.embedded_owner(MAIL_REPLY_APPROVE_VERB)?;
         self.vault().approve_mail_reply(&owner, input)
     }
 }
@@ -852,34 +892,57 @@ impl Vault {
     /// again, and the ledger replays what it recorded rather than sending
     /// twice.
     ///
+    /// The approval checks in (2k9a; P25-SHAPE Q1 = A). The vault Owner's
+    /// goes on their own proof, and with `check_in_ref` the Owner applies an
+    /// asker's approved check-in for exactly this revision's send
+    /// ([`crate::check_in::mail_reply_approve_effect_digest`]), spent in the
+    /// writer that approves. A member's approval of their own mailbox's
+    /// reply stays unjudged, as before. The draft keeps the decision, and
+    /// every answer about it shows it; a retry names the same check-in or
+    /// none.
+    ///
     /// # Errors
     ///
     /// The draft unknown, discarded, sent, of another revision or of a
     /// mailbox not the caller's; the mailbox unable to send; the dispatch
-    /// refused.
+    /// refused. `BAD_REQUEST` for a `check_in_ref` that is no check-in id,
+    /// that a member names, or that is not the one an approved revision
+    /// spent; a check-in that does not apply.
     pub fn approve_mail_reply(
         &self,
         owner: &AuthenticatedOwner,
         input: &MailReplyApproveRequest,
     ) -> MemoryResult<MailReplyDraftView> {
         let id = EntityId::from_hex(&input.draft_ref)?;
+        let applied_ref = input
+            .check_in_ref
+            .as_deref()
+            .map(|hex| {
+                EntityId::from_hex(hex)
+                    .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))
+            })
+            .transpose()?;
         let unknown = || MemoryError::not_found("no reply draft by that ref");
         // The mailbox's own person, owner of the vault or not: the door
         // acts only on their own mailbox's reply.
         let actor = owner.revalidate_person(self)?;
-        let (row, source) = {
+        let (row, source, vault_owner) = {
             let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
             super::pack::require_pack_active_in(self, &txn)?;
             let row = DRAFTS.get(&self.store, &txn, &id)?.ok_or_else(unknown)?;
             let source = SOURCES
                 .get(&self.store, &txn, &row.source)?
                 .ok_or_else(unknown)?;
-            (row, source)
+            let vault_owner = crate::policy_model::owners_in_txn(self, &txn)?.contains(&actor);
+            (row, source, vault_owner)
         };
         if source.owner != Some(actor) {
             return Err(MemoryError::bad_request(
                 "only the mailbox's own person approves its replies",
             ));
+        }
+        if applied_ref.is_some() && !vault_owner {
+            return Err(member_check_in_refused());
         }
         if row.revision != input.revision {
             return Err(invalid_state(
@@ -893,7 +956,10 @@ impl Vault {
                     "the send's outcome is uncertain; the ledger holds it",
                 ));
             }
-            MailReplyDraftState::Sent => return Ok(view(id, &row)),
+            MailReplyDraftState::Sent => {
+                pressed_check_in(&row, applied_ref.as_ref())?;
+                return Ok(view(id, &row));
+            }
             MailReplyDraftState::Discarded => {
                 return Err(invalid_state("the draft was discarded; it never sends"));
             }
@@ -972,6 +1038,30 @@ impl Vault {
                 ));
             }
             if held.approved_at.is_none() {
+                // The approval checks in first: the vault Owner's own proof,
+                // spending the asker's approved check-in for exactly this
+                // revision's send when the call applies one (2k9a).
+                held.check_in = if crate::policy_model::owners_in_txn(self, txn)?.contains(&actor) {
+                    let applied = applied_ref.map(|check_in| AppliedCheckIn {
+                        id: check_in,
+                        verb: MAIL_REPLY_APPROVE_VERB,
+                        effect_digest: crate::check_in::mail_reply_approve_effect_digest(
+                            &id,
+                            held.revision,
+                            &held.plan_ref,
+                        ),
+                    });
+                    Some(crate::check_in::owner_act_decision_in_txn(
+                        self,
+                        txn,
+                        ActClass::OutboundSend,
+                        applied.as_ref(),
+                    )?)
+                } else if applied_ref.is_some() {
+                    return Err(member_check_in_refused());
+                } else {
+                    None
+                };
                 self.approve_once_as_person_in_txn(txn, owner, digest)?;
                 held.approved_at = Some(now);
                 held.state = MailReplyDraftState::Approved;
@@ -979,6 +1069,8 @@ impl Vault {
                 DRAFTS.put(&self.store, txn, &id, &held)?;
                 // The press answers the revision's Ask.
                 clear_reply_ask_in_txn(self, txn, &id, held.revision)?;
+            } else {
+                pressed_check_in(&held, applied_ref.as_ref())?;
             }
             Ok(held)
         })?;
@@ -1054,8 +1146,9 @@ pub(super) fn reply_awaits_in(
         .is_some_and(|source| source.owner == Some(person)))
 }
 
-/// Forgets `actor` as the drafter of every draft, in `txn` (an actor's
-/// erase): the drafts stay, nameless.
+/// Forgets `actor` as the drafter of every draft, and as the asker an
+/// approval's check-in names (2k9a), in `txn` (an actor's erase): the drafts
+/// stay, nameless.
 ///
 /// # Errors
 ///
@@ -1065,9 +1158,20 @@ pub(crate) fn erase_reply_drafter_in_txn(
     txn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
+    let actor_hex = actor.to_hex();
     for (id, mut row) in DRAFTS.scan(&vault.store, txn)? {
+        let mut scrubbed = false;
         if row.drafted_by == Some(*actor) {
             row.drafted_by = None;
+            scrubbed = true;
+        }
+        if let Some(decision) = row.check_in.as_mut()
+            && decision.requester.as_deref() == Some(actor_hex.as_str())
+        {
+            decision.requester = None;
+            scrubbed = true;
+        }
+        if scrubbed {
             DRAFTS.put(&vault.store, txn, &id, &row)?;
         }
     }
