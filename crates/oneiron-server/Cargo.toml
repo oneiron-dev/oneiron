@@ -312,6 +312,12 @@ name = "delete_authority_served_door"
 path = "tests/delete_authority_served_door.rs"
 required-features = ["oneiron/test-support"]
 
+# The found-key route's refusal case roots its server on a `MemoryKeystore` too.
+[[test]]
+name = "found_key_route_bound_refusal"
+path = "tests/found_key_route_bound_refusal.rs"
+required-features = ["oneiron/test-support"]
+
 # The off-record stretch pack cases serve the owner's root from a `MemoryKeystore` too.
 [[test]]
 name = "off_record_room_context_pack"

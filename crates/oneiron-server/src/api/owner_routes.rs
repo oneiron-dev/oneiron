@@ -439,6 +439,14 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
             oneiron::ErrorKind::ConsentApproveOnceSpent => {
                 ApiError::invalid_state(Some("already_decided"))
             }
+            // FIX [L6-03-FOUND-KEY-ROUTE-BOUND-500]: an act its target's state
+            // does not admit (a found key already ruled, a place that cannot
+            // take its value back, an erased value) is the refusal a delete
+            // of the found key already answers: 409 `refused` in the engine's
+            // own words. Each reason is a fixed sentence; none carries a value.
+            oneiron::ErrorKind::InvalidConsentBound => {
+                owner_error(OwnerError::Refused(error.to_string()))
+            }
             oneiron::ErrorKind::SecretRefNotFound => ApiError::not_found("secret", None),
             oneiron::ErrorKind::SecretCustodyNotActive => {
                 ApiError::invalid_state(Some("secret_not_active"))
