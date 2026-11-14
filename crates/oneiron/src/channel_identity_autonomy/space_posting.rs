@@ -12,12 +12,8 @@ use rmpv::Value;
 const POSTING_ENVELOPE: &str = "channel_identity.space_posting_envelope";
 const POSTING_HEAD: &str = "channel_identity.space_posting_head";
 
-/// Posting identity is data. Even owner mode must pass the normal outbound gate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SpacePostingMode {
-    NamedParticipant,
-    PostAsOwner,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::channel_identity_autonomy::space_posting::SpacePostingMode;
 
 /// Group defaults compose the existing autonomy rungs, not a workflow language.
 #[derive(

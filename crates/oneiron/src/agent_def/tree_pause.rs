@@ -11,14 +11,24 @@
 //! person's pause, each waiting watcher's tick is held, and each hook binding
 //! switched on is switched off. One gate decision records the act, and one
 //! pause record keeps what this act moved and nothing else, so the undo
-//! never switches on what was off before. A running branch is not paused
-//! (Engine RULING BLASTRADIUS-RUNNING = A, 13 Nov): the answer lists it, and
-//! the existing branch cancel stops it. Grants are not touched.
+//! never switches on what was off before. Grants are not touched.
+//!
+//! A running run is paused at its next step boundary (Engine RULING
+//! PAUSE-BOUNDARY-SCOPE = B, 13 Nov): the same write posts a Pause signal
+//! on its branch, and the run's executor takes it once the step it is
+//! running has committed its checkpoint, moving its row to a person's pause
+//! before its next model request (`attempt_queue::boundary_pause`). The
+//! answer lists each such branch as pausing at its next step. A branch it
+//! does not pause (a landing branch, one of no run, one whose pause another
+//! act has pending) is listed as running, and the existing branch cancel
+//! stops it.
 //!
 //! `vault.agents.resume_tree` undoes one pause: each member still in the
 //! state the pause left it goes back, in one write with one gate decision;
-//! a member someone moved since is left as found and named. A repeat
-//! answers the first resume and writes nothing.
+//! a member someone moved since is left as found and named. A running
+//! branch that took its pause is resumed as a paused one is; one whose
+//! pause no step has taken yet has its Pause signal withdrawn, so no later
+//! step takes it. A repeat answers the first resume and writes nothing.
 //!
 //! Both are owner acts: the only check is the owner's proof, rechecked in
 //! the writer.
@@ -28,11 +38,16 @@ use serde::{Deserialize, Serialize};
 use super::doors::stands;
 use super::made_by::branch_id;
 use crate::Vault;
-use crate::attempt_queue::{AttemptInterventionKind, AttemptQueue, AttemptState, InterveneAttempt};
+use crate::attempt_queue::{
+    AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptState, InterveneAttempt,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
+use crate::run_tree::{
+    RunSignalInput, RunSignalKind, RunSignalState, RunTreeAdapter, takes_boundary_pause,
+};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::attempt_record::AttemptPause;
 use crate::store::scan_count::ScanCount;
@@ -50,6 +65,16 @@ const TREE_PAUSE_CONTENT_KIND: &str = "agent_tree_pause";
 const PAUSE_REASON: &str = "gate.allow.owner_agent_tree_pause";
 /// The reason code of a resume.
 const RESUME_REASON: &str = "gate.allow.owner_agent_tree_resume";
+
+/// The key of the Pause signal a tree pause posts on each running branch.
+fn pause_signal_key(pause: &EntityId) -> String {
+    format!("agent-tree-pause:{}", pause.to_hex())
+}
+
+/// The note that signal carries onto the branch's pause event.
+fn boundary_pause_note(pause: &EntityId) -> String {
+    format!("agent tree pause {}, at a step boundary", pause.to_hex())
+}
 
 /// The existing door that cancels one running branch (FIX 8219): the
 /// owner's cancel stops it at once.
@@ -111,12 +136,18 @@ pub struct AgentTreePauseReceipt {
     pub agent_def_ref: EntityId,
     /// The gate decision that records it, as `gate:<id hex>`.
     pub receipt_ref: String,
-    /// How many members it paused.
+    /// How many members it paused, with the running branches it pauses at
+    /// their next step boundary.
     pub count: usize,
     pub paused: AgentTreeMembers,
-    /// Branches running when it committed: a running step is not paused.
+    /// Running branches it pauses at their next step boundary: each run
+    /// stops once the step it is running has committed.
+    pub pausing_at_next_step: Vec<String>,
+    /// Branches running when it committed that it does not pause: a
+    /// landing branch, one of no run, or one whose pause another act has
+    /// pending.
     pub running: Vec<String>,
-    /// The door that cancels a running branch.
+    /// The door that cancels a running branch at once.
     pub running_cancel_door: String,
 }
 
@@ -143,6 +174,9 @@ pub struct AgentTreeResumeReceipt {
     /// Members no longer in the state the pause left them (switched back
     /// on, resumed, cancelled, changed or gone since), left as found.
     pub left_as_found: AgentTreeMembers,
+    /// Running branches whose pause no step had taken yet: its Pause signal
+    /// is withdrawn, so the run goes on unpaused.
+    pub withdrawn: Vec<String>,
 }
 
 impl AgentTreeResumeReceipt {
@@ -163,7 +197,8 @@ fn listed(agent: EntityId, members: &[&AgentTreeMembers]) -> Vec<EntityId> {
 }
 
 /// One pause as the vault keeps it: what it moved, each switched-off
-/// definition with the version the pause wrote, and its resume once run.
+/// definition with the version the pause wrote, the running branches it
+/// signalled, and its resume once run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct TreePauseRecord {
     agent: EntityId,
@@ -172,6 +207,10 @@ struct TreePauseRecord {
     /// The version the pause wrote on each definition it switched off, in
     /// `paused.agents`' order.
     paused_versions: Vec<String>,
+    /// The running branches it posted its Pause signal on
+    /// ([`pause_signal_key`]).
+    #[serde(default)]
+    pausing: Vec<String>,
     resume: Option<TreeResumeRecord>,
 }
 
@@ -181,7 +220,27 @@ struct TreeDecision<'a> {
     agent: &'a EntityId,
     pause: &'a EntityId,
     members: &'a AgentTreeMembers,
+    /// A pause's running branches it signalled; a resume's it withdrew.
+    pausing: &'a [String],
     running: &'a [String],
+}
+
+/// Whether `row` stands paused by the Pause signal `key`: a step took it at
+/// its boundary, and the row's last pause event is the one it wrote, with
+/// `note`. A row paused again by hand since is not this pause's to resume.
+fn took_pause(row: &AttemptRecord, key: &str, note: &str) -> bool {
+    let settled = row.signals.iter().any(|signal| {
+        signal.key == key
+            && signal.state == RunSignalState::Settled
+            && matches!(signal.kind, RunSignalKind::Pause { .. })
+    });
+    settled
+        && row
+            .events
+            .iter()
+            .rev()
+            .find(|event| event.kind == AttemptInterventionKind::Pause)
+            .is_some_and(|event| event.note.as_deref() == Some(note))
 }
 
 /// A pause's resume as the vault keeps it, for a repeat's answer.
@@ -190,6 +249,8 @@ struct TreeResumeRecord {
     receipt_ref: String,
     resumed: AgentTreeMembers,
     left_as_found: AgentTreeMembers,
+    #[serde(default)]
+    withdrawn: Vec<String>,
 }
 
 /// The version a pause or resume writes on a definition: derived from the
@@ -257,6 +318,8 @@ impl Vault {
                 paused_versions.push(off.version);
             }
             let queue = AttemptQueue::new(self);
+            let signals = RunTreeAdapter::new(self);
+            let mut pausing = Vec::new();
             let mut running = Vec::new();
             let mut seen = std::collections::BTreeSet::new();
             let branches = made
@@ -273,6 +336,24 @@ impl Vault {
                 let Some(record) = queue.get_in_write_txn(txn, id)? else {
                     continue;
                 };
+                if takes_boundary_pause(&record)
+                    && let Some(run_id) = record.run_id.clone()
+                {
+                    signals.signal_in_txn(
+                        txn,
+                        RunSignalInput {
+                            branch: id,
+                            run_id,
+                            key: pause_signal_key(&pause),
+                            actor: owner_id.to_hex(),
+                            kind: RunSignalKind::Pause {
+                                note: Some(boundary_pause_note(&pause)),
+                            },
+                        },
+                    )?;
+                    pausing.push(branch.to_owned());
+                    continue;
+                }
                 if record.state.is_running() {
                     running.push(branch.to_owned());
                     continue;
@@ -317,6 +398,7 @@ impl Vault {
                     agent,
                     pause: &pause,
                     members: &paused,
+                    pausing: &pausing,
                     running: &running,
                 },
             )?;
@@ -329,6 +411,7 @@ impl Vault {
                     receipt_ref: receipt_ref.clone(),
                     paused: paused.clone(),
                     paused_versions,
+                    pausing: pausing.clone(),
                     resume: None,
                 },
             )?;
@@ -338,8 +421,9 @@ impl Vault {
                     pause_ref: pause,
                     agent_def_ref: *agent,
                     receipt_ref,
-                    count: paused.count(),
+                    count: paused.count() + pausing.len(),
                     paused,
+                    pausing_at_next_step: pausing,
                     running,
                     running_cancel_door: BRANCH_CANCEL_DOOR.to_owned(),
                 },
@@ -385,6 +469,7 @@ impl Vault {
                         already_resumed: true,
                         resumed: done.resumed.clone(),
                         left_as_found: done.left_as_found.clone(),
+                        withdrawn: done.withdrawn.clone(),
                     },
                     false,
                 ));
@@ -444,6 +529,40 @@ impl Vault {
                 )?;
                 resumed.branches.push(branch.clone());
             }
+            // A running branch it signalled: one paused at its boundary is
+            // resumed as above; one whose pause is still untaken has it
+            // withdrawn.
+            let signals = RunTreeAdapter::new(self);
+            let key = pause_signal_key(pause);
+            let note = boundary_pause_note(pause);
+            let mut withdrawn = Vec::new();
+            for branch in &record.pausing {
+                let id = branch_id(branch)?;
+                if signals.withdraw_pause_in_txn(txn, id, &key)? {
+                    withdrawn.push(branch.clone());
+                    continue;
+                }
+                let took = queue.get_in_write_txn(txn, id)?.is_some_and(|row| {
+                    row.state == AttemptState::Paused
+                        && row.active_pause == Some(AttemptPause::Person)
+                        && took_pause(&row, &key, &note)
+                });
+                if !took {
+                    left.branches.push(branch.clone());
+                    continue;
+                }
+                queue.intervene_in_txn(
+                    txn,
+                    InterveneAttempt {
+                        id,
+                        kind: AttemptInterventionKind::Resume,
+                        actor: owner_id.to_hex(),
+                        note: Some(format!("agent tree resume {}", pause.to_hex())),
+                        now,
+                    },
+                )?;
+                resumed.branches.push(branch.clone());
+            }
             for task in &record.paused.watchers {
                 if crate::runtime_hooks::release_task_tick_hold_in_txn(self, txn, *task, *pause)? {
                     resumed.watchers.push(*task);
@@ -470,6 +589,7 @@ impl Vault {
                     agent: &record.agent,
                     pause,
                     members: &resumed,
+                    pausing: &withdrawn,
                     running: &[],
                 },
             )?;
@@ -477,6 +597,7 @@ impl Vault {
                 receipt_ref: receipt_ref.clone(),
                 resumed: resumed.clone(),
                 left_as_found: left.clone(),
+                withdrawn: withdrawn.clone(),
             });
             TREE_PAUSE.put(&self.store, txn, pause, &record)?;
             let hooks_moved = !resumed.hooks.is_empty();
@@ -488,6 +609,7 @@ impl Vault {
                     already_resumed: false,
                     resumed,
                     left_as_found: left,
+                    withdrawn,
                 },
                 hooks_moved,
             ))
@@ -514,9 +636,10 @@ impl Vault {
             agent,
             pause,
             members,
+            pausing,
             running,
         } = *decision;
-        let members_body = serde_json::to_vec(&(members, running))
+        let members_body = serde_json::to_vec(&(members, pausing, running))
             .map_err(|_| Error::InvariantViolation("agent tree pause members encode"))?;
         let digest = blake3::hash(&members_body);
         let details = vec![
@@ -526,6 +649,7 @@ impl Vault {
             format!("branches:{}", members.branches.len()),
             format!("watchers:{}", members.watchers.len()),
             format!("hooks:{}", members.hooks.len()),
+            format!("pausing:{}", pausing.len()),
             format!("running:{}", running.len()),
             format!("members_digest:{}", digest.to_hex()),
         ];
