@@ -47,6 +47,7 @@ mod scoped_call_control;
 mod scoped_child;
 mod scoped_child_io;
 mod scoped_generation;
+mod speech_rows;
 pub use self::scoped_generation::{ScopedChildGeneration, ScopedChildGenerationCall};
 pub mod shadow_runner;
 mod spawn_replay;
@@ -332,15 +333,15 @@ pub use run_verbs::{
     AgentSpawnInput, JS_SAFE_INTEGER, LeaderAdviceInput, LeaderPatternInput, LeaderSplitInput,
     MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput, MemoryTimeRange,
     ReaderSpawnInput, ReportBlockedInput, SkillCallInput, SpawnCare, SpawnKnob, SpawnPattern,
-    SpokenText, SummarizeInput, SummarizeInputEffort, TaskRefuseDomain, TaskRefuseInput,
-    TaskWaitAgentsRequest, TaskWaitInput, TaskWaitSetRequest, TaskWaitWorldRequest,
-    ThinkAloudInput,
+    SummarizeInput, SummarizeInputEffort, TaskRefuseDomain, TaskRefuseInput, TaskWaitAgentsRequest,
+    TaskWaitInput, TaskWaitSetRequest, TaskWaitWorldRequest,
 };
 pub use run_verbs::{
     AgentSpawnKind, AgentSpawnOutput, LeaderPatternFile, LeaderPatternOutput, LeaderSplitOutput,
     MemoryEdgeOutput, MemorySearchHit, MemorySearchOutput, MemoryWriteOutput, ReportBlockedOutput,
-    SpeechOutput, TaskRefuseOutput, TaskWaitOutput,
+    TaskRefuseOutput, TaskWaitOutput,
 };
+pub use speech_rows::{SpeechOutput, SpokenText, ThinkAloudInput};
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,
     AgentVerbRefusal, AgentVerbRefusalWords, RunCall, RunObservation, RunSpeechDestination,

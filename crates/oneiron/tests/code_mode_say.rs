@@ -10,7 +10,11 @@
 //! runs its generated OF-063 refs check and its engine door for real.
 //!
 //! Fixture: the vault's owner (`owen`) and a custom agent (`yuki`) seated in
-//! one project's home room. Every run's actor is yuki.
+//! one project's home room, which owen has spoken in. The speech and refusal
+//! runs act as yuki, an agent whose door reads under no grant. The runs that
+//! deliver to a room or a person act as owen, a caller that reads both: an
+//! agent's fresh turn in a project room is that room's to refuse (its
+//! response rules), and its reads are its Grants', neither of them `say`'s.
 //!
 //! Red on main: `say` is no global and `self.think.aloud` is undefined, so
 //! every program throws before its `finish` and no test gets its answer.
@@ -36,7 +40,7 @@ use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorLimits, EngineExecutorOutcome, EngineExecutorStatus,
     EngineNativeExecutor,
 };
-use oneiron::memory::HostWriteOrigin;
+use oneiron::memory::{HostWriteOrigin, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::store::GateDecisionId;
@@ -55,11 +59,12 @@ use sha2::{Digest, Sha256};
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 /// The run's verb door: every verb-table call runs the shipped engine entry
-/// on the agent's own memory, and an engine refusal is the door's refusal,
-/// by its code. Every run call and every speech is admitted.
+/// on the run actor's own memory, and an engine refusal is the door's
+/// refusal, by its code. Every run call and every speech is admitted.
 struct EngineDoor {
     vault: Arc<Vault>,
     actor: EntityId,
+    class: EdgeActorClass,
 }
 
 impl AgentVerbDoor for EngineDoor {
@@ -69,7 +74,7 @@ impl AgentVerbDoor for EngineDoor {
         _origin: &HostWriteOrigin,
         _invocation: InvocationId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
-        let memory = self.vault.memory(self.actor, EdgeActorClass::Agent);
+        let memory = self.vault.memory(self.actor, self.class);
         Ok(
             match invoke(&memory, call.verb.as_str(), call.input.clone()) {
                 Ok(output) => Ok(AgentVerbAnswer::new(output, None)),
@@ -162,7 +167,7 @@ fn quickjs_factory() -> QuickJsRuntimeFactory {
         .expect("the QuickJS component passes its readiness probe")
 }
 
-/// The owner, the agent the runs act as, and the room both are seated in.
+/// The owner, the agent, and the room both are seated in.
 struct Fixture {
     _dir: tempfile::TempDir,
     vault: Arc<Vault>,
@@ -198,6 +203,26 @@ fn fixture() -> TestResult<Fixture> {
     project.roster.push(yuki.to_hex());
     vault.put_project(project_id, &project, vault.now_recorded_at())?;
     let room = EntityId::from_hex(&project.home_room)?;
+    vault
+        .memory(owen, EdgeActorClass::Human)
+        .rooms_speak(&WitnessTurn {
+            conversation_ref: room.to_hex(),
+            turn_ref: Some(EntityId::now().to_hex()),
+            thread_audience: None,
+            messages: vec![WitnessMessage {
+                id: Some(EntityId::now().to_hex()),
+                author: WitnessAuthor::User,
+                message_type: "text".into(),
+                content: "the room opens".into(),
+                parts: None,
+                metadata: Some(serde_json::json!({})),
+                is_visible: true,
+                order: 0,
+                quote: None,
+            }],
+            occurred_at: vault.now_recorded_at(),
+            assertions: Default::default(),
+        })?;
     Ok(Fixture {
         _dir: dir,
         vault,
@@ -207,21 +232,27 @@ fn fixture() -> TestResult<Fixture> {
     })
 }
 
-/// One run of `program` as yuki, to its end.
-fn run_program(fixture: &Fixture, program: &str) -> EngineExecutorOutcome {
+/// One run of `program` as `actor` of `class`, to its end.
+fn run_as(
+    fixture: &Fixture,
+    actor: EntityId,
+    class: EdgeActorClass,
+    program: &str,
+) -> EngineExecutorOutcome {
     let backend = FixtureBackend {
         programs: Mutex::new(VecDeque::from([program.to_owned()])),
     };
     let lease = BudgetLease::for_test("code-mode-say");
     let gated = GatedActorWrite::new(
         &fixture.vault,
-        WriteActor::new(fixture.yuki, EdgeActorClass::Agent),
+        WriteActor::new(actor, class),
         "run-code-mode-say",
     )
     .expect("a dispatcher binds")
     .with_agent_verb_door(Arc::new(EngineDoor {
         vault: Arc::clone(&fixture.vault),
-        actor: fixture.yuki,
+        actor,
+        class,
     }));
     let factory = quickjs_factory();
     let mut runtime = factory.runtime().expect("a guest runtime");
@@ -247,6 +278,11 @@ fn run_program(fixture: &Fixture, program: &str) -> EngineExecutorOutcome {
         "the run completes"
     );
     outcome
+}
+
+/// One run of `program` as yuki.
+fn run_program(fixture: &Fixture, program: &str) -> EngineExecutorOutcome {
+    run_as(fixture, fixture.yuki, EdgeActorClass::Agent, program)
 }
 
 /// The run's `finish` answer.
@@ -308,7 +344,7 @@ fn say_kind(fields: &[(rmpv::Value, rmpv::Value)]) -> Option<String> {
 }
 
 /// `say(text, {to: room, kind, refs})` lands one text MESSAGE in that room,
-/// authored by the agent, marked with its kind; the run's own conversation
+/// authored by its caller, marked with its kind; the run's own conversation
 /// gets no bubble of it, so the options were not dropped.
 #[test]
 fn say_to_a_room_lands_one_message_there_marked_with_its_kind() -> TestResult {
@@ -318,7 +354,7 @@ fn say_to_a_room_lands_one_message_there_marked_with_its_kind() -> TestResult {
         r#"const receipt = await say("hi room", {{to: "{room}", kind: "note", refs: ["{room}"]}});
 finish(receipt.room);"#
     );
-    let outcome = run_program(&fixture, &program);
+    let outcome = run_as(&fixture, fixture.owen, EdgeActorClass::Human, &program);
     assert_eq!(
         answer(&outcome),
         room,
@@ -333,7 +369,7 @@ finish(receipt.room);"#
     );
     assert_eq!(
         field(message, "author").and_then(rmpv::Value::as_str),
-        Some("companion")
+        Some("user")
     );
     assert_eq!(say_kind(message).as_deref(), Some("note"));
     Ok(())
@@ -445,23 +481,23 @@ fn a_say_citing_a_record_that_does_not_resolve_is_refused() -> TestResult {
     Ok(())
 }
 
-/// `say(text, {to: person})` lands in the Direct room the agent and that
-/// person share, marked with its kind.
+/// `say(text, {to: agent})` lands in the Direct room its caller and that
+/// agent share, marked with its kind.
 #[test]
 fn say_to_a_person_lands_in_the_room_they_share() -> TestResult {
     let fixture = fixture()?;
     let program = format!(
-        r#"const receipt = await say("for owen", {{to: "{owen}", kind: "ask"}});
+        r#"const receipt = await say("for yuki", {{to: "{yuki}", kind: "ask"}});
 finish(receipt.room);"#,
-        owen = fixture.owen.to_hex(),
+        yuki = fixture.yuki.to_hex(),
     );
-    let outcome = run_program(&fixture, &program);
+    let outcome = run_as(&fixture, fixture.owen, EdgeActorClass::Human, &program);
     assert_ne!(
         answer(&outcome),
         fixture.room.to_hex(),
         "a person's message goes to the room the two share, not the project room"
     );
-    let landed = messages_saying(&fixture.vault, "for owen")?;
+    let landed = messages_saying(&fixture.vault, "for yuki")?;
     assert_eq!(landed.len(), 1, "one MESSAGE");
     assert_eq!(
         field(&landed[0], "type").and_then(rmpv::Value::as_str),

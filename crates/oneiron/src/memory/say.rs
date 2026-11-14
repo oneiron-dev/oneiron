@@ -75,6 +75,17 @@ pub struct SayRequest {
     pub refs: Vec<String>,
 }
 
+/// `say`'s answer: where a delivered message landed, or, for a code run's
+/// plain `say(text)`, the bubble's place, as `self.speak` answers it.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum SayAnswer {
+    /// The message landed in a room `to` named.
+    Delivered(SayReceipt),
+    /// The run spoke where it speaks.
+    Spoken(crate::code_run::SpeechOutput),
+}
+
 /// `say`'s receipt: the room the message landed in and its witness receipt.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SayReceipt {
@@ -107,7 +118,7 @@ impl Memory<'_> {
     /// result is a code run's own, spoken where it speaks);
     /// [`SAY_UNKNOWN_DESTINATION`] and [`SAY_TASK_UNASSIGNED`] before any
     /// write; then every refusal of the door the destination takes.
-    pub fn say(&self, input: &SayRequest) -> MemoryResult<SayReceipt> {
+    pub fn say(&self, input: &SayRequest) -> MemoryResult<SayAnswer> {
         let (Some(to), Some(text), None) = (
             input
                 .to
@@ -141,10 +152,10 @@ impl Memory<'_> {
                 };
                 let landed =
                     self.message_person_linked(&request, marks, |_| Ok(()), |_, _| Ok(()))?;
-                Ok(SayReceipt {
+                Ok(SayAnswer::Delivered(SayReceipt {
                     room: landed.room,
                     receipt: landed.receipt,
-                })
+                }))
             }
             SayDestination::Room(room) => {
                 let text = text.trim();
@@ -174,10 +185,10 @@ impl Memory<'_> {
                     occurred_at: unix_seconds(),
                     assertions: marks.assertions,
                 })?;
-                Ok(SayReceipt {
+                Ok(SayAnswer::Delivered(SayReceipt {
                     room: room.to_hex(),
                     receipt,
-                })
+                }))
             }
         }
     }

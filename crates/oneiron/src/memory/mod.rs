@@ -299,8 +299,8 @@ pub use plugin_sections::{
 };
 pub(crate) use say::MessageMarks;
 pub use say::{
-    SAY_NEEDS_A_DESTINATION, SAY_TASK_UNASSIGNED, SAY_UNKNOWN_DESTINATION, SayKind, SayReceipt,
-    SayRequest,
+    SAY_NEEDS_A_DESTINATION, SAY_TASK_UNASSIGNED, SAY_UNKNOWN_DESTINATION, SayAnswer, SayKind,
+    SayReceipt, SayRequest,
 };
 pub use signal_extraction::{
     ProspectiveQueryHint, SignalExtractionClaim, SignalExtractionMessage, SignalExtractionRequest,
