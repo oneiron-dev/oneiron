@@ -4,13 +4,15 @@
 //!
 //! The supervisor signs every request its vault's owner sends from his own
 //! sign-in (`ManagedOwnerAction`). On each route here a verified one names
-//! him as the request's caller, the person himself with every owner power,
-//! where before the attestation was dropped and the request served as the
-//! host's root. Each route is one registered method and path pattern, never
-//! a prefix: `{..}` is one non-empty path segment, `{*..}` the non-empty rest
-//! of the path. A HEAD on a GET route selects it too, as the router answers
-//! that HEAD through the GET; the attestation is still verified over HEAD
-//! (FIX 9496). A route that is not registered still answers 404 or 405.
+//! him as the request's caller, the person himself with every owner power.
+//! On a route that is not, the attestation is dropped and a request with no
+//! slip of its own is anonymous (FIX 2222): an owner route missing here
+//! refuses the owner's console 401 (L10-29). Each route is one registered
+//! method and path pattern, never a prefix: `{..}` is one non-empty path
+//! segment, `{*..}` the non-empty rest of the path. A HEAD on a GET route
+//! selects it too, as the router answers that HEAD through the GET; the
+//! attestation is still verified over HEAD (FIX 9496). A route that is not
+//! registered still answers 404 or 405.
 //!
 //! The owner routes' bodies are held in memory up to the buffered
 //! verification's `MAX_REMOTE_REQUEST_BYTES` (64 MiB) and staged on the
@@ -74,6 +76,7 @@ const OWNER_ROUTES: &[Route] = &[
     ("POST", "/v1/core/summaries/{summary_id}/rederive"),
     ("POST", "/v1/core/turns/annotate"),
     ("POST", "/v1/core/surface-events"),
+    ("POST", "/v1/core/linear/push"),
     // The core reads, boards and runs.
     ("GET", "/v1/core/org-admin/{org}/powers"),
     ("POST", "/v1/core/query"),
@@ -121,7 +124,8 @@ const OWNER_ROUTES: &[Route] = &[
     ("GET", "/v1/core/turns/annotate"),
     ("GET", "/v1/core/surface-events/{correlation_id}"),
     // The other core doors: checkpoints, a device's renewal, widen answers,
-    // the action list, a live run's attach and a role holder's asks.
+    // the action list, a live run's attach, a role holder's asks, and the
+    // owner's kept exports and their sealed secret supplements.
     ("GET", "/v1/core/authority/checkpoints/{id}"),
     ("POST", "/v1/core/slips/renew"),
     ("POST", "/v1/core/consent/widen/accept"),
@@ -132,6 +136,9 @@ const OWNER_ROUTES: &[Route] = &[
     ("POST", "/v1/core/skills/tradeoff-asks/pick"),
     ("GET", "/v1/core/decisions/asks"),
     ("POST", "/v1/core/decisions/asks/answer"),
+    ("GET", "/v1/core/export-transfers/{transfer_ref}"),
+    ("DELETE", "/v1/core/export-transfers/{transfer_ref}"),
+    ("GET", "/v1/core/export-secret-supplements/{request}"),
     // The companion, campaign and saved-query resources.
     ("POST", "/v1/companion/access-grants"),
     ("POST", "/v1/companion/access-grants/{grant_id}/revoke"),
@@ -144,6 +151,7 @@ const OWNER_ROUTES: &[Route] = &[
     ("GET", "/campaigns/{campaign_ref}"),
     ("PATCH", "/campaigns/{campaign_ref}"),
     ("POST", "/campaigns/{campaign_ref}/archive"),
+    ("POST", "/campaigns/{campaign_ref}/launch"),
     ("GET", "/campaigns/{campaign_ref}/members"),
     ("POST", "/campaigns/{campaign_ref}/programs"),
     ("GET", "/campaigns/{campaign_ref}/programs/{program_ref}"),
