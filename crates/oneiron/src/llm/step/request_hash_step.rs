@@ -1,16 +1,14 @@
 //! Request-hash durable steps: bound submits and receipts without a submission row.
 //!
 //! A bound extraction step keys its durable work by the request content hash, never by a
-//! call-site key. Its submit runs the standard durable execution and saves no submission row;
+//! call-site key. Its submit uses the shared checked execution and saves no submission row;
 //! its receipt reads the terminal record in one snapshot. Both share the moved result
 //! converter with the owner doors.
 
 #[cfg(oneiron_test_support)]
 use std::ops::Bound;
 
-use super::super::{
-    BudgetGuard, FallbackRegistry, LlmBackend, LlmRequest, LlmUsage, ResponseFormat,
-};
+use super::super::{LlmRequest, ResponseFormat};
 use super::public::ModelStepReceipt;
 use super::step_claim::{decode_step_claim_value, load_step_response_in_txn};
 #[cfg(oneiron_test_support)]
@@ -23,10 +21,7 @@ use super::step_result::step_result;
 #[cfg(oneiron_test_support)]
 use super::step_state::STEP_STATE;
 use super::step_state::step_state_read;
-use super::{
-    DREAMER_STEP_RETRY_BACKOFF_MS, DurableStepContext, DurableStepError, DurableStepResult,
-    StepOutcome, StepProgression,
-};
+use super::{DurableStepError, DurableStepResult, StepOutcome, StepProgression};
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::bytes_to_hex_lower;
@@ -34,29 +29,6 @@ use crate::error::{Error, Result};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::model_step_effect::StepEffectBinding;
 use crate::store::model_step_submission::{ModelStepResult, ModelStepRetryPolicy};
-
-/// Runs the standard durable execution and keeps the unsaved usage of a fresh response that
-/// could not be saved. Errors and saved-response recovery keep their ordinary meaning.
-pub(crate) async fn call_as_step_with_unsaved_usage(
-    ctx: &DurableStepContext<'_>,
-    backend: &dyn LlmBackend,
-    guard: &BudgetGuard,
-    request: LlmRequest,
-) -> (DurableStepResult<StepOutcome>, Option<LlmUsage>) {
-    let mut unsaved_usage = None;
-    let outcome = super::execute::durable_step(
-        ctx,
-        backend,
-        guard,
-        request,
-        &FallbackRegistry::standard(),
-        None,
-        DREAMER_STEP_RETRY_BACKOFF_MS.len(),
-        Some(&mut unsaved_usage),
-    )
-    .await;
-    (outcome, unsaved_usage)
-}
 
 /// Builds the receipt of a bound submit from its execution outcome. The hash comes from the
 /// request, the model and format ride the request, and the terminal lookup runs inside.

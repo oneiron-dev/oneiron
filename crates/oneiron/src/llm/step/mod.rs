@@ -69,7 +69,7 @@ pub use self::peer_wait::{
 #[cfg(oneiron_test_support)]
 pub(crate) use self::request_hash_step::step_state_present_for_attempt;
 pub(crate) use self::request_hash_step::{
-    call_as_step_with_unsaved_usage, request_hash_step_receipt_in_txn, request_hash_submit_receipt,
+    request_hash_step_receipt_in_txn, request_hash_submit_receipt,
 };
 pub(crate) use self::retry::stated_reset_at;
 pub(crate) use self::trap::{

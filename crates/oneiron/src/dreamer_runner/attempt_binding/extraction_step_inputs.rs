@@ -1,12 +1,16 @@
 //! One-snapshot checks and served words for a bound extraction generation step.
 
+use std::collections::BTreeSet;
+
 use super::DreamerAttemptBinding;
 use super::extraction_evidence::{bound_branch_error, check_turn_evidence};
 use super::extraction_steps::ExtractionStepRequest;
 use crate::EntityId;
 use crate::claim::ClaimReadStatus;
 use crate::dreamer_consolidation::extraction_pack::{BoundBranchInput, project_bound_branch};
-use crate::dreamer_consolidation::extraction_step::{PreparedExtractionStep, prepare_bound_step};
+use crate::dreamer_consolidation::extraction_step::{
+    ExtractionStepPiece, PreparedExtractionStep, prepare_bound_step,
+};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::snapshot_read::{extraction_reader_scope_in_txn, queued_extraction_branch_in_txn};
 
@@ -34,7 +38,8 @@ impl DreamerAttemptBinding {
                     "an extraction step needs between 1 and {limit} evidence entries"
                 )));
             }
-            let mut words = Vec::with_capacity(input.evidence.len());
+            let mut pieces = Vec::with_capacity(input.evidence.len());
+            let mut turns = BTreeSet::new();
             for evidence in &input.evidence {
                 let (turn, served) = check_turn_evidence(
                     &memory,
@@ -44,13 +49,21 @@ impl DreamerAttemptBinding {
                     evidence,
                     (scope, &branch),
                 )?;
-                let text = served
-                    .spans
-                    .into_iter()
-                    .map(|span| span.text)
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                words.push((turn, text));
+                if !turns.insert(turn) {
+                    return Err(MemoryError::bad_request(
+                        "an extraction step cites each TURN once",
+                    ));
+                }
+                let (start, text) = match served.spans.into_iter().next() {
+                    Some(span) => (span.start, span.text),
+                    None => (0, String::new()),
+                };
+                pieces.push(ExtractionStepPiece {
+                    turn,
+                    start,
+                    text,
+                    version: evidence.version.clone(),
+                });
             }
             let bound = project_bound_branch(
                 vault,
@@ -64,7 +77,7 @@ impl DreamerAttemptBinding {
                 },
             )
             .map_err(bound_branch_error)?;
-            let prepared = prepare_bound_step(vault, txn, &read, &bound, &words)
+            let prepared = prepare_bound_step(vault, txn, &read, &bound, &pieces)
                 .map_err(bound_branch_error)?;
             Ok((prepared, branch.subject().unwrap_or_else(|| self.attempt())))
         })?;

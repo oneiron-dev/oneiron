@@ -80,6 +80,9 @@ impl DreamerAttemptBinding {
     }
 
     /// Reads this attempt's saved step without borrowing, admitting or charging a backend.
+    ///
+    /// This door has no served pieces, so it keeps the terminal record's JSON rather
+    /// than decoding the bound extraction reply as submit and resubmit do.
     pub(super) fn extraction_step_receipt(
         &self,
         input: ModelStepReceiptRequest,

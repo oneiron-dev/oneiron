@@ -79,7 +79,7 @@ impl LlmBackend for CountingExtractionStepBackend {
         true
     }
 
-    /// Answers the step with the fixed plain-text reply and declares its terminal usage.
+    /// Answers the step with a valid extraction reply and declares its terminal usage.
     fn generate<'a>(
         &'a self,
         request: LlmRequest,
@@ -90,7 +90,17 @@ impl LlmBackend for CountingExtractionStepBackend {
                 Step::text(
                     "extraction-step",
                     ScriptedBackend::digest_of(&request),
-                    "owen keeps tea warm",
+                    json!({
+                        "persons": [{
+                            "id": "new:P1", "name": "owen", "evidence_turn_refs": ["T1"],
+                        }],
+                        "candidates": [{
+                            "subject": "new:P1", "predicate": "likes", "value": "tea",
+                            "confidence": 0.9,
+                            "evidence_refs": [{"source": "T1", "quote": "owen likes tea"}],
+                        }],
+                    })
+                    .to_string(),
                 )
                 .buffered()
                 .usage(100, 50),
@@ -266,7 +276,7 @@ fn extraction_step_loan_rechecks_its_step_gate_each_call() -> ExtractionStepTest
     );
     let response = serde_json::to_string(&answer["result"]["response"])?;
     assert!(
-        response.contains("owen keeps tea warm"),
+        response.contains("new:P1") && response.contains("owen likes tea"),
         "the finished step answers its scripted output: {response}"
     );
     let step_reference = answer["step_ref"]

@@ -6,6 +6,8 @@
 //! role. The snapshot holds in the validation transaction; failure rules load
 //! after it, in execution, so a retracted rule never shapes a prepared input.
 
+mod reply;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::call_labels::{CallLabelMap, LabelKind};
@@ -22,6 +24,8 @@ use crate::error::Result;
 #[cfg(oneiron_test_support)]
 use crate::memory::MemoryError;
 use crate::memory::MemoryResult;
+use crate::snapshot_read::SourceVersion;
+use crate::store::model_step_submission::ModelStepResult;
 use oneiron_model::llm::Scope;
 
 /// One bound extraction step's checked input, snapshotted in validation.
@@ -30,21 +34,36 @@ use oneiron_model::llm::Scope;
 /// speaker or unknown, with native conversation headers and turn labels. The
 /// scope is the bound attenuated scope for the cited TURNs. The sources are
 /// every row the transcript was read from. No person-mint namespace binds the
-/// request; the job output decoding owns declared persons.
+/// request; the decoded reply retains declared persons without minting them.
 pub(crate) struct PreparedExtractionStep {
     /// Holds the native transcript over the served words, with labels rendered in.
     transcript: String,
     /// Holds the call labels the transcript assigned, binding the request identity.
     labels: CallLabelMap,
+    /// Holds each TURN's served words, start and pinned version.
+    pieces: Vec<ExtractionStepPiece>,
     /// Holds the attenuated scope the bound call asks under.
     scope: Scope,
     /// Holds every row the transcript was read from, for the sourced backend.
     sources: Vec<EntityId>,
 }
 
-/// Snapshots `words` into a native transcript with native labels and scope.
+/// Holds the one served piece of a TURN at its checked version.
+#[derive(Clone)]
+pub(crate) struct ExtractionStepPiece {
+    /// Names the TURN whose words were served.
+    pub(crate) turn: EntityId,
+    /// Holds the first served byte in TURN coordinates.
+    pub(crate) start: u64,
+    /// Holds exactly the words served for this entry.
+    pub(crate) text: String,
+    /// Holds the source version checked with the served words.
+    pub(crate) version: SourceVersion,
+}
+
+/// Snapshots `pieces` into a native transcript with native labels and scope.
 ///
-/// Each word's TURN must be a queued TURN of `bound`, with its declared part
+/// Each piece's TURN must be a queued TURN of `bound`, with its declared part
 /// conversation. Each TURN's speaker is its checked native body speaker, or
 /// unknown when the body names none. The transcript lists each cited TURN in
 /// input order under its conversation header, each named by its turn label.
@@ -62,9 +81,9 @@ pub(crate) fn prepare_bound_step(
     txn: &heed::RoTxn<'_>,
     read: &ScopedRead<'_>,
     bound: &BoundBranchRead,
-    words: &[(EntityId, String)],
+    pieces: &[ExtractionStepPiece],
 ) -> Result<PreparedExtractionStep> {
-    let cited: Vec<EntityId> = words.iter().map(|(turn, _)| *turn).collect();
+    let cited: Vec<EntityId> = pieces.iter().map(|piece| piece.turn).collect();
     let scoped = bound.extraction_scope(vault, txn, &cited)?;
     let distinct: BTreeSet<EntityId> = cited.iter().copied().collect();
     let ordered: Vec<EntityId> = distinct.iter().copied().collect();
@@ -85,18 +104,20 @@ pub(crate) fn prepare_bound_step(
     let mut labels = CallLabelMap::default();
     let mut transcript = String::new();
     let mut current = None;
-    for (at, (turn, text)) in words.iter().enumerate() {
+    for (at, piece) in pieces.iter().enumerate() {
+        let turn = piece.turn;
+        let text = &piece.text;
         let conversation = bound
-            .turn_conversation(*turn)
+            .turn_conversation(turn)
             .ok_or_else(|| invalid_consolidation("unlisted branch turn"))?;
         if at == 0 || Some(conversation) != current {
             current = Some(conversation);
             let header = labels.assign(LabelKind::Conversation, conversation);
             transcript.push_str(&format!("conversation {header}\n"));
         }
-        let turn_label = labels.assign(LabelKind::Turn, *turn);
+        let turn_label = labels.assign(LabelKind::Turn, turn);
         let speaker = speakers
-            .get(turn)
+            .get(&turn)
             .and_then(|speaker| speaker.as_deref())
             .unwrap_or("unknown");
         transcript.push_str(&format!("[{turn_label} {speaker}] {text}\n"));
@@ -106,6 +127,7 @@ pub(crate) fn prepare_bound_step(
     Ok(PreparedExtractionStep {
         transcript,
         labels,
+        pieces: pieces.to_vec(),
         scope: scoped.scope,
         sources,
     })
@@ -118,11 +140,13 @@ pub(crate) fn prepare_bound_step(
 /// transcript, then the labels bound with no person-mint namespace, then the
 /// Extraction rules, then the final Extraction role authorization and
 /// reasoning binding. The call sends on the sourced backend bound to the
-/// prepared sources. The durable execution uses the standard three retries
+/// prepared sources. The durable execution keeps the standard three transport retries
 /// with the original attempt context and guard. The outcome is accounted into
 /// the shared tally through the borrowed native helper, with a test
 /// observation for the spent generation, before the original outcome moves
-/// into the shared request-hash receipt converter.
+/// into the shared request-hash receipt converter. Each submit generates once; a
+/// refused reply is paid and not memoized. A finished submit, including a memo
+/// resubmit, decodes against these same pieces into the receipt's JSON.
 ///
 /// # Errors
 ///
@@ -156,11 +180,13 @@ pub(crate) async fn execute_bound_step(
         .canonical_hash()
         .map_err(|error| MemoryError::bad_request(error.to_string()))?;
     let execution_request = request.clone();
-    let (outcome, unsaved_usage) = crate::llm::call_as_step_with_unsaved_usage(
+    let check = reply::check_bound_reply(prepared);
+    let (outcome, unsaved_usage) = crate::llm::call_as_step_checked_with_unsaved_usage(
         ctx,
         backend.get(),
         loan.guard,
         execution_request,
+        &check,
     )
     .await;
     {
@@ -214,5 +240,10 @@ pub(crate) async fn execute_bound_step(
             }
         }
     }
-    crate::llm::request_hash_submit_receipt(ctx.vault, ctx.attempt_id, &request, outcome)
+    let mut receipt =
+        crate::llm::request_hash_submit_receipt(ctx.vault, ctx.attempt_id, &request, outcome)?;
+    if let Some(ModelStepResult::Finished { response, json, .. }) = receipt.result.as_mut() {
+        *json = Some(reply::decode_bound_reply(response, prepared)?);
+    }
+    Ok(receipt)
 }

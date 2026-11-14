@@ -181,7 +181,7 @@ pub(in crate::dreamer_consolidation) fn check_extraction_reply(
 
 /// Whether `response` is a deterministic fallback's reply, whose candidates
 /// were authored before its call (FIX 7577).
-pub(super) fn authored_fallback(response: &LlmResponse) -> bool {
+pub(in crate::dreamer_consolidation) fn authored_fallback(response: &LlmResponse) -> bool {
     matches!(
         &response.finish_reason,
         FinishReason::Other { name } if name.starts_with("fallback:")
@@ -241,7 +241,10 @@ fn contract_fault(candidate: &serde_json::Value, authored: bool) -> Option<&'sta
     .find_map(|(field, met)| (!met).then_some(field))
 }
 
-fn prospective_queries(candidate: &serde_json::Value) -> Result<Vec<String>> {
+/// Reads and normalizes a candidate's optional prospective query hints.
+pub(in crate::dreamer_consolidation) fn prospective_queries(
+    candidate: &serde_json::Value,
+) -> Result<Vec<String>> {
     let Some(queries) = candidate.get("prospective_queries") else {
         return Ok(Vec::new());
     };
