@@ -1,4 +1,24 @@
+pub use crate::blob_artifact::create::ArtifactCreateRequest;
+pub use crate::blob_artifact::deck_doors::DeckCommentInspection;
+pub use crate::blob_artifact::deck_doors::DeckInspectRequest;
+pub use crate::blob_artifact::deck_doors::DeckInspectionView;
+pub use crate::blob_artifact::deck_doors::DeckProposeRejection;
+pub use crate::blob_artifact::deck_doors::DeckRejectionCheck;
+pub use crate::blob_artifact::deck_doors::DeckRejectionReport;
+pub use crate::blob_artifact::family::ArtifactKind;
+pub use crate::blob_artifact::verbs::ArtifactAdmitSubmit;
+pub use crate::blob_artifact::verbs::ArtifactAskSubmit;
+pub use crate::blob_artifact::verbs::ArtifactAskUnits;
+pub use crate::blob_artifact::verbs::ArtifactExportRequest;
+pub use crate::blob_artifact::verbs::ArtifactRefRequest;
+pub use crate::blob_artifact::verbs::BornFromRequest;
+pub use crate::blob_artifact::verbs::DeckProposeRequest;
 pub use crate::blob_artifact::verbs::FolderItemInput;
+pub use crate::blob_artifact::verbs::NativeOutputRequest;
+pub use crate::blob_artifact::verbs::ProposalSettleRequest;
+pub use crate::blob_artifact::verbs::SlideReviewSubmit;
+pub use crate::blob_artifact::verbs::SlideReviewUnitInput;
+pub use crate::blob_artifact::verbs::SlideUnitRefused;
 pub use oneiron_docedit::edit::transaction::DeckTransaction;
 pub use oneiron_store::blob_artifact::body::BLOB_ARTIFACT_BODY_KEYS;
 pub use oneiron_store::blob_artifact::body::BLOB_ARTIFACT_MEDIA_TYPE_MAX_BYTES;
@@ -15,4 +35,9 @@ pub use oneiron_store::blob_artifact::store_keys::BLOB_ARTIFACT_CONTENT_HASH_LEN
 pub use oneiron_store::blob_artifact::store_keys::BLOB_ARTIFACT_RUN_REF_MAX_BYTES;
 pub use oneiron_store::blob_artifact::unit_refusal;
 
+pub mod create;
+pub mod deck_creation;
+pub mod deck_doors;
+pub mod esign;
+pub mod family;
 pub mod verbs;

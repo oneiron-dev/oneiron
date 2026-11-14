@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "Engine-internal stored record types below the oneiron engine: side-table payloads, receipts, queue rows and checkpoint parts"
 repository.workspace = true
-homepage.workspace = true
 
 [lib]
 doctest = false

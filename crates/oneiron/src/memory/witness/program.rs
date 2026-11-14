@@ -102,9 +102,10 @@ pub(crate) struct ImportedTurnStamp {
     /// A source landing's proof (fix list row 16256): with it, the
     /// CONVERSATION, the TURN and every MESSAGE revision this turn lands
     /// carry the source-audience obligation in their own bytes, and the turn
-    /// joins only containers that carry it. History and connector imports
-    /// hold none, and land no row that names it. `source` stays import
-    /// provenance only.
+    /// joins only containers that carry it. A history import holds one for a
+    /// conversation its source shared; other history imports and connector
+    /// imports hold none, and land no row that names it. `source` stays
+    /// import provenance only.
     pub(crate) source_audience: Option<SourceAudienceBirth>,
     /// Whom the source names as each message's speaker, resolved in the
     /// landing's writer before admission.

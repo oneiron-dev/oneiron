@@ -22,6 +22,12 @@ pub struct PackSetupSecretState {
     pub name: String,
     /// A live custody record holds the name.
     pub stored: bool,
+    /// Unix seconds the stored value was set: at registration, or at its
+    /// last rotation (an owner's, or a provider refresh's write-back). The
+    /// grant's age, read without opening the grant. `None` when nothing is
+    /// stored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issued_at: Option<u64>,
     /// The live custody record the view read the name to, in the same
     /// transaction; a host lists it beside the view. Never on the wire, and
     /// never a value.

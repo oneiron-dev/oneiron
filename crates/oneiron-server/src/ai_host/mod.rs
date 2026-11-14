@@ -49,6 +49,7 @@ pub(crate) use dreamer::DreamerControl;
 mod dreamer_thing;
 mod eval_authoring;
 pub(crate) use eval_authoring::execute as execute_eval_authoring;
+pub(crate) use training_offer::run_now as run_training_offer_pass;
 mod eval_measurement;
 pub(crate) mod failure_signals;
 mod feedback_report_delivery;

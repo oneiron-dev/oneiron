@@ -249,7 +249,9 @@ fn seat_key(id: &str) -> Result<Vec<u8>> {
     }
     Ok(SEATS.key_bytes(&id.to_owned()))
 }
-pub(crate) fn purpose_key(purpose: &CallPurpose) -> String {
+/// The label a call's purpose is routed and metered under: the `purpose` a
+/// settled call's usage event carries (`other:<name>` for a named purpose).
+pub fn purpose_key(purpose: &CallPurpose) -> String {
     match purpose {
         CallPurpose::Other { name } => format!("other:{name}"),
         other => serde_json::to_value(other)

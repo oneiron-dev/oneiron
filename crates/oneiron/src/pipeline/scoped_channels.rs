@@ -102,6 +102,7 @@ impl PipelineBuilder<'_> {
                 || filters.corpus_scope != &CorpusScope::All
                 || filters.candidate_filter.is_some()
                 || self.memory_category,
+            &self.params,
         )?);
         // Widen the collector's window, scan caps and score truncation, not
         // the request sigma settles on.
@@ -110,6 +111,7 @@ impl PipelineBuilder<'_> {
                 &self.read,
                 rtxn,
                 &scoped_config,
+                &self.params,
                 now,
                 metadata_cache,
                 filters.deadline,
@@ -133,6 +135,7 @@ impl PipelineBuilder<'_> {
             &self.read,
             rtxn,
             &scoped_config,
+            &self.params,
             now,
             metadata_cache,
             filters.deadline,

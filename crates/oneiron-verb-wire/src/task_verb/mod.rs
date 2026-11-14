@@ -1,6 +1,8 @@
 //! Moved from `crates/oneiron/src/task_verb/mod.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+pub(crate) use crate::task_verb::brief::hex32;
+
 pub use crate::authority::task_ask_handle::TaskAskHandle;
 pub use crate::disclosure::task_ask_default::TaskAskDefault;
 pub use crate::failure_ladder::task_terminal::TaskTerminalDisposition;

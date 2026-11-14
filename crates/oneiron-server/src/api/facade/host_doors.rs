@@ -60,6 +60,8 @@ pub(crate) use super::agent_definition_doors::*;
 pub(crate) use super::agent_grant_doors::*;
 // The owner's verdict on a plan-doc (plan mode) too.
 pub(crate) use super::plan_doc_doors::*;
+// A check-in holder's answer (ROLES-CHECKIN P2.3c), likewise.
+pub(crate) use super::check_in_doors::*;
 // The Steward doors: member asks, the system-agent grant narrowing and the
 // engine-control receipts (untangle 6.3, 6.6).
 pub(crate) use super::steward_doors::*;
@@ -177,6 +179,8 @@ pub(crate) use super::weave_admin_doors::{
 };
 // The owner inbox's group doors over both kinds (FIX 3024, 3026), likewise.
 pub(crate) use super::inbox_group_doors::*;
+// The inquiry rows (INQUIRE-1 PR 5), likewise.
+pub(crate) use super::inquiry_doors::*;
 pub(crate) use super::web_fetch_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
 pub(crate) use super::graph_ask_doors::*;

@@ -39,9 +39,7 @@ use super::super::trace::{
     capture_replay_identity_in_txn, capture_replay_inputs, record_ppr_cache_outcome,
     retrieval_trace_fused_scores,
 };
-use super::super::types::{
-    ClaimStatusGateCache, EntityMetadataCache, PPR_DAMPING, RelMode, TurnFold,
-};
+use super::super::types::{ClaimStatusGateCache, EntityMetadataCache, RelMode, TurnFold};
 use super::super::world_authority::resolve_active_world_authority;
 use super::types::{HydeAttemptOverrides, RetrievalTxnOutput, pending_vectors_for_scores};
 use crate::bm25::Bm25Config;
@@ -420,7 +418,7 @@ impl PipelineBuilder<'_> {
                                 rtxn,
                                 seeds,
                                 *depth,
-                                PPR_DAMPING,
+                                self.params.ppr_damping,
                                 self.ppr_vad_alpha,
                                 crate::ppr::SeedWeighting::Specificity,
                                 &visibility,
@@ -432,7 +430,7 @@ impl PipelineBuilder<'_> {
                             rtxn,
                             seeds,
                             *depth,
-                            PPR_DAMPING,
+                            self.params.ppr_damping,
                             self.ppr_vad_alpha,
                             crate::ppr::SeedWeighting::Specificity,
                             self.deadline,
@@ -566,6 +564,7 @@ impl PipelineBuilder<'_> {
                 claim_aging_profiles: self.claim_aging_profiles,
                 access_factor_application: AccessFactorApplication::Apply,
                 affect: self.affect_policy,
+                cosine_ghost_vector_threshold: self.params.cosine_ghost_vector_threshold,
             };
             if capture_retrieval_trace {
                 fused_trace_scores = Some(retrieval_trace_fused_scores(
@@ -1208,6 +1207,7 @@ impl PipelineBuilder<'_> {
             self.vector_search.is_some(),
             self.vault.evidence_space(),
             &floors,
+            &self.params,
             &mut kind_of,
         )? {
             capabilities.clear();
@@ -1228,6 +1228,7 @@ impl PipelineBuilder<'_> {
                 self.vector_search.is_some(),
                 self.vault.evidence_space(),
                 &floors,
+                &self.params,
                 &mut kind_of,
             )?
         {

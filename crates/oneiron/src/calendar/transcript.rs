@@ -131,33 +131,8 @@ pub struct TranscriptFileDropRequest<'a> {
     pub arrived_at_ms: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "outcome", rename_all = "snake_case")]
-pub enum TranscriptIngestOutcome {
-    Session {
-        session_ref: crate::EntityId,
-        turn_refs: Vec<crate::EntityId>,
-        /// IDs carried by the same in-transaction SessionEnd wake plan.
-        wake_turn_refs: Vec<crate::EntityId>,
-        extraction_enqueued: bool,
-    },
-    RetryOpenSession {
-        open_session_ref: crate::EntityId,
-    },
-    /// The original session-open hook has asked; no SESSION was minted.
-    HookPending {
-        session_ref: crate::EntityId,
-        ask: crate::EntityId,
-    },
-    /// The same upload is already retained under its native lease or due instant.
-    Queued {
-        attempt_ref: String,
-    },
-    /// A nonempty file with no usable turns remains explicit caller-owned NOTE input.
-    NoteFallback {
-        note_ref: crate::EntityId,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::calendar::transcript::TranscriptIngestOutcome;
 
 /// Mints (or detects) the session before persisting transcript turns, then
 /// atomically closes it through the standard lifecycle path.
