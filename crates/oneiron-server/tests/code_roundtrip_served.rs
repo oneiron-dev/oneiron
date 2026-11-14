@@ -305,12 +305,31 @@ impl Fixture {
         drop(serving);
         drop(app);
         drop(server);
-        assert_eq!(
-            Arc::strong_count(&vault),
-            1,
-            "C3 restart: the old server and app hold no Arc<Vault> once dropped"
-        );
-        drop(vault);
+        // The reader runner and the message stream upgrade a Weak<Vault>
+        // for one store read each tick, so take the vault back by value:
+        // once that succeeds no Weak upgrades again, and the drop closes
+        // the store before it is opened again.
+        let mut vault = vault;
+        let mut tries = 0_u32;
+        let old = loop {
+            match Arc::try_unwrap(vault) {
+                Ok(old) => break old,
+                Err(shared) if tries < 100_000 => {
+                    tries += 1;
+                    vault = shared;
+                    std::thread::yield_now();
+                    tokio::task::yield_now().await;
+                }
+                Err(shared) => {
+                    return Err(format!(
+                        "C3 restart: {} other Arc<Vault> holders outlive the old server and app",
+                        Arc::strong_count(&shared) - 1
+                    )
+                    .into());
+                }
+            }
+        };
+        drop(old);
         let vault = Arc::new(Vault::open(vault_dir.path(), VaultConfig::device())?);
         vault.install_device_keystore(Arc::clone(&keystore));
         let server = Arc::new(SyncServer::new(Arc::clone(&vault), server_config()?)?);
@@ -2167,7 +2186,7 @@ async fn fenced_lease_keeps_work() -> TestResult {
         )
         .await?;
     let url = text("C3 A checkout bind", &bind, "remote_url")?;
-    let refspec = format!("{a_commit}:{}", REF);
+    let refspec = format!("{a_commit}:{REF}");
     fx.git_ok(
         "C3 A push",
         &a.dir,
@@ -2207,7 +2226,35 @@ async fn owner_lapsed_lease_refused() -> TestResult {
         .commit("C1 A commit", &a.dir, "owen", "device A greets back")
         .await?;
 
-    // C2: the owner cancels the TASK A's lease was claimed for.
+    // C2: the owner cancels the TASK A's lease was claimed for. A cancel is
+    // an external effect the gate allows only under the owner's standing
+    // cancel grant, which he mints first (task_authority_convergence.rs).
+    let owner_proof = fx
+        .vault
+        .authenticate_owner(
+            fx.owner_actor,
+            &fx.owner_actor.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .map_err(|error| format!("C2 owner proof: {error:?}"))?;
+    fx.vault
+        .mint_standing_outbound_grant(
+            &owner_proof,
+            EntityId::from_bytes([0xC5; 16]).map_err(|_| "C2 cancel grant id")?,
+            &oneiron::genui::GrantMintIntent {
+                principal_ref: fx.owner_actor.to_hex(),
+                origin_component_id: "tasks".to_owned(),
+                origin_action_id: "cancel".to_owned(),
+                origin_receipt_ref: None,
+                scope: oneiron::genui::GrantMintIntentScope::VerbClass {
+                    verb_class: oneiron::task_verb::sdk::AgentVerb::Cancel
+                        .as_str()
+                        .to_owned(),
+                },
+            },
+        )
+        .map_err(|error| format!("C2 cancel grant: {error:?}"))?;
     let cancelled = fx
         .vault
         .memory(fx.owner_actor, EdgeActorClass::Human)
