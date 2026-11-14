@@ -237,7 +237,7 @@ impl ResultRead {
             return read(&body, false);
         }
         let whole = RunBody::whole(self, storage);
-        let view = RedactedBody::new(&body, &whole, redacted::known_source(storage)?)?;
+        let view = RedactedBody::new(&body, &whole, redacted::known_source(storage)?);
         read(&view, true)
     }
 

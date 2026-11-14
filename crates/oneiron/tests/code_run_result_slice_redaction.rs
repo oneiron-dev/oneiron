@@ -231,6 +231,43 @@ fn a_slice_that_cuts_the_phrase_blanks_its_part_too() {
 }
 
 #[test]
+fn a_slice_inside_a_long_key_block_is_blanked() {
+    // A key block far longer than any fixed read margin (REVIEW-7800 P1): a
+    // slice from its middle holds neither its BEGIN nor its END line, and a
+    // slice at its tail holds only its END line.
+    let head = clean_lines();
+    let key = "A".repeat(200_000);
+    let block = format!("-----BEGIN TEST PRIVATE KEY-----\n{key}\n-----END TEST PRIVATE KEY-----");
+    let body = format!("{head}{block}\n{}", clean_lines()).into_bytes();
+    let secret = head.len()..head.len() + block.len();
+    let fixture = ResultBodyFixture::new(body, secret);
+    assert_eq!(
+        fixture.mark().as_deref(),
+        Some("gate.secret_scan.private_key")
+    );
+    let mut expected = fixture.body.clone();
+    for byte in &mut expected[fixture.secret.clone()] {
+        if *byte != b'\n' {
+            *byte = FILLER;
+        }
+    }
+    let middle = fixture.secret.start + 100_000;
+    assert_redacted_slice(
+        &fixture.slice(middle, middle + 100),
+        middle,
+        middle + 100,
+        &expected[middle..middle + 100],
+    );
+    let tail = fixture.secret.end - 50;
+    assert_redacted_slice(
+        &fixture.slice(tail, tail + 100),
+        tail,
+        tail + 100,
+        &expected[tail..tail + 100],
+    );
+}
+
+#[test]
 fn the_stored_bytes_and_the_mark_stay_as_stored() {
     let fixture = ResultBodyFixture::phrase();
     let before = fixture.mark().expect("the scan marked the phrase");

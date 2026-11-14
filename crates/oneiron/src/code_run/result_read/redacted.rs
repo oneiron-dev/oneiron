@@ -9,26 +9,23 @@
 //! never rewritten; the view is made at each read.
 //!
 //! The spans are those the write door's text rules place ([`file_spans`])
-//! and the values custody knows now ([`KnownSource`]), found in the bytes
-//! read widened on each side by [`SECRET_SPAN_REACH`] or the known values'
-//! reach, whichever is longer, so a span the read's edges cut is found
-//! whole. Each reply is still checked for an unmarked secret before it
-//! leaves (`facets`).
+//! and the values custody knows now ([`KnownSource`]), found once per view
+//! in the whole body, as the write door read it whole when it marked it
+//! (`batch::secret_scan::mask::spool`). A span is found from its own
+//! anchors however far it runs, so a read anywhere inside it is blanked,
+//! even one that holds neither end of a long key block. Each reply is still
+//! checked for an unmarked secret before it leaves (`facets`).
 
 use std::ops::Range;
+use std::sync::OnceLock;
 
 use super::ResultBody;
 use super::run_body::LiveCutoff;
 use crate::batch::secret_scan::file_spans;
 use crate::code_run::{CodeRunOutputKind, ExecutorStorage};
 use crate::file_secret_marks::FILLER;
-use crate::secret_custody::{KnownSource, KnownValues};
+use crate::secret_custody::KnownSource;
 use crate::{Error, Result};
-
-/// Bytes a read is widened by on each side, at the least, so that a secret
-/// span it cuts is found whole: the head a card's shape is sniffed from,
-/// which holds the longest private-key block the text rules place.
-const SECRET_SPAN_REACH: usize = 64 * 1024;
 
 /// The values custody knows, as `storage`'s output sweeps read them: its
 /// ids and handles, each pass reading the values again (KS-3).
@@ -44,12 +41,13 @@ pub(super) fn known_source(storage: &ExecutorStorage<'_>) -> Result<Option<Known
 pub(super) struct RedactedBody<'b> {
     /// The window the facets read: the whole body, or a range of it.
     shown: &'b dyn ResultBody,
-    /// The whole body `shown` is a window of, read for the margins.
+    /// The whole body `shown` is a window of, read whole for its spans.
     whole: &'b dyn ResultBody,
     /// The values custody knows, if it knows any.
     known: Option<KnownSource>,
-    /// Bytes each read is widened by on each side.
-    margin: u64,
+    /// The secret spans at their offsets in `whole`, found at the first
+    /// read.
+    spans: OnceLock<Vec<Range<usize>>>,
 }
 
 impl<'b> RedactedBody<'b> {
@@ -59,23 +57,26 @@ impl<'b> RedactedBody<'b> {
         shown: &'b dyn ResultBody,
         whole: &'b dyn ResultBody,
         known: Option<KnownSource>,
-    ) -> Result<Self> {
-        let reach = match &known {
-            Some(source) => source.pass(|values| values.map_or(0, KnownValues::reach))?,
-            None => 0,
-        };
-        Ok(Self {
+    ) -> Self {
+        Self {
             shown,
             whole,
             known,
-            margin: SECRET_SPAN_REACH.max(reach) as u64,
-        })
+            spans: OnceLock::new(),
+        }
     }
 
-    /// The secret spans in `bytes`, at their offsets in it: the text rules'
-    /// and each value custody knows now.
-    fn spans(&self, bytes: &[u8]) -> Result<Vec<Range<usize>>> {
-        let mut spans: Vec<Range<usize>> = file_spans(bytes)
+    /// The secret spans in the whole body, at their offsets in it: the text
+    /// rules' and each value custody knows now. The first read finds them;
+    /// later reads of the same view reuse them.
+    fn spans(&self) -> Result<&[Range<usize>]> {
+        if let Some(spans) = self.spans.get() {
+            return Ok(spans.as_slice());
+        }
+        let len = usize::try_from(self.whole.len())
+            .map_err(|_| Error::ArithmeticOverflow("redacted result read"))?;
+        let bytes = self.whole.read(0, len)?;
+        let mut spans: Vec<Range<usize>> = file_spans(&bytes)
             .into_iter()
             .map(|(span, _)| span)
             .collect();
@@ -83,7 +84,7 @@ impl<'b> RedactedBody<'b> {
             let found = source.pass(|values| {
                 values.map_or_else(Vec::new, |values| {
                     values
-                        .spans(bytes)
+                        .spans(&bytes)
                         .into_iter()
                         .map(|hit| hit.span)
                         .collect::<Vec<_>>()
@@ -91,7 +92,7 @@ impl<'b> RedactedBody<'b> {
             })?;
             spans.extend(found);
         }
-        Ok(spans)
+        Ok(self.spans.get_or_init(|| spans).as_slice())
     }
 }
 
@@ -104,39 +105,32 @@ impl ResultBody for RedactedBody<'_> {
         self.shown.kind()
     }
 
-    /// The window's bytes from `offset`, read with a margin of the whole
-    /// body on each side; each span found there is blanked where it meets
-    /// the bytes returned.
+    /// The window's bytes from `offset`; each span of the whole body is
+    /// blanked where it meets the bytes returned.
     fn read(&self, offset: u64, len: usize) -> Result<Vec<u8>> {
         let take = self.shown.len().saturating_sub(offset).min(len as u64);
         if take == 0 {
             return Ok(Vec::new());
         }
-        let start = self.shown.base().saturating_add(offset);
-        let from = start.saturating_sub(self.margin);
-        let to = start
-            .saturating_add(take)
-            .saturating_add(self.margin)
-            .min(self.whole.len());
         let overflow = |_| Error::ArithmeticOverflow("redacted result read");
-        let wide = usize::try_from(to.saturating_sub(from)).map_err(overflow)?;
-        let lead = usize::try_from(start - from).map_err(overflow)?;
-        let take = usize::try_from(take).map_err(overflow)?;
-        let mut bytes = self.whole.read(from, wide)?;
-        let end = lead.saturating_add(take).min(bytes.len());
-        if lead >= end {
-            return Ok(Vec::new());
-        }
-        for span in self.spans(&bytes)? {
-            let blanked = bytes.get_mut(span.start.max(lead)..span.end.min(end));
+        let at = self.shown.base().saturating_add(offset);
+        let mut bytes = self
+            .whole
+            .read(at, usize::try_from(take).map_err(overflow)?)?;
+        let start = usize::try_from(at).map_err(overflow)?;
+        let end = start.saturating_add(bytes.len());
+        for span in self.spans()? {
+            let (from, to) = (span.start.max(start), span.end.min(end));
+            if from >= to {
+                continue;
+            }
+            let blanked = bytes.get_mut(from - start..to - start);
             for byte in blanked.into_iter().flatten() {
                 if *byte != b'\n' {
                     *byte = FILLER;
                 }
             }
         }
-        bytes.truncate(end);
-        bytes.drain(..lead);
         Ok(bytes)
     }
 
