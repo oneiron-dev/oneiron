@@ -137,6 +137,7 @@ mod hyde_doors;
 mod identity;
 mod identity_doors;
 mod identity_topology_doors;
+mod image_edit_doors;
 mod inbox_group_doors;
 mod invocations;
 mod invoke;
