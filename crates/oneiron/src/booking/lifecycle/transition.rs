@@ -117,14 +117,10 @@ pub(super) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
             }
             Ok(BookingVerbReceipt::Cancelled(receipt))
         }
-        BookingVerbRequest::Waitlist(spec) => execute_waitlist(
-            vault,
-            oracle,
-            spec,
-            now_utc,
-            invite_actor,
-            invite_sink,
-            attempt.public_authority.as_ref(),
+        // RED PROOF: the verb parses and validates, but no writer runs it.
+        BookingVerbRequest::Waitlist(_) => Err(BookingError::InvalidConstraint(
+            "booking.waitlist has no writer (red proof)".to_owned(),
+        )),
         ),
     }
 }
@@ -133,12 +129,8 @@ pub(super) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
 /// in a writer of its own, now that the solver sees the slot free. A failure
 /// never fails the committed transition.
 fn pass_freed_slot(vault: &Vault, oracle: &dyn SlotOracle, freed: Option<FreedSlot>, now_utc: u64) {
-    if let Some((page_ref, event_type, slot)) = freed
-        && let Err(error) =
-            run_waitlist_offer_pass(vault, oracle, page_ref, &event_type, Some(slot), now_utc)
-    {
-        tracing::debug!(%error, "a freed booking slot reached no waiter");
-    }
+    // RED PROOF: a freed slot reaches no waiter.
+    let _ = (vault, oracle, freed, now_utc);
 }
 
 /// Runs one waitlist stage: a pass that settles the page's lapsed offers
