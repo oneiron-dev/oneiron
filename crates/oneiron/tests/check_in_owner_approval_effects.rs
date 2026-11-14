@@ -40,7 +40,7 @@ use oneiron::check_in::ActClass;
 use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::context_projection::{ChatProjection, ContextSpec};
-use oneiron::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
+use oneiron::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::task_verb::{TaskAssignee, TaskCreateSpec};
 use oneiron::verbs::{
     ProposedAgentDefinitionChangeApproveRequest, ProposedAgentDefinitionChangeRejectRequest,
@@ -117,18 +117,23 @@ fn json_of(value: &RmpValue) -> Value {
     }
 }
 
-/// Agent `author`'s own Base definition `agent_id`, created by the Owner,
-/// and the proposal its put of a wider version "2" (scope All) is stored as.
-fn proposed_change(
+/// Agent `author`'s own Base definition `agent_id`, created by the Owner.
+fn base_definition(
     vault: &Vault,
     owner_proof: &AuthenticatedOwner,
     author: EntityId,
     agent_id: &str,
-) -> EntityId {
+) -> AgentDefinition {
     let before = definition(agent_id, AgentScope::Base, AgentCeiling::Proposed);
     vault
         .create_agent_definition_as(owner_proof, &author, &before, at(NOW), NOW)
         .expect("the Owner creates the agent");
+    before
+}
+
+/// The proposal agent `author`'s put of a wider version "2" (scope All) of
+/// its own definition `before` is stored as.
+fn proposed_change(vault: &Vault, author: EntityId, before: AgentDefinition) -> EntityId {
     let mut wider = before;
     wider.scope = AgentScope::All;
     wider.version = "2".to_owned();
@@ -173,15 +178,26 @@ fn the_owner_applies_an_approved_ask_for_that_agent_definition_change_only() {
     let authors =
         [0x70_u8, 0x71, 0x72].map(|seed| EntityId::from_bytes([seed; 16]).expect("an id"));
     let [own, asked, other] = authors;
-    // A put over a stored row is admitted only on a lane that reads the row.
+    let bases = [
+        (own, "check_in.approval.own"),
+        (asked, "check_in.approval.asked"),
+        (other, "check_in.approval.other"),
+    ]
+    .map(|(author, agent_id)| {
+        (
+            author,
+            base_definition(&vault, &owner_proof, author, agent_id),
+        )
+    });
+    // A put over a stored row is admitted only on a lane that reads the row;
+    // the permit names live rows only, so it follows their creation.
     vault
         .install_read_permits_for_test(
             &authors.map(|author| WriteActor::new(author, EdgeActorClass::Agent)),
         )
         .expect("each author reads its own row");
-    let own_change = proposed_change(&vault, &owner_proof, own, "check_in.approval.own");
-    let asked_change = proposed_change(&vault, &owner_proof, asked, "check_in.approval.asked");
-    let other_change = proposed_change(&vault, &owner_proof, other, "check_in.approval.other");
+    let [own_change, asked_change, other_change] =
+        bases.map(|(author, before)| proposed_change(&vault, author, before));
 
     let approved_own = approve_proposed_agent_definition_change_as(
         &vault,
@@ -213,10 +229,13 @@ fn the_owner_applies_an_approved_ask_for_that_agent_definition_change_only() {
         &vault,
         &owner_proof,
         approval(other_change, Some(check_in)),
-    );
+    )
+    .expect_err("the approval covers the change it was asked for only");
     assert!(
-        refused.is_err(),
-        "the approval covers the change it was asked for only; seen {refused:?}"
+        refused
+            .message
+            .contains("the act is another effect than the one asked"),
+        "refused on the effect it was asked for; seen {refused:?}"
     );
     assert!(
         !spent(&vault, &check_in),
@@ -266,9 +285,16 @@ const WIDEN_ROW: u8 = 0xB3;
 /// The first-party PERSON that files the board's TASK.
 const CREATOR: u8 = 0xE1;
 
-/// A board TASK the Owner owns, run by an Auto agent; a parent dispatched
-/// under it with no context; and one child per key, each asking for the
-/// parent's last chat turn, so each is held as a widen proposal: their ids.
+/// The chat TURN the board's projection holds, so a child's last turn is
+/// something to widen to.
+const TURN: u8 = 0xA7;
+
+/// A board TASK the Owner owns, run by an Auto agent, over one chat TURN;
+/// and per key a parent dispatched under it with no context and one child
+/// asking for its last chat turn, so each child is held as a widen
+/// proposal: their ids. An approval widens its proposal's parent's slice,
+/// so each proposal has its own parent: another's approval leaves it
+/// current.
 fn widen_proposals(
     vault: &Vault,
     owner: EntityId,
@@ -285,6 +311,24 @@ fn widen_proposals(
             1,
         )
         .expect("the Owner creates the board's agent");
+    let mut turn = Vec::new();
+    rmpv::encode::write_value(
+        &mut turn,
+        &RmpValue::Map(vec![
+            (RmpValue::from("role"), RmpValue::from("user")),
+            (RmpValue::from("text"), RmpValue::from("board context")),
+        ]),
+    )
+    .expect("the turn's bytes");
+    vault
+        .put_entity(
+            &EntityId::from_bytes([TURN; 16]).expect("the turn id"),
+            ENTITY_TYPE_TURN,
+            at(1),
+            1,
+            &turn,
+        )
+        .expect("the board's chat turn");
     let creator = EntityId::from_bytes([CREATOR; 16]).expect("the creator id");
     vault
         .put_entity(&creator, ENTITY_TYPE_PERSON, at(1), 1, b"creator")
@@ -301,31 +345,32 @@ fn widen_proposals(
         .local_attempt()
         .expect("the board dispatch");
     let dispatcher = AgentDispatcher::new(vault);
-    let child = |parent, key: &str| DispatchAgent {
+    // A dedupe key names one dispatch in the whole vault, not per parent.
+    let child = |parent, key: String| DispatchAgent {
         target: AgentDispatchTarget::Custom(row),
         parent_attempt: Some(parent),
-        dedupe_key: Some(key.to_owned()),
+        dedupe_key: Some(key),
         run_id: None,
         now: 3,
     };
-    let parent = match dispatcher
-        .dispatch_with_context(
-            child(board, "parent"),
-            AgentSpawnContext::default().with_context_spec(ContextSpec::excluded()),
-        )
-        .expect("the parent dispatch")
-    {
-        AgentDispatchOutcome::Dispatched(status) => status.attempt.id,
-        other => panic!("the parent dispatches; seen {other:?}"),
-    };
     keys.iter()
         .map(|&key| {
+            let parent = match dispatcher
+                .dispatch_with_context(
+                    child(board, format!("parent.{key}")),
+                    AgentSpawnContext::default().with_context_spec(ContextSpec::excluded()),
+                )
+                .expect("the parent dispatch")
+            {
+                AgentDispatchOutcome::Dispatched(status) => status.attempt.id,
+                other => panic!("the parent dispatches; seen {other:?}"),
+            };
             let asked = AgentSpawnContext::default().with_context_spec(ContextSpec {
                 chat: ChatProjection::Recent { last_n: 1 },
                 ..ContextSpec::excluded()
             });
             match dispatcher
-                .dispatch_with_context(child(parent, key), asked)
+                .dispatch_with_context(child(parent, format!("child.{key}")), asked)
                 .expect("the child dispatch")
             {
                 AgentDispatchOutcome::ProposedWiden(proposal) => proposal.proposal_id,
@@ -381,16 +426,20 @@ fn the_owner_applies_an_approved_ask_for_that_widen_proposal_only() {
         &widen_proposal_approve_effect_digest(&answer(asked, None)).expect("the approval's digest"),
     );
     let declined =
-        decline_widen_proposal_as_owner(&vault, &owner_proof, &answer(other, Some(check_in)));
+        decline_widen_proposal_as_owner(&vault, &owner_proof, &answer(other, Some(check_in)))
+            .expect_err("a decline widens nothing and applies no check-in");
     assert!(
-        declined.is_err(),
-        "a decline widens nothing and applies no check-in; seen {declined:?}"
+        declined.to_string().contains("a decline widens nothing"),
+        "refused for its check_in_ref; seen {declined:?}"
     );
     let refused =
-        approve_widen_proposal_as_owner(&vault, &owner_proof, &answer(other, Some(check_in)));
+        approve_widen_proposal_as_owner(&vault, &owner_proof, &answer(other, Some(check_in)))
+            .expect_err("the approval covers the proposal it was asked for only");
     assert!(
-        refused.is_err(),
-        "the approval covers the proposal it was asked for only; seen {refused:?}"
+        refused
+            .to_string()
+            .contains("the act is another effect than the one asked"),
+        "refused on the effect it was asked for; seen {refused:?}"
     );
     assert!(
         !spent(&vault, &check_in),
