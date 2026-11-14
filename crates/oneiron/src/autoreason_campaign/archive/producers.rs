@@ -126,6 +126,82 @@ pub(crate) enum ArchiveProducerRecord {
     },
 }
 
+impl ArchiveProducerRecord {
+    /// Whether `id` minted this record: the axes proposal's producer, or the
+    /// principal a placement or score was asked for, whose decisions'
+    /// receipts name it too.
+    fn minted_by(&self, id: &EntityId) -> bool {
+        match self {
+            Self::Axes { producer, .. } => producer == id,
+            Self::Placement {
+                principal, basis, ..
+            } => {
+                principal == id
+                    || matches!(basis, ArchivePlacementBasis::Judgment { decisions }
+                        if decisions.iter().any(|decision| decision.receipt.principal == *id))
+            }
+            Self::Score {
+                principal,
+                decision,
+                ..
+            } => principal == id || decision.receipt.principal == *id,
+        }
+    }
+
+    /// Drops `id` from the evidence this record's decisions read; whether
+    /// any of them named it.
+    fn forget_evidence(&mut self, id: &EntityId) -> bool {
+        let decisions: Vec<&mut TypedDecision> = match self {
+            Self::Placement {
+                basis: ArchivePlacementBasis::Judgment { decisions },
+                ..
+            } => decisions.iter_mut().collect(),
+            Self::Score { decision, .. } => vec![decision],
+            Self::Axes { .. } | Self::Placement { .. } => Vec::new(),
+        };
+        let mut named = false;
+        for decision in decisions {
+            let rows = decision.evidence.len();
+            decision.evidence.retain(|row| row != id);
+            let pins = decision.receipt.evidence_versions.len();
+            decision
+                .receipt
+                .evidence_versions
+                .retain(|pin| pin.id != *id);
+            named |=
+                decision.evidence.len() != rows || decision.receipt.evidence_versions.len() != pins;
+        }
+        named
+    }
+}
+
+/// The producer table's declared scrub (FIX 3520): an actor's erase, and a
+/// restored image's replay of every erased id. A record `id` minted goes
+/// whole, since a decision receipt's principal has no erased form (as
+/// `skill_attribution::erase_decision_receipts_entity_in_txn` drops one), so
+/// install, repropose and record refuse its receipt from then on; another
+/// record keeps its receipt's bindings and forgets `id` as its decisions'
+/// evidence (#7965 review round 2).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_producer_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let rows = crate::store::side_table_erase_scan::erase_scan_in_txn(vault, wtxn, PRODUCERS)?;
+    for (receipt, mut record) in rows {
+        if record.minted_by(id) {
+            PRODUCERS.delete(&vault.store, wtxn, &receipt)?;
+        } else if record.forget_evidence(id) {
+            PRODUCERS.put(&vault.store, wtxn, &receipt, &record)?;
+        }
+    }
+    Ok(())
+}
+
 fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(reason.into())
 }

@@ -17,6 +17,7 @@ pub use axes::{
     ArchiveAxesProposal, ArchiveAxesRequest, ArchiveAxis, ArchiveDescriptor,
     CoachArchiveAxesRecipe, propose_campaign_archive,
 };
+pub(crate) use producers::erase_producer_actor_in_txn;
 pub use producers::{
     ArchiveAxesMethod, ArchiveAxesMint, ArchivePlacementBasis, mint_archive_axes,
     mint_archive_placement, mint_archive_score,

@@ -15,9 +15,11 @@ crate::side_table::side_tables! {
         [restore: content] [family: unclassified] [tier: canonical];
     /// One engine-minted producer record behind an output archive's receipt id: the Coach's axes
     /// proposal, a typed placement or a quality score, with what it was bound to. Install,
-    /// repropose and record resolve every receipt they carry here. Key: id16 (receipt id).
+    /// repropose and record resolve every receipt they carry here. An erase drops the records
+    /// its actor minted (#7965 review round 2). Key: id16 (receipt id).
     AUTORESEARCH_ARCHIVE_PRODUCER: VaultMeta b"autoresearch:archive-producer:v1:" Named
-        [restore: content] [family: unclassified] [tier: canonical];
+        [restore: content] [family: unclassified] [tier: canonical]
+        => crate::autoreason_campaign::archive::erase_producer_actor_in_txn;
     /// One claim-authoring campaign (OF-366): its strategy skill pin, fixed config, strategy pin
     /// and BEAM promotion receipt. Key: id16 (root attempt).
     AUTORESEARCH_AUTHORING: VaultMeta b"autoresearch:authoring:v1:" Named
