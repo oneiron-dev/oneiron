@@ -203,6 +203,9 @@ pub(crate) use super::secret_lift_doors::*;
 // The owner's custody register, rotate, rewrap, view and sealed submit
 // doors (FIX 4993), likewise.
 pub(crate) use super::secret_custody_doors::*;
+// A found key's two answers its writer may give as the owner may
+// (L6-03-WRITER-MARK-MANAGED-MEMBER), likewise.
+pub(crate) use super::found_key_answer_doors::*;
 // The owner's custody member drain doors (FIX 11274), likewise.
 pub(crate) use super::custody_drain_doors::*;
 // The owner's reservoir source preview door (FIX 11352), likewise.

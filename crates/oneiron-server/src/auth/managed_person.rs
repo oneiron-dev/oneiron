@@ -15,11 +15,12 @@
 //! that takes a person's own proof among the shared-vault rows: the member
 //! reads, his receipts and notices and his own leave (stage 1), and the
 //! Admin powers, the invitee's answer, objections and erase asks, his own
-//! record erase, the shared policy, trusted contacts and the workspace rows
-//! (stage 2). Whether he holds a power is the engine's roster and role check,
-//! never this list. The same action signs his `/mcp` call of one of those
-//! doors and the upgrade of his held MCP socket, whose calls reach those
-//! doors alone (`api::mcp_gateway::person_call`).
+//! record erase, his answers to a found key whose value he wrote, the
+//! shared policy, trusted contacts and the workspace rows (stage 2). Whether
+//! he holds a power is the engine's roster and role check, never this list.
+//! The same action signs his `/mcp` call of one of those doors and the
+//! upgrade of his held MCP socket, whose calls reach those doors alone
+//! (`api::mcp_gateway::person_call`).
 
 use axum::http::{Extensions, HeaderMap};
 use oneiron::claim::CallerLocality;
@@ -37,9 +38,9 @@ use crate::server::SyncServer;
 /// withdrawn and their slips, a Steward's member asks filed, read, applied
 /// and declined, shared acts proposed and executed), the
 /// invitee's accept and decline, objections and erase asks, his own record
-/// erase, the shared policy's proposal and answer, his trusted contacts and
-/// the workspace rows.
-pub(crate) const MANAGED_PERSON_DOORS: [&str; 43] = [
+/// erase, his answers to a found key whose value he wrote, the shared
+/// policy's proposal and answer, his trusted contacts and the workspace rows.
+pub(crate) const MANAGED_PERSON_DOORS: [&str; 45] = [
     "vault.members.invitations",
     "vault.shared.erase_asks",
     "vault.shared.receipt",
@@ -71,6 +72,8 @@ pub(crate) const MANAGED_PERSON_DOORS: [&str; 43] = [
     "vault.shared.close_erase_ask",
     "vault.records.erase_preview",
     "vault.records.erase_confirm",
+    "vault.secrets.found.not_a_secret",
+    "vault.secrets.found.keep_as_text",
     "vault.shared.policy.propose",
     "vault.shared.policy.answer",
     "vault.trusted_contacts.name",

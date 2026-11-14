@@ -319,6 +319,14 @@ name = "found_key_writer_route"
 path = "tests/found_key_writer_route.rs"
 required-features = ["oneiron/test-support"]
 
+# A found key's two facade answers, on a managed member's person action and
+# a writer's own slip (L6-03-WRITER-MARK-MANAGED-MEMBER), on a
+# `MemoryKeystore` too.
+[[test]]
+name = "found_key_member_verb"
+path = "tests/found_key_member_verb.rs"
+required-features = ["oneiron/test-support"]
+
 # DEL-2's core HTTP delete door roots its server on a `MemoryKeystore` too.
 [[test]]
 name = "delete_authority_served_door"
