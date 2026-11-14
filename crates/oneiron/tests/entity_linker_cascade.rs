@@ -976,11 +976,19 @@ fn a_lone_unsure_role_edge_is_not_replaced_by_sound_matches() {
 }
 
 /// The codes a write posts are the ones main posts: the linker's whole-name
-/// codes come out of the same generator without changing it.
+/// codes come out of the same generator without changing it. The `ipa:`
+/// sound keys (L10-08) are posted beside them; oneiron-store's
+/// `phonetic_ipa` tests check those.
 #[test]
 fn the_write_codes_are_unchanged() {
+    let codes_without_sound_keys = |name: &str| -> Vec<String> {
+        generate_phonetic_codes(name)
+            .into_iter()
+            .filter(|code| !code.starts_with("ipa:"))
+            .collect()
+    };
     assert_eq!(
-        generate_phonetic_codes("Owen Smith"),
+        codes_without_sound_keys("Owen Smith"),
         [
             "en:soundex:O500",
             "en:soundex:O525",
@@ -991,7 +999,7 @@ fn the_write_codes_are_unchanged() {
         ]
     );
     assert_eq!(
-        generate_phonetic_codes("Mori Yuki"),
+        codes_without_sound_keys("Mori Yuki"),
         [
             "en:soundex:M600",
             "en:soundex:M620",
@@ -1002,7 +1010,7 @@ fn the_write_codes_are_unchanged() {
         ]
     );
     assert_eq!(
-        generate_phonetic_codes("もり ゆき"),
+        codes_without_sound_keys("もり ゆき"),
         ["kana:もりゆき", "romaji:moriyuki"]
     );
 }

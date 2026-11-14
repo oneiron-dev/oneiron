@@ -1,0 +1,101 @@
+{
+  "communication": {
+    "audience": "Board",
+    "outcome": "Approve the budget",
+    "main_message": "Five findings on costs and margins"
+  },
+  "language": "en-GB",
+  "accessibility": [
+    "Describe every figure"
+  ],
+  "pages": [
+    {
+      "id": "findings",
+      "job": "explain",
+      "division": "split",
+      "blocks": [
+        {
+          "id": "f-title",
+          "kind": "title",
+          "text": "Five findings on costs, margins and churn"
+        },
+        {
+          "id": "f-one",
+          "kind": "claim",
+          "text": "Operating costs fell for the third straight quarter as the regional review removed duplicate supplier contracts and consolidated deliveries. Procurement savings account for most of the decline, with the remainder from lower overtime after shift patterns were redrawn. Finance expects the run rate to hold through next quarter, provided headcount stays flat and energy prices do not rise again.",
+          "evidence": [
+            {
+              "document": "doc:annual-report",
+              "version": "v3",
+              "start": "cursor:10",
+              "end": "cursor:47",
+              "quote": "procurement savings",
+              "quote_hash": "93b9f14378fa63c9050a0aa23d8cefe12aafa3844636a064714f7783aef811e7"
+            }
+          ]
+        },
+        {
+          "id": "f-two",
+          "kind": "claim",
+          "text": "Gross margin widened by two points as price discipline held in every segment and cheaper input contracts took effect. Discounting stayed inside the approved bands, and the mix shifted toward higher-margin service lines. The improvement covers the shortfall from softer volumes, leaving operating profit ahead of plan. Management intends to protect the margin before chasing volume in the final quarter.",
+          "evidence": [
+            {
+              "document": "doc:annual-report",
+              "version": "v3",
+              "start": "cursor:10",
+              "end": "cursor:47",
+              "quote": "margin widened by two points",
+              "quote_hash": "d5aa9d0de4462982d4bdb3badec7888b03b7f7e4357af6f5fe1a995f730f809f"
+            }
+          ]
+        },
+        {
+          "id": "f-three",
+          "kind": "claim",
+          "text": "Customer churn eased for the second quarter in a row after the support team cut response times and the renewal desk contacted every at-risk account. Saved renewals now outweigh new losses, and satisfaction scores recovered to last year's level. The remaining churn concentrates in one low-margin segment where repricing continues. Retention spending stays within budget.",
+          "evidence": [
+            {
+              "document": "doc:annual-report",
+              "version": "v3",
+              "start": "cursor:10",
+              "end": "cursor:47",
+              "quote": "churn eased",
+              "quote_hash": "abcff27b13c1e83ccbf8ff4e55f3c8fc3b78890b437d4b77491a581c4e8bbc77"
+            }
+          ]
+        },
+        {
+          "id": "f-four",
+          "kind": "claim",
+          "text": "Site costs diverged across regions even as the group total fell, with two depots running above plan on maintenance and agency staffing. The review moves one depot to the shared maintenance rota and freezes agency hiring where overtime covers the gap. Regional managers report monthly against the revised ceilings. The central team audits the two outliers before the next review.",
+          "evidence": [
+            {
+              "document": "doc:annual-report",
+              "version": "v3",
+              "start": "cursor:10",
+              "end": "cursor:47",
+              "quote": "depots running above plan",
+              "quote_hash": "34e84571a6dc67f725a828e562bc740ea2d590f08d6945b12bc062bb5679ed0c"
+            }
+          ]
+        },
+        {
+          "id": "f-five",
+          "kind": "claim",
+          "text": "Net margin guidance rises slightly as the cost and churn trends reinforce each other into the final quarter. Lower servicing costs per retained account compound the procurement savings, while stable pricing protects the top line. The board paper asks for no new funding and restates the full-year target. Risks sit with energy prices and the timing of two contract renewals.",
+          "evidence": [
+            {
+              "document": "doc:annual-report",
+              "version": "v3",
+              "start": "cursor:10",
+              "end": "cursor:47",
+              "quote": "guidance rises slightly",
+              "quote_hash": "5f20a92fb76862331d3851ba96c5345d8eb089058efdd2e2de658cd2ff130a25"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "datasets": []
+}

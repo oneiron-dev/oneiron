@@ -337,7 +337,7 @@ pub(crate) fn stamp_reveal_lease_in_txn(
         authority.effector(),
         Some(ttl_secs),
     )?;
-    let value = reveal_value_in_txn(&vault.store, wtxn, authority)?;
+    let value = reveal_value_in_txn(vault, wtxn, authority)?;
     let lease = write_t1_lease_rows_in_txn(
         vault,
         wtxn,
@@ -450,7 +450,7 @@ pub(crate) fn reread_reveal_lease_in_txn(
         rec.class,
         &rec.name,
     )?;
-    reveal_value_in_txn(&vault.store, txn, authority).map(Some)
+    reveal_value_in_txn(vault, txn, authority).map(Some)
 }
 
 /// The rows every T1 materialization writes once its value is read: the
