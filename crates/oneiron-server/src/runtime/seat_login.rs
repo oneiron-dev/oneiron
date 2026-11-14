@@ -154,7 +154,7 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
         // `_scratch` is the fenced CLI's TMPDIR: it stays until the run ends.
         let (mut command, fence_outcome, _scratch) = match &self.runner_fence {
             Some(fence) => {
-                let runner = fence.command(&spec.program, &self.workdir);
+                let runner = fence.command(&spec.program, Some(&self.workdir));
                 (runner.command, Some(runner.outcome), runner.scratch)
             }
             None => (oneiron_spawn::command(&spec.program), None, None),

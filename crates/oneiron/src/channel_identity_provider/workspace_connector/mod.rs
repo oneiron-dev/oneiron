@@ -556,6 +556,7 @@ fn delivered(
             }),
             result_absence: None,
             budget_steering: Vec::new(),
+            session_manifest: None,
         },
     )
 }

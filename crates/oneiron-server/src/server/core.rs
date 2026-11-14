@@ -190,6 +190,9 @@ pub struct SyncServer {
     /// and `connector.answer` reads them.
     pub(crate) connector_elicitations:
         Arc<crate::connector_elicitation::ConnectorElicitationRegistry>,
+    /// The `mcp_stdio` connector children every connector host this server
+    /// builds sends through (row L8-27), stopped with the server.
+    pub(crate) connector_stdio: Arc<crate::connector_call_host::stdio::ConnectorStdioRegistry>,
     /// The `[browser]` guest each code run starts for its own browser verbs.
     /// `None` answers every browser call `browser_unbound`.
     pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
@@ -359,7 +362,8 @@ const _: fn(&SyncServer) = |server| {
         leaf_keys, lens_frames, note_editors, artifact_previews, live_voice, asr_sessions,
         meeting_imports, model_streams, export_transfers, pairing_backoff, mcp_registry,
         mcp_code_host, mcp_code_run_continuations, reader_runner, live_runs, secret_destinations,
-        seat_helpers, model_budgets, cloud_registration, connector_elicitations, browser_guest,
+        seat_helpers, model_budgets, cloud_registration, connector_elicitations, connector_stdio,
+        browser_guest,
         browser_readiness, desktop_guest, artifact_backend, desktop_seats, browser_seats,
         web_fetcher, memories_cursors, self_brief_sessions, deep_retrieval, model_slots,
         trained_embedders, model_setup, model_setup_runtime, gpu_pool, llm, decision_read,
@@ -840,6 +844,16 @@ impl SyncServer {
     pub(crate) async fn stop_shared_envs(&self) {
         if let Some(registry) = self.shared_envs.get() {
             registry.stop().await;
+        }
+    }
+
+    /// Stops every `mcp_stdio` connector child, and starts none from here
+    /// on (row L8-27): each child's input is closed, and it is killed if it
+    /// has not exited a moment later.
+    pub(crate) async fn stop_connector_stdio(&self) {
+        let registry = Arc::clone(&self.connector_stdio);
+        if let Err(error) = tokio::task::spawn_blocking(move || registry.stop()).await {
+            tracing::warn!(%error, "stdio connector children were not stopped");
         }
     }
 

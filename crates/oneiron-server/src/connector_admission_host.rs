@@ -13,6 +13,10 @@
 //! body. The credential is presented only inside the credential door, as
 //! the call host presents it. No proxy, no redirects, bounded replies, and
 //! any server request on a reply stream is refused.
+//!
+//! A stdio connector's tools are listed from a child started for that
+//! listing alone, under the runner fence, and stopped after it (row L8-27);
+//! it presents no credential. Its probes run over HTTP only.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -32,6 +36,10 @@ use reqwest::blocking::{Client, Request, Response};
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 use serde::Deserialize;
 use serde_json::{Value, json};
+
+use crate::config::ConnectorHostConfig;
+use crate::connector_call_host::stdio::{StdioChild, StdioStart};
+use crate::runtime::runner_fence::HostRunnerFence;
 
 /// The MCP revision discovery asks for.
 const REQUESTED_REVISION: &str = "2026-07-28";
@@ -281,6 +289,70 @@ pub(crate) fn discover(
         revision: std::mem::take(&mut session.revision),
         tools,
     })
+}
+
+/// Lists the tools of the stdio connector `name`, installed as `installed`,
+/// from a child started under `fence` for this listing alone: at `pinned`
+/// once the key has pinned a revision, else at the newest one both sides
+/// speak. The child is stopped after it.
+pub(crate) fn discover_stdio(
+    fence: Option<&HostRunnerFence>,
+    name: &str,
+    installed: &ConnectorHostConfig,
+    pinned: Option<&str>,
+) -> oneiron::Result<Discovery> {
+    let accepts = |answered: &str| {
+        pinned.map_or(SPOKEN_REVISIONS.contains(&answered), |pinned| {
+            pinned == answered
+        })
+    };
+    let mut child = StdioChild::start(&StdioStart {
+        name,
+        connector: installed,
+        fence,
+        requested_revision: pinned.unwrap_or(REQUESTED_REVISION),
+        accepts_revision: &accepts,
+    })
+    .map_err(refused)?;
+    let tools = list_pages(|_, params| child.request("tools/list", params, HANDSHAKE_TIMEOUT))
+        .map_err(refused)?;
+    Ok(Discovery {
+        revision: child.revision().to_owned(),
+        tools,
+    })
+}
+
+/// Every `tools/list` page, in the connector's order, however many it
+/// lists (FIX 8196): `page` sends the request numbered as its first
+/// argument, with its params, and returns its result. Only a cursor the
+/// connector already gave, which would page forever, is refused.
+fn list_pages(
+    mut page: impl FnMut(u64, Value) -> Result<Value, &'static str>,
+) -> Result<Vec<ListedTool>, &'static str> {
+    let mut tools = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut seen = std::collections::BTreeSet::new();
+    for number in 0u64.. {
+        let params = cursor
+            .take()
+            .map_or_else(|| json!({}), |cursor| json!({ "cursor": cursor }));
+        let result = page(number, params)?;
+        let listed = result
+            .get("tools")
+            .and_then(Value::as_array)
+            .ok_or("a tools/list page has no tools")?;
+        for tool in listed {
+            tools.push(ListedTool::parse(tool)?);
+        }
+        match result.get("nextCursor").and_then(Value::as_str) {
+            Some(next) if !seen.insert(next.to_owned()) => {
+                return Err("the connector's tools/list cursor repeats");
+            }
+            Some(next) => cursor = Some(next.to_owned()),
+            None => break,
+        }
+    }
+    Ok(tools)
 }
 
 /// The listed tools resolved as the retained manifest resolves them, with
@@ -660,20 +732,13 @@ impl<'a> Session<'a> {
         read_reply(response, id, &mut |request: &Value| self.refuse(request))
     }
 
-    /// Every `tools/list` page, in the connector's order, however many it
-    /// lists (FIX 8196). Each page has its own timeout; only a cursor the
-    /// connector already gave, which would page forever, is refused.
+    /// Every `tools/list` page ([`list_pages`]), each with its own
+    /// timeout.
     fn list_tools(
         &self,
         mut requests: Option<&mut Vec<ProbeCapturedRequest>>,
     ) -> Result<Vec<ListedTool>, &'static str> {
-        let mut tools = Vec::new();
-        let mut cursor: Option<String> = None;
-        let mut seen = std::collections::BTreeSet::new();
-        for page in 0u64.. {
-            let params = cursor
-                .take()
-                .map_or_else(|| json!({}), |cursor| json!({ "cursor": cursor }));
+        list_pages(|page, params| {
             let body = json!({
                 "jsonrpc": "2.0",
                 "id": format!("tools/list:{page}"),
@@ -694,26 +759,11 @@ impl<'a> Session<'a> {
                 .execute(built)
                 .map_err(|_| "the connector did not answer")?;
             let message = self.answer(response, &body["id"])?;
-            let result = message
+            message
                 .get("result")
                 .cloned()
-                .ok_or("the connector answered with an error")?;
-            let listed = result
-                .get("tools")
-                .and_then(Value::as_array)
-                .ok_or("a tools/list page has no tools")?;
-            for tool in listed {
-                tools.push(ListedTool::parse(tool)?);
-            }
-            match result.get("nextCursor").and_then(Value::as_str) {
-                Some(next) if !seen.insert(next.to_owned()) => {
-                    return Err("the connector's tools/list cursor repeats");
-                }
-                Some(next) => cursor = Some(next.to_owned()),
-                None => break,
-            }
-        }
-        Ok(tools)
+                .ok_or("the connector answered with an error")
+        })
     }
 
     /// Answers one server request on a reply stream with a refusal: this

@@ -77,6 +77,7 @@ impl ConnectorElicitationRegistry {
                 result: Some(result.clone()),
                 result_absence: None,
                 budget_steering: Vec::new(),
+                session_manifest: None,
             },
         ) {
             entry.result = Some(Arc::new(result));
