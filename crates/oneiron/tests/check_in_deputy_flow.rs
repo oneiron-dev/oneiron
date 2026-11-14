@@ -53,7 +53,7 @@ use oneiron::check_in::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole, InitialSharedMember};
 use oneiron::memory::{
-    BlobArtifactInput, MEMORY_CODE_CHECK_IN_PENDING, MEMORY_CODE_FORBIDDEN, Memory, MemoryResult,
+    BlobArtifactInput, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, Memory, MemoryResult,
     WitnessAuthor, WitnessMessage, WitnessTurn,
 };
 use oneiron::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
@@ -79,6 +79,8 @@ const REVERSIBLE: &str = "vault.projects.goal.propose";
 const WORKSPACE: &str = "check-in-deputy-flow-workspace";
 /// The workspace's shared vault. Not 7, the own-device residence scope's id.
 const SHARED: u64 = 45;
+/// The refusal of an act that names a check-in nobody has approved.
+const INELIGIBLE: &str = "the check-in did not make the act eligible";
 
 fn hex(bytes: &[u8; 32]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -380,7 +382,8 @@ fn a_deputys_acts_go_wait_or_hold_and_the_approved_ones_land_once() {
     let early = flow
         .house_adds(Some(&add_id))
         .expect_err("an unanswered check-in lands nothing");
-    assert_ne!(early.code, MEMORY_CODE_CHECK_IN_PENDING, "{early:?}");
+    assert_eq!(early.code, MEMORY_CODE_BAD_REQUEST, "{early:?}");
+    assert!(early.message.contains(INELIGIBLE), "{early:?}");
 
     // Its erase ask is held until the Owner answers.
     let record = flow
@@ -420,10 +423,11 @@ fn a_deputys_acts_go_wait_or_hold_and_the_approved_ones_land_once() {
             "the Owner who minted the Grant is asked first"
         );
     }
-    assert!(
-        flow.erase(record, &erase_id).is_err(),
-        "the Owner's confirm naming the unanswered ask erases nothing"
-    );
+    let held = flow
+        .erase(record, &erase_id)
+        .expect_err("the Owner's confirm naming the unanswered ask erases nothing");
+    assert_eq!(held.code, MEMORY_CODE_BAD_REQUEST, "{held:?}");
+    assert!(held.message.contains(INELIGIBLE), "{held:?}");
     assert!(
         flow.vault.get(&record).expect("read the record").is_some(),
         "the held erase erased nothing"
