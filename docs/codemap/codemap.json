@@ -49716,7 +49716,7 @@
      "path": "src/llm/decision/questions/graph_ask.rs",
      "purpose": "One-off graph judgment: scoped context, injected answerer, and proposed claims",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 7,
       "struct": 7,
@@ -102888,6 +102888,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/serving_egress_credentials.rs",
+     "purpose": "Admitted agent egresses release typed Nulled bodies while the owner keeps encoded carriers and graph source…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/serving_scoped_credentials.rs",
      "purpose": "Serving keeps the owner's current view while an admitted agent receives the scoped export's typed Nulled…",
      "surface": {}
@@ -105228,7 +105236,7 @@
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7582,
-   "test_files": 1299
+   "test_files": 1300
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -124229,7 +124237,7 @@
      "path": "src/lib.rs",
      "purpose": "The retrieval ruler of the oneiron engine (RESEARCH-0651 Tier 0)",
      "surface": {
-      "mod": 9
+      "mod": 10
      }
     },
     {
@@ -124372,6 +124380,27 @@
     },
     {
      "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Fill",
+      "TrecConversion",
+      "TrecError",
+      "TrecPassage",
+      "TrecQrel",
+      "TrecSplit",
+      "TrecTopic"
+     ],
+     "path": "src/trec_collection.rs",
+     "purpose": "TREC-shaped passage collections (MIRACL, Mr.TyDi) in, one pack slice out",
+     "surface": {
+      "const": 3,
+      "enum": 1,
+      "fn": 7,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/acceptance.rs",
@@ -124408,6 +124437,14 @@
      "notable": [],
      "path": "tests/scorecard.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/trec_collection.rs",
+     "purpose": "TREC passage collections become pack slices: three slices of passages by article, fills, and malformed lines…",
      "surface": {}
     }
    ],
@@ -124474,12 +124511,19 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "The sealed-once markers: one sealed run per experiment (RESEARCH-0651 Tier 0)"
+    },
+    "trec_collection": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "TREC-shaped passage collections (MIRACL, Mr.TyDi) in, one pack slice out"
     }
    },
    "over_bar": 1,
    "purpose": "The retrieval ruler of the oneiron engine (RESEARCH-0651 Tier 0)",
-   "source_files": 10,
-   "test_files": 5
+   "source_files": 11,
+   "test_files": 6
   },
   "oneiron-run-budget": {
    "files": [
