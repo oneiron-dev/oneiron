@@ -63,6 +63,27 @@ pub(in crate::task_verb) fn proposer_of(
     Ok(proposer)
 }
 
+/// Whether `person` settles `claim` though he opened it: a vault owner
+/// settles his own composed post (RULING L8-07-OWNER-OPENER = A, 14 Nov
+/// 09:35). Its brief is the engine's local-model draft, under a composer
+/// stamp no caller sets, and he is the person who reads it before it runs.
+/// Every other opener stays refused on his own proposal (DEC-0006), and so
+/// does the owner on any other proposal he opened.
+pub(crate) fn owner_settles_own_composed_post(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    claim: &ClaimBody,
+    person: EntityId,
+) -> Result<bool> {
+    let composed = claim.predicate == TASK_CREATE_PROPOSAL_PREDICATE
+        && map_entry(&claim.value, TASK_POST_STAMP_KEY)
+            .and_then(from_value::<PostStamp>)
+            .is_some_and(|stamp| stamp.brief.composed.is_some());
+    Ok(composed
+        && crate::claim::session_claim_producer(claim) == Some(person)
+        && crate::policy_model::owners_in_txn(vault, txn)?.contains(&person))
+}
+
 /// The actor class a claim's write envelope stamped into its evidence:
 /// immutable, unlike its subject or any approver.
 pub(in crate::task_verb) fn envelope_actor_class(claim: &ClaimBody) -> Option<EdgeActorClass> {
@@ -106,7 +127,12 @@ pub(super) fn settle_post(
     let stamp: PostStamp = from_value(stamp_value).ok_or(Error::Record(
         crate::error::RecordError::InvalidTaskBody("tasks.proposal.post"),
     ))?;
-    let proposer = proposer_of(claim, approver)?;
+    let proposer = match approver {
+        Some(owner) if owner_settles_own_composed_post(vault, wtxn, claim, owner.entity_ref())? => {
+            owner.entity_ref()
+        }
+        _ => proposer_of(claim, approver)?,
+    };
     let class = class_of(stamp.actor_class)?;
     let task_ref = EntityId::derive(TASK_SETTLE_ID_DOMAIN, &[claim_id.as_bytes()])?;
     if vault.get_raw_in(wtxn, &task_ref)?.is_some() {

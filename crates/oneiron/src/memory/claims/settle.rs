@@ -250,6 +250,9 @@ struct ReviewedProposal {
     /// The actors that opened it: its authenticated author and the actor its
     /// envelope names, unless the owner's whole-vault restore brought it back.
     openers: Vec<EntityId>,
+    /// The vault owner who opened it when it is his own composed task post,
+    /// which he settles though he opened it (RULING L8-07-OWNER-OPENER = A).
+    composed_post_owner: Option<EntityId>,
     /// Whether it is an active claim whose own author's retract waits for
     /// the holder's consent (ARCH-0040 `mcp:5`).
     parked_retract: bool,
@@ -360,6 +363,16 @@ impl ReviewedProposal {
         {
             openers.push(actor);
         }
+        let composed_post_owner = match crate::claim::session_claim_producer(&body) {
+            Some(producer)
+                if crate::task_verb::owner_settles_own_composed_post(
+                    vault, txn, &body, producer,
+                )? =>
+            {
+                Some(producer)
+            }
+            _ => None,
+        };
         Ok(Self {
             digest: *hasher.finalize().as_bytes(),
             frontier,
@@ -368,6 +381,7 @@ impl ReviewedProposal {
             prior,
             machine,
             openers,
+            composed_post_owner,
             parked_retract,
         })
     }
@@ -414,7 +428,7 @@ impl ReviewedProposal {
         if !self.review_id().eq_ignore_ascii_case(review_id) {
             return Err(stale_review());
         }
-        if self.openers.contains(&person) {
+        if self.openers.contains(&person) && self.composed_post_owner != Some(person) {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
                 "the actor that opened a proposal never settles it",

@@ -215,7 +215,7 @@ pub use browser_workflow::{
 pub use decision_port::TaskDecisions;
 #[cfg(oneiron_test_support)]
 pub(crate) use highway_post::parked_post_brief;
-pub(crate) use highway_post::settle_task_proposal_in_txn;
+pub(crate) use highway_post::{owner_settles_own_composed_post, settle_task_proposal_in_txn};
 pub use highway_types::{
     AttemptHandle, AttemptView, HostBinding, TaskAccept, TaskCall, TaskCallReceipt, TaskHandle,
     TaskLifecycleRecord, TaskOutcome, TaskPhase, TaskPost, TaskRedo, TaskReport, TaskReportBody,
