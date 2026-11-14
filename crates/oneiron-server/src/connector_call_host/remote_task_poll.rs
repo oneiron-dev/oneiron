@@ -36,10 +36,22 @@
 //! rows, and carrying out the task-input key retirements committed writers
 //! staged.
 //!
-//! A `tasks/get` answered HTTP 404 in its session is the connector ending
-//! that session: the poll opens a new one under the same endpoint, revision
-//! and credential, declaring what the send's session declared, the ledger
-//! keeps its id, and the poll asks again in it (FIX 16028). The session ends
+//! When the owner asked the task to stop (L8-29: the owner's cancel of the
+//! call, or the owner's Stop of its try), the poll first sends one
+//! `tasks/cancel` in the task's session, which undoes nothing already done:
+//! the stop is claimed in the ledger (Sending) before its POST, the keyed
+//! call's issuer binding is read again after that writer, and the POST's
+//! outcome is recorded (Sent for a 2xx, Uncertain when unknown or held). A
+//! claimed stop is never sent again. It carries no content and is the
+//! owner's own act, so it goes out whether or not the grant still admits the
+//! send; the `tasks/get` that follows in the same pass does not. Its answer
+//! is not read: the send stays Deferred until a poll reads the task's end.
+//!
+//! A `tasks/get` or `tasks/cancel` answered HTTP 404 in its session is the
+//! connector ending that session: the poll opens a new one under the same
+//! endpoint, revision and credential, declaring what the send's session
+//! declared, the ledger keeps its id, and the poll asks again in it (FIX
+//! 16028). The session ends
 //! only after the ledger holds the settlement. A session whose handle went
 //! before it ended (an erase took the request) is owed its end: each pass
 //! ends those, under the connector's own endpoint and the credential the
@@ -60,6 +72,8 @@ use super::*;
 const POLL_ID: u64 = 7;
 /// The JSON-RPC id of the `tasks/result` an `input_required` poll sends.
 const RESULT_ID: u64 = 8;
+/// The JSON-RPC id of the `tasks/cancel` the owner's stop sends (L8-29).
+const CANCEL_ID: u64 = 9;
 /// The most tasks one pass polls.
 const POLLS_PER_PASS: usize = 32;
 /// JSON-RPC "Invalid params": MCP's answer for a task id it does not know,
@@ -77,6 +91,16 @@ enum Polled {
     /// it.
     Ended(RemoteTaskEnd, LiveSession),
     /// The row is no longer a Deferred send of this task: nothing was sent.
+    Gone,
+}
+
+/// What one POST in a task's session came to.
+enum InSession {
+    /// The connector's answer, or the send's error, and the session it came
+    /// in.
+    Answered(LiveSession, reqwest::Result<reqwest::blocking::Response>),
+    /// The connector ended the session, and the row is no longer a Deferred
+    /// send of this task: the session renewed for it is ended.
     Gone,
 }
 
@@ -149,7 +173,13 @@ fn poll_due_remote_tasks(server: &SyncServer) {
             Ok(Polled::Running {
                 status,
                 poll_after_ms,
-            }) => vault.remote_task_polled(&task.intent, poll_after_ms, status, now_ms()),
+            }) => vault.remote_task_polled(
+                &task.intent,
+                poll_after_ms,
+                status,
+                now_ms(),
+                task.cancel_requested,
+            ),
             Ok(Polled::Ended(end, mut live)) => {
                 vault.settle_polled_remote_task(&task.intent, end).map(|_| {
                     // The ledger holds the end: the task's session ends. Its
@@ -166,7 +196,13 @@ fn poll_due_remote_tasks(server: &SyncServer) {
             Ok(Polled::Gone) => Ok(()),
             Err(reason) => {
                 tracing::info!(%intent, reason, "remote task not polled; it waits for the next pass");
-                vault.remote_task_polled(&task.intent, None, reason, now_ms())
+                vault.remote_task_polled(
+                    &task.intent,
+                    None,
+                    reason,
+                    now_ms(),
+                    task.cancel_requested,
+                )
             }
         };
         if let Err(error) = recorded {
@@ -248,7 +284,8 @@ impl ServedConnectorCallHost {
     }
 
     /// Polls `task` once: its credential presented again through its own
-    /// door, then one `tasks/get` in its session.
+    /// door, then, when the owner asked the task to stop, one `tasks/cancel`
+    /// (L8-29), then one `tasks/get` in its session.
     fn poll_remote_task(&mut self, task: &DueRemoteTask) -> Result<Polled, &'static str> {
         let view = FrozenToolCallView::read(&task.call).map_err(|_| "frozen_call_unread")?;
         let connector = self
@@ -258,11 +295,14 @@ impl ServedConnectorCallHost {
         if connector.endpoint != view.endpoint() {
             return Err("connector_endpoint_changed");
         }
-        // The grant that admitted the send still admits it.
+        // The grant that admitted the send still admits it. The owner's stop
+        // carries no content and is the owner's own act, so it goes out
+        // whether or not the grant still admits the send (L8-29); the poll
+        // does not.
         let admitted = OutboundBindingAuthority::for_vault(&self.vault)
             .and_then(|authority| authority.validate_frozen_call(&self.vault, &task.call))
             .is_ok_and(|validation| matches!(validation, OutboundBindingValidation::Valid));
-        if !admitted {
+        if !admitted && !task.cancel_requested {
             return Err("binding_not_admitted");
         }
         let protocol =
@@ -308,60 +348,27 @@ impl ServedConnectorCallHost {
         if !still_due {
             return Ok(Polled::Gone);
         }
+        let live = if task.cancel_requested {
+            match self.cancel_remote_task(live, task)? {
+                Some(live) => live,
+                None => return Ok(Polled::Gone),
+            }
+        } else {
+            live
+        };
+        if !admitted {
+            return Err("binding_not_admitted");
+        }
         let request = json!({
             "jsonrpc": "2.0",
             "id": POLL_ID,
             "method": "tasks/get",
             "params": { "taskId": task.task_id },
         });
-        let response = live
-            .post(&request, Some(CALL_TIMEOUT))
-            .send()
-            .map_err(|_| "poll_unsent")?;
-        // MCP (Streamable HTTP): a 404 to a request that carries a session id
-        // is the server ending that session, and the client starts a new
-        // one. A task binds to its authorization context, not its session
-        // (MCP 2025-11-25 tasks), so its poll goes on in a new session under
-        // the row's own endpoint and credential.
-        let (live, response) =
-            if response.status() == reqwest::StatusCode::NOT_FOUND && live.session.is_some() {
-                drop(response);
-                let renewed = renew_session(&live, &task.poll)?;
-                // The new session is this poll's until the ledger keeps it:
-                // every way short of that ends it, so no retry leaves one
-                // open on the connector.
-                let Ok(session) = renewed
-                    .session
-                    .as_ref()
-                    .map(|value| value.to_str().map(str::to_owned))
-                    .transpose()
-                else {
-                    renewed.end();
-                    return Err("session_unreadable");
-                };
-                match self
-                    .vault
-                    .remote_task_session_renewed(&task.intent, &task.task_id, session)
-                {
-                    Ok(true) => {}
-                    // Erased or settled since the pass read it.
-                    Ok(false) => {
-                        renewed.end();
-                        return Ok(Polled::Gone);
-                    }
-                    Err(_) => {
-                        renewed.end();
-                        return Err("session_unrecorded");
-                    }
-                }
-                let response = renewed
-                    .post(&request, Some(CALL_TIMEOUT))
-                    .send()
-                    .map_err(|_| "poll_unsent")?;
-                (renewed, response)
-            } else {
-                (live, response)
-            };
+        let (live, response) = match self.post_in_task_session(live, task, &request)? {
+            InSession::Answered(live, sent) => (live, sent.map_err(|_| "poll_unsent")?),
+            InSession::Gone => return Ok(Polled::Gone),
+        };
         if !response.status().is_success() {
             return Err("poll_http_refused");
         }
@@ -401,6 +408,136 @@ impl ServedConnectorCallHost {
             },
             Read::Ended(end) => Polled::Ended(end, live),
         })
+    }
+
+    /// Sends the owner's stop of `task` in its session `live` (L8-29): the
+    /// stop is claimed first (Sending, in a writer that commits before the
+    /// POST), the keyed call's issuer binding is read again after that
+    /// writer (FIX 12166), then one `tasks/cancel` goes out, in a renewed
+    /// session when the connector ended this one, and how it went is
+    /// recorded: Sent when the connector took it (a 2xx), Uncertain when that
+    /// is unknown or an issuer hold stood after the claim. A refused or
+    /// unsent stop stays Sending. None is ever sent again. Its answer is not
+    /// read: a stop undoes nothing already done, and only the end a poll
+    /// reads settles the send. The session the poll goes on in; `None` when
+    /// the row is no longer this task's Deferred send; `Err` when an issuer
+    /// hold stood after the claim, so the pass sends nothing more.
+    fn cancel_remote_task(
+        &self,
+        live: LiveSession,
+        task: &DueRemoteTask,
+    ) -> Result<Option<LiveSession>, &'static str> {
+        match self
+            .vault
+            .claim_remote_task_cancel(&task.intent, &task.task_id)
+        {
+            Ok(true) => {}
+            // Claimed before, and the task still runs: the poll goes on. A
+            // row no longer this task's Deferred send (settled or erased
+            // since the pass read it) sends nothing more.
+            Ok(false) => {
+                let still_due = self
+                    .vault
+                    .remote_task_still_due(&task.intent, &task.task_id)
+                    .map_err(|_| "row_unread")?;
+                return Ok(still_due.then_some(live));
+            }
+            Err(_) => return Err("cancel_unclaimed"),
+        }
+        if issuer_held(&self.vault, task) {
+            tracing::info!(
+                reason = "remote_task_cancel_issuer_held",
+                "an issuer hold stands over a remote task's claimed stop; it is not sent, and \
+                 never sent again"
+            );
+            if let Err(error) = self.vault.record_remote_task_cancel_uncertain(&task.intent) {
+                tracing::warn!(%error, "a remote task stop's outcome not recorded");
+            }
+            // The hold stands: this pass presents the credential no more,
+            // so no tasks/get goes out either (FIX 12166).
+            return Err("issuer_held");
+        }
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": CANCEL_ID,
+            "method": "tasks/cancel",
+            "params": { "taskId": task.task_id },
+        });
+        // A session the connector ended and that could not be renewed: the
+        // stop was not taken, and it stays Sending.
+        let (live, sent) = match self.post_in_task_session(live, task, &request)? {
+            InSession::Answered(live, sent) => (live, sent),
+            InSession::Gone => return Ok(None),
+        };
+        let recorded = match Posted::of_send(&sent) {
+            Posted::Accepted => self.vault.record_remote_task_cancel_sent(&task.intent),
+            Posted::Uncertain => self.vault.record_remote_task_cancel_uncertain(&task.intent),
+            Posted::Refused | Posted::Unsent => {
+                tracing::info!(
+                    reason = "remote_task_cancel_not_taken",
+                    "the connector did not take a remote task's stop; it is not sent again"
+                );
+                Ok(())
+            }
+        };
+        drop(sent);
+        if let Err(error) = recorded {
+            tracing::warn!(%error, "a remote task stop's outcome not recorded");
+        }
+        Ok(Some(live))
+    }
+
+    /// POSTs `request` in `task`'s session `live`. MCP (Streamable HTTP): a
+    /// 404 to a request that carries a session id is the server ending that
+    /// session, and the client starts a new one. A task binds to its
+    /// authorization context, not its session (MCP 2025-11-25 tasks), so its
+    /// requests go on in a new session under the row's own endpoint and
+    /// credential (FIX 16028): the ledger keeps the new session's id, and
+    /// `request` is sent again in it. The connector took nothing it answered
+    /// 404, so that POST is the request's first that counts.
+    fn post_in_task_session(
+        &self,
+        live: LiveSession,
+        task: &DueRemoteTask,
+        request: &Value,
+    ) -> Result<InSession, &'static str> {
+        let sent = live.post(request, Some(CALL_TIMEOUT)).send();
+        let ended = live.session.is_some()
+            && matches!(&sent, Ok(response) if response.status() == reqwest::StatusCode::NOT_FOUND);
+        if !ended {
+            return Ok(InSession::Answered(live, sent));
+        }
+        drop(sent);
+        let renewed = renew_session(&live, &task.poll)?;
+        // The new session is this request's until the ledger keeps it: every
+        // way short of that ends it, so no retry leaves one open on the
+        // connector.
+        let Ok(session) = renewed
+            .session
+            .as_ref()
+            .map(|value| value.to_str().map(str::to_owned))
+            .transpose()
+        else {
+            renewed.end();
+            return Err("session_unreadable");
+        };
+        match self
+            .vault
+            .remote_task_session_renewed(&task.intent, &task.task_id, session)
+        {
+            Ok(true) => {}
+            // Erased or settled since the pass read it.
+            Ok(false) => {
+                renewed.end();
+                return Ok(InSession::Gone);
+            }
+            Err(_) => {
+                renewed.end();
+                return Err("session_unrecorded");
+            }
+        }
+        let sent = renewed.post(request, Some(CALL_TIMEOUT)).send();
+        Ok(InSession::Answered(renewed, sent))
     }
 }
 

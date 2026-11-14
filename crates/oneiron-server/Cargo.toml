@@ -320,6 +320,13 @@ name = "note_session_bind_reply"
 path = "tests/note_session_bind_reply.rs"
 required-features = ["oneiron/test-support"]
 
+# L8-29's remote task stop serves its owner's root from a `MemoryKeystore`, and
+# writes its Deferred sends through `oneiron::test_doors`.
+[[test]]
+name = "remote_task_cancel"
+path = "tests/remote_task_cancel.rs"
+required-features = ["oneiron/test-support"]
+
 # DEL-2's core HTTP delete door roots its server on a `MemoryKeystore` too.
 [[test]]
 name = "delete_authority_served_door"

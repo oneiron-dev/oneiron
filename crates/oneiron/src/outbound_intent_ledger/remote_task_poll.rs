@@ -22,20 +22,23 @@
 //! whose handle goes before it ended (an erase takes the request, or the
 //! row settles another way) is owed its end: the host ends it on its next
 //! pass. The poll table keeps only
-//! the next poll time, the count and the last status: the session and the
-//! credential choice stay in the handle, which an erase forgets.
+//! the next poll time, the count, the last status and where the owner's
+//! stop of the task stands (L8-29, `remote_task_cancel`): the
+//! session and the credential choice stay in the handle, which an erase
+//! forgets.
 
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use super::remote_task_cancel::RemoteTaskCancelPhase;
 use super::settlement::{RemoteTaskHandle, RemoteTaskObservation, intent_settlement_in_txn};
 use super::types::{FrozenOutboundCall, IntentLedgerError, IntentLedgerResult, IntentState};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
 /// Each pollable Deferred row's next poll, by its intent id.
-const POLLS: SideTable<[u8; 32], RemoteTaskPollState, Named> =
+pub(super) const POLLS: SideTable<[u8; 32], RemoteTaskPollState, Named> =
     SideTable::new(&side_table::OUTBOUND_REMOTE_TASK_POLL);
 
 /// Each MCP session a remote task's polls kept open whose handle went
@@ -186,11 +189,15 @@ pub enum RemoteTaskEnd {
 
 /// One pollable row's place.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct RemoteTaskPollState {
-    next_poll_ms: u64,
+pub(super) struct RemoteTaskPollState {
+    pub(super) next_poll_ms: u64,
     polls: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_status: Option<String>,
+    /// Where the owner's stop of the task stands (L8-29); `None` while
+    /// nobody asked for it. A row kept without it reads as none asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) cancel: Option<RemoteTaskCancelPhase>,
 }
 
 /// One Deferred send whose task is due a poll.
@@ -203,6 +210,9 @@ pub struct DueRemoteTask {
     pub poll: RemoteTaskPoll,
     /// The polls made of it so far.
     pub polls: u32,
+    /// Whether the owner asked the task to stop and the host has not yet
+    /// claimed that stop (L8-29): the pass sends `tasks/cancel` first.
+    pub cancel_requested: bool,
 }
 
 impl fmt::Debug for DueRemoteTask {
@@ -214,6 +224,7 @@ impl fmt::Debug for DueRemoteTask {
             )
             .field("poll", &self.poll)
             .field("polls", &self.polls)
+            .field("cancel_requested", &self.cancel_requested)
             .finish_non_exhaustive()
     }
 }
@@ -252,6 +263,7 @@ pub(crate) fn schedule_first_poll_in_txn(
             next_poll_ms: first_poll_ms(handle, now_ms),
             polls: 0,
             last_status: None,
+            cancel: None,
         },
     )
 }
@@ -309,6 +321,7 @@ impl Vault {
                     task_id: handle.id,
                     poll,
                     polls: state.polls,
+                    cancel_requested: state.cancel == Some(RemoteTaskCancelPhase::Requested),
                 });
             }
         }
@@ -382,7 +395,10 @@ impl Vault {
     /// Records a poll that found row `intent`'s task still running, as
     /// `status`: its next poll waits the longer of the provider's hint
     /// (`poll_after_ms`) and a backoff that starts at the host's pass and
-    /// doubles with each poll up to fifteen minutes.
+    /// doubles with each poll up to fifteen minutes. A stop the owner asked
+    /// for after this poll's pass read the row (`stop_seen` false while the
+    /// row's stop is Requested) keeps its due-now poll, so the next pass
+    /// sends it (L8-29).
     ///
     /// # Errors
     /// Storage faults.
@@ -392,6 +408,7 @@ impl Vault {
         poll_after_ms: Option<u64>,
         status: &str,
         now_ms: u64,
+        stop_seen: bool,
     ) -> IntentLedgerResult<()> {
         let mut status = status.to_owned();
         if status.len() > MAX_STATUS_BYTES || !status.bytes().all(|byte| byte.is_ascii_graphic()) {
@@ -402,11 +419,15 @@ impl Vault {
                 return Ok(());
             };
             state.polls = state.polls.saturating_add(1);
-            let backoff = MIN_REMOTE_TASK_POLL_MS
-                .saturating_mul(1_u64 << state.polls.min(5))
-                .min(MAX_REMOTE_TASK_POLL_MS);
-            let after = backoff.max(poll_after_ms.unwrap_or(0));
-            state.next_poll_ms = now_ms.saturating_add(after);
+            let stop_asked_since =
+                !stop_seen && state.cancel == Some(RemoteTaskCancelPhase::Requested);
+            if !stop_asked_since {
+                let backoff = MIN_REMOTE_TASK_POLL_MS
+                    .saturating_mul(1_u64 << state.polls.min(5))
+                    .min(MAX_REMOTE_TASK_POLL_MS);
+                let after = backoff.max(poll_after_ms.unwrap_or(0));
+                state.next_poll_ms = now_ms.saturating_add(after);
+            }
             state.last_status = Some(status);
             POLLS.put(&self.store, txn, intent, &state)
         })?;
