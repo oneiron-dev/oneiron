@@ -7,6 +7,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::check_in::{
+    ActClass, AppliedCheckIn, CheckInDecision, CheckInScope, DoorAct, DoorCheckIn, RolePreset,
+};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
@@ -20,6 +23,9 @@ const LOG: SideTable<u64, MailComplianceEventRow, Named> =
 
 /// The longest purpose a change or a search records.
 const MAX_PURPOSE_BYTES: usize = 2048;
+/// The saved verb a change of the setting is: the verb its check-in names
+/// (2k4).
+const MAIL_COMPLIANCE_SET_VERB: &str = "vault.mail.compliance.set";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MailComplianceSettingRow {
@@ -48,6 +54,10 @@ struct MailComplianceEventRow {
     /// search ran and what it matched, not the words searched.
     query_digest: Option<String>,
     result_count: Option<u64>,
+    /// A change's check-in decision (2k4); absent on a search and on an
+    /// entry kept before it.
+    #[serde(default)]
+    check_in: Option<CheckInDecision>,
 }
 
 /// The setting as anyone in the vault reads it.
@@ -61,6 +71,11 @@ pub struct MailComplianceSettingView {
     pub set_by_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub set_at: Option<u64>,
+    /// The check-in decision the change this call made ran on (2k4;
+    /// P25-SHAPE Q1 = A); absent on a read and on a call that changed
+    /// nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 /// `vault.mail.compliance.set`'s input.
@@ -70,6 +85,10 @@ pub struct MailComplianceSetRequest {
     pub enabled: bool,
     /// Why, in the setter's words; kept in the compliance log.
     pub purpose: String,
+    /// The check-in an earlier call's `CHECK_IN_PENDING` named, 32 hex: once
+    /// it is approved, the same change and purpose run on it (2k4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// One compliance log entry.
@@ -86,6 +105,9 @@ pub struct MailComplianceEventView {
     pub query_digest: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_count: Option<u64>,
+    /// A change's check-in decision (2k4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 fn valid_purpose(purpose: &str) -> MemoryResult<()> {
@@ -155,8 +177,76 @@ pub(crate) fn record_compliance_search_in_txn(
             purpose: purpose.to_owned(),
             query_digest: Some(blake3::hash(query.as_bytes()).to_hex().to_string()),
             result_count: Some(result_count),
+            check_in: None,
         },
     )
+}
+
+/// What a change of the setting did in its writer.
+enum SetOutcome {
+    /// The setting already read so: nothing recorded, nothing spent.
+    Unchanged,
+    /// The change waits on this pending check-in, committed alone.
+    Waits(EntityId),
+    /// The change landed on this decision.
+    Set(CheckInDecision),
+}
+
+/// The check-in decision `actor`'s change of the setting runs on, in `txn`,
+/// the change's writer (2k4; P25-SHAPE Q1 = A). The vault's Owner, and the
+/// embedded owner of a vault with no authority root, change it on their own
+/// proof, and with `check_in_ref` apply another asker's approved check-in
+/// for this exact change. An Admin's or a Deputy's change is judged under
+/// their membership role (2i): the act always asks, so it waits on the
+/// Owner, and the call that names the approved check-in runs it.
+///
+/// # Errors
+///
+/// An Admin standing with no membership grant; as
+/// [`crate::check_in::person_door_check_in_in_txn`] and
+/// [`crate::check_in::owner_act_decision_in_txn`].
+fn setter_check_in_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: EntityId,
+    input: &MailComplianceSetRequest,
+    check_in_ref: Option<&EntityId>,
+) -> Result<DoorCheckIn> {
+    let act = ActClass::SecurityControlDisable;
+    let effect_digest =
+        crate::check_in::mail_compliance_set_effect_digest(input.enabled, &input.purpose);
+    let standing = crate::workspace_roster::vault_standing_in(vault, txn, actor)?;
+    if standing != Some(crate::workspace_roster::VaultStanding::Admin) {
+        let applied = check_in_ref.map(|id| AppliedCheckIn {
+            id: *id,
+            verb: MAIL_COMPLIANCE_SET_VERB,
+            effect_digest,
+        });
+        return crate::check_in::owner_act_decision_in_txn(vault, txn, act, applied.as_ref())
+            .map(DoorCheckIn::Go);
+    }
+    let not_member =
+        || crate::Error::InvalidConfig("an Admin's change needs their membership grant".into());
+    let at = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
+    let person = crate::workspace_roster::person_of_actor_in_txn(vault, txn, actor, at)?
+        .ok_or_else(not_member)?;
+    let creation = vault
+        .shared_vault_creation_in_txn(txn)?
+        .ok_or_else(not_member)?;
+    let (grant, role) = vault
+        .member_grant_in_txn(txn, creation.vault_id, person)?
+        .ok_or_else(not_member)?;
+    let door_act = DoorAct {
+        person,
+        role: RolePreset::of_grant_role(role),
+        grant,
+        verb: MAIL_COMPLIANCE_SET_VERB,
+        act,
+        scope: CheckInScope::default(),
+        effect_digest,
+    };
+    let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    crate::check_in::person_door_check_in_in_txn(vault, txn, &door_act, check_in_ref, now)
 }
 
 impl Memory<'_> {
@@ -173,19 +263,39 @@ impl Memory<'_> {
                 .and_then(|row| row.set_by)
                 .map(|id| id.to_hex()),
             set_at: row.map(|row| row.set_at),
+            check_in: None,
         })
     }
 
     /// Turns org compliance search on or off, by the vault's Owner or an
     /// Admin, with the purpose kept in the compliance log. A request that
-    /// changes nothing records nothing.
+    /// changes nothing records nothing. A change checks in first (2k4;
+    /// P25-SHAPE Q1 = A): the Owner's goes on their own proof, and an
+    /// Admin's or a Deputy's waits on the Owner (`CHECK_IN_PENDING`, naming
+    /// the check-in) until a call names it approved as `check_in_ref`. The
+    /// log entry and the answer record the decision.
+    ///
+    /// # Errors
+    ///
+    /// `BAD_REQUEST` for a bad purpose or `check_in_ref`, an actor who is
+    /// neither the vault's Owner nor an Admin, or an inactive mail pack;
+    /// `CHECK_IN_PENDING` while the change waits; a check-in that does not
+    /// apply; storage errors.
     pub fn mail_compliance_set(
         &self,
         input: &MailComplianceSetRequest,
     ) -> MemoryResult<MailComplianceSettingView> {
         valid_purpose(&input.purpose)?;
+        let check_in_ref = input
+            .check_in_ref
+            .as_deref()
+            .map(|hex| {
+                EntityId::from_hex(hex)
+                    .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))
+            })
+            .transpose()?;
         let actor = self.actor();
-        self.with_verified_actor_write_txn(|txn| {
+        let outcome = self.with_verified_actor_write_txn(|txn| {
             let vault = self.vault();
             super::pack::require_pack_active_in(vault, txn)?;
             if !manages_in(vault, txn, actor)? {
@@ -193,38 +303,55 @@ impl Memory<'_> {
                     "org compliance search is set by the vault's Owner or an Admin",
                 ));
             }
-            if compliance_search_enabled_in(vault, txn)? != input.enabled {
-                let at = crate::unix_seconds_now();
-                SETTING.put(
-                    &vault.store,
-                    txn,
-                    &(),
-                    &MailComplianceSettingRow {
-                        enabled: input.enabled,
-                        set_by: Some(actor),
-                        set_at: at,
-                    },
-                )?;
-                append_in_txn(
-                    vault,
-                    txn,
-                    &MailComplianceEventRow {
-                        kind: if input.enabled {
-                            MailComplianceEventKind::Enabled
-                        } else {
-                            MailComplianceEventKind::Disabled
-                        },
-                        by: Some(actor),
-                        at,
-                        purpose: input.purpose.clone(),
-                        query_digest: None,
-                        result_count: None,
-                    },
-                )?;
+            if compliance_search_enabled_in(vault, txn)? == input.enabled {
+                return Ok(SetOutcome::Unchanged);
             }
-            Ok(())
+            let decision =
+                match setter_check_in_in_txn(vault, txn, actor, input, check_in_ref.as_ref())? {
+                    DoorCheckIn::Go(decision) => decision,
+                    DoorCheckIn::Wait(check_in) => return Ok(SetOutcome::Waits(check_in)),
+                };
+            let at = crate::unix_seconds_now();
+            SETTING.put(
+                &vault.store,
+                txn,
+                &(),
+                &MailComplianceSettingRow {
+                    enabled: input.enabled,
+                    set_by: Some(actor),
+                    set_at: at,
+                },
+            )?;
+            append_in_txn(
+                vault,
+                txn,
+                &MailComplianceEventRow {
+                    kind: if input.enabled {
+                        MailComplianceEventKind::Enabled
+                    } else {
+                        MailComplianceEventKind::Disabled
+                    },
+                    by: Some(actor),
+                    at,
+                    purpose: input.purpose.clone(),
+                    query_digest: None,
+                    result_count: None,
+                    check_in: Some(decision.clone()),
+                },
+            )?;
+            Ok(SetOutcome::Set(decision))
         })?;
-        self.mail_compliance_setting()
+        let check_in = match outcome {
+            SetOutcome::Waits(check_in) => {
+                return Err(crate::Error::CheckInPending(check_in.to_hex()).into());
+            }
+            SetOutcome::Unchanged => None,
+            SetOutcome::Set(decision) => Some(decision),
+        };
+        Ok(MailComplianceSettingView {
+            check_in,
+            ..self.mail_compliance_setting()?
+        })
     }
 
     /// The compliance log, oldest first: every change to the setting and
@@ -246,6 +373,7 @@ impl Memory<'_> {
                     purpose: row.purpose,
                     query_digest: row.query_digest,
                     result_count: row.result_count,
+                    check_in: row.check_in,
                 })
             })
             .collect()
