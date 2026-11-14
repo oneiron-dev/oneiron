@@ -315,15 +315,31 @@ impl OffRecordSessionRegistry {
         })
     }
 
-    /// Whether `id` is a member of ANY live session overlay.
+    /// Whether `id` is a committed member of ANY live session overlay.
     ///
-    /// The sole semantic behind both surviving egress doors (sync window
-    /// packing, whole-vault export) and the K4 base-write taint guard. Reads
-    /// immutable published snapshots, so it takes no registry or entry lock.
+    /// Egress doors and readers that resolve an id through a committed view
+    /// use this membership. K4 alone also sees open segments. Reads immutable
+    /// published snapshots, so it takes no registry or entry lock.
     pub(crate) fn contains_entity(&self, id: &EntityId) -> Result<bool> {
         let sessions = self.published.load();
         for entry in sessions.values() {
             if entry.published_record.load().is_some() && entry.overlay.contains_entity(id)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// K4 base-write taint membership: committed rows plus each live room's
+    /// open segment (ARCH-0052, the open-segment window). Every other reader
+    /// keeps `contains_entity`, because it resolves an id and then reads it
+    /// through a committed view.
+    pub(crate) fn contains_committed_or_staged_entity(&self, id: &EntityId) -> Result<bool> {
+        let sessions = self.published.load();
+        for entry in sessions.values() {
+            if entry.published_record.load().is_some()
+                && entry.overlay.contains_committed_or_staged_entity(id)?
+            {
                 return Ok(true);
             }
         }
@@ -339,7 +355,7 @@ impl OffRecordSessionRegistry {
     /// THAT the id is session-owned, and naming any live owner refuses it.
     ///
     /// [`Self::contains_entity`] answers the same membership question for the
-    /// egress doors and the taint guard, which need only a bool; the witness
+    /// egress doors, which need only a bool; the witness
     /// door reports the owning session in its typed refusal, so it needs the
     /// ref.
     pub(crate) fn owning_session_ref(&self, id: &EntityId) -> Result<Option<String>> {
@@ -430,6 +446,21 @@ impl OffRecordSessionRegistry {
         let sessions = self.published.load();
         for entry in sessions.values() {
             if entry.published_record.load().is_some() && entry.overlay.has_entities()? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// K4 base-write taint membership: committed rows plus each live room's
+    /// open segment (ARCH-0052, the open-segment window). Other readers keep
+    /// committed-only membership because they resolve through committed views.
+    pub(crate) fn has_committed_or_staged_overlay_entities(&self) -> Result<bool> {
+        let sessions = self.published.load();
+        for entry in sessions.values() {
+            if entry.published_record.load().is_some()
+                && entry.overlay.has_committed_or_staged_entities()?
+            {
                 return Ok(true);
             }
         }

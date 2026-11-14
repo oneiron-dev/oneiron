@@ -34,6 +34,17 @@ pub(in crate::session_overlay) struct TxnSegment {
     _lease: Lease,
 }
 
+impl TxnSegment {
+    /// Publishes every preview replacement, including rollback and scrubbing,
+    /// so K4 sees current rows and the publication releases displaced bytes.
+    pub(super) fn replace_preview(&mut self, preview: Arc<OverlayState>) {
+        self.preview = preview;
+        self.overlay
+            .open_segment_preview
+            .store(Some(Arc::clone(&self.preview)));
+    }
+}
+
 pub(super) static NEXT_OVERLAY_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 /// The next write segment's install nonce (FIX 10004).
@@ -81,6 +92,7 @@ impl TxnSegmentGuard {
 
 impl Drop for TxnSegmentGuard {
     fn drop(&mut self) {
+        self.overlay.open_segment_preview.store(None);
         if !self.finished {
             let aborted = ACTIVE_SEGMENT.with(|slot| {
                 let mut slot = slot.borrow_mut();

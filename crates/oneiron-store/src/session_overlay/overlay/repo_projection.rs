@@ -101,7 +101,7 @@ impl SessionOverlay {
             let keys = staged_copies(&segment.preview, prefixes, key_match);
             let mut preview = segment.preview.as_ref().clone();
             drop_rows(&mut preview, &keys, stale);
-            segment.preview = Arc::new(preview);
+            segment.replace_preview(Arc::new(preview));
             true
         });
         let mut lifecycle = self
