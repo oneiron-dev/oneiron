@@ -27,12 +27,13 @@ mod sync_harness;
 
 use loro::LoroDoc;
 use oneiron::edge::EdgeActorClass;
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use oneiron::sync::client::ImportTier;
 use oneiron::sync::replay::{ReplicatedEntity, replay_entity};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, WindowExport};
 use oneiron::test_doors::world_access::put_world_access_row;
+use oneiron::write_envelope::claim_body::encode_claim_body;
 use oneiron::write_envelope::{
     WriteActor, WriteEnvelope, WriteProvenance, write_envelope_evidence,
 };
@@ -121,6 +122,34 @@ impl Grant {
     /// The tiers the agent reads on `vault` with no selection.
     fn authority(&self, vault: &Vault) -> ResolvedWorldAuthority {
         vault.board_world_authority(Some(self.agent), None).unwrap()
+    }
+
+    /// An ordinary claim body about the agent, approved and user-stated: what
+    /// a peer's row under the grant's id would carry.
+    fn ordinary_claim(&self) -> Vec<u8> {
+        let mut body = world_access_claim_body(
+            PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+            self.agent,
+            &WorldAuthoritySet::new(true, []).unwrap(),
+            ClaimSource::UserStated,
+            ClaimApprovalStatus::Approved,
+            None,
+            None,
+        )
+        .unwrap();
+        body.predicate = "preference.food".to_owned();
+        encode_claim_body(&body).unwrap()
+    }
+
+    /// The agent is governed on `vault` by the grant written there, and
+    /// reads base reality plus the granted world.
+    fn assert_governed_by_grant(&self, vault: &Vault) {
+        let here = self.authority(vault);
+        assert_eq!(here.allowed_claim_ids, vec![self.grant]);
+        assert_eq!(
+            here.allowed_set,
+            WorldAuthoritySet::new(true, [self.world]).unwrap()
+        );
     }
 }
 
@@ -314,4 +343,136 @@ fn the_archive_import_keeps_both_tiers_as_archive_data() {
             "{predicate}"
         );
     }
+}
+
+/// A peer's row under the id of a grant stored here never replaces it,
+/// whatever its own predicate: the replay door reads the stored row too.
+/// Red on #7793's first head: the replayed ordinary claim overwrote the
+/// grant, so the agent was no longer governed by it.
+#[test]
+fn a_replayed_row_never_replaces_a_local_grant() {
+    let (_a, b) = vault_pair();
+    let g = Grant::new();
+    g.put_agent(&b.vault);
+    g.put_grant(&b.vault);
+    let stored = b.vault.get_raw(&g.grant).unwrap().expect("grant on B");
+    let header = EntityMetadataHeader::parse(&stored).expect("grant header");
+    let ordinary = g.ordinary_claim();
+
+    let replayed = replay_entity(
+        &b.vault,
+        ReplicatedEntity {
+            id: g.grant,
+            entity_type: ENTITY_TYPE_CLAIM,
+            occurred: TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            learned_at: header.learned_at + 1,
+            row_version: header.row_version + 1,
+            body: &ordinary,
+        },
+        ImportTier::OwnDevice,
+    );
+
+    assert_eq!(
+        b.vault.get_raw(&g.grant).unwrap().as_deref(),
+        Some(stored.as_slice()),
+        "the grant stored here stands"
+    );
+    g.assert_governed_by_grant(&b.vault);
+    assert!(replayed.is_ok(), "dropped, not refused: {replayed:?}");
+}
+
+/// A peer's window row under the id of a grant stored here is dropped, and
+/// the rest of the window lands. Red on #7793's first head: the ordinary
+/// claim landed over the grant.
+#[test]
+fn a_peers_row_under_a_local_grants_id_never_lands() {
+    let (a, b) = vault_pair();
+    let g = Grant::new();
+    g.put_agent(&a.vault);
+    g.put_agent(&b.vault);
+    g.put_grant(&b.vault);
+    let stored = b.vault.get_raw(&g.grant).unwrap().expect("grant on B");
+    let beside = EntityId::now();
+    a.put_entity_in_window(
+        WINDOW,
+        &beside,
+        &make_entity_blob(ENTITY_TYPE_PERSON, T0, b"beside"),
+    );
+    map_insert_bytes(
+        &a.doc(WINDOW).get_map("entities"),
+        &g.grant.to_hex(),
+        &make_entity_blob(ENTITY_TYPE_CLAIM, T0 + 1, &g.ordinary_claim()),
+    );
+    a.doc(WINDOW).commit();
+    let quarantined = b.quarantine_rows();
+
+    exchange(&a, &b, WINDOW);
+
+    assert!(
+        b.vault.get_raw(&beside).unwrap().is_some(),
+        "the rest of the peer's window lands"
+    );
+    assert_eq!(
+        b.vault.get_raw(&g.grant).unwrap().as_deref(),
+        Some(stored.as_slice()),
+        "the grant stored here stands"
+    );
+    assert_eq!(
+        b.quarantine_rows(),
+        quarantined,
+        "the row is dropped, not refused into quarantine"
+    );
+    g.assert_governed_by_grant(&b.vault);
+}
+
+/// A peer's tombstone naming a grant stored here deletes nothing: the grant
+/// is local authority, and a narrower grant erased would widen the meet.
+/// The same window's tombstone of an ordinary row still deletes it. Red on
+/// #7793's first head: the tombstone erased the grant.
+#[test]
+fn a_peers_tombstone_never_deletes_a_local_grant() {
+    let (a, b) = vault_pair();
+    let g = Grant::new();
+    g.put_agent(&a.vault);
+    g.put_agent(&b.vault);
+    g.put_grant(&b.vault);
+    let stored = b.vault.get_raw(&g.grant).unwrap().expect("grant on B");
+    let beside = EntityId::now();
+    a.put_entity_in_window(
+        WINDOW,
+        &beside,
+        &make_entity_blob(ENTITY_TYPE_PERSON, T0, b"beside"),
+    );
+    exchange(&a, &b, WINDOW);
+    assert!(
+        b.vault.get_raw(&beside).unwrap().is_some(),
+        "B holds the peer's ordinary row"
+    );
+    let tombstones = a.doc(WINDOW).get_map("tombstones");
+    for id in [beside, g.grant] {
+        map_insert_bytes(&tombstones, &id.to_hex(), &(T0 + 5).to_le_bytes());
+    }
+    a.doc(WINDOW).commit();
+    let quarantined = b.quarantine_rows();
+
+    exchange(&a, &b, WINDOW);
+
+    assert!(
+        b.vault.get_raw(&beside).unwrap().is_none(),
+        "the peer's tombstone deletes its ordinary row"
+    );
+    assert_eq!(
+        b.vault.get_raw(&g.grant).unwrap().as_deref(),
+        Some(stored.as_slice()),
+        "the grant stored here stands"
+    );
+    assert_eq!(
+        b.quarantine_rows(),
+        quarantined,
+        "the tombstone is skipped, not refused into quarantine"
+    );
+    g.assert_governed_by_grant(&b.vault);
 }
