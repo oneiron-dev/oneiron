@@ -1075,6 +1075,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/serve.rs` | src | m | 1 re-export · 13 crate-vis | — | The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then… |
 | `src/commands/serve/hooks.rs` | src | s | 2 crate-vis | — | The vault's one hook sandbox and the fact-hook runner that runs on it, for plain and managed serve |
 | `src/commands/serve/page_seal.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | OpenedServedVault | The vault serve opens before it builds its server, plain or sealed (OF-570 maximum tier), for plain serve… |
+| `src/commands/serve/sleep_release.rs` | src | s | 1 crate-vis | — | Releases this machine's executor leases before it sleeps and takes them up again when it wakes (L8-28) |
 | `src/commands/serve/startup_gate.rs` | src | s | 4 crate-vis | — | The API listener's answers from bind until serve's startup work ends (FIX 22117) |
 | `src/commands/serve/stop.rs` | src | s | 1 crate-vis | — | What plain serve stops beside its workers, in its order, once its listeners have stopped or its start failed… |
 | `src/commands/serve/workers.rs` | src | m | 5 crate-vis | — | Startup and ordered shutdown of unmanaged and embedded serve workers |
