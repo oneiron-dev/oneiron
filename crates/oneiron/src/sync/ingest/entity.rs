@@ -743,7 +743,8 @@ fn deleted_here(ctx: &IngestCtx<'_>, txn: &heed::RoTxn<'_>, id: &EntityId) -> bo
                 entity = %id.to_hex(),
                 "sync ingest: entity deleted here (dt: marker or row fence), refusing materialization"
             );
-            true
+            // MUTATION (red pin for test 4 only): the local delete marker no longer refuses.
+            false
         }
         Err(err) => {
             tracing::warn!(

@@ -307,7 +307,8 @@ fn land_grant_row(
     else {
         return Ok(false);
     };
-    if !is_own_device_grant(&grant) || !holders.contains(&grant.member_ref.to_hex()) {
+    // MUTATION (red pin for test 2 only): the holder binding is dropped.
+    if !is_own_device_grant(&grant) || holders.is_empty() {
         return Ok(false);
     }
     // No window document rides with the row: its tombstones are this
