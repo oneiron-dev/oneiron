@@ -18,6 +18,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::gmail::reads_google_mail;
+use super::importer::SourceStepGuard;
 use super::quota::{MeteredMailWire, is_resting};
 use super::source::{MailProvider, MailSourceRow, MailSourceStatus, SOURCES};
 use super::state::{MailSyncState, SYNC};
@@ -151,6 +152,10 @@ impl Vault {
         wire: &dyn MailProviderWire,
         topic: Option<&str>,
     ) -> MemoryResult<Option<MailWatchAct>> {
+        // It spends from the windows an import step spends from: it waits
+        // for a step of the source under way to end, as such a step waits
+        // for it.
+        let _stepping = SourceStepGuard::wait_for(source);
         let (row, state) = {
             let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
             super::pack::require_pack_active_in(self, &txn)?;
