@@ -3,8 +3,9 @@
 //! Engine's rulings of 13 Nov 09:34 and 09:53): the verb reaches the host's
 //! image organ door; a caller whose own lane does not read the artifact is
 //! refused as if it were absent; with no image organ on the host the
-//! owner's edit is refused with the reason, and nothing waits or lands; and
-//! a request no organ takes gets its typed refusal. A server test cannot
+//! owner's whole edit is one held call with the reason, and nothing lands
+//! (RULING 09:53, IO-HOLD C); and a request no organ takes gets its typed
+//! refusal. A server test cannot
 //! start the organ binary (cargo names it only to its own package's tests),
 //! so the real crop is `oneiron-image`'s `image_edit_landing` test.
 //!
@@ -275,6 +276,15 @@ fn crop() -> Value {
     json!([{ "op": "crop", "x": 0, "y": 0, "w": 1, "h": 1 }])
 }
 
+/// The edit's answer, bare or as the facade's `value`.
+fn answer(body: &Value) -> &Value {
+    if body.get("artifact_ref").is_some() {
+        body
+    } else {
+        &body["value"]
+    }
+}
+
 fn code(body: &Value) -> Option<&str> {
     body["error"]["code"].as_str()
 }
@@ -329,10 +339,10 @@ async fn caller_refused() -> TestResult {
         .await?;
     let (status, body) = fixture.owner_edit(&photo, crop()).await?;
     assert_eq!(
-        (status, code(&body)),
-        (503, Some("image_no_node")),
-        "FAILBEFORE: the owner's edit reaches the image organ's door: {body}"
+        status, 200,
+        "FAILBEFORE: the owner's edit reaches the image organ's door and is held: {body}"
     );
+    assert!(answer(&body)["held"].is_object(), "{body}");
 
     // The agent's own slip binds it, and the owner's one Grant for it reads
     // one facet that does not hold the owner's artifact: the edit is refused
@@ -356,7 +366,7 @@ async fn caller_refused() -> TestResult {
     assert_eq!(status, 401, "a call with no credential: {body}");
 
     let (held, proposals) = fixture.waiting(&photo).await?;
-    assert!(held.is_empty(), "nothing is held: {held:?}");
+    assert_eq!(held.len(), 1, "only the owner's edit is held: {held:?}");
     assert!(
         proposals.is_empty(),
         "nothing waits for Keep: {proposals:?}"
@@ -365,12 +375,12 @@ async fn caller_refused() -> TestResult {
 }
 
 #[test]
-fn with_no_image_organ_on_the_host_the_owners_edit_is_refused_with_the_reason_and_nothing_lands()
+fn with_no_image_organ_on_the_host_the_owners_edit_is_held_with_the_reason_and_nothing_lands()
 -> TestResult {
-    on_engine_stack(no_organ_refused)
+    on_engine_stack(no_organ_held)
 }
 
-async fn no_organ_refused() -> TestResult {
+async fn no_organ_held() -> TestResult {
     let fixture = Fixture::new()?;
     let photo = fixture
         .artifact("photo.png", "image/png", PNG_BASE64)
@@ -381,21 +391,30 @@ async fn no_organ_refused() -> TestResult {
     ]);
     let (status, body) = fixture.owner_edit(&photo, ops).await?;
     assert_eq!(
-        (status, code(&body)),
-        (503, Some("image_no_node")),
-        "FAILBEFORE: the owner's edit, with no image organ on the host: {body}"
+        status, 200,
+        "FAILBEFORE: the owner's edit, with no image organ on the host, is held: {body}"
     );
-    // The reason names the call no node could run and each place tried.
-    let reason = message(&body);
+    let edited = answer(&body);
+    assert_eq!(edited["artifact_ref"], json!(photo), "{body}");
+    assert_eq!(edited["born"], json!(false), "{body}");
+    assert_eq!(
+        edited["proposals"],
+        json!([]),
+        "nothing waits for Keep: {body}"
+    );
+    // The whole edit is one call, and the reason names it and each place tried.
+    let wait = &edited["held"];
+    assert_eq!(wait["verb"], json!("image.render"), "{body}");
+    assert_eq!(wait["run_ref"], json!("image-edit-test"), "{body}");
+    let reason = wait["reason"].as_str().unwrap_or_default();
     assert!(
-        reason.contains("no node can run the image organ now")
-            && reason.contains("image.open")
-            && reason.contains("here:"),
-        "the refusal says why: {body}"
+        reason.contains("image.render") && reason.contains("here:"),
+        "the hold says why: {body}"
     );
 
     let (held, proposals) = fixture.waiting(&photo).await?;
-    assert!(held.is_empty(), "the open is not held: {held:?}");
+    assert_eq!(held.len(), 1, "the whole edit is one held call: {held:?}");
+    assert_eq!(held[0]["verb"], json!("image.render"), "{held:?}");
     assert!(
         proposals.is_empty(),
         "nothing waits for Keep: {proposals:?}"
