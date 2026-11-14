@@ -30,6 +30,10 @@ pub(super) struct NuggetJudgment {
     pub ability: String,
     pub wedge_bucket: WedgeBucket,
     pub value: f64,
+    /// The `beam-replicate@3e12035` verdict: a separate pass whose judge saw
+    /// the placeholder question. Its column int-casts it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replicate_value: Option<f64>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +41,10 @@ pub(super) struct NuggetMean {
     pub count: usize,
     pub official_int_cast: f64,
     pub fixed_float_clamped: f64,
+    /// `beam-replicate@3e12035`: int(score) over the placeholder-question
+    /// verdicts, set only when every row carries one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replicate_int_cast: Option<f64>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,6 +60,11 @@ fn mean(rows: &[&NuggetJudgment]) -> NuggetMean {
         official_int_cast: rows.iter().map(|r| r.value.trunc()).sum::<f64>() / rows.len() as f64,
         fixed_float_clamped: rows.iter().map(|r| r.value.clamp(0.0, 1.0)).sum::<f64>()
             / rows.len() as f64,
+        replicate_int_cast: rows
+            .iter()
+            .map(|r| r.replicate_value.map(f64::trunc))
+            .sum::<Option<f64>>()
+            .map(|sum| sum / rows.len() as f64),
     }
 }
 impl FixedBeamScorer {
@@ -60,11 +73,20 @@ impl FixedBeamScorer {
             || judgments.iter().any(|j| {
                 !j.value.is_finite()
                     || !(0.0..=1.0).contains(&j.value)
+                    || j.replicate_value
+                        .is_some_and(|v| !v.is_finite() || !(0.0..=1.0).contains(&v))
                     || j.ability.trim().is_empty()
             })
         {
             return Err(BeamError::Comparability {
                 reason: "nuggets must be nonempty, finite, and ability-tagged".into(),
+            });
+        }
+        if judgments.iter().any(|j| j.replicate_value.is_some())
+            && judgments.iter().any(|j| j.replicate_value.is_none())
+        {
+            return Err(BeamError::Comparability {
+                reason: "a beam-replicate@3e12035 column needs every nugget's placeholder-question verdict".into(),
             });
         }
         let mut abilities: BTreeMap<String, Vec<&NuggetJudgment>> = BTreeMap::new();
@@ -128,16 +150,19 @@ pub(super) fn run(path: &Path) -> BeamResult<ProofResult> {
         });
     }
     let score = FixedBeamScorer.score_nuggets(&replay.judgments)?;
-    if score
+    let columns = score
         .beam
         .as_ref()
-        .expect("FixedBeamScorer produces BEAM columns")
-        .wedge_buckets
-        .values()
-        .any(Option::is_none)
-    {
+        .expect("FixedBeamScorer produces BEAM columns");
+    if columns.wedge_buckets.values().any(Option::is_none) {
         return Err(BeamError::Comparability {
             reason: "proof number must cover all four wedge buckets".into(),
+        });
+    }
+    // ARCH-0042 beam:D9: no BEAM number is published without this column.
+    if columns.aggregate.replicate_int_cast.is_none() {
+        return Err(BeamError::Comparability {
+            reason: "proof number must carry beam-replicate@3e12035: every judgment needs its placeholder-question verdict".into(),
         });
     }
     let commit = env!("ONEIRON_BENCH_SOURCE_REVISION").to_owned();
@@ -183,6 +208,7 @@ mod tests {
                 ability: format!("{bucket:?}"),
                 wedge_bucket: bucket,
                 value: 0.5,
+                replicate_value: None,
             })
             .collect();
         let report = FixedBeamScorer.score_nuggets(&rows).unwrap();
@@ -192,7 +218,8 @@ mod tests {
             NuggetMean {
                 count: 4,
                 official_int_cast: 0.0,
-                fixed_float_clamped: 0.5
+                fixed_float_clamped: 0.5,
+                replicate_int_cast: None,
             }
         );
         assert_eq!(columns.wedge_buckets.len(), 4);
