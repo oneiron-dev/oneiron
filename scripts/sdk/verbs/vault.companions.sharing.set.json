@@ -3,7 +3,7 @@
   "description": "The owner's standing yes to one frozen clearance offer for a companion's contact.",
   "input": "CompanionSharingSetRequest",
   "output": "crate::workspace_roster::CompanionSharingView",
-  "call": "memory.companion_sharing_set(&input.target()?, &input.proposal_ref, &input.delta()?)?",
+  "call": "memory.companion_sharing_set(&input)?",
   "scope": "Write",
   "act_class": "grant_widen",
   "admission": {

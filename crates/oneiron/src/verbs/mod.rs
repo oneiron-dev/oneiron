@@ -249,6 +249,11 @@ pub struct CompanionSharingSetRequest {
     pub contact_ref: String,
     pub proposal_ref: String,
     pub expected_delta: String,
+    /// Another asker's approved check-in for this exact yes, 32 hex: the
+    /// owner applies it on their own proof, and the confirm's writer spends
+    /// it (ROLES-CHECKIN 2k8). Omitted: the owner's own yes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 impl CompanionSharingSetRequest {
     /// The companion and contact this request names.
@@ -284,6 +289,29 @@ impl CompanionSharingSetRequest {
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| MemoryError::bad_request("invalid expected_delta"))
     }
+}
+/// The digest of the owner's companion sharing `request`: the effect an
+/// asker's `vault.check_in.open` names for `vault.companions.sharing.set`,
+/// and the one the owner's yes spends (2k8; P25-2K8-SCOPE Q1 = A). BLAKE3,
+/// key derived from `oneiron check_in companion sharing set v1`, over the
+/// request's MessagePack encoding with field names, without its
+/// `check_in_ref`: the companion, the contact, the offer and its bytes.
+///
+/// # Errors
+///
+/// The request does not encode.
+pub fn companion_sharing_set_effect_digest(
+    request: &CompanionSharingSetRequest,
+) -> MemoryResult<[u8; 32]> {
+    let set = CompanionSharingSetRequest {
+        check_in_ref: None,
+        ..request.clone()
+    };
+    let encoded = rmp_serde::to_vec_named(&set)
+        .map_err(|_| crate::error::Error::InvariantViolation("companion sharing set encode"))?;
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in companion sharing set v1");
+    hasher.update(&encoded);
+    Ok(*hasher.finalize().as_bytes())
 }
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

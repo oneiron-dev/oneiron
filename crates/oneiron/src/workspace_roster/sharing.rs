@@ -87,6 +87,11 @@ pub struct CompanionSharingView {
     /// What a room meet takes for this contact now: bottom while none is
     /// set, once it is revoked, or while the contact is not active.
     pub effective: Scope,
+    /// The decision the owner's yes ran on: their own proof, naming the
+    /// asker's approved check-in it applied (ROLES-CHECKIN 2k8). Absent on a
+    /// read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 fn refused() -> Error {
@@ -123,6 +128,7 @@ fn sharing_view_in(
             updated_at: clearance.updated_at,
         }),
         effective,
+        check_in: None,
     })
 }
 
@@ -210,19 +216,44 @@ impl Memory<'_> {
         Ok(sharing_view_in(vault, &txn, target)?)
     }
 
-    /// The owner's standing yes to one frozen clearance offer for the
-    /// contact `target` is about, from the owner's own direct request.
+    /// `vault.companions.sharing.set`: the owner's standing yes to one
+    /// frozen clearance offer for the contact a companion's sharing is
+    /// about, from the owner's own direct request.
     ///
     /// Transport write access is not owner authority: only a surface the
     /// host bound to the owner's authenticated proof, naming this human
     /// actor, sets anything. Generated code, a room turn or an agent gets
     /// refused, never an offer filed or confirmed in its stead.
+    ///
+    /// The yes widens what the companion may disclose to the contact: it is
+    /// the owner's own act on their own proof, never gated, and the answer
+    /// records that decision (`check_in`). With `check_in_ref` the owner
+    /// applies another asker's approved check-in for this exact yes
+    /// ([`crate::verbs::companion_sharing_set_effect_digest`]), spent in the
+    /// confirm's writer after every check (ROLES-CHECKIN 2k8; Engine RULINGS
+    /// P25-SHAPE Q1 = A, P25-2K8-SCOPE Q1 = A). Every yes settles its offer,
+    /// so none is a repeat that spends nothing.
+    ///
+    /// # Errors
+    ///
+    /// A malformed id, delta or `check_in_ref`; a caller that is not the
+    /// owner's own direct request; the confirm's refusals; a check-in that
+    /// is not an approved ask for this yes.
     pub fn companion_sharing_set(
         &self,
-        target: &CompanionSharingTarget,
-        proposal_ref: &str,
-        expected_delta: &[u8],
+        input: &crate::verbs::CompanionSharingSetRequest,
     ) -> MemoryResult<CompanionSharingView> {
+        let target = input.target()?;
+        let expected_delta = input.delta()?;
+        let applied = match input.check_in_ref.as_deref() {
+            Some(hex) => Some(crate::check_in::AppliedCheckIn {
+                id: EntityId::from_hex(hex)
+                    .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))?,
+                verb: "vault.companions.sharing.set",
+                effect_digest: crate::verbs::companion_sharing_set_effect_digest(input)?,
+            }),
+            None => None,
+        };
         let forbidden = || {
             MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
@@ -241,9 +272,13 @@ impl Memory<'_> {
         if owner.revalidate(self.vault())? != self.actor() {
             return Err(forbidden());
         }
-        Ok(self
-            .vault()
-            .companion_sharing_set(owner, target, proposal_ref, expected_delta)?)
+        Ok(self.vault().companion_sharing_set_with_check_in(
+            owner,
+            &target,
+            &input.proposal_ref,
+            &expected_delta,
+            applied.as_ref(),
+        )?)
     }
 }
 
@@ -257,13 +292,29 @@ impl Vault {
     /// another principal. The offer must be for `target.contact`. The confirm
     /// door then revalidates the owner, the offer, the active contact and its
     /// prior clearance, and writes the contact's one clearance row. Narrowing
-    /// and revoking keep their own doors.
+    /// and revoking keep their own doors. The view records the owner's own
+    /// decision.
     pub fn companion_sharing_set(
         &self,
         owner: &AuthenticatedOwner,
         target: &CompanionSharingTarget,
         proposal_ref: &str,
         expected_delta: &[u8],
+    ) -> Result<CompanionSharingView> {
+        self.companion_sharing_set_with_check_in(owner, target, proposal_ref, expected_delta, None)
+    }
+
+    /// [`Self::companion_sharing_set`] applying `applied`: another asker's
+    /// approved check-in for this exact yes, spent in the confirm's writer
+    /// after every check, so a refusal settles nothing and leaves it
+    /// eligible (ROLES-CHECKIN 2k8).
+    pub(crate) fn companion_sharing_set_with_check_in(
+        &self,
+        owner: &AuthenticatedOwner,
+        target: &CompanionSharingTarget,
+        proposal_ref: &str,
+        expected_delta: &[u8],
+        applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
     ) -> Result<CompanionSharingView> {
         self.with_write_txn_grouped(|txn| {
             let actor = owner.revalidate_in_txn(self, txn)?;
@@ -285,7 +336,16 @@ impl Vault {
                 expected_delta,
                 ContactDisclosureOutcome::Standing,
             )?;
-            sharing_view_in(self, txn, target)
+            let decision = crate::check_in::owner_act_decision_in_txn(
+                self,
+                txn,
+                crate::check_in::ActClass::GrantWiden,
+                applied,
+            )?;
+            Ok(CompanionSharingView {
+                check_in: Some(decision),
+                ..sharing_view_in(self, txn, target)?
+            })
         })
     }
 }

@@ -11,6 +11,7 @@ use super::super::ledger::state_in;
 use super::super::model::EsignState;
 use super::{EsignIssuedLink, EsignLinksView};
 use crate::authority::VerifiedSlip;
+use crate::check_in::{ActClass, CheckInDecision};
 use crate::claim::ScopedRead;
 use crate::edge::EdgeActorClass;
 use crate::memory::Memory;
@@ -95,16 +96,49 @@ impl Memory<'_> {
             let minted = mint_draft_capabilities_in(vault, txn, document, rotate)?;
             Ok((minted, state_in(vault, txn, document)?))
         })?;
-        Ok(links_view(document, state, minted))
+        // The owner's own credential minted: their own act, never gated
+        // (ROLES-CHECKIN 2k8). It applies no other asker's check-in.
+        let decision = (!minted.is_empty())
+            .then(|| crate::check_in::owner_own_proof_decision(ActClass::GrantWiden));
+        Ok(links_view(document, state, minted, decision))
     }
 }
 
+/// The digest of the owner's link issue on `document`, `rotate` or not,
+/// over the draft's `recipients` ids in the draft's order: the effect an
+/// asker's `vault.check_in.open` names for `vault.esign.links.issue`, and
+/// the one the owner's issue spends (2k8; P25-2K8-SCOPE Q1 = A). The mint's
+/// writer takes the recipients from the draft it mints on, so an ask for
+/// another set of recipients applies to none. BLAKE3, key derived from
+/// `oneiron check_in esign links issue v1`, over the document's 16 id bytes,
+/// one byte (1 on `rotate`), the recipient count as eight big-endian bytes,
+/// then each id's byte length as eight big-endian bytes and its UTF-8 bytes.
+#[must_use]
+pub fn esign_links_issue_effect_digest(
+    document: EntityId,
+    rotate: bool,
+    recipients: &[String],
+) -> [u8; 32] {
+    let length = |len: usize| u64::try_from(len).unwrap_or(u64::MAX).to_be_bytes();
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in esign links issue v1");
+    hasher.update(document.as_bytes());
+    hasher.update(&[u8::from(rotate)]);
+    hasher.update(&length(recipients.len()));
+    for recipient in recipients {
+        hasher.update(&length(recipient.len()));
+        hasher.update(recipient.as_bytes());
+    }
+    *hasher.finalize().as_bytes()
+}
+
 /// The view of the links `minted` on `document`, its recipients as `state`
-/// folds them: each new link shown this once, in the draft's order.
+/// folds them: each new link shown this once, in the draft's order, and the
+/// `check_in` decision the mint ran on.
 pub(super) fn links_view(
     document: EntityId,
     state: EsignState,
     minted: Vec<(String, EsignCapability)>,
+    check_in: Option<CheckInDecision>,
 ) -> EsignLinksView {
     let mut minted: BTreeMap<String, EsignCapability> = minted.into_iter().collect();
     let mut issued = Vec::new();
@@ -123,5 +157,6 @@ pub(super) fn links_view(
         document_ref: document.to_hex(),
         issued,
         unchanged,
+        check_in,
     }
 }

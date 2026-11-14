@@ -49,6 +49,7 @@ mod links;
 mod preview;
 mod read;
 
+pub use links::esign_links_issue_effect_digest;
 pub use preview::{EsignSigningPreviewRequest, EsignSigningPreviewView, layout_esign_preview};
 
 /// A signing document to draft on an existing artifact.
@@ -104,6 +105,13 @@ pub struct EsignLinksIssueRequest {
     /// usable link get one.
     #[serde(default)]
     pub rotate: bool,
+    /// Another asker's approved check-in for this exact issue, 32 hex: the
+    /// owner applies it on their own proof, and the mint's writer spends it
+    /// (ROLES-CHECKIN 2k8). Its effect is
+    /// [`esign_links_issue_effect_digest`] over the draft's recipients.
+    /// Omitted: the owner's own issue. A narrowed credential names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// One recipient's new signing link.
@@ -125,6 +133,11 @@ pub struct EsignLinksView {
     pub issued: Vec<EsignIssuedLink>,
     /// The recipients whose earlier link still holds, and is not shown again.
     pub unchanged: Vec<String>,
+    /// The decision an issue that minted a link ran on: the owner's own
+    /// proof, naming the asker's approved check-in it applied
+    /// (ROLES-CHECKIN 2k8). Absent when no link was minted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 /// One send or reminder of a signing document through the dispatch gate.
@@ -539,16 +552,38 @@ impl Memory<'_> {
     /// owner's proof mints: the one the host bound to this request, else the
     /// embedded owner's own. A narrowed credential mints only as the vault
     /// owner's own, on a draft its lane reaches (FIX 6403).
+    ///
+    /// A mint widens who may act on the draft: the owner's own issue goes on
+    /// their own proof, never gated, and the answer records that decision
+    /// (`check_in`). With `check_in_ref` the owner applies another asker's
+    /// approved check-in for this exact issue, spent in the mint's writer
+    /// (ROLES-CHECKIN 2k8; Engine RULINGS P25-SHAPE Q1 = A, P25-2K8-SCOPE
+    /// Q1 = A). An issue that mints no link spends nothing and records none.
     /// # Errors
     /// A caller that is not the vault owner, a document already sent, or no
-    /// such document.
+    /// such document; a `check_in_ref` that is no 32-hex id, that a narrowed
+    /// credential names, or that is not an approved ask for this issue over
+    /// the draft's current recipients.
     pub fn esign_links_issue(
         &self,
         input: &EsignLinksIssueRequest,
     ) -> MemoryResult<EsignLinksView> {
         const VERB: &str = "vault.esign.links.issue";
         let document = document_id(&input.document_ref)?;
+        let check_in = input
+            .check_in_ref
+            .as_deref()
+            .map(|hex| {
+                EntityId::from_hex(hex)
+                    .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))
+            })
+            .transpose()?;
         if let EsignScope::Credential(lane) = self.esign_scope()? {
+            if check_in.is_some() {
+                return Err(MemoryError::bad_request(
+                    "a narrowed credential applies no check-in",
+                ));
+            }
             return self.esign_links_issue_in_lane(&lane, document, input.rotate);
         }
         let embedded: AuthenticatedOwner;
@@ -560,13 +595,10 @@ impl Memory<'_> {
             }
         };
         let vault = self.vault();
-        let minted = if input.rotate {
-            vault.reissue_esign_capabilities(owner, document)?
-        } else {
-            vault.issue_esign_capabilities(owner, document)?
-        };
+        let (minted, decision) =
+            vault.issue_esign_links_with_check_in(owner, document, input.rotate, check_in)?;
         let state = vault.esign_document(document)?;
-        Ok(links::links_view(document, state, minted))
+        Ok(links::links_view(document, state, minted, decision))
     }
 
     /// `vault.esign.send_for_signature`: sends the drafted document to its

@@ -5,6 +5,7 @@
 //! adds a link and never revokes one the recipient holds; only an explicit
 //! draft rotation revokes every indexed link, and `revoke` revokes one.
 use super::{ledger::state_in, model::*, principals::verify_owner};
+use crate::check_in::{ActClass, AppliedCheckIn, CheckInDecision, owner_act_decision_in_txn};
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::classified::SideGet;
 use crate::side_table::{self, CodecError, LegacyJson, Raw, RawValue, SideTable};
@@ -355,9 +356,49 @@ impl Vault {
         document: EntityId,
         rotate: bool,
     ) -> Result<Vec<(String, EsignCapability)>> {
+        Ok(self
+            .issue_esign_links_with_check_in(owner, document, rotate, None)?
+            .0)
+    }
+    /// [`Self::issue_esign_capabilities`], or on `rotate`
+    /// [`Self::reissue_esign_capabilities`], for `vault.esign.links.issue`,
+    /// with the decision it ran on. An issue that mints a link is the owner's
+    /// own act on their own proof; with `check_in` they apply another asker's
+    /// approved check-in for this exact issue over the draft's recipients,
+    /// spent in the mint's writer after every check (ROLES-CHECKIN 2k8;
+    /// P25-2K8-SCOPE Q1 = A), so a refusal mints nothing and leaves it
+    /// eligible. An issue that mints no link spends nothing and records none.
+    pub(crate) fn issue_esign_links_with_check_in(
+        &self,
+        owner: &AuthenticatedOwner,
+        document: EntityId,
+        rotate: bool,
+        check_in: Option<EntityId>,
+    ) -> Result<(Vec<(String, EsignCapability)>, Option<CheckInDecision>)> {
         self.with_write_txn_grouped(|txn| {
             verify_owner(self, txn, owner)?;
-            mint_draft_capabilities_in(self, txn, document, rotate)
+            let minted = mint_draft_capabilities_in(self, txn, document, rotate)?;
+            if minted.is_empty() {
+                return Ok((minted, None));
+            }
+            let recipients: Vec<String> = state_in(self, txn, document)?
+                .document
+                .recipients
+                .into_iter()
+                .map(|recipient| recipient.id)
+                .collect();
+            let applied = check_in.map(|id| AppliedCheckIn {
+                id,
+                verb: "vault.esign.links.issue",
+                effect_digest: super::esign_links_issue_effect_digest(
+                    document,
+                    rotate,
+                    &recipients,
+                ),
+            });
+            let decision =
+                owner_act_decision_in_txn(self, txn, ActClass::GrantWiden, applied.as_ref())?;
+            Ok((minted, Some(decision)))
         })
     }
     pub fn revoke_esign_capability(
