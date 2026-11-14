@@ -3,7 +3,6 @@ pub use crate::claim::learning_evidence::EvidenceSource;
 pub use crate::claim::learning_evidence::Observation;
 pub use crate::claim::learning_predicate::LearningPredicate;
 pub use crate::receipt::task_type_ref::ROOT_TYPE_NODE;
-pub use crate::receipt::task_type_ref::TypeRef;
 pub use oneiron_base::learning_estimate::BetaView;
 pub use oneiron_base::learning_estimate::ESTIMATOR_VERSION;
 pub use oneiron_base::learning_estimate::Estimate;

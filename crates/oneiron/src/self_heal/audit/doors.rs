@@ -16,9 +16,27 @@ use super::{
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::self_heal::audit::doors::{
-    SealAttemptRequest, SealCompleteRequest, SealPendingRequest, SealReceiptView, SealRunReceipt,
-    SealRunRequest,
+    SealAttemptRequest, SealCompleteRequest, SealPendingRequest, SealRunReceipt, SealRunRequest,
 };
+
+/// Findings move task quality; the confession reward remains separate.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SealReceiptView {
+    pub receipt: SealedAttemptReceipt,
+    pub assessment: SealAssessment,
+    pub honesty_reward: f64,
+}
+
+impl From<SealedAttemptReceipt> for SealReceiptView {
+    fn from(receipt: SealedAttemptReceipt) -> Self {
+        let assessment = seal_assessment(&receipt);
+        Self {
+            receipt,
+            assessment,
+            honesty_reward: assessment.honesty_reward(),
+        }
+    }
+}
 
 /// Adds only the immutable report and its directed recheck requests.
 pub fn confess_as_owner(

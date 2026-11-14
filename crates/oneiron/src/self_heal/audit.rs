@@ -30,9 +30,35 @@ const SEALS: SideTable<[u8; 16], StoredSeal, Named> =
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::self_heal::audit::{
-    AttemptConfession, AuditDraw, ObjectiveConfession, ObjectiveFinding, SealCheckKind,
-    SealCheckOutcome, SealCheckReceipt, SealCheckRequest, SealedAttemptReceipt,
+    AuditDraw, ObjectiveConfession, ObjectiveFinding, SealCheckKind, SealCheckOutcome,
+    SealCheckReceipt, SealCheckRequest,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AttemptConfession {
+    pub attempt: AttemptId,
+    /// The skill or actor this attempt measured.
+    pub subject: EntityId,
+    pub type_ref: TypeRef,
+    /// Every objective the attempt was given, including ones it met.
+    pub objectives: Vec<ObjectiveConfession>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SealedAttemptReceipt {
+    pub confession: AttemptConfession,
+    /// The project the attempt ran in, as its stored dispatch names it at
+    /// seal time (FIX 2957). `None` when it names none.
+    pub project: Option<EntityId>,
+    pub executor: String,
+    pub result_ref: String,
+    pub sealed_at: u64,
+    pub passing: bool,
+    pub draw: Option<AuditDraw>,
+    pub checks: Vec<SealCheckReceipt>,
+}
 
 fn invalid(reason: &'static str) -> Error {
     Error::InvalidClaimBody(reason)

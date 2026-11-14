@@ -9092,7 +9092,6 @@ dependencies = [
  "loro",
  "oneiron-authority",
  "oneiron-base",
- "oneiron-browser",
  "oneiron-code-check",
  "oneiron-code-source",
  "oneiron-consent-state",

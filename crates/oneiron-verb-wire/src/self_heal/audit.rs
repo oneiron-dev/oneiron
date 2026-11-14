@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/self_heal/audit.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::receipt::task_type_ref::TypeRef;
-use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::attempt_id::AttemptId;
 use serde::Deserialize;
 use serde::Serialize;
@@ -31,17 +29,6 @@ impl ObjectiveConfession {
     pub fn needs_recheck(&self) -> bool {
         self.confesses_flaw() || self.uncertainty.is_some()
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AttemptConfession {
-    pub attempt: AttemptId,
-    /// The skill or actor this attempt measured.
-    pub subject: EntityId,
-    pub type_ref: TypeRef,
-    /// Every objective the attempt was given, including ones it met.
-    pub objectives: Vec<ObjectiveConfession>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -110,20 +97,5 @@ pub struct SealCheckReceipt {
     /// a check that keeps coming back unsettled cannot hold every slot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_asked_at: Option<u64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SealedAttemptReceipt {
-    pub confession: AttemptConfession,
-    /// The project the attempt ran in, as its stored dispatch names it at
-    /// seal time (FIX 2957). `None` when it names none.
-    pub project: Option<EntityId>,
-    pub executor: String,
-    pub result_ref: String,
-    pub sealed_at: u64,
-    pub passing: bool,
-    pub draw: Option<AuditDraw>,
-    pub checks: Vec<SealCheckReceipt>,
 }
 pub mod doors;

@@ -9,4 +9,3 @@ pub mod confirm;
 pub mod dispatch_compliance;
 pub mod owner_policy_mutation;
 pub mod policy_manifest_doors;
-pub mod weave_grant;
