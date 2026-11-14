@@ -99,6 +99,11 @@ pub(crate) use self::scoped_touch::ScopedTouchRecord;
 pub(crate) use self::stop_hold::{
     clear_pending_stop_for_delete, maintain_pending_stop_put, send_stop_reason_in_txn,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::stop_hold::{
+    deliver_withheld_clear_receipts, mark_recorded_stop_peer_projected, recorded_stop_holds,
+    retract_standing_opt_outs, withhold_clear_receipts,
+};
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
