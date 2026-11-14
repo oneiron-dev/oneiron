@@ -16,7 +16,7 @@ use oneiron::check_in::{
     ModelCheck, ROLE_PRESET, ResolvedMode, RoleDefault, RolePreset, UnsureTest, WaitReason,
     check_in, check_in_with_mode, resolve_mode,
 };
-use oneiron::consent::CATASTROPHE_FLOOR_V2;
+use oneiron::consent::CATASTROPHE_FLOOR_V3;
 use oneiron::federation::FederationGrantRole;
 use oneiron::{Error, Result};
 
@@ -109,7 +109,7 @@ fn tables_have_one_row_per_act_and_role() {
     }
 }
 
-/// ARCH-0082 #catastrophe-floor: the eight C rows and the F row, and a C row
+/// ARCH-0082 #catastrophe-floor: the nine C rows and the F row, and a C row
 /// is AlwaysAsk for every role but Owner, whatever row a caller passes.
 #[test]
 fn catastrophe_rows_ask_every_role_but_owner() {
@@ -127,6 +127,7 @@ fn catastrophe_rows_ask_every_role_but_owner() {
         ActClass::SecurityControlDisable,
         ActClass::MassSecretExport,
         ActClass::WorldWiden,
+        ActClass::ProtectedRefRewriteOrDelete,
     ]
     .into_iter()
     .collect();
@@ -173,11 +174,11 @@ fn catastrophe_rows_ask_every_role_but_owner() {
     assert_eq!(stub.calls.get(), 0);
 }
 
-/// The built floor (consent CATASTROPHE_FLOOR_V2) and the act table agree:
+/// The built floor (consent CATASTROPHE_FLOOR_V3) and the act table agree:
 /// each floor class is one row, and that row is a C row or the F row.
 #[test]
 fn built_floor_classes_are_c_or_f_rows() {
-    for class in CATASTROPHE_FLOOR_V2 {
+    for class in CATASTROPHE_FLOOR_V3 {
         let rows: Vec<_> = ACT_CLASS
             .iter()
             .filter(|row| row.floor_class == Some(class))

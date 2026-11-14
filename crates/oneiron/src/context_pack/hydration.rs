@@ -272,7 +272,7 @@ pub(super) fn hydrate_entity(
     if let (Some(clamp), Some(body)) = (options.clamp, gated_claim_body)
         && !super::retained_copies::clamp_admits(
             clamp,
-            store.base(),
+            vault,
             rtxn,
             &id,
             ENTITY_TYPE_CLAIM,
@@ -324,6 +324,7 @@ pub(super) fn hydrate_entity(
 
     let edges = if options.include_edges {
         Some(load_entity_edges(
+            vault,
             store,
             rtxn,
             &id,
