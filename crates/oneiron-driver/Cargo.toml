@@ -23,6 +23,10 @@ oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync"] }
 # supervisor's default backend construction must not imply network egress —
 # hosts that want a remote adapter inject their own Arc<dyn LlmBackend>.
 oneiron-llm-local = { version = "0.1.0", path = "../oneiron-llm-local" }
+# Untangle 6.9c (S69-RUN = A): the host adapter runs the Dreamer's job crate
+# over a client bound to one admitted attempt, never a `&Vault`.
+oneiron-dreamer = { version = "0.1.0", path = "../oneiron-dreamer" }
+oneiron-remote = { version = "0.1.0", path = "../oneiron-remote" }
 # Mirrors the oneiron core feature set (rt/sync/time/macros), NOT tokio
 # "full": the driver is a plain event consumer, no net/io stack of its own.
 tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }

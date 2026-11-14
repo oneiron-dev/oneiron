@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { decode } from "@msgpack/msgpack";
 import type { Facade, FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
@@ -7,7 +7,7 @@ import type { PairedActor } from "./support/engine.ts";
 import { PublicHttpClient, PublicHttpError, WsClient, WsRpcError, credentialParts } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { ScriptedProviders, openaiText } from "./support/providers.ts";
-import { assertFlowActive, defineFile, ownResource, recordStart, redactor, secretHex } from "./support/run.ts";
+import { assertFlowActive, defineFile, expect, ownResource, recordStart, redactor, secretHex } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";

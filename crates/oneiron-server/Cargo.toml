@@ -275,6 +275,13 @@ name = "artifact_private_owner_read"
 path = "tests/artifact_private_owner_read.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
+# Publishes its bundle with `publish_artifact_pointer_with_tier` (`oneiron/test-hooks`) on a
+# `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
+[[test]]
+name = "artifact_pinned_document_cache"
+path = "tests/artifact_pinned_document_cache.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
 # These three build their servers on a `MemoryKeystore` (`oneiron-keystore/test-keystore`,
 # forwarded by `oneiron/test-support`), so they take `it`'s rolling-tier features.
 [[test]]
