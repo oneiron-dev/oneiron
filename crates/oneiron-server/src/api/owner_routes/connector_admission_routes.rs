@@ -275,20 +275,27 @@ fn discover_installed(
         ));
     }
     let door_origin = server.loopback_api_origin();
-    host::with_credential(server.vault(), secret_ref, name, |auth| match endpoint {
-        Some(endpoint) => host::discover(&host::client()?, endpoint, auth, pinned),
-        None => host::discover_stdio(
-            server.runner_fence().as_deref(),
-            name,
-            installed,
-            pinned,
-            &host::ListingDoor {
-                doors: server.connector_stdio.upstream_doors(),
-                origin: door_origin.as_deref(),
-                auth,
-            },
-        ),
-    })
+    host::with_credential_and_value(
+        server.vault(),
+        secret_ref,
+        name,
+        |auth, value| match endpoint {
+            Some(endpoint) => host::discover(&host::client()?, endpoint, auth, pinned),
+            None => host::discover_stdio(
+                server.runner_fence().as_deref(),
+                name,
+                installed,
+                pinned,
+                &host::ListingDoor {
+                    doors: server.connector_stdio.upstream_doors(),
+                    origin: door_origin.as_deref(),
+                    auth,
+                    value,
+                    vault: server.vault(),
+                },
+            ),
+        },
+    )
     .map_err(engine)?
     .map_err(engine)
 }

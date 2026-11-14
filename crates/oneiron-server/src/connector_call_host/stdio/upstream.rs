@@ -18,14 +18,24 @@
 //! A request at the door must come from this device and present the child's
 //! reference, as a bearer (or `token`) credential or in `x-api-key`. The door
 //! sends it on to the upstream origin with the same method, path, query,
-//! body and headers, less the hop-by-hop ones, `Host` and every credential
-//! header, adding the held `Authorization`. It sends with the connector
-//! client's policy: no proxy, no redirect, the connect and call bounds. The
-//! answer goes back whole (its status, headers and a body within 16 MiB),
-//! cleared of the presented value, and `no-store`. A request with an unknown
-//! reference reads as unauthorized; one outside a call, as a conflict. Each
-//! request is traced by connector, method, path and status; it lands on no
-//! receipt yet (FIX [STDIO-UPSTREAM-SENDS-RECEIPT]).
+//! body and headers, less the hop-by-hop ones, `Host`, the codings the child
+//! asks for and every credential header, adding the held `Authorization`. It
+//! sends with the connector client's policy: no proxy, no redirect, the
+//! connect and call bounds. The call's issuer binding is read again before
+//! each send, the last point before the credential leaves: while a change
+//! the owner has not accepted holds it, or it cannot be read, nothing is sent
+//! (FIX 9303). The answer goes back whole (its status, headers and a body
+//! within 16 MiB), cleared of the presented value, and `no-store`; an answer
+//! still in a content coding, which the clearing cannot read, is refused. A
+//! request with an unknown reference reads as unauthorized; one outside a
+//! call, as a conflict. Each request is traced by connector, method, path and
+//! status; it lands on no receipt yet (FIX [STDIO-UPSTREAM-SENDS-RECEIPT]).
+//!
+//! A request is admitted only while a call is in flight, and lives no longer
+//! than that call's hold: ending the hold aborts each request the door
+//! admitted under it that is still running, while it reads the child's body
+//! (so it is never sent), waits on the upstream or reads its answer (which
+//! never reaches the child), and waits for each to end.
 //!
 //! Loopback is not process identity: any process on this device that holds
 //! a child's reference can send through its door while one of that child's
@@ -33,7 +43,8 @@
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, mpsc};
+use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
@@ -43,7 +54,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use oneiron::claim::CallerLocality;
 use oneiron::secret_custody::{KeptSentValue, SentValue};
+use oneiron::{EntityId, Vault};
 use rand_core::RngCore as _;
+use tokio::sync::watch;
 use zeroize::Zeroizing;
 
 use crate::config::connectors::{StdioUpstream, normalize_name};
@@ -60,10 +73,15 @@ pub const UPSTREAM_REFERENCE_PREFIX: &str = "oneiron-connector.";
 /// gives back.
 const MAX_BODY: usize = 16 * 1024 * 1024;
 
+/// How long the end of a call's hold waits for the requests it aborts to
+/// end.
+const DRAIN_BOUND: Duration = Duration::from_secs(2);
+
 /// The headers that never pass the door either way: the hop-by-hop ones,
-/// the target's `Host`, the length the sender sets again, and every
+/// the target's `Host`, the length the sender sets again, the codings the
+/// child asks for (the door's client asks for those it decodes), and every
 /// credential header.
-const DROPPED_HEADERS: [&str; 13] = [
+const DROPPED_HEADERS: [&str; 14] = [
     "connection",
     "keep-alive",
     "proxy-authenticate",
@@ -75,26 +93,76 @@ const DROPPED_HEADERS: [&str; 13] = [
     "upgrade",
     "host",
     "content-length",
+    "accept-encoding",
     "authorization",
     "x-api-key",
 ];
 
 /// What one call presents to its connector's upstream, held at the door
 /// for the call's span: the `Authorization` header its credential door
-/// built, and the value to clear from what the upstream says. Both are
-/// `None` for a call that presents nothing; its requests go on with no
-/// credential.
+/// built, the value to clear from what the upstream says, and the issuer
+/// binding that governs its sends. The first two are `None` for a call that
+/// presents nothing; its requests go on with no credential.
 #[derive(Default)]
 pub struct UpstreamHeld {
     auth: Option<HeaderValue>,
     kept: Option<KeptSentValue>,
+    issuer: Option<UpstreamIssuer>,
 }
 
 impl UpstreamHeld {
-    /// The header a call presents, and the value it was built from.
+    /// The header a call presents, the value it was built from, and the
+    /// issuer binding read again before each of its sends.
     #[must_use]
-    pub fn new(auth: Option<HeaderValue>, kept: Option<KeptSentValue>) -> Self {
-        Self { auth, kept }
+    pub fn new(
+        auth: Option<HeaderValue>,
+        kept: Option<KeptSentValue>,
+        issuer: Option<UpstreamIssuer>,
+    ) -> Self {
+        Self { auth, kept, issuer }
+    }
+
+    /// The hold on the call's issuer binding, read now: `None` while none
+    /// holds it, or when no binding governs the call.
+    ///
+    /// # Errors
+    ///
+    /// When the binding cannot be read.
+    pub fn issuer_hold(&self) -> oneiron::Result<Option<&'static str>> {
+        self.issuer.as_ref().map_or(Ok(None), UpstreamIssuer::read)
+    }
+}
+
+/// The issuer binding that governs a call's sends, read again before each
+/// one (FIX 9303).
+pub enum UpstreamIssuer {
+    /// A call's governing connector key and tool.
+    Row {
+        vault: Arc<Vault>,
+        key_ref: EntityId,
+        tool: String,
+    },
+    /// Every binding of the catalog connector `connector`, as its listing
+    /// reads them.
+    Connector {
+        vault: Arc<Vault>,
+        connector: String,
+    },
+}
+
+impl UpstreamIssuer {
+    /// The hold on the binding, read now.
+    fn read(&self) -> oneiron::Result<Option<&'static str>> {
+        match self {
+            Self::Row {
+                vault,
+                key_ref,
+                tool,
+            } => vault.connector_issuer_hold(key_ref, tool),
+            Self::Connector { vault, connector } => {
+                vault.connector_issuer_hold_for_connector(connector)
+            }
+        }
     }
 }
 
@@ -114,20 +182,45 @@ struct UpstreamDoor {
     name: String,
     /// The upstream origin, with no trailing `/`.
     origin: String,
-    /// What the call in flight on the child presents; `None` between calls.
-    held: Option<Arc<UpstreamHeld>>,
+    /// The call in flight on the child; `None` between calls.
+    call: Option<InFlight>,
 }
 
-/// A child's place at its door; dropping it closes the door.
+/// What a door keeps of the call in flight on its child.
+struct InFlight {
+    /// What the call presents.
+    held: Arc<UpstreamHeld>,
+    /// Dropped when the call's hold ends, which aborts each request the
+    /// door admitted under it.
+    ended: watch::Sender<()>,
+    /// Each admitted request keeps a clone until it ends; the hold's end
+    /// waits for the last one.
+    lease: mpsc::Sender<()>,
+}
+
+/// One request the door admitted: its upstream origin, what its call
+/// presents, and its lease on that call.
+struct Admitted {
+    origin: String,
+    held: Arc<UpstreamHeld>,
+    _lease: mpsc::Sender<()>,
+}
+
+/// A child's place at its door; dropping it closes the door, and aborts
+/// each request of a call still held there.
 pub struct UpstreamTicket {
     doors: Arc<UpstreamDoors>,
     reference: [u8; 32],
 }
 
-/// A call's hold at its child's door; dropping it ends the hold.
+/// A call's hold at its child's door. Dropping it ends the hold: each
+/// request the door admitted under it is aborted, and the drop waits up to
+/// two seconds for them to end, so drop it off the async runtime.
 pub struct UpstreamHold {
     doors: Arc<UpstreamDoors>,
     reference: [u8; 32],
+    /// Disconnected once the hold's last admitted request has ended.
+    drained: mpsc::Receiver<()>,
 }
 
 /// The variables that point a child's upstream API at its door: the base
@@ -168,7 +261,7 @@ impl UpstreamDoors {
             UpstreamDoor {
                 name,
                 origin: upstream.origin.trim_end_matches('/').to_owned(),
-                held: None,
+                call: None,
             },
         );
         let ticket = UpstreamTicket {
@@ -184,16 +277,25 @@ impl UpstreamDoors {
         (ticket, env)
     }
 
-    /// The origin and the hold of the door the reference `presented` opens
-    /// for the connector `name`.
-    fn admit(&self, name: &str, presented: &str) -> Result<(String, Arc<UpstreamHeld>), Refusal> {
+    /// A request the door the reference `presented` opens for the connector
+    /// `name` admits, and the signal of its call's end.
+    fn admit(
+        &self,
+        name: &str,
+        presented: &str,
+    ) -> Result<(Admitted, watch::Receiver<()>), Refusal> {
         let doors = lock(&self.doors);
         let door = doors
             .get(&digest(presented))
             .filter(|door| door.name == name)
             .ok_or(Refusal::Unknown)?;
-        let held = door.held.clone().ok_or(Refusal::NotInCall)?;
-        Ok((door.origin.clone(), held))
+        let call = door.call.as_ref().ok_or(Refusal::NotInCall)?;
+        let admitted = Admitted {
+            origin: door.origin.clone(),
+            held: Arc::clone(&call.held),
+            _lease: call.lease.clone(),
+        };
+        Ok((admitted, call.ended.subscribe()))
     }
 
     /// The connector client's policy: no proxy, no redirect, its connect
@@ -218,21 +320,31 @@ impl UpstreamTicket {
     /// dropped.
     #[must_use]
     pub fn hold(&self, held: UpstreamHeld) -> UpstreamHold {
+        let (lease, drained) = mpsc::channel();
         if let Some(door) = lock(&self.doors.doors).get_mut(&self.reference) {
-            door.held = Some(Arc::new(held));
+            door.call = Some(InFlight {
+                held: Arc::new(held),
+                ended: watch::channel(()).0,
+                lease,
+            });
         }
         UpstreamHold {
             doors: Arc::clone(&self.doors),
             reference: self.reference,
+            drained,
         }
     }
 }
 
 impl Drop for UpstreamHold {
     fn drop(&mut self) {
-        if let Some(door) = lock(&self.doors.doors).get_mut(&self.reference) {
-            door.held = None;
-        }
+        // Taken off its door, the call admits no more requests, and those it
+        // admitted are aborted.
+        let call = lock(&self.doors.doors)
+            .get_mut(&self.reference)
+            .and_then(|door| door.call.take());
+        drop(call);
+        let _ = self.drained.recv_timeout(DRAIN_BOUND);
     }
 }
 
@@ -288,11 +400,17 @@ enum Refusal {
     NotInCall,
     /// The request's body is not one readable body within 16 MiB.
     TooLarge,
+    /// The call's issuer binding meets a change the owner has not accepted,
+    /// or cannot be read (FIX 9303).
+    Held,
     /// The upstream did not answer within the call bound.
     TimedOut,
     /// The upstream could not be reached, or its answer was not one
     /// readable body within 16 MiB.
     NoAnswer,
+    /// The answer is still in a content coding, so the presented value
+    /// could not be cleared from it.
+    Encoded,
 }
 
 impl Refusal {
@@ -302,8 +420,10 @@ impl Refusal {
             Self::Unknown => (StatusCode::UNAUTHORIZED, "unauthorized"),
             Self::NotInCall => (StatusCode::CONFLICT, "no_call_in_flight"),
             Self::TooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "body_too_large"),
+            Self::Held => (StatusCode::FORBIDDEN, "issuer_held"),
             Self::TimedOut => (StatusCode::GATEWAY_TIMEOUT, "timeout"),
             Self::NoAnswer => (StatusCode::BAD_GATEWAY, "no_answer"),
+            Self::Encoded => (StatusCode::BAD_GATEWAY, "encoded_answer"),
         };
         (
             status,
@@ -324,8 +444,8 @@ async fn door(State(doors): State<Arc<UpstreamDoors>>, request: Request) -> Resp
     response
 }
 
-/// Sends one admitted request on to its connector's upstream, and its
-/// answer back cleared of what the call presents.
+/// Admits one request at the door, and sends it on to its connector's
+/// upstream for as long as its call's hold lasts.
 async fn forward(
     doors: &UpstreamDoors,
     parts: axum::http::request::Parts,
@@ -336,18 +456,46 @@ async fn forward(
     }
     let (name, path) = door_target(parts.uri.path()).ok_or(Refusal::Unknown)?;
     let reference = presented_reference(&parts.headers).ok_or(Refusal::Unknown)?;
-    let (origin, held) = doors.admit(name, &reference)?;
+    let (admitted, mut ended) = doors.admit(name, &reference)?;
     drop(reference);
+    // The hold's end aborts the request wherever it is.
+    tokio::select! {
+        biased;
+        _ = ended.changed() => Err(Refusal::NotInCall),
+        answer = send_on(doors, &admitted, name, path, &parts, body) => answer,
+    }
+}
+
+/// Sends one admitted request on to its connector's upstream, presenting
+/// what its call holds, and its answer back cleared of it.
+async fn send_on(
+    doors: &UpstreamDoors,
+    admitted: &Admitted,
+    name: &str,
+    path: &str,
+    parts: &axum::http::request::Parts,
+    body: Body,
+) -> Result<Response, Refusal> {
     let body = axum::body::to_bytes(body, MAX_BODY)
         .await
         .map_err(|_| Refusal::TooLarge)?;
     let client = doors.client().ok_or(Refusal::NoAnswer)?;
-    let mut url = format!("{origin}{path}");
+    let held = &admitted.held;
+    let mut url = format!("{}{path}", admitted.origin);
     if let Some(query) = parts.uri.query() {
         url.push('?');
         url.push_str(query);
     }
     let mut headers = passed_headers(&parts.headers);
+    // The last point before the credential leaves.
+    match held.issuer_hold() {
+        Ok(None) => {}
+        Ok(Some(_)) => return Err(Refusal::Held),
+        Err(error) => {
+            tracing::warn!(%error, "connector issuer binding not read");
+            return Err(Refusal::Held);
+        }
+    }
     if let Some(auth) = &held.auth {
         headers.insert(header::AUTHORIZATION, auth.clone());
     }
@@ -372,6 +520,11 @@ async fn forward(
         status = status.as_u16(),
         "a stdio connector's upstream request went through its door"
     );
+    // The client decodes the codings it asks for and takes their header
+    // off; a body still coded is not what the clearing reads.
+    if held.kept.is_some() && coded(answer.headers()) {
+        return Err(Refusal::Encoded);
+    }
     let mut reply_headers = passed_headers(answer.headers());
     let mut bytes = Vec::new();
     while let Some(chunk) = answer.chunk().await.map_err(|_| Refusal::NoAnswer)? {
@@ -389,6 +542,27 @@ async fn forward(
     *response.status_mut() = status;
     *response.headers_mut() = reply_headers;
     Ok(response)
+}
+
+/// Whether an answer's body is still coded once the client has read it: a
+/// content coding other than `identity`, or a transfer coding other than
+/// `chunked`, named in any form.
+fn coded(headers: &HeaderMap) -> bool {
+    names_a_coding(headers, header::CONTENT_ENCODING, &["identity"])
+        || names_a_coding(headers, header::TRANSFER_ENCODING, &["identity", "chunked"])
+}
+
+/// Whether any value of the header `name` names a coding outside `plain`;
+/// a value that is not text names one.
+fn names_a_coding(headers: &HeaderMap, name: header::HeaderName, plain: &[&str]) -> bool {
+    headers.get_all(name).iter().any(|value| {
+        let Ok(text) = value.to_str() else {
+            return true;
+        };
+        text.split(',').map(str::trim).any(|coding| {
+            !coding.is_empty() && !plain.iter().any(|plain| coding.eq_ignore_ascii_case(plain))
+        })
+    })
 }
 
 /// The connector name and the upstream path of a door request's path: the

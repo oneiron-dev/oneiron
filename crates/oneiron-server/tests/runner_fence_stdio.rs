@@ -212,6 +212,7 @@ fn call(
         }
         StdioDelivery::NotSent => panic!("the call was not sent (is python3 on PATH?)"),
         StdioDelivery::NoAnswer => None,
+        StdioDelivery::Held { reason } => panic!("the call was held: {reason}"),
     };
     (said, outcome.session_manifest)
 }

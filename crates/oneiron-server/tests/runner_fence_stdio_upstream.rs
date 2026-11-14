@@ -5,17 +5,21 @@
 //! credential; the door adds the header its call presents, for that call's
 //! span alone, and clears the presented value from what the upstream
 //! answers. A request with another reference, under another connector's
-//! name, outside a call or after the child stopped is refused; a call that
-//! presents nothing reaches the upstream with no credential; a connector
-//! that names an upstream is not started without a door origin; the
-//! upstream is part of the connector's endpoint, and only a bare origin is
-//! taken.
+//! name, outside a call or after the child stopped is refused; a request
+//! whose call ends before its body is read is aborted and never sent; an
+//! answer still in a content coding is refused, and the codings the child
+//! asks for never pass; a call that presents nothing reaches the upstream
+//! with no credential; a connector that names an upstream is not started
+//! without a door origin; the upstream is part of the connector's endpoint,
+//! and only a bare origin is taken.
 //!
-//! The child is a Python stand-in that calls its upstream with urllib. The
-//! upstream is a stand-in HTTP server on loopback that answers every
-//! request with the `Authorization` it got, in its body and in `x-echo`.
-//! The door is served on loopback by the API's own router. Run the tests
-//! with `--test-threads=1`.
+//! The child is a Python stand-in that calls its upstream with urllib, or
+//! with a raw socket for a request it finishes in a later call. The
+//! upstream is a stand-in HTTP server on loopback that records each request
+//! and then answers it with the `Authorization` it got, in its body and in
+//! `x-echo` (under `/encoded`, in a coding no client decodes). The door is
+//! served on loopback by the API's own router. Run the tests with
+//! `--test-threads=1`.
 #![cfg(unix)]
 
 use std::collections::BTreeSet;
@@ -50,9 +54,15 @@ const CLEARED: &str = "[issues token]";
 
 /// An MCP stdio server: `tools/call fetch` sends `GET` to its upstream's
 /// base URL plus `path`, with `Authorization: Bearer` and its key (or
-/// `token`, when the call names one), and says the status, the body and
-/// `x-echo` it got back, and its whole environment.
-const STAND_IN: &str = r#"import json, os, sys, urllib.error, urllib.request
+/// `token`, when the call names one) and `Accept-Encoding: accept` when the
+/// call names one, and says the status, the body and `x-echo` it got back,
+/// and its whole environment. With `slow: "begin"` it sends a `POST`'s head
+/// and half its body and keeps the rest; with `slow: "end"`, in a later
+/// call, it says what the door answered, sending the rest of the body first
+/// only when the door had said nothing within 3 s.
+const STAND_IN: &str = r#"import json, os, socket, sys, time, urllib.error, urllib.parse, urllib.request
+
+slow = None
 
 def send(message):
     sys.stdout.write(json.dumps(message) + "\n")
@@ -67,7 +77,10 @@ def read():
 def fetch(arguments):
     url = os.environ.get("PROBE_API_URL", "") + arguments["path"]
     token = arguments.get("token", os.environ.get("PROBE_API_TOKEN", ""))
-    request = urllib.request.Request(url, headers={"Authorization": "Bearer " + token})
+    headers = {"Authorization": "Bearer " + token}
+    if "accept" in arguments:
+        headers["Accept-Encoding"] = arguments["accept"]
+    request = urllib.request.Request(url, headers=headers)
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
         with opener.open(request, timeout=20) as answer:
@@ -77,6 +90,27 @@ def fetch(arguments):
     except Exception as error:
         status, body, echo = 0, repr(error), ""
     return {"status": status, "body": body, "echo": echo, "env": dict(os.environ)}
+
+def begin_slow(arguments):
+    global slow
+    base = urllib.parse.urlsplit(os.environ.get("PROBE_API_URL", ""))
+    slow = socket.create_connection((base.hostname, base.port), timeout=20)
+    head = ("POST " + base.path + arguments["path"] + " HTTP/1.1\r\nHost: " + base.netloc
+            + "\r\nAuthorization: Bearer " + os.environ.get("PROBE_API_TOKEN", "")
+            + "\r\nContent-Length: 10\r\nConnection: close\r\n\r\nhalf.")
+    slow.sendall(head.encode())
+    time.sleep(1)
+    return {"begun": True}
+
+def end_slow():
+    slow.settimeout(3)
+    try:
+        answer = slow.recv(65536)
+    except socket.timeout:
+        slow.sendall(b"rest.")
+        slow.settimeout(20)
+        answer = slow.recv(65536)
+    return {"answer": answer.decode(errors="replace")}
 
 while True:
     message = read()
@@ -90,7 +124,13 @@ while True:
         send({"jsonrpc": "2.0", "id": message["id"], "result": {
             "tools": [{"name": "fetch", "inputSchema": {"type": "object"}}]}})
     elif method == "tools/call":
-        said = fetch(message["params"].get("arguments", {}))
+        arguments = message["params"].get("arguments", {})
+        if arguments.get("slow") == "begin":
+            said = begin_slow(arguments)
+        elif arguments.get("slow") == "end":
+            said = end_slow()
+        else:
+            said = fetch(arguments)
         send({"jsonrpc": "2.0", "id": message["id"], "result": {
             "content": [{"type": "text", "text": "fetched"}],
             "structuredContent": said}})
@@ -146,6 +186,7 @@ struct Seen {
     target: String,
     authorization: Option<String>,
     api_key: Option<String>,
+    accept_encoding: Option<String>,
 }
 
 /// The upstream stand-in on loopback: its origin, and the requests it got.
@@ -160,19 +201,17 @@ fn upstream() -> (String, Arc<Mutex<Vec<Seen>>>) {
     thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(stream) = stream else { continue };
-            if let Some(request) = answer(stream) {
-                kept.lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .push(request);
-            }
+            let _ = answer(stream, &kept);
         }
     });
     (origin, seen)
 }
 
-/// Reads one request and answers it 200, with the `Authorization` it got
-/// in a JSON body and in `x-echo`.
-fn answer(mut stream: TcpStream) -> Option<Seen> {
+/// Reads one request, records it in `seen`, and only then answers it 200,
+/// so a test that reads `seen` once the child has its answer finds it: the
+/// `Authorization` it got in a JSON body and in `x-echo`, the body reversed
+/// and named `Content-Encoding: x-reversed` under `/encoded`.
+fn answer(mut stream: TcpStream, seen: &Mutex<Vec<Seen>>) -> Option<()> {
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .ok()?;
@@ -182,7 +221,8 @@ fn answer(mut stream: TcpStream) -> Option<Seen> {
     let mut words = line.split_whitespace();
     let method = words.next()?.to_owned();
     let target = words.next()?.to_owned();
-    let (mut authorization, mut api_key, mut length) = (None, None, 0_usize);
+    let (mut authorization, mut api_key, mut accept_encoding, mut length) =
+        (None, None, None, 0_usize);
     loop {
         let mut header = String::new();
         reader.read_line(&mut header).ok()?;
@@ -195,6 +235,7 @@ fn answer(mut stream: TcpStream) -> Option<Seen> {
         match name.to_ascii_lowercase().as_str() {
             "authorization" => authorization = Some(value),
             "x-api-key" => api_key = Some(value),
+            "accept-encoding" => accept_encoding = Some(value),
             "content-length" => length = value.parse().ok()?,
             _ => {}
         }
@@ -202,21 +243,29 @@ fn answer(mut stream: TcpStream) -> Option<Seen> {
     let mut body = vec![0; length];
     reader.read_exact(&mut body).ok()?;
     let echo = authorization.clone().unwrap_or_default();
-    let reply = json!({ "authorization": echo, "target": target }).to_string();
+    let mut reply = json!({ "authorization": echo, "target": target }).to_string();
+    let mut coding = String::new();
+    if target.starts_with("/encoded") {
+        reply = reply.chars().rev().collect();
+        coding.push_str("Content-Encoding: x-reversed\r\n");
+    }
+    seen.lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push(Seen {
+            method,
+            target,
+            authorization,
+            api_key,
+            accept_encoding,
+        });
     write!(
         stream,
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Echo: {echo}\r\nContent-Length: \
-         {}\r\nConnection: close\r\n\r\n{reply}",
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{coding}X-Echo: {echo}\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n{reply}",
         reply.len()
     )
     .ok()?;
-    stream.flush().ok()?;
-    Some(Seen {
-        method,
-        target,
-        authorization,
-        api_key,
-    })
+    stream.flush().ok()
 }
 
 /// The upstream doors of `registry`, served on loopback by the API's own
@@ -250,6 +299,7 @@ fn held() -> UpstreamHeld {
     UpstreamHeld::new(
         Some(auth),
         Some(SentValue::new(SECRET.as_bytes(), CLEARED).keep()),
+        None,
     )
 }
 
@@ -279,6 +329,7 @@ fn fetch(
         }
         StdioDelivery::NotSent => None,
         StdioDelivery::NoAnswer => panic!("the stand-in gave no answer"),
+        StdioDelivery::Held { reason } => panic!("the call was held: {reason}"),
     }
 }
 
@@ -405,6 +456,82 @@ fn a_door_request_with_another_reference_or_outside_a_call_is_refused() {
             .is_empty(),
         "a refused request reached the upstream"
     );
+}
+
+#[test]
+fn a_door_request_whose_call_ends_before_its_body_is_read_is_aborted_and_never_sent() {
+    let layout = layout();
+    let fence = HostRunnerFence::for_vault(&layout.vault).expect("runner fence");
+    let (upstream_origin, seen) = upstream();
+    let registry = ConnectorStdioRegistry::default();
+    let (door_origin, _runtime) = door(&registry);
+    let connector = section(&layout.stand_in, Some(&upstream_origin));
+    // The child begins a request inside one call, and holds back half its
+    // body until the next.
+    let begun = fetch(
+        &registry,
+        &connector,
+        &fence,
+        Some(&door_origin),
+        held(),
+        json!({ "slow": "begin", "path": "/repos/owen/notes" }),
+    )
+    .expect("the call was sent (is python3 on PATH?)");
+    assert_eq!(begun["begun"], true, "{begun}");
+    let ended = fetch(
+        &registry,
+        &connector,
+        &fence,
+        Some(&door_origin),
+        held(),
+        json!({ "slow": "end" }),
+    )
+    .expect("the second call was sent");
+    let answer = ended["answer"].as_str().expect("the door's answer");
+    eprintln!("runner_fence_stdio_upstream: the door answered the late request: {answer:?}");
+    // The first call's end aborted the request: the door refused it before
+    // the rest of its body came, and it never reached the upstream.
+    assert!(answer.starts_with("HTTP/1.1 409"), "{answer}");
+    assert!(
+        seen.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_empty(),
+        "a request whose call had ended reached the upstream"
+    );
+    registry.stop();
+}
+
+#[test]
+fn an_upstream_answer_still_in_a_content_coding_is_refused_and_the_childs_codings_never_pass() {
+    let layout = layout();
+    let fence = HostRunnerFence::for_vault(&layout.vault).expect("runner fence");
+    let (upstream_origin, seen) = upstream();
+    let registry = ConnectorStdioRegistry::default();
+    let (door_origin, _runtime) = door(&registry);
+    let connector = section(&layout.stand_in, Some(&upstream_origin));
+    let said = fetch(
+        &registry,
+        &connector,
+        &fence,
+        Some(&door_origin),
+        held(),
+        json!({ "path": "/encoded/notes", "accept": "x-reversed" }),
+    )
+    .expect("the call was sent (is python3 on PATH?)");
+    // The reversed body holds the credential where no clearing reads it:
+    // the door gives none of it back.
+    assert_eq!(said["status"], 502, "{said}");
+    let body = said["body"].as_str().expect("a text body");
+    let reversed: String = SECRET.chars().rev().collect();
+    assert!(!body.contains(&reversed), "{body}");
+    let seen = seen.lock().unwrap_or_else(PoisonError::into_inner).clone();
+    assert_eq!(seen.len(), 1, "{seen:?}");
+    assert_ne!(
+        seen[0].accept_encoding.as_deref(),
+        Some("x-reversed"),
+        "the child's codings reached the upstream"
+    );
+    registry.stop();
 }
 
 #[test]

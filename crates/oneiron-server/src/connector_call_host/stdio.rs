@@ -52,7 +52,7 @@ use crate::runtime::runner_fence::{HostRunnerFence, runner_session_manifest};
 
 pub mod upstream;
 
-use upstream::{UpstreamDoors, UpstreamEnv, UpstreamHeld, UpstreamTicket};
+use upstream::{UpstreamDoors, UpstreamEnv, UpstreamHeld, UpstreamIssuer, UpstreamTicket};
 
 /// The backend a stdio connector child's session manifest names.
 pub const STDIO_RUNNER_BACKEND: &str = "runner:connector-stdio";
@@ -570,6 +570,9 @@ pub enum StdioDelivery {
     NotSent,
     /// The child answered: the message and its own bytes.
     Answered { message: Value, body: Vec<u8> },
+    /// The call's issuer binding met a change the owner has not accepted
+    /// once the call had its child: nothing was sent (FIX 9303).
+    Held { reason: &'static str },
     /// The request went, or may still have gone, and no readable answer
     /// came back within the call's bound or before the server stopped; the
     /// child is stopped.
@@ -643,6 +646,22 @@ impl ConnectorStdioRegistry {
         let Some(child) = slot.live(&name, &call, &self.stopping, &self.upstream) else {
             return not_sent();
         };
+        // Read again once the call has its child: a change that came to hold
+        // its binding while it waited for the slot or the start sends nothing
+        // (FIX 9303).
+        match call.held.issuer_hold() {
+            Ok(None) => {}
+            Ok(Some(reason)) => {
+                return StdioToolOutcome {
+                    delivery: StdioDelivery::Held { reason },
+                    session_manifest: None,
+                };
+            }
+            Err(error) => {
+                tracing::warn!(%error, "connector issuer binding not read");
+                return not_sent();
+            }
+        }
         let session_manifest = child.session_manifest.clone();
         // The door holds what the call presents until the call ends.
         let held = child.door.as_ref().map(|door| door.hold(call.held));
@@ -798,8 +817,11 @@ impl ServedConnectorCallHost {
             );
             return Sent::not_sent(OutboundFailureKind::TransportNotStarted, None);
         }
+        let key_ref = view.key_ref().and_then(|hex| EntityId::from_hex(hex).ok());
         let exchange = StdioExchange {
             registry: &self.stdio,
+            vault: &self.vault,
+            key_ref,
             name: view.server(),
             connector,
             fence: self.fence.as_deref(),
@@ -814,8 +836,8 @@ impl ServedConnectorCallHost {
             door_origin: self.door_origin.as_deref(),
         };
         // The door reads the call's issuer binding before it opens and
-        // again inside it (FIX 9303).
-        let key_ref = view.key_ref().and_then(|hex| EntityId::from_hex(hex).ok());
+        // again inside it (FIX 9303); the call reads it again once it has
+        // its child, and its upstream door before each send.
         let row = key_ref.as_ref().map(|key_ref| (key_ref, view.tool()));
         presenting.send(&self.vault, &exchange, row, presented)
     }
@@ -825,6 +847,10 @@ impl ServedConnectorCallHost {
 /// the credential its send presents.
 struct StdioExchange<'a> {
     registry: &'a ConnectorStdioRegistry,
+    vault: &'a Arc<Vault>,
+    /// The call's governing connector key, whose issuer binding with the
+    /// tool governs its sends.
+    key_ref: Option<EntityId>,
     name: &'a str,
     connector: &'a ConnectorHostConfig,
     fence: Option<&'a HostRunnerFence>,
@@ -846,13 +872,22 @@ impl DoorExchange for StdioExchange<'_> {
             tool: self.tool,
             arguments: self.arguments.clone(),
             door_origin: self.door_origin,
-            held: UpstreamHeld::new(auth, value.map(SentValue::keep)),
+            held: UpstreamHeld::new(
+                auth,
+                value.map(SentValue::keep),
+                self.key_ref.map(|key_ref| UpstreamIssuer::Row {
+                    vault: Arc::clone(self.vault),
+                    key_ref,
+                    tool: self.tool.to_owned(),
+                }),
+            ),
         });
         let sent = match outcome.delivery {
             StdioDelivery::NotSent => {
                 Sent::not_sent(OutboundFailureKind::TransportNotStarted, None)
             }
             StdioDelivery::NoAnswer => Sent::ambiguous("connector_no_reply"),
+            StdioDelivery::Held { reason } => Sent::held(reason),
             StdioDelivery::Answered {
                 mut message,
                 mut body,
