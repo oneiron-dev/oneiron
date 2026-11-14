@@ -6,13 +6,14 @@
 //! the genuine one from a forgery. A replica that settled a forged handoff
 //! first therefore refuses the real one, and this record is how it says so.
 //! Each refusal of a row signed by such a key names the key, the handoffs this
-//! vault holds that it signed, and the refused row. Only a row whose
-//! signatures verify is recorded, so no one without the key can plant a
-//! record. It is evidence for the owner, never a reason to admit. Records live
-//! with the vault handle and go when it closes. Each retired key's first such
-//! record also raises a saved alarm (key and refused row hash) that stays until
-//! the vault's owner acknowledges it (OF-166); a row the owner has not seen
-//! raises it again.
+//! vault holds that it signed, and the refused row. Only a row of this vault
+//! whose signatures verify is recorded, so no one without the key can plant a
+//! record, and a peer replaying another vault's genuine rows, signed by a key
+//! enrolled there too, plants none. It is evidence for the owner, never a
+//! reason to admit. Records live with the vault handle and go when it closes.
+//! Each retired key's first such record also raises a saved alarm (key and
+//! refused row hash) that stays until the vault's owner acknowledges it
+//! (OF-166); a row the owner has not seen raises it again.
 
 use std::collections::BTreeSet;
 use std::sync::{Mutex, PoisonError};
@@ -247,10 +248,14 @@ impl HandoffEquivocations {
 }
 
 /// Whether a door refuses `entry` because it stands on a retired key (see
-/// [`AuthorityFold::stands_on_retired_key`]). A refused row that a retired
-/// key signed, with signatures that verify, is recorded first, with the
-/// handoffs `fold` holds that the same key signed. `row` reads a row by hash,
-/// stored or arriving beside it.
+/// [`AuthorityFold::stands_on_retired_key`]). A refused row of `fold`'s own
+/// vault that a retired key signed, with signatures that verify, is recorded
+/// first, with the handoffs `fold` holds that the same key signed. A row of
+/// another vault is refused the same way and recorded nowhere: a key also
+/// enrolled in a second vault signs that vault's rows rightly, so they are no
+/// evidence of a fork here. Doors that compare the vault first never reach
+/// that case; the append door does, and so does any door added later. `row`
+/// reads a row by hash, stored or arriving beside it.
 pub(crate) fn door_refuses_retired_standing(
     store: &Store,
     fold: &AuthorityFold,
@@ -261,7 +266,10 @@ pub(crate) fn door_refuses_retired_standing(
     if !fold.stands_on_retired_key(hash, entry, row)? {
         return Ok(false);
     }
-    if entry.validate_shape().is_err() || verify_entry_signatures(entry).is_err() {
+    if entry.validate_shape().is_err()
+        || verify_entry_signatures(entry).is_err()
+        || !of_fold_vault(fold, entry)?
+    {
         return Ok(true);
     }
     for signer in entry_signer_keys(entry).filter(|key| fold.retired_keys.contains(*key)) {
@@ -284,6 +292,17 @@ pub(crate) fn door_refuses_retired_standing(
         store.authority_handoff_equivocations.record(evidence);
     }
     Ok(true)
+}
+
+/// Whether `entry` belongs to the vault `fold` folds: a genesis founds the
+/// vault its own hash names, and every other row names its vault. A fold with
+/// no settled root holds no vault to match.
+fn of_fold_vault(fold: &AuthorityFold, entry: &AuthorityLogEntry) -> Result<bool> {
+    let vault_id = match entry.op {
+        AuthorityOp::Genesis { .. } => Some(genesis_vault_id(entry)?),
+        _ => entry.vault_id,
+    };
+    Ok(fold.vault_id.is_some() && vault_id == fold.vault_id)
 }
 
 impl Vault {
