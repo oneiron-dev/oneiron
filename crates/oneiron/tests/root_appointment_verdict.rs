@@ -485,6 +485,53 @@ fn a_successor_the_ancestry_names_is_refused_and_burns_nothing() {
     assert!(!burned(&fold, &log.anchor));
 }
 
+/// A successor key that only an actor-binding revocation of the ancestry
+/// names, a key the roster never enrolled, is not fresh either: it would
+/// inherit that revocation's watermark (Astra split6-anchor threats 8 and 9).
+/// It is refused and burns nothing; a fresh appointment by the same anchor
+/// after it is valid.
+#[test]
+fn a_successor_only_a_binding_revocation_names_is_refused_and_burns_nothing() {
+    let mut log = Log::new();
+    let root_key = log.root_key.clone();
+    let named_key = signing(101);
+    let revocation = log.sign(
+        &root_key,
+        1,
+        vec![log.genesis],
+        AuthorityOp::RevokeActor {
+            authority_key: key_of(&named_key),
+            epoch: 1,
+        },
+    );
+    let fork: Vec<AuthorityEntryHash> = [(2, FIRST_HANDOFF_SEED), (3, SECOND_HANDOFF_SEED)]
+        .into_iter()
+        .map(|(seq, seed)| {
+            log.sign(
+                &root_key,
+                seq,
+                vec![revocation],
+                AuthorityOp::ReRoot {
+                    new_device: device(key_of(&signing(seed)), ROLE_OWNER | ROLE_ADMIN),
+                },
+            )
+        })
+        .collect();
+    let named = log.appoint(2, log.witnesses(&fork), &named_key);
+    let fresh = log.appoint(3, log.witnesses(&fork), &signing(102));
+
+    let fold = log.fold();
+
+    assert_eq!(
+        verdict(&fold, named),
+        Some(AppointmentVerdict::SuccessorNotFresh),
+        "{:?}",
+        fold.issues
+    );
+    assert_eq!(verdict(&fold, fresh), Some(AppointmentVerdict::Valid));
+    assert!(!burned(&fold, &log.anchor));
+}
+
 /// Another root's anchor appoints over the fork. This install pins the owner
 /// root, so it does not judge that appointment; an install that pins the
 /// other root judges the same row valid.
