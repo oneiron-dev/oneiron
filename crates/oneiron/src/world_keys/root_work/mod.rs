@@ -502,7 +502,13 @@ impl Vault {
             }
             RootChange::Pin { root } => match ROOT_WORK_CARRIED_PIN {
                 CarriedPin::AwaitsOwner => {
-                    write_awaited_root_in_txn(&self.store, txn, Some(root), Some(hash))?;
+                    let _pinned = self.pin_owner_root_in_txn(
+                        txn,
+                        request.act.owner,
+                        secret,
+                        root,
+                        Some(hash),
+                    )?;
                     tracing::info!(
                         "a root request asks this install to pin another root; it awaits the \
                          owner's confirm at this install's pin door and stays pending"
