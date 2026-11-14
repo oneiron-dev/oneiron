@@ -334,5 +334,13 @@ pub(crate) fn erase_narrowing_actor_in_txn(
     Ok(())
 }
 
+// The adapter a home move carries the narrowing history through (Engine
+// RULING ROW4-NARROWING-HISTORY = A).
+#[cfg(feature = "sync")]
+mod home;
+
+#[cfg(feature = "sync")]
+pub(crate) use home::SystemAgentNarrowingRows;
+
 #[cfg(test)]
 mod tests;
