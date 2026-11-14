@@ -73,6 +73,17 @@ impl RetrievalRunId {
     pub fn to_hex(self) -> String {
         bytes_to_hex_lower(&self.bytes)
     }
+
+    /// The id `text` spells as 32 hex digits, as [`Self::to_hex`] writes it.
+    #[must_use]
+    pub fn from_hex(text: &str) -> Option<Self> {
+        if text.len() != 32 {
+            return None;
+        }
+        Uuid::parse_str(text).ok().map(|id| Self {
+            bytes: id.into_bytes(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

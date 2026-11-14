@@ -54,6 +54,12 @@ pub const COACH_PERSON_THRESHOLD_FACET: &str = "coach.person_threshold";
 /// Q2 tuning (FIX 2437): each quick pick that later proved wrong, read once,
 /// feeds a proposed think-threshold row.
 pub const COACH_THINK_THRESHOLD_FACET: &str = "coach.think_threshold";
+/// The slow retrieval loop (ARCH-0053 #tune-retrieval, census L1-18): one
+/// review of the retrieval receipts against the owner's imported
+/// `tune-oneiron-retrieval` skill. The nightly retrieval tune queues it
+/// after its bandit update; the host runs it through
+/// [`Vault::run_coach_retrieval_skill_review`].
+pub const COACH_RETRIEVAL_SKILL_REVIEW_FACET: &str = "coach.retrieval_skill_review";
 /// Observe, read-side hardening: the retrieval-miss detector over the stored
 /// retrieval runs.
 pub const COACH_READ_HARDENING_FACET: &str = "coach.read_hardening";
