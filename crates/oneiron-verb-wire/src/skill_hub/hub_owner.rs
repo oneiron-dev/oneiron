@@ -20,6 +20,12 @@ pub struct ClawHubImportRequest {
     pub expected_content_hash: Option<String>,
     /// The initial HTTP response budget; native expanded-tree bounds still apply.
     pub response_limit_bytes: Option<usize>,
+    /// Another asker's approved check-in for this exact import, 32 hex: the
+    /// owner applies it on their own proof, and the import's commit writer
+    /// spends it (ROLES-CHECKIN 2k8). It needs `expected_content_hash`, so the
+    /// ask names the exact bytes. Omitted: the owner's own import.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// A source pin records the actual imported tree. Without an explicit expected
@@ -31,6 +37,10 @@ pub enum ClawHubImportReply {
         entity: EntityId,
         source: HubRef,
         github_handoff: Option<super::ClawHubGitHubHandoff>,
+        /// The decision the import ran on: the owner's own proof, naming the
+        /// asker's approved check-in it applied (ROLES-CHECKIN 2k8).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        check_in: Option<crate::check_in::CheckInDecision>,
     },
     ProviderError {
         status: u16,

@@ -96,10 +96,15 @@ pub use oneiron_verb_wire::skill_hub::hub_owner::{ClawHubImportReply, ClawHubImp
 impl Vault {
     /// Downloads an explicitly selected public-registry skill, then imports the
     /// same checked bytes through the configured hub's normal marketplace doors.
-    pub fn import_clawhub_skill(
+    /// The import's commit writer records the decision it ran on: the owner's
+    /// own proof, and with `applied` another asker's approved check-in for this
+    /// exact import, spent there (ROLES-CHECKIN 2k8; P25-2K8-SCOPE Q1 = A). A
+    /// provider error, or any refusal before the commit, spends nothing.
+    pub(crate) fn import_clawhub_skill(
         &self,
         owner: &AuthenticatedOwner,
         input: &ClawHubImportRequest,
+        applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
     ) -> Result<ClawHubImportReply> {
         owner.revalidate(self)?;
         let configured = self.skill_hub_record(&input.hub)?;
@@ -157,7 +162,7 @@ impl Vault {
         let osv = Some(&super::osv::OsvDevClient as &dyn super::osv::OsvQuery);
         let caller = HoldsNothing;
         let fit = self.chosen_skill_fit(&caller)?;
-        let entity = self.import_marketplace_skill_with_query(
+        let (entity, decision) = self.import_marketplace_skill_applying(
             &PrefetchedPackage {
                 adapter: &adapter,
                 source: &source,
@@ -169,12 +174,13 @@ impl Vault {
             osv,
             occurred,
             at,
-            &mut super::SkillImportRows::default(),
+            applied,
         )?;
         Ok(ClawHubImportReply::Imported {
             entity,
             source,
             github_handoff,
+            check_in: Some(decision),
         })
     }
 

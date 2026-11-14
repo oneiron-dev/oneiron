@@ -751,11 +751,63 @@ pub fn skill_hub_clawhub_search_as_owner(
 }
 
 /// Explicit owner-selected import; the native door revalidates the proof before
-/// fetching and uses the normal publisher, fit, scan and import writer.
+/// fetching and uses the normal publisher, fit, scan and import writer. The
+/// owner's own import goes on their own proof, never gated, and an imported
+/// answer records that decision (`check_in`). With `check_in_ref` the owner
+/// applies another asker's approved check-in for this exact import: it
+/// needs `expected_content_hash`, so the ask names the bytes, and the
+/// import's commit writer spends it (ROLES-CHECKIN 2k8; Engine RULING
+/// P25-2K8-SCOPE Q1 = A). A provider error spends nothing.
+///
+/// # Errors
+///
+/// `BAD_REQUEST` for a malformed `check_in_ref`, or one without
+/// `expected_content_hash`, before any fetch; the import's refusals; a
+/// check-in that is not an approved ask for this import.
 pub fn skill_hub_clawhub_import_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: &crate::skill_hub::ClawHubImportRequest,
 ) -> MemoryResult<crate::skill_hub::ClawHubImportReply> {
-    Ok(vault.import_clawhub_skill(owner, input)?)
+    let applied = match super::shared::check_in_ref(input.check_in_ref.as_deref())? {
+        Some(id) => {
+            if input.expected_content_hash.is_none() {
+                return Err(MemoryError::bad_request(
+                    "check_in_ref needs expected_content_hash, so the ask names the exact bytes",
+                ));
+            }
+            Some(AppliedCheckIn {
+                id,
+                verb: "vault.skill_hubs.clawhub.import",
+                effect_digest: clawhub_import_effect_digest(input)?,
+            })
+        }
+        None => None,
+    };
+    Ok(vault.import_clawhub_skill(owner, input, applied.as_ref())?)
+}
+
+/// The digest of the owner's ClawHub import `request`: the effect an
+/// asker's `vault.check_in.open` names for `vault.skill_hubs.clawhub.import`,
+/// and the one the import spends (2k8; P25-2K8-SCOPE Q1 = A). BLAKE3, key
+/// derived from `oneiron check_in clawhub import v1`, over the request's
+/// MessagePack encoding with field names, without its `check_in_ref` and its
+/// `response_limit_bytes`, a transport budget that pins nothing.
+///
+/// # Errors
+///
+/// The request does not encode.
+pub fn clawhub_import_effect_digest(
+    request: &crate::skill_hub::ClawHubImportRequest,
+) -> MemoryResult<[u8; 32]> {
+    let import = crate::skill_hub::ClawHubImportRequest {
+        check_in_ref: None,
+        response_limit_bytes: None,
+        ..request.clone()
+    };
+    let encoded = rmp_serde::to_vec_named(&import)
+        .map_err(|_| crate::error::Error::InvariantViolation("clawhub import encode"))?;
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in clawhub import v1");
+    hasher.update(&encoded);
+    Ok(*hasher.finalize().as_bytes())
 }
