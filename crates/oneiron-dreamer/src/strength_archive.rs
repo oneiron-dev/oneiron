@@ -14,13 +14,14 @@
 //! A repeat of the job archives nothing twice: an archived claim no longer
 //! reads live, so no later page offers it.
 
-use std::collections::BTreeMap;
 use std::fmt;
 
 use oneiron_remote::OneironClient;
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+use crate::strength_scoring::{SelectionConfig, StrengthSignals};
 
 /// The read the job pages.
 pub const OBSERVATIONS_PAGE_VERB: &str = "vault.consolidation.strength.observations.page";
@@ -196,7 +197,14 @@ fn archive_item(page: &Page, claim: &ObservedClaim, now_ms: u64) -> Option<Value
     if observed.source_count == 0 || !quiet(claim.last_activity_ms, now_ms, page.policy.quiet_ms) {
         return None;
     }
-    let signals = StrengthSignals::from_observed(&claim.predicate, observed, now_ms, &page.config);
+    let signals = StrengthSignals::from_evidence(
+        &claim.predicate,
+        observed.source_count,
+        observed.latest_learned_at_ms,
+        observed.distinct_diversity,
+        now_ms,
+        &page.config,
+    );
     let score = signals.score(&page.config.weights);
     if !score.is_finite() || score >= page.policy.archive_below {
         return None;
@@ -223,50 +231,6 @@ fn quiet(last_activity_ms: u64, now_ms: u64, quiet_ms: u64) -> bool {
         .is_some_and(|age| age >= quiet_ms)
 }
 
-/// The four strength signals an Archive item carries.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-struct StrengthSignals {
-    type_prior: f64,
-    frequency: f64,
-    recency: f64,
-    diversity: f64,
-}
-
-impl StrengthSignals {
-    /// The engine's signals for the page's evidence of one claim, computed
-    /// as the engine computes them (`StrengthSignals::from_evidence` in
-    /// `oneiron::dreamer_consolidation::selection`), operation for operation.
-    fn from_observed(
-        predicate: &str,
-        observed: &ObservedSignals,
-        now_ms: u64,
-        config: &SelectionConfig,
-    ) -> Self {
-        Self {
-            type_prior: config
-                .type_priors
-                .get(predicate)
-                .copied()
-                .unwrap_or(config.default_type_prior),
-            frequency: (observed.source_count as f64 / config.frequency_scale as f64).min(1.0),
-            recency: 1.0
-                - (now_ms.saturating_sub(observed.latest_learned_at_ms) as f64
-                    / config.recency_window_ms as f64)
-                    .min(1.0),
-            diversity: (observed.distinct_diversity as f64 / config.diversity_scale as f64)
-                .min(1.0),
-        }
-    }
-
-    /// The weighted sum the engine's `strength_score` computes, in its order.
-    fn score(self, weights: &StrengthWeights) -> f64 {
-        self.type_prior * weights.type_prior
-            + self.frequency * weights.frequency
-            + self.recency * weights.recency
-            + self.diversity * weights.diversity
-    }
-}
-
 /// The scoped-read answer around a page.
 #[derive(Deserialize)]
 struct PageEnvelope {
@@ -289,25 +253,6 @@ struct Page {
 struct StrengthPolicy {
     archive_below: f64,
     quiet_ms: u64,
-}
-
-/// The live selection config: the fields the strength score reads.
-#[derive(Deserialize)]
-struct SelectionConfig {
-    weights: StrengthWeights,
-    type_priors: BTreeMap<String, f64>,
-    default_type_prior: f64,
-    frequency_scale: u64,
-    diversity_scale: u64,
-    recency_window_ms: u64,
-}
-
-#[derive(Deserialize)]
-struct StrengthWeights {
-    type_prior: f64,
-    frequency: f64,
-    recency: f64,
-    diversity: f64,
 }
 
 /// One observed claim as the page judges it.
