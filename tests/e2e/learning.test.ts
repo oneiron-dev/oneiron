@@ -207,9 +207,17 @@ type Learning04Seal = {
 suite.todo(test, "LEARNING-04", "waits on typed confession, directed-recheck and stamped seal-audit receipt/completion calls");
 
 // LEARNING-05 — Niche archive and coverage floor should work. OF-545.
-// Waiting: typed archive descriptor install, output placement/record and per-cell
-// best readback. A CampaignArchivePin in research.promotion_basis is a CHECKED
-// reference to an existing archive, not an archive-authoring door.
+// The archive doors exist: vault.research.archive.install/record/best/get/coverage/
+// repropose, and research.promotion_basis checks a CampaignArchivePin against the
+// installed archive. Waiting: the canon producers of what install and record take.
+// A Coach archive-axes job proposes the axes from the goal and sample outputs, a
+// typed judgment places each output, and a quality score rates it, each with its
+// own receipt (ARCH-0053 #output-archive; ARCH-0079:303 "the archive axes ... still
+// have no Coach job"). Today install and record copy caller-supplied receipt ids
+// unchecked, so a case could only invent them. The goal's coverage floor comes from
+// the witnessed goal interview (vault.projects.goal.intake.complete); a candidate
+// that loses a required cell gets a basis with call "reject", not a refusal. Bunching
+// (re-proposal) is a strict majority of recorded outputs in one cell: 3 of 5 here.
 // Use two descriptor axes, pinned to one campaign. Insert uneven fixture scores
 // and a replacement winner in cell A. Read both bests, not just the global best.
 // A globally higher candidate that loses required cell B fails the GOAL's
@@ -218,14 +226,14 @@ suite.todo(test, "LEARNING-04", "waits on typed confession, directed-recheck and
 // effective goal or mix cells across definitions. This is an OUTPUT archive,
 // never a skill archive and never a second store of numeric learning claims.
 type Learning05 = {
-  descriptor: { campaign: Ref; revision: string; axes: { key: string; values: string[] }[] };
+  descriptor: { campaign: Ref; revision: string; axes: { name: string; bins: string[] }[] };
   placement: { output: Ref; output_revision: string; cell: string[]; scoring_receipt: Ref };
   view: { descriptor_revision: string; best: { cell: string[]; output: Ref; score: number }[] };
   admission: { candidate: Ref; required_cells: string[][]; covered_cells: string[][]; admitted: boolean };
 };
 type Learning05Current = PublicCall<"vault.research.promotion_basis">;
 // Root: vault.research.create_root enqueues the run-bearing root vault.research.bind accepts.
-suite.todo(test, "LEARNING-05", "waits on its arming PR: goal/TASK/real output/candidate setup with receipts and a valid two-bin axis fixture over a vault.research.create_root root");
+suite.todo(test, "LEARNING-05", "waits on the canon producers: a Coach archive-axes job with its proposal receipt, a typed placement judgment and an archive quality score; install and record take those receipts from the caller unchecked");
 
 // LEARNING-06 — Eval authoring keeps independent held-out families should work.
 // OF-578. G01 is RESOLVED: wait for typed HTTP+SDK authoring/ledger calls, not

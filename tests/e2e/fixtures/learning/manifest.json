@@ -10,7 +10,7 @@
         "revision": "learning-v1-2026-10-18"
       },
       "licence": "Apache-2.0",
-      "sha256": "730f83579be3dc86f30bde720a7453213b4a9f99bb9e85eadcb5f745d1b524d4",
+      "sha256": "cb8d9e27fe7c9dfe255a6a76e25fb5569abf4ad49604eb3cabda8a638693ecda",
       "expectedFacts": {
         "planned_tests": 9,
         "oracle": "independently authored synthetic labels",
@@ -83,7 +83,7 @@
         "revision": "f8e2f8397685bc63405bc1a303b65f94aa26c33d"
       },
       "licence": "Apache-2.0",
-      "sha256": "00d7ed3ec8c0bde508efb0e95a8edf0c4d7aace056187e38dfc2aa1f1bdc0568",
+      "sha256": "db3bff679583aa68b8be0775ae42f6060bf1d2c5683cb1a4e6fc0b888d35fd50",
       "expectedFacts": {
         "binding_head": "f8e2f8397685bc63405bc1a303b65f94aa26c33d",
         "blocked_ids": [
