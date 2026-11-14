@@ -77,3 +77,17 @@ pub(super) fn abandon_sends_in_txn(
         _ => Error::CorruptedIndex("outbound intent ledger row"),
     })
 }
+
+/// The owner's Stop writer's step for `attempt`'s sends, in a writer of
+/// its own: the door `test_doors::remote_task_cancel` opens for
+/// oneiron-server's `tests/remote_task_cancel.rs` (L8-29).
+///
+/// # Errors
+/// Storage faults.
+#[cfg(oneiron_test_support)]
+pub(crate) fn stop_sends_in_own_writer(vault: &Vault, attempt: AttemptId, now: u64) -> Result<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    abandon_stopped_sends_in_txn(vault, &mut wtxn, attempt, now);
+    wtxn.commit()?;
+    Ok(())
+}
