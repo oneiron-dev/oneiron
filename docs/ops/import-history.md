@@ -202,6 +202,14 @@ entry cap is the call's own `archive_max_entries` input (262,144 when absent),
 which the refusal names; its report lists the skipped entries in
 `skipped_entries`.
 
+A hosted import (`oneiron import <chatgpt|claude> <zip> --hosted`, or an
+upload to the vault's own hostname) passes it when its job decodes the
+export. The job's progress (`vault.imports.get`) lists the skipped entries in
+its `parse` phase, `skipped_entries` (the zip's first 100, with their
+`reason`) and `skipped_entry_count` (all of them); both are absent when none
+was skipped. A refused zip ends the job `failed`, with the refusal in
+`failure`, and nothing lands.
+
 ## The report
 
 stdout is one JSON document of counts: per conversation (its source id, kind,
