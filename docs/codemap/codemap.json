@@ -47451,15 +47451,19 @@
       "InquiryEdge",
       "InquiryEdgeReciprocalGrant",
       "InquiryEdgeRequest",
-      "InquiryScopeItem"
+      "InquiryScopeItem",
+      "InquiryTermsChange",
+      "InquiryTermsChangeOutcome",
+      "InquiryTermsChanged"
      ],
      "path": "src/inquiry/edge.rs",
      "purpose": "The inquiry edge and its opened scope (federation.md #inquiry-scope, #inquiry-first-build; Engine ruling…",
      "surface": {
       "const": 1,
       "crate-vis": 7,
-      "fn": 10,
-      "struct": 4
+      "enum": 1,
+      "fn": 12,
+      "struct": 6
      }
     },
     {
@@ -47545,7 +47549,7 @@
      "path": "src/inquiry/receipt.rs",
      "purpose": "The asking side's `inquiry` receipt (federation.md #inquiry-keep): one receipt per send of an inquiry, with…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -47597,6 +47601,7 @@
      "path": "src/inquiry/send.rs",
      "purpose": "The asking side's send (INQUIRE-1 PR 4; Engine ruling INQUIRE-SHAPE Q2 = A, Q3 = A)",
      "surface": {
+      "const": 1,
       "enum": 1,
       "fn": 1,
       "struct": 2,
@@ -47616,6 +47621,7 @@
      "kind": "src",
      "notable": [
       "InquiryCheckInMode",
+      "InquiryKeepModes",
       "InquiryTerms",
       "InquiryTierCeiling"
      ],
@@ -47623,8 +47629,8 @@
      "purpose": "The inquiry edge's terms (federation.md #inquiry-first-build, \"Grant row\"; Engine ruling INQUIRE-SHAPE Q1 =…",
      "surface": {
       "enum": 2,
-      "fn": 5,
-      "struct": 1
+      "fn": 11,
+      "struct": 2
      }
     },
     {
@@ -94600,6 +94606,41 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "InquireAnswer",
+      "InquireRequest",
+      "InquiryAnswerRequest",
+      "InquiryAnswerView",
+      "InquiryEdgeMintRequest",
+      "InquiryEdgeRef",
+      "InquiryEdgeTermsChangeRequest",
+      "InquiryEdgeTermsChanged",
+      "InquiryEdgeView",
+      "InquiryKeepModesInput",
+      "InquiryKeepModesView",
+      "InquiryLog",
+      "InquiryLogRow",
+      "InquiryReciprocalGrantMintRequest",
+      "InquiryReciprocalGrantMinted",
+      "InquiryRouteOpenRequest",
+      "InquiryRouteOpened",
+      "InquiryScopeCloseRequest",
+      "InquiryScopeClosed",
+      "InquiryScopeItemView",
+      "InquiryScopeItems",
+      "InquiryScopeOpenRequest",
+      "InquiryStatementView"
+     ],
+     "path": "src/verbs/inquiry.rs",
+     "purpose": "The inquiry verbs (INQUIRE-1 PR 5; federation.md #inquiry; Engine ruling INQUIRE-SHAPE Q2, Q4, Q7 = A): the…",
+     "surface": {
+      "fn": 22,
+      "struct": 23
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -94698,7 +94739,7 @@
       "crate-vis": 1,
       "fn": 9,
       "mod": 1,
-      "re-export": 129,
+      "re-export": 130,
       "struct": 9
      }
     },
@@ -104838,7 +104879,7 @@
      "purpose": "Core's view of the verb table (untangle slice 5.0a, S5-2 = A, S50A-3 = A): the per-verb behaviour core's…"
     },
     "verbs": {
-     "files": 142,
+     "files": 143,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104901,9 +104942,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 273,
+   "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7566,
+   "source_files": 7567,
    "test_files": 1284
   },
   "oneiron-agent-runtime": {
@@ -129863,7 +129904,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 196
+      "crate-vis": 197
      }
     },
     {
@@ -130077,13 +130118,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/inquiry_doors.rs",
+     "purpose": "The host doors of the inquiry rows (INQUIRE-1 PR 5; federation.md #inquiry; Engine ruling INQUIRE-SHAPE Q2…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/invocations.rs",
      "purpose": "The facade's invocation claims: one call per client-named invocation id (OF-580)",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -131408,6 +131459,16 @@
      "purpose": "Who a host credential acts as at a server door (FIX 2222 = A, slice B; owner ruling \"A + support\", 2026-10-18)",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/inquiry_peer.rs",
+     "purpose": "The member host's inquiry route (INQUIRE-1 PR 5; federation.md #inquiry; Engine ruling INQUIRE-SHAPE Q2 =…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -139458,6 +139519,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HttpInquiryTransport"
+     ],
+     "path": "src/inquiry_delivery.rs",
+     "purpose": "The company host's inquiry transport (INQUIRE-1 PR 5; Engine ruling INQUIRE-SHAPE Q2 = A)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -139497,7 +139571,7 @@
       "const": 1,
       "crate-vis": 1,
       "fn": 3,
-      "mod": 25,
+      "mod": 26,
       "re-export": 2
      }
     },
@@ -147269,6 +147343,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/inquiry_federation.rs",
+     "purpose": "INQUIRE-1 PR 5 (federation.md #inquiry; Engine ruling INQUIRE-SHAPE Q2, Q4, Q7 = A): the inquiry verbs and…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -147854,7 +147936,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 782,
+     "files": 784,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -148125,6 +148207,13 @@
      "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The import audience sweep (OF-492)"
+    },
+    "inquiry_delivery": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The company host's inquiry transport (INQUIRE-1 PR 5; Engine ruling INQUIRE-SHAPE Q2 = A)"
     },
     "invocation_claims": {
      "files": 1,
@@ -148402,8 +148491,8 @@
    },
    "over_bar": 62,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1878,
-   "test_files": 253
+   "source_files": 1881,
+   "test_files": 254
   },
   "oneiron-skill-attribution": {
    "files": [
