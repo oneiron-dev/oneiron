@@ -495,7 +495,7 @@ pub(super) fn press_budget_trap_add_funds(
             .ok_or_else(|| invalid("the spend scope's budget unit has no USD price"))?;
         let units = funds_units(&price, amount_usd_micros)?;
         let now = vault.store.clock.now_recorded_at();
-        let woken = raise_scope_cap_in_txn(vault, txn, scope, by, units, now.saturating_mul(1000))?;
+        let woken = raise_scope_cap_in_txn(vault, txn, scope, by, 0, now.saturating_mul(1000))?;
         record_funds_in_txn(
             vault,
             txn,
