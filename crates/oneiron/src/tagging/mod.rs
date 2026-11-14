@@ -51,6 +51,7 @@ mod role;
 mod save;
 mod tags;
 mod trace;
+mod vector;
 mod verbs;
 
 pub use freshness::{TaggingFreshness, TaggingMoodPartView};
@@ -71,6 +72,7 @@ pub use tags::{
     TurnTags,
 };
 pub use trace::{HandBackReason, SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace};
+pub use vector::LINKER_VECTOR_MARGIN;
 pub use verbs::{
     DerivationEnvelopeView, MentionLinkView, MentionReferenceView, MergeEvidenceView,
     TaggedMentionView, TaggingFailureView, TaggingHistoryView, TaggingMarkerState,
@@ -100,6 +102,7 @@ pub(crate) use tags::{
     readable_page_in_txn, readable_view_in_txn, saved_turn_mood_in_txn, settle_mention_in_txn,
     tagged_messages_absent_in_txn, tear_in_txn,
 };
+pub(crate) use vector::ranked_for_turn_in_txn;
 #[cfg(test)]
 mod save_tests;
 pub(crate) mod tables;

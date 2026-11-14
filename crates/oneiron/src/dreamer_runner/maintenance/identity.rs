@@ -368,6 +368,25 @@ pub(crate) fn recheck_page_for_test(vault: &Vault, now: u64) -> Result<Vec<Ident
         .collect())
 }
 
+/// Stamps every open ask kept separate at `now`, as a nightly decision
+/// that abstains leaves it (`settlement::keep_separate_in_txn`), with no
+/// Dreamer receipt: the test door's way to hold a question out of the due
+/// list (census item 12, the entity linker cascade). Returns how many.
+#[cfg(oneiron_test_support)]
+pub(crate) fn keep_asks_separate_for_test(vault: &Vault, now: u64) -> Result<usize> {
+    vault.with_write_txn(|txn| {
+        let open = ASKS.scan(&vault.store, txn)?;
+        for (key, ask) in &open {
+            let kept = IdentityAsk {
+                kept_separate_at: Some(now),
+                ..ask.clone()
+            };
+            ASKS.put(&vault.store, txn, key, &kept)?;
+        }
+        Ok(open.len())
+    })
+}
+
 /// The name of a mention an effect may not act on yet: its ask is open, or
 /// it is still uncertain and no saved hint settles it. Provenance that names
 /// no saved mention is unsettled too, with an empty name. Reads only, in the

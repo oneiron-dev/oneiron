@@ -73,9 +73,9 @@ pub(super) fn speaker_in_txn(
 }
 
 /// The role edge a claim body is, when it is one of `possessor`'s for
-/// `predicate` that stands at `now`: Active, valid at `now`, about
-/// `possessor` itself, and valued with an entity id in canonical 32-hex
-/// form. The answer pairs that id with whether the edge is Approved. Auto
+/// `predicate` that stands at `now`: Active and not marked stale, valid at
+/// `now`, about `possessor` itself, and valued with an entity id in
+/// canonical 32-hex form. The answer pairs that id with whether the edge is Approved. Auto
 /// and Proposed edges are unsure; a Rejected edge, which the owner refused,
 /// names no one.
 fn role_edge(
@@ -87,6 +87,7 @@ fn role_edge(
     if body.subject != ClaimSubject::Entity(*possessor)
         || body.predicate != predicate
         || body.lifecycle != ClaimLifecycleStatus::Active
+        || body.stale
         || body.valid_from.is_some_and(|start| start > now)
         || body.valid_to.is_some_and(|end| end <= now)
     {

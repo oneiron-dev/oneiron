@@ -11,6 +11,12 @@ pub fn run_identity_recheck(vault: &Vault, now: u64) -> Result<Vec<IdentityAsk>>
     crate::dreamer_runner::maintenance::identity::recheck_page_for_test(vault, now)
 }
 
+/// Stamps every open identity ask kept separate at `now` (seconds), as a
+/// nightly decision that abstains leaves it; returns how many.
+pub fn keep_identity_asks_separate(vault: &Vault, now: u64) -> Result<usize> {
+    crate::dreamer_runner::maintenance::identity::keep_asks_separate_for_test(vault, now)
+}
+
 /// Opens `claim`'s owner-answer obligation (ARCH-0026 §G3), as a replica's
 /// revision of a held critical claim leaves it: the claim keeps its stored
 /// approval, and every effect reader holds it until its owner answers.
