@@ -12,6 +12,8 @@
 //!   answer holds the broker's redaction.
 //! - A stream the provider cuts short ends as a stream cut, after the events
 //!   the broker had already cleared.
+//! - A Gemini model that declares streaming streams through the broker's
+//!   `streamGenerateContent` event shape.
 #![cfg(unix)]
 
 use std::io::Write;
@@ -38,6 +40,8 @@ use zeroize::Zeroizing;
 
 /// The vault secret the provider's key is registered under: the handle.
 const HANDLE: &str = "stream-provider-key";
+/// The Gemini event request's path for the checker's model.
+const GEMINI_STREAM_PATH: &str = "/v1beta/models/chat-small:streamGenerateContent?alt=sse";
 
 /// Every line this process logs, at every level, once [`capture_logs`] ran.
 static LOGS: Mutex<Vec<u8>> = Mutex::new(Vec::new());
@@ -154,6 +158,11 @@ struct Fixture {
 /// A runtime whose `paid` provider of `kind`, its key the vault secret
 /// [`HANDLE`], serves the `checker` seat through the same-user broker child.
 fn fixture(kind: &str) -> Fixture {
+    fixture_with(kind, "")
+}
+
+/// [`fixture`], with the line `extra` in the provider's table.
+fn fixture_with(kind: &str, extra: &str) -> Fixture {
     capture_logs();
     let key = sentinel();
     let fake = FakeProvider::start(FakeReply::json(401, &json!({})));
@@ -188,6 +197,7 @@ base_url = "{origin}"
 key_secret = "{HANDLE}"
 revision = "v1"
 timeout_secs = 20
+{extra}
 
 [roles.checker]
 rungs = [{{ model = "paid:chat-small" }}]
@@ -633,6 +643,83 @@ async fn a_cut_key_secret_stream_ends_as_a_stream_cut() {
         ),
         "a cut ends as StreamCut: {error:?}"
     );
+    f.assert_no_key_in_receipts();
+    let logs = captured_logs();
+    assert_no_key(&f.key, &logs, "a log line");
+}
+
+/// A Gemini event stream spelling `Hello, owen` over three chunks, the last
+/// with its finish and usage.
+fn gemini_stream_body() -> String {
+    let chunks = [
+        json!({"candidates": [{"content": {"role": "model", "parts": [{"text": "Hel"}]}}]}),
+        json!({"candidates": [{"content": {"role": "model", "parts": [{"text": "lo, "}]}}]}),
+        json!({
+            "candidates": [{
+                "content": {"role": "model", "parts": [{"text": "owen"}]},
+                "finishReason": "STOP"
+            }],
+            "usageMetadata": {"promptTokenCount": 3, "candidatesTokenCount": 3, "totalTokenCount": 6}
+        }),
+    ];
+    let mut body = String::new();
+    for chunk in chunks {
+        body.push_str("data: ");
+        body.push_str(&chunk.to_string());
+        body.push_str("\r\n\r\n");
+    }
+    body
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_key_secret_gemini_chat_streams_through_the_event_shape() {
+    let f = fixture_with("gemini", r#"capabilities = ["streaming"]"#);
+    assert_fixture(&f);
+    let key = f.key.clone();
+    f.fake.respond_with(move |request| {
+        if request.path == GEMINI_STREAM_PATH
+            && request.header("x-goog-api-key") == Some(key.as_str())
+        {
+            FakeReply {
+                status: 200,
+                headers: vec![("content-type".to_owned(), "text/event-stream".to_owned())],
+                body: gemini_stream_body().into_bytes(),
+            }
+        } else {
+            FakeReply::json(
+                400,
+                &json!({"error": {"message": "expected a keyed stream"}}),
+            )
+        }
+    });
+    let (events, error) = f.stream("stream-gemini").await;
+    assert!(error.is_none(), "no error: {error:?}");
+    let mut concatenated = String::new();
+    let mut delta_count = 0;
+    let mut done_text = None;
+    for event in &events {
+        match event {
+            LlmStreamEvent::TextDelta { text, .. } => {
+                delta_count += 1;
+                concatenated.push_str(text);
+            }
+            LlmStreamEvent::Done { message, .. } => {
+                done_text = Some(text_of(message));
+            }
+            _ => {}
+        }
+    }
+    assert!(delta_count >= 2, "at least two deltas before Done");
+    assert_eq!(concatenated, "Hello, owen", "delta texts concatenate");
+    assert_eq!(
+        done_text.as_deref(),
+        Some("Hello, owen"),
+        "the Done message text"
+    );
+    let seen = f.fake.seen();
+    assert_eq!(seen.len(), 1, "one send");
+    assert_eq!(seen[0].path, GEMINI_STREAM_PATH, "to the event endpoint");
+    assert_eq!(f.reads(), 1, "one key read at the door");
     f.assert_no_key_in_receipts();
     let logs = captured_logs();
     assert_no_key(&f.key, &logs, "a log line");
