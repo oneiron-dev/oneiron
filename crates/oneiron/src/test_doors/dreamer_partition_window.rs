@@ -1,7 +1,8 @@
 //! Door for `tests/dreamer_window_finish_order.rs` (FIX 21927): one real
 //! Meso wake window whose second slot can finish while its first slot's
 //! extraction is pending. The injected pass clock enters the finalize window
-//! only after that finish replies, or after a bounded poll fallback.
+//! only after that finish replies, or after a bounded poll fallback. Conflict
+//! scenarios also read the escalation rows a ready slot publishes or drops.
 
 use std::collections::BTreeMap;
 use std::future::{Future, poll_fn};
@@ -52,6 +53,16 @@ pub struct WindowFinish {
     /// Every model call the backend saw, in order: its purpose, the
     /// partition marker of an extraction, and the pass clock at the call.
     pub calls: Vec<String>,
+    /// Open-conflict CLAIM rows about the second slot's person.
+    pub open_conflict_markers: usize,
+    /// Contradiction gaps citing the second slot's turn in the origin queues.
+    pub contradiction_gaps: usize,
+    /// The second slot's durable park reason, if it parked.
+    pub second_park_reason: Option<String>,
+    /// Whether the second slot's conflict judge reply was answered.
+    pub judge_answered: bool,
+    /// Whether the wake driver returned the contained executor-panic error.
+    pub executor_panicked: bool,
 }
 
 /// Runs one two-partition Meso pass and reads its labels in admission order.
@@ -64,6 +75,35 @@ pub struct WindowFinish {
 ///
 /// Vault setup, wake execution, or reading the persisted attempt outcomes.
 pub fn meso_window_finish() -> Result<WindowFinish> {
+    run_window_finish(WindowScenario::Finish)
+}
+
+/// Runs an early escalation whose settle is stopped by its sibling's panic.
+///
+/// # Errors
+///
+/// Vault setup, unexpected wake errors, or reading the persisted outcomes.
+pub fn meso_window_stop_drops_early_finish_conflict_rows() -> Result<WindowFinish> {
+    run_window_finish(WindowScenario::StopAfterConflict)
+}
+
+/// Runs an early escalation whose settle publishes both held conflict rows.
+///
+/// # Errors
+///
+/// Vault setup, wake execution, or reading the persisted outcomes.
+pub fn meso_window_publishes_early_finish_conflict_rows_at_settle() -> Result<WindowFinish> {
+    run_window_finish(WindowScenario::PublishConflict)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WindowScenario {
+    Finish,
+    StopAfterConflict,
+    PublishConflict,
+}
+
+fn run_window_finish(scenario: WindowScenario) -> Result<WindowFinish> {
     let directory = tempfile::tempdir()?;
     let store_clock = crate::ports::ManualClock::new(10);
     let mut config = crate::VaultConfig::device();
@@ -105,6 +145,7 @@ pub fn meso_window_finish() -> Result<WindowFinish> {
         }
     }
     let backend = WindowBackend {
+        scenario,
         elapsed_ms: Arc::new(AtomicU64::new(0)),
         state: Mutex::new(WindowState::default()),
     };
@@ -141,7 +182,7 @@ pub fn meso_window_finish() -> Result<WindowFinish> {
     };
     let mut driver = DreamerWakeDriver::new(&vault, "window-finish", deadline);
     store_clock.set(21);
-    ready(driver.run_wake_pass(
+    let pass = ready(driver.run_wake_pass(
         RunWakePass {
             trigger: WakeTrigger::Compaction,
             scope,
@@ -155,25 +196,63 @@ pub fn meso_window_finish() -> Result<WindowFinish> {
         },
         &mut executor,
         &WakeCancellation::new(),
-    ))?;
+    ));
+    // FIX 7322 ends the pass with this error after draining its window's
+    // durable parks. Keep the readings instead of returning early on it.
+    let executor_panicked = match pass {
+        Ok(_) => false,
+        Err(error)
+            if scenario == WindowScenario::StopAfterConflict
+                && crate::dreamer_wake::is_executor_panic_error(&error) =>
+        {
+            true
+        }
+        Err(error) => return Err(error),
+    };
     // Prefixes are first polled in admission order. Never assume the queue's
     // generated attempt ids sort in the same order as conversation ids.
-    let (order, calls) = {
+    let (order, calls, judge_answered) = {
         let state = backend.state.lock().expect("window state");
-        (state.extraction_order.clone(), state.calls.clone())
+        (
+            state.extraction_order.clone(),
+            state.calls.clone(),
+            state.judge_answered,
+        )
     };
     let store = DreamerRunnerStore::new(&vault);
+    let [_, second] = order.as_slice() else {
+        return Err(Error::InvalidConfig(format!(
+            "fixture expected two extractions; model calls: {calls:?}"
+        )));
+    };
+    let second = &conversations[*second];
+    let second_attempt = attempts
+        .get(&second.conversation)
+        .copied()
+        .ok_or_else(|| Error::InvalidConfig("fixture second partition was not queued".into()))?;
+    let second_park_reason = store
+        .parked_attempt(second_attempt)?
+        .map(|parked| parked.reason);
+    let (open_conflict_markers, contradiction_gaps) = conflict_row_counts(&vault, second)?;
     let labels = order
         .into_iter()
         .map(|index| {
             let attempt = attempts
-                .get(&conversations[index])
+                .get(&conversations[index].conversation)
                 .copied()
                 .ok_or_else(|| Error::InvalidConfig("fixture partition was not queued".into()))?;
             finish_label(&vault, &store, attempt)
         })
         .collect::<Result<_>>()?;
-    Ok(WindowFinish { labels, calls })
+    Ok(WindowFinish {
+        labels,
+        calls,
+        open_conflict_markers,
+        contradiction_gaps,
+        second_park_reason,
+        judge_answered,
+        executor_panicked,
+    })
 }
 
 #[derive(Default)]
@@ -182,9 +261,11 @@ struct WindowState {
     calls: Vec<String>,
     second_extraction_answered: bool,
     finish_answered: bool,
+    judge_answered: bool,
 }
 
 struct WindowBackend {
+    scenario: WindowScenario,
     elapsed_ms: Arc<AtomicU64>,
     state: Mutex<WindowState>,
 }
@@ -215,16 +296,28 @@ impl LlmBackend for WindowBackend {
                     .push(format!("extraction {} at {at}", MARKERS[index]));
                 first
             };
-            let response = extraction_response(MARKERS[index]);
+            let response = if !first && self.scenario != WindowScenario::Finish {
+                conflict_extraction_response(MARKERS[index])
+            } else {
+                extraction_response(MARKERS[index])
+            };
             if first {
                 let mut polls_after_second = 0;
                 return Box::pin(poll_fn(move |_cx| {
-                    let state = self.state.lock().expect("window state");
-                    if state.second_extraction_answered {
+                    let (second_answered, finish_answered) = {
+                        let state = self.state.lock().expect("window state");
+                        (state.second_extraction_answered, state.finish_answered)
+                    };
+                    if second_answered {
                         polls_after_second += 1;
                     }
-                    if !state.finish_answered && polls_after_second < SLOW_PREFIX_POLL_LIMIT {
+                    if !finish_answered && polls_after_second < SLOW_PREFIX_POLL_LIMIT {
                         return Poll::Pending;
+                    }
+                    // Panic outside the mutex guard: B's settle and the
+                    // outcome reader must still be able to use the backend.
+                    if self.scenario == WindowScenario::StopAfterConflict {
+                        panic!("fixture first extraction panicked after the conflict judge wait");
                     }
                     self.elapsed_ms.store(FINALIZE_ELAPSED_MS, Ordering::SeqCst);
                     Poll::Ready(Ok(response.clone()))
@@ -238,9 +331,17 @@ impl LlmBackend for WindowBackend {
                 Ok(response)
             });
         }
-        // A's finish is refused before reaching the backend. B's one typed
-        // correction read chooses none rather than replacing its name claim.
-        let response = text_response(serde_json::json!({"Q1": {"none": 1.0, "C1": 0.0}}));
+        // A's finish is refused before reaching the backend. In the
+        // original scenario B has one correction question. The conflict
+        // scenarios answer both corrections, then escalate the judge pack.
+        let (response, judge) = if self.scenario == WindowScenario::Finish {
+            (
+                text_response(serde_json::json!({"Q1": {"none": 1.0, "C1": 0.0}})),
+                false,
+            )
+        } else {
+            conflict_decision_response(&request)
+        };
         {
             let mut state = self.state.lock().expect("window state");
             let at = self.elapsed_ms.load(Ordering::SeqCst);
@@ -249,7 +350,9 @@ impl LlmBackend for WindowBackend {
                 .push(format!("{:?} at {at}", request.envelope.purpose));
         }
         Box::pin(async move {
-            self.state.lock().expect("window state").finish_answered = true;
+            let mut state = self.state.lock().expect("window state");
+            state.judge_answered |= judge;
+            state.finish_answered = self.scenario == WindowScenario::Finish || judge;
             Ok(response)
         })
     }
@@ -273,6 +376,59 @@ fn extraction_response(marker: &str) -> LlmResponse {
         "confidence": 0.8,
         "evidence_refs": [{"source": "T1", "quote": marker}],
     }]}))
+}
+
+fn conflict_extraction_response(marker: &str) -> LlmResponse {
+    let candidates: Vec<_> = ["tea", "coffee"]
+        .into_iter()
+        .map(|value| {
+            serde_json::json!({
+                "subject": "P1",
+                "predicate": "profile.hobby",
+                "value": value,
+                "confidence": 0.8,
+                "evidence_refs": [{"source": "T1", "quote": marker}],
+            })
+        })
+        .collect();
+    text_response(serde_json::json!({"candidates": candidates}))
+}
+
+fn conflict_decision_response(request: &LlmRequest) -> (LlmResponse, bool) {
+    assert_eq!(request.envelope.purpose, CallPurpose::Consolidation);
+    let turn = request.messages.last().expect("typed decision turn");
+    let text = turn
+        .content
+        .iter()
+        .find_map(|part| match part {
+            ContentPart::Text { text, .. } => Some(text),
+            _ => None,
+        })
+        .expect("typed decision text");
+    let pack: serde_json::Value = serde_json::from_str(text).expect("typed decision JSON");
+    let questions = pack["questions"].as_array().expect("typed questions");
+    let mut answers = serde_json::Map::new();
+    let mut judge = false;
+    for question in questions {
+        let id = question["id"].as_str().expect("question label");
+        let labels = question["labels"].as_array().expect("choice labels");
+        let resolution = labels
+            .iter()
+            .any(|label| label.as_str() == Some("escalate"));
+        judge |= resolution;
+        let selected = if resolution { "escalate" } else { "none" };
+        assert!(labels.iter().any(|label| label.as_str() == Some(selected)));
+        let weights: serde_json::Map<String, serde_json::Value> = labels
+            .iter()
+            .map(|label| {
+                let label = label.as_str().expect("choice label");
+                let weight = if label == selected { 1.0 } else { 0.0 };
+                (label.to_owned(), serde_json::json!(weight))
+            })
+            .collect();
+        answers.insert(id.to_owned(), serde_json::Value::Object(weights));
+    }
+    (text_response(serde_json::Value::Object(answers)), judge)
 }
 
 fn text_response(reply: serde_json::Value) -> LlmResponse {
@@ -304,7 +460,18 @@ fn text_response(reply: serde_json::Value) -> LlmResponse {
     }
 }
 
-fn seed_conversation(vault: &Vault, seed: u8, name: &str, marker: &str) -> Result<EntityId> {
+struct ConversationFixture {
+    conversation: EntityId,
+    person: EntityId,
+    turn: EntityId,
+}
+
+fn seed_conversation(
+    vault: &Vault,
+    seed: u8,
+    name: &str,
+    marker: &str,
+) -> Result<ConversationFixture> {
     let conversation = EntityId::from_bytes([seed; 16])?;
     vault.put_entity(
         &conversation,
@@ -367,7 +534,56 @@ fn seed_conversation(vault: &Vault, seed: u8, name: &str, marker: &str) -> Resul
         .put(&turn, ENTITY_TYPE_TURN, occurred(10), 10, &encoded)
         .edge(&turn, EdgeKind::ChildOf, &conversation, 1.0)
         .commit()?;
-    Ok(conversation)
+    Ok(ConversationFixture {
+        conversation,
+        person,
+        turn,
+    })
+}
+
+fn conflict_row_counts(vault: &Vault, fixture: &ConversationFixture) -> Result<(usize, usize)> {
+    let mut markers = 0;
+    for id in vault.claims_for_subject(&fixture.person)? {
+        let body = vault.get_claim(&id)?.ok_or(Error::EntityNotFound)?;
+        if body.predicate == crate::claim::PREDICATE_CONFLICT_OPEN {
+            markers += 1;
+        }
+    }
+    // The origin queue has no public decoder. Read its persisted namespace
+    // directly, without the approval/lifecycle filters of claim retrieval.
+    let txn = vault.store.env.read_txn()?;
+    let mut gaps = 0;
+    for row in vault
+        .store
+        .vault_meta
+        .prefix_iter(&txn, b"dreamer:gap-branch:v1:")?
+    {
+        let (_, raw) = row?;
+        let gap = rmpv::decode::read_value(&mut &raw[..])
+            .map_err(|_| Error::InvalidConfig("fixture gap row decoding".into()))?;
+        let kind = map_field(&gap, "kind").and_then(Value::as_str);
+        let subject_matches = matches!(
+            map_field(&gap, "subject"),
+            Some(Value::Binary(id)) if id.as_slice() == fixture.person.as_bytes()
+        );
+        let cites_turn = map_field(&gap, "evidence_turn_refs")
+            .and_then(Value::as_array)
+            .is_some_and(|refs| {
+                refs.iter().any(|id| {
+                    matches!(id, Value::Binary(id) if id.as_slice() == fixture.turn.as_bytes())
+                })
+            });
+        if kind == Some("contradiction_left_standing") && subject_matches && cites_turn {
+            gaps += 1;
+        }
+    }
+    Ok((markers, gaps))
+}
+
+fn map_field<'a>(map: &'a Value, key: &str) -> Option<&'a Value> {
+    map.as_map()?
+        .iter()
+        .find_map(|(name, value)| (name.as_str() == Some(key)).then_some(value))
 }
 
 fn encode(value: &Value) -> Result<Vec<u8>> {
