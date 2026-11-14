@@ -143,12 +143,14 @@ fn a_note_body_its_writer_kept_as_text_reads_back_with_its_value() -> TestResult
             "kept as text puts the value back in the NOTE's document"
         );
     }
+    // The birth record names the writer too, so only a later record counts
+    // (REVIEW-7876 F3).
     let document = vault.note_document(note)?;
     assert!(
         document
             .authorship
             .iter()
-            .any(|record| record.actor == NoteActor::Actor(writer)),
+            .any(|record| record.operation != note && record.actor == NoteActor::Actor(writer)),
         "the restore is an edit by the person who answered: {:?}",
         document.authorship
     );
@@ -184,5 +186,41 @@ fn a_note_title_kept_as_text_reads_back_with_its_value() -> TestResult {
         "kept as text puts the value back in the NOTE's title"
     );
     assert_eq!(document.markdown, "Deploy checklist.");
+    Ok(())
+}
+
+#[test]
+fn a_value_in_a_note_body_and_title_reads_back_in_both() -> TestResult {
+    let (_dir, vault, owner, _) = open_vault()?;
+    let owner_proof = proof_of(&vault, owner)?;
+    let written = format!("Release notes: deploy with token={TOKEN}.");
+    let note = write_note(&vault, owner, &written);
+    let handle = found_handle(&vault, &owner_proof, &note)?;
+    let title = format!("Deploy with token={TOKEN}");
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .set_note_title(note, title.clone())
+        .unwrap_or_else(|error| panic!("FIXTURE: the owner titles the NOTE: {error:?}"));
+    let masked = vault
+        .note_document(note)?
+        .title
+        .ok_or("FIXTURE: the NOTE has a title")?;
+    assert!(
+        masked.contains(&format!("{HANDLE_OPEN}{handle}]")),
+        "FIXTURE: custody knows the value, so the title takes the body key's handle: {masked}"
+    );
+
+    vault.rule_found_key_not_a_secret(&owner_proof, ActSurface::ThisInstall, &handle)?;
+
+    let document = vault.note_document(note)?;
+    assert_eq!(
+        document.markdown, written,
+        "not a secret puts the value back in the body"
+    );
+    assert_eq!(
+        document.title.as_deref(),
+        Some(title.as_str()),
+        "and in the title, where the same handle stands"
+    );
     Ok(())
 }
