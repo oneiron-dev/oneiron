@@ -15,9 +15,9 @@ use serde::{Deserialize, Serialize};
 
 /// A member's role, as a seed states it. A delegate's expiring grant and
 /// an ask guest are not membership, so no row names them.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
-)]
+/// Steward is a named grant preset, not a rung between Admin and Member:
+/// the enum has no order, and [`Self::reach`] gives Steward none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ShapeMemberRole {
     Owner,
@@ -49,24 +49,34 @@ impl ShapeMemberRole {
         }
     }
 
-    /// How much the role may do, for telling a raise from a lowering.
-    pub(super) const fn reach(self) -> u8 {
+    /// How much a role on the member ladder may do, for telling a raise from
+    /// a lowering. Steward is off the ladder: its verbs are neither a subset
+    /// nor a superset of another role's.
+    pub(super) const fn reach(self) -> Option<u8> {
         match self {
-            Self::Viewer => 0,
-            Self::Member => 1,
-            Self::Steward => 2,
-            Self::Admin => 3,
-            Self::Deputy => 4,
-            Self::Owner => 5,
+            Self::Viewer => Some(0),
+            Self::Member => Some(1),
+            Self::Admin => Some(3),
+            Self::Deputy => Some(4),
+            Self::Owner => Some(5),
+            Self::Steward => None,
         }
     }
 
+    /// Whether a move from `was` to `now` climbs the ladder. A move into or
+    /// out of Steward is never a climb; the plan judges it by name.
+    pub(super) fn raises(was: Self, now: Self) -> bool {
+        matches!((was.reach(), now.reach()), (Some(was), Some(now)) if now > was)
+    }
+
     /// Whether a member moved from `was` to `now` loses the capability slips
-    /// they hold: a lowering, or a move into or out of Steward, whose verbs
-    /// are neither a subset nor a superset of another role's (as
-    /// `shared_act::membership` revokes them).
+    /// they hold: a lowering on the ladder, or any move into or out of
+    /// Steward (as `shared_act::membership` revokes them).
     pub(super) fn move_lowers(was: Self, now: Self) -> bool {
-        now.reach() < was.reach() || (now != was && (now == Self::Steward || was == Self::Steward))
+        match (was.reach(), now.reach()) {
+            (Some(was), Some(now)) => now < was,
+            _ => now != was,
+        }
     }
 }
 
@@ -83,16 +93,8 @@ impl From<ShapeMemberRole> for FederationGrantRole {
     }
 }
 
-/// The ARCH-0043 preset a shared vault's defaults came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ShapePreset {
-    Personal,
-    Family,
-    Team,
-    Org,
-    Community,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::vault_shape::member::ShapePreset;
 
 impl From<SharedVaultPreset> for ShapePreset {
     fn from(preset: SharedVaultPreset) -> Self {

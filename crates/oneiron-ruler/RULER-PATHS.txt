@@ -1,0 +1,7 @@
+# Ruler paths (RESEARCH-0651 Tier 0, auto-reject). A candidate whose commit changes any of these
+# paths cannot be judged by the ruler it changed: `scorecard compare --repo` reads this file at the
+# BASE commit and rejects the candidate. An entry ending in "/" matches every path under it.
+crates/oneiron-ruler/
+crates/oneiron-bench/src/scorecard/
+crates/oneiron/src/pipeline/builder_eval.rs
+crates/oneiron/src/autoreason_campaign/general.rs

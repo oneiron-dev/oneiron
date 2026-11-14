@@ -69,8 +69,6 @@ pub(super) fn options() -> ProducerOptions {
         },
         diarization_model_id: FIXTURE_DIARIZER_MODEL.into(),
         cleanup_policy: Some(CleanupPolicy {
-            max_candidates_per_word: 16,
-            max_candidate_bytes: 256,
             language_rules: std::collections::BTreeMap::from([
                 (
                     "English".into(),

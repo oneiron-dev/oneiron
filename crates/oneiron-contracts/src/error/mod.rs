@@ -219,6 +219,8 @@ pub enum ErrorKind {
     IndexedTextTooLarge,
     UpstreamToolFailure,
     RetrievalStageCut,
+    /// A decision read stopped at its provider's token cap before its answer.
+    DecisionReadTokenCap,
     /// No provider answered a model call that may be sent again later.
     ProviderUnavailable,
     /// A durable step's committed trap already parked its attempt.
@@ -421,6 +423,9 @@ pub enum ErrorKind {
     ArchivedVault,
     HostActionRequiresSupportGrant,
     StorageIdMismatch,
+    /// A custody door for one purpose of erasable key was handed another
+    /// purpose's key (FIX 23943).
+    ErasableKeyPurposeMismatch,
     /// A nonce spend met the writer lease another process holds on the vault
     /// (FIX 12023 W0).
     VaultServedElsewhere,
@@ -514,6 +519,12 @@ pub enum Error {
     /// partial work, so it never leaves the retrieval it was raised in.
     #[error("retrieval stage cut at its deadline")]
     RetrievalStageCut,
+    /// A decision provider's read stopped at its token cap before its answer
+    /// (ARCH-0076 #receipt): an unfinished reply is not an answer. The
+    /// decision ladder that asked catches it and closes on a receipt whose
+    /// stop cause names the cap, so it never leaves the decision call.
+    #[error("decision read stopped at its token cap")]
+    DecisionReadTokenCap,
     /// No provider answered a model call a host door made for a run (FIX
     /// 3194): nothing kept the call, and it may be sent again in
     /// `retry_after` seconds. A run's door raises it in place of a refusal,
@@ -705,6 +716,7 @@ impl Error {
             Self::EdgeNotFound => ErrorKind::EdgeNotFound,
             Self::UpstreamToolFailure { .. } => ErrorKind::UpstreamToolFailure,
             Self::RetrievalStageCut => ErrorKind::RetrievalStageCut,
+            Self::DecisionReadTokenCap => ErrorKind::DecisionReadTokenCap,
             Self::ProviderUnavailable { .. } => ErrorKind::ProviderUnavailable,
             Self::DurableStepTrapped => ErrorKind::DurableStepTrapped,
             Self::AgentRunExecutorMoved => ErrorKind::AgentRunExecutorMoved,
