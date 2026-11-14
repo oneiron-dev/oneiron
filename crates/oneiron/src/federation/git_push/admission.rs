@@ -78,8 +78,8 @@ impl Vault {
     /// the push `caller` makes into `served`, over the checkout `ticket`
     /// when it came on the lease route. A push that names a lease is held to
     /// it whatever arm admits it (FIX 8729): the lease, its TASK and
-    /// attempt, and the run's own Grant over the served repo must stand, and
-    /// the stamp carries the lease, so the final writer judges every ref move
+    /// attempt (and, on a run's lease, the run's own Grant over the served
+    /// repo) must stand, and the stamp carries the lease, so the final writer judges every ref move
     /// and changed path under it again. Only a push that names no lease is a
     /// raw push.
     ///
@@ -471,7 +471,8 @@ impl Vault {
         }
         // A push that named a lease is held to it whatever arm admitted it
         // (FIX 8729): the same lease, its TASK and attempt, and a live Grant
-        // of the pusher's over every ref move and changed path.
+        // of the pusher's over every ref move and changed path, except on the
+        // owner's own lease, which is held to the lease alone.
         if stamp.checkout.is_some() {
             let changes = changes.ok_or_else(|| refused(&stamp.served, PATHS_UNKNOWN))?;
             return self.git_push_checkout_rechecks_in_txn(txn, stamp, principal, repo, changes);

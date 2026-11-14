@@ -279,7 +279,8 @@ impl GitPushStamp {
 
     /// Whether this push named a checkout lease, whatever arm admitted it
     /// (FIX 8729): its ref moves and changed paths are listed and judged
-    /// again in the final writer, under the lease and the run's Grant.
+    /// again in the final writer, under the lease (and, on a run's lease,
+    /// the run's Grant).
     pub(crate) const fn names_checkout(&self) -> bool {
         self.checkout.is_some()
     }
