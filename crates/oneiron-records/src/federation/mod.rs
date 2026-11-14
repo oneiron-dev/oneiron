@@ -79,6 +79,7 @@ pub use oneiron_verb_wire::federation::relationships::MemberRelationship;
 pub use oneiron_verb_wire::federation::relationships::MemberRelationshipContext;
 pub use oneiron_verb_wire::federation::relationships::RelationshipTrustClass;
 
+pub use oneiron_verb_wire::federation::vault_id_decimal;
 pub mod engine_controls;
 pub mod git_push;
 pub mod grant_scope;
@@ -88,4 +89,3 @@ pub mod rulings;
 pub mod shared_act;
 pub mod shared_creation;
 pub mod system_agent_grant;
-pub mod vault_id_decimal;
