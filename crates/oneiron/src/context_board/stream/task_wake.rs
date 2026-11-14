@@ -313,12 +313,21 @@ impl Vault {
 /// One TASK wake's offers are kept under its TASK, kind and recipient, hex.
 type OfferKey = (String, TaskWakeKind, String);
 
-/// The connections each TASK wake was offered to, by TASK, kind and recipient,
-/// each with the failed attempt heads its offers covered
-/// ([`CommittedTaskBoardState::wake_heads`]).
+/// What one connection was offered of one TASK wake.
+#[derive(Debug, Default)]
+struct Offered {
+    /// The occurrence its latest offer named: the envelope id a staged row of
+    /// that occurrence holds (`StagedTaskWake::event_ref`).
+    occurrence: String,
+    /// The failed attempt heads its offers covered
+    /// ([`CommittedTaskBoardState::wake_heads`]).
+    heads: BTreeSet<String>,
+}
+
+/// The connections each TASK wake was offered to, by TASK, kind and recipient.
 #[derive(Debug, Default)]
 pub(super) struct PublishedTaskWakes {
-    offered: BTreeMap<OfferKey, BTreeMap<StreamConnectionId, BTreeSet<String>>>,
+    offered: BTreeMap<OfferKey, BTreeMap<StreamConnectionId, Offered>>,
 }
 
 impl PublishedTaskWakes {
@@ -341,23 +350,38 @@ impl PublishedTaskWakes {
         self.offered
             .get(key)
             .and_then(|offered| offered.get(connection))
-            .is_some_and(|covered| heads.iter().all(|head| covered.contains(head)))
+            .is_some_and(|offer| heads.iter().all(|head| offer.heads.contains(head)))
     }
 
-    /// Records that each of `connections` was offered the occurrence `heads`
-    /// names.
+    /// Records that each of `connections` was offered `occurrence`, whose
+    /// failed attempt heads are `heads`.
     fn record(
         &mut self,
         key: OfferKey,
         connections: impl IntoIterator<Item = StreamConnectionId>,
+        occurrence: &str,
         heads: &[String],
     ) {
         let offered = self.offered.entry(key).or_default();
         for connection in connections {
-            offered
-                .entry(connection)
-                .or_default()
-                .extend(heads.iter().cloned());
+            let offer = offered.entry(connection).or_default();
+            occurrence.clone_into(&mut offer.occurrence);
+            offer.heads.extend(heads.iter().cloned());
+        }
+    }
+
+    /// Forgets the offers of the occurrence a spent staged row held. An offer
+    /// of a later occurrence of the same wake stays: a pass that read the row
+    /// spent before that occurrence was staged and offered must not make it
+    /// heard again by a connection that already heard it.
+    fn forget_spent(&mut self, row: &StagedTaskWake) {
+        let key = (row.task.to_hex(), row.kind, row.recipient.to_hex());
+        let Some(offered) = self.offered.get_mut(&key) else {
+            return;
+        };
+        offered.retain(|_, offer| offer.occurrence != row.event_ref);
+        if offered.is_empty() {
+            self.offered.remove(&key);
         }
     }
 
@@ -389,6 +413,7 @@ impl BoardStreamRegistry {
         let scope = kind.scope();
         let key = (state.task_ref().to_owned(), kind, recipient.to_owned());
         let heads = state.wake_heads(kind);
+        let occurrence = state.occurrence_ref(kind.word());
         let fresh: BTreeSet<StreamConnectionId> = self
             .connections
             .iter()
@@ -406,7 +431,7 @@ impl BoardStreamRegistry {
         let event = VerifiedOwnTaskEvent {
             task_ref: state.task_ref().to_owned(),
             actor_ref: recipient.to_owned(),
-            event_ref: state.occurrence_ref(kind.word()),
+            event_ref: occurrence.clone(),
         };
         let line = state.line().to_owned();
         let event = match kind {
@@ -414,7 +439,8 @@ impl BoardStreamRegistry {
             TaskWakeKind::Arrived => BoardEvent::ConsultArrived { event, line },
         };
         let routed = self.route_event_where(event, |connection, _| fresh.contains(connection));
-        self.published_task_wakes.record(key, fresh, heads);
+        self.published_task_wakes
+            .record(key, fresh, &occurrence, heads);
         routed
     }
 
@@ -474,14 +500,12 @@ impl BoardStreamRegistry {
             .retain(|(task, _, _), _| *task != task_ref);
     }
 
-    /// Forgets the offers of the staged wakes a read found spent.
+    /// Forgets the offers of the staged wakes a read found spent, each only
+    /// for the occurrence its row held, as [`Vault::settle_task_wakes`]
+    /// deletes a row only while it holds that occurrence.
     pub fn forget_spent_task_wakes(&mut self, spent: &[StagedTaskWake]) {
         for row in spent {
-            self.published_task_wakes.offered.remove(&(
-                row.task.to_hex(),
-                row.kind,
-                row.recipient.to_hex(),
-            ));
+            self.published_task_wakes.forget_spent(row);
         }
     }
 }

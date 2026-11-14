@@ -9,9 +9,10 @@
 //! each connection of its recipient that may read the TASK.
 //!
 //! The doors in `oneiron::test_doors::board_task_wakes` run serve's two passes
-//! inline: the TASK pass (read, stage, route) and the staged wake pass. On
-//! main the TASK pass only routes and nothing is replayed, so the restart,
-//! late-connection, admission, consult and later-failure cases are red there.
+//! inline: the TASK pass (read, stage, route) and the staged wake pass, whole
+//! or as its read and the rest apart. On main the TASK pass only routes and
+//! nothing is replayed, so the restart, late-connection, admission, consult
+//! and later-failure cases are red there.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test board_task_wakes_restart`.
@@ -28,7 +29,8 @@ use oneiron::task_verb::{
     TaskAssignee, TaskCreateSpec,
 };
 use oneiron::test_doors::board_task_wakes::{
-    publish_committed_task, publish_staged_task_wakes, route_committed_task, stage_committed_task,
+    apply_staged_task_wakes, publish_committed_task, publish_staged_task_wakes,
+    read_staged_task_wakes, route_committed_task, stage_committed_task,
 };
 use oneiron::{AttemptQueue, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 
@@ -57,12 +59,11 @@ fn create_task(vault: &Vault, owner: EntityId, intent: &str) -> TestResult<Entit
         .ok_or_else(|| "tasks.create names its TASK".into())
 }
 
-/// Claims the next queued realization and fails it: the TASK it realizes
-/// folds to `failed`.
-fn fail_next_realization(vault: &Vault) -> TestResult {
-    let queue = AttemptQueue::new(vault);
+/// Claims the next queued realization: the TASK it realizes folds to
+/// `running`. Returns the failure [`fail_claimed`] records for it.
+fn claim_next_realization(vault: &Vault) -> TestResult<FailAttempt> {
     let now = vault.now_recorded_at();
-    let ClaimOutcome::Claimed(leased) = queue.claim_kind(
+    let ClaimOutcome::Claimed(leased) = AttemptQueue::new(vault).claim_kind(
         "tasks.realize",
         ClaimAttempt {
             lease_owner: WORKER.to_owned(),
@@ -72,14 +73,26 @@ fn fail_next_realization(vault: &Vault) -> TestResult {
     else {
         return Err("a realization is queued".into());
     };
-    queue.fail(FailAttempt {
+    Ok(FailAttempt {
         id: leased.id,
         lease_owner: WORKER.to_owned(),
         attempt_count: leased.attempt_count,
         reason: "the worker stopped".to_owned(),
         now,
-    })?;
+    })
+}
+
+/// Fails a claimed realization: the TASK it realizes folds to `failed`.
+fn fail_claimed(vault: &Vault, mut failure: FailAttempt) -> TestResult {
+    failure.now = vault.now_recorded_at();
+    AttemptQueue::new(vault).fail(failure)?;
     Ok(())
+}
+
+/// Claims the next queued realization and fails it.
+fn fail_next_realization(vault: &Vault) -> TestResult {
+    let failure = claim_next_realization(vault)?;
+    fail_claimed(vault, failure)
 }
 
 /// Queues another realization of `task`: its next failure is a new failed
@@ -288,6 +301,52 @@ fn a_later_failure_reaches_a_connection_that_heard_the_earlier_one() -> TestResu
     // Offered once: the next pass hands the connection nothing.
     publish_staged_task_wakes(&vault, &mut registry, admit_all_staged)?;
     assert!(registry.drain_wakes(&connection).is_empty());
+    Ok(())
+}
+
+/// A staged pass reads the TASK while its retry runs, so the first failure's
+/// row reads spent. Before that pass goes on, the retry fails and the TASK
+/// pass offers the owner's connection the second failure. The stale pass
+/// then forgets only the first failure's offers, so a later pass does not
+/// offer the connection the second failure again.
+#[test]
+fn a_stale_staged_pass_keeps_the_offer_of_a_later_failure() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let vault = open(directory.path())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let task = create_task(&vault, owner, "fails, runs again, fails again")?;
+    let mut registry = BoardStreamRegistry::default();
+    let connection = attach(&mut registry, "owen", owner);
+
+    fail_next_realization(&vault)?;
+    publish_committed_task(&vault, &mut registry, task, admit_all)?;
+    let first = registry.drain_wakes(&connection);
+    assert_eq!(first.len(), 1, "{first:?}");
+
+    realize_again(&vault, task)?;
+    let retry = claim_next_realization(&vault)?;
+    let stale = read_staged_task_wakes(&vault)?;
+    assert!(stale.pending.is_empty(), "a running TASK owes no wake");
+    assert_eq!(
+        stale.spent.len(),
+        1,
+        "the first failure's row reads spent while the retry runs"
+    );
+
+    fail_claimed(&vault, retry)?;
+    publish_committed_task(&vault, &mut registry, task, admit_all)?;
+    let second = registry.drain_wakes(&connection);
+    assert_eq!(second.len(), 1, "the TASK pass offers the second failure");
+    assert_task_wake(&second[0], task, owner, "failed");
+    assert_ne!(second[0].event_ref, first[0].event_ref);
+
+    apply_staged_task_wakes(&vault, &mut registry, stale, admit_all_staged)?;
+    publish_staged_task_wakes(&vault, &mut registry, admit_all_staged)?;
+    let again = registry.drain_wakes(&connection);
+    assert!(
+        again.is_empty(),
+        "the connection heard the second failure once: {again:?}"
+    );
     Ok(())
 }
 
