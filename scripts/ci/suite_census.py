@@ -37,6 +37,7 @@ import json
 import posixpath
 import re
 import sys
+from collections import namedtuple
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -141,34 +142,42 @@ def close_brace(masked, open_pos):
     return len(masked)
 
 
+# One mod declaration in a file: span is the (open, close) brace offsets of an inline block, attr its #[path] value,
+# gated whether it sits under its own #[cfg(any())], chain the (item, attr) of each inline block around it, outermost first.
+ModDecl = namedtuple("ModDecl", "item offset span attr gated chain")
+
+
 def mod_decls(text, masked):
-    """[(item, offset, inline span or None, #[path] value or None, gated)] for each mod declared in a file."""
+    """[ModDecl] for each mod declared in a file, inline blocks included."""
     out = []
     for m in _MOD_DECL.finditer(masked):
         start = item_start(masked, m.start())
         gated = bool(_CFG_ANY.search(masked, start, m.start()))
-        if m.group(2) == "{":
-            out.append((m.group(1), m.start(), (m.end() - 1, close_brace(masked, m.end() - 1)), None, gated))
-            continue
         attr = _PATH_ATTR.search(text, start, m.start())
-        out.append((m.group(1), m.start(), None, attr.group(1) if attr else None, gated))
+        span = (m.end() - 1, close_brace(masked, m.end() - 1)) if m.group(2) == "{" else None
+        chain = tuple((d.item, d.attr) for d in out if d.span and d.span[0] < m.start() < d.span[1])
+        out.append(ModDecl(m.group(1), m.start(), span, attr.group(1) if attr else None, gated, chain))
     return out
 
 
-def module_files(path, item, attr, path_loaded):
-    """(module file, module directory or None) that `mod item;` declared in path loads, by rustc's rules: a #[path]
-    is relative to the declaring file's directory; otherwise a mod.rs-like file (mod.rs, a crate root, or a file that
-    was itself loaded by #[path]) keeps its children in its own directory, and any other file in a directory named
-    after its stem. A #[path] inside an inline mod block is read as if the block were not there."""
-    here = posixpath.dirname(path)
-    if attr:
-        target = posixpath.normpath(posixpath.join(here, attr))
-        return target, posixpath.dirname(target) if target.endswith("/mod.rs") else None
+def module_files(path, decl, path_loaded):
+    """(module file, module directory or None) that the out-of-line `mod` decl in path loads, by rustc's rules
+    (rustc_expand module.rs mod_dir_path): a mod.rs-like file (mod.rs, a crate root, or a file that was itself loaded
+    by #[path]) keeps its children in its own directory, and any other file in a directory named after its stem.
+    Each inline block around the decl adds its name as a directory (a block with a #[path] moves to that directory
+    instead), and a #[path] is relative to the directory so reached; at the top of a non-mod.rs file that is the
+    file's own directory, without the stem."""
     parts = path.split("/")
     mod_rs = path_loaded or parts[-1] in ("mod.rs", "lib.rs", "main.rs", "build.rs") or (
         len(parts) > 1 and parts[-2] in CRATE_ROOT_DIRS)
-    child_dir = here if mod_rs else path.removesuffix(".rs")
-    return f"{child_dir}/{item}.rs", f"{child_dir}/{item}"
+    here, stem = posixpath.dirname(path), None if mod_rs else parts[-1].removesuffix(".rs")
+    for item, attr in decl.chain:
+        here, stem = posixpath.normpath(posixpath.join(here, attr or posixpath.join(stem or "", item))), None
+    if decl.attr:
+        target = posixpath.normpath(posixpath.join(here, decl.attr))
+        return target, posixpath.dirname(target) if target.endswith("/mod.rs") else None
+    child_dir = posixpath.join(here, stem) if stem else here
+    return f"{child_dir}/{decl.item}.rs", f"{child_dir}/{decl.item}"
 
 
 def gated_fns(masked):
@@ -228,20 +237,28 @@ def census(repo, rev):
         rows[path] = {bucket: n}
 
     def path_targets():
-        return {module_files(p, i, a, False)[0] for p, ds in decls.items() for i, _, span, a, _ in ds if a and not span}
+        """The files some #[path] declaration loads. A #[path] inside an inline block of a file that #[path] loaded
+        resolves from that file's own directory, so iterate until the loaded set stops changing."""
+        loaded = set()
+        for _ in range(len(decls) + 1):
+            now = {module_files(p, d, p in loaded)[0] for p, ds in decls.items() for d in ds if d.attr and not d.span}
+            if now == loaded:
+                break
+            loaded = now
+        return loaded
 
     loaded_by_path = path_targets()
     inline, by_file = {}, {}  # declaring file -> [(span, gate)]; module file or directory -> gate
     for decl, ds in decls.items():
-        for item, _, span, attr, gated in ds:
-            if not gated:
+        for d in ds:
+            if not d.gated:
                 continue
-            if span:
-                inline.setdefault(decl, []).append((span, (decl, item)))
+            if d.span:
+                inline.setdefault(decl, []).append((d.span, (decl, d.item)))
             else:
-                for where in module_files(decl, item, attr, decl in loaded_by_path):
+                for where in module_files(decl, d, decl in loaded_by_path):
                     if where:
-                        by_file[where] = (decl, item)
+                        by_file[where] = (decl, d.item)
 
     def gates_of(path, offset):
         """The gated (declaring file, item) that hold the item at offset in path."""
@@ -251,15 +268,16 @@ def census(repo, rev):
         return held
 
     # A gate holds every module its gated code declares, wherever the module file lies. The file and directory
-    # prefixes above cover a plain child; a #[path] child (comm/tests.rs loads comm/thread_alias_tests.rs) and the
+    # prefixes above cover a plain child; a child declared inside a gated inline block (lib.rs `mod outer { mod
+    # child; }` loads outer/child.rs), a #[path] child (comm/tests.rs loads comm/thread_alias_tests.rs) and the
     # children of a file loaded by #[path] (they sit beside it) lie outside them, so carry the gate down each
     # declaration until nothing changes, reading the declarations of a gated #[path] file that was not read yet.
     while True:
         grew = False
         for decl, ds in list(decls.items()):
-            for item, offset, span, attr, gated in ds:
-                held = () if span or gated else gates_of(decl, offset)
-                for where in module_files(decl, item, attr, decl in loaded_by_path) if held else ():
+            for d in ds:
+                held = () if d.span or d.gated else gates_of(decl, d.offset)
+                for where in module_files(decl, d, decl in loaded_by_path) if held else ():
                     if where and where not in by_file:
                         by_file[where] = min(held)
                         grew = True
@@ -273,7 +291,7 @@ def census(repo, rev):
         loaded_by_path = path_targets()
 
     holding = set()  # gated (declaring file, item) that hold at least one test, and gated test fns
-    gated = {(decl, d[0]) for decl, ds in decls.items() for d in ds if d[4]} | gated_fn_rows
+    gated = {(decl, d.item) for decl, ds in decls.items() for d in ds if d.gated} | gated_fn_rows
     for path, tests in rust_tests.items():
         if is_office(path, "rust"):
             counts["office"] += len(tests)

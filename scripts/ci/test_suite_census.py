@@ -152,6 +152,32 @@ class SuiteCensusTests(unittest.TestCase):
         self.assertEqual(rows["live_tests.rs"]["rust_lib"], 1)
         self.assertEqual(c["quarantine_unlisted"], ["crates/oneiron/src/comm/mod.rs::tests"])
 
+    def test_a_gate_reaches_children_declared_inside_inline_blocks(self):
+        # rustc reads a child declared inside an inline block from a directory named after the block: lib.rs
+        # `mod outer { mod child; }` loads outer/child.rs, and in the non-mod.rs file a.rs `mod inline { #[path] }`
+        # is relative to a/inline/. Each gate must reach those files, and the live twin of each stays live.
+        self.commit({
+            "crates/demo/src/lib.rs": (
+                "#[cfg(any())]\nmod outer {\n    mod child;\n}\n\nmod open {\n    #[cfg(any())]\n    mod shut;\n"
+                "    mod alive;\n}\n\nmod a;\n"
+            ),
+            "crates/demo/src/outer/child.rs": rust_source("probe"),
+            "crates/demo/src/child.rs": rust_source("not_loaded"),
+            "crates/demo/src/open/shut.rs": rust_source("shut_one"),
+            "crates/demo/src/open/alive.rs": rust_source("alive_one"),
+            "crates/demo/src/a.rs": '#[cfg(any())]\nmod inline {\n    #[path = "other.rs"]\n    mod inner;\n}\n',
+            "crates/demo/src/a/inline/other.rs": rust_source("other_one"),
+            "crates/demo/src/other.rs": rust_source("other_twin"),
+        })
+        c = self.census("--files")
+        rows = {r["path"].removeprefix("crates/demo/src/"): r for r in c["files"]}
+        self.assertEqual(c["quarantined"], 3)  # probe, shut_one, other_one
+        self.assertEqual(c["rust"]["lib"], 3)  # not_loaded, alive_one, other_twin: the scan counts every file
+        for name in ("outer/child.rs", "open/shut.rs", "a/inline/other.rs"):
+            self.assertEqual(rows[name].get("quarantined"), 1, name)
+        for name in ("child.rs", "open/alive.rs", "other.rs"):
+            self.assertEqual(rows[name].get("rust_lib"), 1, name)
+
     def test_office_counts_apart(self):
         self.commit({
             "crates/oneiron-seal/src/lib.rs": rust_source("seals"),
