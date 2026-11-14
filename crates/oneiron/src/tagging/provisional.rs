@@ -404,19 +404,37 @@ fn naming_audience_in_txn(
     id: &EntityId,
     name: &str,
 ) -> Result<Option<rmpv::Value>> {
-    use crate::claim::RelationshipRead;
     let digest = crate::ingest::identity_hint_digest(name);
     let messages = tags::naming_messages_in_txn(vault, txn, id, &digest)?;
     if messages.is_empty() {
         return Ok(None);
     }
+    naming_rows_audience_in_txn(vault, txn, &messages)
+}
+
+/// The source audience of an entity named by the words of the rows `rows`
+/// (MESSAGEs, or a TURN holding its own words), as `naming_audience_in_txn`
+/// reads it for a provisional entity's confirmation: `None` when one of them
+/// is open, otherwise the relationships whose members read one of them and
+/// whether every one is private. A row whose audience does not resolve
+/// counts as private. A derivation's Person item is born under it.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn naming_rows_audience_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    rows: &BTreeSet<EntityId>,
+) -> Result<Option<rmpv::Value>> {
+    use crate::claim::RelationshipRead;
     let mut relationships = std::collections::BTreeSet::new();
     let mut private = true;
-    for message in &messages {
-        let Some(raw) = vault.get_raw_in(txn, message)? else {
+    for row in rows {
+        let Some(raw) = vault.get_raw_in(txn, row)? else {
             continue;
         };
-        match crate::claim::relationship_read(&vault.store, txn, message, &raw)? {
+        match crate::claim::relationship_read(&vault.store, txn, row, &raw)? {
             RelationshipRead::Decided(true)
             | RelationshipRead::Gated {
                 space: None,

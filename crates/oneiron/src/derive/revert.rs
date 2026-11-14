@@ -55,7 +55,8 @@ pub struct DeriveRevertReceipt {
 /// cleanup-archive marker. So an `archive` item's revision also covers that
 /// marker as stored (its request id and time included), and a claim that was
 /// restored, or restored and archived again by a later act, no longer stands
-/// at the revision its first archive left.
+/// at the revision its first archive left. A `person` item's revision covers
+/// its PERSON's marker the same way, since its revert archives the row.
 pub(super) fn row_revision_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -67,7 +68,7 @@ pub(super) fn row_revision_in(
     }
     let stored = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &row)?
         .map_or([0; 32], |raw| *blake3::hash(&raw).as_bytes());
-    if kind != "archive" {
+    if kind != "archive" && kind != "person" {
         return Ok(stored);
     }
     let marker = crate::ports::TombstoneStoreRead::port_deletion_marker(
@@ -166,7 +167,14 @@ impl Vault {
                 continue;
             }
             let mut savepoint = self.store.env.nested_write_txn(txn)?;
-            match self.undo_item_in_txn(&mut savepoint, &record.actor, reverter, item, now_ms) {
+            match self.undo_item_in_txn(
+                &mut savepoint,
+                &record.actor,
+                reverter,
+                item,
+                now_ms,
+                &reverted_rows,
+            ) {
                 Ok(true) => {
                     savepoint.commit()?;
                     reverted_rows.extend(item.rows.iter().copied());
@@ -201,8 +209,8 @@ impl Vault {
         })
     }
 
-    /// Undoes one landed item in `txn`. `false` when its kind has no inverse
-    /// here.
+    /// Undoes one landed item in `txn`, after this revert took back the rows
+    /// `taken_back` names. `false` when its kind has no inverse here.
     fn undo_item_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -210,6 +218,7 @@ impl Vault {
         reverter: WriteActor,
         item: &ItemRecord,
         now_ms: u64,
+        taken_back: &std::collections::BTreeSet<EntityId>,
     ) -> Result<bool> {
         let first = || {
             item.rows
@@ -256,6 +265,27 @@ impl Vault {
             }
             "archive" => {
                 self.restore_archived_in_txn(txn, &first()?)?;
+            }
+            "person" => {
+                // The extraction mint's inverse is the cleanup's archive, by
+                // the cleanup's own rule: a PERSON still minted at its stored
+                // revision, with no live claim about it but those this revert
+                // took back first. Never an unbirth: the owner's cleanup
+                // restore lifts it.
+                let person = first()?;
+                if !crate::vault_cleanup::person_mint_unclaimed_in_txn(
+                    self, txn, &person, taken_back,
+                )? {
+                    return Err(Error::InvalidClaimBody(
+                        "a person another row names stays born",
+                    ));
+                }
+                let marker = crate::deletion::TombstoneValueV2 {
+                    reason: crate::deletion::TombstoneReason::ArchivedByCleanup,
+                    deleted_at: now_ms / 1_000,
+                    request_id: self.store.clock.ulid()?,
+                };
+                self.put_archive_tombstone_in_txn(txn, &person, &marker)?;
             }
             "same_as" => {
                 crate::dreamer_consolidation::revert_authored_change_in_txn(

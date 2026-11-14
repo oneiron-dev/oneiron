@@ -118,6 +118,7 @@ pub mod identity_doors;
 mod inspection;
 mod key_value;
 mod lifted_view;
+pub(crate) use lifted_view::lifted_keys_of_bodies_in_txn;
 mod locality;
 mod machine_write;
 pub mod merge_queue_doors;

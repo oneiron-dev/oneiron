@@ -166,6 +166,9 @@ impl Vault {
                     DerivationItem::Archive(archive) => {
                         super::archive::stage_in_txn(self, txn, &context, archive)?
                     }
+                    DerivationItem::Person(person) => {
+                        super::person::stage_in_txn(self, txn, &context, person)?
+                    }
                 }
             };
             match &outcome {
@@ -248,8 +251,8 @@ pub(super) fn refusal_receipt_in_txn(
 }
 
 /// Appends the receipt of one landed item the derive verdict judged
-/// (settlement, supersession, artifact, archive): the grant it was judged
-/// by and the frontier it was judged under, beside the item's reason
+/// (settlement, supersession, artifact, archive, person): the grant it was
+/// judged by and the frontier it was judged under, beside the item's reason
 /// tokens.
 pub(super) fn allowance_receipt_in_txn(
     vault: &Vault,
