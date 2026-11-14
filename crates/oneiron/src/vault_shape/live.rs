@@ -409,7 +409,7 @@ impl Vault {
                 rows.push((
                     ShapeRow::Channel {
                         channel: facts.channel.clone(),
-                        address: facts.address_or_handle.clone(),
+                        address: facts.address_or_handle,
                         provision,
                     },
                     Some(id),
