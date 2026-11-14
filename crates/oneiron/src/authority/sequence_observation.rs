@@ -152,6 +152,11 @@ pub(crate) fn record_authority_sequence_observation_in_txn(
     let key = sequence_key(entry);
     let previous = SEQ_HWM.get(store, txn, &key)?;
     SEQ_OBSERVATION.put(store, txn, &receipt_key, &SequenceReceipt(previous))?;
+    // A root appointment's order is its ancestry, never its arrival here: it
+    // moves no floor of its anchor (OWNER-ANCHOR-ROOT-RECOVERY, E5).
+    if matches!(entry.op, AuthorityOp::RootAppointment(_)) {
+        return Ok(true);
+    }
     let next = previous.map_or(entry.seq, |value| value.max(entry.seq));
     SEQ_HWM.put(store, txn, &key, &next)?;
     Ok(true)

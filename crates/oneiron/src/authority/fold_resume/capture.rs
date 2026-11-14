@@ -18,6 +18,19 @@ pub(in crate::authority) struct FoldCapture {
     /// The checkpoint image build's capture (OF-469, checkpoint v2): it keeps
     /// an [`ImageFold`] in place of a resumable once fold.
     image: Option<ImageSlot>,
+    /// A root appointment's proof fold's capture (OWNER-ANCHOR-ROOT-RECOVERY):
+    /// it keeps the last once fold's [`ProofParts`], spoiled or not.
+    proof: Option<RefCell<Option<Box<ProofParts>>>>,
+}
+
+/// What a root appointment's proof fold settled: each surviving row's state,
+/// the raw merge of them before any restrictive fact, and the handoffs whose
+/// fences closed. A counted appointment's recovered world is made of these
+/// (PLAN v3 section 6).
+pub(in crate::authority) struct ProofParts {
+    pub(in crate::authority) states: BTreeMap<AuthorityEntryHash, FoldState>,
+    pub(in crate::authority) merged: FoldState,
+    pub(in crate::authority) closed_handoffs: BTreeSet<AuthorityEntryHash>,
 }
 
 /// The frontier an image build keeps fold states at, and what it kept of the
@@ -58,6 +71,20 @@ impl FoldCapture {
         }
     }
 
+    /// A capture for a root appointment's proof fold: it keeps the last
+    /// once fold's [`ProofParts`]. No resumed fold reads it.
+    pub(in crate::authority) fn for_proof() -> Self {
+        Self {
+            proof: Some(RefCell::new(None)),
+            ..Self::default()
+        }
+    }
+
+    /// What the proof fold kept of its last once fold.
+    pub(in crate::authority) fn take_proof(self) -> Option<Box<ProofParts>> {
+        self.proof.and_then(RefCell::into_inner)
+    }
+
     /// What the image build kept of the last once fold.
     pub(in crate::authority) fn take_image(self) -> Option<Box<ImageFold>> {
         self.image.and_then(|image| image.fold.into_inner())
@@ -68,7 +95,13 @@ impl FoldCapture {
     }
 
     pub(in crate::authority) fn record(&self, parts: OnceParts<'_>) {
-        if let Some(image) = &self.image {
+        if let Some(proof) = &self.proof {
+            *proof.borrow_mut() = Some(Box::new(ProofParts {
+                states: parts.states.clone(),
+                merged: parts.merged,
+                closed_handoffs: parts.closed_handoffs,
+            }));
+        } else if let Some(image) = &self.image {
             *image.fold.borrow_mut() =
                 ImageFold::of(parts, &image.frontier, image.replay).map(Box::new);
         } else {

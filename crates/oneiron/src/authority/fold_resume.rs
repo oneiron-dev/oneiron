@@ -36,7 +36,7 @@ mod side_tail;
 
 use capture::Once;
 pub(super) use capture::{
-    ConfirmKeys, FoldCapture, OnceParts, add_bound_keys, add_writers, admits_past,
+    ConfirmKeys, FoldCapture, OnceParts, ProofParts, add_bound_keys, add_writers, admits_past,
 };
 pub(super) use image::ImageFold;
 use receipts::BaseReceipts;

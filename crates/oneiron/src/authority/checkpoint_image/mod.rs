@@ -88,7 +88,9 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// working view (row 6 WORKING-VIEW-EDIT).
 /// 34: a revocation retires its key on every branch, as a handoff retires its predecessors
 /// (REVOKED-OWNER-ROOT-SIBLING-ENROL).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 34;
+/// 35: a counted root appointment folds its line as its own ancestry's fold did, and a
+/// rootless roster names itself (OWNER-ANCHOR-ROOT-RECOVERY).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 35;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.

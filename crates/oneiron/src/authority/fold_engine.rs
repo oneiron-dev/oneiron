@@ -60,12 +60,14 @@ pub(super) struct FoldContext<'a> {
     /// The bytes this fold may project to hold at its peak.
     pub(super) memory_floor_bytes: u64,
     /// This install's pin on a fold of its own vault's log: which world-key
-    /// records count here. It decides no entry's validity.
+    /// records count here. The pin decides no entry's validity; it decides
+    /// which valid root appointment counts.
     pub(super) pin: Option<&'a PinnedRoot>,
-    /// The verdicts of the root appointments this fold holds
-    /// (`root_appointment_judge`), which their refusals carry. None on a
-    /// fold that judges none (an appointment is then `Unjudged`).
-    pub(super) appointments: Option<&'a BTreeMap<AuthorityEntryHash, AppointmentVerdict>>,
+    /// The verdicts of the root appointments this fold holds, which their
+    /// refusals carry, and the world the counted ones recover
+    /// (`root_appointment_judge`). None on a fold that judges none (an
+    /// appointment is then `Unjudged`).
+    pub(super) appointments: Option<&'a super::root_appointment_judge::AppointmentJudgement>,
 }
 
 impl FoldContext<'_> {
@@ -373,7 +375,7 @@ pub(super) fn fold_authority_log_once(
     let context = FoldContext {
         sequence_floors: causal_floors.as_ref(),
         entry_ancestors: Some(&entry_ancestors),
-        appointments: Some(&appointments.verdicts),
+        appointments: Some(&appointments),
         ..context
     };
 
@@ -390,6 +392,7 @@ pub(super) fn fold_authority_log_once(
         &by_hash,
         &entry_ancestors,
         handoffs,
+        &appointments.recovered,
         &mut issues,
         |states, present| federation_confirm_losers(states, &by_hash, present),
     );

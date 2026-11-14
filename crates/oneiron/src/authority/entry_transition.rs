@@ -51,13 +51,21 @@ pub(super) fn fold_entry_state(
     if entry.validate_shape().is_err() || verify_entry_signatures(entry).is_err() {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
-    // A root appointment counts on no install yet (OWNER-ANCHOR-ROOT-RECOVERY):
-    // it is refused before any floor or parent state, so its refusal is the
-    // same on every install, and carries its verdict.
+    // A counted root appointment's line folds as its proof fold folded it,
+    // and the appointment as its recovered world (OWNER-ANCHOR-ROOT-RECOVERY,
+    // E1, E3): before any floor (E5) or parent state, so a refused witness
+    // parent never holds it back. Every other appointment is refused here,
+    // the same way on every install, and carries its verdict.
+    if let Some(recovered) = context
+        .appointments
+        .and_then(|judgement| judgement.recovered.entry_fold(&hash))
+    {
+        return recovered;
+    }
     if matches!(entry.op, AuthorityOp::RootAppointment(_)) {
         let verdict = context
             .appointments
-            .and_then(|verdicts| verdicts.get(&hash).copied())
+            .and_then(|judgement| judgement.verdicts.get(&hash).copied())
             .unwrap_or(AppointmentVerdict::Unjudged);
         return EntryFold::Invalid(AuthorityFoldIssue::AppointmentRefused {
             entry: hash,

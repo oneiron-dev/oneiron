@@ -66,6 +66,12 @@ pub(super) fn image_stands_here(image: &AuthorityCheckpointV2, log: AdoptedTail<
         let Ok(entry) = decode_authority_log_entry_body(body) else {
             return false;
         };
+        // A counted appointment's line folds under its building pin alone, so
+        // an image over an appointment stands under that pin only
+        // (OWNER-ANCHOR-ROOT-RECOVERY, round-1 finding 7).
+        if pin_moved && matches!(entry.op, AuthorityOp::RootAppointment(_)) {
+            return false;
+        }
         let reads = (pin_moved && reads_pin(&entry.op))
             || matches!(&entry.op, AuthorityOp::FederationLifecycle(action)
                 if moved_peers.contains(&action.peer_vault_id));

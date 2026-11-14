@@ -34,11 +34,20 @@
 //!   installs nothing, so revocations can leave the roster with no live root
 //!   key: a cycle of them closes every fence in it, and two roots that each
 //!   revoke themselves on sibling branches both stand. No roster row settles
-//!   that state; FIX [OWNER-ANCHOR-NO-ROOT-RECOVERY] gives the owner anchor
-//!   the way out.
+//!   that state, and the fold names it (`NoRootKey`).
+//! - The pinned root's anchor is the way out (OWNER-ANCHOR-ROOT-RECOVERY): a
+//!   root appointment this install counts closes its fence first, and always.
+//!   It holds every key its ancestry names as a device other than its
+//!   successor, and its line is the appointment and its ancestry, which keeps
+//!   the verdicts its proof fold gave (`root_appointment_judge::Recovered`):
+//!   no fence of a row there closes again, and no such row is refused, pruned
+//!   or loses a collision. A row the appointment's fence excludes closes no
+//!   fence either, so it never makes the appointment, or a later handoff of
+//!   its successor, yield.
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::root_appointment_judge::Recovered;
 use super::*;
 
 /// The closed fences: those of the handoffs and revocations that settled or
@@ -48,6 +57,8 @@ pub(super) struct Retirements {
     fences: Vec<Fence>,
     /// The entries that folded through an owner anchor's branch.
     anchored: BTreeSet<AuthorityEntryHash>,
+    /// The handoffs a counted appointment's proof fold closed in its line.
+    recovered_handoffs: BTreeSet<AuthorityEntryHash>,
 }
 
 #[derive(Debug)]
@@ -71,9 +82,24 @@ enum FenceKind {
     Handoff,
     /// A `RevokeDevice`: it installs nothing.
     Revocation,
+    /// A counted `RootAppointment`: it installs its successor, and always
+    /// closes.
+    Appointment,
 }
 
 impl Fence {
+    /// A counted appointment's fence.
+    fn of_appointment(fence: &super::root_appointment_judge::AppointmentFence) -> Self {
+        Self {
+            row: fence.row,
+            kind: FenceKind::Appointment,
+            vault_id: fence.vault_id,
+            keys: fence.keys.clone(),
+            line: fence.line.clone(),
+            conflict: false,
+        }
+    }
+
     /// Whether `op` closes a fence.
     fn closes(op: &AuthorityOp) -> bool {
         matches!(
@@ -168,13 +194,42 @@ impl Retirements {
             .collect()
     }
 
-    /// The handoffs whose fences are closed, settled or in conflict.
+    /// The handoffs whose fences are closed, settled or in conflict, here or
+    /// in a counted appointment's proof fold.
     pub(super) fn handoffs(&self) -> BTreeSet<AuthorityEntryHash> {
         self.fences
             .iter()
             .filter(|fence| fence.kind == FenceKind::Handoff)
             .map(|fence| fence.row)
+            .chain(self.recovered_handoffs.iter().copied())
             .collect()
+    }
+
+    /// The issue a row refused as `issue` carries: a handoff a counted
+    /// appointment's fence excludes is sealed, not unsettled (PLAN v3 E4).
+    fn sealed_issue(
+        &self,
+        hash: &AuthorityEntryHash,
+        issue: &AuthorityFoldIssue,
+        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    ) -> AuthorityFoldIssue {
+        let appointments = || {
+            self.fences
+                .iter()
+                .filter(|fence| fence.kind == FenceKind::Appointment)
+        };
+        if !matches!(issue, AuthorityFoldIssue::UnsettledHandoff(_)) {
+            issue.clone()
+        } else if appointments().any(|fence| fence.signed_outside(hash, entries, &self.anchored)) {
+            AuthorityFoldIssue::RetiredSigner(*hash)
+        } else if appointments()
+            .any(|fence| fence.excludes(hash, entries, ancestors, &self.anchored))
+        {
+            AuthorityFoldIssue::InvalidAncestry(*hash)
+        } else {
+            issue.clone()
+        }
     }
 
     /// Whether a conflict retired a root and installed no successor, so the
@@ -235,6 +290,7 @@ pub(super) fn settle_handoffs(
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     eligible: Option<&BTreeSet<AuthorityEntryHash>>,
+    recovered: &Recovered,
     issues: &mut Vec<AuthorityFoldIssue>,
     contend: impl Fn(
         &BTreeMap<AuthorityEntryHash, FoldState>,
@@ -246,14 +302,16 @@ pub(super) fn settle_handoffs(
         .filter(|hash| {
             matches!(entries[*hash].op, AuthorityOp::ReRoot { .. })
                 && eligible.is_some_and(|eligible| !eligible.contains(*hash))
+                && !recovered.holds(hash)
         })
         .map(|handoff| (*handoff, AuthorityFoldIssue::UnsettledHandoff(*handoff)))
         .collect();
     loop {
         let mut refused = pruned.clone();
-        let retirements = close_fences(states, entries, ancestors, &mut refused);
+        let retirements = close_fences(states, entries, ancestors, recovered, &mut refused);
         let gone = with_descendants(states, &refused, ancestors);
-        let losers = contend(states, &|hash| !gone.contains(hash));
+        let mut losers = contend(states, &|hash| !gone.contains(hash));
+        losers.retain(|hash, _| !recovered.holds(hash));
         let lost: Vec<_> = retirements
             .fences
             .iter()
@@ -271,7 +329,7 @@ pub(super) fn settle_handoffs(
             let gone = with_descendants(states, &refused, ancestors);
             states.retain(|hash, _| {
                 if let Some(issue) = refused.get(hash) {
-                    issues.push(issue.clone());
+                    issues.push(retirements.sealed_issue(hash, issue, entries, ancestors));
                 } else if gone.contains(hash) {
                     issues.push(AuthorityFoldIssue::InvalidAncestry(*hash));
                 }
@@ -313,6 +371,7 @@ fn close_fences(
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    recovered: &Recovered,
     refused: &mut BTreeMap<AuthorityEntryHash, AuthorityFoldIssue>,
 ) -> Retirements {
     let gone = with_descendants(states, refused, ancestors);
@@ -321,9 +380,24 @@ fn close_fences(
         .filter(|(hash, state)| state.anchor_entries.contains(*hash))
         .map(|(hash, _)| *hash)
         .collect();
+    // A counted appointment's fence closes first, and always: no row its
+    // line holds and no row it excludes takes part below.
+    let appointed: Vec<Fence> = recovered
+        .fences
+        .iter()
+        .filter(|fence| states.contains_key(&fence.row))
+        .map(Fence::of_appointment)
+        .collect();
     let fences: Vec<Fence> = states
         .keys()
-        .filter(|hash| !gone.contains(*hash) && Fence::closes(&entries[*hash].op))
+        .filter(|hash| {
+            !gone.contains(*hash)
+                && !recovered.holds(hash)
+                && Fence::closes(&entries[*hash].op)
+                && !appointed
+                    .iter()
+                    .any(|fence| fence.excludes(hash, entries, ancestors, &anchored))
+        })
         .map(|row| Fence::of(row, states, entries, ancestors))
         .collect();
     let count = fences.len();
@@ -392,20 +466,24 @@ fn close_fences(
         .map(|i| fences[i].row)
         .collect();
     let retirements = Retirements {
-        fences: fences
+        fences: appointed
             .into_iter()
-            .zip(closed)
-            .zip(&members)
-            .filter_map(|((fence, closed), members)| {
-                (closed == Some(true)).then_some(Fence {
-                    conflict: members.len() > 1,
-                    ..fence
-                })
-            })
+            .chain(fences.into_iter().zip(closed).zip(&members).filter_map(
+                |((fence, closed), members)| {
+                    (closed == Some(true)).then_some(Fence {
+                        conflict: members.len() > 1,
+                        ..fence
+                    })
+                },
+            ))
             .collect(),
         anchored,
+        recovered_handoffs: recovered.closed_handoffs.clone(),
     };
-    for hash in states.keys().filter(|hash| !gone.contains(*hash)) {
+    for hash in states
+        .keys()
+        .filter(|hash| !gone.contains(*hash) && !recovered.holds(hash))
+    {
         if retirements
             .fences
             .iter()
