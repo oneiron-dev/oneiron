@@ -20,6 +20,18 @@
 //! through `oneiron_server::test_doors::merge_queue_checker_pass`, because
 //! `build_app` starts no lifecycle; the pass is the served drain with the
 //! server's own host executor and the repo's `checker.py` helper.
+//!
+//! L4-06 PR 3 (one-origin, two-device code continuity): the vault owner has
+//! two devices, A and B, each with its own credential, TASK, checkout lease
+//! and stock-git worktree, and each device reaches the one served origin
+//! only through its own lease door (`vault.code.checkout.bind`'s
+//! `remote_url`). An edit on one device is seen on the other, a stale lease
+//! cannot publish after an authority cutover, offline work on a fenced lease
+//! is not lost, and a restart keeps proposals, review state and head.
+//! Proposals are read at the origin's door (RA2: the PROPOSAL side table is
+//! origin-local), as refs are; no replica copy exists. Named remainder: two
+//! enrolled machines' device sync still needs the E2E `startDevicePeer`
+//! fixture, which no in-process Rust test can host.
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support
 //! --test code_roundtrip_served`. Stock `git` and `python3` must be on PATH.
@@ -121,8 +133,7 @@ impl Credential {
 /// fixture's two slips, as a signing client would; every gate still runs.
 #[derive(Clone)]
 struct GitSigner {
-    owner: Credential,
-    member: Credential,
+    creds: Vec<Credential>,
     vault: Arc<Vault>,
 }
 
@@ -136,8 +147,9 @@ async fn sign_git_request(
         .get(AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "));
-    let who = [&signer.owner, &signer.member]
-        .into_iter()
+    let who = signer
+        .creds
+        .iter()
         .find(|who| token == Some(who.token.as_str()));
     if let Some(who) = who {
         let binding = who
@@ -160,14 +172,21 @@ struct Fixture {
     member: Credential,
     member_person: EntityId,
     owner_actor: EntityId,
+    device_a: Credential,
+    device_b: Credential,
+    keystore: Arc<oneiron_keystore::MemoryKeystore>,
     work: tempfile::TempDir,
-    serving: tokio::task::JoinHandle<()>,
+    serving: ServingTask,
     _vault_dir: tempfile::TempDir,
 }
 
-impl Drop for Fixture {
+/// The task that serves the git doors on the loopback port; dropping it
+/// stops it.
+struct ServingTask(tokio::task::JoinHandle<()>);
+
+impl Drop for ServingTask {
     fn drop(&mut self) {
-        self.serving.abort();
+        self.0.abort();
     }
 }
 
@@ -178,7 +197,8 @@ impl Fixture {
     async fn new() -> TestResult<Self> {
         let vault_dir = tempfile::tempdir()?;
         let vault = Arc::new(Vault::open(vault_dir.path(), VaultConfig::device())?);
-        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+        let keystore = Arc::new(oneiron_keystore::MemoryKeystore::default());
+        vault.install_device_keystore(Arc::clone(&keystore));
         let issuer = oneiron::test_support::provision_engine_machines(&vault);
         vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
         let root = vault.ensure_host_root_slip(&issuer)?;
@@ -201,46 +221,115 @@ impl Fixture {
             0x72,
             Some(&["core:read", "core:write"]),
         )?;
-        let server = Arc::new(SyncServer::new(
-            Arc::clone(&vault),
-            SyncServerConfig {
-                auth_secret: Some("code-roundtrip-served".into()),
-                merge_queue: Some(MergeQueueCheckerConfig {
-                    checker_backend: CheckerBackend::Host,
-                    helper: Some(checker_helper_argv()?),
-                    toolchain: BTreeMap::from([("posix".to_owned(), "host".to_owned())]),
-                    ..MergeQueueCheckerConfig::default()
-                }),
-                ..Default::default()
-            },
-        )?);
+        let device_a = Credential::mint(&vault, &issuer, &root, owner_actor, 0x73, None)?;
+        let device_b = Credential::mint(&vault, &issuer, &root, owner_actor, 0x74, None)?;
+        let server = Arc::new(SyncServer::new(Arc::clone(&vault), server_config()?)?);
         let app = build_app(Arc::clone(&server));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-        let endpoint = format!("http://{}/git", listener.local_addr()?);
-        let signer = GitSigner {
-            owner: owner.clone(),
-            member: member.clone(),
-            vault: Arc::clone(&vault),
-        };
-        let git_app = app
-            .clone()
-            .layer(middleware::from_fn_with_state(signer, sign_git_request));
-        let serving = tokio::spawn(async move {
-            let _ = axum::serve(listener, git_app).await;
-        });
-        Ok(Self {
+        let mut fx = Self {
             app,
             server,
             vault,
-            endpoint,
+            endpoint: String::new(),
             owner,
             member,
             member_person,
             owner_actor,
+            device_a,
+            device_b,
+            keystore,
             work: tempfile::tempdir()?,
-            serving,
+            serving: ServingTask(tokio::spawn(async {})),
             _vault_dir: vault_dir,
-        })
+        };
+        fx.listen().await?;
+        Ok(fx)
+    }
+
+    /// Serves the app's git doors on a new loopback port, signing every
+    /// fixture credential's holder proof, and points `endpoint` at them.
+    async fn listen(&mut self) -> TestResult {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        self.endpoint = format!("http://{}/git", listener.local_addr()?);
+        let signer = GitSigner {
+            creds: vec![
+                self.owner.clone(),
+                self.member.clone(),
+                self.device_a.clone(),
+                self.device_b.clone(),
+            ],
+            vault: Arc::clone(&self.vault),
+        };
+        let git_app = self
+            .app
+            .clone()
+            .layer(middleware::from_fn_with_state(signer, sign_git_request));
+        // The old serving task, if any, stops as it drops here.
+        self.serving = ServingTask(tokio::spawn(async move {
+            let _ = axum::serve(listener, git_app).await;
+        }));
+        Ok(())
+    }
+
+    /// Restarts the served origin as a process restart does: the serving
+    /// task, the app and the server drop, and with them the last
+    /// `Arc<Vault>`; the same vault dir opens again with the same keystore,
+    /// and a new server, app and loopback listener serve it. Proposals, the
+    /// queue, leases, authority and the served refs are vault rows and
+    /// files. Engine rows (machines, root slip, owner, binds) persist too,
+    /// and `SyncServer::new` runs their ensures again itself, so this
+    /// re-runs none of them.
+    async fn restart(self) -> TestResult<Self> {
+        let Self {
+            app,
+            server,
+            vault,
+            endpoint: _,
+            owner,
+            member,
+            member_person,
+            owner_actor,
+            device_a,
+            device_b,
+            keystore,
+            work,
+            mut serving,
+            _vault_dir: vault_dir,
+        } = self;
+        serving.0.abort();
+        // The aborted task's future, and the signer's `Arc<Vault>` in it,
+        // is dropped before its handle answers.
+        let _ = (&mut serving.0).await;
+        drop(serving);
+        drop(app);
+        drop(server);
+        assert_eq!(
+            Arc::strong_count(&vault),
+            1,
+            "C3 restart: the old server and app hold no Arc<Vault> once dropped"
+        );
+        drop(vault);
+        let vault = Arc::new(Vault::open(vault_dir.path(), VaultConfig::device())?);
+        vault.install_device_keystore(Arc::clone(&keystore));
+        let server = Arc::new(SyncServer::new(Arc::clone(&vault), server_config()?)?);
+        let app = build_app(Arc::clone(&server));
+        let mut fx = Self {
+            app,
+            server,
+            vault,
+            endpoint: String::new(),
+            owner,
+            member,
+            member_person,
+            owner_actor,
+            device_a,
+            device_b,
+            keystore,
+            work,
+            serving: ServingTask(tokio::spawn(async {})),
+            _vault_dir: vault_dir,
+        };
+        fx.listen().await?;
+        Ok(fx)
     }
 
     fn repo_url(&self) -> String {
@@ -470,6 +559,21 @@ fn write_file(path: &Path, bytes: &[u8], executable: bool) -> TestResult {
     Ok(())
 }
 
+/// The served app's config: the host checker backend with the repo's own
+/// `checker.py` helper, shared by a fresh fixture and a restart.
+fn server_config() -> TestResult<SyncServerConfig> {
+    Ok(SyncServerConfig {
+        auth_secret: Some("code-roundtrip-served".into()),
+        merge_queue: Some(MergeQueueCheckerConfig {
+            checker_backend: CheckerBackend::Host,
+            helper: Some(checker_helper_argv()?),
+            toolchain: BTreeMap::from([("posix".to_owned(), "host".to_owned())]),
+            ..MergeQueueCheckerConfig::default()
+        }),
+        ..Default::default()
+    })
+}
+
 /// The trusted helper's argv for the host backend: `python3` from PATH and
 /// the repo's own `checker.py`.
 fn checker_helper_argv() -> TestResult<Vec<String>> {
@@ -574,7 +678,24 @@ struct RoundTrip {
     seal: Value,
 }
 
-async fn round_trip() -> TestResult<RoundTrip> {
+/// What PR 3's tests start from: S1-S4 of [`round_trip`] (register, admit,
+/// import, the owner's checkout, the checked baseline, the accepted
+/// import), with the served `main` still at the admitted commit.
+struct Baseline {
+    fx: Fixture,
+    project: String,
+    code_repo: String,
+    snapshot: String,
+    source_commit: String,
+    source: PathBuf,
+    task: String,
+    checkout: String,
+    epoch: Value,
+    work_ref: String,
+    baseline: String,
+}
+
+async fn imported_baseline() -> TestResult<Baseline> {
     let fx = Fixture::new().await?;
     let project = fx.vault.root_project()?.to_hex();
     let registered = fx
@@ -695,6 +816,35 @@ async fn round_trip() -> TestResult<RoundTrip> {
         json!("promoted"),
         "S4 import accept: {accepted}"
     );
+    Ok(Baseline {
+        fx,
+        project,
+        code_repo,
+        snapshot,
+        source_commit,
+        source,
+        task,
+        checkout,
+        epoch,
+        work_ref,
+        baseline,
+    })
+}
+
+async fn round_trip() -> TestResult<RoundTrip> {
+    let Baseline {
+        fx,
+        project,
+        code_repo,
+        snapshot,
+        source_commit,
+        source,
+        task,
+        checkout,
+        epoch,
+        work_ref,
+        baseline,
+    } = imported_baseline().await?;
 
     // S6: the baseline's first export, cloned with stock git.
     let first = fx
@@ -1419,6 +1569,835 @@ async fn refused_push() -> TestResult {
         listed.starts_with(&source_commit),
         "the served ref is unmoved: {listed}"
     );
+    Ok(())
+}
+
+const NOTES_V1: &[u8] = b"# Notes\n\nDevice B was here.\n";
+
+/// One device of the vault owner: its own credential, TASK, checkout lease
+/// and stock-git worktree, reaching the origin only through its lease door.
+struct Device {
+    cred: Credential,
+    task: String,
+    checkout: String,
+    epoch: Value,
+    url: String,
+    dir: PathBuf,
+}
+
+/// What one landed lease push leaves: its ingress row, its single
+/// proposal and the sealed green revision.
+struct Landed {
+    ingress: Value,
+    proposal: Value,
+    seal: Value,
+}
+
+/// A device on the baseline: its own TASK, its own checkout lease claim
+/// (the same JSON as S2), its bind, and a stock clone of its lease door
+/// at the baseline head.
+async fn device(baseline: &Baseline, name: &str, cred: &Credential) -> TestResult<Device> {
+    let fx = &baseline.fx;
+    let label = format!("{name} works the greeter skill");
+    let task = fx.owner_task(&label)?;
+    let checkout = EntityId::now().to_hex();
+    let lease = fx
+        .ok(
+            &format!("C1 {name} checkout claim"),
+            cred,
+            "vault.code.checkout.claim",
+            json!({
+                "checkout": checkout,
+                "repo": baseline.snapshot,
+                "task": task,
+                "task_class": "edit",
+                "ttl_seconds": 3600,
+                "declared_idempotent": false,
+            }),
+        )
+        .await?;
+    let epoch = lease["epoch"].clone();
+    let bind = fx
+        .ok(
+            &format!("C1 {name} checkout bind"),
+            cred,
+            "vault.code.checkout.bind",
+            json!({"repo": SERVED_REPO, "checkout": checkout, "epoch": epoch, "endpoint": fx.endpoint}),
+        )
+        .await?;
+    let url = text(&format!("C1 {name} checkout bind"), &bind, "remote_url")?.to_owned();
+    let dir = fx.work.path().join(name);
+    let path = dir.display().to_string();
+    fx.git_ok(
+        &format!("C1 {name} clone"),
+        fx.work.path(),
+        Some(cred),
+        &[
+            "clone",
+            "-q",
+            "--branch",
+            BRANCH,
+            url.as_str(),
+            path.as_str(),
+        ],
+    )
+    .await?;
+    let head = fx
+        .git_ok(
+            &format!("C1 {name} clone"),
+            &dir,
+            None,
+            &["rev-parse", "HEAD"],
+        )
+        .await?;
+    assert_eq!(
+        head, baseline.source_commit,
+        "C1 {name}: the clone starts at the baseline head"
+    );
+    Ok(Device {
+        cred: cred.clone(),
+        task,
+        checkout,
+        epoch,
+        url,
+        dir,
+    })
+}
+
+/// Waits for a lease push's landing, as S9-S10 do for the member's direct
+/// push: the push's published row, its ingress, and checker passes until
+/// `repos.get` green_revision is the candidate's last revision; the one
+/// proposal is a received_files proposal.
+async fn land(
+    fx: &Fixture,
+    baseline: &Baseline,
+    commit: &str,
+    expected_old: &str,
+    step: &str,
+) -> TestResult<Landed> {
+    let receipt = fx
+        .published(&format!("{step} push admission"), commit)
+        .await?
+        .ok_or_else(|| format!("{step} push admission: the push has no published row"))?;
+    let provenance = receipt["provenance_receipt"].clone();
+    let mut ingress = Value::Null;
+    let mut seal = None;
+    for _ in 0..PASSES {
+        fx.checker_pass().await?;
+        let (_, answer) = fx
+            .call(
+                &fx.owner,
+                "vault.code.ingress.get",
+                json!({"repo": baseline.code_repo, "provenance": provenance, "ref_name": REF}),
+            )
+            .await?;
+        ingress = answer;
+        let revisions = ingress["candidate"]["revision_refs"].as_array().cloned();
+        let Some(last) = revisions.and_then(|refs| refs.last().cloned()) else {
+            continue;
+        };
+        let repo = fx
+            .ok(
+                &format!("{step} repos.get"),
+                &fx.owner,
+                "vault.code.repos.get",
+                json!({"repo": baseline.code_repo}),
+            )
+            .await?;
+        if repo["green_revision"] == last {
+            seal = Some(last);
+            break;
+        }
+    }
+    let seal =
+        seal.ok_or_else(|| format!("{step} no sealed green after {PASSES} passes: {ingress}"))?;
+    assert_eq!(
+        ingress["old_oid"],
+        json!(expected_old),
+        "{step} ingress: {ingress}"
+    );
+    assert_eq!(
+        ingress["new_oid"],
+        json!(commit),
+        "{step} ingress: {ingress}"
+    );
+    let proposals = ingress["candidate"]["proposal_refs"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(proposals.len(), 1, "{step} one proposal: {ingress}");
+    let view = fx
+        .ok(
+            &format!("{step} proposal view"),
+            &fx.owner,
+            "vault.code.proposal_view",
+            json!({"proposal_ref": proposals[0]}),
+        )
+        .await?;
+    assert_eq!(
+        view["operation_kind"],
+        json!("received_files"),
+        "{step} proposal view: {view}"
+    );
+    Ok(Landed {
+        ingress,
+        proposal: proposals[0].clone(),
+        seal,
+    })
+}
+
+/// L4-06 PR 3 T1: an edit on one device is seen on the other, through the
+/// served lease doors. RA2 makes proposals origin rows (the PROPOSAL side
+/// table, `repo_mutation/proposal.rs:68`), so a device reads them at the
+/// origin's door, as it reads refs; no replica copy exists.
+#[test]
+fn an_edit_on_one_device_is_seen_on_the_other() -> TestResult {
+    on_engine_stack(devices_share_an_edit)
+}
+
+async fn devices_share_an_edit() -> TestResult {
+    let baseline = imported_baseline().await?;
+    let fx = &baseline.fx;
+    let a = device(&baseline, "device-a", &fx.device_a).await?;
+    let b = device(&baseline, "device-b", &fx.device_b).await?;
+
+    // C2: A's edit lands.
+    write_file(&a.dir.join("SKILL.md"), SKILL_V2, false)?;
+    fx.git_ok("C2 A add", &a.dir, None, &["add", "-A"]).await?;
+    let a_commit = fx
+        .commit("C2 A commit", &a.dir, "owen", "device A greets back")
+        .await?;
+    fx.git_ok(
+        "C2 A push",
+        &a.dir,
+        Some(&a.cred),
+        &["push", "-q", a.url.as_str(), "HEAD:refs/heads/main"],
+    )
+    .await?;
+    let a_landed = land(
+        fx,
+        &baseline,
+        &a_commit,
+        &baseline.source_commit,
+        "C2 A land",
+    )
+    .await?;
+
+    // C3: B's concurrent edit cannot push over A's: the push fails and the
+    // origin still names A's commit.
+    write_file(&b.dir.join("NOTES.md"), NOTES_V1, false)?;
+    fx.git_ok("C3 B add", &b.dir, None, &["add", "-A"]).await?;
+    let _b_stale = fx
+        .commit("C3 B commit", &b.dir, "yuki", "device B notes")
+        .await?;
+    let refused = fx
+        .git(
+            &b.dir,
+            Some(&b.cred),
+            &["push", "-q", b.url.as_str(), "HEAD:refs/heads/main"],
+        )
+        .await?;
+    let stderr = String::from_utf8_lossy(&refused.stderr).into_owned();
+    assert!(
+        !refused.status.success() && stderr.contains("rejected"),
+        "C3 B's stale push is rejected as not a fast-forward: {stderr}"
+    );
+    let origin = fx
+        .git_ok(
+            "C3 origin",
+            &b.dir,
+            Some(&b.cred),
+            &["ls-remote", b.url.as_str(), REF],
+        )
+        .await?;
+    assert!(
+        origin.starts_with(&a_commit),
+        "C3 the origin is unchanged at A's commit: {origin}"
+    );
+
+    // C4: B fetches A's commit, rebases onto it, pushes and lands.
+    fx.git_ok(
+        "C4 B fetch",
+        &b.dir,
+        Some(&b.cred),
+        &["fetch", "-q", "origin"],
+    )
+    .await?;
+    let fetched = fx
+        .git_ok("C4 B fetch", &b.dir, None, &["rev-parse", "origin/main"])
+        .await?;
+    assert_eq!(fetched, a_commit, "C4 B's fetch sees A's commit");
+    fx.git_ok(
+        "C4 B rebase",
+        &b.dir,
+        None,
+        &[
+            "-c",
+            "user.name=yuki",
+            "-c",
+            "user.email=yuki@example.com",
+            "rebase",
+            "origin/main",
+        ],
+    )
+    .await?;
+    let b_commit = fx
+        .git_ok("C4 B rebase", &b.dir, None, &["rev-parse", "HEAD"])
+        .await?;
+    fx.git_ok(
+        "C4 B push",
+        &b.dir,
+        Some(&b.cred),
+        &["push", "-q", b.url.as_str(), "HEAD:refs/heads/main"],
+    )
+    .await?;
+    land(fx, &baseline, &b_commit, &a_commit, "C4 B land").await?;
+
+    // C5: B reads A's proposal at the origin under its own credential.
+    let view = fx
+        .ok(
+            "C5 B reads A's proposal",
+            &b.cred,
+            "vault.code.proposal_view",
+            json!({"proposal_ref": a_landed.proposal}),
+        )
+        .await?;
+    assert_eq!(
+        view["operation_kind"],
+        json!("received_files"),
+        "C5 B reads A's proposal: {view}"
+    );
+    Ok(())
+}
+
+/// L4-06 PR 3 T2: a stale lease cannot publish after a cutover. The owner
+/// cuts the served origin's authority to another writer, the live lease's
+/// push is refused and the ref is unchanged, the owner cuts back to this
+/// host's writer, and a fresh lease lands; the pre-cutover lease stays
+/// refused.
+#[test]
+fn a_stale_lease_cannot_publish_after_a_cutover() -> TestResult {
+    on_engine_stack(stale_lease_cutover)
+}
+
+async fn stale_lease_cutover() -> TestResult {
+    let baseline = imported_baseline().await?;
+    let fx = &baseline.fx;
+    let a = device(&baseline, "device-a", &fx.device_a).await?;
+    write_file(&a.dir.join("NOTES.md"), NOTES_V1, false)?;
+    fx.git_ok("C1 A add", &a.dir, None, &["add", "-A"]).await?;
+    fx.commit("C1 A commit", &a.dir, "owen", "device A notes")
+        .await?;
+    let before = fx
+        .ok(
+            "C1 authority get",
+            &fx.owner,
+            "vault.code.origin.authority.get",
+            json!({"repo": SERVED_REPO}),
+        )
+        .await?;
+    assert_eq!(
+        before["authority"],
+        Value::Null,
+        "C1 no cutover yet: {before}"
+    );
+    let host = before["host"]
+        .as_str()
+        .ok_or("C1 authority get: this host names no machine id")?
+        .to_owned();
+
+    // C1: the owner cuts authority to another writer at the current epoch.
+    let other = EntityId::now().to_hex();
+    let cut = fx
+        .ok(
+            "C1 cutover",
+            &fx.owner,
+            "vault.code.origin.authority.set",
+            json!({
+                "repo": SERVED_REPO,
+                "expected_epoch": before["authority"]["epoch"].clone(),
+                "residence": "local-vault",
+                "writer": other,
+                "mirror": false,
+            }),
+        )
+        .await?;
+    let e1 = cut["authority"]["epoch"]
+        .as_u64()
+        .ok_or("C1 cutover: no authority epoch")?;
+    assert_eq!(
+        cut["authority"]["writer"],
+        json!(other),
+        "C1 cutover: {cut}"
+    );
+
+    // C2: A's push through its still-live lease is refused, and the origin
+    // ref is unchanged.
+    let refused = fx
+        .git(
+            &a.dir,
+            Some(&a.cred),
+            &["push", "-q", a.url.as_str(), "HEAD:refs/heads/main"],
+        )
+        .await?;
+    let stderr = String::from_utf8_lossy(&refused.stderr).into_owned();
+    assert!(
+        !refused.status.success(),
+        "C2 A's push after the cutover is refused"
+    );
+    assert!(
+        stderr.contains("another host writes") || stderr.contains("403"),
+        "C2 the refusal is the door's: {stderr}"
+    );
+    let origin = fx
+        .git_ok(
+            "C2 origin",
+            &a.dir,
+            Some(&a.cred),
+            &["ls-remote", a.url.as_str(), REF],
+        )
+        .await?;
+    assert!(
+        origin.starts_with(&baseline.source_commit),
+        "C2 the origin ref is unchanged: {origin}"
+    );
+
+    // C3: the owner cuts back to this host's writer; a fresh lease lands.
+    let back = fx
+        .ok(
+            "C3 cutover",
+            &fx.owner,
+            "vault.code.origin.authority.set",
+            json!({
+                "repo": SERVED_REPO,
+                "expected_epoch": e1,
+                "residence": "local-vault",
+                "writer": host,
+                "mirror": false,
+            }),
+        )
+        .await?;
+    let e2 = back["authority"]["epoch"]
+        .as_u64()
+        .ok_or("C3 cutover: no authority epoch")?;
+    assert!(e2 > e1, "C3 the epoch advances: {back}");
+    let b = device(&baseline, "device-b", &fx.device_b).await?;
+    write_file(&b.dir.join("SKILL.md"), SKILL_V2, false)?;
+    fx.git_ok("C3 B add", &b.dir, None, &["add", "-A"]).await?;
+    let b_commit = fx
+        .commit("C3 B commit", &b.dir, "yuki", "device B greets back")
+        .await?;
+    fx.git_ok(
+        "C3 B push",
+        &b.dir,
+        Some(&b.cred),
+        &["push", "-q", b.url.as_str(), "HEAD:refs/heads/main"],
+    )
+    .await?;
+    land(
+        fx,
+        &baseline,
+        &b_commit,
+        &baseline.source_commit,
+        "C3 B land",
+    )
+    .await?;
+
+    // C4: A's ORIGINAL lease, claimed before C1, refuses a fast-forward
+    // push. A first fetches B's landed commit through that lease and
+    // rebases onto it, so git's own non-fast-forward check cannot be the
+    // refusal.
+    fx.git_ok(
+        "C4 A fetch",
+        &a.dir,
+        Some(&a.cred),
+        &["fetch", "-q", "origin"],
+    )
+    .await?;
+    fx.git_ok(
+        "C4 A rebase",
+        &a.dir,
+        None,
+        &[
+            "-c",
+            "user.name=owen",
+            "-c",
+            "user.email=owen@example.com",
+            "rebase",
+            "origin/main",
+        ],
+    )
+    .await?;
+    let parent = fx
+        .git_ok("C4 A rebase", &a.dir, None, &["rev-parse", "HEAD~1"])
+        .await?;
+    assert_eq!(parent, b_commit, "C4 A's commit sits on B's landed commit");
+    let again = fx
+        .git(
+            &a.dir,
+            Some(&a.cred),
+            &["push", "-q", a.url.as_str(), "HEAD:refs/heads/main"],
+        )
+        .await?;
+    let origin = fx
+        .git_ok(
+            "C4 origin",
+            &b.dir,
+            Some(&b.cred),
+            &["ls-remote", b.url.as_str(), REF],
+        )
+        .await?;
+    assert!(
+        !again.status.success() && origin.starts_with(&b_commit),
+        "C4 a lease claimed before the cutover still publishes after it: {} / {origin}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+    Ok(())
+}
+
+/// L4-06 PR 3 T3: offline work on a fenced lease is not lost (owner ruling
+/// L4-06-FENCED = B: the refused push records nothing, the commit stays in
+/// the device's worktree, and the device pushes it again under a new
+/// lease; the engine adds nothing).
+#[test]
+fn offline_work_on_a_fenced_lease_is_not_lost() -> TestResult {
+    on_engine_stack(fenced_lease_keeps_work)
+}
+
+async fn fenced_lease_keeps_work() -> TestResult {
+    let baseline = imported_baseline().await?;
+    let fx = &baseline.fx;
+    let a = device(&baseline, "device-a", &fx.device_a).await?;
+    let b = device(&baseline, "device-b", &fx.device_b).await?;
+
+    // C1: A commits offline; B takes A's checkout over at its epoch.
+    write_file(&a.dir.join("SKILL.md"), SKILL_V2, false)?;
+    fx.git_ok("C1 A add", &a.dir, None, &["add", "-A"]).await?;
+    let a_commit = fx
+        .commit("C1 A commit", &a.dir, "owen", "device A greets back")
+        .await?;
+    let a_epoch = a
+        .epoch
+        .as_u64()
+        .ok_or("C1 takeover: A's epoch is no number")?;
+    let taken = fx
+        .ok(
+            "C1 takeover",
+            &b.cred,
+            "vault.code.checkout.takeover",
+            json!({"checkout": a.checkout, "expected_epoch": a.epoch}),
+        )
+        .await?;
+    assert_eq!(
+        taken["epoch"],
+        json!(a_epoch + 1),
+        "C1 takeover moves the epoch: {taken}"
+    );
+
+    // C2: A's push through its old lease is refused; the origin is
+    // unchanged; A's worktree still holds the commit.
+    let refused = fx
+        .git(
+            &a.dir,
+            Some(&a.cred),
+            &["push", "-q", a.url.as_str(), "HEAD:refs/heads/main"],
+        )
+        .await?;
+    assert!(
+        !refused.status.success(),
+        "C2 A's push on the fenced lease is refused"
+    );
+    let origin = fx
+        .git_ok(
+            "C2 origin",
+            &b.dir,
+            Some(&b.cred),
+            &["ls-remote", b.url.as_str(), REF],
+        )
+        .await?;
+    assert!(
+        origin.starts_with(&baseline.source_commit),
+        "C2 the origin ref is unchanged: {origin}"
+    );
+    let commit_arg = format!("{a_commit}^{{commit}}");
+    fx.git_ok(
+        "C2 worktree",
+        &a.dir,
+        None,
+        &["cat-file", "-e", commit_arg.as_str()],
+    )
+    .await?;
+    let head = fx
+        .git_ok("C2 worktree", &a.dir, None, &["rev-parse", "HEAD"])
+        .await?;
+    assert_eq!(head, a_commit, "C2 A's worktree still holds the commit");
+    assert!(
+        fx.published("C2 no admission", &a_commit).await?.is_none(),
+        "C2 the refused push records nothing"
+    );
+
+    // C3: A claims a new lease and pushes the SAME commit id through it.
+    let task = fx.owner_task("device A retries the greeter skill")?;
+    let checkout = EntityId::now().to_hex();
+    let lease = fx
+        .ok(
+            "C3 A checkout claim",
+            &a.cred,
+            "vault.code.checkout.claim",
+            json!({
+                "checkout": checkout,
+                "repo": baseline.snapshot,
+                "task": task,
+                "task_class": "edit",
+                "ttl_seconds": 3600,
+                "declared_idempotent": false,
+            }),
+        )
+        .await?;
+    let epoch = lease["epoch"].clone();
+    let bind = fx
+        .ok(
+            "C3 A checkout bind",
+            &a.cred,
+            "vault.code.checkout.bind",
+            json!({"repo": SERVED_REPO, "checkout": checkout, "epoch": epoch, "endpoint": fx.endpoint}),
+        )
+        .await?;
+    let url = text("C3 A checkout bind", &bind, "remote_url")?;
+    let refspec = format!("{a_commit}:{}", REF);
+    fx.git_ok(
+        "C3 A push",
+        &a.dir,
+        Some(&a.cred),
+        &["push", "-q", url, refspec.as_str()],
+    )
+    .await?;
+    // `land` asserts the ingress new_oid is A's commit and its one
+    // received_files proposal.
+    land(
+        fx,
+        &baseline,
+        &a_commit,
+        &baseline.source_commit,
+        "C3 A land",
+    )
+    .await?;
+    Ok(())
+}
+
+/// L4-06 PR 3 T4: a restart keeps proposals, review state and head. The
+/// app, the server and the serving task are dropped and rebuilt on the
+/// same vault dir with the same keystore; every `Arc<Vault>` is gone
+/// before the reopen.
+#[test]
+fn a_restart_keeps_proposals_review_state_and_head() -> TestResult {
+    on_engine_stack(restart_keeps_state)
+}
+
+async fn restart_keeps_state() -> TestResult {
+    let mut baseline = imported_baseline().await?;
+    let cred_a = baseline.fx.device_a.clone();
+    let cred_b = baseline.fx.device_b.clone();
+    let a = device(&baseline, "device-a", &cred_a).await?;
+    let mut b = device(&baseline, "device-b", &cred_b).await?;
+
+    // C1: A's edit lands.
+    write_file(&a.dir.join("SKILL.md"), SKILL_V2, false)?;
+    baseline
+        .fx
+        .git_ok("C1 A add", &a.dir, None, &["add", "-A"])
+        .await?;
+    let a_commit = baseline
+        .fx
+        .commit("C1 A commit", &a.dir, "owen", "device A greets back")
+        .await?;
+    baseline
+        .fx
+        .git_ok(
+            "C1 A push",
+            &a.dir,
+            Some(&a.cred),
+            &["push", "-q", a.url.as_str(), "HEAD:refs/heads/main"],
+        )
+        .await?;
+    let a_landed = land(
+        &baseline.fx,
+        &baseline,
+        &a_commit,
+        &baseline.source_commit,
+        "C1 A land",
+    )
+    .await?;
+
+    // C2: record the pre-restart answers.
+    let fx = &baseline.fx;
+    let repos = fx
+        .ok(
+            "C2 repos.get",
+            &fx.owner,
+            "vault.code.repos.get",
+            json!({"repo": baseline.code_repo}),
+        )
+        .await?;
+    let proposal = fx
+        .ok(
+            "C2 proposal view",
+            &fx.owner,
+            "vault.code.proposal_view",
+            json!({"proposal_ref": a_landed.proposal}),
+        )
+        .await?;
+    assert_eq!(
+        repos["green_revision"], a_landed.seal,
+        "C2 green is A's sealed revision"
+    );
+    let observed = fx
+        .ok(
+            "C2 observe",
+            &fx.owner,
+            "vault.code.merge_queue.observe",
+            json!({"repo": baseline.code_repo, "batches": a_landed.ingress["candidate"]["batch_refs"].clone()}),
+        )
+        .await?;
+    let lease = fx
+        .ok(
+            "C2 checkout get",
+            &fx.owner,
+            "vault.code.checkout.get",
+            json!({"checkout": b.checkout}),
+        )
+        .await?;
+    assert_eq!(
+        lease["value"]["state"],
+        json!("active"),
+        "C2 B's lease is active: {lease}"
+    );
+    let head = fx
+        .git_ok(
+            "C2 origin",
+            &b.dir,
+            Some(&b.cred),
+            &["ls-remote", b.url.as_str(), REF],
+        )
+        .await?;
+    assert!(
+        head.starts_with(&a_commit),
+        "C2 B's lease door names A's commit: {head}"
+    );
+    for (what, value) in [
+        (
+            "repos.get queue.green_commit",
+            &repos["queue"]["green_commit"],
+        ),
+        ("observe green_commit", &observed["green_commit"]),
+        (
+            "observe green_export.tested_revision",
+            &observed["green_export"]["tested_revision"],
+        ),
+        ("checkout.get epoch", &lease["value"]["epoch"]),
+    ] {
+        assert!(!value.is_null(), "C2 {what} is present before the restart");
+    }
+
+    // C3: restart on the same dir with the same keystore, and point B's
+    // worktree at the new endpoint, same path.
+    baseline.fx = baseline.fx.restart().await?;
+    let suffix = b
+        .url
+        .split_once("/lease/")
+        .ok_or("C3 B's lease URL names no lease")?
+        .1
+        .to_owned();
+    b.url = format!("{}/lease/{suffix}", baseline.fx.endpoint);
+    baseline
+        .fx
+        .git_ok(
+            "C3 B set-url",
+            &b.dir,
+            None,
+            &["remote", "set-url", "origin", b.url.as_str()],
+        )
+        .await?;
+
+    // C4: every pre-restart answer still reads the same.
+    let fx = &baseline.fx;
+    let repos_after = fx
+        .ok(
+            "C4 repos.get",
+            &fx.owner,
+            "vault.code.repos.get",
+            json!({"repo": baseline.code_repo}),
+        )
+        .await?;
+    assert_eq!(
+        repos_after["green_revision"], repos["green_revision"],
+        "C4 green_revision is unchanged"
+    );
+    assert_eq!(
+        repos_after["queue"]["green_commit"], repos["queue"]["green_commit"],
+        "C4 green_commit is unchanged"
+    );
+    let proposal_after = fx
+        .ok(
+            "C4 proposal view",
+            &fx.owner,
+            "vault.code.proposal_view",
+            json!({"proposal_ref": a_landed.proposal}),
+        )
+        .await?;
+    assert_eq!(proposal_after, proposal, "C4 the proposal reads the same");
+    let observed_after = fx
+        .ok(
+            "C4 observe",
+            &fx.owner,
+            "vault.code.merge_queue.observe",
+            json!({"repo": baseline.code_repo, "batches": a_landed.ingress["candidate"]["batch_refs"].clone()}),
+        )
+        .await?;
+    assert_eq!(
+        observed_after["green_commit"], observed["green_commit"],
+        "C4 observe names the same green"
+    );
+    assert_eq!(
+        observed_after["green_export"]["tested_revision"],
+        observed["green_export"]["tested_revision"],
+        "C4 observe names the same tested revision"
+    );
+    let lease_after = fx
+        .ok(
+            "C4 checkout get",
+            &fx.owner,
+            "vault.code.checkout.get",
+            json!({"checkout": b.checkout}),
+        )
+        .await?;
+    assert_eq!(
+        lease_after["value"]["epoch"], lease["value"]["epoch"],
+        "C4 B's checkout keeps its epoch"
+    );
+    assert_eq!(
+        lease_after["value"]["task"],
+        json!(b.task),
+        "C4 B's checkout keeps its TASK"
+    );
+    assert_eq!(
+        lease_after["value"]["state"],
+        json!("active"),
+        "C4 B's checkout is still active: {lease_after}"
+    );
+    let head_after = fx
+        .git_ok(
+            "C4 origin",
+            &b.dir,
+            Some(&b.cred),
+            &["ls-remote", b.url.as_str(), REF],
+        )
+        .await?;
+    assert_eq!(head_after, head, "C4 the lease door answers the same head");
+    let kept = fx
+        .git_ok("C4 worktree", &a.dir, None, &["rev-parse", "HEAD"])
+        .await?;
+    assert_eq!(kept, a_commit, "C4 A's worktree still holds its commit");
     Ok(())
 }
 
