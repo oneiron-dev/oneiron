@@ -25,13 +25,19 @@ pub fn replay_entity(
 
 /// [`replay_entity`] with the row's carried Rule A birth, stamped in the
 /// transaction that admits the row. A malformed or conflicting birth is left
-/// out; the row stands.
+/// out; the row stands. A world-access grant or default is dropped: it stands
+/// only on the node that wrote it (RULING L2-53-CEILING).
 pub fn replay_entity_with_birth(
     vault: &Vault,
     entity: ReplicatedEntity<'_>,
     birth: Option<&crate::provenance::birth::RowBirth>,
     tier: ImportTier,
 ) -> crate::Result<()> {
+    if entity.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+        && super::local_claims::world_access_claim(entity.body)
+    {
+        return Ok(());
+    }
     let replayed = vault.with_write_txn_grouped(|txn| {
         vault
             .batch_in()

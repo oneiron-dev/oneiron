@@ -112,6 +112,7 @@ pub mod untangle_regressions;
 pub mod verb_hook_ask;
 pub mod wake_d1_park_release;
 pub mod workspace_token;
+pub mod world_access;
 #[cfg(feature = "sync")]
 pub mod world_follow;
 #[cfg(feature = "sync")]

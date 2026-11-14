@@ -18,3 +18,12 @@ pub const PREDICATE_WORLD_ACCESS_ALLOWED_SET: &str = "core.world_access.allowed_
 /// clamping it: an agent must never reach a wider read through its own
 /// default. Consumed only when the turn supplies no explicit selection.
 pub const PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET: &str = "core.world_access.default_subset";
+
+/// Whether `predicate` names one of the two world-access tiers. Both are local
+/// authority (ARCH-0067 #phasing; RULING L2-53-CEILING, 14 Nov 2026): no sync
+/// door ships them, every door that replays a peer's rows drops them, and the
+/// whole-vault import keeps them as archive data.
+pub fn is_world_access_tier_predicate(predicate: &str) -> bool {
+    predicate == PREDICATE_WORLD_ACCESS_ALLOWED_SET
+        || predicate == PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
+}

@@ -421,6 +421,10 @@ fn world_access_row_in_force(body: &ClaimBody, at: u64) -> bool {
 /// it would honour. Defaults also require the subject's envelope-stamped writer
 /// identity. Another writer's row cannot win precedence or cause a value-decode
 /// refusal, even when its value is malformed.
+///
+/// Every row read here was written on this node: both tiers are local
+/// authority, so no sync door ships them and replay drops them (RULING
+/// L2-53-CEILING; `sync::local_claims::world_access_claim`).
 fn world_access_rows(
     store: &Store,
     rtxn: &RoTxn<'_>,
