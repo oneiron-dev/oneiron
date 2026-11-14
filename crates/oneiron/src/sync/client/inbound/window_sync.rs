@@ -817,10 +817,12 @@ impl SyncClient {
         key: &WindowKey,
         payload: &[u8],
     ) -> std::result::Result<(), TransportError> {
-        window
-            .doc
-            .import(payload)
-            .map_err(|_| TransportError::InvalidPayload("window import failed"))?;
+        crate::sync::window::import_into_live_window(
+            self.manager.materializer(),
+            &window.doc,
+            payload,
+        )
+        .map_err(|_| TransportError::InvalidPayload("window import failed"))?;
         if key.world().is_some() && !window.doc.get_map("retained_claim_worlds").is_empty() {
             // Observer B cannot materialize a bodyless CLAIM on an entity-map
             // callback: its paired witness/tombstone may arrive later in the

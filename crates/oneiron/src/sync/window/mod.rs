@@ -517,14 +517,17 @@ pub(crate) fn prune_subsumed_window_updates_in_txn(
 }
 
 /// Imports `bytes` from a peer into `doc`, a registered window's document that
-/// other threads reach, with its Observer callbacks. Every peer import into a
-/// live window goes through here (L7-45).
+/// other threads reach, with its Observer callbacks, under the live-window
+/// turn ([`Materializer::enter_live_window`]): it waits for an indexed pass
+/// over a live window to end, and a pass waits for it. Every peer import into
+/// a live window goes through here (L7-45). Hold nothing else across it: the
+/// caller's discard, persist or open runs after it returns.
 pub(crate) fn import_into_live_window(
     materializer: &Materializer,
     doc: &LoroDoc,
     bytes: &[u8],
 ) -> std::result::Result<loro::ImportStatus, loro::LoroError> {
-    let _ = materializer;
+    let _turn = materializer.enter_live_window();
     doc.import(bytes)
 }
 

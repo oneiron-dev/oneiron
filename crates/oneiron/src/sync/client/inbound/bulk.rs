@@ -100,7 +100,13 @@ impl SyncClient {
                     own_device.as_ref(),
                     (&window.key, &window.doc),
                     doc_state,
-                    || window.doc.import(doc_state),
+                    || {
+                        crate::sync::window::import_into_live_window(
+                            self.manager.materializer(),
+                            &window.doc,
+                            doc_state,
+                        )
+                    },
                 )
                 .map_err(|_| TransportError::InvalidPayload("bulk doc state import failed"))?;
                 if let Err(e) = window.persist_state(&self.vault) {
@@ -182,7 +188,13 @@ impl SyncClient {
                     own_device.as_ref(),
                     (&key, &window.doc),
                     doc_state,
-                    || window.doc.import(doc_state),
+                    || {
+                        crate::sync::window::import_into_live_window(
+                            self.manager.materializer(),
+                            &window.doc,
+                            doc_state,
+                        )
+                    },
                 );
                 if imported.is_err() {
                     self.manager.discard_window(&WindowKey::new(window_key));

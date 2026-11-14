@@ -255,7 +255,10 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
             // tombstones map between this commit and the persist below
             // (mirrors `Vault::write_crdt_tombstone`; lock order
             // materializer → LMDB txn matches every other holder, and the
-            // registry lock is NOT held here).
+            // registry lock is NOT held here). The live-window turn spans the
+            // merge and the indexed commit below (L7-45): no peer import lands
+            // between this tombstone index's build and the commit.
+            let _turn = manager.materializer().enter_live_window();
             merge_persisted_state_into_doc(vault, &window.doc, window_key)?;
             let _guard = manager.materializer().lock();
             let vv_before = window.doc.oplog_vv();

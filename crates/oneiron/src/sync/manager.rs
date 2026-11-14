@@ -38,9 +38,13 @@
 //!   transition and never waits; opens and unloads of other windows never
 //!   wait on it. The registry mutex covers only lookups, the fast path,
 //!   registration and removal.
-//! - Lock order: **registry lock → materializer lock** (a cold open takes the
+//! - Lock order: **registry lock → live-window turn → materializer lock**
+//!   (the turn, [`Materializer::enter_live_window`], serializes a peer import
+//!   into a live window with an indexed pass over one, L7-45; an import holds
+//!   it only around `doc.import`, so it never waits on the registry lock).
+//!   The registry lock before the materializer lock: a cold open takes the
 //!   materializer lock for step-5 forward remat, and an unload for its
-//!   persist, without the registry lock).
+//!   persist, without the registry lock.
 //!   Observer callbacks take ONLY the materializer lock and never the
 //!   registry lock, so observer traffic cannot deadlock against
 //!   open/unload. Code built on the manager must never acquire the registry

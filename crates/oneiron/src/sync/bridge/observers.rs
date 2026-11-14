@@ -71,6 +71,41 @@ pub struct Materializer {
     mutex: Mutex<()>,
     lease_vault_id: u64,
     live_query_tees: Mutex<Vec<std::sync::Weak<dyn LiveQueryTee>>>,
+    /// The live-window turn: see [`Materializer::enter_live_window`].
+    live_window_turns: LiveWindowTurns,
+}
+
+/// Which thread holds the live-window turn, and how many nested turns it
+/// holds (L7-45).
+#[derive(Default)]
+struct LiveWindowTurns {
+    holder: Mutex<Option<(std::thread::ThreadId, usize)>>,
+    released: std::sync::Condvar,
+}
+
+/// One thread's live-window turn: dropping the last nested turn of the
+/// holding thread releases it. Not `Send`: a turn is released by the thread
+/// that took it, so it is never held across an `.await`.
+pub(crate) struct LiveWindowTurn<'a> {
+    turns: &'a LiveWindowTurns,
+    _held_by_this_thread: std::marker::PhantomData<*const ()>,
+}
+
+impl Drop for LiveWindowTurn<'_> {
+    fn drop(&mut self) {
+        let mut holder = self
+            .turns
+            .holder
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *holder = match *holder {
+            Some((thread, depth)) if depth > 1 => Some((thread, depth - 1)),
+            _ => None,
+        };
+        if holder.is_none() {
+            self.turns.released.notify_all();
+        }
+    }
 }
 
 impl Default for Materializer {
@@ -79,6 +114,7 @@ impl Default for Materializer {
             mutex: Mutex::new(()),
             lease_vault_id: crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
             live_query_tees: Mutex::new(Vec::new()),
+            live_window_turns: LiveWindowTurns::default(),
         }
     }
 }
@@ -93,6 +129,7 @@ impl Materializer {
             mutex: Mutex::new(()),
             lease_vault_id,
             live_query_tees: Mutex::new(Vec::new()),
+            live_window_turns: LiveWindowTurns::default(),
         }
     }
 
@@ -128,6 +165,40 @@ impl Materializer {
 
     pub fn lease_vault_id(&self) -> u64 {
         self.lease_vault_id
+    }
+
+    /// Takes the live-window turn (L7-45; ARCH-0023b `#tombstone-index-built`):
+    /// an import into a window document other threads reach, with its
+    /// Observer callbacks, and an indexed sync pass over such a document never
+    /// overlap. A pass's `TombstoneIndex` reads a case-shifted tombstone key
+    /// from a snapshot taken when it is built, and only an import writes one;
+    /// a pass holds the turn from before that build to its end, so no import
+    /// lands between them.
+    ///
+    /// Re-entrant on the holding thread: Observer callbacks run inside the
+    /// import that holds the turn, and a nested pass shares it. Lock order:
+    /// registry lock, then this turn, then [`Self::lock`]. Never take it while
+    /// holding the materializer lock, and never take the registry lock while
+    /// holding it (Observer callbacks never take the registry lock).
+    pub(crate) fn enter_live_window(&self) -> LiveWindowTurn<'_> {
+        let turns = &self.live_window_turns;
+        let this_thread = std::thread::current().id();
+        let mut holder = turns
+            .holder
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while holder.is_some_and(|(thread, _)| thread != this_thread) {
+            holder = turns
+                .released
+                .wait(holder)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        let depth = holder.map_or(0, |(_, depth)| depth);
+        *holder = Some((this_thread, depth + 1));
+        LiveWindowTurn {
+            turns,
+            _held_by_this_thread: std::marker::PhantomData,
+        }
     }
 
     /// Acquires the materializer lock.

@@ -179,6 +179,9 @@ fn forward_with_recovery(
     // The rows this pass writes came from the doc: the live mirror must not
     // rewrite a carrier with them.
     let _import = crate::sync::manager::import_scope();
+    // No peer import lands in the doc from the tombstone index's build to the
+    // pass's end (L7-45): the index reads a case-shifted key from a snapshot.
+    let _turn = materializer.enter_live_window();
     let (tombstones, native_documents) = open(vault, doc, window_key, trusted)?;
     #[cfg(oneiron_test_support)]
     run_index_built_hook();
