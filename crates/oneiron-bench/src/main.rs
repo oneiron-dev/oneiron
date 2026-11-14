@@ -36,6 +36,9 @@
 //! * `eval route-calibration` — known-answer yes/no cases answered by the
 //!   real decision ladder in a fresh vault, labelled after their answers,
 //!   and the per-route calibration report over those pairs (Engine row 22229).
+//! * `eval phonetic` — cross-script name cases asked through the code rung,
+//!   the learned rung and both, with R@1, R@5, MRR and the false-positive
+//!   rate per script pair (CROSS-ARCH-0013 §11).
 //!
 //! The full MIRACL / Mr.TyDi / internal SEA judgment-set retrieval
 //! matrix is not shipped here; this binary ships the bench drivers,
@@ -146,6 +149,10 @@ fn print_help() {
                                        the real decision ladder in a fresh vault\n\
                                        and report route-conditioned calibration\n\
                                        (Engine row 22229)\n\
+          eval phonetic               ask cross-script name cases through the\n\
+                                       code rung, the learned rung and both, and\n\
+                                       report R@1, R@5, MRR and false positives\n\
+                                       per script pair (CROSS-ARCH-0013)\n\
                                        outcome-ingest and tune open an existing\n\
                                        vault and require its full reopen\n\
                                        configuration: --vault --dimensions\n\
