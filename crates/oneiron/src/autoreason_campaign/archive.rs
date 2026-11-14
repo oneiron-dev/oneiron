@@ -11,11 +11,17 @@ use crate::workspace_roster::GoalRecord;
 use super::{CampaignError, CampaignResult};
 
 mod axes;
+pub(crate) mod axes_job;
 mod producers;
 pub(crate) mod records;
 pub use axes::{
     ArchiveAxesProposal, ArchiveAxesRequest, ArchiveAxis, ArchiveDescriptor,
     CoachArchiveAxesRecipe, propose_campaign_archive,
+};
+pub use axes_job::{
+    ArchiveAxesBrief, ArchiveAxesHost, ArchiveAxesReply, ArchiveAxesSample,
+    CampaignArchiveAxesQueued, CampaignArchiveProposalRequest, CampaignArchiveProposalState,
+    CampaignArchiveProposeAxes,
 };
 pub(crate) use producers::erase_producer_actor_in_txn;
 pub use producers::{

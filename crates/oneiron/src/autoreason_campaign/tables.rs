@@ -13,6 +13,11 @@ crate::side_table::side_tables! {
     /// Key: ().
     AUTOREASON_BEAM_DEFAULT: VaultMeta b"authoring/default-beam-winner" LegacyJson
         [restore: content] [family: unclassified] [tier: canonical];
+    /// One request for the Coach's output-archive axes (ARM05 P2): the campaign root, the task,
+    /// goal, ruler and samples it is for, and its state: pending, proposed with the receipt the
+    /// Coach's producer record holds, no descriptor, or refused. Key: id16 (request id).
+    AUTORESEARCH_ARCHIVE_AXES_REQUEST: VaultMeta b"autoresearch:archive-axes-request:v1:" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// One engine-minted producer record behind an output archive's receipt id: the Coach's axes
     /// proposal, a typed placement or a quality score, with what it was bound to. Install,
     /// repropose and record resolve every receipt they carry here. An erase drops the records

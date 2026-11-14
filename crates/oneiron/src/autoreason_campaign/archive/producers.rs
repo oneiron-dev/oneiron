@@ -17,17 +17,18 @@ use super::{
     ArchiveOutputRef, ArchiveOutputScore, ArchiveQualityMetric, CampaignArchivePin,
     CampaignArchivePlacement, propose_campaign_archive,
 };
-use crate::autoreason_campaign::research;
+use crate::autoreason_campaign::research::{self, ResearchBinding};
 use crate::llm::decision::{DecisionAnswer, TypedDecision};
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_optimize::JudgeRubric;
+use crate::workspace_roster::GoalRecord;
 use crate::{EntityId, Error, Result, Vault};
 
 const PRODUCERS: SideTable<[u8; 16], ArchiveProducerRecord, Named> =
     SideTable::new(&side_table::AUTORESEARCH_ARCHIVE_PRODUCER);
 
 /// How the Coach reached an axes descriptor.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ArchiveAxesMethod {
     /// The categorical recipe on the Coach's model seat.
@@ -225,6 +226,74 @@ pub(crate) fn ruler_in_txn(
         .ok_or_else(refused)
 }
 
+/// What one axes proposal is for: the campaign root, the bunched campaign a
+/// re-proposal follows, and the task, goal, ruler and samples it reads.
+pub(super) struct AxesPremises<'a> {
+    pub(super) root: EntityId,
+    pub(super) from: Option<EntityId>,
+    pub(super) task: EntityId,
+    pub(super) project: EntityId,
+    pub(super) goal_ref: EntityId,
+    pub(super) quality_metric: &'a ArchiveQualityMetric,
+    pub(super) sample_outputs: &'a [ArchiveOutputRef],
+}
+
+/// The outputs an archive scored, sorted and each once: a re-proposal's
+/// samples.
+pub(super) fn measured_outputs(record: &records::CampaignArchiveRecord) -> Vec<ArchiveOutputRef> {
+    record
+        .scores
+        .iter()
+        .map(|score| score.output.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// Checks an axes proposal's premises as install (or repropose) checks them:
+/// no archive at the root yet, its binding, the campaign's current goal, a
+/// TASK, held output revisions, the ruler and, for a re-proposal, a bunched
+/// archive of the same task, goal and ruler over its measured outputs.
+/// Returns the root's binding and the goal.
+pub(super) fn axes_premises_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    premises: &AxesPremises<'_>,
+) -> Result<(ResearchBinding, GoalRecord)> {
+    let root = attempt(premises.root)?;
+    if ARCHIVES.contains(&vault.store, txn, root.as_bytes())? {
+        return Err(invalid(
+            "an archive descriptor is immutable; bind a new campaign",
+        ));
+    }
+    let binding = research::binding_in_txn(vault, txn, root)?;
+    let goal = records::goal_in_txn(vault, txn, &binding, premises.project, premises.goal_ref)?;
+    records::task_in_txn(vault, txn, &premises.task)?;
+    for output in premises.sample_outputs {
+        records::output_in_txn(vault, txn, output)?;
+    }
+    ruler_in_txn(vault, txn, premises.quality_metric)?;
+    if let Some(from) = premises.from {
+        let mut samples = premises.sample_outputs.to_vec();
+        samples.sort();
+        let old = records::read_in_txn(vault, txn, attempt(from)?)?;
+        let bunched = records::rebuild(&old)?.needs_axes_reproposal();
+        if from == premises.root
+            || !bunched
+            || old.project != premises.project
+            || old.pin.task() != premises.task
+            || old.pin.goal_ref() != premises.goal_ref
+            || old.pin.quality_metric() != premises.quality_metric
+            || measured_outputs(&old) != samples
+        {
+            return Err(invalid(
+                "a re-proposal follows a bunched archive of the same task, goal and ruler, over its measured outputs",
+            ));
+        }
+    }
+    Ok((binding, goal))
+}
+
 /// Records the Coach's axes proposal for `mint.root`, after the same checks
 /// install (or repropose) runs on it, and returns the proposal install takes.
 pub(crate) fn mint_axes_in_txn(
@@ -232,19 +301,19 @@ pub(crate) fn mint_axes_in_txn(
     txn: &mut heed::RwTxn<'_>,
     mint: ArchiveAxesMint,
 ) -> Result<ArchiveAxesProposal> {
-    let root = attempt(mint.root)?;
-    if ARCHIVES.contains(&vault.store, txn, root.as_bytes())? {
-        return Err(invalid(
-            "an archive descriptor is immutable; bind a new campaign",
-        ));
-    }
-    let binding = research::binding_in_txn(vault, txn, root)?;
-    let goal = records::goal_in_txn(vault, txn, &binding, mint.project, mint.goal_ref)?;
-    records::task_in_txn(vault, txn, &mint.task)?;
-    for output in &mint.sample_outputs {
-        records::output_in_txn(vault, txn, output)?;
-    }
-    ruler_in_txn(vault, txn, &mint.quality_metric)?;
+    let (binding, goal) = axes_premises_in_txn(
+        vault,
+        txn,
+        &AxesPremises {
+            root: mint.root,
+            from: mint.from,
+            task: mint.task,
+            project: mint.project,
+            goal_ref: mint.goal_ref,
+            quality_metric: &mint.quality_metric,
+            sample_outputs: &mint.sample_outputs,
+        },
+    )?;
     match (&mint.method, &mint.descriptor) {
         (ArchiveAxesMethod::CoachRecipe { .. }, ArchiveDescriptor::Axes { .. })
         | (ArchiveAxesMethod::EmbeddingClusters, ArchiveDescriptor::EmbeddingClusters { .. }) => {}
@@ -252,29 +321,6 @@ pub(crate) fn mint_axes_in_txn(
     }
     let mut samples = mint.sample_outputs.clone();
     samples.sort();
-    if let Some(from) = mint.from {
-        let old = records::read_in_txn(vault, txn, attempt(from)?)?;
-        let bunched = records::rebuild(&old)?.needs_axes_reproposal();
-        let measured: Vec<_> = old
-            .scores
-            .iter()
-            .map(|score| score.output.clone())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        if from == mint.root
-            || !bunched
-            || old.project != mint.project
-            || old.pin.task() != mint.task
-            || old.pin.goal_ref() != mint.goal_ref
-            || old.pin.quality_metric() != &mint.quality_metric
-            || measured != samples
-        {
-            return Err(invalid(
-                "a re-proposal follows a bunched archive of the same task, goal and ruler, over its measured outputs",
-            ));
-        }
-    }
     let proposal = ArchiveAxesProposal {
         receipt: vault.new_entity_id()?,
         descriptor: mint.descriptor.clone(),
