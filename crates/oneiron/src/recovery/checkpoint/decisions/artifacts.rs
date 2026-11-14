@@ -18,8 +18,8 @@ const VERSIONS: SideTable<(EntityId, u64), BlobArtifactVersion, Raw> =
     SideTable::new(&side_table::BLOB_ARTIFACT_VERSION);
 
 /// Whether a retained output may be published, and whether a cached result
-/// naming it may be stored or hit, as its taint decides: the refs its
-/// sidecar and its blob body carry (`exhaust_taint_refs_in_txn`), classified
+/// naming it may be stored or hit, as its taint decides: the refs its blob
+/// body, or its artifacts' bodies, carry (`exhaust_taint_refs_in_txn`), classified
 /// against the custody records as they stand (`taint_state_for_refs_in_txn`).
 /// Publication admits a clean or live-tainted output, and a stale-tainted one
 /// only under the stale-publish dial (`allow_stale_publish_in_txn`); the

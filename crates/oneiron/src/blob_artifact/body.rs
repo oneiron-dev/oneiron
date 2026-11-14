@@ -87,6 +87,41 @@ pub(crate) fn validate_blob_artifact_body_bytes(bytes: &[u8]) -> Result<()> {
     decode_blob_artifact_body(bytes).map(|_| ())
 }
 
+/// `bytes`, a stored BLOB_ARTIFACT body, with its `secret_taint.refs` key set
+/// to `refs` (absent when empty). Every other entry keeps its value and its
+/// place, and a source landing's audience stamp stays the last entry, as its
+/// codec requires (`source_audience_obligation`).
+pub(crate) fn body_with_secret_taint_refs(
+    bytes: &[u8],
+    refs: &[SecretTaintRef],
+) -> Result<Vec<u8>> {
+    let Value::Map(mut entries) = read_value(bytes, "body")? else {
+        return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+            "body must be a MessagePack map",
+        )));
+    };
+    entries.retain(|(key, _)| key.as_str() != Some(KEY_SECRET_TAINT_REFS));
+    if !refs.is_empty() {
+        let at = entries
+            .iter()
+            .position(|(key, _)| key.as_str() == Some(SOURCE_AUDIENCE_REQUIRED_KEY))
+            .unwrap_or(entries.len());
+        entries.insert(
+            at,
+            (
+                Value::from(KEY_SECRET_TAINT_REFS),
+                taint_refs_to_value(refs),
+            ),
+        );
+    }
+    let out = encode_value(
+        &Value::Map(entries),
+        "BLOB artifact body MessagePack encode failed",
+    )?;
+    validate_blob_artifact_body_bytes(&out)?;
+    Ok(out)
+}
+
 fn decode_blob_artifact_body_value(value: &Value) -> Result<BlobArtifactBody> {
     let Value::Map(entries) = value else {
         return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
