@@ -454,13 +454,25 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         provider_id: &str,
         attachment: &MailAttachmentRef,
     ) -> Result<Option<Vec<u8>>> {
+        self.attachment_charging(source, provider_id, attachment, &|_| Ok(()))
+    }
+
+    fn attachment_charging(
+        &self,
+        source: &MailSyncSource,
+        provider_id: &str,
+        attachment: &MailAttachmentRef,
+        charge: &dyn Fn(MailCall) -> Result<()>,
+    ) -> Result<Option<Vec<u8>>> {
         let message_url = Self::message_url(provider_id)?;
         // An attachment Gmail keeps apart is fetched by its id; a small one
-        // rides inline in its part of the whole message.
+        // rides inline in its part of the whole message, which is read whole
+        // and charged as that read.
         if let Some(id) = &attachment.provider_attachment_id {
-            return self.attachment_by_id(source, &message_url, id);
+            return self.attachment_by_id(source, &message_url, id, charge);
         }
         let params = [("format", "full".to_owned())];
+        charge(MailCall::Full)?;
         let Some(message) = self.get(source, &message_url, &params)? else {
             return Ok(None);
         };
@@ -476,7 +488,7 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         // A part described without its id (an imported copy) whose bytes
         // Gmail keeps apart: fetched by the id its part names now.
         match part.pointer("/body/attachmentId").and_then(Value::as_str) {
-            Some(id) => self.attachment_by_id(source, &message_url, id),
+            Some(id) => self.attachment_by_id(source, &message_url, id, charge),
             None => Ok(None),
         }
     }
@@ -505,12 +517,14 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
 }
 
 impl HttpGmailMailWire<'_> {
-    /// The bytes of the attachment `id` of the message at `message_url`.
+    /// The bytes of the attachment `id` of the message at `message_url`,
+    /// its one request charged through `charge` before it is made.
     fn attachment_by_id(
         &self,
         source: &MailSyncSource,
         message_url: &str,
         id: &str,
+        charge: &dyn Fn(MailCall) -> Result<()>,
     ) -> Result<Option<Vec<u8>>> {
         let plain = id
             .bytes()
@@ -519,6 +533,7 @@ impl HttpGmailMailWire<'_> {
             return Err(refused("gmail_mail_attachment_id_not_plain"));
         }
         let url = format!("{message_url}/attachments/{id}");
+        charge(MailCall::Attachment)?;
         let Some(answer) = self.get(source, &url, &[])? else {
             return Ok(None);
         };
