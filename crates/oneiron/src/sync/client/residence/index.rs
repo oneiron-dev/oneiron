@@ -125,13 +125,14 @@ struct CatalogueReply {
 }
 
 /// The months a member lane's catalogue call names (MEMBER-SYNC-CATALOGUE = A): the
-/// current month and its predecessors, at most `current_window_count`, each
-/// `YYYY-MM`. The home reads at most its catalogue cap (36); the budgets'
-/// `current_window_count` is the work slice.
+/// current month and its predecessors, each `YYYY-MM`: at most
+/// `current_window_count` (the budgets' work slice) and at most
+/// [`crate::sync::carrier::MAX_CATALOGUE_MONTHS`], since the home refuses a
+/// longer list.
 fn catalogue_months(now_secs: u64, current_window_count: usize) -> Vec<String> {
     let mut months = Vec::new();
     let mut next = Some(WindowKey::from_timestamp(now_secs));
-    for _ in 0..current_window_count {
+    for _ in 0..current_window_count.min(crate::sync::carrier::MAX_CATALOGUE_MONTHS) {
         let Some(key) = next else { break };
         next = key.previous_month();
         months.push(key.as_str().to_owned());

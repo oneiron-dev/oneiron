@@ -132,6 +132,11 @@ pub const UPGRADE_REFUSAL_HEADER: &str = "oneiron-upgrade-refusal";
 /// a world-bounded pact, whose ceiling is narrower than All, and per-world
 /// lanes are not built yet, so the lane parks and the member sees why.
 pub const UPGRADE_REFUSAL_WORLD_BOUNDED_PACT: &str = "world-bounded-pact";
+/// The most months one `residence.windows` catalogue call names (MEMBER-SYNC
+/// D6). The home refuses a longer list, so a member lane asks for at most
+/// this many, whatever its budgets' `current_window_count` (MEMBER-SYNC PR 2
+/// review F1).
+pub const MAX_CATALOGUE_MONTHS: usize = 36;
 
 /// Why the home refused a sync upgrade with 403, when it names one
 /// (MEMBER-SYNC-WORLD-PACT = C). A bare 403 carries `None`: the credential is
