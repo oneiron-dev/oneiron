@@ -5,8 +5,11 @@
 //! fails `MDB_BAD_RSLOT`. Each case reads the one repo ASSET whose bytes hold a
 //! value custody knows, through one door that took the pass inside a snapshot
 //! it already held: the native raw body, a graph-fs cat, a `vault.get` and the
-//! in-process hydrate an MCP tool reads by. Each is served, with the value as
-//! its handle wherever the door returns the bytes.
+//! in-process hydrate an MCP tool reads by. Each is served with the value
+//! masked. A door that returns the bytes serves the file's masked copy: the
+//! value's span overwritten by filler of the same length, as a repo file's
+//! projection and every file copy read (file_key_masks), not a `[secret `
+//! handle, which only lifted record text and a container's text member carry.
 //!
 //! Fleet: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test repo_asset_known_pass_single_snapshot`
 #![cfg(oneiron_test_support)]
@@ -129,7 +132,7 @@ fn known_pass_fixture() -> KnownPassFixture {
         .expect("owner creates the holder");
     // The ASSET is put before custody knows the value, so its bytes are
     // stored raw and only a masked read's known-value pass masks them.
-    let body = format!("staging deploy uses {KNOWN_PASS_SECRET} for access");
+    let body = known_pass_body(KNOWN_PASS_SECRET);
     let asset = known_pass_asset_id(blake3::hash(body.as_bytes()).as_bytes());
     vault
         .put_entity(
@@ -230,21 +233,28 @@ fn known_pass_slip_read_key(vault: &Vault) -> ScopedReadActorKey {
     ScopedReadActorKey::from_verified_slip(&verified).expect("read key")
 }
 
+/// The repo asset's body with `value` in its place.
+fn known_pass_body(value: &str) -> String {
+    format!("staging deploy uses {value} for access")
+}
+
 fn known_pass_holds(bytes: &[u8], needle: &[u8]) -> bool {
     bytes.windows(needle.len()).any(|window| window == needle)
 }
 
-/// `bytes` hold the known value as its handle and not the value itself.
+/// `bytes` are the asset's masked copy: the known value's span overwritten by
+/// filler of the same length, every other byte as stored.
 fn known_pass_assert_masked(bytes: &[u8], door: &str) {
     assert!(
         !known_pass_holds(bytes, KNOWN_PASS_SECRET.as_bytes()),
         "{door} served the value custody knows: {}",
         String::from_utf8_lossy(bytes)
     );
-    assert!(
-        known_pass_holds(bytes, b"[secret "),
-        "{door} served no handle in its place: {}",
-        String::from_utf8_lossy(bytes)
+    let masked = known_pass_body(&"*".repeat(KNOWN_PASS_SECRET.len()));
+    assert_eq!(
+        String::from_utf8_lossy(bytes),
+        masked,
+        "{door} served the asset's masked copy"
     );
 }
 
@@ -253,7 +263,7 @@ fn known_pass_memory(fixture: &KnownPassFixture) -> Memory<'_> {
 }
 
 #[test]
-fn native_raw_entity_body_serves_a_repo_asset_with_the_known_value_as_its_handle() {
+fn native_raw_entity_body_serves_a_repo_asset_with_the_known_value_masked() {
     let fixture = known_pass_fixture();
     let memory = known_pass_memory(&fixture);
     let body = memory
@@ -265,7 +275,7 @@ fn native_raw_entity_body_serves_a_repo_asset_with_the_known_value_as_its_handle
 }
 
 #[test]
-fn graph_fs_cat_serves_a_repo_asset_with_the_known_value_as_its_handle() {
+fn graph_fs_cat_serves_a_repo_asset_with_the_known_value_masked() {
     let fixture = known_pass_fixture();
     let memory = known_pass_memory(&fixture);
     let output = memory

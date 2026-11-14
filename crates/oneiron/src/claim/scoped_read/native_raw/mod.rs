@@ -29,8 +29,8 @@ impl<'a> NativeRawRead<'a> {
     /// release scan still reads a credential, answer `None`, as a withheld row
     /// does (FIX NATIVE-RAW-ENTITY-BODY-SHIPS-SCAN-OFF-CREDENTIALS). A masked
     /// reader's snapshot is the known-value pass's own (FIX 8966), so a repo
-    /// file reads with each value custody knows as its handle and the thread
-    /// holds one read transaction (FIX REPO-ASSET-KNOWN-PASS-NESTED-SNAPSHOT).
+    /// file reads with each value custody knows masked and the thread holds
+    /// one read transaction (FIX REPO-ASSET-KNOWN-PASS-NESTED-SNAPSHOT).
     pub fn entity_body(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
         let reads = [PointRead::id(*id)];
         if self.lane.actor_key.secret_sight() != crate::secret_custody::SecretSight::Masked {
