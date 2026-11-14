@@ -25,7 +25,7 @@ use super::{CanVerbAnswer, CanVerbGate, WitnessTurn};
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryResult};
 use crate::error::Error;
 use crate::verbs::{AgentVerb, CanVerb, TaskAnswerRequest};
-use crate::workspace_roster::{JoinRequest, RoomPinPolicySet, RoomPinRequest};
+use crate::workspace_roster::{JoinRequest, RoomClosedSet, RoomPinPolicySet, RoomPinRequest};
 use crate::{EdgeActorClass, EntityId};
 
 /// The reason `person` carries for a verb whose row asks a person's proof.
@@ -114,6 +114,10 @@ impl Memory<'_> {
                 self.rooms_pins_policy_set_admission(&verb_input::<RoomPinPolicySet>(
                     name, params,
                 )?),
+                true,
+            ),
+            "vault.rooms.closed.set" => (
+                self.rooms_closed_set_admission(&verb_input::<RoomClosedSet>(name, params)?),
                 true,
             ),
             "vault.rooms.invite" => (

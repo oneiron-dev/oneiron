@@ -2,6 +2,7 @@
 mod attendee;
 mod body;
 mod chat_breakpoint;
+mod closed;
 mod deletion;
 mod live_speakers;
 mod membership;
@@ -28,6 +29,7 @@ pub(crate) use chat_breakpoint::{
     erase_chat_breakpoints_in_txn, forget_chat_breakpoint_in_txn,
     forget_withdrawn_summary_breakpoints_in_txn, scrub_chat_breakpoint_actor_in_txn,
 };
+pub(crate) use closed::CLOSED_UPDATES;
 pub(crate) use deletion::ROOM_ERASURES;
 pub(crate) use deletion::{
     guard_room_message_delete, pin_room_message_edge, record_author, replay_room_message_tombstone,

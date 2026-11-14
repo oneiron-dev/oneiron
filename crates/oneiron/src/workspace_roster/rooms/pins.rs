@@ -105,30 +105,43 @@ impl PinnedBody {
                 crate::store::conversation_body::encode(body)?
             }
         };
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &room)?
-            .ok_or(Error::EntityNotFound)?;
-        if raw.len() < ENTITY_METADATA_HEADER_LEN {
-            return Err(Error::CorruptedIndex("conversation header"));
-        }
-        let header = EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("conversation header"))?;
         PIN_UPDATES.put(&vault.store, txn, &room, &[1])?;
-        vault
-            .batch_in()
-            .put(
-                &room,
-                ENTITY_TYPE_CONVERSATION,
-                crate::TimeRange {
-                    start: header.occurred_start,
-                    end: header.occurred_end,
-                },
-                header.learned_at,
-                &bytes,
-            )
-            .apply(txn)?;
+        put_room_body_in(vault, txn, room, &bytes)?;
         PIN_UPDATES.delete(&vault.store, txn, &room)?;
         Ok(())
     }
+}
+
+/// Writes `bytes` as `room`'s body, keeping the room's header times, in the
+/// caller's write transaction. The door that calls it sets its own marker
+/// around the write, as the all-writer guard asks.
+pub(super) fn put_room_body_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    room: EntityId,
+    bytes: &[u8],
+) -> Result<()> {
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &room)?
+        .ok_or(Error::EntityNotFound)?;
+    if raw.len() < ENTITY_METADATA_HEADER_LEN {
+        return Err(Error::CorruptedIndex("conversation header"));
+    }
+    let header =
+        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("conversation header"))?;
+    vault
+        .batch_in()
+        .put(
+            &room,
+            ENTITY_TYPE_CONVERSATION,
+            crate::TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            header.learned_at,
+            bytes,
+        )
+        .apply(txn)?;
+    Ok(())
 }
 
 /// The pins `room`'s stored body holds, in their stored order, as `txn`
