@@ -219,6 +219,7 @@ pub(super) fn remove_member(
     )?;
     crate::dreamer_runner::deindex_dreamer_milestone_claim(store, txn, id)?;
     crate::llm::deindex_dreamer_step_claim(store, txn, id)?;
+    crate::access_grant::reindex_companion_grant(store, txn, id, None)?;
     // Both read the stored row, so they run before it goes.
     crate::store::identity_hints::reindex_identity_hints(store, txn, id, None)?;
     crate::ports::reindex_named_entities(store, txn, id, None)?;
