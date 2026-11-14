@@ -27,6 +27,9 @@ oneiron-docedit = { version = "0.1.0", path = "../oneiron-docedit" }
 oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
 oneiron-skill-attribution = { version = "0.1.0", path = "../oneiron-skill-attribution" }
 oneiron-vault-contract = { version = "0.1.0", path = "../oneiron-vault-contract" }
+# L10-08 (CROSS-ARCH-0013 rung 1): Han characters' Mandarin readings for the
+# `ipa:` sound keys. MIT, no dependencies; its data is built in by build.rs.
+pinyin = { version = "0.11", default-features = false, features = ["plain", "heteronym"] }
 rand = "0.8"
 rand_core = { workspace = true }
 rmp-serde = { workspace = true }
