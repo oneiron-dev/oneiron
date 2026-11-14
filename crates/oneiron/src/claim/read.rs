@@ -122,6 +122,25 @@ impl Vault {
         }
     }
 
+    /// Whether any of `ids` is a foreign copy as `rtxn` holds it
+    /// ([`Self::claim_is_foreign_copy_in_txn`]).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn any_foreign_copy_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        ids: &[EntityId],
+    ) -> Result<bool> {
+        for id in ids {
+            if self.claim_is_foreign_copy_in_txn(rtxn, id)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// The targeted claim and the actual history carriers the same read
     /// consulted. These ids name source entities, not grants or a frozen
     /// snapshot of their bytes.

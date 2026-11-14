@@ -163,6 +163,19 @@ pub(crate) fn claim_is_foreign_copy(body: &ClaimBody) -> bool {
         .is_some_and(crate::entity_id::is_foreign_world_id_range)
 }
 
+/// The refusal of a write that names a foreign copy as its source: a
+/// derivation batch citing one, a PsychProfile read from one, or a model's
+/// proposal whose prompt carried one (L7-02).
+pub(crate) const SOURCE_FOREIGN_COPY: &str = "gate.deny.source_foreign_copy";
+
+/// [`SOURCE_FOREIGN_COPY`] as the gate's refusal, which aborts the write.
+pub(crate) fn foreign_copy_source_refusal() -> Error {
+    Error::Gate(crate::error::GateError::GateWriteRejected {
+        outcome: "deny",
+        reason_codes: vec![SOURCE_FOREIGN_COPY],
+    })
+}
+
 pub(crate) fn psych_mirror_claim_affect_salience(body: &ClaimBody) -> Result<f32> {
     let salience = body.salience.unwrap_or(0.0);
     let affect = crate::write_envelope::affect_trigger::decode_affect_trigger_claim(body)?.map_or(

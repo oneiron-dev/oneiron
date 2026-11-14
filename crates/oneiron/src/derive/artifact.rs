@@ -4,6 +4,7 @@
 
 use super::batch::{DerivedPersonAbout, DerivedPsychProfile};
 use super::commit::{ItemContext, ItemOutcome, allowance_receipt_in_txn, refusal_receipt_in_txn};
+use crate::claim::SOURCE_FOREIGN_COPY;
 use crate::dreamer_consolidation::{about_facts_in, publish_person_about_in_txn};
 use crate::error::{Error, RecordError, Result};
 use crate::gate::{DeriveCapability, derive_verdict_in_txn};
@@ -156,6 +157,11 @@ pub(super) fn stage_profile_in_txn(
         .any(Option::is_none)
     {
         return refuse(vault, txn, context, id, PROFILE_SOURCE_UNREAD);
+    }
+    // A foreign copy is never a source for a write (L7-02): a profile read
+    // from one is refused, as a batch citing one is.
+    if vault.psych_profile_reads_foreign_copy_in_txn(txn, &item.profile)? {
+        return refuse(vault, txn, context, id, SOURCE_FOREIGN_COPY);
     }
     let mut savepoint = vault.store.env.nested_write_txn(txn)?;
     match vault.put_psych_profile_in_txn(&mut savepoint, &id, &item.profile) {

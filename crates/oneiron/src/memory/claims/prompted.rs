@@ -3,6 +3,8 @@
 //! worlds they lie in hold for the proposal on every later read and sync,
 //! settings he changes later included (`settings::device_only` follows a
 //! claim's prompt inputs). The rows are named by ref, never copied as text.
+//! A prompt that carried a foreign copy makes no proposal: a foreign copy is
+//! never a source for a write (L7-02).
 
 use super::*;
 use crate::provenance::birth::RowBirth;
@@ -14,7 +16,9 @@ impl Memory<'_> {
     /// carried `producers`, read as `read` through `door`: the proposal's
     /// birth names each producer as a prompt input
     /// ([`Self::prompted_birth`]). With no producer it is
-    /// [`Self::claim_propose`].
+    /// [`Self::claim_propose`]. A producer that is a foreign copy refuses
+    /// the proposal in its committing writer
+    /// ([`Self::refuse_foreign_copy_producers_in_txn`]).
     pub fn claim_propose_prompted(
         &self,
         input: &ClaimInput,
@@ -28,9 +32,30 @@ impl Memory<'_> {
             false,
             Some(ClaimApprovalStatus::Proposed),
             || {},
-            &|_: &heed::RoTxn<'_>| Ok(()),
+            &|txn: &heed::RoTxn<'_>| self.refuse_foreign_copy_producers_in_txn(txn, producers),
             birth.as_ref(),
         )
+    }
+
+    /// Refuses, in the proposal's committing writer `txn`, a prompt that
+    /// carried a foreign copy among `producers`: the model's words would
+    /// name the copy as their source, and a foreign copy is never a source
+    /// for a write (L7-02; federation.md #model, Guest federation row). The
+    /// answer was already served from the copy in the session; only the
+    /// durable proposal is refused.
+    ///
+    /// # Errors
+    ///
+    /// The gate's refusal `SOURCE_FOREIGN_COPY`, and storage errors.
+    pub(super) fn refuse_foreign_copy_producers_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        producers: &[EntityId],
+    ) -> Result<(), Error> {
+        if self.vault.any_foreign_copy_in_txn(txn, producers)? {
+            return Err(crate::claim::foreign_copy_source_refusal());
+        }
+        Ok(())
     }
 
     /// The birth of `input`, proposed through `door` by this handle's actor

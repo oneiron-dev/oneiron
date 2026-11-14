@@ -7,7 +7,9 @@
 //! with `Vault::put_claim`, as the inquiry landing writes one.
 //!
 //! Red on main: the batch citing the copy commits, the evidence predicate
-//! admits the copy, the brief share naming its world is created, and the
+//! admits the copy, a profile read from the copy is stored (through a
+//! derivation and directly), a model's proposal whose prompt carried the
+//! copy is stored, the brief share naming its world is created, and the
 //! guest ask's disclosure check does not refuse it. Guards (green on main
 //! too): the same doors take a local claim, a local world, a TURN.
 //!
@@ -27,18 +29,24 @@ use oneiron::claim::{
 };
 use oneiron::consent::{AudienceBound, DisclosureClass, DisclosureEnvelope, GrantBound};
 use oneiron::entity_id::ForeignWorldId;
+use oneiron::memory::ClaimInput;
 use oneiron::note::TakeTarget;
+use oneiron::psych_profile::{
+    PsychProfile, PsychProfileConfidence, PsychProfileKey, PsychProfileSource,
+    PsychProfileSourceWords, psych_profile_entity_id,
+};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::share::Share;
 use oneiron::store::GateDecisionId;
 use oneiron::store::ports::ManualClock;
+use oneiron::store::revision_ref::RevisionRef;
 use oneiron::task_verb::{
     ConsultPayloadRef, TaskAskDefault, TaskAskGuest, TaskAskQuestion, TaskAskSpec, TaskAskTarget,
 };
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derive::{
-    Claim, Derived, Evidence, Named, batches_of, claim_evidence_admissible, commit,
-    commit_with_sources, grant_core_read, source_version, supports,
+    Claim, Derived, Evidence, Named, Profile, batches_of, claim_evidence_admissible, commit,
+    commit_with_sources, grant_core_read, profile_stored, source_version, supports,
 };
 use oneiron::test_doors::guest_ask_disclosure::check_disclosure;
 use oneiron::test_doors::steward::dreamer;
@@ -47,7 +55,7 @@ use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActo
 use serde_json::json;
 
 const READER: &str = "reader";
-const FOREIGN_COPY_REFUSAL: &str = "gate.deny.derive.source_foreign_copy";
+const FOREIGN_COPY_REFUSAL: &str = "gate.deny.source_foreign_copy";
 /// The ask's own refusal (`tasks.ask.fact`), which tells nothing more.
 const ASK_FACT_REFUSAL: &str = "tasks.ask.fact";
 const T0: u64 = 1_800_000_000;
@@ -249,6 +257,169 @@ fn the_evidence_predicate_never_admits_a_foreign_copy() {
     );
     // Guard: an approved user-stated claim is.
     assert!(claim_evidence_admissible(&fixture.vault, fixture.rows.local).expect("read"));
+}
+
+impl DeriveFixture {
+    /// Commits the Dreamer's profile of the person read from `document`:
+    /// whether it landed, and its reasons.
+    fn commit_profile(&self, run: &str, document: EntityId) -> (bool, Vec<String>) {
+        let committed = commit(
+            &self.vault,
+            self.dreamer,
+            EdgeActorClass::System,
+            run,
+            &[Derived::Profile(Profile {
+                local: "profile",
+                subject: self.rows.person,
+                document,
+            })],
+        )
+        .expect("commit");
+        let [item] = committed.items.as_slice() else {
+            panic!("one item: {:?}", committed.items);
+        };
+        (item.landed, item.reasons.clone())
+    }
+}
+
+#[test]
+fn a_derived_profile_read_from_a_foreign_copy_is_refused() {
+    let fixture = derive_fixture();
+    // Guard: the Dreamer reads the copy, so the refusal is never the unread one.
+    fixture.version(fixture.rows.copy);
+    assert_eq!(
+        fixture.commit_profile("run-profile-copy", fixture.rows.copy),
+        (false, vec![FOREIGN_COPY_REFUSAL.to_owned()]),
+        "a profile read from a foreign copy is refused"
+    );
+    assert!(
+        !profile_stored(&fixture.vault, fixture.rows.person).expect("read"),
+        "no profile is stored"
+    );
+
+    // Guard: the same profile read from the local claim lands.
+    let (landed, reasons) = fixture.commit_profile("run-profile-local", fixture.rows.local);
+    assert!(landed, "the profile lands: {reasons:?}");
+    assert!(profile_stored(&fixture.vault, fixture.rows.person).expect("read"));
+}
+
+/// The profile of `subject` read whole from `document`, as the derive
+/// door's `Profile` item builds it.
+fn whole_record_profile(subject: EntityId, document: EntityId) -> PsychProfile {
+    PsychProfile::new(
+        subject,
+        "steady and curious",
+        "A steady, curious person.",
+        "They meet new things steadily and with curiosity.",
+        vec![document],
+        PsychProfileConfidence::new(0.8, 0.7, 0.6).expect("a confidence"),
+    )
+    .expect("a profile")
+    .with_sources(vec![PsychProfileSource {
+        revision_ref: document,
+        document_ref: document,
+        world_ref: None,
+        document_revision: RevisionRef([0; 16]),
+        words: PsychProfileSourceWords::Record { content: [0; 32] },
+    }])
+    .expect("its source")
+}
+
+#[test]
+fn a_profile_put_from_a_foreign_copy_is_refused() {
+    let fixture = derive_fixture();
+    let person = fixture.rows.person;
+    let id = psych_profile_entity_id(&PsychProfileKey {
+        person,
+        facet: None,
+        world: None,
+    });
+    let refused = fixture
+        .vault
+        .put_psych_profile(&id, &whole_record_profile(person, fixture.rows.copy))
+        .expect_err("a profile read from a foreign copy is refused");
+    assert!(
+        format!("{refused:?}").contains(FOREIGN_COPY_REFUSAL),
+        "{refused:?}"
+    );
+    assert!(
+        !profile_stored(&fixture.vault, person).expect("read"),
+        "no profile is stored"
+    );
+
+    // Guard: the same profile read from the local claim is stored.
+    fixture
+        .vault
+        .put_psych_profile(&id, &whole_record_profile(person, fixture.rows.local))
+        .expect("a profile read from a local claim is stored");
+    assert!(profile_stored(&fixture.vault, person).expect("read"));
+}
+
+#[test]
+fn a_proposal_from_a_prompt_that_carried_a_foreign_copy_is_refused() {
+    // An agent that reads proposes, as `claim_approval_recall.rs` opens one.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
+    vault.ensure_embedded_owner_actor().expect("the owner");
+    let rows = rows(&vault);
+    let agent = put(&vault, ENTITY_TYPE_PERSON, b"yuki");
+    vault
+        .install_read_permit_for_test(WriteActor::new(agent, EdgeActorClass::Agent))
+        .expect("the agent reads");
+    let memory = vault.memory(agent, EdgeActorClass::Agent);
+    let proposal = |id: EntityId| ClaimInput {
+        id: Some(id.to_hex()),
+        predicate: "profile.note".to_owned(),
+        subject_ref: rows.person.to_hex(),
+        value: json!("owen is away this week"),
+        confidence: 0.8,
+        source: "generated".to_owned(),
+        world_ref: None,
+        relationship_ref: None,
+        scope: None,
+        valid_from: None,
+        valid_to: None,
+        occurred_at: None,
+        learned_at: None,
+        salience: None,
+        confidence_details: None,
+    };
+
+    let from_copy = EntityId::now();
+    let refused = memory
+        .claim_propose_prompted(
+            &proposal(from_copy),
+            "test.prompted",
+            &[rows.copy],
+            &[b"owen is out Thursday".as_slice()],
+        )
+        .expect_err("a proposal from a prompt that carried a foreign copy is refused");
+    assert_eq!(
+        refused
+            .gate_denial
+            .as_ref()
+            .map(|denial| denial.reason_codes.clone()),
+        Some(vec![FOREIGN_COPY_REFUSAL.to_owned()]),
+        "{refused:?}"
+    );
+    assert!(
+        vault.get_claim(&from_copy).expect("read").is_none(),
+        "no proposal is stored"
+    );
+
+    // Guard: the same proposal from a prompt that carried the local claim is
+    // stored, proposed.
+    let from_local = EntityId::now();
+    let receipt = memory
+        .claim_propose_prompted(
+            &proposal(from_local),
+            "test.prompted",
+            &[rows.local],
+            &[b"owen takes his coffee black".as_slice()],
+        )
+        .expect("a proposal from a prompt that carried a local claim is stored");
+    assert_eq!(receipt.approval, "proposed");
+    assert!(vault.get_claim(&from_local).expect("read").is_some());
 }
 
 /// One rooted, owner-bound vault, as `delegation_expiry_wall_clock.rs` opens

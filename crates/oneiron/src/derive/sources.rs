@@ -8,6 +8,7 @@
 
 use super::batch::{DerivationBatch, DerivationStamp};
 use crate::Vault;
+use crate::claim::SOURCE_FOREIGN_COPY;
 use crate::error::{Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::snapshot_read::SourceVersionCheck;
@@ -18,11 +19,6 @@ pub const SOURCE_MOVED: &str = "gate.deny.derive.source_moved";
 
 /// The refusal of a batch citing a source the caller no longer reads.
 pub const SOURCE_WITHHELD: &str = "gate.deny.derive.source_withheld";
-
-/// The refusal of a batch citing a foreign copy: a claim in a received
-/// foreign WORLD, which a pact's WORLD copy or a copied inquiry answer lands
-/// in.
-const SOURCE_FOREIGN_COPY: &str = "gate.deny.derive.source_foreign_copy";
 
 /// Rechecks every source version of `batch` in `txn` under the committing
 /// actor's own read.

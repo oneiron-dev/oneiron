@@ -153,7 +153,9 @@ impl Memory<'_> {
     /// The proxy's independent Proposed exchange, under its still-live
     /// read and remember rows, checked in the claim's committing writer. Its
     /// birth names the rows the answer's prompt carried, `producers`, read
-    /// as `read` through `door` (FIX 8192, [`Self::prompted_birth`]).
+    /// as `read` through `door` (FIX 8192, [`Self::prompted_birth`]). A
+    /// producer that is a foreign copy refuses it
+    /// ([`Self::refuse_foreign_copy_producers_in_txn`]).
     pub fn claim_propose_for_proxy(
         &self,
         input: &ClaimInput,
@@ -193,7 +195,7 @@ impl Memory<'_> {
                     },
                 ));
             }
-            Ok(())
+            self.refuse_foreign_copy_producers_in_txn(txn, producers)
         };
         self.claim_propose_carried_guarded(input, &guard, birth.as_ref())
     }
