@@ -158,7 +158,6 @@ pub use self::redaction::{
     FilteredFeedback, FilteredText, TextFilter, TextFilterError, TextFilterIdentity,
     apply_recognised_spans,
 };
-pub(crate) use self::report::ReportRestoreOutcome;
 pub use self::report::{
     COACH_FEEDBACK_DELIVERY_FACET, IssueCategory, REPORT_SIGNATURE_LANE, REPORT_SIGNATURE_SCHEMA,
     REPORT_SIGNATURE_VERB, REPORT_VERB, ReportDeliveryHold, ReportDeliveryKey,
@@ -170,6 +169,7 @@ pub use self::report::{
     ReportRequest, ReportReview, ReportRoute, ReportRoutedPayload, ReportSignature,
     ReportSignatureTransport, ReportSignatureTransportRequest, ReportStatus, ReportTextSendBinding,
 };
+pub(crate) use self::report::{ReportRestoreOutcome, restorable_archived_report};
 pub use self::triage::{
     COACH_FEEDBACK_SWEEP_FACET, COACH_FEEDBACK_TRIAGE_FACET, COACH_FEEDBACK_TRIAGE_PARK_OWNER,
     COACH_FEEDBACK_TRIAGE_PART_FACET, COACH_FEEDBACK_TRIAGE_SYNTHESIS_FACET,
