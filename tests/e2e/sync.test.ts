@@ -2,7 +2,7 @@ import { afterAll, test } from "bun:test";
 import type { FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import type { DevicePeer } from "./support/engine.ts";
-import { PublicHttpError } from "./support/clients.ts";
+import { PublicHttpError, credentialParts } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { defineFile, expect } from "./support/run.ts";
 import { SyncLinkProxy } from "./support/sync_link.ts";
@@ -113,6 +113,31 @@ function sync01DeviceMachine(device: DevicePeer): string {
   if (typeof machine !== "string" || !/^[0-9a-f]{32}$/.test(machine)) throw new Error("device enrol printed no enrolment.machine");
   return machine;
 }
+/** One machine's answer as GET/POST /v1/owner/machines/answer show it. */
+type HomeMachineAnswer = { readonly machine: string; readonly role: string | null; readonly revision: string };
+/**
+ * The owner answers his home "yours", as a surface asks him once the vault
+ * first serves. Until he answers, the serving install's MACHINE stands in the
+ * `unanswered` role, which proves no connection (MachineRole::answered), so a
+ * device he joins to it takes no own-device grant from it and never admits
+ * him. Called right after the home starts, so the checkpoint the device's
+ * pairing link pins already holds the answer. Read back on the home.
+ * Doors: GET /v1/owner/roots (this install's machine), GET and POST
+ * /v1/owner/machines/answer.
+ */
+async function answerHomeYours(home: EngineFixture): Promise<void> {
+  const roots = await home.client.request<{ machine?: string | null }>("GET", "/v1/owner/roots");
+  const machine = roots.body.machine;
+  if (typeof machine !== "string" || !/^[0-9a-f]{32}$/.test(machine)) throw new Error("GET /v1/owner/roots named no home machine");
+  const path = `/v1/owner/machines/answer?machine=${machine}`;
+  const before = (await home.client.request<HomeMachineAnswer>("GET", path)).body;
+  if (before.role !== "unanswered") throw new Error(`the home's MACHINE stood as ${String(before.role)} before the owner answered, not unanswered`);
+  await home.client.request<HomeMachineAnswer>("POST", "/v1/owner/machines/answer", { machine, answer: "yours", seen: before.revision });
+  const after = (await home.client.request<HomeMachineAnswer>("GET", path)).body;
+  expect(after.machine).toBe(machine);
+  expect(after.role).toBe("yours");
+  expect(after.revision).not.toBe(before.revision);
+}
 /** Half-open Unicode-scalar span of the one occurrence of `word` (the authored note is ASCII). */
 function sync01Span(text: string, word: string): Sync01Span {
   const start = text.indexOf(word);
@@ -149,15 +174,13 @@ async function sync01Facts(client: Sync01Client, predicates: readonly string[]):
  *   counts whole messages per direction across sockets, so it cannot select
  *   an update over a session hello or a residence RPC; Sol review, 10 Nov);
  *   in-socket drop and reorder (no recovery promise).
- * DEFECT (red since E2E job 12b, Thu 12 Nov 2026; FIX row
- *   DEVICE-JOIN-CENSUS-MISSES-CARRIERS-AND-HOME-ROOM, fixed by #7172): the
- *   CLI `device enrol` into the device's empty vault exits 1 with "storage
- *   error: MDB_BAD_RSLOT". The empty-vault join guard ensure_joinable
- *   (device_sync/enrolment/join.rs) calls Vault::first_non_bootstrap_row,
- *   which opens a second read transaction beside its own. With that read on
- *   one snapshot, the census still refuses a fresh vault on its seeded root
- *   home-room CONVERSATION. Not worked around: a pre-seeded device would not
- *   be a fresh second machine.
+ * DEFECT (red since E2E job 23, Fri 13 Nov 2026; FIX row
+ *   REPLICA-NOTE-READ-400-BEFORE-DOCUMENT): the device is admitted now, but
+ *   after its sync-all switch its notes.read of the home's note answers 400
+ *   "invalid NOTE body: NOTE head document missing" about 3.8 s later: the
+ *   replica holds the NOTE row without its head document (note/storage.rs
+ *   load_stored_to). Earlier reds, fixed: the enrol join guard (#7172), the
+ *   join proof and the own-device grant catch-up (this stack).
  */
 suite.test(test, "SYNC-01", "Two machines of one vault converge on home's anchored note edits and on a claim written on each side, once each and authored by the owner, after a partition and a reconnect", async () => {
   const scenario = await sync01Scenario();
@@ -168,6 +191,7 @@ suite.test(test, "SYNC-01", "Two machines of one vault converge on home's anchor
   const predicates = [sync01Predicate(northFact.label), sync01Predicate(southFact.label)] as const;
 
   const home = await EngineFixture.start({ id: "SYNC-01", profile });
+  await answerHomeYours(home);
   const owner = home.pairedActor.principalRef;
   const link = await SyncLinkProxy.start({ target: home.url });
   // Fixture kind "annotation" is not a shipped NOTE kind; "research" is (vault-readable, durable).
@@ -178,7 +202,7 @@ suite.test(test, "SYNC-01", "Two machines of one vault converge on home's anchor
   const mode = await device.client.call("vault.residence.mode", { machine, mode: "all" });
   if (mode.state !== "applied") throw new Error(`device residence switch answered ${mode.state}`);
   expect(mode.mode).toBe("all");
-  await awaitPublic(() => device.client.call("vault.notes.read", { note_ref: note.id_hex }),
+  await awaitPublic(() => withWireReason("SYNC-01 device notes.read", device.client.call("vault.notes.read", { note_ref: note.id_hex })),
     read => read.value?.markdown === authored.base && read.value.source === "local",
     { label: "device holds the authored note", timeoutMs: 15_000 });
   const scope = await ownerBaseClaimScope(home.client, owner);
@@ -412,10 +436,13 @@ async function sync04Search(device: DevicePeer, query: string): Promise<Sync04Se
  *   carries only the owner's credential (a narrow reader paired on the home
  *   and a public own-device grant revocation are not set up); the exact hit
  *   set of "opal lantern" (lexical search may also rank other "lantern" items).
- * DEFECT (red since E2E job 12b, Thu 12 Nov 2026; FIX row
- *   DEVICE-JOIN-CENSUS-MISSES-CARRIERS-AND-HOME-ROOM, fixed by #7172): the
- *   device never joins. `device enrol` exits 1 with MDB_BAD_RSLOT at the
- *   empty-vault join guard, as in SYNC-01.
+ * DEFECT (red since E2E job 23, Fri 13 Nov 2026; FIX row
+ *   DEVICE-HOME-SEARCH-MISSES-UNOPENED-NOTE): the device is admitted and the
+ *   open, offline and restart steps pass, but its search through home
+ *   answers residence {source "home", complete true, hits []} for the
+ *   unopened note for the whole 10 s poll. Earlier reds, fixed: the enrol
+ *   join guard (#7172), the join proof and the own-device grant catch-up
+ *   (this stack).
  */
 suite.test(test, "SYNC-04", "A device in opened mode lists only metadata, opens one item from home that stays readable offline and across a restart while its unopened neighbour stays remote, and searches unopened text through home", async () => {
   const scenario = await sync04Scenario();
@@ -426,6 +453,7 @@ suite.test(test, "SYNC-04", "A device in opened mode lists only metadata, opens 
   if (!query) throw new Error("SYNC-04 has no query naming the unopened item");
 
   const home = await EngineFixture.start({ id: "SYNC-04", profile });
+  await answerHomeYours(home);
   const link = await SyncLinkProxy.start({ target: home.url });
   // Created before the device joins: its first connection fetches the current
   // thin index. Fixture kind is not given; "research" is a shipped kind.
@@ -462,7 +490,11 @@ suite.test(test, "SYNC-04", "A device in opened mode lists only metadata, opens 
   expect((await device.client.call("vault.notes.read", { note_ref: unopened.id_hex })).value).toBeNull();
 
   // Search for unopened text goes to home through the device's own route.
-  const remote = await sync04Search(device, query);
+  // Bounded poll: the home indexes the unopened body after vault.notes.create
+  // answers; a deadline prints the last residence block (source, complete, hits).
+  const remote = await awaitPublic(() => sync04Search(device, query),
+    found => found.residence?.source === "home" && found.residence.hits.some(hit => hit.id === unopened.id_hex),
+    { label: "device search through home finds the unopened item", timeoutMs: 10_000 });
   expect(remote.residence?.source).toBe("home");
   expect(typeof remote.residence?.complete).toBe("boolean");
   expect(remote.residence?.hits.map(hit => hit.id)).toContain(unopened.id_hex);
@@ -551,7 +583,7 @@ function sync05Span(text: string, word: string): Sync05Span {
   return { start, end: start + word.length };
 }
 async function sync05LocalBody(device: DevicePeer, noteRef: string): Promise<string | undefined> {
-  const read = await device.client.call("vault.notes.read", { note_ref: noteRef });
+  const read = await withWireReason("SYNC-05 device notes.read", device.client.call("vault.notes.read", { note_ref: noteRef }));
   return read.value?.source === "local" ? read.value.markdown : undefined;
 }
 async function sync05Standing(client: EngineFixture["client"], predicate: string) {
@@ -576,12 +608,12 @@ async function sync05Standing(client: EngineFixture["client"], predicate: string
  *   authenticated authority" (note/operations.rs:493-495); the private canary
  *   for a narrow reader (the device carries only the owner credential);
  *   repeated reconnects adding nothing (not proved anywhere yet: SYNC-01 has one partition and one heal).
- * DEFECT (red since E2E job 2, Tue 10 Nov 2026; FIX row
- *   NOTE-SUBJECT-REFERENCE, fixed by #7177): the home's vault.claims.upsert
- *   whose subject_ref names the owner's own live NOTE is refused 422
- *   INVENTED_REFERENCE. Reference admission (claim/scoped_read/versions.rs
- *   admitted_raw_in) rechecks the projected four-key NOTE body against the
- *   strict three-key core codec.
+ * DEFECT (red since E2E job 23, Fri 13 Nov 2026; FIX row
+ *   REPLICA-NOTE-READ-400-BEFORE-DOCUMENT): after the sync-all switch the
+ *   device's notes.read of a note it never opened answers 400 "invalid NOTE
+ *   body: NOTE head document missing", as in SYNC-01. Earlier reds, fixed:
+ *   the NOTE subject reference (#7177), the join proof and the own-device
+ *   grant catch-up (this stack).
  */
 suite.test(test, "SYNC-05", "Switching a device to sync-all makes every authorized body local, readable with the home link cut and after a crash, leaves claim source and approval unchanged, and receives the home's offline-time edit on rejoin", async () => {
   const scenario = await sync05Scenario();
@@ -591,6 +623,7 @@ suite.test(test, "SYNC-05", "Switching a device to sync-all makes every authoriz
   const predicate = "inventory.crate_contents";
 
   const home = await EngineFixture.start({ id: "SYNC-05", profile });
+  await answerHomeYours(home);
   const owner = home.pairedActor.principalRef;
   const link = await SyncLinkProxy.start({ target: home.url });
   // Fixture kind is not given; "research" is a shipped kind (vault-readable, durable).
@@ -1018,3 +1051,51 @@ suite.test(test, "SYNC-07", "A claim from a connected vault lands only under the
  *   path receipts, across restart) is an absence check: excluded.
  */
 suite.todo(test, "SYNC-08", "waits on an EngineFixture opt-in that binds the mesh listener on loopback peers (ONEIRON_MESH_BIND is environment-only and the fixture strips ONEIRON_*) and an enrolled same-vault device syncing over oneiron/sync/1");
+
+/* SYNC-09 — covers part of its promise (the runner sets its status). The ID
+ *   is a placeholder until OPUS-E2E-1 names the plan row (Engine RULING 12 Nov
+ *   2026 22:00).
+ * Promise: a freshly enrolled device keeps its paired credential fresh. Its
+ *   renewal at start comes before its first sync lands the vault's authority
+ *   log, so it cannot sign a machine proof yet; once that log lands the device
+ *   renews at once, keeps its holder key, and goes on syncing on the renewed
+ *   credential.
+ * Doors: EngineFixture.startDevicePeer (DevicePeer.enrolledCredential, read
+ *   before the first launch, and readCredential: the credential file that
+ *   `device enrol` names and the renewal replaces); on the home
+ *   vault.notes.create; on the device vault.residence.index.
+ * Unproved and why: the home's record of the renewal (no public read of slip
+ *   mints or of the `renews` lineage; the slip doors are renew and revoke
+ *   only); a refusal that stays a refusal (a work_school or rented device is
+ *   refused by the home for good, and its proof is an absence read); a
+ *   renewal after a restart (30 s flow); the retry wait alone, when a
+ *   catch-up takes no rows and signals nothing (no fixture serves a pinned
+ *   checkpoint that holds every entry, and the first retry is 30 s).
+ * DEFECT (FIX row DEVICE-RENEWAL-REFUSED-BEFORE-FIRST-SYNC, Thu 12 Nov 2026):
+ *   the renewal at start found "this install is not a machine of the vault
+ *   yet" (machine_connection_proof reads no vault id from the empty local
+ *   authority log) and refused for the life of the process, so the enrolled
+ *   credential was never renewed and the device stopped syncing once it ran
+ *   out.
+ */
+suite.test(test, "SYNC-09", "A freshly enrolled device renews its paired credential once its first sync lands the vault's authority, keeps its holder key, and goes on syncing on the renewed credential", async () => {
+  const home = await EngineFixture.start({ id: "SYNC-09", profile });
+  await answerHomeYours(home);
+  const device = await home.startDevicePeer({ id: "SYNC-09-device" });
+  const machine = sync01DeviceMachine(device);
+  const enrolled = credentialParts(device.enrolledCredential);
+
+  const renewed = await awaitPublic(() => device.readCredential(), credential => credential !== device.enrolledCredential,
+    { label: "the device renews its enrolled credential", timeoutMs: 15_000 });
+  const fresh = credentialParts(renewed);
+  expect(fresh.seed).toBe(enrolled.seed);
+  expect(fresh.bearer).not.toBe(enrolled.bearer);
+
+  // Second door: the device syncs on the renewed credential. A note the home
+  // creates after the renewal reaches the device's residence index.
+  const note = await home.client.call("vault.notes.create", { kind: "research", markdown: "SYNC-09 written after the device renewed its credential" });
+  await awaitPublic(() => device.client.call("vault.residence.index", { machine }),
+    answer => answer.state === "applied" && answer.windows.some(slot => slot.items.some(item => item.entity_id === note.id_hex)),
+    { label: "a home note made after the renewal reaches the device", timeoutMs: 15_000 });
+  expect(await device.readCredential()).toBe(renewed);
+});

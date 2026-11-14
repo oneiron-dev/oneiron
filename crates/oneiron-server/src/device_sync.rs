@@ -332,6 +332,7 @@ async fn open(
         pin,
         machine,
         candidacy,
+        authority_caught_up: Arc::new(tokio::sync::Notify::new()),
     };
     let connection = link.connection(link.client_config(&credential)?)?;
     let renewal = renewal::Renewal::new(
@@ -339,6 +340,7 @@ async fn open(
         credential_file,
         Arc::clone(host.vault()),
         link.mesh_dialer.clone(),
+        Arc::clone(&link.authority_caught_up),
         moves,
     );
     let (stop, stop_rx) = oneshot::channel();
@@ -388,6 +390,10 @@ struct Link {
     /// Served hosts re-declare their candidacy after authority catch-up.
     /// An app-only device never declares itself as a home candidate.
     candidacy: Option<Candidacy>,
+    /// Signalled on each authority catch-up that takes rows, so a renewal
+    /// that found this install not a machine of the vault yet is made again
+    /// (FIX DEVICE-RENEWAL-REFUSED-BEFORE-FIRST-SYNC).
+    authority_caught_up: Arc<tokio::sync::Notify>,
 }
 
 #[cfg(feature = "mesh")]
@@ -496,6 +502,7 @@ impl Link {
                         Arc::clone(self.windows.vault()),
                         self.candidacy,
                         self.freeze.admission(),
+                        Arc::clone(&self.authority_caught_up),
                     ),
                 );
                 tokio::pin!(observed);
@@ -586,7 +593,9 @@ enum RunEnd {
 /// the log. An authority catch-up that took rows declares this machine's
 /// MACRO home candidacy again off the async thread, so a freshly enrolled
 /// device counts at once, not at its next start: under an admission of its
-/// own from `admit`, and not while frozen.
+/// own from `admit`, and not while frozen. Such a catch-up also signals
+/// `authority_caught_up`, frozen or not, so a credential renewal that found
+/// this install not a machine of the vault yet is made again.
 #[cfg(feature = "mesh")]
 fn observer(
     home: String,
@@ -594,6 +603,7 @@ fn observer(
     vault: Arc<oneiron::Vault>,
     candidacy: Option<Candidacy>,
     admit: crate::server::HousekeepingAdmission,
+    authority_caught_up: Arc<tokio::sync::Notify>,
 ) -> impl FnMut(oneiron::sync::SyncEvent) + Send {
     use oneiron::sync::SyncEvent;
 
@@ -603,6 +613,7 @@ fn observer(
             let _ = statuses.send(status);
         }
         SyncEvent::AuthorityCaughtUp => {
+            authority_caught_up.notify_one();
             let Some(candidacy) = candidacy else {
                 return;
             };
