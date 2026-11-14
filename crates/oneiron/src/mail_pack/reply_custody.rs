@@ -1,21 +1,21 @@
-//! What one revision of a drafted reply with files, a Gmail or a Graph one,
-//! keeps sealed beside its draft (fix list row 17645), each record under
-//! that revision's own erasable custody key, a ConnectorResume leaf whose
-//! ref derives from the draft, the revision and the nonce its landing drew
-//! at random, under a domain of the record's own, apart from every connector
-//! call's and ledger row's. The draft's row keeps that nonce, and so does
-//! each record's row, so each landing seals under refs custody never held; a
-//! draft an erase dropped and drafted again under its request key also lands
-//! above every revision it was (`reply_erase`'s revision floor):
+//! What one revision of a drafted reply with files, a Gmail, a Graph or an
+//! SMTP one, keeps sealed beside its draft (fix list row 17645), each record
+//! under that revision's own erasable custody key, a ConnectorResume leaf
+//! whose ref derives from the draft, the revision and the nonce its landing
+//! drew at random, under a domain of the record's own, apart from every
+//! connector call's and ledger row's. The draft's row keeps that nonce, and
+//! so does each record's row, so each landing seals under refs custody never
+//! held; a draft an erase dropped and drafted again under its request key
+//! also lands above every revision it was (`reply_erase`'s revision floor):
 //!
 //! - **The message**: the exact RFC 5322 bytes the revision sends, written
 //!   once at draft. The send opens it, checks it against the revision's
 //!   frozen length and BLAKE3, and sends it as it is: nothing is read,
 //!   masked or written again.
 //! - **The plan stub**: the kept Gmail plan a Gmail reply's send dispatches,
-//!   its words with its manifest's digest and its carrier's ref. A Graph
-//!   reply keeps none: its frozen message rides in its draft's row, naming
-//!   the same digest and carrier.
+//!   its words with its manifest's digest and its carrier's ref. A Graph or
+//!   an SMTP reply keeps none: its frozen message rides in its draft's row,
+//!   naming the same digest and carrier.
 //! - **The manifest**: the files the revision carries, its exact message's
 //!   length and BLAKE3, and the message it answers. The draft's own row names
 //!   it only by its digest, so no image of that row carries a file's name,
