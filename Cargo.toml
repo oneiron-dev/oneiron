@@ -67,7 +67,6 @@ edition = "2024"
 rust-version = "1.96"
 license = "Apache-2.0"
 repository = "https://github.com/oneiron-dev/oneiron"
-homepage = "https://github.com/oneiron-dev/oneiron"
 readme = "README.md"
 keywords = ["retrieval", "vector-search", "lmdb", "crdt"]
 categories = ["database", "command-line-utilities"]

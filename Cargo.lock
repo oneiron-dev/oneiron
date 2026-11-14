@@ -8724,7 +8724,6 @@ dependencies = [
  "blake3",
  "memmap2",
  "rmp-serde",
- "rmpv",
  "rustix",
  "serde",
  "serde_bytes",
