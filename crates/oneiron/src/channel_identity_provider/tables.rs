@@ -28,12 +28,12 @@ crate::side_table::side_tables! {
     /// is. Key: id16 (identity) + bytes32 (sha256 of the message id).
     NATIVE_MAIL_MAILBOX_SKIPPED: VaultMeta b"native_mail:mailbox_skipped:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
-    /// One Sheets write's claim on its caller's invocation (FIX 4862, REVIEW-6403): the request it
-    /// bound (tool, spreadsheet id, request digest, mutation), its intent Gate record, and its send
-    /// under way or settled with what it came to and its outcome Gate record, so a replay never
-    /// sends an attempted write again. Key: id16 (invocation ref).
-    SHEETS_WRITE_INVOCATION: VaultMeta b"sheets:write_invocation:v1:" Named
-        // Restore class: A Sheets write's invocation claim records a send that left the vault: the
-        // live vault's row stands, as a held connector call's does.
+    /// One workspace connector write's claim on its caller's invocation (FIX 4862, REVIEW-6403;
+    /// L3-17): the request it bound (connector, tool, file id, request digest, mutation), its intent
+    /// Gate record, and its send under way or settled with what it came to and its outcome Gate
+    /// record, so a replay never sends an attempted write again. Key: id16 (invocation ref).
+    WORKSPACE_WRITE_INVOCATION: VaultMeta b"workspace:write_invocation:v1:" Named
+        // Restore class: A workspace write's invocation claim records a send that left the vault:
+        // the live vault's row stands, as a held connector call's does.
         [restore: live] [family: unclassified] [tier: canonical];
 }
