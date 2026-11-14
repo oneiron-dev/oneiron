@@ -112,8 +112,10 @@ pub(super) fn person(
 /// a member door it serves (`auth::MANAGED_PERSON_DOORS`): a live human
 /// person, as a slip holder's proof is, with no slip to bind, so the proof
 /// is this request's alone. The engine's roster, role and Grant checks then
-/// judge that person in the acting writer. `None` for any other caller or
-/// door, which keeps [`person`]'s own path.
+/// judge that person in the acting writer. When the supervisor signed the
+/// action's `mfa_verified` claim, the proof carries it as this act's org
+/// Admin step-up (L7-17); without it an Admin's act is refused. `None` for
+/// any other caller or door, which keeps [`person`]'s own path.
 fn managed_person_proof(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -122,11 +124,13 @@ fn managed_person_proof(
     let holder = auth
         .managed_person()
         .filter(|_| crate::auth::MANAGED_PERSON_DOORS.contains(&verb))?;
-    Some(
-        server
-            .vault()
-            .authenticate_owner(holder, &holder.to_hex(), true, GateDecisionId::now()),
-    )
+    let vault = server.vault();
+    let person = vault.authenticate_owner(holder, &holder.to_hex(), true, GateDecisionId::now());
+    Some(if auth.managed_person_mfa_verified() {
+        person.and_then(|person| vault.bind_managed_mfa_verified(person))
+    } else {
+        person
+    })
 }
 
 /// The vault owner's proof, as `/v1/owner` takes it from the request.

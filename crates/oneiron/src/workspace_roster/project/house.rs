@@ -192,7 +192,7 @@ impl Vault {
             }
             let binder = owner.revalidate_in_txn(self, txn)?;
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            unlink_house_in_txn(self, txn, house, binder, now)?;
+            unlink_house_in_txn(self, txn, house, binder, &owner.org_admin_step_up(), now)?;
             if moves {
                 self.sign_root_leader_in_txn(
                     txn,
@@ -250,11 +250,26 @@ impl Vault {
             if authority.leader != house {
                 // The house that led before gives up its role in its org.
                 if let Ok(before) = EntityId::from_hex(&authority.leader) {
-                    unlink_house_in_txn(self, txn, before, binder, now)?;
+                    unlink_house_in_txn(
+                        self,
+                        txn,
+                        before,
+                        binder,
+                        &owner.org_admin_step_up(),
+                        now,
+                    )?;
                 }
                 self.sign_root_leader_in_txn(txn, owner, signer, (root, kind), witness, house)?;
             }
-            link_house_in_txn(self, txn, preset, role, binder, now)?;
+            link_house_in_txn(
+                self,
+                txn,
+                preset,
+                role,
+                binder,
+                &owner.org_admin_step_up(),
+                now,
+            )?;
             let reseeded = self.reseed_policy_manifest_in_txn(txn, now)?.is_some();
             self.house_joins_root_in_txn(txn, owner, root, preset.house_actor_ref)?;
             Ok((true, reseeded))

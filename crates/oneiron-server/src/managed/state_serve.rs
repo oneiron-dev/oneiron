@@ -238,6 +238,12 @@ pub(crate) struct McpLifecycleObservation;
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ManagedPersonHolder(pub(crate) oneiron::EntityId);
 
+/// The person whose `ManagedPersonAction` for this one request its
+/// supervisor signed with the `mfa_verified` claim (L7-17), verified at
+/// ingress beside [`ManagedPersonHolder`]: that act's org Admin step-up.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ManagedPersonMfaVerified(pub(crate) oneiron::EntityId);
+
 /// Managed ingress's mark on every request it hands the app (FIX 5125): the
 /// supervisor forwarded it on its caller's behalf, so the caller sits off this
 /// device whatever socket it arrived on, and the machine its own proof shows

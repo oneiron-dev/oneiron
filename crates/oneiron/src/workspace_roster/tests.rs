@@ -68,6 +68,21 @@ fn writer(seed: u8) -> WriteActor {
     WriteActor::new(entity(seed), EdgeActorClass::Human)
 }
 
+/// `writer` as an org Admin's writer whose request shows a step-up
+/// (L7-17). This unrooted test vault holds no slip to step up on, so the
+/// step-up is a managed supervisor's `mfa_verified` claim.
+fn stepped_up(writer: WriteActor) -> OrgAdminWriter {
+    OrgAdminWriter::showing(
+        writer,
+        crate::federation::OrgAdminStepUp::SupervisorVerified,
+    )
+}
+
+/// [`writer`] for `seed`, stepped up ([`stepped_up`]).
+fn admin_writer(seed: u8) -> OrgAdminWriter {
+    stepped_up(writer(seed))
+}
+
 fn definition(agent_id: &str) -> AgentDefinition {
     AgentDefinition::new(
         agent_id,
@@ -275,7 +290,7 @@ fn type_count(vault: &Vault, entity_type: u8) -> usize {
 fn venture_name_is_runtime_data() -> Result<()> {
     for venture_name in ["Antevon", "Oneiron"] {
         let (_dir, vault, intent) = fixture(venture_name);
-        vault.onboard_workspace_member(intent, &writer(WRITER), None)?;
+        vault.onboard_workspace_member(intent, &admin_writer(WRITER), None)?;
         let roster = vault.workspace_roster("antevon-slack", AT)?;
         let house = roster
             .iter()
@@ -293,7 +308,7 @@ fn venture_name_is_runtime_data() -> Result<()> {
 #[test]
 fn member_bundle_never_widens_to_admin() -> Result<()> {
     let (_dir, vault, intent) = fixture("Antevon");
-    let outcome = vault.onboard_workspace_member(intent.clone(), &writer(WRITER), None)?;
+    let outcome = vault.onboard_workspace_member(intent.clone(), &admin_writer(WRITER), None)?;
 
     let rtxn = vault.store.env.read_txn()?;
     let grant = read_federation_grant_in_txn(&vault, &rtxn, &outcome.federation_grant_ref)?
@@ -315,7 +330,7 @@ fn member_bundle_never_widens_to_admin() -> Result<()> {
         widened.grant_bundle.role = role;
         widened.grant_bundle.preset = preset;
         let err = vault
-            .onboard_workspace_member(widened, &writer(WRITER), None)
+            .onboard_workspace_member(widened, &admin_writer(WRITER), None)
             .expect_err("widened bundle must be refused");
         assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
     }
@@ -331,7 +346,7 @@ fn companion_birth_is_full_person() -> Result<()> {
     intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
     intent.companion_birth = Some(birth.clone());
 
-    let outcome = vault.onboard_workspace_member(intent, &writer(WRITER), None)?;
+    let outcome = vault.onboard_workspace_member(intent, &admin_writer(WRITER), None)?;
     assert_eq!(outcome.companion_person_ref, Some(birth.person_ref));
     assert_eq!(outcome.companion_actor_ref, Some(birth.actor_ref));
 
@@ -455,7 +470,7 @@ fn existing_companion_person_requires_valid_baseline_before_grant() -> Result<()
         )?;
         assert!(
             vault
-                .onboard_workspace_member(intent.clone(), &writer(WRITER), None)
+                .onboard_workspace_member(intent.clone(), &admin_writer(WRITER), None)
                 .is_err()
         );
         assert!(vault.get_access_grant(&birth.profile_grant_ref)?.is_none());
@@ -477,7 +492,7 @@ fn optional_delegated_mailbox_uses_custody_ref_only() -> Result<()> {
 
     register_mailbox_custody(&vault, &requested, &requested.address)?;
     let err = vault
-        .onboard_workspace_member(intent, &writer(WRITER), Some(&mailbox_owner(&vault)?))
+        .onboard_workspace_member(intent, &admin_writer(WRITER), Some(&mailbox_owner(&vault)?))
         .expect_err("Requested lifecycle cannot complete autonomy");
     assert!(matches!(
         err,
@@ -558,7 +573,7 @@ fn unprivileged_writer_rejected() -> Result<()> {
 #[test]
 fn workspace_preset_is_settled_once_and_shared() -> Result<()> {
     let (_dir, vault, intent) = fixture("Antevon");
-    vault.onboard_workspace_member(intent.clone(), &writer(WRITER), None)?;
+    vault.onboard_workspace_member(intent.clone(), &admin_writer(WRITER), None)?;
 
     let mut conflicting = intent.clone();
     conflicting.onboarding_id = "onboard-2".to_owned();
@@ -567,7 +582,7 @@ fn workspace_preset_is_settled_once_and_shared() -> Result<()> {
     conflicting.actor_ref = entity(0xBA);
     conflicting.grant_bundle.federation_grant_ref = entity(0xBB);
     let err = vault
-        .onboard_workspace_member(conflicting, &writer(WRITER), None)
+        .onboard_workspace_member(conflicting, &admin_writer(WRITER), None)
         .expect_err("a disagreeing preset must be refused");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
 
@@ -584,7 +599,7 @@ fn workspace_preset_is_settled_once_and_shared() -> Result<()> {
     second_birth.display_name = "Silverleaf".to_owned();
     second.grant_bundle.companion_profile_grant_ref = Some(second_birth.profile_grant_ref);
     second.companion_birth = Some(second_birth.clone());
-    let outcome = vault.onboard_workspace_member(second, &writer(WRITER), None)?;
+    let outcome = vault.onboard_workspace_member(second, &admin_writer(WRITER), None)?;
     assert_eq!(outcome.person_ref, entity(0xB9));
 
     // Each principal has their own quiz-named companion beside the same house.
@@ -615,14 +630,14 @@ fn aliased_entity_ids_are_refused() {
     let mut aliased = intent.clone();
     aliased.actor_ref = aliased.person_ref;
     let err = vault
-        .onboard_workspace_member(aliased, &writer(WRITER), None)
+        .onboard_workspace_member(aliased, &admin_writer(WRITER), None)
         .expect_err("an actor id aliased onto the member PERSON must be refused");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
 
     let mut mismatched = intent;
     mismatched.grant_bundle.companion_profile_grant_ref = Some(entity(0xD5));
     let err = vault
-        .onboard_workspace_member(mismatched, &writer(WRITER), None)
+        .onboard_workspace_member(mismatched, &admin_writer(WRITER), None)
         .expect_err("a mismatched companion profile grant ref must be refused");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
 }
@@ -754,7 +769,7 @@ fn assert_mailbox_waiting(
 ) -> Result<OnboardingJournal> {
     let mailbox = intent.delegated_mailbox.as_ref().expect("mailbox");
     let error = vault
-        .onboard_workspace_member(intent.clone(), &writer(WRITER), Some(owner))
+        .onboard_workspace_member(intent.clone(), &admin_writer(WRITER), Some(owner))
         .expect_err("external fulfillment is still required");
     assert!(matches!(
         error,

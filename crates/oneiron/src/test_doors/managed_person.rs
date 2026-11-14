@@ -9,9 +9,9 @@ use crate::error::Result;
 use crate::store::GateDecisionId;
 use crate::vault::Vault;
 
-/// The slipless proof of `person` a managed member door builds; on this
-/// tree a supervisor's `mfa_verified` claim has no engine form, so the
-/// proof carries nothing for it.
+/// The slipless proof of `person` a managed member door builds, carrying
+/// the supervisor's `mfa_verified` claim when `mfa_verified`
+/// ([`Vault::bind_managed_mfa_verified`]).
 ///
 /// # Errors
 ///
@@ -22,6 +22,9 @@ pub fn managed_person_proof(
     mfa_verified: bool,
 ) -> Result<AuthenticatedOwner> {
     let proof = vault.authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())?;
-    let _ = mfa_verified;
-    Ok(proof)
+    if mfa_verified {
+        vault.bind_managed_mfa_verified(proof)
+    } else {
+        Ok(proof)
+    }
 }

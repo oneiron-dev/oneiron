@@ -370,6 +370,9 @@ pub(crate) struct CoreAuth {
     /// 1302); `None` for every other request
     /// ([`Self::for_attested_person`]).
     managed_person: Option<oneiron::EntityId>,
+    /// Whether that person action's supervisor signed its `mfa_verified`
+    /// claim (L7-17): the org Admin step-up of this one act.
+    managed_person_mfa_verified: bool,
 }
 
 impl CoreAuth {
@@ -411,6 +414,7 @@ impl CoreAuth {
             off_record_session: None,
             managed_owner: None,
             managed_person: None,
+            managed_person_mfa_verified: false,
         }
     }
 
@@ -491,6 +495,7 @@ impl CoreAuth {
             off_record_session: None,
             managed_owner: None,
             managed_person: None,
+            managed_person_mfa_verified: false,
         })
     }
 
@@ -513,6 +518,7 @@ impl CoreAuth {
             off_record_session: None,
             managed_owner: None,
             managed_person: None,
+            managed_person_mfa_verified: false,
         }
     }
 
@@ -993,6 +999,7 @@ fn core_auth_for_live_claims(
         off_record_session: None,
         managed_owner: None,
         managed_person: None,
+        managed_person_mfa_verified: false,
     })
 }
 

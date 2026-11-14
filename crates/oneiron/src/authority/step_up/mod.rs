@@ -329,6 +329,35 @@ impl Vault {
             && self.step_up_factor_stands_in_txn(txn, &record)?)
     }
 
+    /// Whether `person` stands stepped up on `request` in `txn`, as
+    /// [`Self::admin_step_up`] judges it in its own read: the slip is a
+    /// live, untransferred, undelegated one of this vault held by `person`,
+    /// a live PERSON, and a step-up recorded on that exact slip with a
+    /// factor still enrolled stands. An org Admin's act reads it in its
+    /// acting writer (L7-17), so a step-up ended while the act waited for
+    /// the writer counts for nothing.
+    ///
+    /// # Errors
+    /// A storage fault.
+    pub(crate) fn person_stepped_up_on_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        request: &VerifiedSlip,
+        person: EntityId,
+    ) -> Result<bool> {
+        let holder = match self.step_up_holder_in_txn(txn, request) {
+            Ok(holder) => holder,
+            Err(crate::error::Error::Record(crate::error::RecordError::AuthorityRefused(_))) => {
+                return Ok(false);
+            }
+            Err(error) => return Err(error),
+        };
+        Ok(holder == person
+            && self
+                .step_up_standing_in_txn(txn, request, holder)?
+                .is_some())
+    }
+
     fn has_step_up_factor_in_txn(&self, txn: &heed::RoTxn<'_>, holder: EntityId) -> Result<bool> {
         Ok(!self.step_up_passkeys_in_txn(txn, holder)?.is_empty()
             || totp::has_enrolled(self, txn, holder)?)

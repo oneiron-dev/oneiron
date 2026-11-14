@@ -5,7 +5,9 @@ use super::*;
 impl Vault {
     /// Onboards one member into a workspace, idempotently and resumably.
     ///
-    /// The writer needs an admin federation grant over the target vault;
+    /// The writer needs an admin federation grant over the target vault and,
+    /// unless a live Owner grant admits it, the MFA step-up its request shows
+    /// (L7-17; [`OrgAdminWriter`]: a plain [`WriteActor`] shows none);
     /// `mailbox_owner` authenticates the member PERSON, independently of the writer.
     /// For a delegated mailbox it also authorizes the autonomy grants minted for
     /// it, which only the vault's owner may do: a member who does not own the
@@ -18,7 +20,7 @@ impl Vault {
     pub fn onboard_workspace_member(
         &self,
         intent: MemberOnboardingIntent,
-        authenticated_writer: &WriteActor,
+        authenticated_writer: impl Into<OrgAdminWriter>,
         mailbox_owner: Option<&AuthenticatedOwner>,
     ) -> Result<MemberOnboardingOutcome> {
         self.onboard_workspace_member_halting_after(
@@ -39,13 +41,13 @@ impl Vault {
     pub fn onboard_workspace_member_with_owner(
         &self,
         intent: MemberOnboardingIntent,
-        authenticated_writer: &WriteActor,
+        authenticated_writer: impl Into<OrgAdminWriter>,
         member: &AuthenticatedOwner,
         owner: &AuthenticatedOwner,
     ) -> Result<MemberOnboardingOutcome> {
         self.onboard_workspace_member_with_proofs(
             intent,
-            authenticated_writer,
+            &authenticated_writer.into(),
             MailboxProofs::separate(member, owner),
             MemberOnboardingStep::Complete,
         )?
@@ -63,13 +65,13 @@ impl Vault {
     pub(super) fn onboard_workspace_member_halting_after(
         &self,
         intent: MemberOnboardingIntent,
-        authenticated_writer: &WriteActor,
+        authenticated_writer: impl Into<OrgAdminWriter>,
         mailbox_owner: Option<&AuthenticatedOwner>,
         halt_after: MemberOnboardingStep,
     ) -> Result<Option<MemberOnboardingOutcome>> {
         self.onboard_workspace_member_with_proofs(
             intent,
-            authenticated_writer,
+            &authenticated_writer.into(),
             MailboxProofs::one(mailbox_owner),
             halt_after,
         )
@@ -78,7 +80,7 @@ impl Vault {
     fn onboard_workspace_member_with_proofs(
         &self,
         intent: MemberOnboardingIntent,
-        authenticated_writer: &WriteActor,
+        authenticated_writer: &OrgAdminWriter,
         proofs: MailboxProofs<'_>,
         halt_after: MemberOnboardingStep,
     ) -> Result<Option<MemberOnboardingOutcome>> {
@@ -188,7 +190,7 @@ impl Vault {
         &self,
         step: MemberOnboardingStep,
         intent: &MemberOnboardingIntent,
-        writer: &WriteActor,
+        writer: &OrgAdminWriter,
         proofs: MailboxProofs<'_>,
     ) -> Result<()> {
         match step {

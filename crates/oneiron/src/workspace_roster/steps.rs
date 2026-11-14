@@ -6,7 +6,8 @@ use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
 
 /// Requires the writer to hold an administrative federation grant over
-/// `vault_id`.
+/// `vault_id` and, unless a live Owner grant admits it, a standing MFA
+/// step-up on the request it shows (L7-17), checked in each step's writer.
 ///
 /// Authority is a STORED grant, never an asserted actor class: a caller can
 /// spell any [`crate::edge::EdgeActorClass`] it likes into a [`WriteActor`], so
@@ -17,7 +18,7 @@ use crate::ports::EntityStoreRead;
 pub(super) fn require_workspace_authority(
     vault: &Vault,
     vault_id: u64,
-    writer: &WriteActor,
+    writer: &OrgAdminWriter,
 ) -> Result<()> {
     let txn = vault.store.env.read_txn()?;
     require_workspace_authority_in_txn(vault, &txn, vault_id, writer)
@@ -27,16 +28,14 @@ pub(super) fn require_workspace_authority_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     vault_id: u64,
-    writer: &WriteActor,
+    writer: &OrgAdminWriter,
 ) -> Result<()> {
     vault
-        .authorize_shared_vault_write_in_txn(
+        .authorize_org_admin_act_in_txn(
             txn,
             vault_id,
             writer,
-            &crate::federation::SharedVaultWrite::Admin(
-                crate::federation::OrgAdminPower::AddMember,
-            ),
+            crate::federation::OrgAdminPower::AddMember,
         )
         .map_err(|error| match error {
             crate::Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { .. }) => {
@@ -50,7 +49,7 @@ pub(super) fn require_workspace_authority_in_txn(
 pub(super) fn with_workspace_authority<T>(
     vault: &Vault,
     vault_id: u64,
-    writer: &WriteActor,
+    writer: &OrgAdminWriter,
     write: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
 ) -> Result<T> {
     vault.with_write_txn_grouped(|txn| {
@@ -200,7 +199,7 @@ pub(super) fn validate_workspace_preset_in_txn(
 pub(super) fn establish_workspace(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
-    writer: &WriteActor,
+    writer: &OrgAdminWriter,
 ) -> Result<()> {
     validate_workspace_references(vault, intent)?;
     // The house agent keeps its own model PERSON anchor (HOUSE-BIND = A): the
@@ -213,7 +212,7 @@ pub(super) fn establish_workspace(
 pub(super) fn link_member_actor(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
-    writer: &WriteActor,
+    writer: &OrgAdminWriter,
 ) -> Result<()> {
     ensure_agent_definition(
         vault,
@@ -234,7 +233,7 @@ pub(super) fn link_member_actor(
 pub(super) fn grant_member_bundle(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
-    writer: &WriteActor,
+    writer: &OrgAdminWriter,
 ) -> Result<()> {
     let id = intent.grant_bundle.federation_grant_ref;
     let mut expected = FederationGrant::new(
@@ -305,7 +304,7 @@ pub(super) fn birth_companion(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
     companion: &CompanionBirthIntent,
-    writer: &WriteActor,
+    writer: &OrgAdminWriter,
 ) -> Result<()> {
     ensure_companion_person(vault, intent, companion, writer)?;
     ensure_model_substrate(vault, intent, companion.person_ref, writer)?;
@@ -350,7 +349,7 @@ pub(super) fn birth_companion(
 pub(super) fn bring_companion(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
-    writer: &WriteActor,
+    writer: &OrgAdminWriter,
 ) -> Result<()> {
     let CompanionChoice::Bring {
         person, work_facet, ..
@@ -386,7 +385,7 @@ pub(super) fn bind_delegated_mailbox(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
     mailbox: &DelegatedMailboxOnboarding,
-    writer: &WriteActor,
+    writer: &OrgAdminWriter,
 ) -> Result<()> {
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
         if let Some(existing) = read_onboarding_mailbox_in_txn(vault, txn, intent, mailbox)? {
@@ -493,7 +492,7 @@ pub(super) fn read_onboarding_mailbox_in_txn(
 pub(super) fn record_roster_member(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
-    writer: &WriteActor,
+    writer: &OrgAdminWriter,
     proofs: MailboxProofs<'_>,
 ) -> Result<()> {
     require_workspace_authority(vault, intent.workspace.workspace_vault_id, writer)?;
@@ -531,7 +530,7 @@ pub(super) fn record_roster_member(
             wtxn,
             intent.person_ref,
             intent.companion.person_ref(),
-            *writer,
+            *writer.actor(),
             now,
         )
     })
@@ -547,7 +546,7 @@ pub(super) fn ensure_subject_anchor(
     intent: &MemberOnboardingIntent,
     actor_ref: EntityId,
     subject_ref: EntityId,
-    writer: &WriteActor,
+    writer: &OrgAdminWriter,
 ) -> Result<()> {
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
         crate::subject_model::ensure_actor_subject_in_txn(
@@ -555,7 +554,7 @@ pub(super) fn ensure_subject_anchor(
             txn,
             actor_ref,
             subject_ref,
-            *writer,
+            *writer.actor(),
             intent.occurred_at,
         )
     })
@@ -571,7 +570,7 @@ pub(super) fn ensure_agent_definition(
     intent: &MemberOnboardingIntent,
     id: &EntityId,
     definition: &AgentDefinition,
-    writer: &WriteActor,
+    writer: &OrgAdminWriter,
 ) -> Result<()> {
     let at = intent.occurred_at;
     let data = encode_agent_definition(definition)?;
@@ -611,7 +610,7 @@ pub(super) fn ensure_companion_person(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
     companion: &CompanionBirthIntent,
-    writer: &WriteActor,
+    writer: &OrgAdminWriter,
 ) -> Result<()> {
     let at = intent.occurred_at;
     let body = encode_value(&Value::Map(vec![
@@ -678,14 +677,14 @@ pub(super) fn ensure_model_substrate(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
     person_ref: EntityId,
-    writer: &WriteActor,
+    writer: &OrgAdminWriter,
 ) -> Result<()> {
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
         crate::subject_model::ensure_model_person_in_txn(
             vault,
             txn,
             person_ref,
-            *writer,
+            *writer.actor(),
             intent.occurred_at,
         )
     })
@@ -697,7 +696,7 @@ pub(super) fn ensure_work_facet_edge(
     intent: &MemberOnboardingIntent,
     person_ref: EntityId,
     facet_ref: EntityId,
-    writer: &WriteActor,
+    writer: &OrgAdminWriter,
 ) -> Result<()> {
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
         if vault
@@ -723,7 +722,7 @@ pub(super) fn ensure_companion_profile_grant(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
     companion: &CompanionBirthIntent,
-    writer: &WriteActor,
+    writer: &OrgAdminWriter,
 ) -> Result<()> {
     // The member reads the companion PERSON's profile at every facet; the
     // work facet is the companion's association, not a bound on the grant.
@@ -800,7 +799,7 @@ pub(super) fn ensure_companion_profile_grant(
 pub(super) fn ensure_preset_row(
     vault: &Vault,
     preset: &WorkspaceRosterPreset,
-    writer: &WriteActor,
+    writer: &OrgAdminWriter,
 ) -> Result<()> {
     let row = PresetRow {
         preset: preset.clone(),

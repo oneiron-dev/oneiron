@@ -27,6 +27,7 @@ mod decision_slot;
 mod grants;
 mod invitee_credential;
 mod lineage;
+mod managed_mfa_claim;
 mod owner;
 mod person_credential;
 mod queue_check;
@@ -81,6 +82,11 @@ pub struct AuthenticatedOwner {
     /// ([`Vault::authenticate_host_action_owner`], FIX 2222). Every
     /// revalidation then also requires that action to still hold.
     host_action: Option<Box<crate::authority::HostActionGuard>>,
+    /// Whether a managed host's supervisor signed `mfa_verified` on the one
+    /// person action this slipless proof was built for
+    /// ([`Vault::bind_managed_mfa_verified`], L7-17): that act's org Admin
+    /// step-up. It lends no other authority.
+    managed_mfa_verified: bool,
 }
 
 impl AuthenticatedOwner {
@@ -350,6 +356,26 @@ impl AuthenticatedOwner {
         self.credential
             .as_deref()
             .or(self.person_credential.as_deref())
+    }
+
+    /// What this proof's request shows of an org Admin's MFA step-up
+    /// (L7-17): the slip the request came on (its own request slip first,
+    /// then a bound person or owner credential), whose recorded step-up the
+    /// acting writer reads; else a managed supervisor's `mfa_verified` claim
+    /// on this one action; else nothing.
+    pub(crate) fn org_admin_step_up(&self) -> crate::federation::OrgAdminStepUp {
+        match self
+            .request_credential
+            .as_ref()
+            .or(self.person_credential.as_ref())
+            .or(self.credential.as_ref())
+        {
+            Some(request) => crate::federation::OrgAdminStepUp::Slip(request.clone()),
+            None if self.managed_mfa_verified => {
+                crate::federation::OrgAdminStepUp::SupervisorVerified
+            }
+            None => crate::federation::OrgAdminStepUp::Absent,
+        }
     }
 
     pub(super) fn stamp(&self) -> ConsentOwnerStamp {

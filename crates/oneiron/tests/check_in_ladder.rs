@@ -108,10 +108,17 @@ impl Ladder {
             .get_seeded_agent_definition_by_logical_id("sys.team_lead")
             .expect("seeded agents")
             .expect("sys.team_lead");
+        // An Admin's delegation stands on an MFA step-up (L7-17). This
+        // fixture's people hold no slip, so the Admin's proof carries a
+        // managed supervisor's `mfa_verified` claim.
+        let stepped_up_admin = fx
+            .vault
+            .bind_managed_mfa_verified(first_admin.1.clone())
+            .expect("the supervisor's MFA claim binds");
         let delegate = fx
             .vault
             .create_federation_delegate(
-                &first_admin.1,
+                &stepped_up_admin,
                 first_admin_grant,
                 agent,
                 T0,

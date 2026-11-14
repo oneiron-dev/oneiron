@@ -422,6 +422,12 @@ impl crate::Vault {
                 "delegate parent or member is not active".into(),
             ));
         }
+        // An org Admin's or Deputy's delegation is an Admin act: it stands
+        // on the step-up its request shows (L7-17). A parent Owner grant is
+        // the Owner's own, exempt as at the gate.
+        if parent.role != super::FederationGrantRole::Owner {
+            self.require_org_admin_step_up_in_txn(txn, holder_actor, &holder.org_admin_step_up())?;
+        }
         let fold = self.authority_fold_readonly_in_txn(txn)?;
         if self.shared_vault_deletion_in_txn(txn)?.is_some() || fold.vault_root_is_conflicted() {
             return Err(Error::InvalidConfig("delegate vault is not active".into()));

@@ -3,8 +3,14 @@
 //! federation:27: admin power is a fixed allowlist of named powers). Steward
 //! is a named grant preset that only an owner of the vault gives.
 //!
+//! An Admin acts here on a session that passed MFA (L7-17), so each refusal
+//! is the role's, never the missing step-up's.
+//!
 //! Runs on public paths: `cargo test -p oneiron --all-features --test
 //! admin_is_not_steward`.
+#[path = "admin_step_up/fixture.rs"]
+mod admin_step_up;
+
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
 use oneiron::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON};
@@ -85,12 +91,13 @@ fn shared_with_admin(vault: &Vault, admin: EntityId) -> EntityId {
 #[test]
 fn an_admin_cannot_make_itself_a_steward() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    let (vault, issuer, _) = admin_step_up::rooted_vault(dir.path());
     let admin = EntityId::now();
     shared_with_admin(&vault, admin);
+    admin_step_up::bind_human_writer(&vault, &issuer, admin);
+    let admin_proof = admin_step_up::stepped_up_proof(&vault, &issuer, admin);
 
-    let refused =
-        vault.change_shared_member_role(&proof(&vault, admin), SHARED, admin, Role::Steward, None);
+    let refused = vault.change_shared_member_role(&admin_proof, SHARED, admin, Role::Steward, None);
     assert!(
         refused.is_err(),
         "an Admin's AssignRole must not reach the Steward preset: {refused:?}"
@@ -101,12 +108,13 @@ fn an_admin_cannot_make_itself_a_steward() {
 #[test]
 fn an_admin_cannot_give_the_steward_role_but_the_owner_can() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    let (vault, issuer, _) = admin_step_up::rooted_vault(dir.path());
     let admin = EntityId::now();
     let owner = shared_with_admin(&vault, admin);
     let member = EntityId::now();
     person(&vault, member);
-    let admin_proof = proof(&vault, admin);
+    admin_step_up::bind_human_writer(&vault, &issuer, admin);
+    let admin_proof = admin_step_up::stepped_up_proof(&vault, &issuer, admin);
 
     // An Admin's AddMember stops at Steward ...
     let refused = vault.add_shared_member(&admin_proof, SHARED, member, Some(Role::Steward));
@@ -120,7 +128,9 @@ fn an_admin_cannot_give_the_steward_role_but_the_owner_can() {
         .add_shared_member(&admin_proof, SHARED, member, Some(Role::Member))
         .expect("an Admin adds a Member");
 
-    // The owner gives Steward: the Admin becomes one through the owner's act.
+    // The owner gives Steward: the Admin becomes one through the owner's act,
+    // the host key bound to the owner again.
+    oneiron::test_support::bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
     vault
         .change_shared_member_role(&proof(&vault, owner), SHARED, admin, Role::Steward, None)
         .expect("the owner gives the Steward role");

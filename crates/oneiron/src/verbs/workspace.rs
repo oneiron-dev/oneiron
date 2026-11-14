@@ -131,9 +131,14 @@ pub fn onboard_workspace_member_as(
         delegated_mailbox: None,
         occurred_at: input.occurred_at,
     };
+    // The holder's request slip, or its managed supervisor's MFA claim,
+    // carries the Admin's step-up (L7-17).
     Ok(vault.onboard_workspace_member(
         intent,
-        &WriteActor::new(author, EdgeActorClass::Human),
+        crate::federation::OrgAdminWriter::of_proof(
+            WriteActor::new(author, EdgeActorClass::Human),
+            holder,
+        ),
         None,
     )?)
 }

@@ -289,5 +289,8 @@ pub use oneiron_authority::federation::{
 };
 
 mod org_admin;
+mod org_admin_step_up;
 pub(crate) mod tables;
 pub use org_admin::{OrgAdminError, OrgAdminPolicy, OrgAdminPower};
+pub(crate) use org_admin_step_up::OrgAdminStepUp;
+pub use org_admin_step_up::{ORG_ADMIN_STEP_UP_REQUIRED, OrgAdminWriter};

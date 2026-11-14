@@ -29,8 +29,8 @@ use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::federation::record_scope::ScopedRecord;
 use crate::federation::{
-    FederationGrant, FederationGrantRole as Role, FederationGrantScope, OrgAdminPower, Scope,
-    ScopeAxis, SharedVaultWrite, decode_federation_grant_body, encode_federation_grant_body,
+    FederationGrant, FederationGrantRole as Role, FederationGrantScope, OrgAdminPower,
+    OrgAdminWriter, Scope, ScopeAxis, decode_federation_grant_body, encode_federation_grant_body,
 };
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::write_envelope::WriteActor;
@@ -615,15 +615,16 @@ impl Vault {
         ) -> Result<(Effect, Option<UnsignedExecution>)>,
     ) -> Result<SharedActExecutionReceipt> {
         let mut txn = self.store.env.write_txn()?;
-        // Person tier; the named power is checked against the live roster.
+        // Person tier; the named power is checked against the live roster,
+        // and an Admin's act against the step-up its request shows (L7-17).
         let actor_id = actor.revalidate_person_in_txn(self, &txn)?;
         super::check_vault(self, &txn, vault_id)?;
         if let Some(power) = power {
-            self.authorize_shared_vault_write_in_txn(
+            self.authorize_org_admin_act_in_txn(
                 &txn,
                 vault_id,
-                &WriteActor::new(actor_id, EdgeActorClass::Human),
-                &SharedVaultWrite::Admin(power),
+                &OrgAdminWriter::of_proof(WriteActor::new(actor_id, EdgeActorClass::Human), actor),
+                power,
             )?;
         }
         let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;

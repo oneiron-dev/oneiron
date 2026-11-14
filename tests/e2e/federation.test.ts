@@ -1,5 +1,5 @@
 import { afterAll, test } from "bun:test";
-import { createPublicKey, generateKeyPairSync, verify } from "node:crypto";
+import { createHmac, createPublicKey, generateKeyPairSync, verify } from "node:crypto";
 import { encode } from "@msgpack/msgpack";
 import { blake3 } from "@noble/hashes/blake3";
 import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
@@ -89,6 +89,36 @@ async function fed01Diagnose<T>(label: string, act: () => Promise<T>): Promise<T
   }
 }
 
+/** The six-digit RFC 6238 code an authenticator app shows at `unixSecs` for a base32 (RFC 4648, unpadded) secret. */
+function totpCode(base32Secret: string, unixSecs: number): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  const seed: number[] = [];
+  let bits = 0, available = 0;
+  for (const symbol of base32Secret) {
+    const value = alphabet.indexOf(symbol);
+    if (value < 0) throw new Error("TOTP secret is not base32");
+    bits = ((bits << 5) | value) & 0xffff;
+    available += 5;
+    if (available >= 8) { available -= 8; seed.push((bits >> available) & 0xff); }
+  }
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(unixSecs / 30)));
+  const tag = createHmac("sha1", Buffer.from(seed)).update(counter).digest();
+  const offset = tag[19]! & 0x0f;
+  const binary = ((tag[offset]! & 0x7f) << 24) | (tag[offset + 1]! << 16) | (tag[offset + 2]! << 8) | tag[offset + 3]!;
+  return String(binary % 1_000_000).padStart(6, "0");
+}
+
+/** L7-17: an org Admin's acts stand on a current MFA step-up of its own session. Enrolls an authenticator on the
+ * client's slip and confirms it with its first code, which records the step-up on that slip. */
+async function stepUpWithTotp(client: PublicHttpClient): Promise<void> {
+  const enrollment = (await client.request<{ enrollment_id: string; secret: string }>(
+    "POST", "/v1/core/step-up/totp/enrollment")).body;
+  await client.request("POST", "/v1/core/step-up/totp/confirm", {
+    enrollment_id: enrollment.enrollment_id, code: totpCode(enrollment.secret, Date.now() / 1000),
+  });
+}
+
 /* Promise: Admin membership changes respect Owner authority and revoke removed access; Delegates cannot delegate onward.
  * Doors: evidence-backed people + CLI/SDK pairing; shape; members; shared.receipt; receipts.get; restart.
  * Unproved: document-only Delegate expiry, all named powers, other role/content ceilings, relationship authority and personal-vault isolation.
@@ -164,6 +194,8 @@ suite.test(test, "FEDERATION-01", "An Admin can invite, change and remove non-Ow
       invitation: adminInvitation.id, member: adminRef, role: "admin",
     } });
     const adminGrant = await fed01Role(owner, vaultId, adminRef, "admin");
+    // The Admin's session passes MFA before its first Admin act (L7-17).
+    await stepUpWithTotp(admin.client);
 
     const invited = await fed01Diagnose("admin vault.members.add", () => admin.client.call("vault.members.add", {
       vault_id: vaultId, member: memberRef, role: "member",

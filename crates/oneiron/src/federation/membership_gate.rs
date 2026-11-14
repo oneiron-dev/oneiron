@@ -42,6 +42,41 @@ impl Vault {
         writer: &WriteActor,
         requested: &SharedVaultWrite,
     ) -> Result<()> {
+        if self.shared_vault_write_admits_in_txn(txn, vault_id, writer, requested, |_| true)? {
+            Ok(())
+        } else {
+            Err(denied())
+        }
+    }
+
+    /// Whether a live Owner grant of `writer` admits `requested` over
+    /// `vault_id` in `txn`, by the same checks as
+    /// [`Self::authorize_shared_vault_write_in_txn`]: the Owner's exemption
+    /// from an org Admin's step-up (L7-17), judged over every grant the
+    /// writer holds, never by which grant a scan meets first.
+    pub(crate) fn owner_grant_admits_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        writer: &WriteActor,
+        requested: &SharedVaultWrite,
+    ) -> Result<bool> {
+        self.shared_vault_write_admits_in_txn(txn, vault_id, writer, requested, |role| {
+            role == FederationGrantRole::Owner
+        })
+    }
+
+    /// Whether one live grant whose role `counts` admits `requested`; a
+    /// write no grant may make at all, and a stored grant row that does not
+    /// decode, refuse as [`denied`].
+    fn shared_vault_write_admits_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        writer: &WriteActor,
+        requested: &SharedVaultWrite,
+        counts: impl Fn(FederationGrantRole) -> bool,
+    ) -> Result<bool> {
         // A folder's note-import MACHINE writes as the member its own stored
         // record names as both its importer and its maker: that member's
         // binding and live grant decide, as for the member's own write, and
@@ -104,12 +139,13 @@ impl Vault {
                     FederationGrantActivation::Inactive(_)
                 )
                 || !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
+                || !counts(grant.role)
             {
                 continue;
             }
             if let SharedVaultWrite::Content(scope) = requested {
                 if grant_allows_content_write(&grant, scope) {
-                    return Ok(());
+                    return Ok(true);
                 }
                 continue;
             }
@@ -135,10 +171,10 @@ impl Vault {
             };
             record.verbs = ScopeAxis::Some(BTreeSet::from([verb.to_owned()]));
             if grant.authority_scope.admits(verb, &record, &Scope::top()) {
-                return Ok(());
+                return Ok(true);
             }
         }
-        Err(denied())
+        Ok(false)
     }
 }
 
