@@ -19,9 +19,10 @@
 //! A held erase is no such act: it names its record, and runs.
 //!
 //! `start_authority_act` checks a built-in act's name, not its plan, so a
-//! stored plan may not decode. Such an act cannot run. The scrub reads its
-//! plan as text, writes the erased marker over each spelling of the person's
-//! hex, and goes on: one malformed act never stops an erase.
+//! stored plan may not decode. Such an act cannot run. The scrub writes the
+//! erased marker over each spelling of the person's hex: in each JSON string
+//! and key as a JSON reader decodes it, when the plan is JSON, and in its
+//! bytes as text. Then it goes on: one malformed act never stops an erase.
 
 use super::{
     AddOwnerPlan, EraseAskStatus, RemoveOwnerPlan, SharedActExecutionReceipt, SharedActKind,
@@ -151,16 +152,82 @@ fn scrub_plan_text(payload: &mut Vec<u8>, actor: &EntityId) -> bool {
     changed
 }
 
+/// Writes [`ERASED_CALL_IDENTITY`] over each spelling of `hex` (lower case)
+/// in a decoded JSON string. Returns whether it did.
+fn scrub_json_text(text: &mut String, hex: &str) -> bool {
+    // ASCII folding keeps each byte offset, and a hex digit is never part of
+    // a multi-byte character, so each match starts and ends on a character.
+    let folded = text.to_ascii_lowercase();
+    let mut scrubbed = String::with_capacity(text.len());
+    let mut kept = 0;
+    for (at, _) in folded.match_indices(hex) {
+        scrubbed.push_str(&text[kept..at]);
+        scrubbed.push_str(ERASED_CALL_IDENTITY);
+        kept = at + hex.len();
+    }
+    if kept == 0 {
+        return false;
+    }
+    scrubbed.push_str(&text[kept..]);
+    *text = scrubbed;
+    true
+}
+
+/// [`scrub_json_text`] over each string and object key in `value`. Returns
+/// whether it wrote the marker.
+fn scrub_json(value: &mut serde_json::Value, hex: &str) -> bool {
+    match value {
+        serde_json::Value::String(text) => scrub_json_text(text, hex),
+        serde_json::Value::Array(items) => {
+            let mut changed = false;
+            for item in items {
+                changed |= scrub_json(item, hex);
+            }
+            changed
+        }
+        serde_json::Value::Object(fields) => {
+            let mut changed = false;
+            let mut scrubbed = serde_json::Map::with_capacity(fields.len());
+            for (mut key, mut item) in std::mem::take(fields) {
+                changed |= scrub_json_text(&mut key, hex);
+                changed |= scrub_json(&mut item, hex);
+                scrubbed.insert(key, item);
+            }
+            *fields = scrubbed;
+            changed
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {
+            false
+        }
+    }
+}
+
+/// Scrubs a plan that does not decode against its schema. A JSON reader
+/// decodes an escaped spelling (`\u0061` is `a`) that the bytes do not hold,
+/// so a plan that is JSON has each string and key scrubbed as decoded
+/// ([`scrub_json`]) and is written back. Then its bytes are scrubbed as text
+/// ([`scrub_plan_text`]). Returns whether the payload changed.
+fn scrub_unreadable_plan(payload: &mut Vec<u8>, actor: &EntityId) -> Result<bool> {
+    let mut changed = false;
+    if let Ok(mut plan) = serde_json::from_slice::<serde_json::Value>(payload)
+        && scrub_json(&mut plan, &actor.to_hex())
+    {
+        *payload = encode(&plan)?;
+        changed = true;
+    }
+    Ok(scrub_plan_text(payload, actor) | changed)
+}
+
 /// Scrubs a built-in plan's operands through `operands`; a plan that does
-/// not decode is scrubbed as text ([`scrub_plan_text`]). Returns whether the
-/// payload changed.
+/// not decode goes to [`scrub_unreadable_plan`]. Returns whether the payload
+/// changed.
 fn scrub_plan<P: serde::Serialize + serde::de::DeserializeOwned>(
     payload: &mut Vec<u8>,
     actor: &EntityId,
     operands: impl FnOnce(&mut P) -> bool,
 ) -> Result<bool> {
     let Ok(mut plan) = decode::<P>(payload.as_slice()) else {
-        return Ok(scrub_plan_text(payload, actor));
+        return scrub_unreadable_plan(payload, actor);
     };
     if !operands(&mut plan) {
         return Ok(false);
