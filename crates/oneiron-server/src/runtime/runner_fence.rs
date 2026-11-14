@@ -60,25 +60,20 @@ impl HostRunnerFence {
     /// is built, so the runner can write there even where the system temp
     /// directory is on the way to a removed tree.
     ///
-    /// The runner still runs, unfenced and unproven, where the rule cannot
-    /// be built for this spawn, and where `workdir` or its git directories
-    /// lie in a removed tree: a masked copy's checkout is a worktree of a
-    /// repository in the vault's data tree (FIX 7608), and git there needs
-    /// that repository. Canon `#fence-unproven`: the engine never refuses
-    /// the run.
+    /// The runner still runs, unfenced and unproven, on a host whose proof
+    /// failed (a rule the host did not prove may refuse the spawn itself: a
+    /// seccomp policy that denies `landlock_restrict_self`), where the rule
+    /// cannot be built for this spawn, and where `workdir` or its git
+    /// directories lie in a removed tree: a masked copy's checkout is a
+    /// worktree of a repository in the vault's data tree (FIX 7608), and git
+    /// there needs that repository. Canon `#fence-unproven`: the engine
+    /// never refuses the run.
     #[must_use]
     pub fn command(&self, program: impl AsRef<OsStr>, workdir: &Path) -> RunnerCommand {
-        let scratch = tempfile::Builder::new()
-            .prefix("oneiron-runner-")
-            .tempdir()
-            .inspect_err(|error| {
-                tracing::warn!(
-                    error = %error,
-                    "runner fence: no private temp directory for a runner"
-                );
-            })
-            .ok();
-        let (mut command, outcome) = if self.needs_removed_tree(workdir) {
+        let scratch = runner_scratch();
+        let (command, outcome) = if !self.outcome.proven {
+            (oneiron_spawn::command(program), self.outcome.clone())
+        } else if self.needs_removed_tree(workdir) {
             tracing::warn!(
                 "runner fence: a runner's working tree needs a removed tree (a masked \
                  checkout's repository in the vault); it runs unproven"
@@ -96,15 +91,21 @@ impl HostRunnerFence {
                 }
             }
         };
-        command.current_dir(workdir);
-        if let Some(scratch) = &scratch {
-            command.env("TMPDIR", scratch.path());
-        }
-        RunnerCommand {
-            command,
-            outcome,
-            scratch,
-        }
+        RunnerCommand::new(command, outcome, workdir, scratch)
+    }
+
+    /// The command for `program`, started in `workdir` without the rule and
+    /// unproven: a runner whose fenced spawn failed (the rule refused at the
+    /// spawn) starts again this way. Canon `#fence-unproven`: the engine
+    /// never refuses the run.
+    #[must_use]
+    pub fn unfenced_command(&self, program: impl AsRef<OsStr>, workdir: &Path) -> RunnerCommand {
+        RunnerCommand::new(
+            oneiron_spawn::command(program),
+            self.unproven(),
+            workdir,
+            runner_scratch(),
+        )
     }
 
     /// This host's outcome for a runner that runs without the rule.
@@ -138,6 +139,40 @@ pub struct RunnerCommand {
     pub outcome: RunnerFenceOutcome,
     /// The runner's `TMPDIR`; `None` where it could not be made.
     pub scratch: Option<tempfile::TempDir>,
+}
+
+impl RunnerCommand {
+    /// `command` started in `workdir`, with `scratch` as its `TMPDIR`.
+    fn new(
+        mut command: Command,
+        outcome: RunnerFenceOutcome,
+        workdir: &Path,
+        scratch: Option<tempfile::TempDir>,
+    ) -> Self {
+        command.current_dir(workdir);
+        if let Some(scratch) = &scratch {
+            command.env("TMPDIR", scratch.path());
+        }
+        Self {
+            command,
+            outcome,
+            scratch,
+        }
+    }
+}
+
+/// A private temp directory for one runner, `None` where none could be made.
+fn runner_scratch() -> Option<tempfile::TempDir> {
+    tempfile::Builder::new()
+        .prefix("oneiron-runner-")
+        .tempdir()
+        .inspect_err(|error| {
+            tracing::warn!(
+                error = %error,
+                "runner fence: no private temp directory for a runner"
+            );
+        })
+        .ok()
 }
 
 /// The git directories a working tree at `workdir` uses: its `.git`, and
