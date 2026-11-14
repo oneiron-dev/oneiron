@@ -32,10 +32,8 @@ fn real_checkout_remote_push_redeems_a_lease_and_never_copies_upstream_secret() 
     // between the claim and the real credential door instead of racing it.
     let now = crate::unix_seconds_now();
     let clock = crate::store::ports::ManualClock::new(now);
-    let config = crate::VaultConfig {
-        store_clock: clock.bundle(),
-        ..Default::default()
-    };
+    let mut config = crate::VaultConfig::device();
+    config.store_clock = clock.bundle();
     let _dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(_dir.path(), config).unwrap());
     let (_source, repo_dir, _, head) = served_repo(&vault);
@@ -70,6 +68,7 @@ fn real_checkout_remote_push_redeems_a_lease_and_never_copies_upstream_secret() 
             name: "checkout.upstream".into(),
             class: crate::secret_custody::CustodyClass::CustodyPortable,
             device_only: false,
+            model_reveal_allowed: false,
             value_bytes: secret.to_vec(),
             status: crate::secret_custody::SecretCustodyStatus::Active,
             registered_at: now,
@@ -235,8 +234,8 @@ impl crate::dispatch_byoa::ByoaCliExecutor for CheckoutRustBuild<'_> {
             ));
         }
         Ok(crate::dispatch_byoa::ByoaExhaust {
-            stdout: b"checkout build succeeded".to_vec(),
-            stderr: output.stderr,
+            stdout: crate::dispatch_byoa::ByoaStream::from(b"checkout build succeeded".to_vec()),
+            stderr: crate::dispatch_byoa::ByoaStream::from(output.stderr),
             ..Default::default()
         })
     }
@@ -253,16 +252,9 @@ fn leased_door_checkout_build_captures_exhaust_and_reclaims_fail_closed() {
     let now = crate::unix_seconds_now();
     let clock = crate::store::ports::ManualClock::new(now);
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(
-        Vault::open(
-            dir.path(),
-            crate::VaultConfig {
-                store_clock: clock.bundle(),
-                ..Default::default()
-            },
-        )
-        .unwrap(),
-    );
+    let mut config = crate::VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let vault = Arc::new(Vault::open(dir.path(), config).unwrap());
     let (_source, repo_dir, _, head) = served_repo(&vault);
     git(&repo_dir, &["remote", "remove", "origin"]);
     let principal = EntityId::now();
@@ -304,8 +296,10 @@ fn leased_door_checkout_build_captures_exhaust_and_reclaims_fail_closed() {
                 checkout_id,
                 egress_profile_ref: "test/no-network".into(),
                 credential_handles: vec![],
+                staged_input: None,
             }),
             task_ref: Some(task_ref),
+            dev_refs: None,
             parent_attempt_id: None,
             run_id: Some("checkout-build".into()),
             dedupe_key: None,
@@ -337,7 +331,6 @@ fn leased_door_checkout_build_captures_exhaust_and_reclaims_fail_closed() {
                 attempt_count: attempt.attempt_count,
             },
             crate::code_sandbox::microvm::ExecutionBudget::new(60, 128, 8),
-            &leases,
             &mut executor,
             now + 3,
         )
@@ -354,12 +347,9 @@ fn leased_door_checkout_build_captures_exhaust_and_reclaims_fail_closed() {
             now: now + 4,
         })
         .unwrap();
-    let bytes = vault
-        .read_blob_artifact_version(&terminal.artifact_id, 1)
-        .unwrap()
-        .unwrap();
-    let (_, _, stored) = decode_byoa_exhaust(&bytes).unwrap();
-    assert_eq!(stored.stdout, b"checkout build succeeded");
+    let (_, _, stored) =
+        decode_byoa_exhaust(&vault, &terminal.artifact_id, terminal.artifact_version).unwrap();
+    assert!(stored.stdout.is(b"checkout build succeeded"));
 
     git(&tree, &["add", "--", "lib.rs"]);
     git(

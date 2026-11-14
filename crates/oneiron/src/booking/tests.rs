@@ -15,14 +15,14 @@ use serde_json::{Value as JsonValue, json};
 use crate::llm::{
     BudgetLease, ContentPart, FatalLlmError, FinishReason, LlmBackend, LlmGenerateFuture,
     LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse,
-    LlmStreamResult, LlmUsage, ModelTierRef, TierPrecedence,
+    LlmStreamResult, LlmUsage, ModelId, ModelLocality, ModelTierRef, TierPrecedence,
 };
 use crate::temporal::TimeRange;
 
 use super::constraint::{
-    BookingError, CONSTRAINT_SCHEMA_VERSION, ConstraintObject, ConstraintParseConfig,
-    ConstraintParseDisposition, ConstraintParseRequest, ConstraintWeekday, LocalMinuteWindow,
-    parse_constraint_with_backend,
+    BookingDecisions, BookingError, CONSTRAINT_SCHEMA_VERSION, ConstraintObject,
+    ConstraintParseConfig, ConstraintParseDisposition, ConstraintParseRequest, ConstraintWeekday,
+    LocalMinuteWindow, parse_constraint_with_backend,
 };
 
 // -------------------------------------------------------------------------
@@ -56,14 +56,20 @@ impl LlmBackend for RecordingBackend {
             Ok(LlmResponse {
                 message: LlmMessage {
                     role: LlmMessageRole::Assistant,
-                    content: vec![ContentPart::Text { text: body }],
+                    content: vec![ContentPart::Text {
+                        text: body,
+                        signature: None,
+                    }],
                 },
                 usage: LlmUsage {
                     input: LlmInputUsage::default(),
                     output: LlmOutputUsage::default(),
                     raw_provider: JsonValue::Null,
+                    call_metadata: None,
                 },
                 finish_reason: FinishReason::Stop,
+                reply_assertions: Default::default(),
+                token_scores: None,
             })
         })
     }
@@ -114,13 +120,17 @@ fn cheap_tier() -> TierPrecedence {
         vault_policy: Some(ModelTierRef("host-cheap-tier".to_owned())),
         purpose_default: None,
         global_default: ModelTierRef("host-global-tier".to_owned()),
+        seat: None,
     }
 }
 
 fn parse_config() -> ConstraintParseConfig {
     ConstraintParseConfig {
+        model: ModelId::new("test/booking-parse@v1").expect("fixture model id"),
+        locality: ModelLocality::OwnServer,
         tier: cheap_tier(),
         max_input_bytes: 512,
+        decisions: BookingDecisions::shipped(crate::test_util::entity(1)),
     }
 }
 

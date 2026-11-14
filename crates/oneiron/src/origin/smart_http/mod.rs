@@ -151,8 +151,6 @@ pub use self::serve_cmd::{ServeChild, ServeCommand, ServeRequest};
 
 #[cfg(test)]
 mod advertise_tests;
-// FIX [LIBTEST-QUARANTINE-ORIGIN-SMART-HTTP-CHECKOUT-TESTS]: the lib test target's type check fails here (10 errors: E0308 x3, E0063 x3, E0639 x2, E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod checkout_tests;
 #[cfg(test)]

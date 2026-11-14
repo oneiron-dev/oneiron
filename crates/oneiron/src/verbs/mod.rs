@@ -824,8 +824,6 @@ fn verb_input_schema_is_built_once_per_process() {
     assert!(std::ptr::eq(first, second));
 }
 
-// FIX [LIBTEST-QUARANTINE-VERBS-ITEMS]: the lib test target's type check fails here (5 errors: E0599 x5); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 #[test]
 fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
@@ -841,11 +839,12 @@ fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
             verb.as_str()
         );
     }
-    assert!(AgentVerb::TasksAsk.is_section());
-    assert!(AgentVerb::RoomsSpeak.writes());
-    assert!(AgentVerb::RoomsList.is_facade());
-    assert!(!AgentVerb::BoardExpand.is_facade());
-    assert_eq!(AgentVerb::Recall.argument_fields(), &["spec"]);
+    assert!(AgentVerb::Ask.is_section());
+    assert!(AgentVerb::VaultRoomsSpeak.writes());
+    assert!(AgentVerb::VaultRoomsList.is_facade());
+    // A host-served row (the browser context) is no facade verb; board.expand, the old pin, is gone.
+    assert!(!AgentVerb::SelfBrowserClick.is_facade());
+    assert_eq!(AgentVerb::VaultRecall.argument_fields(), &["spec"]);
     assert!(AgentVerb::from_name("not.a.verb").is_none());
 }
 

@@ -70,6 +70,4 @@ pub(crate) mod support;
 mod addressable_consults;
 
 mod authority_asks;
-// FIX [LIBTEST-QUARANTINE-TASK-VERB-TESTS-CODE-LEAD]: the lib test target's type check fails here (5 errors: E0063 x2, E0308 x2, E0027 x1); port it, then drop this gate
-#[cfg(any())]
 mod code_lead;
