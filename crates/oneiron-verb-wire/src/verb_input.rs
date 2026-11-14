@@ -5,6 +5,10 @@
 //! whose input check runs admission checks, takes a board shape and a host shape, or is feature-gated, and a row whose
 //! input names a type the engine holds, stays there. Each row is in exactly one of the two tables.
 
+// A generated check is named after its verb, whose name keeps its own casing (`vault.skills.restoreDefaults` ->
+// `validate_input_vault_skills_restoreDefaults`), as the engine's generated fns are.
+#![allow(non_snake_case)]
+
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 /// A verb's input decoded from its JSON value; a value that does not decode is `bad_request`, naming the path of the
