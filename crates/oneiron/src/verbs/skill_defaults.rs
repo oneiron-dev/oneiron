@@ -8,23 +8,8 @@ use crate::{EntityId, Error, TimeRange, Vault};
 
 use super::{EmptyRequest, HubSkillRequest, SkillLibraryView};
 
-/// The expected build source beside the actual resident. Absence is reported,
-/// never repaired by a read, and resident files are not replaced by build bytes.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct BootstrapSkillView {
-    pub skill_id: String,
-    pub content_hash: String,
-    pub source: HubRef,
-    pub resident: Option<SkillLibraryView>,
-}
-
-impl BootstrapSkillView {
-    pub fn rows(&self) -> Vec<EntityId> {
-        self.resident
-            .as_ref()
-            .map_or_else(Vec::new, SkillLibraryView::rows)
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::skill_defaults::BootstrapSkillView;
 
 pub fn skill_bootstrap_as_owner(
     vault: &Vault,

@@ -14,22 +14,10 @@ use crate::memory::MemoryResult;
 
 use super::connector_call_error;
 
-/// `vault.outbound_calls.request.erase`'s input: the call's attempt and its
-/// sequence within that attempt.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OutboundCallRequestEraseRequest {
-    /// The call's attempt, 32 hex.
-    pub attempt: EntityId,
-    pub call_seq: u64,
-}
-
-/// `vault.outbound_calls.request.erase`'s answer: `false` for a call with no
-/// row here, or one whose request is already erased.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct OutboundCallRequestErased {
-    pub erased: bool,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::outbound_call_erase::{
+    OutboundCallRequestEraseRequest, OutboundCallRequestErased,
+};
 
 /// `vault.outbound_calls.request.erase`: the owner's erase of one outbound
 /// call's frozen request. The owner's proof is revalidated in the

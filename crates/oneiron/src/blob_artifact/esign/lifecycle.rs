@@ -9,28 +9,10 @@ use crate::store::outbound_outcome::OutboundDispatchOutcome;
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EsignNoticeSwitches {
-    pub invite: bool,
-    pub pending: bool,
-    pub completed: bool,
-    pub rejection: bool,
-    pub void: bool,
-    pub expiry: bool,
-}
-impl Default for EsignNoticeSwitches {
-    fn default() -> Self {
-        Self {
-            invite: true,
-            pending: true,
-            completed: true,
-            rejection: true,
-            void: true,
-            expiry: true,
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::blob_artifact::esign::lifecycle::{
+    EsignLifecycleRules, EsignNoticeSwitches,
+};
 
 /// One reminder a sweep's dispatch held, as
 /// [`Vault::sweep_esign_reminders_with_holds`] reports it (FIX 6424).
@@ -57,30 +39,6 @@ pub struct EsignReminderSweep {
     pub held: Vec<HeldEsignReminder>,
 }
 
-/// Rule values belong to the installing pack; the engine does not choose a
-/// reminder ladder or a default expiry window. Seconds are measured from send.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EsignLifecycleRules {
-    pub expiry_after_seconds: u64,
-    pub first_reminder_after_seconds: u64,
-    pub repeat_reminder_every_seconds: u64,
-    pub reminder_cap_seconds: u64,
-    pub notices: EsignNoticeSwitches,
-}
-impl EsignLifecycleRules {
-    pub(super) fn validate(&self) -> Result<()> {
-        if self.expiry_after_seconds == 0
-            || self.first_reminder_after_seconds == 0
-            || self.repeat_reminder_every_seconds == 0
-            || self.reminder_cap_seconds < self.first_reminder_after_seconds
-            || self.reminder_cap_seconds > self.expiry_after_seconds
-        {
-            return Err(invalid("invalid lifecycle rules"));
-        }
-        Ok(())
-    }
-}
 pub(super) fn rules_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

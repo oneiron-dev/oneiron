@@ -9,15 +9,8 @@ use crate::memory::{MEMORY_CODE_INTERNAL, MemoryError, MemoryResult};
 use crate::outbound_intent_ledger::IntentLedgerError;
 use crate::{EntityId, Vault};
 
-/// The owner's press on the exact campaign hold it reviewed.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CampaignEnrollmentApproveOnceRequest {
-    /// The held enrollment's call ref, 32 hex.
-    pub call_ref: String,
-    /// The approve-once digest in the hold's current owner question.
-    pub approval_digest: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::campaign_enrollment::CampaignEnrollmentApproveOnceRequest;
 
 fn campaign_enrollment_error(error: IntentLedgerError) -> MemoryError {
     match error {

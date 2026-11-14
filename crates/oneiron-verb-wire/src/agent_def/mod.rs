@@ -1,9 +1,18 @@
+pub use crate::agent_def::made_by::AgentMadeBy;
+pub use crate::agent_def::made_by::AgentRunNow;
+pub use crate::agent_def::made_by::AgentTreePauseOffer;
+pub use crate::agent_def::made_by::MadeAgent;
+pub use crate::agent_def::made_by::MadeBranch;
+pub use crate::agent_def::made_by::MadeHook;
+pub use crate::agent_def::made_by::MadeSend;
+pub use crate::agent_def::made_by::MadeWatcher;
 pub use crate::agent_def::powers::AgentPowerHolderKind;
 pub use crate::agent_def::proposed_change::ProposedAgentDefinitionChangeDecision;
 pub use crate::agent_def::refusal::RefusalOutcome;
 pub use crate::store::agent_refusal::REFUSAL_DIAL_KEYS;
 pub use crate::store::agent_refusal::RefusalDomain;
 pub use crate::store::agent_refusal::RefusalLevel;
+pub(crate) use oneiron_store::agent_birth_identity::birth_source_id;
 pub use oneiron_store::agent_model::AgentModel;
 pub use oneiron_store::agent_record::AGENT_DEF_BODY_KEYS;
 pub use oneiron_store::agent_record::AGENT_DESC_MAX_BYTES;
@@ -19,7 +28,9 @@ pub use oneiron_store::agent_record::CONTEXT_BUDGET_SPLIT_KEYS;
 pub use oneiron_store::agent_record::CompactionOwnership;
 pub use oneiron_store::agent_record::MCP_REF_KEYS;
 pub use oneiron_store::agent_record::MEMORY_PROFILE_KEYS;
+pub(crate) use oneiron_store::batch::export::agent_knowledge_format::KnowledgeFormat;
 
+pub mod made_by;
 pub mod powers;
 pub mod proposed_change;
 pub mod refusal;

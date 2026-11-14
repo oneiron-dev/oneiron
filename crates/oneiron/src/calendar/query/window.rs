@@ -13,32 +13,10 @@ use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadResult};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::{EntityId, Error, Result, TimeRange};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CalendarOccurrencesRequest {
-    pub master_ref: String,
-    /// Inclusive UTC seconds. An unbounded expansion is not a public call.
-    pub range: CalendarRangeDto,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CalendarOccurrenceView {
-    pub event_ref: String,
-    pub master_ref: String,
-    pub uid: String,
-    /// The occurrence's recurrence key: a UTC instant, or for an all-day or
-    /// floating series its civil start read as UTC.
-    pub original_start_utc: u64,
-    /// Inclusive UTC bounds; for an all-day occurrence in a zone its
-    /// calendar names, its days in that zone; for any other all-day or
-    /// floating occurrence, the span it falls in across every zone. Its days
-    /// or wall times are in [`Self::civil`].
-    pub start_utc: u64,
-    pub end_utc: u64,
-    /// An all-day or floating occurrence's days or wall times (FIX 17869).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub civil: Option<super::civil::CalendarCivilSpan>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::calendar::query::window::{
+    CalendarOccurrenceView, CalendarOccurrencesRequest,
+};
 
 impl Memory<'_> {
     pub fn calendar_occurrences(

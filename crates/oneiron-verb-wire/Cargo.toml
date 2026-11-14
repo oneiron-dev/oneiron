@@ -12,10 +12,14 @@ homepage.workspace = true
 doctest = false
 
 [dependencies]
+base64 = "0.22"
 blake3 = { workspace = true, features = ["zeroize"] }
 ed25519-dalek = { workspace = true }
+encoding_rs = "0.8"
+half = "2"
 heed = { workspace = true }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "tiff", "bmp", "ico", "pnm", "ff", "dds"] }
+lopdf = { version = "=0.44.0", default-features = false }
 loro = { workspace = true }
 oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
 oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
@@ -34,14 +38,18 @@ oneiron-retrieval = { version = "0.1.0", path = "../oneiron-retrieval" }
 oneiron-run-budget = { version = "0.1.0", path = "../oneiron-run-budget" }
 oneiron-skill-attribution = { version = "0.1.0", path = "../oneiron-skill-attribution" }
 oneiron-store = { version = "0.1.0", path = "../oneiron-store" }
+oneiron-vault-contract = { version = "0.1.0", path = "../oneiron-vault-contract" }
 oneiron-wake-contract = { version = "0.1.0", path = "../oneiron-wake-contract" }
 oneiron-web-fetch = { version = "0.1.0", path = "../oneiron-web-fetch" }
+oneiron-xlsx-formula = { version = "0.1.0", path = "../oneiron-xlsx-formula" }
 rmp-serde = { workspace = true }
 rmpv = { workspace = true, features = ["with-serde"] }
 schemars = "=0.8.22"
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["raw_value", "float_roundtrip"] }
+sha2 = "0.10"
 thiserror = { workspace = true }
+zeroize = "1"
 
 [features]
 # Forwarded from `oneiron/sync` and `oneiron/test-support`: a moved item keeps the gate it had in the engine, and

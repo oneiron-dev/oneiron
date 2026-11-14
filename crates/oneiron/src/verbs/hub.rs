@@ -14,31 +14,15 @@ use crate::{EntityId, TimeRange, Vault};
 
 use super::PackPutReceipt;
 
-/// A configured hub's identity, never a fabricated source row.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SkillHubRequest {
-    pub hub: EntityId,
-}
-
-/// The owner's configurable source. Trust changes presentation, not authority.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SkillHubPutRequest {
-    pub hub: EntityId,
-    pub kind: SkillHubKind,
-    pub endpoint: String,
-    pub trust_tier: SkillHubTrustTier,
-    pub sync_policy: HubSyncPolicy,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum HubConsentOutcome {
-    Approved,
-    Denied,
-    Revoked,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::hub::{
+    ClawHubSearchRequest, HookGrantRequest, HubConsentOutcome, HubHookBindRequest,
+    HubHookGoldenRun, HubHookQualifyRequest, HubImportRequest, HubPackRequest, HubRefRequest,
+    HubRefSetRequest, HubSkillImported, HubSkillPermissionRequest, HubSkillProposalSettleRequest,
+    HubSkillProposalSettled, HubSkillReceipts, HubSkillRequest, HubSkillSyncOutcome,
+    HubSkillSyncReceipt, SkillHubPutRequest, SkillHubRequest, SkillPublisherAdmission,
+    SkillPublisherRequest,
+};
 
 /// The actual engine consent decision, not an inferred successful HTTP status.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -74,79 +58,6 @@ pub struct SkillHubConfigured {
     pub consent: HubConsentReceipt,
 }
 
-/// The publisher's offer-only authority is bounded to this one hub.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SkillPublisherRequest {
-    pub hub: EntityId,
-    pub identity: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SkillPublisherAdmission {
-    pub hub: EntityId,
-    pub identity: String,
-    pub grant_ref: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HubRefRequest {
-    pub hub: EntityId,
-    pub ref_string: String,
-}
-
-/// Changes only the ref policy. Fetching and trusting are separate actions.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HubRefSetRequest {
-    pub hub_ref: HubRef,
-    pub sync_policy: HubSyncPolicy,
-}
-
-/// The exact pinned source to fetch, and its admitted foreign publisher.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HubImportRequest {
-    pub hub_ref: HubRef,
-    pub publisher: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HubPackRequest {
-    pub name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HubSkillRequest {
-    pub entity: EntityId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct HubSkillImported {
-    pub entity: EntityId,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum HubSkillSyncOutcome {
-    Applied,
-    Proposed,
-    RefusedByPolicy,
-}
-
-/// A proposal never changes the trusted content or effective capabilities.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct HubSkillSyncReceipt {
-    pub outcome: HubSkillSyncOutcome,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub proposal: Option<EntityId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub approval: Option<crate::claim::ClaimApprovalStatus>,
-}
-
 impl From<HubSyncDisposition> for HubSkillSyncReceipt {
     fn from(disposition: HubSyncDisposition) -> Self {
         match disposition {
@@ -173,44 +84,6 @@ impl From<HubSyncDisposition> for HubSkillSyncReceipt {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HubSkillProposalSettleRequest {
-    pub entity: EntityId,
-    pub proposal: EntityId,
-    pub accept: bool,
-}
-
-/// Approved means the proposal's exact package landed; Rejected closes only
-/// the proposal and leaves the working skill and its capabilities unchanged.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct HubSkillProposalSettled {
-    pub entity: EntityId,
-    pub proposal: EntityId,
-    pub approval: crate::claim::ClaimApprovalStatus,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct HubSkillReceipts {
-    pub sources: Vec<HubRef>,
-    pub imports: Vec<HubImportReceipt>,
-    pub admission: Option<HubAdmissionReceipt>,
-}
-
-/// The source-specific permission ask the owner answers; no first-alias guess.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HubSkillPermissionRequest {
-    pub entity: EntityId,
-    pub hub_ref: HubRef,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HubHookQualifyRequest {
-    pub source: EntityId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HubHookQualificationReceipt {
     pub put: PackPutReceipt,
     pub replays: Vec<HubHookReplay>,
@@ -227,37 +100,12 @@ pub struct HubHookReplay {
     pub golden: Vec<HubHookGoldenRun>,
 }
 
-/// One golden input of a verb hook, as the qualification ran it.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct HubHookGoldenRun {
-    /// Its place in the hook's `golden.json`, from 0.
-    pub index: usize,
-    pub verb: String,
-    /// The hook's selector took the call, so its body ran.
-    pub ran: bool,
-    /// The body returned the expected outcome.
-    pub passed: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HubHookBindRequest {
-    pub pack: String,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HubHookBindingRow {
     pub id: EntityId,
     pub binding: PackHookBinding,
     /// The owner's assignment, or the author's ceiling when none was set.
     pub grant: HookGrant,
-}
-
-/// The binding claim named by `vault.packs.hooks.list`, not its CODE id.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HookGrantRequest {
-    pub binding: EntityId,
 }
 
 /// The owner sets or changes a binding's read grant. This does not change
@@ -572,20 +420,6 @@ pub fn hub_hooks_qualify_embedded(
 ) -> MemoryResult<HubHookQualificationReceipt> {
     let _owner = memory.embedded_owner("vault.packs.hooks.qualify")?;
     super::host_only(memory, "vault.packs.hooks.qualify", input)
-}
-
-/// Queries the public ClawHub-compatible API on a configured HTTP hub's origin.
-/// Query metadata never grants trust or supplies a content hash for import.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ClawHubSearchRequest {
-    pub hub: EntityId,
-    pub q: String,
-    pub limit: Option<i64>,
-    pub highlighted_only: Option<bool>,
-    pub non_suspicious_only: Option<bool>,
-    /// Defaults to the existing 2 MiB HTTP index budget; not sent upstream.
-    pub response_limit_bytes: Option<usize>,
 }
 
 pub fn skill_hub_clawhub_search_as_owner(

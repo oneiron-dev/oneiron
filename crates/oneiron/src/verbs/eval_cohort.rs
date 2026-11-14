@@ -10,14 +10,8 @@ use crate::skill_optimize::{
     setup_eval_cohorts,
 };
 
-/// Pin the returned `built_at` and `inventory_digest` when setting up cohorts.
-/// An omitted time reads the vault clock; a future inventory is refused.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EvalInventoryWire {
-    #[serde(default)]
-    pub at: Option<u64>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::eval_cohort::EvalInventoryWire;
 
 pub fn eval_inventory_as_owner(
     vault: &Vault,

@@ -18,14 +18,12 @@ use crate::federation::{
 use crate::memory::{MemoryError, MemoryResult, ProducerRows};
 use crate::{EntityId, Vault};
 
-/// A shared vault, by the id its creation named.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SharedVaultRequest {
-    #[serde(with = "crate::federation::vault_id_decimal")]
-    #[schemars(with = "String")]
-    pub vault_id: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::shared::{
+    HandoffAlarmRequest, SharedActRequest, SharedAddOwnerRequest, SharedMemberAskIdRequest,
+    SharedMemberAskKind, SharedMemberRequest, SharedOwnerChangeWaitSetRequest,
+    SharedReceiptRequest, SharedVaultRequest,
+};
 
 /// `vault.shared.propose_transfer`'s input: the starter, a live Owner, hands
 /// the vault to `to`, then keeps `from_keeps` or leaves when it is absent.
@@ -62,44 +60,6 @@ pub struct SharedRemoveOwnerRequest {
     #[schemars(with = "Option<String>")]
     pub target_keeps: Option<Role>,
     pub export_first: bool,
-}
-
-/// `vault.shared.propose_add_owner`'s input: a live Owner starts an
-/// `add_owner` act making `owner` an Owner; nobody loses the role.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SharedAddOwnerRequest {
-    #[serde(with = "crate::federation::vault_id_decimal")]
-    #[schemars(with = "String")]
-    pub vault_id: u64,
-    /// The new Owner's PERSON id, hex: a live person not yet an Owner.
-    pub owner: String,
-}
-
-/// `vault.shared.owner_change_wait.set`'s input: whole days, or `null` to
-/// remove the common wait. `Some(0)` persists an explicit zero.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SharedOwnerChangeWaitSetRequest {
-    #[serde(with = "crate::federation::vault_id_decimal")]
-    #[schemars(with = "String")]
-    pub vault_id: u64,
-    #[serde(default)]
-    pub days: Option<u64>,
-}
-
-/// A started shared act, by the id its proposal answered.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SharedActRequest {
-    pub act_id: String,
-}
-
-/// A shared-act or membership receipt, by id.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SharedReceiptRequest {
-    pub receipt_id: String,
 }
 
 /// `vault.members.add`'s input: a live person with no membership here, at a
@@ -190,29 +150,6 @@ pub struct SharedMemberRoleRequest {
     pub role: Role,
 }
 
-/// One member of a shared vault.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SharedMemberRequest {
-    #[serde(with = "crate::federation::vault_id_decimal")]
-    #[schemars(with = "String")]
-    pub vault_id: u64,
-    /// PERSON id, hex.
-    pub member: String,
-}
-
-/// The member change a Steward asks for (`vault.members.ask`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SharedMemberAskKind {
-    /// Invite `member` at `role`, or at the preset's default member role.
-    Add,
-    /// Remove `member`.
-    Remove,
-    /// Move `member` to `role`.
-    AssignRole,
-}
-
 /// A Steward's ask for one member change in a shared vault.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -228,25 +165,6 @@ pub struct SharedMemberAskRequest {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub role: Option<Role>,
-}
-
-/// One member ask in a shared vault, by its id.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SharedMemberAskIdRequest {
-    #[serde(with = "crate::federation::vault_id_decimal")]
-    #[schemars(with = "String")]
-    pub vault_id: u64,
-    /// The ask's id, hex.
-    pub ask: String,
-}
-
-/// A saved handoff alarm, by its retired key (`suite:hex`, as the alarm
-/// names it).
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HandoffAlarmRequest {
-    pub signer: String,
 }
 
 /// `vault.shared.execute`'s answer: the act's receipt and, for an

@@ -15,14 +15,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryResult};
 use crate::task_verb::CommWidenRevokeReceipt;
 
-/// `vault.tasks.comm_widen.revoke`'s input: the run whose widen ask recorded
-/// the stop-asking choice.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CommWidenRevokeRequest {
-    /// The asking run's attempt, 32 hex: the receipt's `attempt`.
-    pub attempt: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::comm_widen::CommWidenRevokeRequest;
 
 /// `vault.tasks.comm_widen.revoke`: ends the standing of the stop-asking
 /// choice `input.attempt`'s widen ask recorded, as the owner proves on his

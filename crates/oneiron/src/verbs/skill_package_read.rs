@@ -12,56 +12,10 @@ use super::{
     SkillLibraryFile, SkillLibraryLifecycle,
 };
 
-/// `self.skills.package`'s package format on the wire: how source fields relate
-/// to native metadata, as the stored package declares it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SkillPackageFormatView {
-    Folder,
-    Native,
-}
-
-impl From<crate::skill_hub::SkillPackageFormat> for SkillPackageFormatView {
-    fn from(format: crate::skill_hub::SkillPackageFormat) -> Self {
-        match format {
-            crate::skill_hub::SkillPackageFormat::Folder => Self::Folder,
-            crate::skill_hub::SkillPackageFormat::Native => Self::Native,
-        }
-    }
-}
-
-/// `self.skills.package`'s record on the wire: every `SkillRecord` field.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SkillPackageRecordView {
-    pub skill_id: String,
-    pub desc: String,
-    pub version: String,
-    pub approval_status: ClaimApprovalStatus,
-    pub lifecycle_status: SkillLibraryLifecycle,
-    pub source: ClaimSource,
-    pub confidence: f32,
-    pub generated: bool,
-    pub human_authored: bool,
-    pub dependencies: Vec<SkillLibraryDependency>,
-    pub provenance: serde_json::Value,
-    pub content_hash: Option<String>,
-    pub forked_from: Option<EntityId>,
-    pub governance_tier: Option<String>,
-    pub role: String,
-    pub call: Option<SkillLibraryCall>,
-}
-
-/// `self.skills.package`'s answer: the skill's record with its runtime package's
-/// files, capabilities and format. A missing, withheld, non-skill or unloadable
-/// skill answers none, never this.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SkillPackageView {
-    pub entity: EntityId,
-    pub record: SkillPackageRecordView,
-    pub files: Vec<SkillLibraryFile>,
-    pub capabilities: SkillCapabilityView,
-    pub format: SkillPackageFormatView,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::skill_package_read::{
+    SkillPackageFormatView, SkillPackageRecordView, SkillPackageView,
+};
 
 /// The view of skill `entity` built from its runtime `package`: the package's
 /// stored record, files, capabilities and format. The native current record

@@ -12,25 +12,10 @@ use crate::claim::{
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_EVENT;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CalendarPassportReadRequest {
-    pub event_ref: String,
-    pub system: String,
-    pub uid: String,
-}
-
-/// Approval and lifecycle are explicit: a recorded proposal is not an admitted head.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CalendarPassportRevision {
-    pub claim_ref: String,
-    pub event_ref: String,
-    pub recorded_at: u64,
-    pub approval: String,
-    pub lifecycle: String,
-    pub stale: bool,
-    pub passport: CalendarPassportValue,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::calendar::query::passport::{
+    CalendarPassportReadRequest, CalendarPassportRevision,
+};
 
 impl Memory<'_> {
     pub fn calendar_passport_read(

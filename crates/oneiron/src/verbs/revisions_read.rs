@@ -7,57 +7,8 @@ use crate::claim::ScopedReadResult;
 use crate::memory::{EntityView, Memory, MemoryError, MemoryResult};
 use crate::vault::RevisionRef;
 
-/// `vault.revisions.read`'s input: the refs to read with their live revisions.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RevisionsReadRequest {
-    /// Record refs to read: short ids or 32-hex ids, each optionally pinned
-    /// as `<ref>@<revision>` like `vault.hydrate`. The row is read at the pin
-    /// when one is named; the revision answered is always the live one.
-    pub refs: Vec<String>,
-    /// The caller's retrieval filter: it only narrows what the refs read.
-    #[serde(default)]
-    pub filter: Option<crate::memory::ReadFilterInput>,
-}
-
-impl RevisionsReadRequest {
-    /// Refuses an empty or over-long list, and a ref that is blank or longer
-    /// than a record ref may be. Parsing is the lane's read.
-    pub fn validate(&self) -> MemoryResult<()> {
-        if self.refs.is_empty() {
-            return Err(MemoryError::bad_request("refs must not be empty"));
-        }
-        crate::memory::caps::check_batch_len("refs", self.refs.len())?;
-        for reference in &self.refs {
-            let reference = reference.trim();
-            if reference.is_empty() || reference.len() > crate::request_limits::RECORD_REF_MAX_BYTES
-            {
-                return Err(MemoryError::bad_request_with(
-                    format!(
-                        "a record ref is 1 to {} bytes",
-                        crate::request_limits::RECORD_REF_MAX_BYTES
-                    ),
-                    &[
-                        "Pass the ref the engine issued: a short id or a 32-hex id, optionally `@<revision>`.",
-                    ],
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
-/// One revision entry: what `vault.get` shows of the row, with the LIVE
-/// revision of its record in the read's snapshot. The revision is live even
-/// when the ref pinned the row's body: it names whether the words read still
-/// stand, not the pin. A record that keeps no revisions answers no revision.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RevisionEntry {
-    /// The row as `vault.get` shows it.
-    pub view: EntityView,
-    /// The record's LIVE revision in the read's snapshot, when it keeps revisions.
-    pub revision: Option<RevisionRef>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::revisions_read::{RevisionEntry, RevisionsReadRequest};
 
 /// `vault.revisions.read` on a handle: each ref's entity view with its live
 /// revision under the caller's lane. The lane read refuses a caller with no

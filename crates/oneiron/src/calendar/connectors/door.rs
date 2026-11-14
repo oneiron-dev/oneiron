@@ -12,33 +12,11 @@ const SEATS: SideTable<String, CalendarConnectorRegistration, Named> =
 const IMIP: SideTable<(), CalendarImipTransportConfig, Named> =
     SideTable::new(&side_table::CALENDAR_IMIP_TRANSPORT);
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CalendarConnectorConfigureRequest {
-    pub config: CalendarConnectorSeatConfig,
-    /// CalDAV discovery URL. Credentials belong in the named custody record.
-    pub endpoint: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CalendarConnectorRequest {
-    pub seat_ref: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CalendarConnectorWriteRequest {
-    pub seat_ref: String,
-    pub event_ref: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CalendarConnectorKillRequest {
-    pub seat_ref: String,
-    pub reason_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::calendar::connectors::door::{
+    CalendarConnectorConfigureRequest, CalendarConnectorKillRequest, CalendarConnectorRequest,
+    CalendarConnectorWriteRequest, CalendarImipTransportConfig,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CalendarConnectorRegistration {
@@ -109,16 +87,6 @@ impl CalendarConnectorOperation {
         config.seat_ref.clear();
         super::literal::digest(&(&self.row.endpoint, &config))
     }
-}
-
-/// An HTTP mail submission service installed by the host's owner. It accepts
-/// one RFC 5322 MIME message per POST; a 2xx means accepted for delivery.
-/// The credential must have a read binding for `calendar.imip`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CalendarImipTransportConfig {
-    pub endpoint: String,
-    pub secret_ref: String,
 }
 
 pub fn validate_endpoint(endpoint: &str) -> MemoryResult<()> {

@@ -13,23 +13,8 @@ use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::vault::RevisionRef;
 use crate::{EdgeActorClass, EntityId};
 
-/// One pinned diary entry: its NOTE id and the LIVE revision of that NOTE in the serving
-/// transaction. `None` is a NOTE with no retained revision there.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DiaryPinnedEntry {
-    pub id: EntityId,
-    pub revision: Option<RevisionRef>,
-}
-
-/// `self.memory.diary.pinned`'s answer: the door's [`DiaryQueryOutcome`] on the wire, in the same
-/// shape `self.memory.diary.query` answers, with the live NOTE revision of each entry it read.
-/// `pins` holds exactly the granted entries, in their order; it is empty unless `outcome` is
-/// granted.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DiaryPinnedOutcome {
-    pub outcome: DiaryQueryOutcome,
-    pub pins: Vec<DiaryPinnedEntry>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::diary_pinned::{DiaryPinnedEntry, DiaryPinnedOutcome};
 
 /// `self.memory.diary.pinned` on a handle: reads as the handle's actor, under the owner proof its
 /// host bound when the owner made this request in person ([`Memory::with_owner_authorship`]), else

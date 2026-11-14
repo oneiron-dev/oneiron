@@ -9,15 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::memory::{EntityRefReceipt, Memory, MemoryError, MemoryResult};
 use crate::note::{NoteKind, NoteScope, NoteWriteEnvelope};
 
-/// `self.memory.diary`'s input: one private entry, and the kind of entry it
-/// is (`reflection`, `daily`), when the agent names one.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DiaryEntryRequest {
-    pub content: String,
-    #[serde(default)]
-    pub kind: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::self_verbs::DiaryEntryRequest;
 
 /// `self.memory.diary`'s answer: the NOTE the entry was written as.
 #[derive(Debug, Clone, Serialize, Deserialize)]

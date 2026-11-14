@@ -10,40 +10,10 @@ use crate::store::GateDecisionId;
 
 const GATE_DECISION_GET_READ_VERB: &str = "vault.gate.decision.get";
 
-/// The same wire fields as `ExplainGateNotice`, with an input/output schema.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct GateDecisionReadNotice {
-    pub notice_type: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub row_ref: Option<String>,
-}
-
-/// The explain door's screened answer, plus version, redaction time and screened
-/// Grant/frontier data. `context` and `diff_handle` are deliberately not served:
-/// FIX row GATE-DECISION-CONTEXT-RELEASE-RULE has no release rule for them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct GateDecisionReadView {
-    pub receipt_id: String,
-    pub decided_at: u64,
-    pub outcome: String,
-    pub reason_codes: Vec<String>,
-    pub receipt_reasons: Vec<String>,
-    pub notices: Vec<GateDecisionReadNotice>,
-    pub actor_class: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actor_ref: Option<String>,
-    pub content_kind: String,
-    pub policy_manifest_version: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub claim_ref: Option<String>,
-    pub version: u8,
-    pub redacted_at: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub grant_ref: Option<String>,
-    /// Only the decision's own actor or the vault owner may read this hash.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub read_frontier_hash: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::gate_decision_read::{
+    GateDecisionReadNotice, GateDecisionReadView,
+};
 
 /// Reads one gate decision in the lane's serving snapshot: the verb Grant,
 /// own/owner/readable-claim admission and reference screening are checked with

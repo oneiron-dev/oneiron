@@ -12,42 +12,8 @@ use crate::{EntityId, Vault};
 pub use crate::memory::GrantRequestedScope;
 pub(crate) use crate::memory::grant_requested_scope;
 
-/// An answer to an access request.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum GrantAnswer {
-    Approve,
-    Deny,
-}
-
-/// `self.grants.answer`'s input.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GrantAnswerRequest {
-    pub request: EntityId,
-    pub answer: GrantAnswer,
-}
-
-/// `self.grants.answer`'s answer.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct GrantAnswered {
-    pub request: EntityId,
-    pub principal_ref: EntityId,
-    pub capability: String,
-    pub scope: GrantRequestedScope,
-    pub status: AccessRequestStatus,
-    /// The person or agent the request asks, when it asks one.
-    pub addressed_to: Option<EntityId>,
-    /// Approval creates exactly this grant at the request's id; denial
-    /// creates none, and so does an approval that delegates none of it,
-    /// which leaves the request pending.
-    pub grant_ref: Option<EntityId>,
-    /// The request that keeps the whole requested grant for the owner, when
-    /// the answerer's credential delegated only part of it.
-    pub excess_request: Option<EntityId>,
-    pub decided_by: Option<EntityId>,
-    pub decided_at: Option<u64>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::grants::{GrantAnswer, GrantAnswerRequest, GrantAnswered};
 
 /// Answers `input` as `responder`, revalidated in the answering write
 /// ([`Vault::respond_addressed_access_request`]).

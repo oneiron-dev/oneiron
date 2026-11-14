@@ -16,45 +16,10 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::memory::MemoryResult;
 
-/// `vault.oauth.authorization.answer`'s input.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OAuthAuthorizationAnswer {
-    /// The sign-in request the owner's ask names (32 hex).
-    pub request_ref: EntityId,
-    /// Whether the owner lets the app in.
-    pub allow: bool,
-    /// The tier an allow gives: `read`, `propose` or `full`. Omitted: the tier the app asked
-    /// for.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tier: Option<AgentTier>,
-    /// The one world an allow binds the app's grant to (32 hex). Omitted: every world the owner
-    /// reads.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub world_ref: Option<EntityId>,
-}
-
-/// `vault.oauth.authorization.answer`'s answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OAuthAuthorizationAnswered {
-    pub request_ref: EntityId,
-    /// Whether the owner let the app in.
-    pub allowed: bool,
-    /// The agent principal the app acts as; absent on a deny.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent: Option<EntityId>,
-    /// The owner agent grant the app's tokens stand on, which the consent registry revokes;
-    /// absent on a deny.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub grant_ref: Option<EntityId>,
-    /// The tier the app got; absent on a deny.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tier: Option<AgentTier>,
-    /// The world the grant is bound to; absent on a deny and on a grant over every world.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub world_ref: Option<EntityId>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::oauth_authorization::{
+    OAuthAuthorizationAnswer, OAuthAuthorizationAnswered,
+};
 
 /// `vault.oauth.authorization.answer` under the owner's proof, his acts recording `surface`.
 pub fn answer_oauth_authorization_as(

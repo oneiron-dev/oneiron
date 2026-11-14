@@ -26,14 +26,10 @@ use crate::{EntityId, Vault};
 /// The prefix of a residence member's id: `residence:<machine hex>`.
 const RESIDENCE_PREFIX: &str = "residence:";
 
-/// `vault.custody.members.drain.begin`'s and `.drain.folder`'s input: one
-/// member of the required set.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CustodyMemberRef {
-    /// The member's id, `<kind>:<name>`, as the set names it.
-    pub target_id: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::custody_drain::{
+    CustodyDrainCommitRequest, CustodyMemberReenrolRequest, CustodyMemberRef,
+};
 
 /// A begun drain: what the member's ack must name, and the token it MACs
 /// the ack with. A retry before the set changes returns the same ticket.
@@ -67,32 +63,6 @@ impl std::fmt::Debug for CustodyDrainTicketView {
             .field("operation_id", &self.operation_id)
             .finish_non_exhaustive()
     }
-}
-
-/// `vault.custody.members.drain.commit`'s input: the member's ack of its
-/// begun drain, as its adapter wrote it.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CustodyDrainCommitRequest {
-    #[schemars(with = "serde_json::Value")]
-    pub ack: DrainAck,
-}
-
-/// `vault.custody.members.reenrol`'s input: the member the owner drained,
-/// by its id (a hosted holder's, or `residence:<machine hex>`), or, for a
-/// folder member, by its absolute folder on this install.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CustodyMemberReenrolRequest {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub folder: Option<String>,
-    /// What a hosted holder keeps: `head_and_log` (when absent) or
-    /// `log_only`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "Option<String>")]
-    pub scope: Option<TargetScope>,
 }
 
 /// The required set's revision after the owner's change.

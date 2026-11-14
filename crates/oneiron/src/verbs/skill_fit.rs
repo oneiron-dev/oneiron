@@ -13,15 +13,8 @@ use crate::memory::MemoryResult;
 
 use super::HubConsentReceipt;
 
-/// The owner's skill-fit choice on the wire: the existing rule fit or the
-/// owner-asked fit. A wire-only projection of
-/// [`crate::skill_hub::SkillFitSetting`], never a second store.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SkillFitChoice {
-    RuleFit,
-    OwnerAsked,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::skill_fit::{SkillFitChoice, SkillFitSetRequest};
 
 impl From<SkillFitChoice> for crate::skill_hub::SkillFitSetting {
     fn from(choice: SkillFitChoice) -> Self {
@@ -30,13 +23,6 @@ impl From<SkillFitChoice> for crate::skill_hub::SkillFitSetting {
             SkillFitChoice::OwnerAsked => Self::OwnerAsked,
         }
     }
-}
-
-/// `vault.skills.fit.set`'s input: the fit ordinary installs run.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SkillFitSetRequest {
-    pub setting: SkillFitChoice,
 }
 
 /// `vault.skills.fit.set`: the owner picks which fit an ordinary skill

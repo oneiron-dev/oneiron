@@ -1,11 +1,13 @@
 //! Moved from `crates/oneiron/src/task_verb/brief.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_base::error::Error;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::memory::MemoryError;
 use oneiron_contracts::memory::MemoryResult;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 /// Domain of [`brief_digest`].
 pub const BRIEF_DIGEST_DOMAIN: &[u8] = b"oneiron.tasks.brief.digest.v1";
@@ -138,4 +140,47 @@ pub fn require_text(text: &str, what: &str) -> MemoryResult<()> {
         )));
     }
     Ok(())
+}
+
+/// Serde for a 32-byte digest as 64 hex characters.
+pub mod hex32 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&oneiron_contracts::entity_id::bytes_to_hex_lower(bytes))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[u8; 32], D::Error> {
+        let text = String::deserialize(deserializer)?;
+        super::decode_hex::<32>(&text)
+            .ok_or_else(|| serde::de::Error::custom("expected a 64-character hex digest"))
+    }
+
+    /// The same for an optional digest.
+    pub mod option {
+        use serde::{Deserialize, Deserializer, Serializer};
+
+        pub fn serialize<S: Serializer>(
+            bytes: &Option<[u8; 32]>,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            match bytes {
+                Some(bytes) => serializer
+                    .serialize_some(&oneiron_contracts::entity_id::bytes_to_hex_lower(bytes)),
+                None => serializer.serialize_none(),
+            }
+        }
+
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<Option<[u8; 32]>, D::Error> {
+            Option::<String>::deserialize(deserializer)?
+                .map(|text| {
+                    super::super::decode_hex::<32>(&text).ok_or_else(|| {
+                        serde::de::Error::custom("expected a 64-character hex digest")
+                    })
+                })
+                .transpose()
+        }
+    }
 }
