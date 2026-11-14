@@ -84,6 +84,45 @@ pub(crate) fn owner_settles_own_composed_post(
         && crate::policy_model::owners_in_txn(vault, txn)?.contains(&person))
 }
 
+/// The process a composed post's proposal names in its birth (census L8-07).
+pub(in crate::task_verb) const TASK_COMPOSED_POST_PROCESS: &str = "tasks.create.composed";
+/// The process the TASK a composed post settles into names in its birth.
+pub(in crate::task_verb) const TASK_COMPOSED_SETTLE_PROCESS: &str = "tasks.settle.composed";
+
+/// The birth of a row whose words a composed brief carries (census L8-07):
+/// the local model read each lens row the brief names, so the row names
+/// them as prompt inputs, by ref and never by text, and the worlds they lie
+/// in hold for it on every later read and sync, as for a claim a model wrote
+/// from recalled rows (`settings::device_only`, FIX 8192). A lens ref this
+/// vault never held names no row and is left out. `None` for a brief no
+/// model composed, or one composed from its one-liner alone.
+pub(in crate::task_verb) fn composed_brief_birth_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+    brief: &QueueTaskBrief,
+    process: &str,
+    at: u64,
+) -> Result<Option<crate::provenance::birth::RowBirth>> {
+    let Some(stamp) = &brief.composed else {
+        return Ok(None);
+    };
+    let mut held = Vec::with_capacity(stamp.lens_refs.len());
+    for row in &stamp.lens_refs {
+        if crate::provenance::birth::prompted::prompt_input_held_in_txn(&vault.store, txn, row)? {
+            held.push(*row);
+        }
+    }
+    Ok(crate::provenance::birth::RowBirth::prompted(
+        actor,
+        crate::provenance::made_by::MadeByClass::Concluded,
+        process,
+        &held,
+        &[],
+        at,
+    ))
+}
+
 /// The actor class a claim's write envelope stamped into its evidence:
 /// immutable, unlike its subject or any approver.
 pub(in crate::task_verb) fn envelope_actor_class(claim: &ClaimBody) -> Option<EdgeActorClass> {
@@ -216,6 +255,18 @@ pub(super) fn settle_post(
             copied,
         )
         .map_err(settle_refusal)?;
+    // The TASK carries the composed brief's words, so it names the lens rows
+    // its proposal named as prompt inputs (census L8-07, review #7814 P1).
+    if let Some(birth) = composed_brief_birth_in(
+        vault,
+        wtxn,
+        memory.write_actor(),
+        &post.brief,
+        TASK_COMPOSED_SETTLE_PROCESS,
+        now,
+    )? {
+        crate::provenance::birth::stamp_row_birth_in_txn(&vault.store, wtxn, &task_ref, &birth)?;
+    }
     Ok(())
 }
 
