@@ -1,13 +1,17 @@
-//! Lends a prepared pass's native decision resources to one extraction attempt.
+//! Lends a prepared pass's resources to one extraction attempt's bound calls.
+//!
+//! Verdict reads and generation steps share the original attempt's guard and charge tally.
 
 use std::sync::{Arc, Mutex};
 
 use oneiron::dreamer_consolidation::{
-    ConsolidationDecisions, DREAMER_VERDICT_ROLE, RoleBackends, RoleCall, StepChargeTally,
+    ConsolidationDecisions, DREAMER_EXTRACTION_ROLE, DREAMER_VERDICT_ROLE, RoleBackends, RoleCall,
+    StepChargeTally,
 };
-use oneiron::dreamer_runner::{DreamerDecisionLender, ExtractionDecisionLoan};
+use oneiron::dreamer_runner::{DreamerDecisionLender, ExtractionDecisionLoan, ExtractionStepLoan};
 use oneiron::dreamer_wake::{WakeAttemptContext, WakePassDeadline};
 use oneiron::llm::decision::{DecisionBandPolicy, DecisionLadder, TypedDecision};
+use oneiron::llm::model_step::ModelStepReceipt;
 use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding};
 use oneiron::memory::MemoryResult;
 use oneiron::verbs::AiVerdict;
@@ -22,9 +26,20 @@ pub trait ExtractionDecisionGate: Send + Sync {
     ///
     /// Returns failures while reading the host's live admission policy.
     fn admits(&self) -> Result<bool>;
+
+    /// Admits the prepared extraction route for one bound generation step.
+    ///
+    /// The default refuses so a gate written for verdict reads never admits generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns failures while reading the host's live admission policy.
+    fn admits_step(&self) -> Result<bool> {
+        Ok(false)
+    }
 }
 
-/// Owns the native resources shared by extraction loans within one prepared pass.
+/// Owns the native resources shared by bound verdict reads and generation steps in one pass.
 ///
 /// Cloned guards share the pass's spend state. The runtime must remain independently
 /// driven while the engine joins its scoped read thread.
@@ -43,13 +58,13 @@ pub struct ExtractionDecisionResources {
     pub extraction_egress: Option<Arc<dyn ExtractionEgressPredicate>>,
     /// Shares the admitted pass's own budget state.
     pub guard: BudgetGuard,
-    /// Rechecks the prepared route's live host permission at every loan.
+    /// Rechecks the prepared verdict or extraction route's live host permission at every loan.
     pub gate: Arc<dyn ExtractionDecisionGate>,
-    /// Drives the engine's read on the host's independent live runtime.
+    /// Drives the engine's bound verdict reads and generation steps on an independent runtime.
     pub runtime: Handle,
 }
 
-/// Owns one extraction attempt's clock and charge sink across its bound verdict calls.
+/// Owns one extraction attempt's clock and charge sink for verdict reads and generation steps.
 pub struct ExtractionAttemptLender {
     /// Retains the prepared pass resources for every borrowed callback.
     resources: Arc<ExtractionDecisionResources>,
@@ -64,8 +79,8 @@ pub struct ExtractionAttemptLender {
 impl ExtractionAttemptLender {
     /// Retains the admitted attempt's own context and registers its shared pass meter.
     ///
-    /// The extraction job must retain this lender across all verdict calls and hand
-    /// its charge sink to the same attempt's outcome, including paid failure prefixes.
+    /// The extraction job must retain this lender across verdict reads and generation steps
+    /// and hand its charge sink to the same attempt's outcome, including paid failure prefixes.
     #[must_use]
     pub fn new(
         resources: Arc<ExtractionDecisionResources>,
@@ -80,7 +95,7 @@ impl ExtractionAttemptLender {
         }
     }
 
-    /// Borrows the attempt-owned tally for the job's outcome and failure handoff.
+    /// Borrows the tally shared by bound verdict reads and generation steps for outcome handoff.
     #[must_use]
     pub fn charges(&self) -> &Mutex<StepChargeTally> {
         &self.charges
@@ -117,6 +132,34 @@ impl DreamerDecisionLender for ExtractionAttemptLender {
         );
         decide(ExtractionDecisionLoan {
             decisions: &resources.decisions,
+            call,
+            guard: &resources.guard,
+            deadline: &self.deadline,
+            now_ms: self.now_ms,
+            charges: &self.charges,
+            runtime: &resources.runtime,
+        })
+        .map(Some)
+    }
+
+    /// Rechecks the step gate and lends the admitted attempt's native extraction resources once.
+    fn lend_extraction_step(
+        &self,
+        step: &mut dyn FnMut(ExtractionStepLoan<'_>) -> MemoryResult<ModelStepReceipt>,
+    ) -> MemoryResult<Option<ModelStepReceipt>> {
+        let resources = &self.resources;
+        if !resources.gate.admits_step()? {
+            return Ok(None);
+        }
+        let call = RoleCall::resolve(
+            &resources.roles,
+            DREAMER_EXTRACTION_ROLE,
+            resources.backend.as_ref(),
+            &resources.model,
+            &resources.binding,
+            resources.extraction_egress.as_deref(),
+        );
+        step(ExtractionStepLoan {
             call,
             guard: &resources.guard,
             deadline: &self.deadline,
