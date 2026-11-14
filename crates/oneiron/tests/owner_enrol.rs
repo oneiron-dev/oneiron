@@ -15,6 +15,10 @@
 //! `an_owner_who_hands_ownership_on_and_stays_as_admin_keeps_no_owner_key`
 //! (the key stays live, and the owner verb still passes). Guard, which passes
 //! on main too: `removing_another_owner_leaves_an_owners_key_and_binding`.
+//! A move no host root signs cannot revoke them, so it is refused while the
+//! member holds either (REVIEW-7931); red before that refusal (the removal ran
+//! unsigned and left the key live):
+//! `a_removal_no_host_root_signs_is_refused_while_the_owner_holds_an_owner_key`.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test owner_enrol`.
 #![cfg(oneiron_test_support)]
@@ -33,7 +37,7 @@ use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::owner_enrol::bind_owner_key;
 use oneiron::test_support::bind_host_owner;
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, ErrorKind, Vault, VaultConfig};
 
 const SHARED: u64 = 44;
 
@@ -260,5 +264,40 @@ fn an_owner_who_hands_ownership_on_and_stays_as_admin_keeps_no_owner_key() {
     assert!(
         shared.passes_owner_verbs(shared.owner),
         "the Owner who stays keeps the host root's binding"
+    );
+}
+
+/// A removal no host root signs could not revoke the removed Owner's owner
+/// key or binding, so it is refused while they hold either (REVIEW-7931):
+/// this install's keystore holds no host root seed, and the key and the
+/// binding stay as they were.
+#[test]
+fn a_removal_no_host_root_signs_is_refused_while_the_owner_holds_an_owner_key() {
+    let shared = shared();
+    let key = shared.bound_co_owner_key();
+    let owner_proof = proof(&shared.vault, shared.owner);
+    let act = shared
+        .vault
+        .propose_remove_owner(&owner_proof, SHARED, shared.co_owner, None, None, false)
+        .expect("the owner starts remove_owner");
+    // This install loses its host root's seed: no issuer signs the run.
+    shared
+        .vault
+        .install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+
+    let refusal = shared
+        .vault
+        .execute_completed_shared_act(&owner_proof, &act.id, None)
+        .expect_err("a removal no host root signs is refused");
+
+    assert_eq!(refusal.kind(), ErrorKind::AuthorityRefused, "{refusal}");
+    assert!(
+        refusal.to_string().contains("the vault's host"),
+        "the refusal names where the move runs: {refusal}"
+    );
+    assert!(shared.key_is_live(key), "their owner key stays live");
+    assert!(
+        shared.passes_owner_verbs(shared.co_owner),
+        "nothing moved: the Owner keeps their binding"
     );
 }
