@@ -1,0 +1,17 @@
+{
+  "name": "vault.files.sources.search",
+  "description": "The owner searches the Files world's sources: files whose name or path matches come first, then files whose text matches in meaning, each with its path, state, revision and dates.",
+  "input": "crate::task_verb::sdk::FilesSourceSearchRequest",
+  "output": "crate::task_verb::sdk::FilesSourceSearchAnswer",
+  "call": "crate::task_verb::sdk::search_files_sources_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
