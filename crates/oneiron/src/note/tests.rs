@@ -216,6 +216,7 @@ fn diary_owner_binding(vault: &crate::Vault, seed: u8, owner: EntityId) {
         AuthorityTier, DeviceAuthority, ROLE_ADMIN, ROLE_OWNER,
     };
     use ed25519_dalek::{Signer, SigningKey};
+    use oneiron_authority::authority::authority_overlay_seed_for;
 
     let signing = SigningKey::from_bytes(&[seed; 32]);
     let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
@@ -225,25 +226,27 @@ fn diary_owner_binding(vault: &crate::Vault, seed: u8, owner: EntityId) {
         entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
         entry
     };
+    let op = AuthorityOp::Genesis {
+        device: DeviceAuthority {
+            key: key.clone(),
+            transport_key_binding: [7; 32],
+            attestation: AuthorityAttestation {
+                kind: "SoftwareArgon2id".to_owned(),
+                evidence: vec![1, 2, 3],
+            },
+            tier: AuthorityTier::Software,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+        },
+        genesis_nonce: [seed.wrapping_add(10); 32],
+        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
+    };
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     let genesis = sign(AuthorityLogEntry {
         schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: None,
         seq: 0,
         parent_hashes: Vec::new(),
-        op: AuthorityOp::Genesis {
-            device: DeviceAuthority {
-                key: key.clone(),
-                transport_key_binding: [7; 32],
-                attestation: AuthorityAttestation {
-                    kind: "SoftwareArgon2id".to_owned(),
-                    evidence: vec![1, 2, 3],
-                },
-                tier: AuthorityTier::Software,
-                roles: ROLE_OWNER | ROLE_ADMIN,
-            },
-            genesis_nonce: [seed.wrapping_add(10); 32],
-            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-        },
+        op,
         signer: AuthoritySignature {
             suite: key.suite(),
             public_key: key.clone(),
@@ -251,6 +254,7 @@ fn diary_owner_binding(vault: &crate::Vault, seed: u8, owner: EntityId) {
         },
         cosigns: Vec::new(),
         ts: 100,
+        overlay_seed,
     });
     let vault_id = crate::authority::genesis_vault_id(&genesis).expect("vault id");
     let bind = sign(AuthorityLogEntry {
@@ -273,6 +277,7 @@ fn diary_owner_binding(vault: &crate::Vault, seed: u8, owner: EntityId) {
         },
         cosigns: Vec::new(),
         ts: 101,
+        overlay_seed: None,
     });
     let time = |at: u64| crate::TimeRange { start: at, end: at };
     vault

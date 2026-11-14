@@ -2365,6 +2365,7 @@ mod lead_fixture {
                 GenesisRecoveryStep, ROLE_ADMIN, ROLE_OWNER, authority_entry_hash,
                 authority_transcript, genesis_vault_id,
             };
+            use oneiron_authority::authority::authority_overlay_seed_for;
             const OWNER_KEY_SEED: u8 = 0xD9;
 
             let owner = self
@@ -2378,25 +2379,27 @@ mod lead_fixture {
                 entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
                 entry
             };
+            let op = AuthorityOp::Genesis {
+                device: DeviceAuthority {
+                    key: key.clone(),
+                    transport_key_binding: [7; 32],
+                    attestation: AuthorityAttestation {
+                        kind: "SoftwareArgon2id".to_owned(),
+                        evidence: vec![1, 2, 3],
+                    },
+                    tier: AuthorityTier::Software,
+                    roles: ROLE_OWNER | ROLE_ADMIN,
+                },
+                genesis_nonce: [OWNER_KEY_SEED; 32],
+                recovery: GenesisRecoveryStep::Saved([1; 32]),
+            };
+            let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
             let genesis = sign(AuthorityLogEntry {
                 schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
                 vault_id: None,
                 seq: 0,
                 parent_hashes: Vec::new(),
-                op: AuthorityOp::Genesis {
-                    device: DeviceAuthority {
-                        key: key.clone(),
-                        transport_key_binding: [7; 32],
-                        attestation: AuthorityAttestation {
-                            kind: "SoftwareArgon2id".to_owned(),
-                            evidence: vec![1, 2, 3],
-                        },
-                        tier: AuthorityTier::Software,
-                        roles: ROLE_OWNER | ROLE_ADMIN,
-                    },
-                    genesis_nonce: [OWNER_KEY_SEED; 32],
-                    recovery: GenesisRecoveryStep::Saved([1; 32]),
-                },
+                op,
                 signer: AuthoritySignature {
                     suite: key.suite(),
                     public_key: key.clone(),
@@ -2404,6 +2407,7 @@ mod lead_fixture {
                 },
                 cosigns: Vec::new(),
                 ts: 100,
+                overlay_seed,
             });
             let bind = sign(AuthorityLogEntry {
                 schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
@@ -2419,6 +2423,7 @@ mod lead_fixture {
                 signer: genesis.signer.clone(),
                 cosigns: Vec::new(),
                 ts: 101,
+                overlay_seed: None,
             });
             self.vault
                 .put_authority_log_entries(&[

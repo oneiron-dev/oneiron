@@ -101,6 +101,7 @@ impl HostSlipIssuer {
         op: AuthorityOp,
         now: u64,
     ) -> Result<AuthorityLogEntry> {
+        let overlay_seed = authority_overlay_seed_for(&op)?;
         let mut entry = AuthorityLogEntry {
             schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id,
@@ -114,6 +115,7 @@ impl HostSlipIssuer {
             },
             cosigns: Vec::new(),
             ts: now,
+            overlay_seed,
         };
         self.resign_entry(&mut entry)?;
         Ok(entry)

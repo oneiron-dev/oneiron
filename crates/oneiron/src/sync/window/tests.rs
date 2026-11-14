@@ -2439,25 +2439,28 @@ fn authority_genesis_fixture_for_window(seed: u8) -> crate::authority::Authority
 
     let signing = SigningKey::from_bytes(&[seed; 32]);
     let key = crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let op = crate::authority::AuthorityOp::Genesis {
+        device: crate::authority::DeviceAuthority {
+            key: key.clone(),
+            transport_key_binding: [0; 32],
+            attestation: crate::authority::AuthorityAttestation {
+                kind: "SoftwareArgon2id".to_owned(),
+                evidence: vec![1, 2, 3],
+            },
+            tier: crate::authority::AuthorityTier::Software,
+            roles: crate::authority::ROLE_OWNER,
+        },
+        genesis_nonce: [seed.wrapping_add(1); 32],
+        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
+    };
+    let overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&op)
+        .expect("authority overlay seed");
     let mut entry = crate::authority::AuthorityLogEntry {
         schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: None,
         seq: 0,
         parent_hashes: Vec::new(),
-        op: crate::authority::AuthorityOp::Genesis {
-            device: crate::authority::DeviceAuthority {
-                key: key.clone(),
-                transport_key_binding: [0; 32],
-                attestation: crate::authority::AuthorityAttestation {
-                    kind: "SoftwareArgon2id".to_owned(),
-                    evidence: vec![1, 2, 3],
-                },
-                tier: crate::authority::AuthorityTier::Software,
-                roles: crate::authority::ROLE_OWNER,
-            },
-            genesis_nonce: [seed.wrapping_add(1); 32],
-            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-        },
+        op,
         signer: crate::authority::AuthoritySignature {
             suite: key.suite(),
             public_key: key,
@@ -2465,6 +2468,7 @@ fn authority_genesis_fixture_for_window(seed: u8) -> crate::authority::Authority
         },
         cosigns: Vec::new(),
         ts: u64::from(seed),
+        overlay_seed,
     };
     let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
     entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
@@ -2508,6 +2512,7 @@ fn authority_revoke_fixture_for_window(
         signer: signature_for(&signer_key),
         cosigns: vec![signature_for(&cosigner_key)],
         ts: 900,
+        overlay_seed: None,
     };
     let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
     entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
@@ -5199,6 +5204,7 @@ fn pre_regrant_depth_edit_stays_refused_through_both_replay_doors() -> Result<()
         signer: bind.signer.clone(),
         cosigns: Vec::new(),
         ts: 102,
+        overlay_seed: None,
     };
     revoke.signer.signature = signing
         .sign(&crate::authority::authority_transcript(&revoke)?)
@@ -5226,6 +5232,7 @@ fn pre_regrant_depth_edit_stays_refused_through_both_replay_doors() -> Result<()
         signer: bind.signer,
         cosigns: Vec::new(),
         ts: 103,
+        overlay_seed: None,
     };
     regrant.signer.signature = signing
         .sign(&crate::authority::authority_transcript(&regrant)?)

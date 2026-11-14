@@ -736,25 +736,28 @@ pub(crate) fn critical_confirm_owner_entry(
         entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
         entry
     };
+    let op = AuthorityOp::Genesis {
+        device: DeviceAuthority {
+            key: key.clone(),
+            transport_key_binding: [7; 32],
+            attestation: AuthorityAttestation {
+                kind: "SoftwareArgon2id".to_owned(),
+                evidence: vec![1, 2, 3],
+            },
+            tier: AuthorityTier::Software,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+        },
+        genesis_nonce: [seed.wrapping_add(1); 32],
+        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
+    };
+    let overlay_seed =
+        crate::authority::authority_overlay_seed_for(&op).expect("authority overlay seed");
     let genesis = sign(AuthorityLogEntry {
         schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: None,
         seq: 0,
         parent_hashes: Vec::new(),
-        op: AuthorityOp::Genesis {
-            device: DeviceAuthority {
-                key: key.clone(),
-                transport_key_binding: [7; 32],
-                attestation: AuthorityAttestation {
-                    kind: "SoftwareArgon2id".to_owned(),
-                    evidence: vec![1, 2, 3],
-                },
-                tier: AuthorityTier::Software,
-                roles: ROLE_OWNER | ROLE_ADMIN,
-            },
-            genesis_nonce: [seed.wrapping_add(1); 32],
-            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-        },
+        op,
         signer: AuthoritySignature {
             suite: key.suite(),
             public_key: key.clone(),
@@ -762,6 +765,7 @@ pub(crate) fn critical_confirm_owner_entry(
         },
         cosigns: Vec::new(),
         ts: 1,
+        overlay_seed,
     });
     let binding =
         crate::gate::critical_write_confirm_binding(pending).expect("critical pending binding");
@@ -791,6 +795,7 @@ pub(crate) fn critical_confirm_owner_entry(
         },
         cosigns: Vec::new(),
         ts: 2,
+        overlay_seed: None,
     });
     (genesis, confirmation)
 }

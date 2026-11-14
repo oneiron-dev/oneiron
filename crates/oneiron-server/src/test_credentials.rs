@@ -476,6 +476,9 @@ pub(crate) fn bind_actor(
         },
         cosigns: Vec::new(),
         ts: now,
+        // `op` comes from `binding_op` only, which mints BindActor/RebindActor:
+        // neither kind has an overlay leaf.
+        overlay_seed: None,
     };
     bind.signer.signature = signing
         .sign(&authority_transcript(&bind).expect("bind transcript"))

@@ -34,6 +34,7 @@ use crate::sync::loro_support::map_get_bytes;
 use crate::sync::manager::WindowManager;
 use crate::sync::quarantine::{QuarantineContainer, quarantined_records};
 use crate::temporal::TimeRange;
+use oneiron_authority::authority::authority_overlay_seed_for;
 
 fn entity_id(byte: u8) -> EntityId {
     crate::test_util::entity(byte)
@@ -64,6 +65,7 @@ fn authority_genesis_entry(seed: u8) -> AuthorityLogEntry {
         genesis_nonce: [seed.wrapping_add(1); 32],
         recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
     };
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     let mut entry = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: None,
@@ -77,6 +79,7 @@ fn authority_genesis_entry(seed: u8) -> AuthorityLogEntry {
         },
         cosigns: Vec::new(),
         ts: u64::from(seed),
+        overlay_seed,
     };
     let transcript = authority_transcript(&entry).unwrap();
     entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
@@ -3681,6 +3684,7 @@ fn signed_lifecycle_entry(
         },
         cosigns: Vec::new(),
         ts: 9,
+        overlay_seed: None,
     };
     let transcript = authority_transcript(&entry).unwrap();
     entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();

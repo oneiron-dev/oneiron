@@ -213,6 +213,7 @@ pub(crate) fn anchor_signed_entry(
     if fold.vault_id.is_none() || parents.is_empty() {
         return Err(invalid_authority());
     }
+    let overlay_seed = authority_overlay_seed_for(&op)?;
     let mut entry = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: fold.vault_id,
@@ -226,6 +227,7 @@ pub(crate) fn anchor_signed_entry(
         },
         cosigns: Vec::new(),
         ts: now,
+        overlay_seed,
     };
     entry.signer.signature = signer
         .sign(&authority_transcript(&entry)?)

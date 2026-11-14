@@ -28,18 +28,21 @@ fn authority_test_device(key: crate::authority::AuthorityKey) -> crate::authorit
 
 #[cfg(feature = "sync")]
 fn authority_genesis_fixture(seed: u8) -> crate::authority::AuthorityLogEntry {
+    use oneiron_authority::authority::authority_overlay_seed_for;
     let signing = authority_test_key(seed);
     let key = authority_key_from_signing(&signing);
+    let op = crate::authority::AuthorityOp::Genesis {
+        device: authority_test_device(key.clone()),
+        genesis_nonce: [seed.wrapping_add(1); 32],
+        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
+    };
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     let mut entry = crate::authority::AuthorityLogEntry {
         schema_version: 1,
         vault_id: None,
         seq: 0,
         parent_hashes: Vec::new(),
-        op: crate::authority::AuthorityOp::Genesis {
-            device: authority_test_device(key.clone()),
-            genesis_nonce: [seed.wrapping_add(1); 32],
-            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-        },
+        op,
         signer: crate::authority::AuthoritySignature {
             suite: key.suite(),
             public_key: key,
@@ -47,6 +50,7 @@ fn authority_genesis_fixture(seed: u8) -> crate::authority::AuthorityLogEntry {
         },
         cosigns: Vec::new(),
         ts: u64::from(seed),
+        overlay_seed,
     };
     let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
     entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
@@ -62,6 +66,8 @@ fn authority_child_fixture(
     ts: u64,
     op: crate::authority::AuthorityOp,
 ) -> crate::authority::AuthorityLogEntry {
+    use oneiron_authority::authority::authority_overlay_seed_for;
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     let signer_key = authority_key_from_signing(signer);
     let mut entry = crate::authority::AuthorityLogEntry {
         schema_version: 1,
@@ -76,6 +82,7 @@ fn authority_child_fixture(
         },
         cosigns: Vec::new(),
         ts,
+        overlay_seed,
     };
     let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
     entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();

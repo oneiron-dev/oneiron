@@ -639,12 +639,14 @@ impl Vault {
             .unwrap_or(0)
             .checked_add(1)
             .ok_or_else(invalid_authority)?;
+        let op = AuthorityOp::ReRoot { new_device };
+        let overlay_seed = authority_overlay_seed_for(&op)?;
         Ok(AuthorityLogEntry {
             schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id: Some(vault_id),
             seq,
             parent_hashes: parents.into_iter().collect(),
-            op: AuthorityOp::ReRoot { new_device },
+            op,
             signer: AuthoritySignature {
                 suite: signer_key.suite(),
                 public_key: signer_key,
@@ -652,6 +654,7 @@ impl Vault {
             },
             cosigns: Vec::new(),
             ts: crate::unix_seconds_now(),
+            overlay_seed,
         })
     }
 

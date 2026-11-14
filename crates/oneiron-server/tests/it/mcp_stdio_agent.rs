@@ -1387,6 +1387,7 @@ fn bind_owner(vault: &oneiron::Vault, host: &SigningKey, owner: oneiron::EntityI
         },
         cosigns: vec![],
         ts: now,
+        overlay_seed: None,
     };
     entry.signer.signature = host
         .sign(&authority_transcript(&entry).unwrap())

@@ -27,6 +27,7 @@ use oneiron::{
     authority::encode_authority_log_entry_body, authority::genesis_vault_id,
     registry::ENTITY_TYPE_AUTHORITY_LOG,
 };
+use oneiron_authority::authority::authority_overlay_seed_for;
 
 const WINDOW: &str = "2026-03";
 const LEARNED_AT: u64 = 1_772_400_000;
@@ -87,6 +88,7 @@ fn unsigned_entry(
     signer_key: AuthorityKey,
     ts: u64,
 ) -> AuthorityLogEntry {
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id,
@@ -100,6 +102,7 @@ fn unsigned_entry(
         },
         cosigns: Vec::new(),
         ts,
+        overlay_seed,
     }
 }
 

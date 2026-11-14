@@ -5,6 +5,7 @@ use crate::authority::{
     authority_entry_hash, authority_transcript, genesis_vault_id,
 };
 use ed25519_dalek::{Signer, SigningKey};
+use oneiron_authority::authority::authority_overlay_seed_for;
 
 /// Real signed genesis + binding, and the next signed revocation for precise
 /// transaction ordering. Shared only with the roster regression tests.
@@ -18,25 +19,27 @@ pub(crate) fn root_owner(vault: &Vault, owner: WriteActor, seed: u8) -> Result<A
             .to_vec();
         Ok(entry)
     };
+    let op = AuthorityOp::Genesis {
+        device: DeviceAuthority {
+            key: key.clone(),
+            transport_key_binding: [7; 32],
+            attestation: AuthorityAttestation {
+                kind: "SoftwareArgon2id".to_owned(),
+                evidence: vec![1, 2, 3],
+            },
+            tier: AuthorityTier::Software,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+        },
+        genesis_nonce: [seed; 32],
+        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
+    };
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     let genesis = sign(AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: None,
         seq: 0,
         parent_hashes: Vec::new(),
-        op: AuthorityOp::Genesis {
-            device: DeviceAuthority {
-                key: key.clone(),
-                transport_key_binding: [7; 32],
-                attestation: AuthorityAttestation {
-                    kind: "SoftwareArgon2id".to_owned(),
-                    evidence: vec![1, 2, 3],
-                },
-                tier: AuthorityTier::Software,
-                roles: ROLE_OWNER | ROLE_ADMIN,
-            },
-            genesis_nonce: [seed; 32],
-            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-        },
+        op,
         signer: AuthoritySignature {
             suite: key.suite(),
             public_key: key.clone(),
@@ -44,6 +47,7 @@ pub(crate) fn root_owner(vault: &Vault, owner: WriteActor, seed: u8) -> Result<A
         },
         cosigns: Vec::new(),
         ts: 100,
+        overlay_seed,
     })?;
     let bind = sign(AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
@@ -59,6 +63,7 @@ pub(crate) fn root_owner(vault: &Vault, owner: WriteActor, seed: u8) -> Result<A
         signer: genesis.signer.clone(),
         cosigns: Vec::new(),
         ts: 101,
+        overlay_seed: None,
     })?;
     let revoke = sign(AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
@@ -72,6 +77,7 @@ pub(crate) fn root_owner(vault: &Vault, owner: WriteActor, seed: u8) -> Result<A
         signer: bind.signer.clone(),
         cosigns: Vec::new(),
         ts: 102,
+        overlay_seed: None,
     })?;
     vault.put_authority_log_entries(&[
         (
@@ -116,6 +122,7 @@ pub(crate) fn regrant_after(
         signer: revoke.signer.clone(),
         cosigns: Vec::new(),
         ts: 103,
+        overlay_seed: None,
     };
     regrant.signer.signature = signing
         .sign(&authority_transcript(&regrant)?)
@@ -153,6 +160,7 @@ pub(crate) fn sign_child(
         })
         .collect();
     cosigns.sort_by(|left, right| left.public_key.cmp(&right.public_key));
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     let mut entry = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id,
@@ -166,6 +174,7 @@ pub(crate) fn sign_child(
         },
         cosigns,
         ts: 100 + seq,
+        overlay_seed,
     };
     let transcript = authority_transcript(&entry)?;
     entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();

@@ -75,6 +75,7 @@ pub(crate) fn unsigned_side_entry(
     {
         return Err(invalid_authority());
     }
+    let overlay_seed = authority_overlay_seed_for(&op)?;
     Ok(AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: fold.vault_id,
@@ -88,6 +89,7 @@ pub(crate) fn unsigned_side_entry(
         },
         cosigns: Vec::new(),
         ts: now,
+        overlay_seed,
     })
 }
 

@@ -237,6 +237,7 @@ fn a_self_hosted_root_binds_its_owner_and_no_one_else() {
 #[test]
 fn revoked_owner_preview_cannot_observe_later_share_recipient() {
     use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
+    use oneiron_authority::authority::authority_overlay_seed_for;
     let (_dir, vault, issuer, mut share) = crate::share::tests::fixture().expect("share fixture");
     let memory = vault.memory(issuer.entity_ref(), EdgeActorClass::Human);
     memory.bless_brief_kind().expect("brief kind");
@@ -259,6 +260,7 @@ fn revoked_owner_preview_cannot_observe_later_share_recipient() {
     let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
     let genesis_hash = crate::authority::authority_entry_hash(&genesis).expect("genesis hash");
     let entry = |seq, parents, op| {
+        let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
         sign_authority(
             AuthorityLogEntry {
                 schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
@@ -273,6 +275,7 @@ fn revoked_owner_preview_cannot_observe_later_share_recipient() {
                 },
                 cosigns: Vec::new(),
                 ts: 100 + seq,
+                overlay_seed,
             },
             &signing,
         )
@@ -397,6 +400,7 @@ fn second_owner_hard_deletes_actor_before_target_delete_txn1() {
             },
             cosigns: Vec::new(),
             ts: 101,
+            overlay_seed: None,
         },
         &signer_a,
     );
@@ -511,6 +515,7 @@ fn second_owner_hard_deletes_actor_before_target_delete_txn1() {
 fn an_owner_lane_read_after_revocation_keeps_the_binding_code() {
     use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
     use crate::claim::{ClaimReadStatus, PointRead};
+    use oneiron_authority::authority::authority_overlay_seed_for;
     let (_dir, vault) = open_vault();
     let owner = put_person(&vault, 0x6B);
     let subject = put_person(&vault, 0x6C);
@@ -531,6 +536,7 @@ fn an_owner_lane_read_after_revocation_keeps_the_binding_code() {
     let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
     let genesis_hash = crate::authority::authority_entry_hash(&genesis).expect("genesis hash");
     let owner_entry = |seq: u64, op: AuthorityOp, parents: Vec<[u8; 32]>| {
+        let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
         sign_authority(
             AuthorityLogEntry {
                 schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
@@ -545,6 +551,7 @@ fn an_owner_lane_read_after_revocation_keeps_the_binding_code() {
                 },
                 cosigns: Vec::new(),
                 ts: 100 + seq,
+                overlay_seed,
             },
             &signing,
         )
@@ -1587,6 +1594,7 @@ fn conflicting_vault_roots_fail_owner_verbs_closed() {
 #[test]
 fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
     use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
+    use oneiron_authority::authority::authority_overlay_seed_for;
     let (_dir, vault) = open_vault();
     let attacker = put_person(&vault, 0x76);
     let subject = put_person(&vault, 0x77);
@@ -1609,6 +1617,7 @@ fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
     let retired = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
     let successor = ed25519_dalek::SigningKey::from_bytes(&[0x79; 32]);
     let owner_entry = |seq: u64, op: AuthorityOp, ts: u64| {
+        let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
         sign_authority(
             AuthorityLogEntry {
                 schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
@@ -1626,6 +1635,7 @@ fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
                 },
                 cosigns: Vec::new(),
                 ts,
+                overlay_seed,
             },
             &signing,
         )
@@ -1660,28 +1670,30 @@ fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
     // Retired device-key ops fold only as verified pre-handoff ancestry, so
     // the rotation's successor signs the host handoff that keeps it live.
     let successor_key = AuthorityKey::Ed25519(successor.verifying_key().to_bytes());
+    let op = AuthorityOp::ReRoot {
+        new_device: crate::authority::DeviceAuthority {
+            key: AuthorityKey::Ed25519(
+                ed25519_dalek::SigningKey::from_bytes(&[0x7F; 32])
+                    .verifying_key()
+                    .to_bytes(),
+            ),
+            transport_key_binding: [7; 32],
+            attestation: crate::authority::AuthorityAttestation {
+                kind: "SoftwareArgon2id".to_owned(),
+                evidence: vec![1, 2, 3],
+            },
+            tier: crate::authority::AuthorityTier::Software,
+            roles: crate::authority::ROLE_OWNER | crate::authority::ROLE_ADMIN,
+        },
+    };
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     let handoff = sign_authority(
         AuthorityLogEntry {
             schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id: Some(vault_id),
             seq: 1,
             parent_hashes: vec![crate::authority::authority_entry_hash(&rotate).expect("rotation")],
-            op: AuthorityOp::ReRoot {
-                new_device: crate::authority::DeviceAuthority {
-                    key: AuthorityKey::Ed25519(
-                        ed25519_dalek::SigningKey::from_bytes(&[0x7F; 32])
-                            .verifying_key()
-                            .to_bytes(),
-                    ),
-                    transport_key_binding: [7; 32],
-                    attestation: crate::authority::AuthorityAttestation {
-                        kind: "SoftwareArgon2id".to_owned(),
-                        evidence: vec![1, 2, 3],
-                    },
-                    tier: crate::authority::AuthorityTier::Software,
-                    roles: crate::authority::ROLE_OWNER | crate::authority::ROLE_ADMIN,
-                },
-            },
+            op,
             signer: AuthoritySignature {
                 suite: successor_key.suite(),
                 public_key: successor_key,
@@ -1689,6 +1701,7 @@ fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
             },
             cosigns: Vec::new(),
             ts: 103,
+            overlay_seed,
         },
         &successor,
     );

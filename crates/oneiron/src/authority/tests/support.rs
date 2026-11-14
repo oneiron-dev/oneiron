@@ -1,5 +1,7 @@
 //! Shared fixtures and fold helpers for the authority tests.
 
+use oneiron_authority::authority::authority_overlay_seed_for;
+
 use super::*;
 
 pub(super) fn hex(bytes: &[u8]) -> String {
@@ -58,6 +60,7 @@ pub(super) fn unsigned_entry(
     signer_key: AuthorityKey,
     ts: u64,
 ) -> AuthorityLogEntry {
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id,
@@ -71,6 +74,7 @@ pub(super) fn unsigned_entry(
         },
         cosigns: Vec::new(),
         ts,
+        overlay_seed,
     }
 }
 
@@ -141,7 +145,25 @@ pub(super) fn genesis_entry(seed: u8, ts: u64) -> AuthorityLogEntry {
         genesis_nonce: [seed.wrapping_add(10); 32],
         recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
     };
-    sign_ed(unsigned_entry(None, 0, Vec::new(), op, key, ts), &signing)
+    // Rule 4: the genesis golden vector pins this entry's bytes, so the seed
+    // is fixed here, never sampled. The attestation evidence above is present,
+    // so the shape check expects Some.
+    let entry = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: None,
+        seq: 0,
+        parent_hashes: Vec::new(),
+        op,
+        signer: AuthoritySignature {
+            suite: key.suite(),
+            public_key: key,
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts,
+        overlay_seed: Some([0x5e; 32]),
+    };
+    sign_ed(entry, &signing)
 }
 
 pub(super) struct EnrollSpec {

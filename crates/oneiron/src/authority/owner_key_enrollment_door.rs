@@ -258,6 +258,7 @@ impl Vault {
                 signature: vec![0; 64],
             }],
             ts: now,
+            overlay_seed: None,
         };
         verify_unsigned(&entry)?;
         let transcript = authority_transcript(&entry)?;
