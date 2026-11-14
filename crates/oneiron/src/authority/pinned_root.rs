@@ -39,7 +39,9 @@ pub(crate) struct PinRow {
     pub(crate) pin: Option<PinnedRoot>,
     pub(crate) earlier: Option<MachineAdmitter>,
     /// A root the owner pinned by its fingerprint before this install
-    /// stored it (Astra #1422e F1, r23). It widens only what the store
+    /// stored it (Astra #1422e F1, r23), or one a root request carried here
+    /// asks this install to pin, which waits for the owner's confirm at its
+    /// pin door (HOSTED-CARRIER-FIRST-PIN). It widens only what the store
     /// gate admits: that root's own row and its anchor's marks. It never
     /// changes the fold's trust, the pin or what counts.
     pub(crate) awaiting: Option<RecoveryRootId>,
@@ -243,14 +245,17 @@ pub(crate) fn end_request_wait_in_txn(
 /// The root request whose wait `row` keeps, when `fold` holds that request
 /// closed: cancelled by the owner or superseded by a newer request on this
 /// install (CALLS ROOT_WORK_CANCEL, ROOT_WORK_SUPERSESSION), or answered
-/// refused, its final state (FIX 5696): its wait has ended (FIX 5582).
-/// `None` for the owner's own wait, a request still open or enacted, or no
-/// wait.
+/// refused, its final state (FIX 5696), or no longer counted here (its
+/// carrier lost a standing race to a removal it did not see): its wait has
+/// ended (FIX 5582). A request that counts again commits its wait again at
+/// its next pickup. `None` for the owner's own wait, a request still open
+/// or enacted, or no wait.
 pub(crate) fn ended_request_wait(row: &PinRow, fold: &AuthorityFold) -> Option<AuthorityEntryHash> {
     let request = row.awaiting.and(row.awaited_for)?;
     (fold.root_request_cancelled(&request)
         || fold.root_request_superseded(&request)
-        || fold.root_request_refused(&request))
+        || fold.root_request_refused(&request)
+        || fold.counted_owner_work_request(&request).is_none())
     .then_some(request)
 }
 

@@ -31,7 +31,7 @@
 //! and the request stays pending until the owner confirms that root at the
 //! target's own pin door ([`Vault::pin_owner_root`]), with his proof there.
 //! A pin request for the root the target pins already runs there as the
-//! door does and closes. Every other change needs the root's seed or kit,
+//! door does, and closes once the target is mine under it. Every other change needs the root's seed or kit,
 //! which only the target receives: it stays pending until the owner, on any
 //! surface that reaches the target, supplies it there
 //! ([`Vault::run_root_request`]). Missing or wrong material is a typed call
@@ -156,8 +156,8 @@ enum CarriedPin {
     /// The root becomes the one the target awaits, the request's own wait
     /// (FIX 5582), and the request stays pending. The owner confirms it at
     /// the target's own pin door; a later pickup then finds it pinned and
-    /// closes the request. An owner-signed request that applies at once is
-    /// FIX [CARRIED-PIN-OWNER-SIGNED-PATH].
+    /// closes the request once the target is mine under it. An owner-signed
+    /// request that applies at once is FIX [CARRIED-PIN-OWNER-SIGNED-PATH].
     AwaitsOwner,
 }
 

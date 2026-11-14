@@ -176,7 +176,8 @@ impl Vault {
     /// [`RootMaterial::ConfirmKit`] confirms the kit, activates its root and
     /// closes the request. A pin request takes no material: the owner
     /// confirms its root at this install's pin door ([`Self::pin_owner_root`]),
-    /// and a later pickup closes it.
+    /// and a later pickup closes it once this install is mine under that
+    /// root.
     pub fn run_root_request(
         &self,
         owner: &AuthenticatedOwner,
