@@ -56,6 +56,11 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::AUTH_CONTROL_KEY,
     &side_table::AUTH_REVOKED_TOKEN_JTI,
     &side_table::AUTHORITY_CACHE_GENERATION,
+    // The sealed rows' overlays, and the ready marks and epoch that open them
+    // (census L5-22): a kept authority row reads as it did before the leave.
+    &side_table::AUTHORITY_OVERLAY,
+    &side_table::AUTHORITY_OVERLAY_KEY_READY,
+    &side_table::AUTHORITY_OVERLAY_OPENNESS_EPOCH,
     &side_table::AUTHLOG_FIRST_SEEN_SIDECAR,
     &side_table::AUTHLOG_INGEST_CHECK,
     &side_table::AUTHLOG_INGEST_COUNT,

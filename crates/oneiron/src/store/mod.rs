@@ -493,11 +493,11 @@ pub use key_custody::protocol as custody_protocol;
 pub use key_custody::sync_dir;
 pub(crate) use key_custody::{
     CUSTODY_COMPLETION_NEEDS_ANCHOR, CUSTODY_HEAD_WRAP_CONTEXT, CustodyBinding, CustodyKind,
-    CustodyPlan, CustodyRecipients, CustodyRequirement, CustodyRoute, CustodySourceAt,
-    CustodySubject, FileAnchor, FolderTarget, MemberProgress, OutboxTarget, PreparedTakeover,
-    Publication, PublicationState, ROLLBACK_NOT_PROVEN, RecipientRetirement, RetirementProgress,
-    TakeoverRefusal, TargetRecipients, admit_published_host_issuer_seeds, refuse_foreign_binding,
-    retirement_in_txn, route_custody, standing_retirements_in_txn,
+    CustodyPlan, CustodyRecipients, CustodyRequirement, CustodyRoute, CustodySecret,
+    CustodySourceAt, CustodySubject, FileAnchor, FolderTarget, MemberProgress, OutboxTarget,
+    PreparedTakeover, Publication, PublicationState, ROLLBACK_NOT_PROVEN, RecipientRetirement,
+    RetirementProgress, TakeoverRefusal, TargetRecipients, admit_published_host_issuer_seeds,
+    refuse_foreign_binding, retirement_in_txn, route_custody, standing_retirements_in_txn,
     unbind_in_txn as unbind_custody_in_txn,
 };
 pub(crate) use key_custody::{

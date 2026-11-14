@@ -50,9 +50,45 @@ pub(crate) fn authority_cache_generation(store: &Store, txn: &heed::RoTxn<'_>) -
         .map(|value| value.unwrap_or(0))
 }
 
+/// How many key events changed which sealed rows open here (census L5-22
+/// 1a-iii). A later generation's fold resumes from a cached base only when
+/// both were folded at the same count: a base that counted a row as open
+/// never resumes past its subject's retirement.
+const AUTHORITY_OVERLAY_OPENNESS_EPOCH: crate::side_table::SideTable<
+    (),
+    u64,
+    crate::side_table::Raw,
+> = crate::side_table::SideTable::new(&crate::side_table::AUTHORITY_OVERLAY_OPENNESS_EPOCH);
+
+fn authority_overlay_openness_epoch(store: &Store, txn: &heed::RoTxn<'_>) -> Result<u64> {
+    AUTHORITY_OVERLAY_OPENNESS_EPOCH
+        .get(store, txn, &())
+        .map(|value| value.unwrap_or(0))
+}
+
+/// Notes in `txn` that a key event changed which sealed rows open here (a
+/// key installed, a subject retired): the openness epoch and the authority
+/// cache generation move together, so no cached fold answers past it and no
+/// later fold resumes from a base folded before it.
+pub(crate) fn note_authority_overlay_openness_change_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    let next = authority_overlay_openness_epoch(store, txn)?
+        .checked_add(1)
+        .ok_or(Error::CorruptedIndex(
+            "authority overlay openness epoch exhausted",
+        ))?;
+    AUTHORITY_OVERLAY_OPENNESS_EPOCH.put(store, txn, &(), &next)?;
+    advance_authority_cache_generation(store, txn)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AuthorityCacheKey {
     generation: u64,
+    /// The overlay openness epoch read in the same snapshot (census L5-22
+    /// 1a-iii): it moves only with the generation, and gates resumption.
+    openness_epoch: u64,
     now_secs: u64,
     posture: HostingPrivacyPosture,
     policy: AuthorityObservationPolicy,
@@ -353,6 +389,7 @@ enum AuthorityTailFold {
 impl AuthorityCachedFold {
     fn matches(&self, key: AuthorityCacheKey) -> bool {
         self.key.generation == key.generation
+            && self.key.openness_epoch == key.openness_epoch
             && self.key.posture == key.posture
             && self.key.policy == key.policy
             && self.key.pin == key.pin
@@ -372,6 +409,7 @@ fn authority_cache_key(
     let now_secs = authority_clock_reading_in_txn(store, txn, store.clock.now_recorded_at())?;
     Ok(AuthorityCacheKey {
         generation: authority_cache_generation(store, txn)?,
+        openness_epoch: authority_overlay_openness_epoch(store, txn)?,
         now_secs,
         posture,
         policy: authority_observation_policy_in_txn(store, txn)?,
@@ -526,7 +564,7 @@ pub(crate) fn authority_view_readonly_for_store_in_txn(
         return Ok(apply_live_overlay(store, txn, key, fold, use_past_standing));
     }
     // A miss resumes from the last committed generation's fold where it can.
-    let continuation = resumable_continuation(store, key.generation);
+    let continuation = resumable_continuation(store, key.generation, key.openness_epoch);
     let (view, next_deadline_secs, continuation) =
         fold_view_for_key(store, posture, txn, key, continuation.as_deref())?;
     cache_fold_if_committed(store, key, next_deadline_secs, &view, continuation);
@@ -619,12 +657,20 @@ fn apply_live_overlay(
 /// The cached continuation a fold at `generation` may resume from: only one
 /// folded at that generation or an earlier one. A snapshot older than the
 /// cached fold lacks rows that fold read, and would be refused as missing
-/// history it never lost.
-fn resumable_continuation(store: &Store, generation: u64) -> Option<Arc<AuthorityContinuation>> {
+/// history it never lost. A fold at another overlay openness epoch (census
+/// L5-22 1a-iii) folds whole: the base judged rows a key event since
+/// opened or closed.
+fn resumable_continuation(
+    store: &Store,
+    generation: u64,
+    openness_epoch: u64,
+) -> Option<Arc<AuthorityContinuation>> {
     store.authority_fold_cache.lock().ok().and_then(|cache| {
         cache
             .as_ref()
-            .filter(|cached| cached.key.generation <= generation)
+            .filter(|cached| {
+                cached.key.generation <= generation && cached.key.openness_epoch == openness_epoch
+            })
             .and_then(|cached| cached.continuation.clone())
     })
 }
@@ -636,7 +682,8 @@ pub(super) fn resumed_hashes_in_txn(
     txn: &heed::RoTxn<'_>,
 ) -> Result<BTreeSet<AuthorityEntryHash>> {
     let generation = authority_cache_generation(store, txn)?;
-    Ok(resumable_continuation(store, generation)
+    let openness_epoch = authority_overlay_openness_epoch(store, txn)?;
+    Ok(resumable_continuation(store, generation, openness_epoch)
         .map(|continuation| continuation.ids.values().copied().collect())
         .unwrap_or_default())
 }

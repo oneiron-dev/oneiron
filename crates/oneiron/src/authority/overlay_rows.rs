@@ -12,7 +12,7 @@
 //! erased: its scaffold still verifies, and nothing it made counts
 //! ("Missing history never counts as permission").
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
@@ -268,4 +268,120 @@ pub(crate) fn stage_carried_overlays_in_txn<'b>(
         }
     }
     Ok(())
+}
+
+/// Each sealed row of `subject` this vault holds an overlay row for: its
+/// entry hash and its overlay row. No index by subject: a key event reads
+/// every overlay row's head, and key events are rare.
+fn subject_overlays_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    subject: &EntityId,
+) -> Result<Vec<(AuthorityEntryHash, SealedOverlay)>> {
+    let mut rows = Vec::new();
+    for (hash, bytes) in AUTHORITY_OVERLAY.scan(store, txn)? {
+        let sealed = SealedOverlay::from_bytes(&bytes)?;
+        if sealed.subject == *subject {
+            rows.push((hash, sealed));
+        }
+    }
+    Ok(rows)
+}
+
+/// The projects the rows of `rows` that are stored here and open in `txn`
+/// may change, each row as a put of it would touch them; with `index`, each
+/// such row's agent-grant member posting is staged too. Both hooks are keyed
+/// upserts and sets: running them again for a row changes nothing.
+fn open_row_hooks_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    rows: &[(AuthorityEntryHash, SealedOverlay)],
+    index: bool,
+) -> Result<BTreeSet<EntityId>> {
+    let mut touched = BTreeSet::new();
+    for (hash, _) in rows {
+        let Some(entry) = stored_authority_row(store, txn, hash)? else {
+            continue;
+        };
+        if index {
+            crate::federation::index_agent_grant_member_in_txn(store, txn, &entry, hash)?;
+        }
+        touched.extend(crate::workspace_roster::projects_touched_by_put(
+            store,
+            txn,
+            (
+                authority_log_entity_id_from_hash(hash)?,
+                crate::registry::ENTITY_TYPE_AUTHORITY_LOG,
+            ),
+            None,
+            Some(&FoldRow::Open(entry)),
+        )?);
+    }
+    Ok(touched)
+}
+
+/// Installs in `txn` the overlay key of `subject` under ref `key_ref` that
+/// key custody delivered here (census L5-22 1a-iii; RULING 11:52, "the row
+/// opens and the fold counts it from then on, with no reimport and no
+/// stall"): the key, its ref row and its ready mark
+/// (`store::authority_overlay_custody`), then the openness epoch and the
+/// authority generation, so no cached fold answers past it and none resumes
+/// from a base folded before it. The rows the key opens get the Open-only
+/// hooks their puts left waiting: the agent-grant member posting and the
+/// project touches, whose frontiers refresh once. Nothing a put already did
+/// runs again: no sequence observation, first-seen time, total, store order
+/// or signature.
+///
+/// Every call moves the epoch and runs the hooks, the same key delivered
+/// again included: a delivery an aborted writer left half done (the key
+/// file live, no mark) completes on its retry.
+///
+/// # Errors
+/// As `store::authority_overlay_custody::install_key_in_txn`; a stored row
+/// of `subject` whose hooks fail.
+pub(crate) fn install_authority_overlay_key_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    subject: &EntityId,
+    key_ref: &[u8; 32],
+    secret: &crate::store::CustodySecret,
+) -> Result<()> {
+    custody::install_key_in_txn(store, txn, subject, key_ref, secret)?;
+    note_authority_overlay_openness_change_in_txn(store, txn)?;
+    let rows = subject_overlays_in_txn(store, txn, subject)?;
+    let touched = open_row_hooks_in_txn(store, txn, &rows, true)?;
+    store
+        .project_writes
+        .refresh_project_frontiers(store, txn, store.privacy_posture, &touched)
+}
+
+/// Retires `subject` in `txn` (census L5-22 1a-iii; RULING 11:52, "an erased
+/// row stays a pass-through for good"): every overlay key of it this
+/// install knows, and the delivered `refs` of keys retired elsewhere, held
+/// here or not, are staged to retire and lose their ready marks
+/// (`store::authority_overlay_custody`), and the openness epoch and the
+/// authority generation move, so from the commit on no row of `subject`
+/// opens and nothing it made counts. The projects its open rows touched are
+/// gathered before they close and refresh once after. A later install of
+/// any key of `subject` is refused. The caller commits, then runs custody's
+/// finisher (`Store::finish_erasable_retirements`). Agent-grant member
+/// postings stay: their reader counts only rows the fold holds valid.
+///
+/// # Errors
+/// As `store::authority_overlay_custody::retire_subject_keys_in_txn`;
+/// storage faults.
+pub(crate) fn retire_authority_overlay_subject_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    subject: &EntityId,
+    refs: &[[u8; 32]],
+) -> Result<()> {
+    let rows = subject_overlays_in_txn(store, txn, subject)?;
+    let touched = open_row_hooks_in_txn(store, txn, &rows, false)?;
+    let heads: Vec<SealedOverlay> = rows.into_iter().map(|(_, sealed)| sealed).collect();
+    custody::retire_subject_keys_in_txn(store, txn, subject, &heads, refs)?;
+    note_authority_overlay_openness_change_in_txn(store, txn)?;
+    store
+        .project_writes
+        .refresh_project_frontiers(store, txn, store.privacy_posture, &touched)
 }

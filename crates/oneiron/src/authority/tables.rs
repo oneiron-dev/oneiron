@@ -58,6 +58,18 @@ crate::side_table::side_tables! {
     /// hash32 (the row's entry hash). Value: subject (16) | key ref (32) | envelope.
     AUTHORITY_OVERLAY: VaultMeta b"authority.overlay.v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// One erasable overlay key this vault committed as ready to open its rows (census L5-22
+    /// 1a-iii): written by the writer that sealed under it or installed it, deleted by the one
+    /// that retires its subject. A key file an aborted writer left opens nothing. A restore
+    /// stands the marks as the live vault held them; a row still opens only under a live key.
+    /// Key: the key's ref (32). Value: ().
+    AUTHORITY_OVERLAY_KEY_READY: VaultMeta b"authority.overlay.key-ready.v1:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// How many key events changed which sealed rows open here (census L5-22 1a-iii): a key
+    /// installed, a subject retired. It moves with the authority cache generation, and a fold
+    /// resumes only from a base folded at the same count. Key: ().
+    AUTHORITY_OVERLAY_OPENNESS_EPOCH: VaultMeta b"authority.overlay.openness-epoch.v1" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// One signed authority row a repair page staged while this vault's history is incomplete
     /// (OF-469): no held history, admitted only when the stage closes the gap. Key: hash32.
     AUTHORITY_HISTORY_STAGE: VaultMeta b"authority.history.stage.v1:" Raw
