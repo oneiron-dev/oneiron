@@ -122,3 +122,5 @@ pub use effect::{
 pub use effect::{embedding_space_probe_delete_effect_digest, record_delete_effect_digest};
 // The archive attempt delete door's effect (2k5e).
 pub use effect::attempt_archive_delete_effect_digest;
+// The legal send door's effect (2k6a).
+pub use effect::legal_send_effect_digest;

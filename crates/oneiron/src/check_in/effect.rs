@@ -592,3 +592,18 @@ pub fn attempt_archive_delete_effect_digest(attempt: &[u8; 16]) -> [u8; 32] {
     hasher.update(attempt);
     *hasher.finalize().as_bytes()
 }
+
+/// The digest of sending signing document `document`, whose recipients the
+/// caller counted as `recipient_count`, for signature: the effect a person's
+/// `vault.esign.send_for_signature` is judged over (2k6a; P25-SHAPE Q1 = A).
+/// Only the create door drafts a document, on an artifact no draft holds
+/// yet, so the id binds the draft the asker sent, and a document sends once.
+/// BLAKE3, key derived from `oneiron check_in esign legal send v1`, over the
+/// document's 16 id bytes and the count as eight big-endian bytes.
+#[must_use]
+pub fn legal_send_effect_digest(document: &EntityId, recipient_count: usize) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in esign legal send v1");
+    hasher.update(document.as_bytes());
+    hasher.update(&(recipient_count as u64).to_be_bytes());
+    *hasher.finalize().as_bytes()
+}
