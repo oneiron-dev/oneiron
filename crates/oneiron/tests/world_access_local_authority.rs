@@ -13,11 +13,14 @@
 //! Rows cross the real Loro delta path between two `Vault`s
 //! (`reverse_rematerialize`, the window export door, Observer B), or the
 //! explicit-tier replay door. The whole-vault import's routing (a cfg door)
-//! keeps both tiers as archive data.
+//! keeps both tiers as archive data. Each row lands on its node through a cfg
+//! door: the shipped manifest parks an owner's Approved grant with no owner
+//! proof at the criticality floor, and no production door writes one yet
+//! (census L2-56).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --no-fail-fast --test world_access_local_authority`.
-#![cfg(all(feature = "sync", feature = "test-support"))]
+#![cfg(all(feature = "sync", feature = "test-support", oneiron_test_support))]
 
 #[path = "it_sync/sync_harness/mod.rs"]
 mod sync_harness;
@@ -29,6 +32,7 @@ use oneiron::sync::client::ImportTier;
 use oneiron::sync::replay::{ReplicatedEntity, replay_entity};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, WindowExport};
+use oneiron::test_doors::world_access::put_world_access_row;
 use oneiron::write_envelope::{
     WriteActor, WriteEnvelope, WriteProvenance, write_envelope_evidence,
 };
@@ -88,9 +92,7 @@ impl Grant {
             None,
         )
         .unwrap();
-        vault
-            .put_claim(&self.grant, &body, time_range(T0), T0)
-            .unwrap();
+        put_world_access_row(vault, &self.grant, &body, time_range(T0), T0).unwrap();
     }
 
     /// The agent's own default of `world` alone, written on `vault` under the
@@ -113,9 +115,7 @@ impl Grant {
             ClaimApprovalStatus::Auto,
         );
         body.evidence = Some(write_envelope_evidence(&envelope, None));
-        vault
-            .put_claim(&self.default, &body, time_range(T0), T0)
-            .unwrap();
+        put_world_access_row(vault, &self.default, &body, time_range(T0), T0).unwrap();
     }
 
     /// The tiers the agent reads on `vault` with no selection.
@@ -302,7 +302,6 @@ fn a_grant_written_here_governs_here() {
 /// ACCESS_GRANT row: the importing node's owner grants its own agents their
 /// worlds. On main both took the generic claim door and landed Imported +
 /// Proposed.
-#[cfg(oneiron_test_support)]
 #[test]
 fn the_archive_import_keeps_both_tiers_as_archive_data() {
     for predicate in [
