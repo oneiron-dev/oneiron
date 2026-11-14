@@ -455,13 +455,15 @@ impl VerifiedClaimTransition {
     /// back in its value, evidence and scope (the parts the mask reads),
     /// and nothing else changed. A claim whose body its MACHINE signed
     /// history owns cannot be restored here: its proof would fail over the
-    /// restored body, and no door re-signs a stored claim.
+    /// restored body, and no door re-signs a stored claim. `held` is how
+    /// custody holds `value`, as the restore read it.
     pub(crate) fn after_owner_restore(
         store: &Store,
         txn: &heed::RoTxn<'_>,
         op: &BatchOp,
         handle: &str,
         value: &[u8],
+        held: crate::file_secret_marks::HeldForm,
     ) -> Result<Self> {
         let BatchOp::Put { id, data, .. } = op else {
             return Err(Error::InvalidClaimBody("owner restore requires claim put"));
@@ -489,8 +491,9 @@ impl VerifiedClaimTransition {
         .into_iter()
         .flatten()
         {
-            changed |= crate::file_secret_marks::unmask_value(part, handle, &text_form, value)
-                .map_err(|_| Error::InvalidClaimBody("owner restore body changed"))?;
+            changed |=
+                crate::file_secret_marks::unmask_value(part, handle, &text_form, value, held)
+                    .map_err(|_| Error::InvalidClaimBody("owner restore body changed"))?;
         }
         if !changed || expected != next {
             return Err(Error::InvalidClaimBody("owner restore body changed"));

@@ -65,6 +65,7 @@ use super::shapes::{self, Door, HANDLE_OPEN};
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::file_secret_marks::HeldForm;
 use crate::file_secret_marks::KeyPlaces;
 use crate::file_secret_marks::KeySpan;
 use crate::file_secret_marks::MemberStep;
@@ -172,6 +173,8 @@ pub(crate) fn seal_whole_part_in_txn(
         reason: reason.unwrap_or(REASON_KNOWN_VALUE),
         record,
         place: place.to_owned(),
+        // The part's MessagePack encoding, kept whole.
+        held: HeldForm::Encoded,
     });
     let handles = plan.mint(&CustodyWrite::of(vault), wtxn, at)?;
     handles
@@ -220,6 +223,7 @@ pub(crate) fn mark_text_value_in_txn(
         reason: REASON_KNOWN_VALUE,
         record,
         place: place.to_owned(),
+        held: HeldForm::Raw,
     });
     let keys = text
         .match_indices(value)
@@ -317,6 +321,11 @@ fn scan_screened(
     for op in &mut *copy {
         match op {
             BatchOp::Put { id, data, .. } => {
+                // A kept array, map or number under a credential name reads
+                // as nil, as the mask leaves it (REVIEW-7873 P1).
+                if let Some(screened) = kept_encoded_members_screened(kept, id, data) {
+                    replace_wiped(data, screened);
+                }
                 // A recovery phrase the owner kept, split over the body's
                 // parts, is screened word by word where the door reads it
                 // (REVIEW-7060 P1).
@@ -340,6 +349,78 @@ fn scan_screened(
         }
     }
     scan_batch_ops(store, wtxn, &copy)
+}
+
+/// `data` of `record` with each credential field whose value is neither text
+/// nor bytes, and whose encoding the owner ruled no secret or kept as text
+/// there, read as nil, in the body's own form (JSON or MessagePack); `None`
+/// when none sits there. Custody holds such a value as its encoding (FIX
+/// SEALED-VALUE-RESTORE-KEEPS-ENCODED-TEXT), which a JSON body never spells,
+/// so [`KeptValues::screened`] fills nothing, and the door's field rule reads
+/// any value under a credential name as a hit. The mask's own pass skips the
+/// same member (`Masker::mask_member`, `is_kept`), so a restore of the value
+/// lands instead of rolling back on its own re-scan (REVIEW-7873 P1).
+fn kept_encoded_members_screened(
+    kept: &KeptValues,
+    record: &EntityId,
+    data: &[u8],
+) -> Option<Vec<u8>> {
+    if !kept.holds_record(record) {
+        return None;
+    }
+    // The door's decoder takes JSON first (`decode_members`).
+    let (mut tree, json) = match serde_json::from_slice::<Value>(data) {
+        Ok(tree) => (tree, true),
+        Err(_) => {
+            let mut cursor = std::io::Cursor::new(data);
+            let tree = rmpv::decode::read_value(&mut cursor)
+                .ok()
+                .filter(|_| cursor.position() == data.len() as u64)?;
+            (tree, false)
+        }
+    };
+    let mut screened = None;
+    if null_kept_encoded_members(kept, record, &mut tree) {
+        let mut out = Vec::with_capacity(data.len());
+        let written = if json {
+            serde_json::to_writer(&mut out, &tree).is_ok()
+        } else {
+            rmpv::encode::write_value(&mut out, &tree).is_ok()
+        };
+        if written {
+            screened = Some(out);
+        } else {
+            out.zeroize();
+        }
+    }
+    wipe::wipe_value(&mut tree);
+    screened
+}
+
+/// [`kept_encoded_members_screened`] over one value and each value under it:
+/// whether it set a member to nil.
+fn null_kept_encoded_members(kept: &KeptValues, record: &EntityId, value: &mut Value) -> bool {
+    match value {
+        Value::Array(items) => items.iter_mut().fold(false, |changed, item| {
+            null_kept_encoded_members(kept, record, item) | changed
+        }),
+        Value::Map(fields) => fields.iter_mut().fold(false, |changed, (key, member)| {
+            let encoded_whole = credential_member(key, member)
+                && !matches!(member, Value::String(_) | Value::Binary(_));
+            if encoded_whole {
+                let mut bytes = Zeroizing::new(Vec::new());
+                if rmpv::encode::write_value(&mut *bytes, member).is_ok()
+                    && kept.holds(record, &bytes)
+                {
+                    wipe::wipe_value(member);
+                    *member = Value::Nil;
+                    return true;
+                }
+            }
+            null_kept_encoded_members(kept, record, member) | changed
+        }),
+        _ => false,
+    }
 }
 
 /// `data` of `record` with the words of each recovery phrase the owner kept
@@ -460,6 +541,8 @@ struct Found {
     reason: &'static str,
     record: EntityId,
     place: String,
+    /// How custody holds `value`.
+    held: HeldForm,
 }
 
 /// A pass over a batch's ops. A plan hands each new value a stand-in and
@@ -732,16 +815,19 @@ impl Masker {
         if !credential_member(key, member) {
             return self.mask_value(member);
         }
-        let secret = Zeroizing::new(match &*member {
-            Value::String(text) => text.as_bytes().to_vec(),
-            Value::Binary(bytes) => bytes.clone(),
+        // A value that is neither text nor bytes is held as its encoding, and
+        // its key says so, so a restore puts back the value itself (FIX
+        // SEALED-VALUE-RESTORE-KEEPS-ENCODED-TEXT).
+        let (secret, held) = match &*member {
+            Value::String(text) => (Zeroizing::new(text.as_bytes().to_vec()), HeldForm::Raw),
+            Value::Binary(bytes) => (Zeroizing::new(bytes.clone()), HeldForm::Raw),
             other => {
                 let mut bytes = Zeroizing::new(Vec::new());
                 rmpv::encode::write_value(&mut *bytes, other)
                     .map_err(|_| Error::InvariantViolation("a credential field did not encode"))?;
-                std::mem::take(&mut *bytes)
+                (bytes, HeldForm::Encoded)
             }
-        });
+        };
         if self.is_kept(&secret) {
             return Ok(false);
         }
@@ -756,7 +842,7 @@ impl Masker {
                 self.placed_known = true;
                 handle
             }
-            None => self.handle(&secret, REASON_SENSITIVE_ENV)?,
+            None => self.handle_held(&secret, REASON_SENSITIVE_ENV, held)?,
         };
         wipe::wipe_value(member);
         *member = Value::from(handle);
@@ -914,6 +1000,17 @@ impl Masker {
 
     /// The handle `value` takes: one per distinct value in a batch.
     fn handle(&mut self, value: &[u8], reason: &'static str) -> Result<String> {
+        self.handle_held(value, reason, HeldForm::Raw)
+    }
+
+    /// [`Self::handle`] for a value custody holds as `held`; the first
+    /// placement of a value in a batch names its form.
+    fn handle_held(
+        &mut self,
+        value: &[u8],
+        reason: &'static str,
+        held: HeldForm,
+    ) -> Result<String> {
         if let Some(handle) = self.handles.get(value) {
             return Ok(handle.clone());
         }
@@ -932,6 +1029,7 @@ impl Masker {
             reason,
             record,
             place,
+            held,
         });
         Ok(STAND_IN.to_owned())
     }
@@ -1007,6 +1105,7 @@ impl Masker {
                 reason: found.reason,
                 place: found.place,
                 writer,
+                held: found.held,
             });
             handles.insert(std::mem::take(&mut *value), (handle, id));
         }

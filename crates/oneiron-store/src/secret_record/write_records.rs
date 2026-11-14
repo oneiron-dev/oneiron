@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::file_secret_marks::HeldForm;
 use crate::git_wire::ids::GitOid;
 use oneiron_contracts::entity_id::EntityId;
 
@@ -68,6 +69,8 @@ pub struct FoundNote {
     /// The person who wrote the value there in their own name, when a
     /// person did; `None` for an agent's or the engine's write.
     pub writer: Option<EntityId>,
+    /// How the custody record holds the value.
+    pub held: HeldForm,
 }
 
 /// Who the owner names for an active custody change.
