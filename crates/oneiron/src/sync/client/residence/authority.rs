@@ -22,6 +22,13 @@
 //! (`residence.authority.checkpoint`), keeps the attestations made with the
 //! pin's own key bindings, and hands both to the adoption door, which
 //! verifies them against the pin and refuses what this vault cannot take.
+//!
+//! A round then asks the home for the own-device grants this machine's live
+//! slips name (`residence.authority.grants`, FIX 23747): the authority log
+//! carries a paired slip's mint but not the grant row its `grant_ref` names,
+//! which a slip door reads, and an opened machine holds no window that
+//! carries it. Each row lands through the entity ingest and each withdrawal
+//! replays as a tombstone ([`admit_own_device_grants`]).
 
 mod parts;
 
@@ -33,19 +40,20 @@ use std::collections::BTreeSet;
 
 use super::super::base::home_withheld_worlds;
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
-use crate::Vault;
 use crate::authority::{
     AUTHORITY_HISTORY_PAGE_MAX, AuthorityCheckpointAttestation, AuthorityCheckpointPin,
     AuthorityCheckpointV2, AuthorityEntryHash, AuthorityHistoryFetch, AuthorityHistoryRequest,
-    AuthorityHistorySelection, AuthorityRepairOutcome, authority_entry_hash,
+    AuthorityHistorySelection, AuthorityRepairOutcome, PeerMachine, authority_entry_hash,
     decode_authority_log_entry_body, side_world,
 };
 use crate::sync::client::SyncClientConfig;
 use crate::sync::residence::{
     AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_ENTRY_PART_MAX, AUTHORITY_TAIL_PAGE_MAX,
-    held_authority_entries, held_authority_history, import_authority_page,
+    OWN_DEVICE_GRANTS_PAGE_MAX, OwnDeviceGrantState, admit_own_device_grants,
+    held_authority_entries, held_authority_history, import_authority_page, own_device_grant_refs,
 };
 use crate::sync::transport::TransportError;
+use crate::{EntityId, Vault};
 
 /// The most pages one catch-up takes before it stops for this round, and the
 /// pages an append sends before it yields.
@@ -200,7 +208,110 @@ pub(crate) async fn catch_up_authority(
             "authority history still names entries this machine lacks"
         );
     }
+    // The grants its live slips stand on, once the history that names them
+    // is folded here. A grant read that fails holds back no history.
+    match catch_up_own_device_grants(vault, config, &mut rpc).await {
+        Ok(0) => {}
+        Ok(admitted) => tracing::debug!(admitted, "own-device grants caught up"),
+        Err(error) => tracing::warn!(%error, "own-device grants not read"),
+    }
     Ok(taken)
+}
+
+/// One own-device grant as the home serves it: its stored row while it
+/// stands, or the tombstone of its withdrawal, each in base64.
+#[derive(Deserialize)]
+struct OwnDeviceGrantReply {
+    id: String,
+    #[serde(default)]
+    row: Option<String>,
+    #[serde(default)]
+    tombstone: Option<String>,
+}
+
+/// The home's answer to one grants ask.
+#[derive(Deserialize)]
+struct OwnDeviceGrantsReply {
+    grants: Vec<OwnDeviceGrantReply>,
+}
+
+/// Asks the home for the own-device grants this machine's live slips name
+/// ([`own_device_grant_refs`]), a page at a time, and admits what it serves
+/// ([`admit_own_device_grants`]): a grant this machine did not ask for is
+/// refused there. A home that serves none answers nothing to admit. Returns
+/// how many grants stand here now as the home holds them.
+async fn catch_up_own_device_grants(
+    vault: &Vault,
+    config: &SyncClientConfig,
+    rpc: &mut ResidenceRpc,
+) -> Result<usize, TransportError> {
+    let asked = own_device_grant_refs(vault).map_err(storage)?;
+    if asked.is_empty() {
+        return Ok(0);
+    }
+    // The grant rows and withdrawals carry no signature of their own: only a
+    // home that proves itself a machine of this vault answers them. A socket
+    // dialled before this vault held the authority that names the home could
+    // not prove it, so the proof is asked for again on a fresh socket.
+    if !home_stands(vault, rpc.home) {
+        match ResidenceRpc::connect(vault, config, residence_budgets(vault)?).await? {
+            Some(fresh) => *rpc = fresh,
+            None => return Err(TransportError::home_offline()),
+        }
+        if !home_stands(vault, rpc.home) {
+            return Err(TransportError::InvalidPayload(
+                "the residence home proved no machine of this vault",
+            ));
+        }
+    }
+    let ids: Vec<EntityId> = asked.keys().copied().collect();
+    let mut served = Vec::new();
+    for page in ids.chunks(OWN_DEVICE_GRANTS_PAGE_MAX) {
+        let grants: Vec<String> = page.iter().map(EntityId::to_hex).collect();
+        let reply = match rpc
+            .request("residence.authority.grants", json!({ "grants": grants }))
+            .await
+        {
+            Ok(reply) => reply,
+            Err(TransportError::InvalidPayload(_)) => return Ok(0),
+            Err(error) => return Err(error),
+        };
+        let reply: OwnDeviceGrantsReply = serde_json::from_value(reply).map_err(|_| refused())?;
+        if reply.grants.len() > page.len() {
+            return Err(refused());
+        }
+        for grant in reply.grants {
+            let id = EntityId::from_hex(&grant.id).map_err(|_| refused())?;
+            let decode = |encoded: &str| {
+                base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .map_err(|_| refused())
+            };
+            let state = match (grant.row.as_deref(), grant.tombstone.as_deref()) {
+                (Some(row), None) => OwnDeviceGrantState::Live(decode(row)?),
+                (None, Some(tombstone)) => OwnDeviceGrantState::Withdrawn(decode(tombstone)?),
+                _ => return Err(refused()),
+            };
+            served.push((id, state));
+        }
+    }
+    if served.is_empty() {
+        return Ok(0);
+    }
+    let admission = admit_own_device_grants(vault, rpc.home, &asked, served).map_err(storage)?;
+    if !admission.refused.is_empty() {
+        tracing::warn!(
+            refused = admission.refused.len(),
+            "the home served own-device grants this machine refused"
+        );
+    }
+    Ok(admission.landed.len() + admission.withdrawn.len())
+}
+
+/// Whether `home`, the machine one residence socket proved, still stands
+/// here as a machine of this vault on the key it proved.
+fn home_stands(vault: &Vault, home: PeerMachine) -> bool {
+    matches!(vault.peer_machine_stands(home), PeerMachine::Proven { .. })
 }
 
 /// Adopts the checkpoint image `pin` names (OF-469): read from the home, its
