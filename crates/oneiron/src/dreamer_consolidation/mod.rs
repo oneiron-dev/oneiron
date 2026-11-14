@@ -153,9 +153,8 @@ pub(crate) use scope_summary_attempt::{
 pub(crate) use settle::keep_approval::{KeepApproval, KeepAs};
 pub use settle::{
     CONFLICT_SETTLE_DIAL, ConflictRevertReceipt, ConflictReviewScope, ConflictSettleDecisions,
-    ConflictSettleReceipt, ConflictSettlement, OpenConflict, ParkedConflictPass,
-    RevertedSettlement, SettledAnswer, SettledConflict, settle_parked_conflicts,
-    settle_parked_conflicts_while,
+    ConflictSettleReceipt, ConflictSettlement, OpenConflict, RevertedSettlement, SettledAnswer,
+    SettledConflict,
 };
 pub(crate) use settle::{
     apply_settlement_in_txn, marker_ids, open_conflict_in_txn, open_conflicts_in_txn,

@@ -1,15 +1,15 @@
-//! A parked conflict's settlement ask as the ladder reads it (FIX 7506 P2):
-//! each stored member and retained alternative by a call-local `C` label,
-//! each keep option shown as `keep:C<n>`. The question keeps its canonical
-//! `keep:<id>` options. Only the model rungs see the labels, and an answer
-//! reads back canonical before it settles anything. Every value rides whole
-//! (Rule 5, FIX 7637): a conflict one ask does not hold is asked in pages
-//! (`decision_pages`), each page an ask of its own over some of its rows.
+//! The engine's projection of one bound settlement ask (FIX 7506 P2).
+//!
+//! `oneiron_dreamer::conflict_settle` chooses whole asks, pages and rounds;
+//! the engine builds each ask and runs it for bound `ai.verdict`. Each
+//! stored member and retained alternative has a call-local `C` label and
+//! `keep:C<n>` option. Canonical questions and answers keep their hex ids,
+//! while every offered value rides whole (Rule 5, FIX 7637).
 
 use serde_json::{Map, Value as Json, json};
 
-use super::decision_pages::{PageAnswer, json_len};
-use super::{ConflictSettlement, DISMISS, ESCALATE, HOLD_BOTH, KEEP_PREFIX, OpenConflict};
+use super::decision_pages::PageAnswer;
+use super::{DISMISS, ESCALATE, HOLD_BOTH, KEEP_PREFIX, OpenConflict};
 use crate::claim::{ClaimSource, claim_surfaceable};
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 use crate::dreamer_consolidation::value_projection::rmpv_to_json;
@@ -35,12 +35,6 @@ impl SettleRow {
         row.insert("keep_option".to_owned(), json!(keep_option));
         row.extend(self.fields.clone());
         Json::Object(row)
-    }
-
-    /// What the row counts against a page's room: its length shown with its
-    /// full id, never less than any label shows it.
-    pub(super) fn bytes(&self) -> usize {
-        json_len(&self.shown(&self.id.to_hex()))
     }
 }
 
@@ -102,13 +96,6 @@ pub(crate) fn settle_rows_in_txn(
     Ok(rows)
 }
 
-/// Reads every settlement row under a fresh transaction by calling
-/// [`settle_rows_in_txn`] with its own snapshot.
-pub(super) fn settle_rows(vault: &Vault, conflict: &OpenConflict) -> Result<Vec<SettleRow>> {
-    let txn = vault.store.env.read_txn()?;
-    settle_rows_in_txn(vault, &txn, conflict)
-}
-
 /// Where one ask sits among its conflict's asks: its round, page and the
 /// round's page count when the conflict is asked in more than one, and what
 /// the pages of the round before answered.
@@ -149,27 +136,12 @@ fn state_of(
     Json::Object(state)
 }
 
-/// The bytes an ask over `rows` at `part` would read.
-pub(super) fn state_bytes(
-    conflict: &OpenConflict,
-    rows: &[&SettleRow],
-    part: &AskPart<'_>,
-) -> usize {
-    json_len(&state_of(
-        conflict,
-        rows,
-        part,
-        &mut CallLabelMap::default(),
-    ))
-}
-
 /// One settlement ask: its canonical question, the state the ladder reads,
-/// the call's labels, and the rows a Keep may name.
+/// and the call's labels.
 pub(crate) struct SettleAsk {
     pub(crate) question: DecisionQuestion,
     pub(super) state: Json,
     pub(super) labels: CallLabelMap,
-    keepable: Vec<EntityId>,
 }
 
 impl SettleAsk {
@@ -219,22 +191,6 @@ impl SettleAsk {
             question,
             state,
             labels,
-            keepable,
         })
-    }
-
-    /// The settlement the canonical `answer` names: hold both, dismiss, or
-    /// keep a member this ask offered. None for escalate or anything else.
-    pub(super) fn settlement(&self, answer: &str) -> Option<ConflictSettlement> {
-        match answer {
-            HOLD_BOTH => Some(ConflictSettlement::HoldBoth),
-            DISMISS => Some(ConflictSettlement::Dismiss),
-            other => other.strip_prefix(KEEP_PREFIX).and_then(|hex| {
-                self.keepable
-                    .iter()
-                    .find(|id| id.to_hex() == hex)
-                    .map(|id| ConflictSettlement::Keep(*id))
-            }),
-        }
     }
 }
