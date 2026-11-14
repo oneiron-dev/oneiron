@@ -54,7 +54,8 @@
  *
  * Each count is an upper bound of what SheetJS reads: a record is counted in
  * any part, in each text form SheetJS may decode the part as, with a tag name
- * in any namespace prefix.
+ * in any namespace prefix, and under the name SheetJS's part readers tell a
+ * tag by, which an attribute filed under key `0` replaces (`parsexmltag`).
  */
 import * as XLSX from "xlsx";
 import { preflightPackage, WorkbookBudgetError } from "./budget";
@@ -247,6 +248,73 @@ function holdsCdataMarker(text: string): boolean {
   return false;
 }
 
+/**
+ * Text that may hold an attribute `parsexmltag` files under key `0` (named
+ * `0`, `0_` and more, or `<prefix>:0`): the key it files a tag's name under
+ * first, so such an attribute replaces the name.
+ */
+const NAME_KEY = /[\s:]0[\s_=]/;
+/**
+ * Text that may hold such an attribute whose value, as `parsexmltag` cuts it,
+ * starts with `<`, as each tag name SheetJS's part readers look for does. A
+ * name `0_...` holds no colon (a prefixed name is filed under the text after
+ * its first colon), and leaving the colon out of its run keeps the search
+ * linear: no `:0` can start a second match inside the run.
+ */
+const TAG_NAME_VALUE = /[\s:]0(?:_[^"\s?>/=:]*)?\s*= *["']?</;
+
+/** A tag's own name, as `parsexmltag` cuts it: its text up to the first space or line break. */
+function ownTagName(tag: string): string {
+  return /^[^ \n\r]*/.exec(tag)![0];
+}
+
+/**
+ * The name SheetJS's part readers tell `tag` by (`parsexmltag(tag)[0]`): its
+ * own name, or the value of the last attribute filed under key `0`.
+ */
+function sheetJsTagName(tag: string): string {
+  return NAME_KEY.test(tag) ? sheetJsAttributes(tag, true).get("0")! : ownTagName(tag);
+}
+
+/** SheetJS's `strip_ns`: a tag name without the first namespace prefix in it. */
+function stripPrefix(name: string): string {
+  return name.replace(/<(\/?)\w+:/, "<$1");
+}
+
+/** A tag, and the tag name an attribute gives it in place of its own. */
+interface RenamedTag {
+  readonly tag: string;
+  readonly name: string;
+}
+
+/**
+ * The tags of `text`, as SheetJS's part readers walk them, that an attribute
+ * gives a tag name other than their own, one those readers may look for. The
+ * counts by pattern read each tag under its own name, so they also count a
+ * tag renamed away (an upper bound), and only a tag renamed to a name they
+ * count needs this second look. A real part holds no such attribute.
+ */
+function renamedTags(text: string): RenamedTag[] {
+  const renamed: RenamedTag[] = [];
+  if (!TAG_NAME_VALUE.test(text)) {
+    return renamed;
+  }
+  for (const [tag] of text.matchAll(TAGS)) {
+    if (TAG_NAME_VALUE.test(tag)) {
+      const name = sheetJsTagName(tag);
+      if (name.startsWith("<") && name !== ownTagName(tag)) {
+        renamed.push({ tag, name });
+      }
+    }
+  }
+  return renamed;
+}
+
+/** Whether a content-type tag gives a type SheetJS files as an external link. */
+function namesExternalLink(tag: string): boolean {
+  return attributeValues(tag, "contenttype").some((type) => EXTERNAL_LINK_TYPES.has(type));
+}
+
 /** The records of one part that make lookups. */
 interface LookupRecords {
   sheets: number;
@@ -254,7 +322,13 @@ interface LookupRecords {
   relationships: number;
 }
 
-function lookupRecords(text: string): LookupRecords {
+/**
+ * The records of `text` that make lookups: by pattern, then each tag
+ * `renamed` gives a record's name as its reader reads it (`parse_wb_xml`
+ * strips a prefix, `parse_rels` compares the whole name, `parse_ct` strips a
+ * prefix that may be empty).
+ */
+function lookupRecords(text: string, renamed: readonly RenamedTag[]): LookupRecords {
   const records: LookupRecords = { sheets: 0, links: 0, relationships: 0 };
   for (const match of text.matchAll(LOOKUP_TAGS)) {
     if (match[1] !== undefined) {
@@ -264,9 +338,18 @@ function lookupRecords(text: string): LookupRecords {
     } else {
       TAG_AT.lastIndex = match.index;
       const tag = TAG_AT.exec(text)?.[0];
-      if (tag !== undefined && attributeValues(tag, "contenttype").some((type) => EXTERNAL_LINK_TYPES.has(type))) {
+      if (tag !== undefined && namesExternalLink(tag)) {
         records.links += 1;
       }
+    }
+  }
+  for (const { tag, name } of renamed) {
+    if (stripPrefix(name) === "<sheet") {
+      records.sheets += 1;
+    } else if (name === "<Relationship") {
+      records.relationships += 1;
+    } else if (name.replace(/<\w*:/, "<") === "<Override" && namesExternalLink(tag)) {
+      records.links += 1;
     }
   }
   return records;
@@ -303,11 +386,12 @@ class ReadTally {
     if (texts.some(holdsCdataMarker)) {
       throw new WorkbookBudgetError("structure", "a part holding a CDATA marker, which SheetJS unescapes in quadratic time");
     }
+    const renamed = texts.map(renamedTags);
     let sheets = 0;
     let links = 0;
     let relationships = 0;
-    for (const text of texts) {
-      const records = lookupRecords(text);
+    for (const [index, text] of texts.entries()) {
+      const records = lookupRecords(text, renamed[index]!);
       sheets = Math.max(sheets, records.sheets);
       links = Math.max(links, records.links);
       relationships = Math.max(relationships, records.relationships);
@@ -323,8 +407,8 @@ class ReadTally {
       throw new WorkbookBudgetError("partLookups", "finding the parts would compare more paths than the budget");
     }
     this.steps += checkSheetExpansion(texts, this.budget, this.formulaText);
-    for (const text of texts) {
-      this.takeComments(text);
+    for (const [index, text] of texts.entries()) {
+      this.takeComments(text, renamed[index]!);
     }
     if (this.steps > this.budget.loopSteps) {
       throw new WorkbookBudgetError(
@@ -342,11 +426,19 @@ class ReadTally {
    * comments gathered so far (`tcomments.concat`). A plain comment is counted
    * at each of its tags, a threaded one at each end tag (SheetJS adds the last
    * comment started at every end tag), each under the cell address its tag
-   * names.
+   * names. People and threaded-comment tags are read by the name SheetJS
+   * tells them by, which an attribute may replace (`renamed`,
+   * {@link sheetJsTagName}): a tag renamed to an end tag adds the last
+   * comment started again, and a start tag renamed away starts none.
    */
-  private takeComments(text: string): void {
+  private takeComments(text: string, renamed: readonly RenamedTag[]): void {
     for (const _ of text.matchAll(PERSON_TAG)) {
       this.people += 1;
+    }
+    for (const { name } of renamed) {
+      if (stripPrefix(name) === "<person") {
+        this.people += 1;
+      }
     }
     for (const [tag] of text.matchAll(COMMENT_TAG)) {
       this.commentOn(sheetJsAttributes(tag).get("ref"));
@@ -357,7 +449,7 @@ class ReadTally {
     }
     let started: string | undefined;
     for (const [tag] of text.matchAll(TAGS)) {
-      const name = /^[^ \n\r]*/.exec(tag)![0].replace(/<(\/?)\w+:/, "<$1");
+      const name = stripPrefix(sheetJsTagName(tag));
       if (name === "<threadedComment") {
         started = sheetJsAttributes(tag).get("ref");
       } else if (name === "</threadedComment>") {

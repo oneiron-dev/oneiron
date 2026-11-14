@@ -12,7 +12,7 @@ const WORKSHEET_TYPE = "application/vnd.openxmlformats-officedocument.spreadshee
 /** The main part of an XLSB workbook, which SheetJS reads with its binary reader. */
 const BINARY_WORKBOOK_TYPE = "application/vnd.ms-excel.sheet.binary.macroEnabled.main";
 const MACRO_WORKBOOK_TYPE = "application/vnd.ms-excel.sheet.macroEnabled.main+xml";
-const EXTERNAL_LINK_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml";
+export const EXTERNAL_LINK_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml";
 const COMMENTS_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml";
 const THREADED_COMMENTS_TYPE = "application/vnd.ms-excel.threadedcomments+xml";
 const PEOPLE_TYPE = "application/vnd.ms-excel.person+xml";
@@ -28,6 +28,8 @@ export function worksheet(sheetData: string, after = ""): string {
 export interface PackageLayout {
   /** Sheets the workbook lists, each with its workbook relationship; at least the sheet parts. */
   readonly listed?: number;
+  /** Elements after the listed sheets, inside the workbook's `sheets`. */
+  readonly listedAfter?: string;
   /** The workbook's content type. */
   readonly workbookType?: string;
   /** Whether the content types give the workbook's type as the `xml` default, with no override naming it. */
@@ -54,6 +56,7 @@ export interface PackageLayout {
 export function sheetsPackage(sheets: readonly Part["body"][], layout: PackageLayout = {}): Uint8Array {
   const {
     listed = sheets.length,
+    listedAfter = "",
     workbookType = WORKBOOK_TYPE,
     workbookTypeByDefault = false,
     contentTypes = "",
@@ -81,7 +84,7 @@ export function sheetsPackage(sheets: readonly Part["body"][], layout: PackageLa
     {
       name: "xl/workbook.xml",
       body: text(
-        `<workbook xmlns="${MAIN}" xmlns:r="${DOC_REL}"><sheets>${each(listed, (n) => `<sheet name="${sheetName(n)}" sheetId="${n}" r:id="rId${n}"/>`)}</sheets></workbook>`,
+        `<workbook xmlns="${MAIN}" xmlns:r="${DOC_REL}"><sheets>${each(listed, (n) => `<sheet name="${sheetName(n)}" sheetId="${n}" r:id="rId${n}"/>`)}${listedAfter}</sheets></workbook>`,
       ),
     },
     {
@@ -521,6 +524,11 @@ function threadedCommentsPackage(comments: number, people: number): Uint8Array {
     (_, i) =>
       `<threadedComment ref="A${i + 1}" dT="2026-11-15T00:00:00.00" personId="{nobody}" id="{c${i}}"><text>x</text></threadedComment>`,
   ).join("");
+  return threadedCommentsPartsPackage(threaded, persons);
+}
+
+/** S1 with one cell, its threaded-comments part holding `threaded`, and the people part holding `persons`. */
+export function threadedCommentsPartsPackage(threaded: string, persons: string): Uint8Array {
   return sheetsPackage([text(PLAIN_SHEET)], {
     contentTypes:
       `<Override PartName="/xl/persons/person.xml" ContentType="${PEOPLE_TYPE}"/>` +
