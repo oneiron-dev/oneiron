@@ -56,14 +56,27 @@ pub use crate::store::embedding::{
     EmbeddingSpace, InputKind, KindSlotBindings,
 };
 
-#[doc(hidden)]
-pub use oneiron_records::embed::space::MediaRefused;
-#[doc(hidden)]
-pub(crate) use oneiron_records::embed::space::SetupActor;
-#[doc(hidden)]
-use oneiron_records::embed::space::refused_setup;
-#[doc(hidden)]
-pub(super) use oneiron_records::embed::space::{slot_setup_id, space_setup_id};
+/// Who wrote an EMBEDDING_SETUP retirement or slot row (FIX 6697): the owner through a door, or a
+/// system move. Startup seeding honours only the owner's retirements and returns to a default;
+/// a system move's re-seed from the config as they did before #3485.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SetupActor {
+    /// The owner, through a door: retiring a space, unbinding or binding a slot, declaring a
+    /// space, abandoning a move, saying yes to one.
+    Owner,
+    /// The engine: a timed-out or worse move's dropped candidate, an undo back to the vault's
+    /// own text index, a swap's backfill retiring the incumbent, and any other engine-driven
+    /// write. A row that names no actor is one of these.
+    #[default]
+    System,
+}
+
+impl SetupActor {
+    fn is_system(&self) -> bool {
+        *self == Self::System
+    }
+}
 
 /// Who acts through an embedding setup write (FIX 8200): the owner, whose request's proof the
 /// committing transaction checks again, or the engine on its own, which has no proof to check.
@@ -121,6 +134,13 @@ pub(crate) enum EmbeddingSetup {
         by: SetupActor,
     },
 }
+
+#[doc(hidden)]
+pub use oneiron_records::embed::space::MediaRefused;
+#[doc(hidden)]
+use oneiron_records::embed::space::refused_setup;
+#[doc(hidden)]
+pub(super) use oneiron_records::embed::space::{slot_setup_id, space_setup_id};
 
 /// The id that names the vault's own text index where a declared space's setup row id would:
 /// the scorer of its retests (FIX 1638). No row is stored under it.

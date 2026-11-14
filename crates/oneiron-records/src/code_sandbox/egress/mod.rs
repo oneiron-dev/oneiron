@@ -2,9 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 pub use crate::code_sandbox::egress::receipt::EgressReceipt;
-use std::io;
-use std::net::IpAddr;
-use std::time::Duration;
 
 /// The transport a [`RawEndpointGrant`] admits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]

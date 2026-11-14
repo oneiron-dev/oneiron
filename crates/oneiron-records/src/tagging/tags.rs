@@ -5,7 +5,6 @@ use oneiron_store::config::tagging::TaggingMarkerConfig;
 use oneiron_verb_wire::memory::extraction::types::SpeakerTarget;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The memo-key of one tag set (ARCH-0035). Two tag sets under one envelope
 /// are interchangeable, so a save under the envelope the turn already holds
