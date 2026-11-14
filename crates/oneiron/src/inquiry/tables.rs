@@ -57,4 +57,30 @@ crate::side_table::side_tables! {
     /// that claim finds its links. Empty marker. Key: id16 (drawn from) + id16 (opened).
     INQUIRY_SCOPE_LINK_BY_SOURCE: VaultMeta b"inquiry:scope_link_by_source:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The member's route to the company of one inquiry edge (L7-03), on the member's vault:
+    /// the company host a told statement goes to, and the guest slip the company's vault minted
+    /// for this host on its reciprocal grant. The edge's revoke deletes it. Key: id16 (the
+    /// inquiry edge's grant).
+    INQUIRY_PUSH_ROUTE: VaultMeta b"inquiry:push_route:v1:" Named
+        // Restore class: live, as credential state is: the slip is bound to this host's key, and
+        // a restore must not bring back a route a revoke ended.
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// One statement the member told a company unasked (L7-03, federation.md #inquiry: the
+    /// member's [Now]), on the member's vault: the edge, the words, the claim they were drawn
+    /// from (member-local; it never crosses), when, and the send's connector TASK. Key: id16
+    /// (the push).
+    INQUIRY_PUSH: VaultMeta b"inquiry:push:v1:" Named
+        // Restore class: live, as the log row is: the row records a send that may already have
+        // left the vault.
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// Every told statement by the claim it was drawn from, written with the push, so an erase
+    /// of that claim drops the link. Empty marker. Key: id16 (drawn from) + id16 (push).
+    INQUIRY_PUSH_BY_SOURCE: VaultMeta b"inquiry:push_by_source:v1:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// A told statement the company landed (L7-03), on the company's vault: the CLAIM it landed
+    /// as, so a re-delivered push lands once. Key: 32 bytes (the member's vault) + id16 (the
+    /// push); value: id16 (the CLAIM).
+    INQUIRY_PUSH_LANDED: VaultMeta b"inquiry:push_landed:v1:" Raw
+        // Restore class: the row follows the image's claims, as the copy it names does.
+        [restore: content] [family: unclassified] [tier: canonical];
 }

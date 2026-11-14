@@ -53,10 +53,24 @@ const CONNECT_SCOPE_KEYS: [&str; 2] = ["kind", "peer_vault_id"];
 /// opened scope.
 pub const INQUIRE_VERB_CLASS: &str = "inquire";
 
+/// The verb class the company's reciprocal grant of an inquiry edge carries
+/// beside `propose` (federation.md #inquiry, line 95; L7-03; lead ruling
+/// L7-03-LANDING = A): the member's vault may tell the company a statement
+/// unasked (the member's [Now]), which the company lands at once as a copy.
+/// It confers no read. Only the reciprocal grant's mint adds it, so the
+/// company Owner's accept of the edge is the consent to receive told needs.
+pub const INQUIRY_PUSH_VERB_CLASS: &str = "inquiry_push";
+
 /// The verb classes a Connect guest grant may carry: a guest reads,
-/// proposes or inquires, and never writes or administers (ARCH-0043
-/// #guest-grants). `inquire` rides only an inquiry edge, alone.
-const CONNECT_GUEST_VERBS: [&str; 3] = ["read", "propose", INQUIRE_VERB_CLASS];
+/// proposes, inquires or tells, and never writes or administers (ARCH-0043
+/// #guest-grants). `inquire` rides only an inquiry edge, alone;
+/// `inquiry_push` rides only an inquiry edge's reciprocal grant.
+const CONNECT_GUEST_VERBS: [&str; 4] = [
+    "read",
+    "propose",
+    INQUIRE_VERB_CLASS,
+    INQUIRY_PUSH_VERB_CLASS,
+];
 
 /// The guest actor row's body: its kind tag, a display name, and the origin
 /// vault (64 hex).
@@ -76,11 +90,14 @@ pub struct ConnectMemberLeaveConsent<'proof> {
     pub member: &'proof AuthenticatedOwner,
 }
 
-/// What a Connect grant mint asks for: the scope, and an inquiry edge's
-/// terms when the scope's verbs are the class `inquire`.
+/// What a Connect grant mint asks for: the scope, an inquiry edge's terms
+/// when the scope's verbs are the class `inquire`, and whether the mint is
+/// an inquiry edge's reciprocal grant, the only mint that may ask for the
+/// class `inquiry_push`.
 pub(crate) struct ConnectGrantRequest {
     pub(crate) scope: Scope,
     pub(crate) inquiry_terms: Option<crate::inquiry::InquiryTerms>,
+    pub(crate) inquiry_reciprocal: bool,
 }
 
 /// What [`Vault::mint_connect_grant`] wrote.
@@ -188,7 +205,7 @@ fn canonical_vault_id(value: &str) -> Option<AuthorityVaultId> {
 }
 
 /// The shape every Connect guest grant's authority holds, on encode and
-/// decode: verbs read, propose or inquire only, worlds named (never base,
+/// decode: verbs read, propose, inquire or inquiry_push only, worlds named (never base,
 /// never a foreign-range id), and a band set the pact triple can carry.
 pub(super) fn validate_connect_authority(scope: &Scope) -> Result<()> {
     let verbs = matches!(&scope.verbs, ScopeAxis::Some(verbs)
@@ -428,6 +445,7 @@ impl Vault {
                 ConnectGrantRequest {
                     scope: authority_scope,
                     inquiry_terms: None,
+                    inquiry_reciprocal: false,
                 },
                 expires_at,
                 detach,
@@ -437,7 +455,8 @@ impl Vault {
 
     /// The writer of [`Self::mint_connect_grant`], in the caller's
     /// transaction. An inquiry edge's mint passes its terms; any other mint
-    /// that asks for the class `inquire` refuses.
+    /// that asks for the class `inquire` refuses. Only an inquiry edge's
+    /// reciprocal grant may ask for the class `inquiry_push`.
     pub(crate) fn mint_connect_grant_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -450,6 +469,7 @@ impl Vault {
         let ConnectGrantRequest {
             scope: requested,
             inquiry_terms,
+            inquiry_reciprocal,
         } = request;
         let actor = owner.revalidate_in_txn(self, txn)?;
         let fold = self.authority_fold_readonly_in_txn(txn)?;
@@ -471,8 +491,16 @@ impl Vault {
                 "the class inquire rides only an inquiry edge, minted with its terms",
             ));
         }
+        if !inquiry_reciprocal
+            && matches!(&requested.verbs, ScopeAxis::Some(verbs)
+                if verbs.contains(INQUIRY_PUSH_VERB_CLASS))
+        {
+            return Err(refused(
+                "the class inquiry_push rides only an inquiry edge's reciprocal grant",
+            ));
+        }
         validate_connect_authority(&requested).map_err(|_| {
-            refused("a Connect grant reads, proposes or inquires over named worlds only")
+            refused("a Connect grant reads, proposes, inquires or tells over named worlds only")
         })?;
         require_local_named_axes(self, txn, &requested)?;
         let ceiling = self.connect_guest_ceiling_in_txn(txn)?;

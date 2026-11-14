@@ -43,6 +43,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
         feedback_manifest("feedback_collector"),
         feedback_manifest("feedback_github"),
         failure_signals_manifest(),
+        inquiry_push_manifest(),
         linear_manifest(),
         esign_manifest(),
         line_manifest(),
@@ -288,6 +289,32 @@ fn failure_signals_manifest() -> OutboundCapabilityManifest {
             OutboundPermissionState::Conditional,
             false,
             "Allowed while the owner's \"Help improve Oneiron\" switch is on (on by default hosted with opt-out, off by default self-host with opt-in).",
+        )],
+    )
+}
+
+/// L7-03 (federation.md #inquiry, line 95; lead rulings L7-03-LANDING and
+/// L7-03-SCOPE = A): the member's [Now], one statement told unasked to the
+/// company of one inquiry edge. It rides the schedule door's one enqueue, so
+/// the owner's undo-send window holds it like any other send. The company
+/// lands each push once by its push id, the send's idempotency key, so a
+/// resend after a lost answer is safe: the retry class is native.
+fn inquiry_push_manifest() -> OutboundCapabilityManifest {
+    manifest(
+        crate::inquiry::INQUIRY_PUSH_CHANNEL,
+        "inquiry",
+        "One statement in the member's own words to the company of one inquiry edge; never a member record id, hit, score or vector.",
+        vec![verb(
+            "send",
+            "POST",
+            json!({"statement":"the member's words","target":"the company vault id (64 hex)"}),
+            OutboundInterruptionClass::Ambient,
+            OutboundDeliverySemanticsKind::FireAndForget,
+            None,
+            OutboundRetryClass::IdempotentNative,
+            OutboundPermissionState::Conditional,
+            false,
+            "The member's own choice to tell the company now, on an inquiry edge whose pact is Active; the company lands each push once.",
         )],
     )
 }

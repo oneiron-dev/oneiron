@@ -126,11 +126,31 @@ fn keep_modes(value: &Value) -> Result<InquiryKeepModes> {
 /// exactly when its verbs carry `inquire`. Such a grant is a Connect guest
 /// grant with no ask payload, its verbs are `inquire` alone, and its one
 /// world is the opened WORLD the terms name.
+///
+/// The class `inquiry_push` (L7-03) rides only an inquiry edge's reciprocal
+/// grant: a Connect guest grant with no ask payload and no terms, its verbs
+/// `propose` and `inquiry_push`, over one world.
 pub(super) fn validate(grant: &FederationGrant) -> Result<()> {
     // Named, never through a top axis: an Owner's top-scope grant names no
     // class and carries no terms.
     let inquire = matches!(&grant.authority_scope.verbs, ScopeAxis::Some(verbs)
         if verbs.contains(crate::federation::INQUIRE_VERB_CLASS));
+    if let ScopeAxis::Some(verbs) = &grant.authority_scope.verbs
+        && verbs.contains(crate::federation::INQUIRY_PUSH_VERB_CLASS)
+    {
+        let reciprocal_verbs = verbs.len() == 2 && verbs.contains("propose");
+        let one_world = matches!(&grant.authority_scope.worlds, ScopeAxis::Some(worlds)
+            if worlds.len() == 1);
+        if grant.inquiry_terms.is_some()
+            || grant.role != FederationGrantRole::Guest
+            || !matches!(grant.scope, FederationGrantScope::Connect { .. })
+            || grant.guest.is_some()
+            || !reciprocal_verbs
+            || !one_world
+        {
+            return Err(invalid_grant());
+        }
+    }
     match &grant.inquiry_terms {
         None if inquire => Err(invalid_grant()),
         None => Ok(()),

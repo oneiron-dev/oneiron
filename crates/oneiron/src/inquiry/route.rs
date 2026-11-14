@@ -190,6 +190,27 @@ pub(crate) fn inquiry_route_in_txn(
     ROUTES.get(store, txn, &(shared_vault_id, member))
 }
 
+/// Every open route to the member vault `member_vault_id` over its inquiry
+/// edge `edge_grant` (32 hex), read in the caller's transaction: what a
+/// statement that member told this vault unasked lands about (L7-03).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn inquiry_routes_to_member_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    member_vault_id: &AuthorityVaultId,
+    edge_grant: &str,
+) -> Result<Vec<InquiryRoute>> {
+    Ok(ROUTES
+        .scan(store, txn)?
+        .into_iter()
+        .map(|(_, route)| route)
+        .filter(|route| route.member_vault_id == *member_vault_id && route.edge_grant == edge_grant)
+        .collect())
+}
+
 /// Ends the route of `member`'s seat in `shared_vault_id`, in the membership
 /// writer's transaction: a leave, a removal or an Owner's hand-over ends the
 /// seat and its route together. Returns whether a route was open.

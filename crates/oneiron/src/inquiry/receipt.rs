@@ -4,6 +4,10 @@
 //! `inquiry_keep` says: a member who uses the company's inquiry power to
 //! probe a colleague leaves this trace. The receipt family reads it.
 //!
+//! A statement a member told the company unasked (L7-03) leaves one
+//! `inquiry` receipt on the company vault too: the member, the push, the
+//! time and the source, never the text, and no question or task.
+//!
 //! The same store keeps, on the member's vault, a Share receipt for each
 //! change of an inquiry edge's terms (FIX INQUIRY-STANDING-PER-KEEP): who
 //! changed them, when, and the modes for each keep and the keep allowed,
@@ -13,7 +17,7 @@ use std::collections::BTreeMap;
 use std::ops::Bound;
 
 use super::edge::{InquiryEdge, InquiryTermsChangeOutcome};
-use super::record::{Inquiry, InquiryOutcome};
+use super::record::{Inquiry, InquiryOutcome, StatementSource};
 use super::terms::InquiryTerms;
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -35,6 +39,10 @@ const FIELD_QUESTION: &str = "question";
 const FIELD_PURPOSE: &str = "purpose";
 const FIELD_KEEP: &str = "keep";
 const FIELD_EXPIRES_AT: &str = "expires_at";
+/// A told statement's field (L7-03): who made it, always the member.
+const FIELD_STATEMENT_SOURCE: &str = "statement_source";
+/// A told statement's receipt outcome: the company landed it.
+const OUTCOME_TOLD: &str = "told";
 /// A terms change's fields: the modes for each keep and the keep allowed,
 /// after the change, then before it.
 const FIELD_TASK_MODE: &str = "task_mode";
@@ -83,6 +91,53 @@ pub(crate) fn write_inquiry_receipt_in_txn(
         fields,
     };
     put_receipt_in_txn(store, wtxn, receipt)
+}
+
+/// Writes the receipt of the statement the member's vault told this vault
+/// unasked as push `push` (L7-03, the member's [Now]), about the PERSON
+/// `member`, which landed at `now` through the reciprocal grant's guest
+/// actor `guest_actor`, in the landing's transaction: an `inquiry` receipt
+/// with no question, purpose or task, and never the statement's text. A
+/// push lands once, so it has one receipt ([`inquiry_push_receipt_id`]);
+/// `job_ref` names the push.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn write_inquiry_push_receipt_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    push: EntityId,
+    member: &EntityId,
+    guest_actor: &EntityId,
+    source: StatementSource,
+    now: u64,
+) -> Result<ReceiptRecord> {
+    let fields = BTreeMap::from([
+        (FIELD_MEMBER.to_owned(), member.to_hex()),
+        (
+            FIELD_STATEMENT_SOURCE.to_owned(),
+            source.as_str().to_owned(),
+        ),
+    ]);
+    let receipt = ReceiptRecord {
+        receipt_id: inquiry_push_receipt_id(push),
+        receipt_kind: ReceiptKind::Inquiry,
+        occurred_at: now,
+        actor: Some(guest_actor.to_hex()),
+        on_behalf_of: None,
+        outcome: OUTCOME_TOLD.to_owned(),
+        job_ref: Some(push.to_hex()),
+        trigger_ref: None,
+        policy_trace: Vec::new(),
+        fields,
+    };
+    put_receipt_in_txn(store, wtxn, receipt)
+}
+
+/// The id of push `push`'s one receipt.
+pub(crate) fn inquiry_push_receipt_id(push: EntityId) -> String {
+    format!("inquiry_push:{}:000000", push.to_hex())
 }
 
 /// Writes the receipt of `member`'s change of `edge`'s terms from

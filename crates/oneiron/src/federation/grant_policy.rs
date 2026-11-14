@@ -244,7 +244,7 @@ pub(crate) fn resolved_scope(
 
 /// The Connect guest ceiling (FIX 3016): the meet of every
 /// `connect_guest_ceiling` row under the precedence row, then the structural
-/// Connect guest ceiling (read, propose and inquire only; the Ask guest's
+/// Connect guest ceiling (read, propose, inquire and inquiry_push only; the Ask guest's
 /// scope is not this one). No row is a refusal: there is no top-scope
 /// fallback.
 pub(crate) fn connect_guest_ceiling(rows: &[GrantPolicyRow]) -> Result<Scope> {

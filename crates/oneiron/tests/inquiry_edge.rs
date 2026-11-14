@@ -19,10 +19,11 @@
 //!   is never drawn from (FIX INQUIRY-SCOPE-DRAWN-FROM-FOREIGN);
 //! - revoking the edge withdraws the grant and leaves the member's
 //!   statements;
-//! - the company's reciprocal grant (`propose` alone over "Inquiry edge:
-//!   <member>") and the member's edge make the existing Connect pact Active
-//!   on both vaults, neither grant confers read, and a second edge to the
-//!   company refuses while that Connect stands.
+//! - the company's reciprocal grant (`propose` and `inquiry_push` over
+//!   "Inquiry edge: <member>"; L7-03) and the member's edge make the
+//!   existing Connect pact Active on both vaults, neither grant confers
+//!   read, and a second edge to the company refuses while that Connect
+//!   stands.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test inquiry_edge`.
 
@@ -620,8 +621,8 @@ fn the_reciprocal_grant_and_the_edge_make_the_connect_pact_active_on_both_vaults
         .expect("the company Owner mints the reciprocal grant");
     assert_eq!(
         reciprocal.authority_scope,
-        connect_scope(reciprocal.world, &["propose"]),
-        "propose alone, one WORLD, no facet, one band, at most public",
+        connect_scope(reciprocal.world, &["inquiry_push", "propose"]),
+        "propose and inquiry_push, one WORLD, no facet, one band, at most public",
     );
 
     let offer = member

@@ -14,8 +14,16 @@
 //! * through the ordinary CLAIM put, so the company indexes and embeds it
 //!   itself.
 //!
+//! A statement the member told the company unasked (L7-03, the member's
+//! [Now]; lead ruling L7-03-LANDING = A) lands the same way, at once and
+//! whatever `inquiry_keep` says: "that statement is at once a company
+//! record" (federation.md #inquiry). Its evidence names the push, not an
+//! inquiry, and it holds with no end.
+//!
 //! The landing is the engine's own writer: no verb reaches it. It lands only
-//! what a send brought back over a route the company Owner opened. Where the
+//! what a send brought back over a route the company Owner opened, or what
+//! the member's vault told over the company's own reciprocal grant to a
+//! member whose route the company Owner opened. Where the
 //! copy lands is read before the send, from the company's own Active Connect
 //! pact with the member's vault; a `copy` send with no such pact, or whose
 //! pact does not open exactly one world to this company, gives `unavailable`
@@ -130,6 +138,21 @@ fn inquiry_copy_claim_id(
     )
 }
 
+/// The evidence key naming the told statement (L7-03) a copy landed from.
+const EVIDENCE_INQUIRY_PUSH: &str = "inquiry_push";
+
+/// One copied statement's CLAIM: its id, the PERSON it is about, the
+/// statement, the evidence naming what it answered or was told under, and
+/// the time it holds.
+struct CopyClaim<'a> {
+    id: EntityId,
+    member: EntityId,
+    statement: &'a InquiryStatement,
+    evidence: (&'static str, EntityId),
+    valid_from: u64,
+    valid_to: Option<u64>,
+}
+
 impl Vault {
     /// Lands each of `statements`, the answer to inquiry `inquiry` about the
     /// PERSON `member`, as one CLAIM in `landing`'s foreign world, and
@@ -153,49 +176,108 @@ impl Vault {
         valid_until: u64,
         now: u64,
     ) -> Result<()> {
-        let facet = self.default_facet_in_txn(txn)?;
         for (ordinal, statement) in statements.iter().enumerate() {
             let id = inquiry_copy_claim_id(inquiry, member, &landing.origin.source_vault, ordinal)?;
-            let mut body = ClaimBody::new(
-                INQUIRY_STATEMENT_PREDICATE,
-                ClaimSubject::Entity(member),
-                Value::from(statement.text()),
-                COPY_CONFIDENCE,
-                ClaimApprovalStatus::Approved,
-                ClaimLifecycleStatus::Active,
-            )?;
-            body.source = Some(ClaimSource::Imported);
-            body.world = Some(landing.world.entity_id());
-            body.scope_facet = facet;
-            body.valid_from = Some(now.min(valid_until));
-            body.valid_to = Some(valid_until);
-            body.evidence = Some(Value::Map(vec![
-                (Value::from(EVIDENCE_INQUIRY), Value::from(inquiry.to_hex())),
-                (
-                    Value::from(EVIDENCE_STATEMENT_SOURCE),
-                    Value::from(statement.source().as_str()),
-                ),
-            ]));
-            self.put_claim_in_txn(
+            self.land_copy_claim_in_txn(
                 txn,
-                &id,
-                &body,
-                TimeRange {
-                    start: now,
-                    end: now,
+                landing,
+                &CopyClaim {
+                    id,
+                    member,
+                    statement,
+                    evidence: (EVIDENCE_INQUIRY, inquiry),
+                    valid_from: now.min(valid_until),
+                    valid_to: Some(valid_until),
                 },
                 now,
             )?;
-            record_engine_delivery_in_txn(
-                self,
-                txn,
-                &landing.pact,
-                landing.consent_epoch,
-                id,
-                landing.origin,
-                landing.world,
-            )?;
         }
         Ok(())
+    }
+
+    /// Lands `statement`, which the member told this vault unasked as push
+    /// `push` (L7-03, the member's [Now]), as the CLAIM `id` about the PERSON
+    /// `member` in `landing`'s foreign world, and records its delivery, in
+    /// `txn`. It holds from `now`, with no end: no task or inquiry bounds it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::land_inquiry_copy_in_txn`].
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn land_pushed_copy_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        landing: &InquiryLanding,
+        id: EntityId,
+        push: EntityId,
+        member: EntityId,
+        statement: &InquiryStatement,
+        now: u64,
+    ) -> Result<()> {
+        self.land_copy_claim_in_txn(
+            txn,
+            landing,
+            &CopyClaim {
+                id,
+                member,
+                statement,
+                evidence: (EVIDENCE_INQUIRY_PUSH, push),
+                valid_from: now,
+                valid_to: None,
+            },
+            now,
+        )
+    }
+
+    /// Puts `copy` as a CLAIM in `landing`'s foreign world through the
+    /// ordinary CLAIM put, and records its delivery, in `txn`.
+    fn land_copy_claim_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        landing: &InquiryLanding,
+        copy: &CopyClaim<'_>,
+        now: u64,
+    ) -> Result<()> {
+        let facet = self.default_facet_in_txn(txn)?;
+        let mut body = ClaimBody::new(
+            INQUIRY_STATEMENT_PREDICATE,
+            ClaimSubject::Entity(copy.member),
+            Value::from(copy.statement.text()),
+            COPY_CONFIDENCE,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )?;
+        body.source = Some(ClaimSource::Imported);
+        body.world = Some(landing.world.entity_id());
+        body.scope_facet = facet;
+        body.valid_from = Some(copy.valid_from);
+        body.valid_to = copy.valid_to;
+        let (evidence_key, evidence_id) = copy.evidence;
+        body.evidence = Some(Value::Map(vec![
+            (Value::from(evidence_key), Value::from(evidence_id.to_hex())),
+            (
+                Value::from(EVIDENCE_STATEMENT_SOURCE),
+                Value::from(copy.statement.source().as_str()),
+            ),
+        ]));
+        self.put_claim_in_txn(
+            txn,
+            &copy.id,
+            &body,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )?;
+        record_engine_delivery_in_txn(
+            self,
+            txn,
+            &landing.pact,
+            landing.consent_epoch,
+            copy.id,
+            landing.origin,
+            landing.world,
+        )
     }
 }

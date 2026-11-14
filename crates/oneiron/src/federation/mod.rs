@@ -31,7 +31,9 @@ pub(crate) use delete_authority::{
 #[allow(unused_imports)]
 pub(crate) use delete_authority::ArchiveDeleteRole;
 mod connect_grant;
-pub use connect_grant::{ConnectGrantMinted, ConnectMemberLeaveConsent, INQUIRE_VERB_CLASS};
+pub use connect_grant::{
+    ConnectGrantMinted, ConnectMemberLeaveConsent, INQUIRE_VERB_CLASS, INQUIRY_PUSH_VERB_CLASS,
+};
 pub(crate) use connect_grant::{
     ConnectGrantRequest, connect_direction_projection, grant_serves_selector, is_guest_slice,
     pact_admits_grant, require_connect_grant_in_txn, require_one_connect_per_peer,

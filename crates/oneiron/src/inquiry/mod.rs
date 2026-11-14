@@ -42,6 +42,11 @@
 //!   and is not held with the task.
 //!
 //! The verbs and the member host's route (PR 5) are a later build.
+//!
+//! * The member's [Now] (L7-03): the member tells the company of one edge
+//!   a statement unasked, as one send on the internal channel
+//!   `inquiry_push`, held by the owner's undo-send window; the company lands
+//!   it once, at once, as a copy ([`Vault::land_pushed_inquiry_statement`](crate::Vault::land_pushed_inquiry_statement)).
 
 mod edge;
 mod holder;
@@ -49,6 +54,7 @@ mod landing;
 mod log;
 mod member;
 mod policy;
+mod push;
 mod receipt;
 mod record;
 mod route;
@@ -74,6 +80,13 @@ pub use member::{
 };
 pub(crate) use policy::{INQUIRY_ROW_KEY, InquiryPolicyRead};
 pub use policy::{INQUIRY_ROW_VERSION, InquiryKeepSetting, InquiryKeepSource, InquiryPolicy};
+pub(crate) use push::drop_inquiry_push_links_in_txn;
+pub use push::{
+    INQUIRY_PUSH_CHANNEL, INQUIRY_PUSH_PEER_PATH, InquiryPush, InquiryPushLanded,
+    InquiryPushRequest, InquiryPushRoute, InquiryPushRouteRequest, InquiryPushSink,
+    InquiryPushState, InquiryPushTransport, InquiryPushView, InquiryPushWire, InquiryPushed,
+    MAX_INQUIRY_PUSH_STATEMENT_BYTES, MAX_INQUIRY_PUSH_WIRE_BYTES,
+};
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use receipt::write_inquiry_receipt_in_txn;
 pub(crate) use receipt::{erase_inquiry_receipt_actor_in_txn, inquiry_receipts};
