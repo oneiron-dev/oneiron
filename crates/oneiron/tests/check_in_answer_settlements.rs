@@ -393,6 +393,7 @@ fn the_owner_answers_the_ask_its_agent_opened_and_the_agent_reads_it() {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("the owner mints the Grant");

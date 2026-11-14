@@ -67,6 +67,7 @@ fn grant_request(agent: EntityId, verb: &str) -> AgentGrantMintRequest {
         verb_classes: BTreeSet::new(),
         wallet_ref: None,
         working_view_bounds: None,
+        check_in_ref: None,
     }
 }
 

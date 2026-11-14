@@ -228,6 +228,7 @@ fn mint_world_read_grant(fixture: &Fixture, agent: EntityId, world: EntityId) ->
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the agent a one-world read Grant")
@@ -410,6 +411,7 @@ fn revoking_an_agents_last_hand_minted_grant_narrows_its_read() {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the agent a base-world read Grant");

@@ -41,6 +41,14 @@
 //! the grant as its `funding_grant_ref` freezes it, and every call that
 //! lease's tree admits draws on that wallet's allocation or is refused. A
 //! grant without one behaves exactly as before.
+//!
+//! `.mint` widens an agent's grant (ARCH-0082 #act-table "Widen another's
+//! grant"): it is the owner's own act on his own proof, never gated, and
+//! its answer records that decision (`check_in`). A Deputy who may not
+//! reach this door asks through `vault.check_in.open` for the exact act;
+//! once the owner approves, he applies it here with `check_in_ref`, and
+//! the act's writer spends the ask (ROLES-CHECKIN 2k7; Engine RULING
+//! P25-SHAPE Q1 = A).
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
@@ -48,6 +56,7 @@ use serde::{Deserialize, Serialize};
 use super::revision_shape;
 use crate::Vault;
 use crate::authority::ActSurface;
+use crate::check_in::{ActClass, AppliedCheckIn, CheckInDecision};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::federation::{
@@ -101,6 +110,11 @@ pub struct AgentGrantMintRequest {
     /// Omitted: no view bound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_view_bounds: Option<WorkingViewEditBounds>,
+    /// Another asker's approved check-in for this exact mint, 32 hex: the
+    /// owner applies it on his own proof, and the mint's writer spends it
+    /// (ROLES-CHECKIN 2k7). Omitted: the owner's own mint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// One owner's agent grant.
@@ -148,6 +162,11 @@ pub struct AgentGrantMinted {
     pub grant: AgentGrantView,
     /// The signed authority entry that records the owner's mint (64 hex).
     pub act_ref: String,
+    /// The decision the mint ran on: the owner's own proof, naming the
+    /// asker's approved check-in it applied (ROLES-CHECKIN 2k7). Absent
+    /// inside a `vault.agents.grants.from_slip` answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 /// `vault.agents.grants.revoke`'s input: the grant, by its id.
@@ -237,28 +256,77 @@ pub fn read_base_agents_as(
 }
 
 /// `vault.agents.grants.mint` under the owner's proof, his act recording
-/// `surface`.
+/// `surface`, applying with `check_in_ref` another asker's approved check-in
+/// for this exact mint (2k7; P25-SHAPE Q1 = A): the mint's writer spends
+/// it. The answer records the decision.
+///
+/// # Errors
+///
+/// `BAD_REQUEST` for a malformed `check_in_ref`; the owner's refusals and
+/// the mint's; a check-in that is not an approved ask for this mint.
 pub fn mint_agent_grant_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     surface: ActSurface,
     input: AgentGrantMintRequest,
 ) -> MemoryResult<AgentGrantMinted> {
-    let minted = vault.mint_agent_grant(
-        owner,
-        surface,
-        input.agent,
-        input.authority_scope,
-        input.expires_at,
-        input.repo_bounds,
-        input.verb_classes,
-        input.wallet_ref,
-        input.working_view_bounds,
-    )?;
+    let applied = match super::shared::check_in_ref(input.check_in_ref.as_deref())? {
+        Some(id) => Some(AppliedCheckIn {
+            id,
+            verb: "vault.agents.grants.mint",
+            effect_digest: agent_grant_mint_effect_digest(&input)?,
+        }),
+        None => None,
+    };
+    let (minted, decision) = vault.with_write_txn_grouped(|txn| {
+        let minted = vault.mint_agent_grant_in_txn(
+            txn,
+            owner,
+            surface,
+            input.agent,
+            input.authority_scope,
+            input.expires_at,
+            input.repo_bounds,
+            input.verb_classes,
+            input.wallet_ref,
+            input.working_view_bounds,
+        )?;
+        let decision = crate::check_in::owner_act_decision_in_txn(
+            vault,
+            txn,
+            ActClass::GrantWiden,
+            applied.as_ref(),
+        )?;
+        Ok((minted, decision))
+    })?;
     Ok(AgentGrantMinted {
         grant: agent_grant_view(&minted.standing, minted.confers),
         act_ref: minted.act.to_hex(),
+        check_in: Some(decision),
     })
+}
+
+/// The digest of the owner's mint `request`: the effect an asker's
+/// `vault.check_in.open` names for `vault.agents.grants.mint`, and the one
+/// the owner's mint spends (2k7; P25-SHAPE Q1 = A). BLAKE3, key derived
+/// from `oneiron check_in agent grant mint v1`, over the request's
+/// MessagePack encoding with field names, without its `check_in_ref`: the
+/// agent, the scope, the expiry, the repo bounds, the verb classes, the
+/// wallet and the working view bound, each exactly as the grant stores it.
+///
+/// # Errors
+///
+/// The request does not encode.
+pub fn agent_grant_mint_effect_digest(request: &AgentGrantMintRequest) -> MemoryResult<[u8; 32]> {
+    let mint = AgentGrantMintRequest {
+        check_in_ref: None,
+        ..request.clone()
+    };
+    let encoded = rmp_serde::to_vec_named(&mint)
+        .map_err(|_| crate::error::Error::InvariantViolation("agent grant mint encode"))?;
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in agent grant mint v1");
+    hasher.update(&encoded);
+    Ok(*hasher.finalize().as_bytes())
 }
 
 /// `vault.agents.grants.revoke` under the owner's proof, his act recording
@@ -305,6 +373,7 @@ pub fn mint_agent_grants_from_slip_as(
                     .map(|minted| AgentGrantMinted {
                         grant: agent_grant_view(&minted.standing, minted.confers),
                         act_ref: minted.act.to_hex(),
+                        check_in: None,
                     })
                     .collect(),
             },

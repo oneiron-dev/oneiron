@@ -422,6 +422,7 @@ pub(crate) fn mint_repo_grant(
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )?;
     Ok(minted.grant.grant_ref)

@@ -128,6 +128,7 @@ fn grant_self_model(fixture: &Fixture, agent: EntityId) -> EntityId {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the self-model Grant");
