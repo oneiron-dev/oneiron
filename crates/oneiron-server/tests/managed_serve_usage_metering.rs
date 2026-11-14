@@ -25,7 +25,7 @@ use oneiron::{Vault, VaultConfig};
 use oneiron_server::ENGINE_THREAD_STACK_BYTES;
 use oneiron_server::config::SyncServerConfig;
 use oneiron_server::server::SyncServer;
-use oneiron_server::test_doors::managed_usage_metering::bind_managed_usage_metering;
+use oneiron_server::test_doors::build_server::bind_managed_usage_metering;
 use oneiron_vault_contract::tenancy::VaultTenancy;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
