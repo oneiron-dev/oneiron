@@ -830,6 +830,12 @@ pub(crate) fn observation_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.observation.txt")
 }
 
+/// The resume-preflight report of step `seq`, recorded when the step resumed its pending step
+/// with drift and then committed (L8-23).
+pub(super) fn resume_preflight_output_path(seq: u64) -> String {
+    format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.resume-preflight.json")
+}
+
 /// The JavaScript a TypeScript step's program ran as (FIX 8276).
 pub(super) fn executed_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.executed.js")

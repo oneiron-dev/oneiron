@@ -1,6 +1,7 @@
 //! Public API surface of the engine-native executor: limits, config, errors, and code-mode step/outcome types.
 
 use super::cancel::StepCancellation;
+use super::host::resume_preflight::ResumePreflightReport;
 use crate::code_run::{
     CodeRunDeterminism, CodeRunReplayRecord, ResultFacet, SelfCall, SelfDispatchOutcome,
     SelfDurableWait, WaitKey,
@@ -40,6 +41,10 @@ pub enum EngineExecutorError {
     /// with the door's stable code.
     #[error("the run's host door refused its call: {code}")]
     HostRefused { code: String },
+    /// A resumed pending step's program drifted from its recorded calls, and an effect step
+    /// would re-fire: the entry holds with the walk's report (L8-23).
+    #[error("{0}")]
+    ResumeDivergence(Box<ResumePreflightReport>),
 }
 
 impl EngineExecutorError {
@@ -52,6 +57,7 @@ impl EngineExecutorError {
             Self::Llm(_) => "llm",
             Self::CanonicalRequest(_) => "canonical_request",
             Self::HostRefused { .. } => "host_refused",
+            Self::ResumeDivergence(_) => "resume_divergence",
         }
     }
 
@@ -606,6 +612,9 @@ pub struct EngineExecutorOutcome {
     /// 8277), read without waiting on any check: a pending one lands later
     /// under its `check_ref`.
     pub program_steps: Vec<crate::code_run::ProgramStepFeedback>,
+    /// The resume-preflight report of the pending step this entry resumed, when it resumed one
+    /// and then committed it or parked it again (L8-23).
+    pub resume_preflight: Option<ResumePreflightReport>,
 }
 
 impl EngineExecutorOutcome {

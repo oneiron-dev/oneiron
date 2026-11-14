@@ -650,6 +650,7 @@ impl EngineNativeExecutor<'_> {
             replay_record,
             seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
             compaction: self.compaction_report(),
+            resume_preflight: None,
         }
     }
 }
