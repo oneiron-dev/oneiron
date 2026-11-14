@@ -130,7 +130,7 @@ impl GeneratedUiCard {
                 .map(|child| child.id.clone())
                 .collect::<Vec<_>>();
             let stripped = stripped_controls.contains(node.id.as_str());
-            let supported = !stripped && surface.supports_atom(&node.atom);
+            let supported = !stripped && surface.supports_atom(&node.atom, &self.state);
             let backed = supported || !(stripped || matches!(node.atom, LensAtom::ResultSet(_)));
             nodes.push(GeneratedUiNode {
                 id: node.id.clone(),
@@ -193,7 +193,7 @@ impl GeneratedUiCard {
         let mut stack = vec![self.tree.root()];
         while let Some(node) = stack.pop() {
             if let Some(result_set) = node.atom.result_set_payload()
-                && !surface.supports_atom(&node.atom)
+                && !surface.supports_atom(&node.atom, &self.state)
             {
                 lowered_actions.extend(result_set.action_bar.iter().map(|id| id.as_str()));
             }
