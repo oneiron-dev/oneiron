@@ -33,6 +33,7 @@ impl TaskAskSpec {
                     ladder.rung,
                     crate::llm::decision::DecisionRung::Rule
                         | crate::llm::decision::DecisionRung::SystemOne
+                        | crate::llm::decision::DecisionRung::Precision
                         | crate::llm::decision::DecisionRung::Escalation
                 )
                 || ladder

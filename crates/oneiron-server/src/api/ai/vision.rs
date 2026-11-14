@@ -352,6 +352,7 @@ async fn box_answer(
             rule: None,
             local: Some(&rung as &dyn DecisionProvider),
             system_one: host.system_one.as_deref(),
+            precision: None,
             escalation: None,
             big: None,
             human: &NoPerson,

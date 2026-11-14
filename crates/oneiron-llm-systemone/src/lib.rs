@@ -149,6 +149,17 @@ impl SystemOneSeat {
         })
     }
 
+    /// The seat on `rung`: the head's `SystemOne` (where [`Self::new`] and
+    /// [`Self::with_transport`] put it) or the precision band's `Precision`, which
+    /// speaks the same wire and codec. Any other rung is refused.
+    pub fn at_rung(mut self, rung: DecisionRung) -> LlmResult<Self> {
+        if !matches!(rung, DecisionRung::SystemOne | DecisionRung::Precision) {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        self.pin.rung = rung;
+        Ok(self)
+    }
+
     /// The transport's own checks before a measurement starts, with no I/O.
     pub fn preflight(&self) -> LlmResult<()> {
         self.transport.preflight()

@@ -231,7 +231,7 @@ impl DecisionProvider for SystemOneRung {
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
-        let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
+        let failed = |what: &str| oneiron::Error::InvalidConfig(format!("{}: {what}", self.label));
         let abstain = ProviderDecision {
             answer: DecisionAnswer::Abstain,
             probability: None,
@@ -335,7 +335,7 @@ impl DecisionProvider for SystemOneRung {
     }
 
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> oneiron::Result<Vec<ProviderDecision>> {
-        let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
+        let failed = |what: &str| oneiron::Error::InvalidConfig(format!("{}: {what}", self.label));
         let abstain = || ProviderDecision {
             answer: DecisionAnswer::Abstain,
             probability: None,
@@ -490,7 +490,7 @@ impl SystemOneRung {
         request: SeatRequest,
         run: &RunAdmission,
     ) -> oneiron::Result<ProviderDecision> {
-        let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
+        let failed = |what: &str| oneiron::Error::InvalidConfig(format!("{}: {what}", self.label));
         let run = run.sourced(Some(call.evidence.to_vec()));
         let permit = run
             .admit_paid(&self.connector, run.declaration().budget().reserve_units)

@@ -371,6 +371,7 @@ fn run_review(
             rule: None,
             local: Some(local),
             system_one: None,
+            precision: None,
             escalation: None,
             big: None,
             human: &NoPerson,

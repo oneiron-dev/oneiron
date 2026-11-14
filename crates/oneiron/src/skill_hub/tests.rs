@@ -2183,18 +2183,20 @@ pub(crate) mod ladder_fixture {
         provider: &dyn DecisionProvider,
         rung: DecisionRung,
     ) -> DecisionLadder<'_> {
-        let (rule, local, system_one, escalation, big) = match rung {
-            DecisionRung::Rule => (Some(provider), None, None, None, None),
-            DecisionRung::Local => (None, Some(provider), None, None, None),
-            DecisionRung::SystemOne => (None, None, Some(provider), None, None),
-            DecisionRung::Escalation => (None, None, None, Some(provider), None),
-            DecisionRung::Big => (None, None, None, None, Some(provider)),
-            DecisionRung::Human => (None, None, None, None, None),
+        let (rule, local, system_one, precision, escalation, big) = match rung {
+            DecisionRung::Rule => (Some(provider), None, None, None, None, None),
+            DecisionRung::Local => (None, Some(provider), None, None, None, None),
+            DecisionRung::SystemOne => (None, None, Some(provider), None, None, None),
+            DecisionRung::Precision => (None, None, None, Some(provider), None, None),
+            DecisionRung::Escalation => (None, None, None, None, Some(provider), None),
+            DecisionRung::Big => (None, None, None, None, None, Some(provider)),
+            DecisionRung::Human => (None, None, None, None, None, None),
         };
         DecisionLadder {
             rule,
             local,
             system_one,
+            precision,
             escalation,
             big,
             human: &NoPerson,

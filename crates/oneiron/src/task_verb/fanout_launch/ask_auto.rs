@@ -147,6 +147,7 @@ fn ladder_view<'a>(ladder: &DecisionLadder<'a>) -> DecisionLadder<'a> {
         rule: ladder.rule,
         local: ladder.local,
         system_one: ladder.system_one,
+        precision: ladder.precision,
         escalation: ladder.escalation,
         big: ladder.big,
         human: ladder.human,

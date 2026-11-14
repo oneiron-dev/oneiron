@@ -152,6 +152,7 @@ impl HeldOutReplayNotes for Replay {
                 rule: None,
                 local: Some(&self.judge),
                 system_one: None,
+                precision: None,
                 escalation: None,
                 big: None,
                 human: &NoPerson,

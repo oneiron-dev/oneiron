@@ -9,8 +9,10 @@
 //! admitted as the `/v1/llm/decision_read` probe's are: a
 //! `limits.decision_reads` turn, then a run of its own with its receipts. The
 //! System One seat fills its rung when `[models.decisions.system_one]` binds
-//! it, and the big model fills the Big rung when `[models.decisions.big]`
-//! names its seat
+//! it, and the precision band's seat, on the same wire, fills the Precision
+//! rung when `[models.decisions.precision]` binds it: a unit the head leaves
+//! in the band moves there. The big model fills the Big rung when
+//! `[models.decisions.big]` names its seat
 //! ([`crate::big_rung`]). The Local-vision seat fills the Local rung when
 //! `[models.roles.local_vision]` binds one: it answers Box, Point and image
 //! questions and abstains, unspent, on a call with no image. The last rung is
@@ -210,7 +212,8 @@ pub struct DecisionHost {
     /// `[models.decisions].wire_health`: the wire health question's wording.
     wire_health: Option<String>,
     /// The owner's explicit opt-in to send unit text off the host,
-    /// `[models.decisions.system_one].remote_opt_in`.
+    /// `remote_opt_in` of `[models.decisions.system_one]` or
+    /// `[models.decisions.precision]`, which config load holds equal.
     remote_opt_in: bool,
     /// The big model on the Big rung, kept so one named model can be asked
     /// as it asks ([`Self::ladder_for_model`]).
@@ -244,6 +247,7 @@ impl DecisionHost {
                 rule,
                 local: None,
                 system_one: None,
+                precision: None,
                 escalation: None,
                 big: None,
                 human: asks.clone(),
@@ -464,6 +468,7 @@ impl DecisionHost {
             return self;
         };
         match SystemOneRung::bind(
+            DecisionRung::SystemOne,
             settings,
             Arc::clone(models),
             default_units,
@@ -474,6 +479,39 @@ impl DecisionHost {
         ) {
             Ok(rung) => self.ladder.system_one = Some(Arc::new(rung)),
             Err(error) => tracing::warn!(%error, "the System One seat cannot fill its rung"),
+        }
+        self
+    }
+
+    /// The precision band's seat on its rung, on the System One wire, its
+    /// measurements sent on `runtime`. Its `remote_opt_in` joins the host's,
+    /// which config load holds equal to the System One seat's.
+    fn with_precision(
+        mut self,
+        settings: Option<&SystemOneSettings>,
+        models: &Arc<crate::models::ModelRuntime>,
+        default_units: u64,
+        posture: HostingPrivacyPosture,
+        runtime: tokio::runtime::Handle,
+        vault: &Arc<Vault>,
+    ) -> Self {
+        self.ladder.precision = None;
+        let Some(settings) = settings else {
+            return self;
+        };
+        self.remote_opt_in |= settings.remote_opt_in;
+        match SystemOneRung::bind(
+            DecisionRung::Precision,
+            settings,
+            Arc::clone(models),
+            default_units,
+            posture,
+            runtime,
+            self.broker.as_ref(),
+            vault,
+        ) {
+            Ok(rung) => self.ladder.precision = Some(Arc::new(rung)),
+            Err(error) => tracing::warn!(%error, "the precision seat cannot fill its rung"),
         }
         self
     }
@@ -743,6 +781,8 @@ impl HouseRead {
 /// `key_secret` seat reads its key at the vault's custody door for each
 /// call, through the credential broker.
 struct SystemOneRung {
+    /// What its refusals call it: the System One seat or the precision seat.
+    label: &'static str,
     vault: Arc<Vault>,
     seat: Arc<oneiron_llm_systemone::SystemOneSeat>,
     guard: BudgetGuard,
@@ -757,7 +797,14 @@ struct SystemOneRung {
 }
 
 impl SystemOneRung {
+    /// The seat `settings` names, pinned on `rung`: `SystemOne` for the head,
+    /// `Precision` for the band. Each keeps its own meter and connector.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the rung joins the seat's settings and the host's runtime"
+    )]
     fn bind(
+        rung: DecisionRung,
         settings: &SystemOneSettings,
         models: Arc<crate::models::ModelRuntime>,
         default_units: u64,
@@ -788,7 +835,13 @@ impl SystemOneRung {
             }
             (None, None) => anyhow::bail!("it names no key_env or key_secret"),
         }
+        .and_then(|seat| seat.at_rung(rung))
         .map_err(|error| anyhow::anyhow!("invalid System One seat: {error}"))?;
+        let (label, meter) = if rung == DecisionRung::Precision {
+            ("precision", "precision")
+        } else {
+            ("system one", "system-one")
+        };
         // A bearer held from bind sits in this process's memory; a broker key stays
         // behind the vault's custody door.
         let custody = if settings.key_env.is_some() {
@@ -797,8 +850,8 @@ impl SystemOneRung {
             KeyCustody::T0
         };
         let connector = PaidConnector {
-            connector: "system-one".to_owned(),
-            route: OfferRoute::new("system-one", "system-one")?,
+            connector: meter.to_owned(),
+            route: OfferRoute::new(meter, meter)?,
             locality: ModelLocality::ThirdParty,
             payer: Payer::CustomerKey,
             credential_binding: None,
@@ -809,10 +862,11 @@ impl SystemOneRung {
             rates: Vec::new(),
         };
         Ok(Self {
+            label,
             vault: Arc::clone(vault),
             seat: Arc::new(seat),
             guard: BudgetGuard::new(
-                "system-one",
+                meter,
                 settings.budget_units.unwrap_or(default_units),
                 BudgetExhaustionPolicy::Suspend,
             ),

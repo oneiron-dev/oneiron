@@ -52,6 +52,8 @@ pub struct DecisionLadder<'a> {
     pub rule: Option<&'a dyn DecisionProvider>,
     pub local: Option<&'a dyn DecisionProvider>,
     pub system_one: Option<&'a dyn DecisionProvider>,
+    /// The precision band, the rung a unit the head leaves in the band moves to.
+    pub precision: Option<&'a dyn DecisionProvider>,
     pub escalation: Option<&'a dyn DecisionProvider>,
     pub big: Option<&'a dyn DecisionProvider>,
     pub human: &'a dyn HumanDecisionQueue,
@@ -340,7 +342,8 @@ fn next_rung(rung: DecisionRung) -> DecisionRung {
     match rung {
         DecisionRung::Rule => DecisionRung::Local,
         DecisionRung::Local => DecisionRung::SystemOne,
-        DecisionRung::SystemOne => DecisionRung::Escalation,
+        DecisionRung::SystemOne => DecisionRung::Precision,
+        DecisionRung::Precision => DecisionRung::Escalation,
         DecisionRung::Escalation => DecisionRung::Big,
         DecisionRung::Big | DecisionRung::Human => DecisionRung::Human,
     }
