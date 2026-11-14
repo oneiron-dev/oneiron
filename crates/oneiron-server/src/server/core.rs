@@ -128,6 +128,10 @@ pub struct SyncServer {
     pub(crate) wire_telemetry: crate::wire_telemetry::WireTelemetry,
     /// The mesh listener's sync streams in their own pressure check (FIX 7737).
     pub(crate) mesh_pressure: Arc<crate::wire_telemetry::PoolPressure>,
+    /// How this process stands now (L8-11): ready until the event-loop
+    /// watchdog serve starts moves it; `/api/health`, `Ping` and the intake
+    /// gate read it.
+    pub(crate) process_readiness: Arc<crate::process_readiness::ProcessReadiness>,
     /// The line app-tier state kept between frames is charged to, sized by
     /// `limits.retained_memory_bytes` (rule 5: charged, never capped).
     pub(crate) retained: Arc<crate::byte_line::ByteLine>,
@@ -196,10 +200,6 @@ pub struct SyncServer {
     /// How this process's browser stands (FIX 7670), which each browser
     /// guest start moves and `Ping` and the owner's status read.
     pub(crate) browser_readiness: crate::config::browser::BrowserReadinessCell,
-    /// How this process stands now (L8-11): ready until the event-loop
-    /// watchdog serve starts moves it; `/api/health`, `Ping` and the intake
-    /// gate read it.
-    pub(crate) process_readiness: Arc<crate::process_readiness::ProcessReadiness>,
     /// The `[desktop]` guest each code run starts for its own desktop verbs.
     /// `None` answers every desktop call `browser_unbound`.
     pub(crate) desktop_guest: Option<oneiron_browser::DesktopGuest>,
