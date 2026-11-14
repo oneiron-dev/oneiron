@@ -6,7 +6,7 @@
 //!   the owner and the companion spoke, imported with foreign speakers into a
 //!   fresh vault, lands each MESSAGE as a `counterparty`'s, its original
 //!   author kept as `metadata.import.source_author`, and marks the MESSAGE
-//!   (`metadata.import.speakers`), each TURN and the CONVERSATION
+//!   (`metadata.import.speakers`), each TURN and each CONVERSATION
 //!   (`import_speakers`) as a foreign archive's words.
 //! * `own_import_of_foreign_restored_speech_is_refused_by_name`: the same
 //!   archive again with foreign speakers is an exact repeat; with own
@@ -60,36 +60,41 @@ fn message(author: WitnessAuthor, content: &str, order: u32) -> WitnessMessage {
     }
 }
 
-/// What the source vault holds: one CONVERSATION in which the owner spoke a
-/// TURN and the companion answered in the next.
+/// What the source vault holds: two CONVERSATIONs of one TURN each, the
+/// owner's words in the first and the companion's in the second.
 struct Spoken {
     archive: Vec<u8>,
     turns: Vec<EntityId>,
-    conversation: EntityId,
+    conversations: Vec<EntityId>,
     messages: Vec<EntityId>,
 }
 
-/// A source vault where the owner spoke one TURN and the companion answered
-/// in the next (a witnessed TURN carries one non-system speaker), and its
-/// whole-vault archive.
+/// A source vault where the owner spoke one TURN and the companion another
+/// (a witnessed TURN carries one non-system speaker), and its whole-vault
+/// archive. Each TURN opens its own CONVERSATION: a second TURN in one
+/// CONVERSATION joins the conversation DAG by a `parent` edge, and the
+/// whole-vault import refuses that reserved edge kind on main
+/// (`ReservedEdgeKind("conversation_dag")`, FIX row
+/// WHOLE-VAULT-IMPORT-REFUSES-CONVERSATION-DAG), which this slice does not
+/// change.
 fn spoken_archive() -> Spoken {
     let (_dir, source) = open_vault();
     let owner = source
         .ensure_embedded_owner_actor()
         .expect("embedded owner");
     let memory = source.memory(owner, EdgeActorClass::Human);
-    let conversation = EntityId::now();
     let occurred_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_secs();
-    let turns: Vec<EntityId> = [
+    let (turns, conversations): (Vec<EntityId>, Vec<EntityId>) = [
         (WitnessAuthor::User, "Repot the basil on Sunday."),
         (WitnessAuthor::Companion, "Sunday it is."),
     ]
     .into_iter()
     .map(|(author, content)| {
-        memory
+        let conversation = EntityId::now();
+        let turn = memory
             .witness(&WitnessTurn {
                 conversation_ref: conversation.to_hex(),
                 turn_ref: None,
@@ -99,9 +104,10 @@ fn spoken_archive() -> Spoken {
                 assertions: WitnessAssertions::default(),
             })
             .expect("witness the turn")
-            .turn_id
+            .turn_id;
+        (turn, conversation)
     })
-    .collect();
+    .unzip();
     let messages = source
         .entities_by_type(ENTITY_TYPE_MESSAGE)
         .expect("list MESSAGE rows");
@@ -114,7 +120,7 @@ fn spoken_archive() -> Spoken {
     Spoken {
         archive,
         turns,
-        conversation,
+        conversations,
         messages,
     }
 }
@@ -196,7 +202,7 @@ fn foreign_archive_speech_lands_counterparty() {
         .turns
         .iter()
         .map(|turn| (turn, "TURN"))
-        .chain([(&spoken.conversation, "CONVERSATION")]);
+        .chain(spoken.conversations.iter().map(|row| (row, "CONVERSATION")));
     for (row, name) in rows {
         assert_eq!(
             text(&stored(&dest, row), "import_speakers").as_deref(),
