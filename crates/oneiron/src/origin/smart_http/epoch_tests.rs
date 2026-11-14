@@ -1,5 +1,6 @@
 //! Epoch-bound receive-pack admission, landing and crash recovery.
 
+use super::protected_ref_confirm::ProtectedRefPasses;
 use super::tests::{
     CapturingSink, advertise, advertised_refs, git, ref_update, served_repo, temp_vault,
 };
@@ -51,7 +52,13 @@ fn epoch_intent(
         quarantine_path: None,
     };
     vault
-        .record_receive_pack_intent(&unpinned_repo_ref(root), &stamp, &door, None)
+        .record_receive_pack_intent(
+            &unpinned_repo_ref(root),
+            &stamp,
+            &door,
+            None,
+            &ProtectedRefPasses::default(),
+        )
         .expect("intent");
     stamp.operation_id()
 }

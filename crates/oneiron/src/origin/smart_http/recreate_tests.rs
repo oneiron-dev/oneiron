@@ -2,6 +2,7 @@
 //! on that earlier publication: the push settles, the ref is advertised and
 //! fetches, and the move is not published a second time.
 
+use super::protected_ref_confirm::ProtectedRefPasses;
 use super::tests::{
     PublicationTestOrigin, advertise, advertised_refs, commit_file, git, landing_time,
     pointer_file, seeded_repo, served_repo, temp_vault,
@@ -363,7 +364,13 @@ fn an_applied_push_needing_more_than_its_owner_settles_uncertified() {
         quarantine_path: None,
     };
     vault
-        .record_receive_pack_intent(&unpinned_repo_ref(&root), &stamp, &door, None)
+        .record_receive_pack_intent(
+            &unpinned_repo_ref(&root),
+            &stamp,
+            &door,
+            None,
+            &ProtectedRefPasses::default(),
+        )
         .expect("pre-effect durable intent");
     for _ in 0..2 {
         vault

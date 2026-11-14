@@ -1,6 +1,7 @@
 //! Serve command and door tests: closed env/argv, vetted hook, unlandable names,
 //! framed blobs, coordinator, door request parse, repo names, noop seam, dial.
 
+use super::protected_ref_confirm::ProtectedRefPasses;
 use super::tests::{git, landing_outcome, landing_time, seeded_repo, temp_vault};
 use super::*;
 use crate::credential_door::PushedBlob;
@@ -333,7 +334,13 @@ fn smart_http_noop_evidence_never_claims_landed_policy_or_scanning() {
     );
     assert!(
         vault
-            .record_receive_pack_intent(&unpinned_repo_ref(&root), &stamp, &door, None)
+            .record_receive_pack_intent(
+                &unpinned_repo_ref(&root),
+                &stamp,
+                &door,
+                None,
+                &ProtectedRefPasses::default()
+            )
             .is_err()
     );
     assert!(

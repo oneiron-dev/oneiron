@@ -3,6 +3,7 @@
 
 use std::process::Command as StdCommand;
 
+use super::protected_ref_confirm::ProtectedRefPasses;
 use super::*;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::config::VaultConfig;
@@ -34,7 +35,13 @@ pub(super) fn fixture_intent_with_pointers(
         quarantine_path: None,
     };
     vault
-        .record_receive_pack_intent(&unpinned_repo_ref(root), &stamp, &door, None)
+        .record_receive_pack_intent(
+            &unpinned_repo_ref(root),
+            &stamp,
+            &door,
+            None,
+            &ProtectedRefPasses::default(),
+        )
         .expect("pre-effect durable intent");
     stamp.operation_id
 }

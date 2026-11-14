@@ -3,6 +3,7 @@
 //! a recovery whose LFS check waited out.
 
 use super::exchange_idle::Progress;
+use super::protected_ref_confirm::ProtectedRefPasses;
 use super::tests::{
     LANDING_LEARNED_AT, RecordingRoom, advertise, advertised_refs, commit_file,
     fixture_attribution, fixture_intent, fixture_intent_with_pointers, git, hooks_dir,
@@ -53,7 +54,13 @@ fn receive_pack_measured_partial_outcome_survives_recovery() {
         quarantine_path: None,
     };
     vault
-        .record_receive_pack_intent(&unpinned_repo_ref(&root), &stamp, &door, None)
+        .record_receive_pack_intent(
+            &unpinned_repo_ref(&root),
+            &stamp,
+            &door,
+            None,
+            &ProtectedRefPasses::default(),
+        )
         .expect("pre-effect intent");
     git(&root, &["update-ref", "refs/heads/pending", first.as_str()]);
     git(
@@ -207,6 +214,7 @@ fn receive_pack_hook_requires_durable_intent_before_releasing_the_backend() {
                 admission: Some(&stamp),
                 scan: ScanBounds::default(),
                 spill_floor: None,
+                protected_ref: None,
             },
         )
         .expect("window answered");
