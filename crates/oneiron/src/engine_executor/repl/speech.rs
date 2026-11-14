@@ -257,8 +257,12 @@ impl EngineNativeExecutor<'_> {
 }
 
 /// Whether an emitted `say(result)` row of `record` said `observation`'s
-/// bytes: its ref resolved as the run's results and live names stand at the
-/// end of the step, as the trailing answer is judged.
+/// bytes: its ref resolved as the run's results stand at the end of the
+/// step, as the trailing answer is judged. Only a handle or occurrence
+/// counts, as it names one result for the whole run. A bound name (`r1`)
+/// may be rebound after the say, so the end of the step can name another
+/// result than the one said. Such a say never hides the answer: at worst
+/// the answer is said a second time.
 fn said_result_bytes(record: &CodeRunReplayRecord, observation: &CodeRunRawOutput) -> bool {
     let live: Vec<&crate::code_run::CodeRunResultBinding> = record.bindings.iter().collect();
     record
@@ -266,11 +270,15 @@ fn said_result_bytes(record: &CodeRunReplayRecord, observation: &CodeRunRawOutpu
         .iter()
         .filter_map(CodeRunBridgeCall::emitted_said_result_ref)
         .any(|reference| {
-            crate::code_run::resolve_result(
+            let target = crate::engine_executor::JsResultTarget::parse(reference);
+            matches!(
+                target.reference,
+                crate::engine_executor::JsResultRef::Handle(_)
+            ) && crate::code_run::resolve_result(
                 record.run_id,
                 record.outputs.iter(),
                 &live,
-                &crate::engine_executor::JsResultTarget::parse(reference).reference,
+                &target.reference,
             )
             .is_some_and(|(said, _)| said.raw_blake3 == observation.raw_blake3)
         })

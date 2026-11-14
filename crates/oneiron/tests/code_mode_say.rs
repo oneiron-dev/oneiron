@@ -617,6 +617,33 @@ finish("the answer");"#,
     Ok(())
 }
 
+/// A name said and then rebound names another result at the end of the
+/// run: the answer stored under the new binding was never said, so the
+/// trailing bubble still says it.
+#[test]
+fn a_said_name_rebound_to_the_answer_does_not_hide_the_answer() -> TestResult {
+    let fixture = fixture()?;
+    let outcome = run_program(
+        &fixture,
+        r#"await store("first words", "r1");
+await say({ref: "r1"});
+await store("the answer", "r1");
+finish("the answer");"#,
+    );
+    assert_eq!(answer(&outcome), "the answer");
+    assert_eq!(
+        result_bubbles(&fixture.vault)?.len(),
+        1,
+        "one result bubble, for the first words"
+    );
+    assert_eq!(
+        messages_saying(&fixture.vault, "the answer")?.len(),
+        1,
+        "the trailing bubble says the answer the run never said"
+    );
+    Ok(())
+}
+
 /// A result with a destination stays the `say` row's refusal: a result is
 /// said only where the run speaks.
 #[test]
