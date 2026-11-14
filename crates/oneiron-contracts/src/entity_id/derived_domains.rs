@@ -346,6 +346,14 @@ pub const FOREIGN_WORLD: &[u8] = b"oneiron.federation.foreign-world.v1";
 /// writes it.
 pub const INQUIRY_JOIN_WORLD: &[u8] = b"oneiron/inquiry-join-world/v1";
 
+/// One statement of a copied inquiry answer, as the company vault lands it
+/// (`inquiry::landing`, INQUIRE-1 PR 6). Parts: the inquiry's id, the id of
+/// the member's PERSON, the member vault's id and the statement's place in
+/// the answer (u64 little-endian), so an inquiry re-sent to the same member
+/// lands each statement on the CLAIM it landed before, and an id re-used for
+/// another member never lands on the first member's copy.
+pub const INQUIRY_COPY_CLAIM: &[u8] = b"oneiron.inquiry.copy-claim.v1";
+
 /// The occurrence of an ASSET's current body file (`store::asset_body`, FIX
 /// 3677): one per ASSET, moved as its row changes. Parts: the ASSET.
 pub const ASSET_BODY_FILE: &[u8] = b"oneiron/asset-body-file/v1";
@@ -476,7 +484,7 @@ pub const RESIDENT_MESSAGE_ASK: &[u8] = b"oneiron.agent_dispatch.resident_messag
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 72] = [
+pub(crate) const ALL: [&[u8]; 73] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -540,6 +548,7 @@ pub(crate) const ALL: [&[u8]; 72] = [
     CONNECT_GUEST_ACTOR,
     FOREIGN_WORLD,
     INQUIRY_JOIN_WORLD,
+    INQUIRY_COPY_CLAIM,
     ASSET_BODY_FILE,
     ASSET_BODY_HELD,
     ASSET_BODY_REVISION,

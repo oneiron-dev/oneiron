@@ -31,7 +31,7 @@ use crate::entity_id::{EntityId, ForeignWorldId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::federation::PactDelivery;
 use crate::federation::delivery_record::{
-    DeliveredRecord, DeliveryOrigin, decode_delivered_record, encode_delivered_record,
+    DeliveredRecord, DeliveryOrigin, decode_delivered_record, delivery_key, encode_delivered_record,
 };
 use crate::side_table::{self, Raw, SideTable};
 use crate::sync::loro_support::map_for_each_value_bytes;
@@ -173,14 +173,6 @@ pub(in crate::sync) fn with_delivery<T, E>(
     };
     let _restore = Restore(DELIVERY.with(|slot| slot.borrow_mut().replace(delivery)));
     import()
-}
-
-fn delivery_key(pact: &[u8; 32], epoch: u64, record: EntityId) -> String {
-    format!(
-        "{}:{epoch:016x}:{}",
-        bytes_to_hex_lower(pact),
-        record.to_hex()
-    )
 }
 
 fn intent_key(record: EntityId, pact: &[u8; 32]) -> String {
