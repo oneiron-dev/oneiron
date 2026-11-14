@@ -28,9 +28,9 @@ const EXPIRY_MARGIN_MS: u64 = 60_000;
 /// A sign-in file is a few KiB; a larger one is not one.
 const MAX_READ_BYTES: u64 = 64 * 1024;
 /// How long one call to a vault's token or revocation endpoint may take.
-pub(crate) const ENDPOINT_TIMEOUT: Duration = Duration::from_secs(30);
-/// The largest token-endpoint answer read.
-const MAX_ANSWER_BYTES: usize = 64 * 1024;
+const ENDPOINT_TIMEOUT: Duration = Duration::from_secs(30);
+/// The largest answer read from a vault's OAuth endpoint.
+pub(crate) const MAX_ANSWER_BYTES: usize = 64 * 1024;
 
 /// The sign-in file's body.
 #[derive(Clone, Serialize, Deserialize)]

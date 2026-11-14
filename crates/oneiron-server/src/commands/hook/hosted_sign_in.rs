@@ -28,7 +28,7 @@ use sha2::Digest as _;
 use crate::api::{
     AUTHORIZE_PATH, PROTECTED_RESOURCE_MCP_METADATA_PATH, REGISTER_PATH, REVOKE_PATH, TOKEN_PATH,
 };
-use crate::commands::oauth_sign_in::{self, OAuthSignIn, SignInParty};
+use crate::commands::oauth_sign_in::{self, MAX_ANSWER_BYTES, OAuthSignIn, SignInParty};
 
 /// Where the browser comes back to on the loopback.
 const CALLBACK_PATH: &str = "/oauth/callback";
@@ -36,8 +36,6 @@ const CALLBACK_PATH: &str = "/oauth/callback";
 const REQUESTED_SCOPE: &str = "read";
 /// The name the owner's ask and consent registry show for the client.
 const CLIENT_NAME: &str = "oneiron hosted login";
-/// A discovery or registration answer is a few hundred bytes.
-const MAX_ANSWER_BYTES: usize = 64 * 1024;
 /// The most of a callback request read: its request line and headers.
 const MAX_REQUEST_HEAD_BYTES: usize = 8 * 1024;
 /// How long one loopback connection may take to send its request.
