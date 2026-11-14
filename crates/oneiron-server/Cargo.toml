@@ -300,6 +300,13 @@ name = "broker_rerank"
 path = "tests/broker_rerank.rs"
 required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
 
+# A key_secret provider's streamed chat registers its sentinel key in a test
+# vault and answers event streams from the broker's TLS fake provider.
+[[test]]
+name = "broker_stream_key_secret"
+path = "tests/broker_stream_key_secret.rs"
+required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
+
 # The NOTE session bind probe roots its home on a `MemoryKeystore` as well.
 [[test]]
 name = "note_session_bind_reply"
