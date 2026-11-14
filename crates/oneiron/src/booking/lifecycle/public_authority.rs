@@ -1,10 +1,11 @@
-//! Transactional public authority check for all four lifecycle mutations.
+//! Transactional public authority check for every lifecycle mutation.
 use super::claim::{read_booking_facts, read_booking_facts_to_cancel};
 use super::storage::{
     HOLD, booking_writer, confirm_receipt_key, engine_failure, read_receipt, refused,
 };
 use super::token::{hold_digest, resolve_token_event, token_digest};
 use super::types::{BookingVerbRequest, LifecycleTokenScope};
+use super::waitlist::waitlist_publication_scope;
 use crate::Vault;
 use crate::booking::BookingError;
 use crate::booking::publication::PublicBookingAuthority;
@@ -62,6 +63,7 @@ fn check_publication_in_writer(
             let facts = read_booking_facts_to_cancel(vault, txn, &event)?;
             (facts.page_ref, facts.event_type)
         }
+        BookingVerbRequest::Waitlist(spec) => waitlist_publication_scope(vault, txn, spec)?,
     };
     // Admission's sampled clock is not the commit clock. A delayed attempt
     // must not retain an expired publication even if its caller reuses `now`.

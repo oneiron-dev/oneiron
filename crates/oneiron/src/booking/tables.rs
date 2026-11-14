@@ -17,6 +17,10 @@ crate::side_table::side_tables! {
     /// Public booking page token index. Key: string.
     BOOKING_PUBLIC_PAGE_TOKEN_INDEX: VaultMeta b"booking.public_page.token/" Raw
         [restore: refuse "public booking pages"] [family: unclassified] [tier: canonical];
+    /// Waitlist entry on a closed window, in join order per page and event type. Key: id16 (page)
+    /// + hash32 (event type) + u64be (joined at) + hash32 (entry token digest).
+    BOOKING_WAITLIST: VaultMeta b"booking.waitlist.v1:" VersionedNamed
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Booking token and checkout lease rows (digest domains keep them apart). Key: hash32.
     BOOKING_TOKEN: VaultMeta b"booking.token.v1:" VersionedNamed
         [restore: content] [family: unclassified] [tier: canonical];

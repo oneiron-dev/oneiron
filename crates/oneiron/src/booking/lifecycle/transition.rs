@@ -1,5 +1,5 @@
 //! The four ordinary transitions inside the writer lease: hold, confirm,
-//! reschedule, cancel.
+//! reschedule, cancel; and the waitlist stages, which `waitlist.rs` runs.
 
 use super::claim::{
     BookingConfirmationContext, calendar_status_value, encode_event_body, read_booking_facts,
@@ -20,7 +20,12 @@ use super::types::{
     BOOKING_STATUS_PREDICATE, BookingLifecycleAttempt, BookingStatus, BookingStatusValue,
     BookingVerbReceipt, BookingVerbRequest, CalendarRevision, CancelSpec, ConfirmReceipt,
     ConfirmSpec, DEFAULT_HOLD_TTL_SECS, HoldReceipt, HoldSpec, LifecycleTokenScope,
-    MAX_CHECKOUT_HOLD_TTL_SECS, RescheduleSpec, RevisionReceipt, SoftHoldRow,
+    MAX_CHECKOUT_HOLD_TTL_SECS, RescheduleSpec, RevisionReceipt, SoftHoldRow, WaitlistReceipt,
+    WaitlistSpec,
+};
+use super::waitlist::{
+    FreedSlot, WaitlistOutcome, run_waitlist_offer_pass, slot_freed_by, waitlist_in_writer,
+    waitlist_settle_scope,
 };
 use super::{BookingContent, CHECKOUT_LEASE, CheckoutLeaseRow, LifecycleReceiptRow};
 use crate::booking::invite_grant::{
@@ -66,6 +71,7 @@ pub(super) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
             attempt.public_authority.as_ref(),
         ),
         BookingVerbRequest::Reschedule(spec) => {
+            let freed = slot_freed_by(vault, &spec.token, LifecycleTokenScope::Reschedule);
             let receipt = execute_reschedule(
                 vault,
                 oracle,
@@ -73,6 +79,7 @@ pub(super) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
                 now_utc,
                 attempt.public_authority.as_ref(),
             )?;
+            pass_freed_slot(vault, oracle, freed, now_utc);
             // The move carries its `REQUEST` under the bumped SEQUENCE through
             // the same grant, gate and intent ledger as the confirm's (FIX
             // 7850). As there, the writer has returned, and a dispatch failure
@@ -91,7 +98,9 @@ pub(super) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
             Ok(BookingVerbReceipt::Rescheduled(receipt))
         }
         BookingVerbRequest::Cancel(spec) => {
+            let freed = slot_freed_by(vault, &spec.token, LifecycleTokenScope::Cancel);
             let receipt = execute_cancel(vault, spec, now_utc, attempt.public_authority.as_ref())?;
+            pass_freed_slot(vault, oracle, freed, now_utc);
             // The cancel carries its `CANCEL` to the booker under the bumped
             // SEQUENCE (FIX 7850), on the grant that covered the booking, and
             // a dispatch failure never fails the committed cancel.
@@ -108,7 +117,68 @@ pub(super) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
             }
             Ok(BookingVerbReceipt::Cancelled(receipt))
         }
+        BookingVerbRequest::Waitlist(spec) => execute_waitlist(
+            vault,
+            oracle,
+            spec,
+            now_utc,
+            invite_actor,
+            invite_sink,
+            attempt.public_authority.as_ref(),
+        ),
     }
+}
+
+/// Offers the slot a committed cancel or move freed to its page's waitlist,
+/// in a writer of its own, now that the solver sees the slot free. A failure
+/// never fails the committed transition.
+fn pass_freed_slot(vault: &Vault, oracle: &dyn SlotOracle, freed: Option<FreedSlot>, now_utc: u64) {
+    if let Some((page_ref, event_type, slot)) = freed
+        && let Err(error) =
+            run_waitlist_offer_pass(vault, oracle, page_ref, &event_type, Some(slot), now_utc)
+    {
+        tracing::debug!(%error, "a freed booking slot reached no waiter");
+    }
+}
+
+/// Runs one waitlist stage: a pass that settles the page's lapsed offers
+/// first, in its own writer, then the stage in the publication-checked
+/// writer, then a pass for any slot the stage gave up.
+fn execute_waitlist<S: OutboundExecutionSink>(
+    vault: &Vault,
+    oracle: &dyn SlotOracle,
+    spec: &WaitlistSpec,
+    now_utc: u64,
+    invite_actor: Option<EntityId>,
+    invite_sink: Option<&mut S>,
+    public_authority: Option<&crate::booking::publication::PublicBookingAuthority>,
+) -> Result<BookingVerbReceipt, BookingError> {
+    if let Some(event_type) = waitlist_settle_scope(vault, spec)? {
+        run_waitlist_offer_pass(vault, oracle, spec.page_ref, &event_type, None, now_utc)?;
+    }
+    let staged = booking_writer_with_publication(
+        vault,
+        public_authority,
+        &BookingVerbRequest::Waitlist(spec.clone()),
+        now_utc,
+        |wtxn| waitlist_in_writer(vault, oracle, spec, wtxn, now_utc),
+    )?;
+    if let Some((event_type, slot)) = staged.freed {
+        pass_freed_slot(
+            vault,
+            oracle,
+            Some((spec.page_ref, event_type, slot)),
+            now_utc,
+        );
+    }
+    Ok(match staged.outcome {
+        WaitlistOutcome::Stage(receipt) => BookingVerbReceipt::Waitlisted(receipt),
+        WaitlistOutcome::Taken(alternatives) => BookingVerbReceipt::SlotTaken { alternatives },
+        WaitlistOutcome::Booked(mut receipt) => {
+            finish_confirm(vault, &mut receipt, invite_actor, invite_sink, now_utc)?;
+            BookingVerbReceipt::Waitlisted(WaitlistReceipt::Claimed(receipt))
+        }
+    })
 }
 
 /// Resolves a hold's expiry and, for an extension, the lease it is bound to.
@@ -229,41 +299,53 @@ pub(crate) fn execute_confirm<S: OutboundExecutionSink>(
             Ok(BookingVerbReceipt::SlotTaken { alternatives })
         }
         ConfirmOutcome::Booked(mut receipt) => {
-            // The UID index is node-local cache CAL-02 repairs from synced truth
-            // on any miss, so it is maintained after the commit rather than
-            // inside it: CAL-02's index door opens its OWN write transaction,
-            // and nesting one inside this writer would deadlock LMDB.
-            index_passport_uid(vault, &receipt.calendar.uid, &receipt.calendar.event_ref)
-                .map_err(calendar_wrap)?;
-            // BK-03 (ONE-1814): with a live booking-page grant this confirm
-            // carries ONE `calendar.invite` REQUEST through the ordinary
-            // outbound door. It runs here for the same reason the UID index
-            // does — the writer has returned, and dispatch opens its own
-            // transactions, which nesting would deadlock.
-            //
-            // A dispatch failure MUST NOT fail the confirm: the EVENT, the
-            // four booking claims, the sequence-0 passport, the revision
-            // tokens, and the durable receipt are already committed, so
-            // erroring here would fail a booking that exists and re-mint a
-            // second cancel token on the retry. The absence of the
-            // intent-ledger record is the observable, and nothing retries: a
-            // second REQUEST would threaten the once-minted UID law. A replay
-            // resolves to the intent the first pass recorded rather than
-            // enqueueing another. FIX 6424: a held invite's approve-once
-            // digest rides the receipt; every refusal is still discarded.
-            if let (Some(actor), Some(sink)) = (invite_actor, invite_sink)
-                && let Ok(invite) =
-                    dispatch_confirm_booking_invite_outcome(vault, actor, &receipt, sink, now_utc)
-            {
-                receipt.approval_digest = invite.approval_digest;
-            }
+            finish_confirm(vault, &mut receipt, invite_actor, invite_sink, now_utc)?;
             Ok(BookingVerbReceipt::Confirmed(receipt))
         }
     }
 }
 
+/// What follows a committed booking, for a confirm and a waitlist claim alike.
+fn finish_confirm<S: OutboundExecutionSink>(
+    vault: &Vault,
+    receipt: &mut ConfirmReceipt,
+    invite_actor: Option<EntityId>,
+    invite_sink: Option<&mut S>,
+    now_utc: u64,
+) -> Result<(), BookingError> {
+    // The UID index is node-local cache CAL-02 repairs from synced truth
+    // on any miss, so it is maintained after the commit rather than
+    // inside it: CAL-02's index door opens its OWN write transaction,
+    // and nesting one inside this writer would deadlock LMDB.
+    index_passport_uid(vault, &receipt.calendar.uid, &receipt.calendar.event_ref)
+        .map_err(calendar_wrap)?;
+    // BK-03 (ONE-1814): with a live booking-page grant this confirm
+    // carries ONE `calendar.invite` REQUEST through the ordinary
+    // outbound door. It runs here for the same reason the UID index
+    // does — the writer has returned, and dispatch opens its own
+    // transactions, which nesting would deadlock.
+    //
+    // A dispatch failure MUST NOT fail the confirm: the EVENT, the
+    // four booking claims, the sequence-0 passport, the revision
+    // tokens, and the durable receipt are already committed, so
+    // erroring here would fail a booking that exists and re-mint a
+    // second cancel token on the retry. The absence of the
+    // intent-ledger record is the observable, and nothing retries: a
+    // second REQUEST would threaten the once-minted UID law. A replay
+    // resolves to the intent the first pass recorded rather than
+    // enqueueing another. FIX 6424: a held invite's approve-once
+    // digest rides the receipt; every refusal is still discarded.
+    if let (Some(actor), Some(sink)) = (invite_actor, invite_sink)
+        && let Ok(invite) =
+            dispatch_confirm_booking_invite_outcome(vault, actor, receipt, sink, now_utc)
+    {
+        receipt.approval_digest = invite.approval_digest;
+    }
+    Ok(())
+}
+
 /// What confirm decided inside the writer.
-enum ConfirmOutcome {
+pub(super) enum ConfirmOutcome {
     Booked(ConfirmReceipt),
     Taken { alternatives: Vec<RankedSlot> },
 }
@@ -277,7 +359,7 @@ enum ConfirmOutcome {
 /// 5. Otherwise create the EVENT, the four exact booking claims, the outbound
 ///    passport at sequence 0, the token digests, and the durable receipt, and
 ///    consume the hold.
-fn confirm_in_writer(
+pub(super) fn confirm_in_writer(
     vault: &Vault,
     oracle: &dyn SlotOracle,
     spec: &ConfirmSpec,

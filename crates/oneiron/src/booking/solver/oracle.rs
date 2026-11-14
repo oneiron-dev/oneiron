@@ -16,7 +16,7 @@ use crate::booking::config::{
     EventTypeConfig, RoutingMode, load_event_type_config, load_event_type_config_listed,
 };
 use crate::booking::constraint::validate_visitor_tz;
-use crate::booking::{BookingError, SlotOracle, SolveRequest, SolveResult};
+use crate::booking::{BookingError, EventTypeKey, SlotOracle, SolveRequest, SolveResult};
 use crate::calendar::freebusy::{BusyUnion, freebusy, freebusy_listing};
 use crate::calendar::query::CalendarSel;
 use crate::calendar::tz::utc_to_wall;
@@ -101,9 +101,39 @@ impl SlotOracle for BookingSolver<'_> {
     ) -> Result<SolveResult, BookingError> {
         self.solve_excluding(req, Some(moving), None)
     }
+
+    fn minimum_notice_secs(&self, event_type: &EventTypeKey) -> Result<u64, BookingError> {
+        let config = match &self.synthetic_config {
+            Some(config) => config.clone(),
+            None => load_event_type_config(self.vault, self.page_ref, event_type)?,
+        };
+        self.notice_secs(&config, event_type)
+    }
 }
 
 impl BookingSolver<'_> {
+    /// The notice step four honours: the owner's activated notice rule
+    /// (FIX 9630), or with none in scope the configuration's own. A synthetic
+    /// configuration is its caller's, and no page rule reaches it.
+    fn notice_secs(
+        &self,
+        config: &EventTypeConfig,
+        event_type: &EventTypeKey,
+    ) -> Result<u64, BookingError> {
+        if self.synthetic_config.is_some() {
+            return Ok(config.min_notice_secs);
+        }
+        let rows = applicable_booking_anti_abuse_rules(
+            self.vault,
+            &self.page_ref,
+            &Some(event_type.clone()),
+        )?;
+        Ok(
+            effective_minimum_notice_secs(&rows, &self.page_ref, event_type)
+                .unwrap_or(config.min_notice_secs),
+        )
+    }
+
     /// [`SlotOracle::solve`] (or [`SlotOracle::solve_moving`] for `moving`),
     /// listing in `producers` every row the solve derived its slots from
     /// (FIX 4777): the `booking.event_type` claim it configured from, each
@@ -160,20 +190,7 @@ impl BookingSolver<'_> {
             }
             (None, None) => load_event_type_config(self.vault, self.page_ref, &req.event_type)?,
         };
-        // The owner's activated notice rule is the notice step four honours
-        // (FIX 9630); with none in scope, the configuration's own stands.
-        if self.synthetic_config.is_none() {
-            let rows = applicable_booking_anti_abuse_rules(
-                self.vault,
-                &self.page_ref,
-                &Some(req.event_type.clone()),
-            )?;
-            if let Some(notice) =
-                effective_minimum_notice_secs(&rows, &self.page_ref, &req.event_type)
-            {
-                config.min_notice_secs = notice;
-            }
-        }
+        config.min_notice_secs = self.notice_secs(&config, &req.event_type)?;
         config.validate()?;
         if config.key != req.event_type {
             return Err(BookingError::InvalidConfig(format!(

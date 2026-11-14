@@ -35,12 +35,18 @@ pub const DEFAULT_HOLD_TTL_SECS: u64 = 5 * 60;
 /// shorten to its verified lease; it can never exceed this.
 pub const MAX_CHECKOUT_HOLD_TTL_SECS: u64 = 30 * 60;
 
+/// How long a slot freed under a waitlist stays held for the waiter it was
+/// offered to (RULING L3-13 WINDOW = B), before the event type's notice
+/// cutoff ends it sooner.
+pub const WAITLIST_OFFER_TTL_SECS: u64 = 2 * 60 * 60;
+
 /// The closed verb table, sorted so the wire spellings live in one place.
-pub const BOOKING_VERBS: [&str; 4] = [
+pub const BOOKING_VERBS: [&str; 5] = [
     "booking.cancel",
     "booking.confirm",
     "booking.hold",
     "booking.reschedule",
+    "booking.waitlist",
 ];
 
 /// Exact predicate: which host event type this booking realizes.
@@ -90,6 +96,7 @@ pub enum BookingVerb {
     Confirm,
     Hold,
     Reschedule,
+    Waitlist,
 }
 
 impl BookingVerb {
@@ -102,6 +109,7 @@ impl BookingVerb {
             Self::Confirm => BOOKING_VERBS[1],
             Self::Hold => BOOKING_VERBS[2],
             Self::Reschedule => BOOKING_VERBS[3],
+            Self::Waitlist => BOOKING_VERBS[4],
         }
     }
 
@@ -113,6 +121,7 @@ impl BookingVerb {
             "booking.confirm" => Some(Self::Confirm),
             "booking.hold" => Some(Self::Hold),
             "booking.reschedule" => Some(Self::Reschedule),
+            "booking.waitlist" => Some(Self::Waitlist),
             _ => None,
         }
     }
@@ -172,6 +181,57 @@ pub struct CancelSpec {
     pub idempotency_key: Option<String>,
 }
 
+/// Ask to wait for a slot in a closed window, leave that wait, or claim the
+/// slot a waitlist offered (ARCH-0062 §7, census L3-13).
+///
+/// A waiter waits on a window, never on a named booked slot: the public
+/// surface never climbs above SLOTS (ARCH-0062 :74, :77), so a join answers
+/// the same whether a booking, a private event or the hours close the window.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WaitlistSpec {
+    #[serde(with = "entity_ref_serde")]
+    pub page_ref: EntityId,
+    pub action: WaitlistAction,
+    /// Retry hygiene only.
+    pub idempotency_key: Option<String>,
+}
+
+/// The three stages of the one waitlist verb, as `booking.book` has a hold
+/// and a confirm stage.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum WaitlistAction {
+    Join(WaitlistJoin),
+    /// The entry token from the join is the only credential.
+    Leave {
+        token: OpaqueLifecycleToken,
+    },
+    Claim(WaitlistClaim),
+}
+
+/// Wait for a slot of `event_type` inside `window`, the half-open UTC
+/// interval `[start, end)`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WaitlistJoin {
+    pub event_type: EventTypeKey,
+    #[serde(with = "time_range_serde")]
+    pub window: TimeRange,
+    /// One live entry per session, page and event type: a second join from
+    /// the same session replaces the first, as a second hold replaces a hold.
+    pub session_key: SessionKey,
+    pub visitor_tz: String,
+}
+
+/// Book the slot an offer holds. The entry token proves the waiter, not the
+/// browser session: an offered waiter may come back in a new one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WaitlistClaim {
+    pub token: OpaqueLifecycleToken,
+    #[serde(with = "entity_ref_serde")]
+    pub booker_contact: EntityId,
+    #[serde(default)]
+    pub intake: Vec<crate::booking::agent_api::BookingIntakeAnswer>,
+}
+
 /// The closed request union one attempt carries.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum BookingVerbRequest {
@@ -179,6 +239,7 @@ pub enum BookingVerbRequest {
     Confirm(ConfirmSpec),
     Reschedule(RescheduleSpec),
     Cancel(CancelSpec),
+    Waitlist(WaitlistSpec),
 }
 
 impl BookingVerbRequest {
@@ -190,6 +251,7 @@ impl BookingVerbRequest {
             Self::Confirm(_) => BookingVerb::Confirm,
             Self::Reschedule(_) => BookingVerb::Reschedule,
             Self::Cancel(_) => BookingVerb::Cancel,
+            Self::Waitlist(_) => BookingVerb::Waitlist,
         }
     }
 
@@ -201,6 +263,7 @@ impl BookingVerbRequest {
             Self::Confirm(spec) => spec.idempotency_key.as_deref(),
             Self::Reschedule(spec) => spec.idempotency_key.as_deref(),
             Self::Cancel(spec) => spec.idempotency_key.as_deref(),
+            Self::Waitlist(spec) => spec.idempotency_key.as_deref(),
         }
     }
 }
@@ -354,6 +417,24 @@ pub struct RevisionReceipt {
     pub reads: Vec<EntityId>,
 }
 
+/// What a waitlist stage returns.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum WaitlistReceipt {
+    /// The window offers no slot, so the visitor waits. The entry token
+    /// appears here and never again; `position` counts the live entries
+    /// whose windows overlap this one, this one included.
+    Joined {
+        token: OpaqueLifecycleToken,
+        position: u32,
+    },
+    /// The window offers slots now: book one. No entry was written.
+    Open {
+        alternatives: Vec<RankedSlot>,
+    },
+    Left,
+    Claimed(ConfirmReceipt),
+}
+
 /// The closed receipt union.
 ///
 /// `SlotTaken` is a receipt, not an error: the transition ran, decided nothing
@@ -365,6 +446,7 @@ pub enum BookingVerbReceipt {
     Confirmed(ConfirmReceipt),
     Rescheduled(RevisionReceipt),
     Cancelled(RevisionReceipt),
+    Waitlisted(WaitlistReceipt),
     SlotTaken { alternatives: Vec<RankedSlot> },
 }
 
@@ -391,6 +473,14 @@ pub(super) fn validate_request(request: &BookingVerbRequest) -> Result<(), Booki
             validate_optional_constraint(spec.constraint.as_ref())
         }
         BookingVerbRequest::Cancel(spec) => validate_token_shape(&spec.token.0),
+        BookingVerbRequest::Waitlist(spec) => match &spec.action {
+            WaitlistAction::Join(join) => {
+                validate_visitor_tz(&join.visitor_tz)?;
+                validate_slot(join.window)
+            }
+            WaitlistAction::Leave { token } => validate_token_shape(&token.0),
+            WaitlistAction::Claim(claim) => validate_token_shape(&claim.token.0),
+        },
     }
 }
 
