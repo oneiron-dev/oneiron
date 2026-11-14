@@ -58,3 +58,19 @@ fn meso_window_publishes_early_finish_conflict_rows_at_settle() {
     assert_eq!(run.open_conflict_markers, 1, "model calls: {:?}", run.calls);
     assert_eq!(run.contradiction_gaps, 1, "model calls: {:?}", run.calls);
 }
+
+#[test]
+fn meso_window_landing_close_drops_early_finish_conflict_rows() {
+    let run =
+        dreamer_partition_window::meso_window_landing_close_drops_early_finish_conflict_rows()
+            .expect("the Meso window checkpoints its ready slot past the landing window");
+    assert!(run.judge_answered, "model calls: {:?}", run.calls);
+    assert!(!run.executor_panicked, "model calls: {:?}", run.calls);
+    assert_eq!(
+        run.labels[1], "parked:checkpoint",
+        "labels: {:?}; model calls: {:?}",
+        run.labels, run.calls
+    );
+    assert_eq!(run.open_conflict_markers, 0, "model calls: {:?}", run.calls);
+    assert_eq!(run.contradiction_gaps, 0, "model calls: {:?}", run.calls);
+}

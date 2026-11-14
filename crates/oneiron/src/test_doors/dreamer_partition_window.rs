@@ -1,8 +1,9 @@
 //! Door for `tests/dreamer_window_finish_order.rs` (FIX 21927): one real
 //! Meso wake window whose second slot can finish while its first slot's
 //! extraction is pending. The injected pass clock enters the finalize window
-//! only after that finish replies, or after a bounded poll fallback. Conflict
-//! scenarios also read the escalation rows a ready slot publishes or drops.
+//! (in one scenario: passes the landing window) only after that finish
+//! replies, or after a bounded poll fallback. Conflict scenarios also read
+//! the escalation rows a ready slot publishes or drops.
 
 use std::collections::BTreeMap;
 use std::future::{Future, poll_fn};
@@ -40,7 +41,13 @@ use crate::{
 };
 
 const FINALIZE_ELAPSED_MS: u64 = 170_000;
+/// Past the 180 s ceiling and its 15 s graceful-wrap window: even a finished
+/// partition checkpoints rather than lands (`WakePassDeadline::landing_closed`).
+const LANDING_CLOSED_ELAPSED_MS: u64 = 200_000;
 const SLOW_PREFIX_POLL_LIMIT: usize = 64;
+/// Polls the slow prefix still waits once the ready slot's judge answered, so
+/// that slot's finish runs out before the pass clock passes the ceiling.
+const FINISH_RUN_OUT_POLLS: usize = 16;
 const WAKE_PASS_POLL_LIMIT: usize = 100_000;
 const MARKERS: [&str; 2] = ["marker-owen", "marker-yuki"];
 
@@ -96,11 +103,24 @@ pub fn meso_window_publishes_early_finish_conflict_rows_at_settle() -> Result<Wi
     run_window_finish(WindowScenario::PublishConflict)
 }
 
+/// Runs an early escalation whose settle comes after the landing window
+/// closed: the sibling's slow prefix replies past the ceiling, so the ready
+/// slot's settle checkpoints and drops both held conflict rows (review
+/// round 2 of #7855).
+///
+/// # Errors
+///
+/// Vault setup, wake execution, or reading the persisted outcomes.
+pub fn meso_window_landing_close_drops_early_finish_conflict_rows() -> Result<WindowFinish> {
+    run_window_finish(WindowScenario::LandingClosedAfterConflict)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WindowScenario {
     Finish,
     StopAfterConflict,
     PublishConflict,
+    LandingClosedAfterConflict,
 }
 
 fn run_window_finish(scenario: WindowScenario) -> Result<WindowFinish> {
@@ -303,6 +323,13 @@ impl LlmBackend for WindowBackend {
             };
             if first {
                 let mut polls_after_second = 0;
+                let mut polls_after_finish = 0;
+                let (run_out_polls, reply_elapsed_ms) =
+                    if self.scenario == WindowScenario::LandingClosedAfterConflict {
+                        (FINISH_RUN_OUT_POLLS, LANDING_CLOSED_ELAPSED_MS)
+                    } else {
+                        (0, FINALIZE_ELAPSED_MS)
+                    };
                 return Box::pin(poll_fn(move |_cx| {
                     let (second_answered, finish_answered) = {
                         let state = self.state.lock().expect("window state");
@@ -311,7 +338,11 @@ impl LlmBackend for WindowBackend {
                     if second_answered {
                         polls_after_second += 1;
                     }
-                    if !finish_answered && polls_after_second < SLOW_PREFIX_POLL_LIMIT {
+                    if finish_answered {
+                        polls_after_finish += 1;
+                    }
+                    let finish_ran_out = finish_answered && polls_after_finish > run_out_polls;
+                    if !finish_ran_out && polls_after_second < SLOW_PREFIX_POLL_LIMIT {
                         return Poll::Pending;
                     }
                     // Panic outside the mutex guard: B's settle and the
@@ -319,7 +350,7 @@ impl LlmBackend for WindowBackend {
                     if self.scenario == WindowScenario::StopAfterConflict {
                         panic!("fixture first extraction panicked after the conflict judge wait");
                     }
-                    self.elapsed_ms.store(FINALIZE_ELAPSED_MS, Ordering::SeqCst);
+                    self.elapsed_ms.store(reply_elapsed_ms, Ordering::SeqCst);
                     Poll::Ready(Ok(response.clone()))
                 }));
             }
