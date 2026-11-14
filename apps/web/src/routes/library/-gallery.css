@@ -848,6 +848,15 @@
   z-index: 1;
 }
 
+.lib-micro-stage[data-height="short"] {
+  height: 280px;
+}
+
+/* An icon action at the end of a menu's head line. */
+.lib-menu-line-action {
+  margin-left: auto;
+}
+
 .lib-field-pick {
   margin-left: 10px;
   color: inherit;

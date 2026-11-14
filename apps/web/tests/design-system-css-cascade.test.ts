@@ -50,3 +50,24 @@ describe('the waiting ring on a microsidebar item', () => {
     assert.ok(outranks(specificity(micro[0][0]), specificity(dot[0])), `${micro[0][0]} must outrank ${dot[0]}`)
   })
 })
+
+describe('a layer starts a new ink scope', () => {
+  /* Every custom property the library sets from the window ground's ink,
+     and that ink itself. */
+  const SHEETS = ['frame/MicroSidebar.css', 'frame/AppFrame.css', 'frame/Sidebar.css', 'ground/WindowGround.css', 'frame/ActivityList.css']
+  const groundInks = new Set(['--sl-ground-ink'])
+  for (const sheet of SHEETS) {
+    for (const [, body] of rules(css(sheet))) {
+      for (const m of body.matchAll(/(--sl-[\w-]+)\s*:[^;]*var\(--sl-ground-ink\)/g)) groundInks.add(m[1])
+    }
+  }
+
+  test('a popover (and so a menu) sets every ground ink back to the sheet’s', () => {
+    assert.ok(groundInks.has('--sl-micro-ink'))
+    const popover = rules(css('overlays/Popover.css')).find(([selector]) => selector === '.sl-popover')
+    assert.ok(popover, 'the .sl-popover rule')
+    for (const ink of groundInks) {
+      assert.match(popover[1], new RegExp(`${ink}\\s*:\\s*var\\(--sl-(ink-[1-4]|hover|lit)\\)`), `${ink} is set back inside a layer`)
+    }
+  })
+})

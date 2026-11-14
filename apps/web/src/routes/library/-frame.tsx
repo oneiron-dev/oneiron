@@ -887,6 +887,40 @@ export function MicroSidebarDemo({
   )
 }
 
+/* A short strip on the window ground for the parts a caller builds on:
+   an item that waits on the person with no count (the ring at its top
+   corner), and the person's menu, whose head line carries an icon action
+   that keeps the menu's inks by day. */
+function MicroSidebarParts({ specimen }: { specimen: string }) {
+  return (
+    <div className="lib-micro-demo">
+      <div className="lib-micro-stage" data-height="short">
+        <WindowGround />
+        <MicroSidebar aria-label="places, parts" data-specimen={specimen}>
+          <MicroSidebar.VaultMark name="antevon" />
+          <MicroSidebar.Item id="parts-activity" icon={<Icon name="activity" />} label="activity" needsYou data-specimen={`${specimen}-waiting`} />
+          <MicroSidebar.Foot>
+            <Menu>
+              <Menu.Trigger asChild>
+                <MicroSidebar.Item id="parts-you" icon={<Glyph initial="o" label="Owen" size={24} />} label="Owen" data-specimen={`${specimen}-you`} />
+              </Menu.Trigger>
+              <Menu.Content side="right" align="end" aria-label="account" data-specimen={`${specimen}-menu`}>
+                <Menu.Line icon={<Glyph initial="o" label="Owen" size={18} />}>
+                  Owen
+                  <IconAction label="Account settings" role="menuitem" tabIndex={-1} className="lib-menu-line-action" data-specimen={`${specimen}-menu-action`}>
+                    <Icon name="gear" />
+                  </IconAction>
+                </Menu.Line>
+                <Menu.Item icon={<Icon name="signOut" />}>sign out</Menu.Item>
+              </Menu.Content>
+            </Menu>
+          </MicroSidebar.Foot>
+        </MicroSidebar>
+      </div>
+    </div>
+  )
+}
+
 /* A microsidebar alone on the window ground of the page's theme. */
 function MicroSidebarAlone({ labels, waiting, specimen }: { labels?: 'none' | 'word'; waiting?: boolean; specimen: string }) {
   const [current, setCurrent] = React.useState('home')
@@ -1348,6 +1382,12 @@ export function FieldSections({ children }: { children?: React.ReactNode }) {
           <figure className="lib-field-specimen">
             <MicroSidebarAlone labels="word" waiting specimen="micro-word" />
             <figcaption className="lib-field-caption">labels word: a word of at most eight letters under each symbol; activity waits on you</figcaption>
+          </figure>
+          <figure className="lib-field-specimen">
+            <MicroSidebarParts specimen="micro-parts" />
+            <figcaption className="lib-field-caption">
+              a caller’s parts: activity waits on you with no count, the ring at its top corner in the ground’s ink; the person’s menu has an icon action on its head line, in the menu’s inks
+            </figcaption>
           </figure>
         </div>
       </section>
