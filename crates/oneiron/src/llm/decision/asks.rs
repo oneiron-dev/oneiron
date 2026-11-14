@@ -106,16 +106,8 @@ pub struct DecisionAsk {
     pub prefilled_reason: Option<String>,
 }
 
-/// The answer the ladder held when it asked, and the provider that read it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AskPrior {
-    pub answer: DecisionAnswer,
-    pub probability: Option<f64>,
-    pub provider: ProviderPin,
-    pub paired: Option<PairedReading>,
-    pub person: Option<PairedReading>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::llm::decision::asks::AskPrior;
 
 /// What a role's holder answered.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

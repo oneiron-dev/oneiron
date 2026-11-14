@@ -17,29 +17,13 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::DigestProposal;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::{EntityId, Error, Result, Vault};
 
-/// One private thread turn a proposal's words were drawn from when its
-/// digest was assembled (FIX 6411).
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(deny_unknown_fields)]
-pub struct DigestPrivateSource {
-    /// The thread's root TURN.
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub root: EntityId,
-    /// The turn the words were read from.
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub turn: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_runner::maintenance::digest::private_sources::DigestPrivateSource;
 
 /// The private thread turns the words of the proposal `claim` are drawn
 /// from, to pin on it as its digest is assembled; empty for words off every

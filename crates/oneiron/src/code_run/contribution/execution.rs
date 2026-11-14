@@ -436,7 +436,8 @@ fn executed_run(
         ShadowStatus::Failed { kind } => Some(ExecutedStepStatus::Failed { kind }),
         ShadowStatus::Waiting { .. }
         | ShadowStatus::Yielded { .. }
-        | ShadowStatus::WindowFull { .. } => None,
+        | ShadowStatus::WindowFull { .. }
+        | ShadowStatus::Paused { .. } => None,
     };
     let consumed = run.bridge.consumed;
     // Every call it matched was answered with the response its live guest

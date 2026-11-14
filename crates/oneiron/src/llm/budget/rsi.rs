@@ -6,7 +6,8 @@ use std::collections::BTreeMap;
 
 /// Durable reserve/settle/refund ledger for the RSI research-loop spend budget. Key: ().
 const RSI_LINE: SideTable<(), Line, LegacyJson> = SideTable::new(&side_table::BUDGET_RSI_LINE);
-type RsiResult<T> = std::result::Result<T, RsiBudgetError>;
+#[doc(hidden)]
+use oneiron_verb_wire::llm::budget::rsi::{RsiLine, RsiResult};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Reservation {
@@ -18,11 +19,6 @@ struct Reservation {
     overdraft: Option<RsiOverdraftReceipt>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-enum RsiLine {
-    Tokens,
-    Exposure,
-}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Line {
     config: RsiBudgetConfig,
@@ -124,6 +120,28 @@ impl Line {
         }
         Ok(())
     }
+}
+
+/// The install's signing keys for a token reservation under a share, which
+/// may overdraw it: an overdraft is signed by this install's device key, and
+/// its keys load before the write transaction, as every signing door's do. A
+/// failure refuses only a reservation that overdraws.
+pub(crate) struct RsiSigning(Option<crate::Result<()>>);
+
+impl RsiSigning {
+    /// No overdraft can arise: an exposure reservation, or tokens under no
+    /// share.
+    pub(crate) fn none() -> Self {
+        Self(None)
+    }
+}
+
+/// A token reservation's own terms: what it is for, the share it draws on,
+/// and the signing keys loaded for a possible overdraft.
+struct TokenTerms {
+    purpose: RsiSpendPurpose,
+    share: Option<String>,
+    signing: RsiSigning,
 }
 
 fn load(vault: &Vault, txn: &heed::RoTxn<'_>) -> RsiResult<Line> {
@@ -237,30 +255,104 @@ impl Vault {
         purpose: RsiSpendPurpose,
         share: Option<String>,
     ) -> RsiResult<()> {
-        self.reserve_rsi_line(id, units, RsiLine::Tokens, Some(purpose), share)
+        let signing = self.rsi_token_signing(share.as_deref());
+        self.reserve_rsi_line(
+            id,
+            units,
+            Some(TokenTerms {
+                purpose,
+                share,
+                signing,
+            }),
+        )
     }
 
     /// Reserve exposure for a bandit slice, independently of token spend.
     pub fn reserve_rsi_exploration(&self, id: EntityId, exposure: u64) -> RsiResult<()> {
-        self.reserve_rsi_line(id, exposure, RsiLine::Exposure, None, None)
+        self.reserve_rsi_line(id, exposure, None)
+    }
+
+    /// Loads the signing keys a token reservation under `share` may need,
+    /// before its write transaction opens.
+    pub(crate) fn rsi_token_signing(&self, share: Option<&str>) -> RsiSigning {
+        RsiSigning(
+            share
+                .is_some()
+                .then(|| self.prepare_install_signing().map(|_| ())),
+        )
+    }
+
+    /// [`Self::reserve_rsi_budget`] inside the caller's write, with the
+    /// signing keys [`Self::rsi_token_signing`] loaded before it. An
+    /// exhausted line's suspension is written into `txn` with the
+    /// `Exhausted` refusal, for the caller to commit.
+    pub(crate) fn reserve_rsi_budget_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        units: u64,
+        purpose: RsiSpendPurpose,
+        share: Option<String>,
+        signing: RsiSigning,
+    ) -> RsiResult<()> {
+        self.reserve_rsi_line_in_txn(
+            txn,
+            id,
+            units,
+            Some(TokenTerms {
+                purpose,
+                share,
+                signing,
+            }),
+        )
+    }
+
+    /// [`Self::reserve_rsi_exploration`] inside the caller's write; an
+    /// exhausted line's suspension is written as
+    /// [`Self::reserve_rsi_budget_in_txn`]'s is.
+    pub(crate) fn reserve_rsi_exploration_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        exposure: u64,
+    ) -> RsiResult<()> {
+        self.reserve_rsi_line_in_txn(txn, id, exposure, None)
     }
 
     fn reserve_rsi_line(
         &self,
         id: EntityId,
         amount: u64,
-        kind: RsiLine,
-        purpose: Option<RsiSpendPurpose>,
-        share: Option<String>,
+        tokens: Option<TokenTerms>,
     ) -> RsiResult<()> {
-        // A token reservation under a share may overdraw it, and an overdraft
-        // is signed by this install's device key: its keys load before the
-        // write transaction, as every signing door's do. A failure refuses
-        // only a reservation that overdraws.
-        let signing = (kind == RsiLine::Tokens && share.is_some())
-            .then(|| self.prepare_install_signing().map(|_| ()));
         let mut txn = self.store.env.write_txn()?;
-        let mut line = load(self, &txn)?;
+        let reserved = self.reserve_rsi_line_in_txn(&mut txn, id, amount, tokens);
+        // An exhausted line keeps its suspension with the refusal.
+        if matches!(reserved, Ok(()) | Err(RsiBudgetError::Exhausted)) {
+            txn.commit().map_err(crate::Error::from)?;
+        }
+        reserved
+    }
+
+    /// One reservation on the token line (`tokens` names its terms) or the
+    /// exposure line, in `txn`. `Exhausted` leaves the line suspended in
+    /// `txn`; any other refusal writes nothing.
+    fn reserve_rsi_line_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        amount: u64,
+        tokens: Option<TokenTerms>,
+    ) -> RsiResult<()> {
+        let (kind, purpose, share, signing) = match tokens {
+            Some(TokenTerms {
+                purpose,
+                share,
+                signing,
+            }) => (RsiLine::Tokens, Some(purpose), share, signing.0),
+            None => (RsiLine::Exposure, None, None, None),
+        };
+        let mut line = load(self, txn)?;
         if line.suspended {
             return Err(RsiBudgetError::Suspended);
         }
@@ -335,7 +427,7 @@ impl Vault {
                                 .into());
                             }
                         }
-                        Some(self.sign_rsi_overdraft_in_txn(&mut txn, id, share, units)?)
+                        Some(self.sign_rsi_overdraft_in_txn(txn, id, share, units)?)
                     }
                     None => None,
                 };
@@ -350,26 +442,18 @@ impl Vault {
             Err(RsiBudgetError::Exhausted) => {
                 line.reservations.remove(&key);
                 line.suspended = true;
-                save(self, &mut txn, &line)?;
-                txn.commit().map_err(crate::Error::from)?;
+                save(self, txn, &line)?;
                 return Err(RsiBudgetError::Exhausted);
             }
             Err(other) => return Err(other),
         }
-        save(self, &mut txn, &line)?;
-        txn.commit().map_err(crate::Error::from)?;
+        save(self, txn, &line)?;
         Ok(())
     }
 
     /// Settle token spend once, releasing unused reserved tokens.
     pub fn settle_rsi_budget(&self, id: EntityId, spent: u64) -> RsiResult<()> {
         self.finish_rsi_reservation(id, RsiSettlement::Spent(spent))
-    }
-
-    /// End token work with no token-denominated native spend total. Keep its
-    /// reservation committed without claiming that the amount was spent.
-    pub(crate) fn settle_rsi_budget_unknown(&self, id: EntityId) -> RsiResult<()> {
-        self.finish_rsi_reservation(id, RsiSettlement::Unknown)
     }
 
     /// Settle exploration exposure once, releasing unused reserved exposure.
@@ -384,7 +468,21 @@ impl Vault {
 
     fn finish_rsi_reservation(&self, id: EntityId, settlement: RsiSettlement) -> RsiResult<()> {
         let mut txn = self.store.env.write_txn()?;
-        let mut line = load(self, &txn)?;
+        self.finish_rsi_reservation_in_txn(&mut txn, id, settlement)?;
+        txn.commit().map_err(crate::Error::from)?;
+        Ok(())
+    }
+
+    /// Settle or refund one reservation inside the caller's write: spent
+    /// tokens (or unknown) on the token line, exposure on the exposure line,
+    /// a refund on either. A refusal writes nothing.
+    pub(crate) fn finish_rsi_reservation_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        settlement: RsiSettlement,
+    ) -> RsiResult<()> {
+        let mut line = load(self, txn)?;
         let row = line
             .reservations
             .get_mut(&id.to_hex())
@@ -414,8 +512,7 @@ impl Vault {
             return Err(RsiBudgetError::Exhausted);
         }
         row.settlement = Some(settlement);
-        save(self, &mut txn, &line)?;
-        txn.commit().map_err(crate::Error::from)?;
+        save(self, txn, &line)?;
         Ok(())
     }
 

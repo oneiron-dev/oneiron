@@ -364,6 +364,8 @@ pub enum EngineArmStatus {
     Failed { kind: String },
     /// It did not run, or stopped, for the runner's typed reason.
     Unavailable { unavailable: ShadowUnavailable },
+    /// A person's pause stopped it at its step boundary.
+    Paused { next_step_seq: u64 },
 }
 
 impl EngineArmStatus {
@@ -381,6 +383,9 @@ impl EngineArmStatus {
             ShadowStatus::Failed { kind } => Self::Failed { kind: kind.clone() },
             ShadowStatus::Unavailable { unavailable } => Self::Unavailable {
                 unavailable: unavailable.clone(),
+            },
+            ShadowStatus::Paused { next_step_seq } => Self::Paused {
+                next_step_seq: *next_step_seq,
             },
         }
     }
