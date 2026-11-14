@@ -397,14 +397,18 @@ pub(super) fn require_at_most_one(matches: &[(EntityId, CommClaim)]) -> CommResu
 pub(super) fn latest_claim_transition_boundary(matches: &[(EntityId, CommClaim)]) -> Option<u64> {
     matches
         .iter()
-        .filter_map(|(_, claim)| {
-            if claim.is_standing() {
-                claim.valid_from
-            } else {
-                claim.valid_to
-            }
-        })
+        .filter_map(|(_, claim)| claim_transition_boundary(claim))
         .max()
+}
+
+/// Where one claim moved its slot: a standing head when it became valid, a
+/// closed one when it was closed.
+pub(super) fn claim_transition_boundary(claim: &CommClaim) -> Option<u64> {
+    if claim.is_standing() {
+        claim.valid_from
+    } else {
+        claim.valid_to
+    }
 }
 
 pub(super) fn build_contact_view_in_txn(

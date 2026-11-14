@@ -1,0 +1,20 @@
+pub use crate::anchored_annotation::wire::AnnotationAnchorView;
+pub use crate::anchored_annotation::wire::AnnotationAssignRequest;
+pub use crate::anchored_annotation::wire::AnnotationBodyAnchorView;
+pub use crate::anchored_annotation::wire::AnnotationBriefView;
+pub use crate::anchored_annotation::wire::AnnotationCommentRequest;
+pub use crate::anchored_annotation::wire::AnnotationCommentView;
+pub use crate::anchored_annotation::wire::AnnotationDriftView;
+pub use crate::anchored_annotation::wire::AnnotationLocator;
+pub use crate::anchored_annotation::wire::AnnotationPinRequest;
+pub use crate::anchored_annotation::wire::AnnotationResolution;
+pub use crate::anchored_annotation::wire::AnnotationStateRequest;
+pub use crate::anchored_annotation::wire::AnnotationThreadOpenRequest;
+pub use crate::anchored_annotation::wire::AnnotationThreadRequest;
+pub use crate::anchored_annotation::wire::AnnotationThreadState;
+pub use crate::anchored_annotation::wire::AnnotationThreadView;
+pub use crate::anchored_annotation::wire::ArtifactUnitView;
+pub use crate::anchored_annotation::wire::ArtifactUnitsRequest;
+pub use crate::anchored_annotation::wire::ArtifactUnitsView;
+
+pub mod wire;
