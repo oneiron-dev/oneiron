@@ -483,35 +483,41 @@ pub(super) async fn handle_window_sync(
                 update,
                 Some(&doc),
             );
-            server
-                .persist_imported_update(&key, &persisted, &landings, write_auth)
-                .map_err(|e| ProtocolError::Persistence(format!("update persist failed: {e}")))?;
             // Client sending Loro update bytes — import with origin for echo suppression.
             // The machine this own-device socket proved sent them: their MESSAGE rows
             // take the own-device lane as they land (FIX 12112).
             let origin = format!("conn:{conn_id}");
-            let positions = oneiron::sync::prepare_own_device_push_positions(
-                server.vault(),
-                conn_state.peer_machine(server.vault()),
-                &key,
-                &doc,
-                update,
-            );
-            // The window is a live window of the reassert manager: the import
-            // and its callbacks take the live-window turn, so an indexed pass
-            // over it never meets them halfway (L7-45).
-            let imported = match oneiron::sync::with_own_device_push(
-                server.vault(),
-                conn_state.peer_machine(server.vault()),
-                (&key, &doc),
-                update,
-                || {
-                    oneiron::sync::window::with_live_window_turn(
-                        server.reassert_manager.materializer(),
+            // The window is a live window of the reassert manager. Appended,
+            // the bytes are a pending u:w: row that any holder's persist_state
+            // merges into the document without the turn, so the append, the
+            // import and its callbacks hold the live-window turn together: an
+            // indexed pass over the window never meets them halfway (L7-45).
+            let (positions, imported) = oneiron::sync::window::with_live_window_turn(
+                server.reassert_manager.materializer(),
+                || -> Result<_, ProtocolError> {
+                    server
+                        .persist_imported_update(&key, &persisted, &landings, write_auth)
+                        .map_err(|e| {
+                            ProtocolError::Persistence(format!("update persist failed: {e}"))
+                        })?;
+                    let positions = oneiron::sync::prepare_own_device_push_positions(
+                        server.vault(),
+                        conn_state.peer_machine(server.vault()),
+                        &key,
+                        &doc,
+                        update,
+                    );
+                    let imported = oneiron::sync::with_own_device_push(
+                        server.vault(),
+                        conn_state.peer_machine(server.vault()),
+                        (&key, &doc),
+                        update,
                         || doc.import_with(update, &origin),
-                    )
+                    );
+                    Ok((positions, imported))
                 },
-            ) {
+            )?;
+            let imported = match imported {
                 Ok(imported) => imported,
                 Err(e) => {
                     // The accepted update stays durable: the window reloads
