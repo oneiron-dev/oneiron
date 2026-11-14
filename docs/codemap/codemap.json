@@ -123,6 +123,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/access_grant/companion_index.rs",
+     "purpose": "The companion profile grants by principal and PERSON (ARCH-0044 H424, census L3-28E)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -166,7 +176,7 @@
      "path": "src/access_grant/mod.rs",
      "purpose": "AccessGrant control-plane record substrate",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 6
      }
     },
@@ -5249,6 +5259,7 @@
      "purpose": "Local host-authorized mesh binding and grants, distinct from address hints",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 7,
       "re-export": 3,
       "struct": 1
@@ -5264,6 +5275,16 @@
       "crate-vis": 3,
       "fn": 8,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/mesh_machine/endpoint_index.rs",
+     "purpose": "The MACHINE rows by the endpoint key their mesh address names (ARCH-0044 H336, census L3-28B)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -5288,7 +5309,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 59,
+      "crate-vis": 60,
       "mod": 2,
       "re-export": 76
      }
@@ -90759,6 +90780,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/companion_grant_index.rs",
+     "purpose": "Doors for `tests/companion_grant_index.rs` (census L3-28E): the grants the companion grant index names for…",
+     "surface": {
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/connector_key_suspend.rs",
      "purpose": "Door for `tests/connector_key_suspend_admission.rs` (FIX 22392): the shared suspend writer, as a budget…",
      "surface": {
@@ -91174,6 +91205,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "IndexedEndpoint"
+     ],
+     "path": "src/test_doors/mesh_machine_endpoint_index.rs",
+     "purpose": "Doors for `tests/mesh_machine_endpoint_index.rs` (census L3-28B): the endpoint lookup as the MACHINE…",
+     "surface": {
+      "enum": 1,
+      "fn": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -91210,7 +91254,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 108,
+      "mod": 110,
       "re-export": 1
      }
     },
@@ -100227,6 +100271,14 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/companion_grant_index.rs",
+     "purpose": "Census L3-28E (ARCH-0044 H424): the companion grant reads (the persona list, the profile admission and the…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -101786,6 +101838,22 @@
      "notable": [],
      "path": "tests/merged_contact_stop_view.rs",
      "purpose": "A key whose PERSON was merged into a different key keeps showing the STOP it said before the merge on its…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/mesh_machine_endpoint_index.rs",
+     "purpose": "Census L3-28B (ARCH-0044 H336): the endpoint lookup is served from a derived endpoint-to-MACHINE index…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/mesh_machine_endpoint_lookup.rs",
+     "purpose": "Census L3-28B (ARCH-0044 H336): the lookup any endpoint key can make used to walk every MACHINE row's body…",
      "surface": {}
     },
     {
@@ -103491,7 +103559,7 @@
    ],
    "modules": {
     "access_grant": {
-     "files": 13,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -103561,7 +103629,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 281,
+     "files": 282,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104982,7 +105050,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 111,
+     "files": 113,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105159,8 +105227,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7578,
-   "test_files": 1296
+   "source_files": 7582,
+   "test_files": 1299
   },
   "oneiron-agent-runtime": {
    "files": [
