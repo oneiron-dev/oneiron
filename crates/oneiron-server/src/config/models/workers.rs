@@ -15,6 +15,13 @@
 //! provider's own loopback `base_url`. An external row is the operator's
 //! endpoint, and names only what its answers must show.
 //!
+//! A managed llama.cpp row may instead say `listen = "unix"` (L9-15): its
+//! supervisor starts it as a reranker on a Unix socket of this launch's own,
+//! and the reranker reaches it there alone, each connection checked against
+//! the supervised child (I2-LOCAL), so its rerank offer is on this device.
+//! Nothing listens on its provider's `base_url`, so that provider serves the
+//! `reranker` role alone, each of its models from such a row.
+//!
 //! The media workers (FIX 8318) are rows too: a `vox_cpm2` worker serves a
 //! `voxcpm2` provider, an `asr` worker a `local-openai-compat` one (an
 //! external one also an `openai-compat` provider that says it is an own
@@ -31,7 +38,10 @@ use oneiron::ModelLocality;
 use oneiron::llm::{CacheDigest, CacheIdentity, WorkerKind, WorkerMode};
 use serde::Deserialize;
 
-use super::levels::ModelRef;
+use oneiron::llm::manifest::ModelRole;
+
+use super::levels::{ModelRef, Rung, role_key};
+use super::media::MediaSettings;
 use super::provider::{ProviderConfig, ProviderKind};
 use crate::model_artifacts::catalog::house_artifact;
 
@@ -86,6 +96,9 @@ pub(super) struct WorkerFile {
     /// Only an external EXL3 row's answers are checked against it.
     launch_manifest_sha256: Option<String>,
     device: Option<String>,
+    /// Where a managed llama.cpp worker listens (L9-15): its provider's
+    /// loopback `base_url`, the default, or a Unix socket of its own.
+    listen: Option<WorkerListen>,
     #[serde(default)]
     args: Vec<String>,
     #[serde(default)]
@@ -95,6 +108,19 @@ pub(super) struct WorkerFile {
     idle_stop_secs: Option<u64>,
     #[serde(default)]
     expected: ExpectedFile,
+}
+
+/// Where a managed worker listens (`listen`, L9-15).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkerListen {
+    /// Its provider's loopback `base_url`, over TCP.
+    #[default]
+    Tcp,
+    /// A Unix socket under its runtime root, one per launch: a managed
+    /// llama.cpp reranker, reached only through a connection checked
+    /// against the supervised child (I2-LOCAL).
+    Unix,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -161,6 +187,15 @@ impl WorkerConfig {
     pub fn has_native_launch(&self) -> bool {
         self.kind == WorkerKind::Exl3 && self.managed_launch().is_some()
     }
+
+    /// Whether this row's supervisor launches it on a Unix socket of its
+    /// own (`listen = "unix"`, L9-15): a managed llama.cpp reranker, whose
+    /// launch record names that socket.
+    #[must_use]
+    pub fn listens_on_socket(&self) -> bool {
+        self.managed_launch()
+            .is_some_and(|launch| launch.listen == WorkerListen::Unix)
+    }
 }
 
 /// What a managed worker's supervisor installs and runs.
@@ -186,8 +221,13 @@ pub struct ManagedLaunch {
     /// llama.cpp's `llama-server`, verified by its SHA-256 before each launch.
     pub server: Option<NativeServer>,
     /// The loopback host and port the worker listens on: its provider's.
+    /// A `listen = "unix"` row listens on neither; its provider's origin
+    /// still names its offer.
     pub listen_host: String,
     pub listen_port: u16,
+    /// Where the worker listens: TCP at `listen_host:listen_port`, or a
+    /// Unix socket of each launch's own (L9-15).
+    pub listen: WorkerListen,
     /// The environment variable holding a media worker's bearer credential:
     /// its provider's `key_env`. Never the credential itself; `None` for a
     /// chat worker, which is given no key.
@@ -390,6 +430,7 @@ impl WorkerFile {
             ("server", self.server.is_some()),
             ("server_sha256", self.server_sha256.is_some()),
             ("device", self.device.is_some()),
+            ("listen", self.listen.is_some()),
             ("args", !self.args.is_empty()),
             ("env", !self.env.is_empty()),
             ("envelope_mib", self.envelope_mib != EnvelopeFile::default()),
@@ -455,6 +496,19 @@ impl WorkerFile {
                 field("server")
             ),
         };
+        let listen = self.listen.unwrap_or_default();
+        if listen == WorkerListen::Unix {
+            anyhow::ensure!(
+                kind == WorkerKind::LlamaCpp,
+                "{}: only a llama_cpp worker listens on a Unix socket",
+                field("listen")
+            );
+            anyhow::ensure!(
+                cfg!(any(target_os = "linux", target_os = "macos")),
+                "{}: a Unix socket listen needs Linux or macOS, where the socket's peer is checked against the supervised child",
+                field("listen")
+            );
+        }
         let media = media_kind(kind);
         anyhow::ensure!(
             kind == WorkerKind::Exl3 || media || self.env_lock.is_none(),
@@ -528,6 +582,7 @@ impl WorkerFile {
             server,
             listen_host,
             listen_port,
+            listen,
             credential_env,
             policy_file,
             device: self.device.clone(),
@@ -623,6 +678,61 @@ impl WorkerFile {
         };
         Ok((Some(credential), policy_file))
     }
+}
+
+/// Refuses a `listen = "unix"` row whose provider serves anything but the
+/// reranker over a Unix-socket row (L9-15): no other role's ladder and no
+/// media seat names the provider, and each reranker rung on it is a model
+/// such a row serves. Nothing listens on that provider's `base_url`.
+pub(super) fn refuse_socket_provider_off_reranker(
+    workers: &[WorkerConfig],
+    roles: &BTreeMap<ModelRole, Vec<Rung>>,
+    media: &MediaSettings,
+) -> anyhow::Result<()> {
+    let socket_rows: BTreeMap<&str, &WorkerConfig> = workers
+        .iter()
+        .filter(|row| row.listens_on_socket())
+        .map(|row| (row.binding.provider.as_str(), row))
+        .collect();
+    for (role, ladder) in roles {
+        for rung in ladder {
+            let Some(row) = socket_rows.get(rung.model.provider.as_str()) else {
+                continue;
+            };
+            anyhow::ensure!(
+                *role == ModelRole::Reranker,
+                "models.workers.{}.listen: provider {:?} serves the reranker alone, but models.roles.{} names it",
+                row.id,
+                rung.model.provider,
+                role_key(*role)
+            );
+            anyhow::ensure!(
+                workers
+                    .iter()
+                    .any(|worker| worker.binding == rung.model && worker.listens_on_socket()),
+                "models.workers.{}.listen: provider {:?} serves each reranker model from a listen = \"unix\" row, and none serves {}",
+                row.id,
+                rung.model.provider,
+                rung.model
+            );
+        }
+    }
+    for (operation, seat) in &media.seats {
+        if let Some(model) = seat
+            .rungs
+            .iter()
+            .chain(seat.tiers.values())
+            .find(|model| socket_rows.contains_key(model.provider.as_str()))
+        {
+            anyhow::bail!(
+                "models.workers.{}.listen: provider {:?} serves the reranker alone, but the {} media seat names it",
+                socket_rows[model.provider.as_str()].id,
+                model.provider,
+                operation.as_str()
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Whether `kind` is a media worker's: VoxCPM2 speech or local ASR.

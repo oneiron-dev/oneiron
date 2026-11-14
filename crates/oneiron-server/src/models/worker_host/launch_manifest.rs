@@ -92,14 +92,17 @@ pub(super) const fn schema_version() -> u64 {
 
 /// What one launch must answer with: the digest of the manifest it was
 /// given, the alias a llama.cpp launch was given, and the identity its
-/// verified bytes give; and where an EXL3 launch answers natively, when it
-/// was given a socket.
+/// verified bytes give; where an EXL3 launch answers natively, when it was
+/// given a socket; and where a llama.cpp launch serves HTTP, when it listens
+/// on a Unix socket (L9-15).
 #[derive(Clone, Debug)]
 pub(super) struct LaunchRecord {
     pub(super) manifest_sha256: String,
     pub(super) llama_alias: Option<String>,
     pub(super) pins: CacheIdentity,
     pub(super) native_socket: Option<PathBuf>,
+    /// A `listen = "unix"` llama.cpp launch's socket, where it serves HTTP.
+    pub(super) http_socket: Option<PathBuf>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(super) native_peer: Option<super::process::ProcessPeer>,
     /// The scheduling wire the qualification hello advertised.
@@ -163,6 +166,40 @@ impl LaunchRecord {
             manifest_sha256: self.manifest_sha256.clone(),
             wire_model: wire_model.to_owned(),
             #[cfg(any(target_os = "linux", target_os = "macos"))]
+            peer: self.native_peer.clone()?,
+        })
+    }
+}
+
+/// The Unix socket a llama.cpp launch serves HTTP on (`listen = "unix"`,
+/// L9-15) and its supervised child, retained by one exchange. Only Linux and
+/// macOS name a socket's peer process, so only there is a launch reached
+/// this way (I2-LOCAL); config refuses the row elsewhere.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone)]
+pub(in crate::models) struct SocketLaunch {
+    socket: PathBuf,
+    peer: super::process::ProcessPeer,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl SocketLaunch {
+    pub(in crate::models) fn socket(&self) -> &Path {
+        &self.socket
+    }
+
+    pub(in crate::models) fn peer_matches(&self, pid: Option<u32>) -> bool {
+        self.peer.matches(pid)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl LaunchRecord {
+    /// This launch's HTTP socket and supervised child; `None` when it
+    /// listens on none, or before its child is in custody.
+    pub(super) fn socket_launch(&self) -> Option<SocketLaunch> {
+        Some(SocketLaunch {
+            socket: self.http_socket.clone()?,
             peer: self.native_peer.clone()?,
         })
     }

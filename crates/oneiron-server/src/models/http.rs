@@ -19,11 +19,15 @@ use crate::config::models::{ProviderConfig, RequestCodec, RequestCompression};
 mod client;
 mod never_sent;
 mod reply_line;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod socket;
 
 pub(super) use reply_line::{
     ReplyBytes, charge_read, holding_chat_replies, holding_replies, read_broker_booked,
 };
 use reply_line::{read_booked, read_whole};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(super) use socket::{get_within_on, post_json_on};
 
 /// The smallest request body worth compressing (ARCH-0081 §6).
 const MIN_COMPRESSED_BYTES: usize = 16 * 1024;

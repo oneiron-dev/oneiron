@@ -16,6 +16,7 @@
 //! [`ModelsStatus`]. Everything that needs no model keeps working.
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::time::Duration;
 
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::{
@@ -27,7 +28,9 @@ use oneiron::{BudgetGuard, LlmCatalogEntry, ModelId, ModelLocality};
 use oneiron_llm_anthropic::{AnthropicMessagesBackend, AnthropicMessagesConfig};
 use oneiron_llm_openai::{OpenAiCompatBackend, OpenAiCompatConfig};
 
-use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig, ProviderKind, role_key};
+use crate::config::models::{
+    ModelRef, ModelsConfig, ProviderConfig, ProviderKind, WorkerConfig, role_key,
+};
 
 mod anthropic;
 mod broker;
@@ -72,6 +75,8 @@ mod offer;
 mod openai;
 pub(crate) mod outbound_wait;
 mod output_cap;
+#[cfg(unix)]
+mod peer_socket;
 mod raw;
 // FIX 462: realtime voice sessions on a voice-loop run.
 mod realtime_voice;
@@ -124,6 +129,7 @@ pub(crate) use media::AgentMediaCall;
 #[cfg(oneiron_test_support)]
 pub(crate) use media::JobSpendLedger;
 pub(crate) use media::RungVoices;
+// L9-15: a stub worker in custody as a socket launch, for the test door only.
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::{OfferEndpoint, ServedOffer};
 pub(crate) use raw::{InjectedRuns, RawInference, funded_run};
@@ -147,6 +153,8 @@ pub use status::{
     TaggerStatus,
 };
 pub use token_ratio::TokenRatios;
+#[cfg(all(oneiron_test_support, any(target_os = "linux", target_os = "macos")))]
+pub(crate) use worker_host::socket_launch_door;
 pub(crate) use worker_host::start_worker_controller;
 pub(crate) use worker_host::{
     install_snapshot_runtime, permit_worker_launch, session_allocations_for_vault,
@@ -486,21 +494,37 @@ fn build_provider(
     Ok(Some(backend))
 }
 
-/// The rerank client for `provider`'s reranker `models`: over the
-/// provider's own HTTP client, or, for a `key_secret` key, over the
-/// credential broker at `site` with the key read at `keys` (L9-12), as the
-/// offer's T0 custody says.
+/// The rerank client for provider `name`'s reranker `models`: over the
+/// provider's own HTTP client; for a `key_secret` key, over the credential
+/// broker at `site` with the key read at `keys` (L9-12), as the offer's T0
+/// custody says; or, for a provider its `listen = "unix"` worker rows serve
+/// (L9-15), on those workers' sockets alone. Beside it, that last client's
+/// on-device alternative, when this process launches those workers: the
+/// same client, whose every call stays on this device.
 fn build_reranker(
+    name: &str,
     provider: &ProviderConfig,
     models: &[ModelRef],
+    workers: &[WorkerConfig],
     site: Option<&Result<broker::BrokerSite, String>>,
     keys: Option<&Arc<dyn KeyDoor>>,
-) -> anyhow::Result<Arc<dyn SingleRouteBackend>> {
+) -> anyhow::Result<(Arc<dyn SingleRouteBackend>, Option<NativeLocal>)> {
     anyhow::ensure!(
         provider.siwc.is_none(),
         "SIWC credentials serve Responses, not reranking"
     );
-    let transport = if provider.key_secret.is_some() {
+    let socket_served = workers
+        .iter()
+        .any(|row| row.binding.provider == name && row.listens_on_socket());
+    let mut socket_workers = BTreeMap::new();
+    let transport = if socket_served {
+        let socket = rerank::SocketRerank::new(
+            worker_host::socket_routes(name, provider, workers),
+            Duration::from_secs(provider.timeout_secs),
+        );
+        socket_workers = socket.workers();
+        rerank::RerankTransport::Socket(socket)
+    } else if provider.key_secret.is_some() {
         rerank::RerankTransport::Broker(broker_rerank::BrokerRerank::new(provider, site, keys)?)
     } else {
         rerank::RerankTransport::Direct(http::ProviderHttp::new(provider, http::KeyStyle::Bearer)?)
@@ -509,7 +533,13 @@ fn build_reranker(
         .iter()
         .map(|model| Ok((engine_model_id(model, provider)?, model.model.clone())))
         .collect::<anyhow::Result<_>>()?;
-    Ok(Arc::new(rerank::RerankBackend::new(transport, wire_models)))
+    let backend: Arc<dyn SingleRouteBackend> =
+        Arc::new(rerank::RerankBackend::new(transport, wire_models));
+    let on_device = (!socket_workers.is_empty()).then(|| NativeLocal {
+        backend: Arc::clone(&backend),
+        workers: socket_workers,
+    });
+    Ok((backend, on_device))
 }
 
 /// The output ceiling a provider's wire carries.
@@ -568,9 +598,12 @@ fn rung(
     })
 }
 
-/// A provider's on-device alternative (I2-LOCAL): one chat backend over the
-/// native channels of the managed EXL3 workers bound to it and nothing else,
-/// and the id of the worker that serves each wire model.
+/// A provider's on-device alternative (I2-LOCAL): one backend over channels
+/// checked against the supervised children of the managed workers bound to
+/// it and nothing else, and the id of the worker that serves each wire
+/// model. For chat, the native channels of its EXL3 workers; for the
+/// reranker, the Unix sockets of its `listen = "unix"` llama.cpp workers
+/// (L9-15).
 #[cfg_attr(not(unix), allow(dead_code))]
 struct NativeLocal {
     backend: Arc<dyn SingleRouteBackend>,
@@ -668,8 +701,8 @@ fn speaks_native_local(provider: &ProviderConfig) -> bool {
 
 /// `model` on `provider` over `native` alone, as a rung at `position`: the
 /// on-device alternative of the rung [`rung`] builds for it (I2-LOCAL), with
-/// the same model id, wire model and prompt. `None` when no supervised native
-/// worker serves its wire model.
+/// the same model id, wire model and prompt, a rerank rung when `rerank`.
+/// `None` when no supervised worker serves its wire model.
 fn native_rung(
     name: &str,
     provider: &ProviderConfig,
@@ -677,12 +710,13 @@ fn native_rung(
     model: &ModelRef,
     position: usize,
     prompt: Option<String>,
+    rerank: bool,
 ) -> Option<LadderRung> {
     if !native.workers.contains_key(&model.model) {
         return None;
     }
     let id = engine_model_id(model, provider).ok()?;
-    let offer = match native_local_offer(provider, id.clone(), &model.model, native) {
+    let offer = match native_local_offer(provider, id.clone(), &model.model, native, rerank) {
         Ok(offer) => offer,
         Err(error) => {
             tracing::warn!(provider = %name, %error, "model has no on-device offer");

@@ -1789,6 +1789,43 @@ broker has no rerank shape yet) refuses the same way. The request
 never names the model, the endpoint or the lease; the server holds them, for
 MCP, HTTP and WebSocket recall alike.
 
+### A reranker on its own Unix socket
+
+A managed llama.cpp worker row can serve the reranker on a Unix socket of
+its own instead of its provider's loopback port (L9-15):
+
+```toml
+[models.providers.house-rerank]
+kind = "local-openai-compat"
+base_url = "http://127.0.0.1:8081"   # names the offer's origin; nothing listens here
+
+[models.roles.reranker]
+model = "house-rerank:<the reranker's wire id>"
+
+[models.workers.house-rerank]
+model = "house-rerank:<the reranker's wire id>"
+kind = "llama_cpp"
+listen = "unix"
+weights_manifest = "/srv/models/reranker.json"   # or a house catalog id in `weights`
+server = "/opt/llama.cpp/llama-server"
+server_sha256 = "<its SHA-256>"
+```
+
+Its supervisor starts llama-server with `--reranking` and `--host` set to a
+socket of each launch's own, `<runtime root>/sock/<id>-<launch>.sock`, and
+reaches it there alone: its liveness and `/metrics`, its qualification (one
+rerank that names no model, whose reply names the launch's alias, then that
+alias's manifest) and every rerank batch. Each qualification and rerank
+exchange opens a connection that is checked against the launch's supervised
+child first, as the native EXL3 channel is, so on Linux and macOS the
+reranker seat gets an on-device view (I2-LOCAL). Config refuses the row on
+other systems, on any kind but `llama_cpp`, on an external row, and on a
+provider that another role or a media seat names, or whose other reranker
+models no such row serves: nothing listens on that provider's `base_url`.
+Only the process that launches the worker reaches it; another process's
+reranker on that provider sends nothing. Recall still sends a device-only
+row empty: it does not take the seat's on-device view yet.
+
 ## 9. The decision read
 
 decide()'s escalation rung reads the `local_reasoner` model as one pack: the

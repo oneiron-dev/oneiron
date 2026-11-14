@@ -70,6 +70,7 @@ pub use training::{TRAINING_SERVICE_UNIT, TrainingConnectorSettings, TrainingSet
 pub use voice::VoiceSettings;
 pub use workers::{
     ArtifactSource, ManagedLaunch, NativeServer, WorkerArtifact, WorkerConfig, WorkerEnvelope,
+    WorkerListen,
 };
 
 use levels::{RoleFile, Shorthand};
@@ -617,6 +618,7 @@ impl ModelsFile {
         let planner = self.planner.resolve()?;
         let training = self.training.resolve()?;
         let workers = workers::resolve(self.workers, &providers, base)?;
+        workers::refuse_socket_provider_off_reranker(&workers, &roles, &media)?;
         let mut models = ModelsConfig {
             providers,
             roles,

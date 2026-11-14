@@ -209,7 +209,7 @@ impl ProcessLauncher {
             runtime: CacheDigest::new(runtime.as_str()).ok(),
             ..CacheIdentity::default()
         };
-        let path = self.record(installation, &manifest, None, pins, None)?;
+        let path = self.record(installation, &manifest, None, pins, None, None)?;
         let script = match self.row.kind {
             WorkerKind::VoxCpm2 => VOXCPM2_WORKER,
             _ => ASR_WORKER,
