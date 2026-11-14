@@ -217,6 +217,14 @@ impl Vault {
             batch.insert(hash, entry.clone());
             staged.push((hash, entry));
         }
+        // The preflight and the write order take rows: these staged rows are
+        // newly signed and always open.
+        let staged_rows: Vec<(AuthorityEntryHash, FoldRow)> = staged
+            .iter()
+            .map(|(hash, entry)| (*hash, FoldRow::Open((*entry).clone())))
+            .collect();
+        let staged_row_refs: Vec<(AuthorityEntryHash, &FoldRow)> =
+            staged_rows.iter().map(|(hash, row)| (*hash, row)).collect();
         // A key a handoff retired signs nothing new here (engine-crates-03).
         // An adopted checkpoint image answers for the history it covers.
         // Where the fold needs history this batch supplies, the fold with
@@ -229,21 +237,24 @@ impl Vault {
                     &self.store,
                     self.privacy_posture(),
                     wtxn,
-                    &staged,
+                    &staged_row_refs,
                 )?),
                 super::adopted_evidence::adopted_evidence_in_txn(&self.store, wtxn)?,
             )
         };
         for (entry, occurred, learned_at) in entries {
+            // A newly signed row always opens: the row-taking doors read it,
+            // and this batch's rows the walk reads, as open rows.
+            let row = FoldRow::Open(entry.clone());
             if let Some(fold) = &local
-                && !super::retired_signers::authority_row_resident(&self.store, wtxn, entry)?
+                && !super::retired_signers::authority_row_resident(&self.store, wtxn, &row)?
                 && super::door_refuses_retired_standing(
                     &self.store,
                     fold,
                     &authority_entry_hash(entry)?,
-                    entry,
+                    &row,
                     &mut |hash| match batch.get(hash) {
-                        Some(row) => Ok(Some(row.clone())),
+                        Some(entry) => Ok(Some(FoldRow::Open(entry.clone()))),
                         None => super::retired_signers::door_ancestor_row(
                             &self.store,
                             wtxn,
@@ -302,7 +313,7 @@ impl Vault {
         let order = if staged.len() < 2 {
             (0..staged.len()).collect()
         } else {
-            super::import_order::write_stage_order(&self.store, wtxn, &staged)?
+            super::import_order::write_stage_order(&self.store, wtxn, &staged_row_refs)?
         };
         let mut ops: Vec<_> = ops.into_iter().map(Some).collect();
         let ops: Vec<_> = order
@@ -332,8 +343,14 @@ impl Vault {
         if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
-        decode_stored_authority_log_body(&self.store, &rtxn, &raw[ENTITY_METADATA_HEADER_LEN..])
-            .map(Some)
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        let row = decode_stored_authority_fold_row(&self.store, &rtxn, body)?;
+        match row.open() {
+            Some(entry) => Ok(Some(entry.clone())),
+            // This door reads one row by id, not the vault's history as this
+            // install reads it: a row that does not open refuses.
+            None => Err(authority_overlay_unavailable()),
+        }
     }
 
     /// The status of the AUTHORITY_LOG entry `hash` names, read in one
@@ -359,15 +376,20 @@ impl Vault {
             if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
                 return Err(Error::InvalidEntityType(header.entity_type));
             }
-            let entry = decode_stored_authority_log_body(
+            let row = decode_stored_authority_fold_row(
                 &self.store,
                 &rtxn,
                 &raw[ENTITY_METADATA_HEADER_LEN..],
             )?;
+            // A stored row always wins over coverage, but a row that does
+            // not open is not the entry: it refuses.
+            let Some(entry) = row.open() else {
+                return Err(authority_overlay_unavailable());
+            };
             // The id is the hash's first 16 bytes; a stored entry with
             // another full hash is a different entry.
-            if authority_entry_hash(&entry)? == *hash {
-                return Ok(AuthorityEntryStatus::Stored(entry));
+            if authority_entry_hash(entry)? == *hash {
+                return Ok(AuthorityEntryStatus::Stored(entry.clone()));
             }
         }
         let adopted = super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(

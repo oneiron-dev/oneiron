@@ -84,7 +84,7 @@ pub(crate) fn preflight_authority_rows_in_txn(
     store: &Store,
     posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,
-    rows: &[(AuthorityEntryHash, &AuthorityLogEntry)],
+    rows: &[(AuthorityEntryHash, &FoldRow)],
 ) -> Result<AuthorityAdmissionView> {
     preflight_authority_rows_beside_in_txn(store, posture, txn, rows, &|| Ok(BTreeMap::new()))
 }
@@ -99,7 +99,7 @@ pub(crate) fn preflight_authority_rows_beside_in_txn(
     store: &Store,
     posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,
-    rows: &[(AuthorityEntryHash, &AuthorityLogEntry)],
+    rows: &[(AuthorityEntryHash, &FoldRow)],
     beside: RowsBeside<'_>,
 ) -> Result<AuthorityAdmissionView> {
     let refusal = match authority_view_readonly_for_store_in_txn(store, posture, txn) {
@@ -114,7 +114,7 @@ pub(crate) fn preflight_authority_rows_beside_in_txn(
     }
     let mut arriving: BTreeMap<_, _> = rows
         .iter()
-        .map(|(hash, entry)| (*hash, (*entry).clone()))
+        .map(|(hash, row)| (*hash, (*row).clone()))
         .collect();
     match authority_view_with_rows_for_store_in_txn(store, posture, txn, &arriving) {
         Ok(ArrivingFold::Complete(view)) => return Ok(AuthorityAdmissionView { view }),
@@ -125,16 +125,16 @@ pub(crate) fn preflight_authority_rows_beside_in_txn(
         return Err(refusal);
     };
     let mut grew = false;
-    for (hash, entry) in beside {
+    for (hash, row) in beside {
         if arriving.contains_key(&hash)
             || !matches!(
-                super::retired_signers::authority_row_resident(store, txn, &entry),
+                super::retired_signers::authority_row_resident(store, txn, &row),
                 Ok(false)
             )
         {
             continue;
         }
-        arriving.insert(hash, entry);
+        arriving.insert(hash, row);
         grew = true;
     }
     if !grew {

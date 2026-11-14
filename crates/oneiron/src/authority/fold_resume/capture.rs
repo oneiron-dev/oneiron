@@ -211,17 +211,11 @@ impl Once {
             return None;
         }
         let final_merged = final_merged?;
-        let issuers = crate::authority::log_structure::authority_structure(
-            by_hash.values().filter_map(FoldRow::open),
-        )
-        .issuers;
+        let issuers =
+            crate::authority::log_structure::authority_structure(by_hash.values()).issuers;
         let uncounted = by_hash
             .iter()
-            .filter(|(_, row)| {
-                row.open().is_some_and(|entry| {
-                    crate::authority::log_budget::is_uncounted(entry, &issuers)
-                })
-            })
+            .filter(|(_, row)| crate::authority::log_budget::is_uncounted(row, &issuers))
             .map(|(hash, _)| *hash)
             .collect::<BTreeSet<_>>();
         let frontier =
@@ -261,8 +255,7 @@ impl Once {
             .collect();
         let missing_parents = by_hash
             .values()
-            .filter_map(FoldRow::open)
-            .flat_map(|entry| entry.parent_hashes.iter())
+            .flat_map(|row| row.parent_hashes().iter())
             .filter(|parent| !by_hash.contains_key(*parent))
             .copied()
             .collect();

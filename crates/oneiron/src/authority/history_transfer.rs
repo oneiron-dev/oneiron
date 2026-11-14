@@ -16,15 +16,15 @@ pub(super) use page::{DecodedRow, PageVerdict, decode_page_in_txn, page_root};
 pub(super) fn history_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-) -> Result<BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>> {
+) -> Result<BTreeMap<AuthorityEntryHash, (Vec<u8>, FoldRow)>> {
     let mut history = BTreeMap::new();
     for (id, bytes) in authority_log_rows_in_txn(&vault.store, txn)? {
-        let entry = decode_stored_authority_log_body(&vault.store, txn, &bytes)?;
-        let hash = authority_entry_hash(&entry)?;
+        let row = decode_stored_authority_fold_row(&vault.store, txn, &bytes)?;
+        let hash = row.hash()?;
         if authority_log_entity_id_from_hash(&hash)? != id {
             return Err(Error::CorruptedIndex("authority history key"));
         }
-        history.insert(hash, (bytes, entry));
+        history.insert(hash, (bytes, row));
     }
     Ok(history)
 }
@@ -34,7 +34,7 @@ pub(super) fn history_in_txn(
 fn refuse_retired_standing(
     store: &crate::store::Store,
     fold: &AuthorityFold,
-    merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, FoldRow)>,
     evidence: Option<&AdoptedEvidence>,
     arriving: &[AuthorityEntryHash],
 ) -> Result<()> {
@@ -52,17 +52,21 @@ fn refuse_retired_standing(
 /// not flag lands as before.
 fn flags_retired_standing(
     fold: &AuthorityFold,
-    merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, FoldRow)>,
     evidence: Option<&AdoptedEvidence>,
     arriving: &[AuthorityEntryHash],
 ) -> Result<bool> {
     for hash in arriving {
-        let Some((_, entry)) = merged.get(hash) else {
+        let Some((_, row)) = merged.get(hash) else {
             continue;
         };
-        if fold.stands_on_retired_key(hash, entry, &mut |parent| match merged.get(parent) {
+        if fold.stands_on_retired_key(hash, row, &mut |parent| match merged.get(parent) {
             Some((_, row)) => Ok(Some(row.clone())),
-            None => evidence.map_or(Ok(None), |evidence| evidence.ancestor(parent)),
+            None => evidence.map_or(Ok(None), |evidence| {
+                evidence
+                    .ancestor(parent)
+                    .map(|entry| entry.map(FoldRow::Open))
+            }),
         })? {
             return Ok(true);
         }
@@ -86,24 +90,24 @@ fn retired_standing_refusal() -> Error {
 fn retired_standing(
     store: &crate::store::Store,
     fold: &AuthorityFold,
-    merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, FoldRow)>,
     evidence: Option<&AdoptedEvidence>,
     arriving: &[AuthorityEntryHash],
 ) -> Result<Option<AuthorityEntryHash>> {
     for hash in arriving {
-        let Some((_, entry)) = merged.get(hash) else {
+        let Some((_, row)) = merged.get(hash) else {
             continue;
         };
-        if super::door_refuses_retired_standing(
-            store,
-            fold,
-            hash,
-            entry,
-            &mut |parent| match merged.get(parent) {
-                Some((_, row)) => Ok(Some(row.clone())),
-                None => evidence.map_or(Ok(None), |evidence| evidence.ancestor(parent)),
-            },
-        )? {
+        if super::door_refuses_retired_standing(store, fold, hash, row, &mut |parent| match merged
+            .get(parent)
+        {
+            Some((_, row)) => Ok(Some(row.clone())),
+            None => evidence.map_or(Ok(None), |evidence| {
+                evidence
+                    .ancestor(parent)
+                    .map(|entry| entry.map(FoldRow::Open))
+            }),
+        })? {
             return Ok(Some(*hash));
         }
     }
@@ -135,17 +139,27 @@ impl<'a> AdoptedPrefix<'a> {
     }
 }
 
+/// Whether `row` is a genesis: an opened Genesis op, or a sealed row whose
+/// standing is Genesis. Both read from the envelope, so the root is the same
+/// before and after the row's key arrives.
+fn is_genesis_row(row: &FoldRow) -> bool {
+    match row {
+        FoldRow::Open(entry) => matches!(entry.op, AuthorityOp::Genesis { .. }),
+        FoldRow::PassThrough(public) => {
+            matches!(public.standing(), PublicStanding::Genesis { .. })
+        }
+    }
+}
+
 /// The one genesis among `history`'s rows and, on an adopted vault,
 /// `adopted`'s pin; more than one refuses.
 fn import_root(
-    history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, FoldRow)>,
     adopted: Option<AdoptedPrefix<'_>>,
 ) -> Result<Option<AuthorityVaultId>> {
     let mut roots: BTreeSet<_> = history
         .iter()
-        .filter_map(|(hash, (_, entry))| {
-            matches!(entry.op, AuthorityOp::Genesis { .. }).then_some(*hash)
-        })
+        .filter_map(|(hash, (_, row))| is_genesis_row(row).then_some(*hash))
         .collect();
     roots.extend(adopted.map(|adopted| adopted.genesis));
     if roots.len() > 1 {
@@ -157,7 +171,7 @@ fn import_root(
 /// Whether `hash` is held for an imported row's parent check: in `history`,
 /// or covered by the adopted image.
 fn parent_held(
-    history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, FoldRow)>,
     adopted: Option<AdoptedPrefix<'_>>,
     hash: &AuthorityEntryHash,
 ) -> bool {
@@ -165,16 +179,16 @@ fn parent_held(
 }
 
 fn history_root(
-    history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, FoldRow)>,
     adopted: Option<AdoptedPrefix<'_>>,
 ) -> Result<Option<AuthorityVaultId>> {
     let root = import_root(history, adopted)?;
-    for (_, entry) in history.values() {
-        if !matches!(entry.op, AuthorityOp::Genesis { .. }) && entry.vault_id != root {
+    for (_, row) in history.values() {
+        if !is_genesis_row(row) && row.vault_id() != root {
             return Err(invalid_authority());
         }
-        if entry
-            .parent_hashes
+        if row
+            .parent_hashes()
             .iter()
             .any(|hash| !parent_held(history, adopted, hash))
         {
@@ -193,7 +207,7 @@ fn history_root(
 /// (CALLS: OF-469 slice E full export on an adopted vault).
 fn unheld_prefix(
     adopted: &VerifiedAuthorityCheckpoint,
-    history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, FoldRow)>,
 ) -> Option<Error> {
     let missing: BTreeSet<AuthorityEntryHash> = adopted
         .image()
@@ -214,15 +228,18 @@ fn unheld_prefix(
 /// The rows an import's consent structure reads past the `resident` ones on
 /// a vault that adopted a checkpoint image: the bodies the image carries of
 /// rows not stored here, as [`super::import_order::write_stage_order`] reads
-/// them. None of them is resident.
-fn carried_structure<'a>(
-    evidence: Option<&'a AdoptedEvidence>,
-    resident: &'a BTreeSet<AuthorityEntryHash>,
-) -> impl Iterator<Item = &'a AuthorityLogEntry> {
+/// them. None of them is resident. The carried bodies are whole entries (the
+/// image is out of scope), wrapped here as open rows; the caller chains them
+/// past its resident rows.
+fn carried_structure(
+    evidence: Option<&AdoptedEvidence>,
+    resident: &BTreeSet<AuthorityEntryHash>,
+) -> Vec<FoldRow> {
     evidence
         .into_iter()
-        .flat_map(move |evidence| evidence.carried_past(resident))
-        .map(|(_, entry)| entry)
+        .flat_map(|evidence| evidence.carried_past(resident))
+        .map(|(_, entry)| FoldRow::Open(entry.clone()))
+        .collect()
 }
 
 /// The verified image this vault adopted, as an import reads it, and its
@@ -270,9 +287,8 @@ impl Vault {
         let mut emitted = BTreeSet::new();
         let mut result = Vec::with_capacity(history.len());
         while !history.is_empty() {
-            let Some(hash) = history.iter().find_map(|(hash, (_, entry))| {
-                entry
-                    .parent_hashes
+            let Some(hash) = history.iter().find_map(|(hash, (_, row))| {
+                row.parent_hashes()
                     .iter()
                     .all(|parent| emitted.contains(parent))
                     .then_some(*hash)
@@ -312,17 +328,17 @@ impl Vault {
         )?;
         let mut decoded = Vec::with_capacity(blobs.len());
         for bytes in blobs {
-            let entry = open_carried_authority_body_in_txn(&self.store, &txn, bytes, overlays)?;
-            decoded.push((authority_entry_hash(&entry)?, bytes.clone(), entry));
+            let row = decode_carried_authority_fold_row_in_txn(&self.store, &txn, bytes, overlays)?;
+            decoded.push((row.hash()?, bytes.clone(), row));
         }
         let mut merged = history_in_txn(self, &txn)?;
         let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
         let (adopted, evidence) = adopted_context_in_txn(&self.store, &txn)?;
         let prefix = adopted.as_deref().map(AdoptedPrefix::of);
-        for (hash, bytes, entry) in &decoded {
+        for (hash, bytes, row) in &decoded {
             merged
                 .entry(*hash)
-                .or_insert_with(|| (bytes.clone(), entry.clone()));
+                .or_insert_with(|| (bytes.clone(), row.clone()));
         }
         let arriving: Vec<AuthorityEntryHash> = decoded
             .iter()
@@ -345,12 +361,15 @@ impl Vault {
         let mut ops = Vec::new();
         // The store door judges each row against the rows already staged
         // (H72), so stage each after its parents, its consent and its
-        // signer's lower sequences, whatever order the caller gave.
+        // signer's lower sequences, whatever order the caller gave. `data`
+        // stays the original bytes, so a sealed row that does not open lands
+        // byte-identical and opens once its key arrives.
+        let carried = carried_structure(evidence.as_deref(), &resident);
         let stored = merged
             .iter()
             .filter(|(hash, _)| resident.contains(*hash))
-            .map(|(_, (_, entry))| entry)
-            .chain(carried_structure(evidence.as_deref(), &resident));
+            .map(|(_, (_, row))| row)
+            .chain(carried.iter());
         let own_roots = super::log_structure::LocalRoots::read_in_txn(&self.store, &txn)?;
         for (hash, bytes, _) in
             super::import_order::import_order(stored, &resident, own_roots, decoded)
@@ -654,8 +673,8 @@ impl Vault {
             .map(|row| row.seq);
         let seq = history
             .values()
-            .filter(|(_, entry)| entry.signer_key() == &signer_key)
-            .map(|(_, entry)| entry.seq)
+            .filter(|(_, row)| row.signer_key() == &signer_key)
+            .map(|(_, row)| row.seq())
             .chain(covered)
             .max()
             .unwrap_or(0)

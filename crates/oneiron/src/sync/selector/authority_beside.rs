@@ -9,7 +9,7 @@ use std::sync::{Arc, OnceLock};
 use loro::LoroMap;
 
 use crate::authority::{
-    AuthorityEntryHash, AuthorityLogEntry, authority_entry_hash, decode_authority_log_entry_body,
+    AuthorityEntryHash, FoldRow, authority_entry_hash, decode_authority_log_entry_body,
     validate_authority_log_entry_body_bytes,
 };
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -26,7 +26,7 @@ pub(in crate::sync) struct AuthorityBeside(Arc<Gathered>);
 
 struct Gathered {
     blobs: Vec<Vec<u8>>,
-    rows: OnceLock<BTreeMap<AuthorityEntryHash, AuthorityLogEntry>>,
+    rows: OnceLock<BTreeMap<AuthorityEntryHash, FoldRow>>,
 }
 
 impl AuthorityBeside {
@@ -64,7 +64,7 @@ impl AuthorityBeside {
 
     /// The gathered rows, decoded, by hash. A blob that is no canonical
     /// authority row is left out: its own door refuses it.
-    pub(in crate::sync) fn rows(&self) -> Result<BTreeMap<AuthorityEntryHash, AuthorityLogEntry>> {
+    pub(in crate::sync) fn rows(&self) -> Result<BTreeMap<AuthorityEntryHash, FoldRow>> {
         Ok(self
             .0
             .rows
@@ -80,7 +80,7 @@ impl AuthorityBeside {
                     if let Ok(entry) = decode_authority_log_entry_body(body)
                         && let Ok(hash) = authority_entry_hash(&entry)
                     {
-                        rows.insert(hash, entry);
+                        rows.insert(hash, FoldRow::Open(entry));
                     }
                 }
                 rows

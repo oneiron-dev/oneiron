@@ -22,7 +22,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::store::Store;
 
-use super::retired_signers::entry_signer_keys;
+use super::log_structure::row_signatures_verified;
+use super::retired_signers::row_signer_keys;
 use super::*;
 
 /// A key that a handoff this vault holds retired signed another row, which a
@@ -255,20 +256,23 @@ pub(crate) fn door_refuses_retired_standing(
     store: &Store,
     fold: &AuthorityFold,
     hash: &AuthorityEntryHash,
-    entry: &AuthorityLogEntry,
-    row: &mut dyn FnMut(&AuthorityEntryHash) -> Result<Option<AuthorityLogEntry>>,
+    entry: &FoldRow,
+    row: &mut dyn FnMut(&AuthorityEntryHash) -> Result<Option<FoldRow>>,
 ) -> Result<bool> {
     if !fold.stands_on_retired_key(hash, entry, row)? {
         return Ok(false);
     }
-    if entry.validate_shape().is_err() || verify_entry_signatures(entry).is_err() {
+    if entry
+        .open()
+        .is_some_and(|entry| entry.validate_shape().is_err())
+        || !row_signatures_verified(entry)
+    {
         return Ok(true);
     }
-    for signer in entry_signer_keys(entry).filter(|key| fold.retired_keys.contains(*key)) {
+    for signer in row_signer_keys(entry).filter(|key| fold.retired_keys.contains(*key)) {
         let mut handoffs = BTreeSet::new();
         for held in &fold.closed_handoffs {
-            if row(held)?
-                .is_some_and(|handoff| entry_signer_keys(&handoff).any(|key| key == signer))
+            if row(held)?.is_some_and(|handoff| row_signer_keys(&handoff).any(|key| key == signer))
             {
                 handoffs.insert(*held);
             }

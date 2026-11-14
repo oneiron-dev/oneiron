@@ -121,7 +121,10 @@ pub(super) fn fold_tail(
         order
             .iter()
             .filter(|hash| {
-                crate::authority::log_budget::is_uncounted(new_rows[*hash], &once.issuers)
+                crate::authority::log_budget::is_uncounted(
+                    &FoldRow::Open((*new_rows[*hash]).clone()),
+                    &once.issuers,
+                )
             })
             .copied(),
     );

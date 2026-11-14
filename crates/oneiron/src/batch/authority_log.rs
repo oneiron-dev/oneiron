@@ -191,9 +191,10 @@ pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
     beside: crate::store::authority_rows::RowsBeside<'_>,
 ) -> Result<()> {
     // A sealed row opens with its overlay record, carried beside it (census
-    // L5-22); the decode validates the body.
-    let entry = crate::authority::open_vault_authority_body_in_txn(store, wtxn, data)?;
-    let entry_hash = oneiron_authority::authority::authority_entry_hash(&entry)?;
+    // L5-22); the decode validates the body. A row that does not open lands
+    // as structure (PassThrough).
+    let row = crate::authority::decode_vault_authority_fold_row_in_txn(store, wtxn, data)?;
+    let entry_hash = row.hash()?;
     // ONE-1604-D1 mirror at the replicated door: content-address + append-only
     // are STORE checks, not ancestry checks — the door stays structural +
     // origin-sig + vault_id (ONE-1604-D2). Ingest observation happens only
@@ -202,12 +203,31 @@ pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
     // the eviction itself belongs to the `apply_put` chokepoint that writes
     // the row, so this validator stays a pure check.
     let _ = check_authority_log_store_key(store, wtxn, id, &entry_hash, data)?;
-    let entry_vault_id = match &entry.op {
-        oneiron_authority::authority::AuthorityOp::Genesis { .. } => {
-            oneiron_authority::authority::genesis_vault_id(&entry)?
+    // A genesis row's vault is its own hash and it names none
+    // (`genesis_vault_id`); a sealed genesis whose record does not open here
+    // is held to the same from its envelope. Any other row names its vault.
+    let entry_vault_id = match &row {
+        oneiron_authority::authority::FoldRow::Open(entry)
+            if matches!(
+                entry.op,
+                oneiron_authority::authority::AuthorityOp::Genesis { .. }
+            ) =>
+        {
+            oneiron_authority::authority::genesis_vault_id(entry)?
         }
-        _ => entry
-            .vault_id
+        oneiron_authority::authority::FoldRow::PassThrough(public)
+            if matches!(
+                public.standing(),
+                oneiron_authority::authority::PublicStanding::Genesis { .. }
+            ) =>
+        {
+            if row.vault_id().is_some() {
+                return Err(oneiron_authority::authority::invalid_authority());
+            }
+            entry_hash
+        }
+        _ => row
+            .vault_id()
             .ok_or(Error::Record(RecordError::InvalidAuthorityLogBody(
                 "missing authority vault id",
             )))?,
@@ -220,7 +240,7 @@ pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
         store,
         posture,
         wtxn,
-        &[(entry_hash, &entry)],
+        &[(entry_hash, &row)],
         beside,
     )?;
     let local_vault_id =
@@ -234,12 +254,12 @@ pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
             "foreign authority log vault id",
         )));
     }
-    let resident = crate::authority::authority_row_resident(store, wtxn, &entry)?;
+    let resident = crate::authority::authority_row_resident(store, wtxn, &row)?;
     // H72: a key no row admitted signs no valid row. Its row waits for that
     // enrollment and is never stored before it, so a stranger's chain never
     // reaches the fold. A key the log's structure admits, such as an owner
     // key a signed rotation named, stands before the fold can admit it.
-    if !resident && !crate::authority::signer_has_standing(store, wtxn, &local_fold, &entry)? {
+    if !resident && !crate::authority::signer_has_standing(store, wtxn, &local_fold, &row)? {
         return Err(Error::Record(RecordError::AuthorityLogSignerPending {
             id: *id,
         }));
@@ -258,7 +278,7 @@ pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
             store,
             &local_fold,
             &entry_hash,
-            &entry,
+            &row,
             &mut |hash| crate::authority::door_ancestor_row(store, wtxn, evidence.as_deref(), hash),
         )?
     {

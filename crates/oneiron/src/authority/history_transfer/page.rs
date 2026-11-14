@@ -11,18 +11,18 @@ use super::*;
 /// On a vault that adopted a checkpoint image, `adopted` adds its prefix
 /// ([`AdoptedPrefix`]).
 pub(in crate::authority) fn page_root(
-    history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, FoldRow)>,
     resident: &BTreeSet<AuthorityEntryHash>,
     adopted: Option<AdoptedPrefix<'_>>,
 ) -> Result<Option<AuthorityVaultId>> {
     let root = import_root(history, adopted)?;
-    for (hash, (_, entry)) in history {
-        if !matches!(entry.op, AuthorityOp::Genesis { .. }) && entry.vault_id != root {
+    for (hash, (_, row)) in history {
+        if !is_genesis_row(row) && row.vault_id() != root {
             return Err(invalid_authority());
         }
         if !resident.contains(hash)
-            && entry
-                .parent_hashes
+            && row
+                .parent_hashes()
                 .iter()
                 .any(|parent| !parent_held(history, adopted, parent))
         {
@@ -85,10 +85,10 @@ impl Vault {
                     .filter(|(hash, _, _)| !resident.contains(hash) && !paged.contains(hash)),
             );
         }
-        for (hash, bytes, entry) in &decoded {
+        for (hash, bytes, row) in &decoded {
             merged
                 .entry(*hash)
-                .or_insert_with(|| (bytes.clone(), entry.clone()));
+                .or_insert_with(|| (bytes.clone(), row.clone()));
         }
         let arriving: Vec<AuthorityEntryHash> = decoded
             .iter()
@@ -111,12 +111,15 @@ impl Vault {
         let mut ops = Vec::new();
         // The store door judges each row against the rows already staged
         // (H72), so stage each after its parents, its consent and its
-        // signer's lower sequences, whatever order the caller gave.
+        // signer's lower sequences, whatever order the caller gave. `data`
+        // stays the original bytes, so a sealed row that does not open lands
+        // byte-identical.
+        let carried = carried_structure(evidence.as_deref(), &resident);
         let stored = merged
             .iter()
             .filter(|(hash, _)| resident.contains(*hash))
-            .map(|(_, (_, entry))| entry)
-            .chain(carried_structure(evidence.as_deref(), &resident));
+            .map(|(_, (_, row))| row)
+            .chain(carried.iter());
         let own_roots =
             crate::authority::log_structure::LocalRoots::read_in_txn(&self.store, &txn)?;
         for (hash, bytes, _) in
@@ -186,8 +189,9 @@ pub(in crate::authority) enum PageVerdict {
 }
 
 /// One signed authority row as a page carries it: its hash, its original
-/// bytes and the entry they decode to.
-pub(in crate::authority) type DecodedRow = (AuthorityEntryHash, Vec<u8>, AuthorityLogEntry);
+/// bytes and the fold row they decode to. A sealed row whose record does not
+/// open here rides as structure; its bytes still land verbatim.
+pub(in crate::authority) type DecodedRow = (AuthorityEntryHash, Vec<u8>, FoldRow);
 
 /// A page's rows, decoded and hashed, in the caller's order, with the
 /// overlay rows the page carried beside them.
@@ -199,8 +203,8 @@ pub(in crate::authority) fn decode_page_in_txn(
 ) -> Result<Vec<DecodedRow>> {
     let mut decoded = Vec::with_capacity(blobs.len());
     for bytes in blobs {
-        let entry = open_carried_authority_body_in_txn(store, txn, bytes, overlays)?;
-        decoded.push((authority_entry_hash(&entry)?, bytes.clone(), entry));
+        let row = decode_carried_authority_fold_row_in_txn(store, txn, bytes, overlays)?;
+        decoded.push((row.hash()?, bytes.clone(), row));
     }
     Ok(decoded)
 }

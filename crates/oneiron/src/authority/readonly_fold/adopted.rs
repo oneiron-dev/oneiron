@@ -17,7 +17,7 @@ pub(super) fn fold_adopted_in_txn(
     key: AuthorityCacheKey,
     adopted: &VerifiedAuthorityCheckpoint,
     required: &BTreeSet<AuthorityEntryHash>,
-    arriving: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    arriving: &BTreeMap<AuthorityEntryHash, FoldRow>,
 ) -> Result<Option<AuthorityTailFold>> {
     let image = adopted.image();
     // The store id is the row's content hash: a held covered row is known
@@ -34,22 +34,31 @@ pub(super) fn fold_adopted_in_txn(
             held_covered.insert(*hash);
             continue;
         }
-        let entry = decode_stored_authority_log_body(
+        // The adopted fold still takes whole entries: a stored row that
+        // does not open here refuses, as it did when no record opened it.
+        let row = decode_stored_authority_fold_row(
             store,
             txn,
             &authority_log_body_in_txn(store, txn, &id)?,
         )?;
-        let hash = authority_entry_hash(&entry)?;
+        let hash = row.hash()?;
+        let entry = row
+            .open()
+            .cloned()
+            .ok_or_else(authority_overlay_unavailable)?;
         if image.rows.contains_key(&hash) {
             held_covered.insert(hash);
         } else {
             tail.push((hash, entry));
         }
     }
-    for (hash, entry) in arriving {
+    for (hash, row) in arriving {
         if image.rows.contains_key(hash) {
             held_covered.insert(*hash);
         } else if !tail.iter().any(|(stored, _)| stored == hash) {
+            let Some(entry) = row.open() else {
+                return Err(authority_overlay_unavailable());
+            };
             tail.push((*hash, entry.clone()));
         }
     }

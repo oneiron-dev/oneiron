@@ -92,34 +92,23 @@ pub(super) fn put_overlay_in_txn(
     AUTHORITY_OVERLAY.put(store, w, &overlay.hash, &row)
 }
 
-/// What one signed AUTHORITY_LOG body of this vault reads as here.
-// A short-lived per-row read result, as `AuthorityEntryRead` is.
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum VaultAuthorityBody {
-    /// The whole entry: unsealed, or sealed and opened with its record.
-    Open(AuthorityLogEntry),
-    /// A sealed row whose record is not here, or whose subject's key is
-    /// retired: its scaffold verifies, and nothing it made counts.
-    Erased(AuthorityEntryScaffold),
-}
-
-/// Decodes `body`, a signed AUTHORITY_LOG body of this vault, in `txn`: an
-/// unsealed row as before, a sealed one opened with its `AUTHORITY_OVERLAY`
-/// record.
+/// Decodes `body`, a signed AUTHORITY_LOG body of this vault, in `txn`, as
+/// the fold takes it: an unsealed row, or a sealed one opened with its
+/// `AUTHORITY_OVERLAY` record, whole; a sealed row whose record does not
+/// open here as structure only.
 ///
 /// # Errors
-/// A body that does not verify; an overlay row that does not open under a
-/// live key, or names another subject than the row's op does.
-pub(crate) fn decode_vault_authority_body_in_txn(
+/// A body that does not verify; an overlay row that is not a sealed overlay
+/// row, or names another subject than the row's op does.
+pub(crate) fn decode_vault_authority_fold_row_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     body: &[u8],
-) -> Result<VaultAuthorityBody> {
+) -> Result<FoldRow> {
     decode_authority_body_with_overlays_in_txn(store, txn, body, None)
 }
 
-/// [`decode_vault_authority_body_in_txn`] for a body that arrives with the
+/// [`decode_vault_authority_fold_row_in_txn`] for a body that arrives with the
 /// overlay rows its route carried (census L5-22 1a-ii): a sealed body's
 /// record is this vault's `AUTHORITY_OVERLAY` row when one is held here,
 /// else its carried row, opened under this vault's custody. Nothing is
@@ -127,32 +116,33 @@ pub(crate) fn decode_vault_authority_body_in_txn(
 /// [`stage_carried_overlays_in_txn`].
 ///
 /// # Errors
-/// As [`decode_vault_authority_body_in_txn`], and a carried row that is not
+/// As [`decode_vault_authority_fold_row_in_txn`], and a carried row that is not
 /// a sealed overlay row.
-pub(crate) fn decode_carried_authority_body_in_txn(
+pub(crate) fn decode_carried_authority_fold_row_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     body: &[u8],
     overlays: &CarriedOverlays,
-) -> Result<VaultAuthorityBody> {
+) -> Result<FoldRow> {
     decode_authority_body_with_overlays_in_txn(store, txn, body, Some(overlays))
 }
 
-/// [`decode_carried_authority_body_in_txn`] for a door that needs the whole
+/// [`decode_carried_authority_fold_row_in_txn`] for a door that needs the whole
 /// entry: a sealed body whose record does not open here answers the
 /// overlay-unavailable error (`is_authority_overlay_unavailable`).
 ///
 /// # Errors
-/// As [`decode_carried_authority_body_in_txn`], and an erased row.
+/// As [`decode_carried_authority_fold_row_in_txn`], and a row whose record
+/// does not open here.
 pub(crate) fn open_carried_authority_body_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     body: &[u8],
     overlays: &CarriedOverlays,
 ) -> Result<AuthorityLogEntry> {
-    match decode_carried_authority_body_in_txn(store, txn, body, overlays)? {
-        VaultAuthorityBody::Open(entry) => Ok(entry),
-        VaultAuthorityBody::Erased(_) => Err(authority_overlay_unavailable()),
+    match decode_carried_authority_fold_row_in_txn(store, txn, body, overlays)? {
+        FoldRow::Open(entry) => Ok(entry),
+        FoldRow::PassThrough(_) => Err(authority_overlay_unavailable()),
     }
 }
 
@@ -161,11 +151,9 @@ fn decode_authority_body_with_overlays_in_txn(
     txn: &RoTxn<'_>,
     body: &[u8],
     carried: Option<&CarriedOverlays>,
-) -> Result<VaultAuthorityBody> {
+) -> Result<FoldRow> {
     if !authority_body_is_sealed(body)? {
-        return Ok(VaultAuthorityBody::Open(open_authority_log_entry_body(
-            body, None,
-        )?));
+        return Ok(FoldRow::Open(open_authority_log_entry_body(body, None)?));
     }
     // Each path verifies the body's signatures once: with its record, or
     // over its scaffold when the record does not open here.
@@ -182,32 +170,31 @@ fn decode_authority_body_with_overlays_in_txn(
         None => None,
     };
     let Some((sealed, record)) = opened else {
-        return Ok(VaultAuthorityBody::Erased(
-            verify_authority_log_entry_scaffold(body)?,
-        ));
+        return Ok(FoldRow::PassThrough(verify_authority_public_row(body)?));
     };
     let record = decode_authority_overlay_record(&record)?;
     let entry = open_authority_log_entry_body(body, Some(&record))?;
     if authority_overlay_subject(&entry.op)? != sealed.subject {
         return Err(Error::CorruptedIndex("authority overlay subject"));
     }
-    Ok(VaultAuthorityBody::Open(entry))
+    Ok(FoldRow::Open(entry))
 }
 
-/// [`decode_vault_authority_body_in_txn`] for a door or reader that needs
+/// [`decode_vault_authority_fold_row_in_txn`] for a door or reader that needs
 /// the whole entry: a sealed row whose record does not open here answers
 /// the overlay-unavailable error (`is_authority_overlay_unavailable`).
 ///
 /// # Errors
-/// As [`decode_vault_authority_body_in_txn`], and an erased row.
+/// As [`decode_vault_authority_fold_row_in_txn`], and a row whose record
+/// does not open here.
 pub(crate) fn open_vault_authority_body_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     body: &[u8],
 ) -> Result<AuthorityLogEntry> {
-    match decode_vault_authority_body_in_txn(store, txn, body)? {
-        VaultAuthorityBody::Open(entry) => Ok(entry),
-        VaultAuthorityBody::Erased(_) => Err(authority_overlay_unavailable()),
+    match decode_vault_authority_fold_row_in_txn(store, txn, body)? {
+        FoldRow::Open(entry) => Ok(entry),
+        FoldRow::PassThrough(_) => Err(authority_overlay_unavailable()),
     }
 }
 

@@ -59,8 +59,9 @@ pub(super) fn fold_under(
     posture: crate::HostingPrivacyPosture,
     root: Option<&RecoveryRoot>,
 ) -> AuthorityFold {
+    let rows = crate::authority::fold_engine::open_rows(entries);
     fold_pinned_authority_log_for_posture(
-        entries,
+        &rows,
         &BTreeMap::new(),
         10,
         &BTreeMap::new(),

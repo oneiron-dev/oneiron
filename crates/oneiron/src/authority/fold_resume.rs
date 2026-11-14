@@ -89,6 +89,17 @@ impl RowSummary {
             world: super::world_privacy::side_world(&entry.op),
         }
     }
+
+    /// The envelope of a stored row, whether it opened here or not: a row
+    /// that passes through keeps no world, as [`RowMeta::of_row`] reads it.
+    fn of_row(row: &FoldRow) -> Self {
+        Self {
+            signer: row.signer_key().clone(),
+            seq: row.seq(),
+            parents: row.parent_hashes().to_vec(),
+            world: row.op().and_then(super::world_privacy::side_world),
+        }
+    }
 }
 
 /// Each row a base folded, by hash: a persistent map, so the next base
@@ -205,11 +216,12 @@ pub(in crate::authority) struct FoldBase {
 
 impl FoldBase {
     /// The base of `view`, a full fold of `rows` whose last once fold is
-    /// `once`.
+    /// `once`. A row that passes through is kept as its envelope summary
+    /// alone: it is never read whole and revokes no roster key.
     fn capture(
         inputs: Inputs,
         once: Once,
-        rows: &[(AuthorityEntryHash, &AuthorityLogEntry)],
+        rows: &[(AuthorityEntryHash, &FoldRow)],
         first_seen: &BTreeMap<AuthorityEntryHash, u64>,
         floors: &BTreeMap<AuthorityEntryHash, u64>,
         view: &AuthorityFold,
@@ -224,16 +236,19 @@ impl FoldBase {
             inputs: Arc::new(inputs),
             rows: rows
                 .iter()
-                .map(|(hash, entry)| (*hash, Arc::new(RowSummary::of(entry))))
+                .map(|(hash, row)| (*hash, Arc::new(RowSummary::of_row(row))))
                 .collect(),
             projected: rows
                 .iter()
-                .filter(|(_, entry)| is_projected(&entry.op))
-                .map(|(hash, entry)| (*hash, Arc::new((*entry).clone())))
+                .filter_map(|(hash, row)| {
+                    let entry = row.open()?;
+                    is_projected(&entry.op).then(|| (*hash, Arc::new(entry.clone())))
+                })
                 .collect(),
-            revokes_roster_keys: rows
-                .iter()
-                .any(|(_, entry)| super::stale_roster::revokes_roster_key(&entry.op)),
+            revokes_roster_keys: rows.iter().any(|(_, row)| {
+                row.open()
+                    .is_some_and(|entry| super::stale_roster::revokes_roster_key(&entry.op))
+            }),
             receipts: BaseReceipts {
                 first_seen: first_seen
                     .iter()
@@ -333,7 +348,7 @@ impl FoldBase {
     /// 12282).
     pub(in crate::authority) fn rows_read_with<'a>(
         &'a self,
-        tail: &[(AuthorityEntryHash, &'a AuthorityLogEntry)],
+        tail: &[(AuthorityEntryHash, &'a FoldRow)],
         reread: impl IntoIterator<Item = AuthorityEntryHash>,
     ) -> Vec<RowMeta<'a>> {
         let pinned = &self.receipts.pinned;
@@ -346,10 +361,10 @@ impl FoldBase {
             .chain(reread)
             .filter_map(|hash| Some((hash, RowMeta::summarized(hash, self.rows.get(&hash)?))))
             .collect();
-        for (hash, entry) in tail {
+        for (hash, row) in tail {
             if !self.rows.contains_key(hash) {
                 rows.entry(*hash)
-                    .or_insert_with(|| RowMeta::of(Some(*hash), *entry));
+                    .or_insert_with(|| RowMeta::of_row(Some(*hash), *row));
             }
         }
         rows.into_values().collect()
@@ -377,7 +392,7 @@ fn stale_roster_rows(
 /// A stored log and what this vault folds it under.
 #[derive(Clone, Copy)]
 pub(in crate::authority) struct StoredLog<'a> {
-    pub(in crate::authority) entries: &'a [AuthorityLogEntry],
+    pub(in crate::authority) entries: &'a [FoldRow],
     pub(in crate::authority) first_seen_at_secs: &'a BTreeMap<AuthorityEntryHash, u64>,
     pub(in crate::authority) now_secs: u64,
     pub(in crate::authority) peer_consent_roots:
@@ -394,7 +409,7 @@ pub(in crate::authority) struct StoredLog<'a> {
 #[derive(Clone, Copy)]
 pub(in crate::authority) struct StoredTail<'a> {
     /// Each stored row the base does not hold, with its hash.
-    pub(in crate::authority) tail: &'a [(AuthorityEntryHash, &'a AuthorityLogEntry)],
+    pub(in crate::authority) tail: &'a [(AuthorityEntryHash, &'a FoldRow)],
     /// The first-seen seconds of each row this fold read: the tail's, and
     /// each base row's but those the base carries.
     pub(in crate::authority) first_seen_at_secs: &'a BTreeMap<AuthorityEntryHash, u64>,
@@ -453,7 +468,7 @@ pub(in crate::authority) fn fold_stored_log(
     } = log;
     let rows: Option<Vec<_>> = entries
         .iter()
-        .map(|entry| Some((authority_entry_hash(entry).ok()?, entry)))
+        .map(|row| Some((row.hash().ok()?, row)))
         .collect();
     // A base resumes only while every row it folded is still in the log.
     if let (Some(base), Some(rows)) = (base, &rows) {
@@ -484,9 +499,8 @@ pub(in crate::authority) fn fold_stored_log(
     let inputs = Inputs::of(posture, pin, peer_consent_roots, observations);
     let capture = FoldCapture::default();
     let (consent, local) = super::fold_engine::own_log_inputs(posture, pin);
-    let fold_rows = super::fold_engine::open_rows(entries);
     let fold = super::fold_engine::fold_authority_log_inner(
-        &fold_rows,
+        entries,
         first_seen_at_secs,
         Some(now_secs),
         peer_consent_roots,
@@ -526,12 +540,20 @@ impl FoldBase {
         if *inputs != *self.inputs {
             return None;
         }
+        // A tail row that does not open here declines the resume: the caller
+        // folds the whole log instead, which judges the row as structure.
+        let mut open = BTreeMap::new();
+        for (hash, row) in tail {
+            let Some(entry) = row.open() else {
+                return None;
+            };
+            open.insert(*hash, entry);
+        }
         let once = &self.once;
         let settlement = &once.settlement;
-        let new_rows: BTreeMap<_, _> = tail
-            .iter()
+        let new_rows: BTreeMap<_, _> = open
+            .into_iter()
             .filter(|(hash, _)| !self.rows.contains_key(hash))
-            .map(|(hash, entry)| (*hash, *entry))
             .collect();
         // A row pinned here and in the base holds one receipt's values, and
         // a row the base pins and this fold did not read holds the base's

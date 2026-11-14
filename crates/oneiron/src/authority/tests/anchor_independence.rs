@@ -263,9 +263,10 @@ fn a_stale_roster_mark_never_vetoes_the_anchors_keys_in_a_world() {
         .iter()
         .map(|entry| (authority_entry_hash(entry).unwrap(), 100))
         .collect();
+    let rows = crate::authority::fold_engine::open_rows(&entries);
     let read_at = |now| {
         fold_pinned_authority_log_for_posture(
-            &entries,
+            &rows,
             &first_seen,
             now,
             &BTreeMap::new(),

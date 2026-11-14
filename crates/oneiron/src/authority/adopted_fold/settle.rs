@@ -78,10 +78,10 @@ pub(super) fn settle_tail(
         .iter()
         .copied()
         .chain(
-            judged
+            judged_rows
                 .iter()
-                .filter(|(_, entry)| {
-                    crate::authority::log_budget::is_uncounted(entry, &image.safety.issuers)
+                .filter(|(_, row)| {
+                    crate::authority::log_budget::is_uncounted(row, &image.safety.issuers)
                 })
                 .map(|(hash, _)| *hash),
         )

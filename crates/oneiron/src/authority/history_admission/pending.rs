@@ -31,6 +31,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::readonly_fold::{ArrivingFold, authority_view_with_rows_for_store_in_txn};
 use super::*;
+use crate::batch::{BatchOp, apply_ops};
+use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::side_table::{self, Raw, SideTable};
 use crate::{TimeRange, Vault};
 
@@ -90,7 +92,10 @@ pub(crate) fn pending_history_of_in_txn(
     Ok(pending_history_of(store, posture, txn, staged).unwrap_or(None))
 }
 
-/// [`pending_history_of_in_txn`], with its own faults returned.
+/// [`pending_history_of_in_txn`], with its own faults returned. `staged` are
+/// newly signed rows, always opened; they wrap as open rows for the fold-row
+/// arriving maps and resident checks, and re-encode as before for the kept
+/// bytes.
 fn pending_history_of(
     store: &Store,
     posture: HostingPrivacyPosture,
@@ -102,24 +107,29 @@ fn pending_history_of(
     }
     let mut arriving = BTreeMap::new();
     for (hash, entry) in staged {
-        if !super::super::retired_signers::authority_row_resident(store, txn, entry)? {
-            arriving.insert(*hash, (*entry).clone());
+        let row = FoldRow::Open((*entry).clone());
+        if !super::super::retired_signers::authority_row_resident(store, txn, &row)? {
+            arriving.insert(*hash, row);
         }
     }
-    if arriving.is_empty() || !arriving.values().all(|entry| grants_only(&entry.op)) {
+    if arriving.is_empty()
+        || !arriving
+            .values()
+            .all(|row| row.open().is_some_and(|entry| grants_only(&entry.op)))
+    {
         return Ok(None);
     }
     // Each row needs the history itself: its fold, with the batch rows it
     // rests on, needs it. A row that does not keeps the batch on today's
     // path.
-    for (hash, entry) in &arriving {
-        let mut own = BTreeMap::from([(*hash, entry.clone())]);
-        let mut stack = entry.parent_hashes.clone();
+    for (hash, row) in &arriving {
+        let mut own = BTreeMap::from([(*hash, row.clone())]);
+        let mut stack = row.parent_hashes().to_vec();
         while let Some(parent) = stack.pop() {
             if let Some(row) = arriving.get(&parent)
                 && own.insert(parent, row.clone()).is_none()
             {
-                stack.extend(row.parent_hashes.iter().copied());
+                stack.extend(row.parent_hashes().iter().copied());
             }
         }
         if !matches!(
@@ -136,7 +146,12 @@ fn pending_history_of(
     };
     let rows = arriving
         .iter()
-        .map(|(hash, entry)| Ok((*hash, encode_authority_log_entry_body(entry)?)))
+        .map(|(hash, row)| {
+            let entry = row.open().ok_or(crate::error::Error::InvariantViolation(
+                "pending staged row",
+            ))?;
+            Ok((*hash, encode_authority_log_entry_body(entry)?))
+        })
         .collect::<Result<Vec<_>>>()?;
     Ok(Some(PendingAuthorityHistory { request, rows }))
 }
@@ -178,23 +193,25 @@ pub(crate) fn keep_pending_in_txn(
     super::super::readonly_fold::advance_authority_cache_generation(store, txn)
 }
 
-/// The pending rows, decoded, by hash. A row whose bytes do not decode to
-/// its key is corruption.
+/// The pending rows, with their stored bytes, decoded as fold rows, by hash.
+/// A sealed row whose record does not open here waits as structure; its bytes
+/// still land verbatim. A row whose bytes do not decode to its key is
+/// corruption.
 fn pending_rows_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-) -> Result<BTreeMap<AuthorityEntryHash, AuthorityLogEntry>> {
+) -> Result<BTreeMap<AuthorityEntryHash, (Vec<u8>, FoldRow)>> {
     AUTHORITY_HISTORY_PENDING
         .scan(store, txn)?
         .into_iter()
         .map(|(hash, bytes)| {
-            let entry = open_vault_authority_body_in_txn(store, txn, &bytes)?;
-            if authority_entry_hash(&entry)? != hash {
+            let row = super::super::decode_vault_authority_fold_row_in_txn(store, txn, &bytes)?;
+            if row.hash()? != hash {
                 return Err(crate::error::Error::CorruptedIndex(
                     "authority history pending key",
                 ));
             }
-            Ok((hash, entry))
+            Ok((hash, (bytes, row)))
         })
         .collect()
 }
@@ -214,8 +231,12 @@ pub(crate) fn pending_history_request_in_txn(
     if pending.is_empty() {
         return Ok(None);
     }
+    let arriving: BTreeMap<_, _> = pending
+        .iter()
+        .map(|(hash, (_, row))| (*hash, row.clone()))
+        .collect();
     Ok(
-        match authority_view_with_rows_for_store_in_txn(store, posture, txn, &pending) {
+        match authority_view_with_rows_for_store_in_txn(store, posture, txn, &arriving) {
             Ok(ArrivingFold::NeedHistory(request)) => Some(request),
             Ok(ArrivingFold::Complete(_)) | Err(_) => None,
         },
@@ -265,7 +286,7 @@ impl Vault {
     /// [`Self::retry_pending_authority_history`] over `pending`, read before.
     fn retry_pending_rows(
         &self,
-        pending: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        pending: &BTreeMap<AuthorityEntryHash, (Vec<u8>, FoldRow)>,
     ) -> Result<()> {
         let closures: BTreeMap<_, _> = pending
             .keys()
@@ -298,10 +319,20 @@ impl Vault {
     /// One put of `rows` through the local append door, in a writer of its
     /// own that deletes them from the evidence as it stores them. The fold
     /// with them in is read first: while it needs history, no writer opens.
+    /// Open rows land through that door as before, with their time metadata,
+    /// in one put while no sealed row stands between them; a sealed row that
+    /// does not open lands alone from its stored bytes, never re-encoded,
+    /// re-sealed or re-signed, after the open rows staged before it. All
+    /// follow one combined stage order, so an open child of a sealed parent
+    /// still lands after it.
     fn land_pending_rows(
         &self,
-        rows: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        rows: &BTreeMap<AuthorityEntryHash, (Vec<u8>, FoldRow)>,
     ) -> Result<PendingLanding> {
+        let arriving: BTreeMap<_, _> = rows
+            .iter()
+            .map(|(hash, (_, row))| (*hash, row.clone()))
+            .collect();
         let now = {
             let txn = self.store.env.read_txn()?;
             if !matches!(
@@ -309,7 +340,7 @@ impl Vault {
                     &self.store,
                     self.privacy_posture(),
                     &txn,
-                    rows
+                    &arriving
                 ),
                 Ok(ArrivingFold::Complete(_))
             ) {
@@ -317,41 +348,34 @@ impl Vault {
             }
             self.instant_in_txn(&txn)?.secs()
         };
-        let entries: Vec<_> = rows
-            .values()
-            .map(|entry| {
-                (
-                    entry.clone(),
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                )
-            })
-            .collect();
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut wtxn = self.store.env.write_txn()?;
-        match self.put_authority_log_rows_in_txn(&mut wtxn, &entries, true) {
-            Ok(AuthorityPut::Stored(_)) => {}
-            Ok(AuthorityPut::Pending(_)) => return Ok(PendingLanding::Waiting),
-            // A row whose signer's enrollment has not landed waits for it,
-            // as one waiting for history does.
-            Err(error)
-                if super::super::readonly_fold::is_history_incomplete(&error)
-                    || matches!(
-                        error,
-                        crate::error::Error::Record(
-                            crate::error::RecordError::AuthorityLogSignerPending { .. }
-                        )
-                    ) =>
-            {
-                return Ok(PendingLanding::Waiting);
+        let staged: Vec<_> = rows.iter().map(|(hash, (_, row))| (*hash, row)).collect();
+        let order = super::super::import_order::write_stage_order(&self.store, &wtxn, &staged)?;
+        let at = TimeRange {
+            start: now,
+            end: now,
+        };
+        let mut open = Vec::new();
+        for index in order {
+            let (hash, row) = staged[index];
+            if let Some(entry) = row.open() {
+                open.push((entry.clone(), at, now));
+                continue;
             }
-            Err(error @ crate::error::Error::Record(_)) => {
-                return Ok(PendingLanding::Refused(error));
+            let put =
+                self.put_authority_log_rows_in_txn(&mut wtxn, &std::mem::take(&mut open), true);
+            if let Some(landing) = interrupted_landing(put)? {
+                return Ok(landing);
             }
-            Err(error) => return Err(error),
+            let put = self.put_sealed_pending_row_in_txn(&mut wtxn, &hash, &rows[&hash].0, at, now);
+            if let Some(landing) = interrupted_landing(put)? {
+                return Ok(landing);
+            }
+        }
+        let put = self.put_authority_log_rows_in_txn(&mut wtxn, &open, true);
+        if let Some(landing) = interrupted_landing(put)? {
+            return Ok(landing);
         }
         for hash in rows.keys() {
             AUTHORITY_HISTORY_PENDING.delete(&self.store, &mut wtxn, hash)?;
@@ -360,6 +384,42 @@ impl Vault {
         watch.finish()?;
         self.store.notify_proactivity_changes();
         Ok(PendingLanding::Landed)
+    }
+
+    /// Puts one pending sealed row whose record does not open here, from its
+    /// stored `bytes`, through the batch door the local append door writes
+    /// through, with the same flags and time metadata.
+    fn put_sealed_pending_row_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        hash: &AuthorityEntryHash,
+        bytes: &[u8],
+        at: TimeRange,
+        now: u64,
+    ) -> Result<AuthorityPut> {
+        let id = super::super::authority_log_entity_id_from_hash(hash)?;
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            vec![BatchOp::Put {
+                id,
+                entity_type: ENTITY_TYPE_AUTHORITY_LOG,
+                occurred: at,
+                learned_at: now,
+                row_version: None,
+                data: bytes.to_vec(),
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )?;
+        Ok(AuthorityPut::Stored(vec![id]))
     }
 
     /// Drops `refused` and every pending row standing on it from the
@@ -391,18 +451,44 @@ impl Vault {
     }
 }
 
+/// Where one put of pending rows leaves their landing: none while they
+/// stored; else the landing it ends on.
+fn interrupted_landing(put: Result<AuthorityPut>) -> Result<Option<PendingLanding>> {
+    match put {
+        Ok(AuthorityPut::Stored(_)) => Ok(None),
+        Ok(AuthorityPut::Pending(_)) => Ok(Some(PendingLanding::Waiting)),
+        // A row whose signer's enrollment has not landed waits for it, as one
+        // waiting for history does.
+        Err(error)
+            if super::super::readonly_fold::is_history_incomplete(&error)
+                || matches!(
+                    error,
+                    crate::error::Error::Record(
+                        crate::error::RecordError::AuthorityLogSignerPending { .. }
+                    )
+                ) =>
+        {
+            Ok(Some(PendingLanding::Waiting))
+        }
+        Err(error @ crate::error::Error::Record(_)) => Ok(Some(PendingLanding::Refused(error))),
+        Err(error) => Err(error),
+    }
+}
+
 /// `hash` and every pending row it stands on, through pending rows only.
+/// Parents read from the envelope, so a sealed row that does not open still
+/// closes over its parents.
 fn pending_closure(
-    pending: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    pending: &BTreeMap<AuthorityEntryHash, (Vec<u8>, FoldRow)>,
     hash: &AuthorityEntryHash,
 ) -> BTreeSet<AuthorityEntryHash> {
     let mut closure = BTreeSet::from([*hash]);
-    let mut stack = pending[hash].parent_hashes.clone();
+    let mut stack = pending[hash].1.parent_hashes().to_vec();
     while let Some(parent) = stack.pop() {
-        if let Some(row) = pending.get(&parent)
+        if let Some((_, row)) = pending.get(&parent)
             && closure.insert(parent)
         {
-            stack.extend(row.parent_hashes.iter().copied());
+            stack.extend(row.parent_hashes().iter().copied());
         }
     }
     closure

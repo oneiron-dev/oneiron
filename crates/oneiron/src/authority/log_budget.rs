@@ -28,7 +28,7 @@ use std::sync::Arc;
 use super::adopted_evidence::AdoptedEvidence;
 use super::log_structure::{
     AuthorityStructure, LocalRoots, authority_structure, authority_structure_under,
-    self_signed_root, signed_by,
+    row_signatures_verified, self_signed_root, signed_by,
 };
 use super::*;
 use crate::store::Store;
@@ -234,35 +234,52 @@ pub(super) fn is_slip_op(op: &AuthorityOp) -> bool {
     )
 }
 
-fn is_handoff(entry: &AuthorityLogEntry) -> bool {
-    matches!(entry.op, AuthorityOp::ReRoot { .. })
+/// Whether `row` hands the vault to a new key: an open re-root, or a sealed
+/// one whose public standing names a re-root. The store door's handoff rule
+/// is storage, not effect, so it reads the kind: the verdict is the same
+/// before and after the key arrives.
+fn is_handoff(row: &FoldRow) -> bool {
+    matches!(row.op(), Some(AuthorityOp::ReRoot { .. }))
+        || matches!(
+            row.public().map(AuthorityPublicRow::standing),
+            Some(PublicStanding::ReRoot { .. })
+        )
 }
 
-/// The slip issuers of `entries`: see [`authority_structure`].
+/// Whether `row` is a slip row: an open slip op, or a sealed mint whose
+/// public standing names one. The fold's bounds and the door's tally exempt
+/// the same rows, so the verdict is the same before and after the key
+/// arrives.
+fn is_slip_row(row: &FoldRow) -> bool {
+    row.op().is_some_and(is_slip_op)
+        || matches!(
+            row.public().map(AuthorityPublicRow::standing),
+            Some(PublicStanding::SlipMint)
+        )
+}
+
+/// The slip issuers of `rows`: see [`authority_structure`].
 #[cfg(test)]
-pub(super) fn slip_issuers(entries: &[AuthorityLogEntry]) -> BTreeSet<AuthorityKey> {
-    authority_structure(entries.iter()).issuers
+pub(super) fn slip_issuers(rows: &[FoldRow]) -> BTreeSet<AuthorityKey> {
+    authority_structure(rows.iter()).issuers
 }
 
-/// The hashes of the rows no fold bound counts: the slip issuers' slip ops.
+/// The hashes of the rows no fold bound counts: the slip issuers' slip rows.
 pub(super) fn uncounted_rows(
     by_hash: &BTreeMap<AuthorityEntryHash, FoldRow>,
 ) -> BTreeSet<AuthorityEntryHash> {
-    let issuers = authority_structure(by_hash.values().filter_map(FoldRow::open)).issuers;
+    let issuers = authority_structure(by_hash.values()).issuers;
     by_hash
         .iter()
-        .filter(|(_, row)| {
-            row.open()
-                .is_some_and(|entry| is_uncounted(entry, &issuers))
-        })
+        .filter(|(_, row)| is_uncounted(row, &issuers))
         .map(|(hash, _)| *hash)
         .collect()
 }
 
-/// Whether no fold bound counts `entry` under `issuers`, the log's slip
-/// issuers: it is one of their slip ops.
-pub(super) fn is_uncounted(entry: &AuthorityLogEntry, issuers: &BTreeSet<AuthorityKey>) -> bool {
-    is_slip_op(&entry.op) && issuers.contains(entry.signer_key())
+/// Whether no fold bound counts `row` under `issuers`, the log's slip
+/// issuers: it is one of their slip rows.
+pub(super) fn is_uncounted(row: &FoldRow, issuers: &BTreeSet<AuthorityKey>) -> bool {
+    is_slip_row(row) && issuers.contains(row.signer_key())
 }
 
 /// What the store doors read of the stored log: its consent structure, and
@@ -298,8 +315,8 @@ struct Tally {
 }
 
 impl Tally {
-    /// Counts one row by its signer, whether it is a slip op, and its signed
-    /// body when the door reads it whole. A row read only by its summary is
+    /// Counts one row by its signer, whether it is a slip row, and the row
+    /// itself when the door reads it whole. A row read only by its summary is
     /// no handoff or stranger's row: an adopted image carries the body of
     /// every such row.
     fn count(
@@ -307,15 +324,15 @@ impl Tally {
         structure: &AuthorityStructure,
         signer: &AuthorityKey,
         slip_op: bool,
-        entry: Option<&AuthorityLogEntry>,
+        row: Option<&FoldRow>,
     ) {
         self.strangers += usize::from(
-            entry.is_some_and(|entry| structure.vouches_for(entry) && structure.is_stranger(entry)),
+            row.is_some_and(|row| structure.vouches_for(row) && structure.is_stranger(row)),
         );
         *self.rows.entry(signer.clone()).or_default() += 1;
         let issuer = structure.issuers.contains(signer);
         self.counted += usize::from(!(issuer && slip_op));
-        self.issuer_handoffs += usize::from(issuer && entry.is_some_and(is_handoff));
+        self.issuer_handoffs += usize::from(issuer && row.is_some_and(is_handoff));
     }
 }
 
@@ -353,7 +370,7 @@ pub(super) fn door_view(
         #[cfg(test)]
         DOOR_VIEW_BUILDS.with(|builds| builds.set(builds.get() + 1));
         let evidence = super::checkpoint_adopt::cached_adopted_evidence_in_txn(store, txn)?;
-        let mut entries = Vec::new();
+        let mut rows = Vec::new();
         for (id, body) in authority_log_rows_in_txn(store, txn)? {
             // A covered row counts once, from the image.
             if evidence
@@ -362,30 +379,29 @@ pub(super) fn door_view(
             {
                 continue;
             }
-            entries.push(open_vault_authority_body_in_txn(store, txn, &body)?);
+            rows.push(decode_vault_authority_fold_row_in_txn(store, txn, &body)?);
         }
         // The structure reads the image's carried rows as the stored rows
         // they stand for: it admits what the covered history admitted, never
-        // what the folded roster now holds.
-        let carried = evidence
+        // what the folded roster now holds. The carried bodies stay whole
+        // entries, wrapped at the chain into the structure.
+        let carried: Vec<FoldRow> = evidence
             .iter()
-            .flat_map(|evidence| evidence.bodies().values());
+            .flat_map(|evidence| evidence.bodies().values())
+            .map(|entry| FoldRow::Open(entry.clone()))
+            .collect();
         let structure = authority_structure_under(
-            carried.chain(&entries),
+            carried.iter().chain(rows.iter()),
             LocalRoots::read_in_txn(store, txn)?,
         );
         let mut tally = Tally::default();
-        for entry in &entries {
-            tally.count(
-                &structure,
-                entry.signer_key(),
-                is_slip_op(&entry.op),
-                Some(entry),
-            );
+        for row in &rows {
+            tally.count(&structure, row.signer_key(), is_slip_row(row), Some(row));
         }
         if let Some(evidence) = &evidence {
-            for (hash, row) in evidence.rows() {
-                tally.count(&structure, &row.signer, row.slip_op, evidence.body(hash));
+            for (hash, summary) in evidence.rows() {
+                let row = evidence.body(hash).cloned().map(FoldRow::Open);
+                tally.count(&structure, &summary.signer, summary.slip_op, row.as_ref());
             }
         }
         Ok(AuthorityDoorView {
@@ -399,7 +415,7 @@ pub(super) fn door_view(
     })
 }
 
-/// Whether `entry`'s signer has standing to store a replicated row: a key
+/// Whether `row`'s signer has standing to store a replicated row: a key
 /// some valid row admitted (live, revoked or retired), a machine's install
 /// key, a valid root's owner anchor, the anchor of the root record it is,
 /// or a key the stored log's structure admits though the fold does not
@@ -410,15 +426,15 @@ pub(crate) fn signer_has_standing(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     fold: &AuthorityFold,
-    entry: &AuthorityLogEntry,
+    row: &FoldRow,
 ) -> crate::error::Result<bool> {
-    let signer = entry.signer_key();
+    let signer = row.signer_key();
     if fold.roster.contains_key(signer)
         || fold.retired_keys.contains(signer)
         || matches!(signer, AuthorityKey::Ed25519(key)
             if fold.machines.values().any(|machine| machine.names_key(key))
                 || fold.root_anchors().contains_key(key))
-        || self_signed_root(entry).is_some()
+        || self_signed_root(row).is_some()
     {
         return Ok(true);
     }
@@ -440,7 +456,7 @@ pub(crate) enum AuthorityDoor {
     Unowned,
 }
 
-/// The door's verdict on storing `entry`, at every door, local or
+/// The door's verdict on storing `row`, at every door, local or
 /// replicated. A row already stored always lands. The owner's work, a row a
 /// slip issuer signs or cosigns, always lands, but a handoff only when a
 /// slip issuer signs it. Any other vouched key's row lands too: past the
@@ -450,28 +466,29 @@ pub(crate) enum AuthorityDoor {
 /// take as its own vouches for, lands only while every such stored row
 /// together is under that row, so fresh anchors never add a bound each; the
 /// rest wait (rule 5: never refused). The door reads the stored log's
-/// structure as the fold's bounds do.
+/// structure as the fold's bounds do, and a row whose record does not open
+/// here by its envelope and public standing, as its open kind is judged.
 pub(crate) fn authority_door(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    entry: &AuthorityLogEntry,
+    row: &FoldRow,
 ) -> crate::error::Result<AuthorityDoor> {
     #[cfg(test)]
     if DOOR_OPEN_FOR_TEST.with(std::cell::Cell::get) {
         return Ok(AuthorityDoor::Lands);
     }
-    if authority_row_resident(store, txn, entry)? {
+    if authority_row_resident(store, txn, row)? {
         return Ok(AuthorityDoor::Lands);
     }
     let view = door_view(store, txn)?;
-    if !view.structure.vouches_for(entry) || verify_entry_signatures(entry).is_err() {
+    if !view.structure.vouches_for(row) || !row_signatures_verified(row) {
         return Ok(AuthorityDoor::Unowned);
     }
     // A self-signed root needs nothing but a fresh key, so an anchor this
     // install does not take as its own is a stranger: its rows, and its
     // machines', share one bound instead of one each (Astra #1422e F1; the
     // Engine, r23). Its own anchors' rows never meet it.
-    if view.structure.is_stranger(entry) {
+    if view.structure.is_stranger(row) {
         return Ok(if view.strangers < signer_bound(store, txn)? {
             AuthorityDoor::Lands
         } else {
@@ -479,25 +496,25 @@ pub(crate) fn authority_door(
         });
     }
     let issuers = &view.structure.issuers;
-    let signer = entry.signer_key();
-    if is_handoff(entry) {
+    let signer = row.signer_key();
+    if is_handoff(row) {
         return Ok(if issuers.contains(signer) {
             AuthorityDoor::Lands
         } else {
             AuthorityDoor::AtBound
         });
     }
-    if signed_by(entry, issuers)
+    if signed_by(row, issuers)
         || AUTHORITY_LOG_SIGNER_COUNT_ADVISORY
         || view.rows.get(signer).copied().unwrap_or_default() < signer_bound(store, txn)?
-        || carries_own_will(store, txn, entry)?
+        || carries_own_will(store, txn, row)?
     {
         return Ok(AuthorityDoor::Lands);
     }
     Ok(AuthorityDoor::AtBound)
 }
 
-/// Whether `entry` is the owner's will this install carries (FIX 7930): signed
+/// Whether `row` is the owner's will this install carries (FIX 7930): signed
 /// by this install's own machine key, which only its own doors hold and sign
 /// with after they revalidate the owner or an agent's Grant, and carrying
 /// that will (an owner or delegated act, or owner work's request, result or
@@ -507,11 +524,12 @@ pub(crate) fn authority_door(
 /// its typed check, were the count not advisory; strangers, other installs' rows and a replica's retries
 /// keep their treatment. No local or replicated flag is read. An install
 /// whose key is not known yet keeps today's path
-/// ([`AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT`]).
+/// ([`AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT`]). A row whose record does
+/// not open here carries no will here: what it wills takes its op.
 fn carries_own_will(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    entry: &AuthorityLogEntry,
+    row: &FoldRow,
 ) -> crate::error::Result<bool> {
     let own = match crate::identity::read_machine_verifying_key_in_store_txn(store, txn) {
         Ok(own) => own,
@@ -521,10 +539,13 @@ fn carries_own_will(
     let Some(own) = own else {
         return Ok(false);
     };
-    if *entry.signer_key() != AuthorityKey::Ed25519(own) {
+    if *row.signer_key() != AuthorityKey::Ed25519(own) {
         return Ok(false);
     }
-    Ok(match &entry.op {
+    let Some(op) = row.op() else {
+        return Ok(false);
+    };
+    Ok(match op {
         AuthorityOp::WorldPrivacy(_)
         | AuthorityOp::GrantTravelSet(_)
         | AuthorityOp::OwnerWorkRequest(_)

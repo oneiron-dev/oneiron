@@ -142,18 +142,22 @@ pub(super) fn resident_genesis_vault_id_in_txn(
 ) -> Result<Option<AuthorityVaultId>> {
     let mut roots = std::collections::BTreeSet::new();
     for (_, bytes) in authority_log_rows_in_txn(store, txn)? {
-        let entry = decode_stored_authority_log_body(store, txn, &bytes)?;
+        let row = decode_stored_authority_fold_row(store, txn, &bytes)?;
+        // Only a row that opened can show a well-formed Genesis.
+        let Some(entry) = row.open() else {
+            continue;
+        };
         let AuthorityOp::Genesis { device, .. } = &entry.op else {
             continue;
         };
         if entry.validate_shape().is_err()
-            || verify_entry_signatures(&entry).is_err()
+            || verify_entry_signatures(entry).is_err()
             || *entry.signer_key() != device.key
             || entry.seq != 0
         {
             continue;
         }
-        if let Ok(root) = genesis_vault_id(&entry) {
+        if let Ok(root) = genesis_vault_id(entry) {
             roots.insert(root);
         }
     }

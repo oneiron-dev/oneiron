@@ -36,7 +36,7 @@ use std::ops::Bound;
 
 use serde::Deserialize;
 
-use super::history_transfer::{DecodedRow, decode_page_in_txn, history_in_txn};
+use super::history_transfer::{DecodedRow, history_in_txn};
 use super::*;
 use crate::error::{Error, RecordError, Result};
 use crate::{EntityId, Vault};
@@ -391,7 +391,16 @@ fn authority_history_page_in_txn(
     fetch: &AuthorityHistoryFetch,
     withheld: &BTreeSet<EntityId>,
 ) -> Result<AuthorityHistoryPage> {
-    let history = history_in_txn(vault, txn)?;
+    let history: BTreeMap<_, _> = history_in_txn(vault, txn)?
+        .into_iter()
+        .map(|(hash, (bytes, row))| {
+            let entry = row
+                .open()
+                .cloned()
+                .ok_or_else(authority_overlay_unavailable)?;
+            Ok((hash, (bytes, entry)))
+        })
+        .collect::<Result<_>>()?;
     let vault_id = rows_vault(history.iter().map(|(hash, (_, entry))| (hash, entry)));
     if fetch.vault_id.is_some() && vault_id.is_some() && fetch.vault_id != vault_id {
         return Err(invalid_authority());
@@ -523,14 +532,24 @@ fn verification_in_txn(
 ) -> Result<AuthorityHistoryVerificationCoverage> {
     let mut rows: BTreeMap<AuthorityEntryHash, AuthorityLogEntry> = history_in_txn(vault, txn)?
         .into_iter()
-        .map(|(hash, (_, entry))| (hash, entry))
-        .collect();
+        .map(|(hash, (_, row))| {
+            let entry = row
+                .open()
+                .cloned()
+                .ok_or_else(authority_overlay_unavailable)?;
+            Ok((hash, entry))
+        })
+        .collect::<Result<_>>()?;
     let adopted =
         super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(&vault.store, txn)?;
     let mut bound = rows_vault(rows.iter())
         .or_else(|| adopted.as_ref().map(|adopted| adopted.pin().genesis))
         .or(expected);
-    for (hash, _, entry) in super::history_repair::staged_rows_in_txn(&vault.store, txn)? {
+    for (hash, _, row) in super::history_repair::staged_rows_in_txn(&vault.store, txn)? {
+        let entry = row
+            .open()
+            .cloned()
+            .ok_or_else(authority_overlay_unavailable)?;
         rows.entry(hash).or_insert(entry);
     }
     let mut coverage = AuthorityHistoryVerificationCoverage {
@@ -540,7 +559,11 @@ fn verification_in_txn(
         ..AuthorityHistoryVerificationCoverage::default()
     };
     let mut scope = requested.clone();
-    for (hash, _, entry) in page {
+    for (hash, _, row) in page {
+        let entry = row
+            .open()
+            .cloned()
+            .ok_or_else(authority_overlay_unavailable)?;
         scope.insert(hash);
         let Some(names) = row_vault(&hash, &entry) else {
             coverage.refused.insert(hash);
@@ -584,9 +607,11 @@ fn verification_in_txn(
                 let Some(entry) = rows.get(hash) else {
                     continue;
                 };
-                if fold.stands_on_retired_key(hash, entry, &mut |parent| {
-                    Ok(rows.get(parent).cloned())
-                })? {
+                if fold.stands_on_retired_key(
+                    hash,
+                    &FoldRow::Open(entry.clone()),
+                    &mut |parent| Ok(rows.get(parent).cloned().map(FoldRow::Open)),
+                )? {
                     coverage.retired.insert(*hash);
                 }
             }
@@ -659,7 +684,21 @@ impl Vault {
             return Err(refused("a history page served for another selection"));
         }
         let txn = self.store.env.read_txn()?;
-        let decoded = decode_page_in_txn(&self.store, &txn, &page.rows, &page.overlays)?;
+        // This verification reader still needs whole entries (the fetch
+        // route is out of the fold-row reader leg's scope).
+        let decoded = page
+            .rows
+            .iter()
+            .map(|bytes| {
+                let entry =
+                    open_carried_authority_body_in_txn(&self.store, &txn, bytes, &page.overlays)?;
+                Ok((
+                    authority_entry_hash(&entry)?,
+                    bytes.clone(),
+                    FoldRow::Open(entry),
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
         let selection = authority_history_selection_in_txn(self, &txn, &fetch.selection)?;
         if let Some(image) = &selection.image
             && decoded.iter().any(|(hash, _, _)| !image.contains(hash))

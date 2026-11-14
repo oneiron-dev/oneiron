@@ -412,18 +412,23 @@ fn capture_in_txn(
             (AdoptedImageFold::NeedHistory(_), _) => return Ok(None),
         }
     }
-    let entries = authority_log_rows_in_txn(store, txn)?
+    let rows = authority_log_rows_in_txn(store, txn)?
         .into_iter()
-        .map(|(_, body)| decode_stored_authority_log_body(store, txn, &body))
+        .map(|(_, body)| decode_stored_authority_fold_row(store, txn, &body))
         .collect::<Result<Vec<_>>>()?;
-    let parents = entries
+    let parents = rows
         .iter()
-        .map(|entry| Ok((authority_entry_hash(entry)?, entry.parent_hashes.clone())))
+        .map(|row| Ok((row.hash()?, row.parent_hashes().to_vec())))
         .collect::<Result<Parents>>()?;
-    let observations = authority_local_observations_in_txn(store, txn, &entries)?;
+    let metas = rows
+        .iter()
+        .map(|row| Ok(super::fold_resume::RowMeta::of_row(Some(row.hash()?), row)))
+        .collect::<Result<Vec<_>>>()?;
+    let observations = super::sequence_observation::authority_local_observations_of_rows_in_txn(
+        store, txn, &metas,
+    )?;
     let capture = FoldCapture::for_image(heads.clone());
     let (consent, local) = super::fold_engine::own_log_inputs(posture, pin);
-    let rows = super::fold_engine::open_rows(&entries);
     super::fold_engine::fold_authority_log_inner(
         &rows,
         &BTreeMap::new(),
@@ -463,8 +468,14 @@ fn capture_past_adopted(
             held_covered.insert(*hash);
             continue;
         }
-        let entry = decode_stored_authority_log_body(store, txn, &body)?;
-        let hash = authority_entry_hash(&entry)?;
+        // The adopted capture still takes whole entries: a stored row
+        // that does not open here refuses, as it did when no record opened it.
+        let row = decode_stored_authority_fold_row(store, txn, &body)?;
+        let hash = row.hash()?;
+        let entry = row
+            .open()
+            .cloned()
+            .ok_or_else(authority_overlay_unavailable)?;
         if image.rows.contains_key(&hash) {
             held_covered.insert(hash);
         } else {

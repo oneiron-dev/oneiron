@@ -7,7 +7,7 @@ use heed::RoTxn;
 
 use crate::Vault;
 use crate::authority::{
-    AuthorityOp, authority_entry_hash, authority_log_entity_id, genesis_vault_id,
+    AuthorityOp, FoldRow, authority_entry_hash, authority_log_entity_id, genesis_vault_id,
     open_vault_authority_body_in_txn,
 };
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -61,11 +61,14 @@ pub(super) fn admit_federated_authority_log(
     // Where the fold needs history this row, or the rows beside it, supply,
     // the fold with them in judges it (FIX 2535, 2989).
     let hash = authority_entry_hash(&entry)?;
+    // This door reads the op, so it keeps the whole entry and wraps it as an
+    // open row for the row-taking fold and standing checks.
+    let row = FoldRow::Open(entry.clone());
     let local = crate::authority::preflight_authority_rows_beside_in_txn(
         &vault.store,
         vault.privacy_posture(),
         txn,
-        &[(hash, &entry)],
+        &[(hash, &row)],
         beside,
     )?;
     let local_vault_id =
@@ -80,12 +83,12 @@ pub(super) fn admit_federated_authority_log(
         )));
     }
     let evidence = crate::authority::adopted_evidence_in_txn(&vault.store, txn)?;
-    if !crate::authority::authority_row_resident(&vault.store, txn, &entry)?
+    if !crate::authority::authority_row_resident(&vault.store, txn, &row)?
         && crate::authority::door_refuses_retired_standing(
             &vault.store,
             &local,
             &hash,
-            &entry,
+            &row,
             &mut |hash| {
                 crate::authority::door_ancestor_row(&vault.store, txn, evidence.as_deref(), hash)
             },

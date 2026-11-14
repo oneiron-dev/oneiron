@@ -57,7 +57,7 @@ pub(super) struct Dispatch {
     pub(super) new_workflow: Option<crate::store::workflow_definition::WorkflowDefinition>,
     pub(super) decoded_claim_body: Option<ClaimBody>,
     pub(super) authority_entry_hash_pin: Option<oneiron_contracts::authority::AuthorityEntryHash>,
-    pub(super) authority_entry_observation: Option<oneiron_authority::authority::AuthorityLogEntry>,
+    pub(super) authority_entry_observation: Option<oneiron_authority::authority::FoldRow>,
     pub(super) authority_dominates_key_squatter: bool,
 }
 

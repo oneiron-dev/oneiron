@@ -86,8 +86,9 @@ pub fn fold_authority_log_with_seen_times(
     now_secs: u64,
 ) -> AuthorityFold {
     let peer_consent_roots = BTreeMap::new();
+    let rows = open_rows(entries);
     fold_authority_log_with_peer_consent_roots(
-        entries,
+        &rows,
         first_seen_at_secs,
         now_secs,
         &peer_consent_roots,
@@ -101,14 +102,13 @@ pub fn fold_authority_log_with_seen_times(
 /// vault id. `peer_consent_roots` only widens which peer signature a lifecycle
 /// gesture may carry, and only for the peer vault the gesture already names.
 pub(crate) fn fold_authority_log_with_peer_consent_roots(
-    entries: &[AuthorityLogEntry],
+    rows: &[FoldRow],
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
     now_secs: u64,
     peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
 ) -> AuthorityFold {
-    let rows = open_rows(entries);
     fold_authority_log_inner(
-        &rows,
+        rows,
         first_seen_at_secs,
         Some(now_secs),
         peer_consent_roots,
@@ -142,14 +142,13 @@ pub(in crate::authority) fn own_log_inputs(
 /// a door of the vault's own log uses when it has no seen-times. A Hosted root
 /// is cloud-stamped, and the self-host arm would refuse that genesis.
 pub(crate) fn fold_own_authority_log(
-    entries: &[AuthorityLogEntry],
+    rows: &[FoldRow],
     posture: crate::HostingPrivacyPosture,
     pin: Option<&PinnedRoot>,
 ) -> AuthorityFold {
     let (consent, local) = own_log_inputs(posture, pin);
-    let rows = open_rows(entries);
     fold_authority_log_inner(
-        &rows,
+        rows,
         &BTreeMap::new(),
         None,
         &BTreeMap::new(),
@@ -168,8 +167,9 @@ pub fn fold_authority_log_for_posture(
     peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
     posture: crate::HostingPrivacyPosture,
 ) -> AuthorityFold {
+    let rows = open_rows(entries);
     fold_pinned_authority_log_for_posture(
-        entries,
+        &rows,
         first_seen_at_secs,
         now_secs,
         peer_consent_roots,
@@ -180,7 +180,7 @@ pub fn fold_authority_log_for_posture(
 
 /// [`fold_authority_log_for_posture`] under this install's pin.
 pub(crate) fn fold_pinned_authority_log_for_posture(
-    entries: &[AuthorityLogEntry],
+    rows: &[FoldRow],
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
     now_secs: u64,
     peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
@@ -188,9 +188,8 @@ pub(crate) fn fold_pinned_authority_log_for_posture(
     pin: Option<&PinnedRoot>,
 ) -> AuthorityFold {
     let (consent, local) = own_log_inputs(posture, pin);
-    let rows = open_rows(entries);
     fold_authority_log_inner(
-        &rows,
+        rows,
         first_seen_at_secs,
         Some(now_secs),
         peer_consent_roots,
@@ -227,7 +226,7 @@ pub fn fold_peer_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
 /// and observation policy), hosting posture and pin.
 #[cfg(test)]
 pub(in crate::authority) fn fold_authority_log_with_local_observations_and_posture(
-    entries: &[AuthorityLogEntry],
+    rows: &[FoldRow],
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
     now_secs: u64,
     peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
@@ -236,9 +235,8 @@ pub(in crate::authority) fn fold_authority_log_with_local_observations_and_postu
     pin: Option<&PinnedRoot>,
 ) -> AuthorityFold {
     let (consent, local) = own_log_inputs(posture, pin);
-    let rows = open_rows(entries);
     fold_authority_log_inner(
-        &rows,
+        rows,
         first_seen_at_secs,
         Some(now_secs),
         peer_consent_roots,

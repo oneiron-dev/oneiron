@@ -743,7 +743,7 @@ fn fold_authority_checkpoint_tail_in_txn(
     key: AuthorityCacheKey,
     baseline: Option<&AuthorityContinuation>,
     required: &BTreeSet<AuthorityEntryHash>,
-    arriving: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    arriving: &BTreeMap<AuthorityEntryHash, FoldRow>,
 ) -> Result<AuthorityTailFold> {
     fold_stored_tail_in_txn(store, posture, txn, key, baseline, required, arriving)
 }
@@ -773,7 +773,7 @@ fn fold_stored_tail_in_txn(
     key: AuthorityCacheKey,
     baseline: Option<&AuthorityContinuation>,
     required: &BTreeSet<AuthorityEntryHash>,
-    arriving: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    arriving: &BTreeMap<AuthorityEntryHash, FoldRow>,
 ) -> Result<AuthorityTailFold> {
     if let Some(adopted) =
         super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(store, txn)?
@@ -793,10 +793,10 @@ fn fold_stored_tail_in_txn(
     let mut tail = Vec::new();
     let mut held = HeldRows::scan_in_txn(store, txn, baseline, &mut tail)?;
     let mut unstored = Vec::new();
-    for (hash, entry) in arriving {
+    for (hash, row) in arriving {
         if held.insert(*hash) {
-            tail.push((*hash, entry.clone()));
-            unstored.push(entry.clone());
+            tail.push((*hash, row.clone()));
+            unstored.push(row.clone());
         }
     }
     let checkpoint_head = super::checkpoint::checkpoint_head_in_txn(store, txn)?;
@@ -834,13 +834,13 @@ fn fold_stored_tail_in_txn(
             .flat_map(|(_, parents)| parents.iter().copied());
         let tail_parents = tail
             .iter()
-            .flat_map(|(_, entry)| entry.parent_hashes.iter().copied());
+            .flat_map(|(_, row)| row.parent_hashes().iter().copied());
         named.extend(baseline_parents.chain(tail_parents));
         named.retain(|hash| !held.contains(hash));
         return Ok(AuthorityTailFold::NeedHistory(AuthorityHistoryRequest {
             vault_id: baseline
                 .and_then(|baseline| baseline.base.vault_id())
-                .or_else(|| tail.iter().find_map(|(_, entry)| entry.vault_id)),
+                .or_else(|| tail.iter().find_map(|(_, row)| row.vault_id())),
             checkpoint: checkpoint.map(|(head, _)| head).or(checkpoint_head),
             missing: named,
         }));
@@ -860,7 +860,7 @@ fn fold_stored_tail_in_txn(
         crate::federation::admitted_peer_consent_roots_for_store_in_txn(store, txn)?;
     if let Some(baseline) = baseline {
         tracing::trace!(target: "oneiron::authority::cache", generation = key.generation, rows = tail.len(), "authority fold past the cached base");
-        let tail: Vec<_> = tail.iter().map(|(hash, entry)| (*hash, entry)).collect();
+        let tail: Vec<_> = tail.iter().map(|(hash, row)| (*hash, row)).collect();
         // Only the tail's receipts and an unpinned base row's are read, and
         // only those rows are visited (FIX 1854, FIX 12282).
         let receipts = RowReceipts::past_base_in_txn(
@@ -918,15 +918,15 @@ fn fold_stored_tail_in_txn(
         }
     }
     tracing::trace!(target: "oneiron::authority::cache", generation = key.generation, "full authority fold fallback");
-    let mut entries = authority_log_rows_in_txn(store, txn)?
+    let mut stored = authority_log_rows_in_txn(store, txn)?
         .into_iter()
-        .map(|(_, body)| decode_stored_authority_log_body(store, txn, &body))
+        .map(|(_, body)| decode_stored_authority_fold_row(store, txn, &body))
         .collect::<Result<Vec<_>>>()?;
-    entries.extend(unstored);
-    let mut rows = Vec::with_capacity(entries.len());
-    for entry in &entries {
-        let hash = authority_entry_hash(entry)?;
-        rows.push(super::fold_resume::RowMeta::of(Some(hash), entry));
+    stored.extend(unstored);
+    let mut rows = Vec::with_capacity(stored.len());
+    for row in &stored {
+        let hash = row.hash()?;
+        rows.push(super::fold_resume::RowMeta::of_row(Some(hash), row));
     }
     let RowReceipts {
         first_seen_at_secs,
@@ -935,7 +935,7 @@ fn fold_stored_tail_in_txn(
     } = RowReceipts::read_in_txn(store, txn, &rows, arriving, backfilled, now_secs)?;
     let (fold, base) = super::fold_resume::fold_stored_log(
         super::fold_resume::StoredLog {
-            entries: &entries,
+            entries: &stored,
             first_seen_at_secs: &first_seen_at_secs,
             now_secs,
             peer_consent_roots: &peer_consent_roots,
@@ -945,10 +945,13 @@ fn fold_stored_tail_in_txn(
         },
         None,
     );
+    // The stale-roster window reads approvals alone: a row that passes
+    // through holds none, so only the rows that opened reach it.
+    let open: Vec<_> = stored.iter().filter_map(FoldRow::open).collect();
     let next_deadline_secs = next_deadline(
         &fold,
         next_stale_roster_deadline(
-            &entries,
+            &open,
             &fold,
             &first_seen_at_secs,
             key.now_secs,
@@ -1080,19 +1083,15 @@ fn authority_log_body_in_txn(
     Ok(body.to_vec())
 }
 
-/// The entry a stored AUTHORITY_LOG `body` holds. A missing or retired
-/// overlay remains unavailable; every other decode fault is store damage
-/// and answers `CorruptedIndex` (ARCH-0006a #list-read-built).
-pub(super) fn decode_stored_authority_log_body(
+/// The row a stored AUTHORITY_LOG `body` holds. A sealed row whose
+/// overlay record does not open here lands as structure
+/// ([`FoldRow::PassThrough`]); every other decode fault is store damage and
+/// answers `CorruptedIndex` (ARCH-0006a #list-read-built).
+pub(super) fn decode_stored_authority_fold_row(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     body: &[u8],
-) -> Result<AuthorityLogEntry> {
-    crate::authority::open_vault_authority_body_in_txn(store, txn, body).map_err(|error| {
-        if is_authority_overlay_unavailable(&error) {
-            error
-        } else {
-            Error::CorruptedIndex("stored authority log row")
-        }
-    })
+) -> Result<FoldRow> {
+    crate::authority::decode_vault_authority_fold_row_in_txn(store, txn, body)
+        .map_err(|_| Error::CorruptedIndex("stored authority log row"))
 }

@@ -26,43 +26,70 @@ use super::log_structure::{Grant, LocalRoots, StructureBuilder, admits_device, i
 use super::*;
 use crate::store::Store;
 
-type Row = (AuthorityEntryHash, Vec<u8>, AuthorityLogEntry);
+type Row = (AuthorityEntryHash, Vec<u8>, FoldRow);
 
 /// A row the consent structure rests on: a genesis, or an owner or admin
-/// admission.
-fn is_consent_row(op: &AuthorityOp) -> bool {
-    matches!(op, AuthorityOp::Genesis { .. }) || admits_device(op).is_some_and(is_consent_device)
+/// admission. A sealed row that does not open admits nothing (`admits_device`
+/// reads its op, `None` for it), so it is never one here; it still waits for
+/// its own grants through [`wanted`].
+fn is_consent_row(row: &FoldRow) -> bool {
+    row.op().is_some_and(|op| {
+        matches!(op, AuthorityOp::Genesis { .. })
+            || admits_device(row).is_some_and(is_consent_device)
+    })
 }
 
 /// A row the door's structure reads: a consent row, a machine revision, or
-/// a root record, which names an owner anchor.
-fn is_structural(op: &AuthorityOp) -> bool {
-    is_consent_row(op)
-        || matches!(
-            op,
-            AuthorityOp::MachineProfile(_) | AuthorityOp::OwnerRoot(_)
-        )
+/// a root record, which names an owner anchor. Open rows only: a sealed row
+/// that does not open provides nothing, and pushing it admits nothing.
+fn is_structural(row: &FoldRow) -> bool {
+    row.op().is_some_and(|op| {
+        is_consent_row(row)
+            || matches!(
+                op,
+                AuthorityOp::MachineProfile(_) | AuthorityOp::OwnerRoot(_)
+            )
+    })
 }
 
 /// A handoff: a replica refuses a row a key it retires signs that arrives
-/// after it, unless the row is in its line.
-fn is_handoff(op: &AuthorityOp) -> bool {
-    matches!(op, AuthorityOp::ReRoot { .. })
+/// after it, unless the row is in its line. Open `ReRoot` or a sealed row
+/// whose standing is `ReRoot`, so the tier is the same before and after its
+/// key arrives.
+fn is_handoff(row: &FoldRow) -> bool {
+    match row {
+        FoldRow::Open(entry) => matches!(entry.op, AuthorityOp::ReRoot { .. }),
+        FoldRow::PassThrough(public) => {
+            matches!(public.standing(), PublicStanding::ReRoot { .. })
+        }
+    }
 }
 
-/// An owned but not "yours" machine revision.
-fn may_restrict(op: &AuthorityOp) -> bool {
-    matches!(op, AuthorityOp::MachineProfile(profile)
+/// An owned but not "yours" machine revision. Open rows only: no
+/// MachineProfile standing exists.
+fn may_restrict(row: &FoldRow) -> bool {
+    row.op().is_some_and(|op| {
+        matches!(op, AuthorityOp::MachineProfile(profile)
         if matches!(profile.role, MachineRole::Owned(_))
             && profile.role != MachineRole::Owned(MachineOwnership::Yours))
+    })
 }
 
-/// The grants any one of which lets a key vouch for `entry`, and for a
-/// handoff the grant that makes its signer a slip issuer. A genesis the
-/// stored log does not take as its root, or a root record, waits for
-/// nothing: no row admits it. A machine revision also waits for its signer
-/// to be an owner anchor.
-fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
+/// The grants any one of which lets a key vouch for `row`, and for a
+/// handoff the grant that makes its signer a slip issuer. Open rows wait as
+/// before; a sealed row that does not open waits for what its public standing
+/// names, and provides nothing (it never satisfies another row's wait).
+fn wanted(row: &FoldRow) -> Vec<Grant> {
+    match row {
+        FoldRow::Open(entry) => wanted_open(entry),
+        FoldRow::PassThrough(public) => wanted_public(row, public),
+    }
+}
+
+/// [`wanted`] for an opened entry. A genesis the stored log does not take as
+/// its root, or a root record, waits for nothing: no row admits it. A machine
+/// revision also waits for its signer to be an owner anchor.
+fn wanted_open(entry: &AuthorityLogEntry) -> Vec<Grant> {
     match &entry.op {
         AuthorityOp::Genesis { .. } | AuthorityOp::OwnerRoot(_) => Vec::new(),
         AuthorityOp::WorldPrivacy(edit) => {
@@ -196,19 +223,55 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
     }
 }
 
+/// [`wanted`] for a sealed row that does not open, from its public standing:
+/// an agent grant waits for its machine's install key; a residence result for
+/// its machine's (its directive entry waits as a parent edge in [`Stager`]);
+/// an owner work result for its executor's (its request waits there too); a
+/// genesis waits for nothing, as an opened one does; an enrollment, a
+/// rotation, a re-root or a slip mint waits for its signer's standing, as its
+/// opened kind does (admitters, plus the issuer for a re-root). It provides
+/// nothing: no grant from it ever wakes another row.
+fn wanted_public(row: &FoldRow, public: &AuthorityPublicRow) -> Vec<Grant> {
+    let signer = row.signer_key().clone();
+    match public.standing() {
+        PublicStanding::AgentGrantAct { machine } => {
+            vec![Grant::InstallKey(*machine, signer)]
+        }
+        PublicStanding::ResidenceResult { machine, .. } => {
+            vec![Grant::InstallKey(*machine, signer)]
+        }
+        PublicStanding::OwnerWorkResult { executor, .. } => {
+            vec![Grant::InstallKey(*executor, signer)]
+        }
+        PublicStanding::Genesis { .. } => Vec::new(),
+        PublicStanding::EnrollDevice { .. }
+        | PublicStanding::RotateKey { .. }
+        | PublicStanding::SlipMint => std::iter::once(row.signer())
+            .chain(row.cosigns())
+            .map(|signature| Grant::Admitter(signature.public_key.clone()))
+            .collect(),
+        PublicStanding::ReRoot { .. } => std::iter::once(row.signer())
+            .chain(row.cosigns())
+            .map(|signature| Grant::Admitter(signature.public_key.clone()))
+            .chain(std::iter::once(Grant::Issuer(signer)))
+            .collect(),
+    }
+}
+
 /// `rows` in the order an import stages them over `stored`, the rows the
 /// store holds, whose hashes are `resident`, with `local`'s anchors this
 /// install's own. A row no key comes to vouch for goes last, in the order
-/// given; its door holds it.
+/// given; its door holds it. Sealed rows that do not open stage as structure:
+/// they wait for their standing's grants and provide none.
 pub(super) fn import_order<'a>(
-    stored: impl Iterator<Item = &'a AuthorityLogEntry>,
+    stored: impl Iterator<Item = &'a FoldRow>,
     resident: &BTreeSet<AuthorityEntryHash>,
     local: LocalRoots,
     rows: Vec<Row>,
 ) -> Vec<Row> {
-    let stored: Vec<&'a AuthorityLogEntry> = stored.collect();
+    let stored: Vec<&'a FoldRow> = stored.collect();
     let order = {
-        let entries: Vec<_> = rows.iter().map(|(hash, _, entry)| (*hash, entry)).collect();
+        let entries: Vec<_> = rows.iter().map(|(hash, _, row)| (*hash, row)).collect();
         consent_order(&stored, resident, local, &entries)
     };
     let mut rows: Vec<_> = rows.into_iter().map(Some).collect();
@@ -219,37 +282,41 @@ pub(super) fn import_order<'a>(
 }
 
 /// Indices of `entries` (hash, row) in the order one local write stages
-/// them over the rows `store` holds: as an import stages them. On a vault
-/// that adopted a checkpoint image, the structure also reads the image's
-/// carried rows, as the door does, while only the stored rows are resident.
+/// them over the rows `store` holds: as an import stages them. Stored rows
+/// read as fold rows without forcing them open, so a sealed row that does not
+/// open still orders as structure. On a vault that adopted a checkpoint image,
+/// the structure also reads the image's carried rows, as the door does, while
+/// only the stored rows are resident; those carried bodies are whole entries,
+/// wrapped here (the image is out of scope).
 pub(super) fn write_stage_order(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    entries: &[(AuthorityEntryHash, &AuthorityLogEntry)],
+    entries: &[(AuthorityEntryHash, &FoldRow)],
 ) -> crate::error::Result<Vec<usize>> {
     let (mut stored, mut resident) = (Vec::new(), BTreeSet::new());
     for (_, body) in authority_log_rows_in_txn(store, txn)? {
-        let entry = open_vault_authority_body_in_txn(store, txn, &body)?;
-        resident.insert(authority_entry_hash(&entry)?);
-        stored.push(entry);
+        let row = decode_stored_authority_fold_row(store, txn, &body)?;
+        resident.insert(row.hash()?);
+        stored.push(row);
     }
     let evidence = super::adopted_evidence::adopted_evidence_in_txn(store, txn)?;
-    let carried = evidence
+    let carried: Vec<FoldRow> = evidence
         .iter()
         .flat_map(|evidence| evidence.bodies())
         .filter(|(hash, _)| !resident.contains(*hash))
-        .map(|(_, entry)| entry);
-    let stored: Vec<_> = stored.iter().chain(carried).collect();
+        .map(|(_, entry)| FoldRow::Open(entry.clone()))
+        .collect();
+    let stored: Vec<_> = stored.iter().chain(carried.iter()).collect();
     let local = LocalRoots::read_in_txn(store, txn)?;
     Ok(consent_order(&stored, &resident, local, entries))
 }
 
 /// Indices of `entries` in the order [`import_order`] stages them.
 fn consent_order(
-    stored: &[&AuthorityLogEntry],
+    stored: &[&FoldRow],
     resident: &BTreeSet<AuthorityEntryHash>,
     local: LocalRoots,
-    entries: &[(AuthorityEntryHash, &AuthorityLogEntry)],
+    entries: &[(AuthorityEntryHash, &FoldRow)],
 ) -> Vec<usize> {
     let mut builder = StructureBuilder::under(local);
     for entry in stored {
@@ -262,12 +329,22 @@ fn consent_order(
 
 /// Indices of `entries` (hash, row) in the order a sync pass hands them to
 /// the store door: parents first, each signer's rows by sequence, the
-/// structure's rows first, then the order given.
+/// structure's rows first, then the order given. The sync pass and its tests
+/// hold whole entries (commit 8, out of scope), wrapped here as open rows.
 #[cfg(any(test, feature = "sync"))]
 pub(crate) fn authority_stage_order(
     entries: &[(AuthorityEntryHash, &AuthorityLogEntry)],
 ) -> Vec<usize> {
-    stage_order(entries, None)
+    let rows: Vec<FoldRow> = entries
+        .iter()
+        .map(|(_, entry)| FoldRow::Open((*entry).clone()))
+        .collect();
+    let staged: Vec<_> = entries
+        .iter()
+        .zip(rows.iter())
+        .map(|((hash, _), row)| (*hash, row))
+        .collect();
+    stage_order(&staged, None)
 }
 
 /// The consent structure of the stored rows and the rows staged so far, and
@@ -275,7 +352,7 @@ pub(crate) fn authority_stage_order(
 type Consent<'r> = (StructureBuilder<'r>, &'r BTreeSet<AuthorityEntryHash>);
 
 fn stage_order<'r>(
-    entries: &'r [(AuthorityEntryHash, &'r AuthorityLogEntry)],
+    entries: &'r [(AuthorityEntryHash, &'r FoldRow)],
     consent: Option<Consent<'r>>,
 ) -> Vec<usize> {
     let mut stager = Stager::new(entries, consent);
@@ -308,7 +385,7 @@ enum Held {
 }
 
 struct Stager<'r> {
-    entries: &'r [(AuthorityEntryHash, &'r AuthorityLogEntry)],
+    entries: &'r [(AuthorityEntryHash, &'r FoldRow)],
     consent: Option<Consent<'r>>,
     /// Hashes already pushed into the consent structure.
     pushed: BTreeSet<AuthorityEntryHash>,
@@ -337,22 +414,30 @@ struct Stager<'r> {
 }
 
 impl<'r> Stager<'r> {
-    fn new(
-        entries: &'r [(AuthorityEntryHash, &'r AuthorityLogEntry)],
-        consent: Option<Consent<'r>>,
-    ) -> Self {
+    fn new(entries: &'r [(AuthorityEntryHash, &'r FoldRow)], consent: Option<Consent<'r>>) -> Self {
         let count = entries.len();
         let at: BTreeMap<_, _> = entries
             .iter()
             .enumerate()
             .map(|(index, (hash, _))| (*hash, index))
             .collect();
+        // A sealed row that does not open waits for its parents as any row
+        // does, plus the entry its standing names: a residence result's
+        // directive entry, an owner work result's request. Those land first
+        // where they are among the rows.
         let parents = |index: usize| {
-            entries[index]
-                .1
-                .parent_hashes
+            let row = entries[index].1;
+            row.parent_hashes()
                 .iter()
-                .filter_map(|parent| at.get(parent).copied())
+                .copied()
+                .chain(row.public().and_then(|public| match public.standing() {
+                    PublicStanding::ResidenceResult {
+                        directive_entry, ..
+                    } => Some(*directive_entry),
+                    PublicStanding::OwnerWorkResult { request, .. } => Some(*request),
+                    _ => None,
+                }))
+                .filter_map(|parent| at.get(&parent).copied())
         };
         let mut waiting = vec![0; count];
         let mut children = vec![Vec::new(); count];
@@ -363,15 +448,15 @@ impl<'r> Stager<'r> {
             }
         }
         let mut scopes: BTreeMap<_, BTreeMap<u64, Vec<usize>>> = BTreeMap::new();
-        for (index, (_, entry)) in entries.iter().enumerate() {
+        for (index, (_, row)) in entries.iter().enumerate() {
             let scope = (
-                entry.signer_key(),
-                super::world_privacy::side_world(&entry.op),
+                row.signer_key(),
+                row.op().and_then(super::world_privacy::side_world),
             );
             scopes
                 .entry(scope)
                 .or_default()
-                .entry(entry.seq)
+                .entry(row.seq())
                 .or_default()
                 .push(index);
         }
@@ -404,14 +489,17 @@ impl<'r> Stager<'r> {
         // lands before it retires them (review round 5, Astra F2).
         let mut tier: Vec<u8> = entries
             .iter()
-            .map(|(_, entry)| match &entry.op {
-                op if is_handoff(op) => HANDOFF_TIER,
-                op => 2 + u8::from(may_restrict(op)),
+            .map(|(_, row)| {
+                if is_handoff(row) {
+                    HANDOFF_TIER
+                } else {
+                    2 + u8::from(may_restrict(row))
+                }
             })
             .collect();
         let mut expanded = vec![false; levels.len()];
         let mut stack: Vec<_> = (0..count)
-            .filter(|index| is_consent_row(&entries[*index].1.op))
+            .filter(|index| is_consent_row(entries[*index].1))
             .collect();
         while let Some(index) = stack.pop() {
             if !(2..HANDOFF_TIER).contains(&tier[index]) {
@@ -477,18 +565,19 @@ impl<'r> Stager<'r> {
         Some(index)
     }
 
-    /// Defers `index` until a key may vouch for it, or queues it.
+    /// Defers `index` until a key may vouch for it, or queues it. A sealed
+    /// row that does not open is vouched as the structure vouches it (R5) and
+    /// waits for its standing's grants; it never provides one.
     fn offer(&mut self, index: usize) {
-        let (hash, entry) = self.entries[index];
+        let (hash, row) = self.entries[index];
         let vouched = self.consent.as_ref().is_none_or(|(builder, resident)| {
             resident.contains(&hash)
-                || (builder.structure.vouches_for(entry)
-                    && (!matches!(entry.op, AuthorityOp::ReRoot { .. })
-                        || builder.structure.issuers.contains(entry.signer_key())))
+                || (builder.structure.vouches_for(row)
+                    && (!is_handoff(row) || builder.structure.issuers.contains(row.signer_key())))
         });
         if !vouched {
             self.is_deferred[index] = true;
-            for grant in wanted(entry) {
+            for grant in wanted(row) {
                 self.deferred.entry(grant).or_default().push(index);
             }
             return;
@@ -501,7 +590,7 @@ impl<'r> Stager<'r> {
         if self.placed[index] || self.is_deferred[index] {
             return;
         }
-        let (turn, seq) = ((self.tier[index], index), self.entries[index].1.seq);
+        let (turn, seq) = ((self.tier[index], index), self.entries[index].1.seq());
         match self.held[index] {
             Some(Held::Ready) => self.ready.remove(&turn),
             Some(Held::ByParent) => self.by_parent.remove(&turn),
@@ -527,14 +616,14 @@ impl<'r> Stager<'r> {
     fn place(&mut self, index: usize) {
         self.placed[index] = true;
         self.order.push(index);
-        let (hash, entry) = self.entries[index];
+        let (hash, row) = self.entries[index];
         let mut grants = Vec::new();
         if let Some((builder, resident)) = &mut self.consent
-            && is_structural(&entry.op)
+            && is_structural(row)
             && !resident.contains(&hash)
             && self.pushed.insert(hash)
         {
-            builder.push(entry);
+            builder.push(row);
             builder.settle();
             grants = std::mem::take(&mut builder.grown);
         }

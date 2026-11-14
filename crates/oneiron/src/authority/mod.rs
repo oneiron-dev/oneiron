@@ -231,6 +231,7 @@ pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
 // Census L5-22: this vault's reads of a sealed authority row.
 pub(crate) use overlay_rows::{
     AUTHORITY_OVERLAY_ROW_MAX, CarriedOverlays, carried_overlays_in_txn,
+    decode_carried_authority_fold_row_in_txn, decode_vault_authority_fold_row_in_txn,
     open_carried_authority_body_in_txn, open_vault_authority_body_in_txn,
     stage_carried_overlays_in_txn,
 };
@@ -508,7 +509,7 @@ pub(crate) use readonly_fold::{
     AuthorityCachedFold, advance_authority_cache_generation, authority_cache_generation,
     authority_fold_readonly_for_store_in_txn,
 };
-use readonly_fold::{authority_log_rows_in_txn, decode_stored_authority_log_body};
+use readonly_fold::{authority_log_rows_in_txn, decode_stored_authority_fold_row};
 pub(crate) use retired_signers::{authority_row_resident, door_ancestor_row, stored_authority_row};
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;
 
