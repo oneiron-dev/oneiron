@@ -13,7 +13,9 @@
 //!
 //! The dispatch after the writer cannot reach a server here, so each approve
 //! may answer Ok or `did not dispatch`; every assertion reads the stored
-//! draft back instead of the answer.
+//! draft back instead of the answer. The seed door leaves the built-in packs
+//! unseeded: the reply's send is read on the built-in `email` channel, whose
+//! pack's checked connection no offline test holds.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test check_in_mail_reply_approve`.
@@ -36,6 +38,10 @@ use oneiron::{EntityId, TimeRange, Vault};
 use owner_apply_fixture::{approved, owner_decision, proof, rooted, spent};
 
 const APPROVE: &str = "vault.mail.reply.approve";
+/// The writer's refusal of an unanswered ask.
+const INELIGIBLE: &str = "the check-in did not make the act eligible";
+/// The writer's refusal of an ask over another effect.
+const ANOTHER_EFFECT: &str = "the act is another effect than the one asked";
 
 fn person(vault: &Vault, id: EntityId) {
     vault
@@ -220,9 +226,10 @@ fn an_ask_that_does_not_apply_is_refused_and_left_unspent() {
         &owen_proof,
         &approve_request(draft, revision, Some(unanswered)),
     );
+    let error = refused.expect_err("an unanswered ask approves nothing");
     assert!(
-        refused.is_err(),
-        "an unanswered ask approves nothing: {refused:?}"
+        error.message.contains(INELIGIBLE),
+        "the writer refuses the unanswered ask: {error:?}"
     );
     let stored = read_draft(&vault, owen, draft).expect("the draft reads back");
     assert_eq!(
@@ -249,9 +256,10 @@ fn an_ask_that_does_not_apply_is_refused_and_left_unspent() {
     );
     let refused =
         vault.approve_mail_reply(&owen_proof, &approve_request(draft, revision, Some(asked)));
+    let error = refused.expect_err("an ask for another revision approves nothing");
     assert!(
-        refused.is_err(),
-        "an ask for another revision approves nothing: {refused:?}"
+        error.message.contains(ANOTHER_EFFECT),
+        "the writer refuses the ask over another revision: {error:?}"
     );
     let stored = read_draft(&vault, owen, draft).expect("the draft reads back");
     assert_eq!(
