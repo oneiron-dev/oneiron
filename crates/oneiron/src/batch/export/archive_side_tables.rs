@@ -32,11 +32,13 @@ use serde::{Deserialize, Serialize};
 
 use super::archive_index::{ArchiveIndex, IndexedArchive, Loc, Tag};
 use super::document_import::parse_id;
+use super::side_names::{DocumentHistories, side_names};
 use crate::code_revision::ArchivedRevisionRow;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::serialize::ExportBodyFile;
 use crate::side_table::{self, SideCodec, SideKey, SideTable, SideTableDecl};
+use crate::source_audience::ExportJudge;
 use crate::store::Store;
 
 /// A binary value or byte array longer than this goes in the archive's `files/`
@@ -113,7 +115,29 @@ fn lent_tables() -> Vec<LentSideTable> {
     tables
 }
 
-fn lent(family: ArchiveSideFamily) -> Result<LentSideTable> {
+/// Every stored row of `family`'s table, as its owner lends it to the
+/// archive: the key after the table's prefix, and the stored value. The
+/// side-source reader reads the families that record a row's sources
+/// through it ([`crate::provenance::side_sources`], fix list row 22344).
+///
+/// # Errors
+///
+/// Storage failures, and a family its owner does not lend.
+pub(crate) fn side_family_rows(
+    family: ArchiveSideFamily,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    lent(family)?.stored_rows(store, rtxn)
+}
+
+/// The entity id at byte `at` of a side-table key, when the key holds one
+/// there.
+pub(crate) fn side_family_key_id(key: &[u8], at: usize) -> Option<EntityId> {
+    id_at(key, at)
+}
+
+pub(super) fn lent(family: ArchiveSideFamily) -> Result<LentSideTable> {
     let name = family.spec().decl.name;
     lent_tables()
         .into_iter()
@@ -260,7 +284,7 @@ enum Form {
 
 /// The families a record's rows go out together within.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Group {
+pub(super) enum Group {
     Blob,
     Lfs,
     Codebase,
@@ -273,11 +297,11 @@ enum Group {
 }
 
 #[derive(Clone, Copy)]
-struct Spec {
+pub(super) struct Spec {
     decl: &'static SideTableDecl,
     key: &'static [Part],
     value: Form,
-    group: Group,
+    pub(super) group: Group,
 }
 
 impl ArchiveSideFamily {
@@ -325,7 +349,7 @@ impl ArchiveSideFamily {
         Self::CodeMemoryTransfer,
     ];
 
-    fn spec(self) -> Spec {
+    pub(super) fn spec(self) -> Spec {
         use Form::{Empty, Hash, LfsObject, MessagePack, Opaque, U64Be, U64Le};
         use Group::{
             Blob, CodeDocument, CodeMemory, CodeMemoryTransfer, CodeRevision, Codebase, Lfs,
@@ -560,6 +584,10 @@ pub struct ArchiveSideRow {
 #[serde(deny_unknown_fields)]
 pub struct ArchiveSideWithheld {
     pub family: ArchiveSideFamily,
+    /// The entity the family's rows travel with; for a code document's
+    /// history, which travels vault-wide and names no record, the document
+    /// (its 32-byte id) an Owner's copy holds it out under (fix list row
+    /// 15416); `None` for a vault-wide row.
     pub owner: Option<String>,
     pub reason: ArchiveSideWithheldReason,
     /// The records a row held out alone names beside its owner, each one
@@ -593,6 +621,11 @@ pub(crate) struct SideRowBytes {
     pub(crate) value: Vec<u8>,
     pub(crate) owner: Option<EntityId>,
     pub(crate) carriers: Vec<EntityId>,
+    /// In an Owner's copy, each entity row the row names, read through its
+    /// family's own codec and carried by the copy's mailbox judge (fix list
+    /// row 15416): their lineage counts as carried once the writer
+    /// serializes the row. Empty elsewhere, and as read back.
+    pub(crate) names: Vec<EntityId>,
 }
 
 impl SideRowBytes {
@@ -717,6 +750,7 @@ impl ArchiveSideRow {
             value,
             owner: self.owner.as_deref().map(parse_id).transpose()?,
             carriers: Vec::new(),
+            names: Vec::new(),
         })
     }
 
@@ -753,11 +787,26 @@ impl ArchiveSideRow {
 /// read on this device); a row of a record the export does not carry, and an
 /// index row no record owns, stay unnamed (FIX 3681: a records archive never
 /// names what its reader could not read).
+///
+/// In an Owner's copy, `member_mail` is its pass's mailbox judge (fix list row
+/// 15416): a row that would go is read through its family's own codec, every
+/// typed record inside it too ([`side_names`]), and goes only when the judge
+/// carries every entity row it names. A record's row that names one the judge
+/// leaves out, or that does not read, holds out the record's rows of its
+/// group, as a carrier the export lacks does, so a version's record, its head
+/// and its born-from row go or stay together; each family is named once under
+/// the record, never by the entity left out. A code document's history goes
+/// whole or not at all: one of its rows naming a session, actor or other row
+/// the judge leaves out, or a snapshot or stamp that does not read, holds out
+/// every row of that document and the generation rows of each repo path it
+/// stood at, each family named once under the document. Each row that goes
+/// keeps the rows it names, to count as carried once the writer serializes it.
 pub(crate) fn archive_side_rows_in_txn(
     store: &Store,
     rtxn: &RoTxn<'_>,
     included: &BTreeSet<EntityId>,
     include_vault_wide: bool,
+    mut member_mail: Option<&mut ExportJudge<'_, '_, '_>>,
 ) -> Result<(Vec<SideRowBytes>, Vec<ArchiveSideWithheld>)> {
     let mut stored = Vec::new();
     for family in ArchiveSideFamily::ALL {
@@ -771,15 +820,47 @@ pub(crate) fn archive_side_rows_in_txn(
             .map(|(family, key, value)| (*family, key.as_slice(), value.as_slice())),
     );
     let mut travels = Vec::with_capacity(stored.len());
+    // In an Owner's copy, what each row that would go names, and whether the
+    // judge carries all of it.
+    let mut judged = Vec::with_capacity(stored.len());
     for (family, key, value) in &stored {
-        travels.push((*family, context.travel(*family, key, value)?));
+        let mut travel = context.travel(*family, key, value)?;
+        let mut verdict = None;
+        if let Some(judge) = member_mail.as_deref_mut()
+            && travel.goes(included, include_vault_wide)
+        {
+            let names = side_names(*family, key, value)?;
+            let carried = match &names.rows {
+                Some(rows) => judge.carries_all(Some(rows.as_slice()))?,
+                None => false,
+            };
+            if !carried {
+                travel = travel.left_out();
+            }
+            verdict = Some((names, carried));
+        }
+        travels.push((*family, travel));
+        judged.push(verdict);
+    }
+    let histories = DocumentHistories::of(&judged);
+    let mut held_documents = BTreeSet::new();
+    for ((family, travel), verdict) in travels.iter_mut().zip(&judged) {
+        let Some((names, _)) = verdict else {
+            continue;
+        };
+        let held = histories.held(names);
+        if !held.is_empty() {
+            *travel = Travel::Orphan;
+            held_documents.extend(held.into_iter().map(|document| (*family, document)));
+        }
     }
     let groups = whole_groups(&travels, included);
     let mut held_out = BTreeSet::new();
     let rows: Vec<SideRowBytes> = stored
         .into_iter()
         .zip(&travels)
-        .filter_map(|((family, key, value), (_, travel))| {
+        .zip(judged)
+        .filter_map(|(((family, key, value), (_, travel)), verdict)| {
             let owner = carried(
                 family,
                 travel,
@@ -792,16 +873,32 @@ pub(crate) fn archive_side_rows_in_txn(
                 Travel::With(_, carriers) => carriers.clone(),
                 Travel::Broken(_) | Travel::Vault | Travel::Orphan => Vec::new(),
             };
+            let names = verdict
+                .and_then(|(names, admitted)| admitted.then_some(names.rows))
+                .flatten()
+                .unwrap_or_default();
             Some(SideRowBytes {
                 family,
                 key,
                 value,
                 owner,
                 carriers,
+                names,
             })
         })
         .collect();
-    Ok((rows, incomplete(held_out).collect()))
+    let mut withheld: Vec<ArchiveSideWithheld> = incomplete(held_out).collect();
+    withheld.extend(
+        held_documents
+            .into_iter()
+            .map(|(family, document)| ArchiveSideWithheld {
+                family,
+                owner: Some(bytes_to_hex_lower(&document)),
+                reason: ArchiveSideWithheldReason::Incomplete,
+                carriers: Vec::new(),
+            }),
+    );
+    Ok((rows, withheld))
 }
 
 /// FIX-LIST 11110: which of a stored records archive's side `rows` stay when
@@ -1125,7 +1222,7 @@ fn side_context(index: &ArchiveIndex<'_>) -> Result<SideContext> {
 /// Where a row goes: with an entity and the carriers it names, broken (its
 /// record's rows of that family stay together, so none go), vault-wide, or
 /// nowhere (an index row no record owns).
-enum Travel {
+pub(super) enum Travel {
     With(EntityId, Vec<EntityId>),
     Broken(EntityId),
     Vault,
@@ -1314,11 +1411,11 @@ impl SideContext {
     }
 }
 
-fn array_at<const N: usize>(bytes: &[u8], at: usize) -> Option<[u8; N]> {
+pub(super) fn array_at<const N: usize>(bytes: &[u8], at: usize) -> Option<[u8; N]> {
     bytes.get(at..at.checked_add(N)?)?.try_into().ok()
 }
 
-fn id_at(bytes: &[u8], at: usize) -> Option<EntityId> {
+pub(super) fn id_at(bytes: &[u8], at: usize) -> Option<EntityId> {
     EntityId::from_bytes(array_at::<ENTITY_ID_LEN>(bytes, at)?).ok()
 }
 

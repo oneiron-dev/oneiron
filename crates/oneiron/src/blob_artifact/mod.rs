@@ -28,6 +28,7 @@
 //! store (OF-307): a content hash computed from one tenant's bytes never
 //! resolves storage for another tenant, even when byte-identical.
 
+mod archived_versions;
 mod body;
 mod body_file;
 pub use oneiron_store::blob_artifact::body_tags;
@@ -56,6 +57,9 @@ mod version_codec;
 mod version_rows;
 mod versions;
 
+pub(crate) use self::archived_versions::{
+    ArchivedVersionSource, archive_version_rows, archive_version_source,
+};
 pub(crate) use self::body::validate_blob_artifact_body_bytes;
 pub use self::body::{
     BLOB_ARTIFACT_BODY_KEYS, BLOB_ARTIFACT_MEDIA_TYPE_MAX_BYTES, BLOB_ARTIFACT_NAME_MAX_BYTES,
@@ -66,7 +70,8 @@ pub use self::body_file::BlobBodyFile;
 pub(crate) use self::body_file::BlobContent;
 pub use self::born_from::{BornFromArtifact, BornFromSource};
 pub(crate) use self::born_from::{
-    agent_run_artifacts_with_prefix_in_txn, archive_born_from_table, artifacts_born_from_in_txn,
+    agent_run_artifacts_with_prefix_in_txn, archive_born_from_rows, archive_born_from_table,
+    artifacts_born_from_in_txn,
 };
 pub use self::create::ArtifactCreateRequest;
 pub use self::deck_doors::{
@@ -94,7 +99,8 @@ pub(crate) use self::lifecycle::{release_response_version_in_txn, response_versi
 pub use self::provenance::BlobVersionProvenance;
 pub(crate) use self::references::archive_version_claim_tables;
 pub(crate) use self::references::{
-    artifacts_claiming, claimed_hash_rows_exist, record_version_claim,
+    archive_claimed_versions, artifacts_claiming, claimed_hash_rows_exist, record_version_claim,
+    version_claim_rows,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::references::{

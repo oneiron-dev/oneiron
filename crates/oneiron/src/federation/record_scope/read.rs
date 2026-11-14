@@ -25,7 +25,18 @@ impl Vault {
     /// A SECRET_CUSTODY row is never a scoped record, in either view: its body
     /// carries the value, which only its binding door reads. Nor is an LFS
     /// chunk that no published object holds yet.
-    pub fn records_in_scope(
+    ///
+    /// A scoped and debug read the crate's own doors make: never an Owner's
+    /// copy of the vault, whatever scopes it is given. That copy is
+    /// [`Self::export_owner_records`] (fix list row 15416).
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "kept for the crate's scoped and debug reads; no door outside the crate reads through it"
+        )
+    )]
+    pub(crate) fn records_in_scope(
         &self,
         selector: &Scope,
         slip: &Scope,

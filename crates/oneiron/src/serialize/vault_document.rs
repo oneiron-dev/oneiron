@@ -19,6 +19,7 @@ use serde_json::Value;
 use super::ExportSecrets;
 use super::credential_nulling::{null_document_credentials, null_document_member};
 use super::export_value::{ExportBody, ExportBodyFile, ExportValue, attaches_as_file};
+use super::written_receipts::written_receipt_bodies;
 use crate::Vault;
 use crate::batch::export::{
     ArchiveRecordKind, ArchiveSecretCustody, ArchiveSideWithheld, ArchiveSideWithheldReason,
@@ -95,6 +96,11 @@ pub(crate) struct DocumentWriter<'v> {
     /// `finish`, when that set and the unlogged diaries are final.
     carried_ids: BTreeSet<EntityId>,
     row_births: BTreeMap<EntityId, RowBirth>,
+    /// Each receipt whose body the copy writes in a carried row's derivation
+    /// envelope, by that row and the receipt's id (fix list row 15416: the
+    /// rows that body was made from count as carried through it). An OKF
+    /// copy writes no receipt body.
+    carried_receipts: BTreeSet<(EntityId, String)>,
 }
 
 impl<'v> DocumentWriter<'v> {
@@ -131,6 +137,7 @@ impl<'v> DocumentWriter<'v> {
             side_withheld: Vec::new(),
             carried_ids: BTreeSet::new(),
             row_births: BTreeMap::new(),
+            carried_receipts: BTreeSet::new(),
         };
         for adapter in adapters {
             writer.push_nulled(
@@ -181,16 +188,26 @@ impl<'v> DocumentWriter<'v> {
                 .iter()
                 .find(|(key, _)| matches!(key, ExportValue::String(key) if key == "evid"))
         {
+            let receipts = crate::batch::export::receipt_sources_for_body(
+                &body,
+                &raw.task_receipts,
+                raw.archived_receipts.as_ref(),
+            )?;
             let envelope = ExportDerivationEnvelope {
                 id: id.clone(),
                 evidence: evidence.clone(),
-                receipts: crate::batch::export::receipt_sources_for_body(
-                    &body,
-                    &raw.task_receipts,
-                    raw.archived_receipts.as_ref(),
-                )?,
+                receipts,
             };
-            self.push_derivation_envelope(&envelope)?;
+            let row = self.push_derivation_envelope(&envelope)?;
+            // The rows a receipt's body was made from count as carried only
+            // through a body this copy writes (fix list row 15416): an
+            // archive writes each envelope's receipts as the nulling pass
+            // leaves them; an OKF copy writes only its evidence.
+            if self.cut == ExportCut::Archive {
+                self.carried_receipts.extend(
+                    written_receipt_bodies(&envelope, &row).map(|receipt| (raw.id, receipt)),
+                );
+            }
         }
         let entity = ExportEntity {
             id,
@@ -429,22 +446,25 @@ impl<'v> DocumentWriter<'v> {
     /// binary codec the release scan reads a credential in, or one that does
     /// not read back through its table, is held out and named in the
     /// manifest. A long binary value goes beside the document as a file.
-    pub(crate) fn side_row(&mut self, raw: SideRowBytes) -> Result<()> {
+    /// Whether the row went into the document (fix list row 15416: only then
+    /// do the rows it names count as carried).
+    pub(crate) fn side_row(&mut self, raw: SideRowBytes) -> Result<bool> {
         let Some((row, files)) = raw.portable()? else {
             self.side_withheld
                 .push(raw.withheld(ArchiveSideWithheldReason::NotPortable));
-            return Ok(());
+            return Ok(false);
         };
         let value = serde_json::to_value(&row).map_err(|_| encode_failed())?;
         if raw.opaque_credential() || null_document_member("", &value, 2) != value {
             self.side_withheld
                 .push(raw.withheld(ArchiveSideWithheldReason::Credential));
-            return Ok(());
+            return Ok(false);
         }
         for bytes in files {
             self.files.attach(&bytes)?;
         }
-        self.push(ArchiveRecordKind::SideTable, &value)
+        self.push(ArchiveRecordKind::SideTable, &value)?;
+        Ok(true)
     }
 
     /// FIX 3681: the side-row families held out whole, each named once with
@@ -455,6 +475,19 @@ impl<'v> DocumentWriter<'v> {
         withheld: impl IntoIterator<Item = ArchiveSideWithheld>,
     ) {
         self.side_withheld.extend(withheld);
+    }
+
+    /// Every entity row this writer carried, the diaries whose read was not
+    /// logged among them until [`Self::finish`] leaves those out (fix list
+    /// row 15416: what an Owner's copy carries of members' mailboxes).
+    pub(crate) const fn carried_rows(&self) -> &BTreeSet<EntityId> {
+        &self.carried_ids
+    }
+
+    /// Each receipt whose body the copy writes in a carried row's derivation
+    /// envelope, by that row and the receipt's id (fix list row 15416).
+    pub(crate) const fn carried_receipts(&self) -> &BTreeSet<(EntityId, String)> {
+        &self.carried_receipts
     }
 
     /// Builds the agent bundles and the manifest, then writes the archive, or
@@ -624,6 +657,8 @@ impl<'v> DocumentWriter<'v> {
                 thread_roots: Default::default(),
                 holder_requests: Vec::new(),
                 notices: Vec::new(),
+                mailbox_notices: Vec::new(),
+                member_mail: None,
             },
         ))
     }
@@ -739,7 +774,10 @@ impl<'v> DocumentWriter<'v> {
     /// the claim's own `evid` member goes out. The reader requires the two
     /// equal, and under Included the pass would null a kept credential text
     /// to a node no reader decodes.
-    fn push_derivation_envelope(&mut self, envelope: &ExportDerivationEnvelope) -> Result<()> {
+    /// Writes `envelope` as the nulling pass leaves it, and answers the row
+    /// it wrote (fix list row 15416: the receipt bodies that row still holds
+    /// are what count as carried).
+    fn push_derivation_envelope(&mut self, envelope: &ExportDerivationEnvelope) -> Result<Value> {
         let typed = serde_json::to_value(envelope).map_err(|_| encode_failed())?;
         let mut row = null_document_member("", &typed, 2);
         if self.secrets == ExportSecrets::Included
@@ -747,7 +785,8 @@ impl<'v> DocumentWriter<'v> {
         {
             *evidence = kept.clone();
         }
-        self.push(ArchiveRecordKind::DerivationEnvelope, &row)
+        self.push(ArchiveRecordKind::DerivationEnvelope, &row)?;
+        Ok(row)
     }
 
     fn push_nulled(

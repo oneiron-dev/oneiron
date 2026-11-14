@@ -259,3 +259,17 @@ fn verify(store: &Store, txn: &RoTxn<'_>, proposal: &CodeRevisionProposal) -> Re
 pub(crate) fn archive_proposal_table() -> crate::batch::export::LentSideTable {
     &PROPOSALS
 }
+
+/// Each entity row a stored stranded proposal names, read through its table's
+/// own codec (fix list row 15416): every row its revision names, read
+/// through the revision's own codec inside it ([`super::keys::revision_rows`]),
+/// and its head revision. Its artifact body is its revision's own
+/// CODE_ARTIFACT body, which names no row. `None` when the proposal, its
+/// revision or its body does not read.
+pub(super) fn archive_proposal_rows(value: &[u8]) -> Option<Vec<EntityId>> {
+    let proposal = PROPOSALS.decode_value(value).ok()?;
+    crate::code_artifact::decode_code_artifact_body(&proposal.artifact_body).ok()?;
+    let mut rows = super::keys::revision_rows(&proposal.revision);
+    rows.push(proposal.head_revision_id);
+    Some(rows)
+}

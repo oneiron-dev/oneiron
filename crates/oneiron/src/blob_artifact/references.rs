@@ -23,6 +23,7 @@ use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 
+use super::archived_versions::ArchivedVersionSource;
 use super::provenance::BLOB_VERSION_CLAIM_PREDICATE;
 use super::store_keys::BLOB_ARTIFACT_CONTENT_HASH_LEN;
 use super::versions::KEY_CONTENT_HASH;
@@ -49,6 +50,79 @@ pub(crate) fn archive_version_claim_tables() -> [crate::batch::export::LentSideT
 /// The value of a fence a release planted. A fence an explicit delete planted is empty, and only
 /// a release fence is ever lifted.
 const RELEASE_FENCE: &[u8] = b"blob_artifact:release";
+
+/// Each entity row the value of `body` names when it is a version's
+/// `blob.version` ledger claim (fix list row 15416): the rows its made_by
+/// names, read through the version's own made_by codec, as the version's
+/// record names them. `None` for any other claim; `Some(None)` when its
+/// made_by does not read.
+pub(crate) fn version_claim_rows(body: &ClaimBody) -> Option<Option<Vec<EntityId>>> {
+    if body.predicate != BLOB_VERSION_CLAIM_PREDICATE {
+        return None;
+    }
+    let Value::Map(entries) = &body.value else {
+        return Some(None);
+    };
+    Some(
+        entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(super::versions::KEY_MADE_BY))
+            .and_then(|(_, value)| value.as_str())
+            .and_then(|text| super::made_by::made_by_from_text(text).ok())
+            .map(|made_by| super::made_by::made_by_rows(&made_by)),
+    )
+}
+
+/// Each `blob.version` claim stored in the snapshot `txn`, local and
+/// replicated alike, found through the claim predicate index (fix list row
+/// 15416): a replica holds these claims and no version chain, and a claim can
+/// stand before any `claim_of` edge to its artifact does. Each comes with the
+/// artifact its own subject names and, read through the version's own
+/// made_by codec, the bytes its own content hash names and what made them. A
+/// claim whose body does not read names no artifact or bytes.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn archive_claimed_versions(
+    store: &Store,
+    txn: &RoTxn<'_>,
+) -> Result<Vec<(EntityId, ArchivedVersionSource)>> {
+    let mut versions = Vec::new();
+    crate::store::claim_projection::for_each_claim_id_for_predicate_in_txn(
+        store,
+        txn,
+        BLOB_VERSION_CLAIM_PREDICATE,
+        |claim| {
+            let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &claim)?
+            else {
+                return Ok(());
+            };
+            if raw.len() <= ENTITY_METADATA_HEADER_LEN || raw[0] != ENTITY_TYPE_CLAIM {
+                return Ok(());
+            }
+            let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+                true,
+            ) else {
+                return Ok(());
+            };
+            let Some((artifact, hash)) = version_claim_reference(&body) else {
+                return Ok(());
+            };
+            versions.push((
+                artifact,
+                ArchivedVersionSource {
+                    asset: super::versions::blob_artifact_asset_entity_id(&hash)?,
+                    claim,
+                    made_by: version_claim_rows(&body).flatten(),
+                },
+            ));
+            Ok(())
+        },
+    )?;
+    Ok(versions)
+}
 
 /// The artifact and content hash `body` names, when it is a `blob.version` claim.
 fn version_claim_reference(body: &ClaimBody) -> Option<(EntityId, ContentHash)> {
