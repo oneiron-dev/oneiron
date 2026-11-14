@@ -10,6 +10,7 @@ use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_
 use oneiron::skill::{SkillLifecycle, SkillRecord};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::TaskCreateSpec;
+use oneiron::test_support::bind_host_actor;
 use oneiron::workspace_roster::{ProjectRecord, RoomOriginCard, RoomTrunkItem};
 use oneiron::{EntityId, Result, TimeRange, Vault, WriteActor};
 
@@ -377,8 +378,20 @@ fn confirmed_card_in_thread_mints_exact_terms_and_rejects_sibling_and_retired_ow
         },
     )?
     .on_thread(room, fresh)?;
-    // A merge never retires the vault's owner, so a delete does.
+    // A merge never retires the vault's owner, so a delete does. The
+    // last-owner guard refuses deleting the bound owner (L9-52 b): the owner
+    // is deleted under a stand-in binding and bound again.
+    let stand_in = EntityId::now();
+    vault.put_entity(
+        &stand_in,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"stand-in",
+    )?;
+    bind_host_actor(&vault, &issuer, stand_in, "human")?;
     assert!(vault.delete_entity(&owner_id)?);
+    bind_host_actor(&vault, &issuer, owner_id, "human")?;
     let rejected = EntityId::now();
     assert!(
         stale

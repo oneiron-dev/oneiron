@@ -944,9 +944,15 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
             Ok(())
         })
         .expect("remove archive fixture");
-    vault
-        .delete_entity_with_reason(&owner, crate::deletion::DeleteReason::UserDelete)
-        .expect("soft delete owner");
+    // The last-owner guard refuses deleting the bound owner (L9-52 b): the
+    // owner is deleted under a stand-in binding and bound again.
+    crate::test_util::delete_bound_person(
+        &vault,
+        &issuer,
+        owner,
+        "human",
+        crate::deletion::DeleteReason::UserDelete,
+    );
     assert!(
         owner_read
             .read(&[crate::claim::PointRead::id(id)], None)

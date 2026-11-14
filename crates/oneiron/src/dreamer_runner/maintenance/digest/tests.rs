@@ -312,7 +312,7 @@ fn deleted_or_archived_owner_cannot_pick_or_refund_a_delivered_ask() -> Result<(
     };
     for archived in [false, true] {
         let (_dir, vault) = open_test_vault_with(embedding_test_config());
-        crate::test_util::provision_engine_machines(&vault);
+        let issuer = crate::test_util::provision_engine_machines(&vault);
         // The digest is the owner's: the judge whose asks it delivers is the
         // vault's owner.
         let person = vault.ensure_embedded_owner_actor().expect("embedded owner");
@@ -353,7 +353,16 @@ fn deleted_or_archived_owner_cannot_pick_or_refund_a_delivered_ask() -> Result<(
                 Ok(())
             })?;
         } else {
-            vault.delete_entity_with_reason(&person, crate::deletion::DeleteReason::UserDelete)?;
+            // The last-owner guard refuses deleting the bound owner (L9-52
+            // b): the owner is deleted under a stand-in binding and bound
+            // again.
+            crate::test_util::delete_bound_person(
+                &vault,
+                &issuer,
+                person,
+                "human",
+                crate::deletion::DeleteReason::UserDelete,
+            );
         }
         assert_eq!(
             record_judge_pick(&vault, &owner, ask.id, false, 20)
