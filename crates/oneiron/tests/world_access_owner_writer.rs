@@ -161,6 +161,9 @@ impl Fixture {
             approval,
         );
         body.evidence = Some(write_envelope_evidence(&envelope, None));
+        // An agent definition has no substrate FACET, so the row takes the
+        // vault default facet, as the setter's rows do.
+        body.scope_facet = self.vault.default_facet().unwrap();
         put_world_access_row(
             &self.vault,
             &EntityId::now(),

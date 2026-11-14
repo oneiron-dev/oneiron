@@ -381,6 +381,10 @@ impl Vault {
             ClaimApprovalStatus::Approved,
         );
         body.evidence = Some(write_envelope_evidence(&envelope, None));
+        // Only a PERSON agent has a substrate FACET. An agent definition or
+        // a base agent MACHINE takes the vault default facet, which the CLAIM
+        // birth gate (#4389) needs.
+        body.scope_facet = self.claim_put_facet_keeping_in_txn(txn, &id, body.scope_facet)?;
         self.put_reserved_claim_in_txn(
             txn,
             &id,
