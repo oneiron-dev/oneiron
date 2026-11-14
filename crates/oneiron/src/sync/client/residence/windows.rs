@@ -39,6 +39,7 @@ struct WindowVvReply {
 /// holds takes the own-device lane as it lands in `window` (FIX 12111).
 fn import_promotion_snapshot_with(
     vault: &crate::Vault,
+    materializer: &crate::sync::bridge::Materializer,
     (window, doc): (&WindowKey, &loro::LoroDoc),
     snapshot: &[u8],
     own_device: Option<&OwnDeviceImport>,
@@ -49,7 +50,11 @@ fn import_promotion_snapshot_with(
             own_device,
             (window, doc),
             snapshot,
-            || crate::sync::ingest::with_promotion(vault, || doc.import(snapshot)),
+            || {
+                crate::sync::ingest::with_promotion(vault, || {
+                    crate::sync::window::import_into_live_window(materializer, doc, snapshot)
+                })
+            },
         )
         .is_ok()
 }
@@ -328,6 +333,7 @@ impl SyncClient {
         if snapshot.len() > crate::sync::residence::MAX_PROMOTION_SNAPSHOT_BYTES
             || !import_promotion_snapshot_with(
                 &self.vault,
+                self.manager.materializer(),
                 (window, &loaded.doc),
                 snapshot,
                 own_device,
@@ -383,8 +389,13 @@ impl SyncClient {
                 "unpromoted window has local CRDT history",
             ));
         }
-        if !import_promotion_snapshot_with(&self.vault, (window, &loaded.doc), snapshot, own_device)
-        {
+        if !import_promotion_snapshot_with(
+            &self.vault,
+            self.manager.materializer(),
+            (window, &loaded.doc),
+            snapshot,
+            own_device,
+        ) {
             self.manager.discard_window(window);
             return Err(refused());
         }

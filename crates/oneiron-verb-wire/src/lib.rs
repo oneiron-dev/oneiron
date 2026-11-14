@@ -113,6 +113,7 @@ pub mod team;
 pub mod training_pack;
 pub mod vault_cleanup;
 pub mod vault_shape;
+pub mod verb_input;
 pub mod verbs;
 pub mod web_connector;
 pub mod workspace_roster;
