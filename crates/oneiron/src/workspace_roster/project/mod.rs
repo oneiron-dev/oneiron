@@ -100,8 +100,6 @@ pub(crate) use revision::{
 };
 pub use revision::{ProjectRevision, ProjectRevisionHash, ProjectRevisionProof};
 pub use roster::{ProjectRosterWriteOutcome, ProjectRosterWriteRequest};
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-REVIEW-TESTS]: the lib test target's type check fails here (6 errors: E0061 x4, E0063 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod review_tests;
 pub(crate) use leader_chat::CHAT_FIELD as LEADER_CHAT_FIELD;

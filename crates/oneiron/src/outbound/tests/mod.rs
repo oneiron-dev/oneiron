@@ -11,8 +11,6 @@ mod quiet_window;
 mod retry_audit;
 mod sender_selection;
 mod space_posting;
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-STEP-FAILURE]: the lib test target's type check fails here (3 errors: E0063 x3); port it, then drop this gate
-#[cfg(any())]
 mod step_failure;
 
 use super::*;

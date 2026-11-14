@@ -14,8 +14,6 @@ mod world_authority_tests;
 
 mod facet_status_world;
 mod fusion_lists;
-// FIX [LIBTEST-QUARANTINE-PIPELINE-TESTS-RELATIONSHIP-SCOPE-FILTER]: the lib test target's type check fails here (3 errors: E0308 x3); port it, then drop this gate
-#[cfg(any())]
 mod relationship_scope_filter;
 mod relevance_order;
 mod rerank_hyde_session_stale;

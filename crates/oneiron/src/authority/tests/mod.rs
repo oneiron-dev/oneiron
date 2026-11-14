@@ -42,8 +42,6 @@ mod support;
 mod weak_keys;
 
 mod anchor_independence;
-// FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-CAUSAL-CLAIM]: the lib test target's type check fails here (3 errors: E0061 x3); port it, then drop this gate
-#[cfg(any())]
 mod causal_claim;
 mod handoff_arrival_order;
 mod handoff_settlement;
