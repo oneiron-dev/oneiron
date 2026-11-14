@@ -11,7 +11,7 @@ use super::owner_confirm;
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{
     ErasePendingReason, EraseWithdrawal, LegalHold, LegalHoldEvent, LegalHoldTarget,
-    LiftAndEraseOutcome, LiftAndEraseStatus,
+    LiftAndEraseOutcome, LiftAndEraseShownState, LiftAndEraseStatus,
 };
 use crate::memory::MemoryResult;
 use crate::{EntityId, Vault};
