@@ -198,7 +198,7 @@ fn local_only_hits(
             hits.push(ResidenceHit {
                 entity_id: id.to_hex(),
                 score: 1.0,
-                window: item.window.clone(),
+                window: item.window,
             });
         }
     }

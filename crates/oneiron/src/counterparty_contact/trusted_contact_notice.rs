@@ -16,8 +16,6 @@
 
 use std::sync::{PoisonError, RwLockReadGuard, RwLockWriteGuard};
 
-use serde::{Deserialize, Serialize};
-
 use super::trusted_contact::{
     RELATIONS, TrustedContact, TrustedContactDial, TrustedContactTier, invalid,
     naming_answered_yes_in_txn,
@@ -82,38 +80,11 @@ fn send_guard(vault: &Vault) -> RwLockReadGuard<'_, ()> {
         .unwrap_or_else(PoisonError::into_inner)
 }
 
-/// What authorized one notice, written with it in the transaction that
-/// staged it: the person's yes to their ask, or, for a just-call contact, the
-/// owner's imminent-tier policy row the gate settled. Never a caller's word.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "origin", rename_all = "snake_case", deny_unknown_fields)]
-pub enum TrustedContactNoticeAuthorization {
-    /// The person answered this ask yes, about the naming the notice is for.
-    Ask { ask_ref: String },
-    /// The policy row whose `RouteToHelp` fired the notice, and its tier.
-    Policy {
-        row_ref: String,
-        tier: TrustedContactTier,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::counterparty_contact::trusted_contact_notice::TrustedContactNoticeAuthorization;
 
-/// Everything the host needs to send one notice, and what authorized it,
-/// and nothing from the turn or the verdict.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TrustedContactNotice {
-    /// The send's own ref: one per fire, so a later crisis is a new send and
-    /// never the replay of an old one.
-    pub fire: String,
-    pub person: String,
-    pub contact: String,
-    pub version: u64,
-    pub sender: String,
-    pub channel: String,
-    pub verb: String,
-    pub target: String,
-    pub authorization: TrustedContactNoticeAuthorization,
-}
+#[doc(hidden)]
+pub use oneiron_records::counterparty_contact::trusted_contact_notice::TrustedContactNotice;
 
 /// Stages one notice from `relation` in the transaction that fired it, under
 /// `authorization`, and answers the fire that will deliver it. While one

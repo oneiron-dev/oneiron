@@ -20,7 +20,6 @@ use super::program_definition::{
     CampaignProgramDraft, CampaignProgramOutbound, CampaignProgramStep, CampaignProgramStepDraft,
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::error::Error;
 use crate::error::Result;
 use crate::write_envelope::cohort_claims::normalize_campaign_pack_token;
 
@@ -87,24 +86,14 @@ pub struct CampaignProgramOutboundSpec {
     pub subject: Option<String>,
 }
 
-/// A program's audience on the wire: the saved query whose entries enroll,
-/// and the step of this program they enroll at.
-///
-/// The query must be the campaign owner's. A Manual or inactive query may be
-/// bound: it gets no automatic intake, and the record's `automatic_intake`
-/// says so.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CampaignProgramAudienceSpec {
-    /// The saved query whose entries enroll.
-    #[schemars(with = "String")]
-    #[serde(with = "crate::entity_id::serde_hex")]
-    pub query_ref: EntityId,
-    /// The step an entry enrolls at; one of this program's `steps`.
-    #[schemars(with = "String")]
-    #[serde(with = "crate::entity_id::serde_hex")]
-    pub entry_step_ref: EntityId,
-}
+#[doc(hidden)]
+pub(crate) use oneiron_verb_wire::memory::campaign_records::program::invalid;
+#[doc(hidden)]
+use oneiron_verb_wire::memory::campaign_records::program::payload_from_hex;
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::campaign_records::program::{
+    ArchiveCampaignProgramRequest, CampaignProgramAudienceSpec, CampaignProgramReadRequest,
+};
 
 /// `vault.campaign.program.create`'s input.
 ///
@@ -128,20 +117,6 @@ pub struct CreateCampaignProgramRequest {
     /// The saved query the program enrolls from; absent or null binds none.
     #[serde(default)]
     pub audience: Option<CampaignProgramAudienceSpec>,
-}
-
-/// `vault.campaign.program.read`'s input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CampaignProgramReadRequest {
-    /// The program's campaign.
-    #[schemars(with = "String")]
-    #[serde(with = "crate::entity_id::serde_hex")]
-    pub campaign_ref: EntityId,
-    /// The program.
-    #[schemars(with = "String")]
-    #[serde(with = "crate::entity_id::serde_hex")]
-    pub program_ref: EntityId,
 }
 
 /// `vault.campaign.program.update`'s input: a whole replacement under a
@@ -170,23 +145,6 @@ pub struct UpdateCampaignProgramRequest {
     /// Replacement audience; absent or null unbinds.
     #[serde(default)]
     pub audience: Option<CampaignProgramAudienceSpec>,
-}
-
-/// `vault.campaign.program.archive`'s input. Archive keeps the program, its
-/// steps and its audience readable; it enrolls no one afterwards.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ArchiveCampaignProgramRequest {
-    /// The program's campaign.
-    #[schemars(with = "String")]
-    #[serde(with = "crate::entity_id::serde_hex")]
-    pub campaign_ref: EntityId,
-    /// The program.
-    #[schemars(with = "String")]
-    #[serde(with = "crate::entity_id::serde_hex")]
-    pub program_ref: EntityId,
-    /// Version the caller believes is current.
-    pub expected_definition_version: u64,
 }
 
 /// A program's lifecycle on the wire. Draft and Paused are the FIX 12542
@@ -341,29 +299,6 @@ impl CampaignProgramOutboundSpec {
     }
 }
 
-/// Decodes a lowercase-hex payload.
-fn payload_from_hex(hex: &str) -> Result<Vec<u8>> {
-    let not_hex = || invalid("a step's outbound payload must be lowercase hex");
-    if !hex.len().is_multiple_of(2) {
-        return Err(not_hex());
-    }
-    hex.as_bytes()
-        .chunks_exact(2)
-        .map(|pair| match (hex_nibble(pair[0]), hex_nibble(pair[1])) {
-            (Some(high), Some(low)) => Ok((high << 4) | low),
-            _ => Err(not_hex()),
-        })
-        .collect()
-}
-
-const fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
-    }
-}
-
 /// The wire record of an authored program.
 pub(crate) fn campaign_program_record(program: &AuthoredCampaignProgram) -> CampaignProgramRecord {
     CampaignProgramRecord {
@@ -397,8 +332,4 @@ pub(crate) fn campaign_program_record(program: &AuthoredCampaignProgram) -> Camp
         created_at: program.definition.created_at,
         updated_at: program.definition.updated_at,
     }
-}
-
-pub(crate) fn invalid(message: &str) -> Error {
-    Error::InvalidConfig(message.to_owned())
 }
