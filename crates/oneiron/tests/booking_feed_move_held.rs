@@ -143,6 +143,19 @@ impl Fixture {
                 b"visitor@example.test",
             )
             .expect("put booker");
+        // A raw claim put is born in its subject's substrate FACET, which
+        // only a PERSON's put stores, so the birth gate refuses a claim about
+        // the page ASSET (InvalidFacet, #4389) until that FACET is stored.
+        vault
+            .put_entity(
+                &oneiron::claim::substrate_facet_id(page).expect("the page's facet id"),
+                oneiron::registry::ENTITY_TYPE_FACET,
+                at(1),
+                1,
+                &rmp_serde::to_vec_named(&serde_json::json!({"name": "booking page facet"}))
+                    .expect("facet body"),
+            )
+            .expect("store the page's facet");
         // The page's event type, which the emergency planner solves its
         // proposals from.
         let event_type_claim = ClaimBody::new(
