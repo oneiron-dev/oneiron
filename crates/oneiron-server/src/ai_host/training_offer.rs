@@ -24,6 +24,7 @@ use oneiron::learning::learning_estimate_with_sources;
 use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::manifest::{MODEL_ROLES, ModelRole};
 use oneiron::llm::registry::ModelRegistryRow;
+use oneiron::skill_optimize::offer_doors::{OfferPassEnd, OfferPassPrerequisite};
 use oneiron::skill_optimize::offer_pilot::{
     model_offer_licence as licence, model_offer_pin as pin, training_base_pin as base_pin,
     training_destination as destination,
@@ -32,7 +33,7 @@ use oneiron::skill_optimize::{
     ComputeDestination, EvalSeat, OfferCandidate, OfferCheckInput, OfferCheckOutcome, OfferCost,
     OfferEvidence, OfferIntent, OfferModelPin, OfferOption, SeatWorkload, TrainingOffer,
     TrainingOfferDraft, model_role_seat, offer_skill_cell, offer_training_handoff, seat_model_role,
-    training_offer, training_offer_checks, training_offer_skill_id, training_offers,
+    training_offer, training_offer_checks, training_offer_skill_in_force, training_offers,
     union_source_rows,
 };
 use oneiron::training_pack::{TrainingRun, TrainingState};
@@ -49,11 +50,13 @@ mod choices;
 mod cost;
 mod draft;
 mod pilot;
+mod run;
 mod sources;
 mod unverifiable;
 pub(super) use check::check;
 use choices::{recipe_choices, stock_choices};
 use cost::{candidate_monthly, monthly, payback};
+pub(crate) use run::run_now;
 use sources::Sources;
 use unverifiable::{Alone, Unverifiable};
 
@@ -74,8 +77,12 @@ const CATALOG_CURRENCY: &str = "USD";
 const COST_TOLERANCE: f64 = 0.10;
 /// The call purpose the offer's model calls are metered under.
 const OFFER_CALL_PURPOSE: &str = "coach_training_offer";
-/// What one job's calls may spend.
-const BUDGET_UNITS: u64 = 1 << 20;
+/// What the offer passes of one day may spend together, in the guard's units
+/// (tokens in and out). The nightly pass and every run-now pass open their
+/// model guard at what the last [`DAY_SECS`] left of it, read from the
+/// usage ledger under [`OFFER_CALL_PURPOSE`]'s metered label: no pass opens a fresh
+/// allowance, so repeated run-now calls cannot multiply the day's spend.
+const DAY_BUDGET_UNITS: u64 = 1 << 20;
 /// What the offer says of its prices, beside the Coach's risk.
 const PRICING_NOTE: &str = "Both sides are priced at list price on this seat's measured \
     token counts, cached prompt tokens at each model's quoted cache rates, or at its input price \
@@ -94,16 +101,23 @@ const SKILL_FILE: &str = "SKILL.md";
 /// The pass's key in its attempt's read set (FIX 7073).
 const OFFER_DRAFT: ReadSetProducer = ReadSetProducer::COACH_OFFER_DRAFT;
 
-/// Raises at most one offer for each served seat, the busiest first.
+/// A pass that stopped before it asked the Coach, for want of `prerequisite`.
+const fn missing(prerequisite: OfferPassPrerequisite) -> OfferPassEnd {
+    OfferPassEnd::Missing { prerequisite }
+}
+
+/// Raises at most one offer for each served seat, the busiest first, and
+/// says how the pass ended. The nightly worker ignores the end; the run-now
+/// door answers it.
 pub(super) fn draft(
     server: &SyncServer,
     admitted: &DreamerAdmittedAttempt,
     now: u64,
-) -> oneiron::Result<()> {
+) -> oneiron::Result<OfferPassEnd> {
     let vault = server.vault();
     // With no meter there is no workload to price an offer on.
     let Some(meter) = server.vault_usage() else {
-        return Ok(());
+        return Ok(missing(OfferPassPrerequisite::UsageMeter));
     };
     let runtime = server.ai.model_runtime();
     let (owner, vault_id) = (meter.owner(), meter.vault_id());
@@ -127,7 +141,32 @@ pub(super) fn draft(
         seats.push((role, route.model.as_str().to_owned(), route.locality, usage));
     }
     if seats.is_empty() {
-        return Ok(());
+        return Ok(missing(OfferPassPrerequisite::MeteredSeat));
+    }
+    // The day's budget, shared with every other offer pass of the last day:
+    // their calls' usage events carry the purpose's metered label. The day
+    // is read up to the vault's time now, after this pass's admission, not
+    // up to the caller's `now`: a pass that settled after the caller read
+    // its clock, and ended before this pass was admitted, still counts.
+    let metered_purpose = oneiron::llm::routing::purpose_key(&oneiron::CallPurpose::Other {
+        name: OFFER_CALL_PURPOSE.to_owned(),
+    });
+    let budget_now = vault.now_recorded_at().max(now);
+    let spent = server
+        .usage_ledger
+        .purpose_settled_units(
+            owner,
+            vault_id,
+            &metered_purpose,
+            budget_now.saturating_sub(DAY_SECS),
+            budget_now.saturating_add(1),
+        )
+        .map_err(|_| {
+            Error::InvalidConfig("the offer passes' day spend could not be read".into())
+        })?;
+    let day_left = DAY_BUDGET_UNITS.saturating_sub(spent);
+    if day_left < oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS {
+        return Ok(missing(OfferPassPrerequisite::DayBudget));
     }
     seats.sort_by(|a, b| b.3.calls.cmp(&a.3.calls).then(a.0.cmp(&b.0)));
     // Every served seat is asked about (Rule 5): how many is measured.
@@ -146,13 +185,13 @@ pub(super) fn draft(
             EntityId::from_bytes(*admitted.status.attempt.id.as_bytes())?.to_hex()
         ),
         OFFER_CALL_PURPOSE,
-        BUDGET_UNITS,
+        day_left,
     )?;
     let Some(executor) = runtime
         .seat(models.coach())
         .map(|seat| seat.model.as_str().to_owned())
     else {
-        return Ok(());
+        return Ok(missing(OfferPassPrerequisite::CoachSeat));
     };
     // The offer skill's body is the Coach's instruction. The load stamps its
     // revision and the Coach's model on the attempt, and each offer names
@@ -175,15 +214,18 @@ pub(super) fn draft(
     }
     let loaded = match vault.load_attempt_skill_pack(
         attempt.id,
-        &training_offer_skill_id()?,
+        &training_offer_skill_in_force(vault)?,
         attempt.lease_owner.as_deref().unwrap_or_default(),
         attempt.attempt_count,
         &executor,
         now,
     ) {
         Ok(loaded) => loaded,
-        // A retired, unapproved or deleted offer skill drafts nothing.
-        Err(Error::EntityNotFound | Error::InvalidClaimBody(_)) => return Ok(()),
+        // A missing, retired, unapproved or deleted offer skill drafts
+        // nothing.
+        Err(Error::EntityNotFound | Error::InvalidClaimBody(_)) => {
+            return Ok(missing(OfferPassPrerequisite::OfferSkill));
+        }
         Err(error) => return Err(error),
     };
     let Some(instruction) = loaded
@@ -193,7 +235,7 @@ pub(super) fn draft(
         .and_then(|file| std::str::from_utf8(&file.content).ok())
         .map(str::to_owned)
     else {
-        return Ok(());
+        return Ok(missing(OfferPassPrerequisite::OfferSkill));
     };
     let offer_skill = (loaded.entity, loaded.record.version.clone());
     // The offer skill's own record on this model: how its checked offers
@@ -206,6 +248,8 @@ pub(super) fn draft(
         ),
         None => (serde_json::Value::Null, Vec::new()),
     };
+    // Whether the Coach was asked at all, and how many offers it raised.
+    let (mut asked, mut drafted) = (false, 0_usize);
     for (role, model, locality, usage) in seats {
         let Some(brief) = Brief::gather(
             vault,
@@ -237,8 +281,15 @@ pub(super) fn draft(
         )?
         else {
             // No seat took the call: the next night asks again.
-            return Ok(());
+            return Ok(if drafted > 0 {
+                OfferPassEnd::Drafted
+            } else if asked {
+                OfferPassEnd::NoOffer
+            } else {
+                missing(OfferPassPrerequisite::ModelCall)
+            });
         };
+        asked = true;
         let Some(mut draft) =
             parse_answer(&text).and_then(|answer| brief.draft(answer, offer_skill.clone(), now))
         else {
@@ -254,7 +305,8 @@ pub(super) fn draft(
         record_read(vault, attempt.id, grounded, &mut read_set_lost);
         match vault.run_coach_training_offer(admitted, draft, now) {
             Ok(offer) => {
-                tracing::debug!(offer = %offer.id.to_hex(), "the Coach raised a training offer")
+                drafted += 1;
+                tracing::debug!(offer = %offer.id.to_hex(), "the Coach raised a training offer");
             }
             // A draft the offer door refuses is no offer; the other seats go on.
             Err(Error::InvalidConfig(_)) => {
@@ -263,7 +315,14 @@ pub(super) fn draft(
             Err(error) => return Err(error),
         }
     }
-    Ok(())
+    Ok(if drafted > 0 {
+        OfferPassEnd::Drafted
+    } else if asked {
+        OfferPassEnd::NoOffer
+    } else {
+        // No metered seat's model had a priced catalog row and an option.
+        missing(OfferPassPrerequisite::PricedOption)
+    })
 }
 
 /// Records rows the pass read under the offer draft's key (FIX 6934, 7073).
