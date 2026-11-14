@@ -103,14 +103,19 @@ impl RawValue for LearnedVectorRow {
     }
 }
 
-/// The key a model's vectors are stored under: BLAKE3-16 of its id and width, so a model whose
-/// width changes is a new model.
-pub(crate) fn model_key(model_id: &str, dimensions: usize) -> [u8; 16] {
+impl LearnedVectorRow {
+    /// The width of the stored vector: the v1 row is one format byte, then two bytes a value.
+    pub(crate) fn dimensions(&self) -> usize {
+        self.row.len().saturating_sub(1) / 2
+    }
+}
+
+/// The key a model's vectors are stored under: BLAKE3-16 of its id. Each row keeps its own
+/// width, so a model whose width changes embeds every name again.
+pub(crate) fn model_key(model_id: &str) -> [u8; 16] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"oneiron/phonetic_learned/model/v1\0");
     hasher.update(model_id.as_bytes());
-    hasher.update(&[0]);
-    hasher.update(&u64::try_from(dimensions).unwrap_or(u64::MAX).to_le_bytes());
     first_16(hasher.finalize().as_bytes())
 }
 

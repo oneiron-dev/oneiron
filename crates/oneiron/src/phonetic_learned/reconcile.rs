@@ -84,11 +84,11 @@ impl Vault {
                  {dimensions}"
             )));
         }
-        let model = model_key(embedder.model_id(), dimensions);
+        let model = model_key(embedder.model_id());
         let mut report = PhoneticEmbedReport::default();
         let (pending, dropped) = {
             let rtxn = self.store.env.read_txn()?;
-            self.phonetic_backlog_in_txn(&rtxn, model, max_names, &mut report)?
+            self.phonetic_backlog_in_txn(&rtxn, (model, dimensions), max_names, &mut report)?
         };
         let pending =
             self.phonetic_names_released(pending, egress, &embedder.endpoint(), &mut report)?;
@@ -143,7 +143,7 @@ impl Vault {
             let key = (item.id, item.key);
             if LEARNED_VECTOR
                 .get(&self.store, &wtxn, &key)?
-                .is_some_and(|old| old.model != model)
+                .is_some_and(|old| old.model != model || old.dimensions() != vector.len())
             {
                 report.removed += 1;
             }
@@ -158,13 +158,13 @@ impl Vault {
         Ok(())
     }
 
-    /// Up to `max_names` names of the named entities in `txn` that lack a vector of `model`,
-    /// in scan order, and every stored vector of a name its entity no longer has; `report`
-    /// counts what the scan read.
+    /// Up to `max_names` names of the named entities in `txn` that lack a vector of `model` (its
+    /// key and width), in scan order, and every stored vector of a name its entity no longer
+    /// has; `report` counts what the scan read.
     fn phonetic_backlog_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-        model: [u8; 16],
+        model: ([u8; 16], usize),
         max_names: usize,
         report: &mut PhoneticEmbedReport,
     ) -> Result<(Vec<PendingName>, Vec<(EntityId, [u8; 16])>)> {
@@ -184,7 +184,7 @@ impl Vault {
                 let mut held = BTreeMap::new();
                 for row in LEARNED_VECTOR.iter_from(&self.store, txn, id.as_bytes())? {
                     let ((_, key), row) = row?;
-                    held.insert(key, row.model);
+                    held.insert(key, (row.model, row.dimensions()));
                 }
                 dropped.extend(
                     held.keys()
