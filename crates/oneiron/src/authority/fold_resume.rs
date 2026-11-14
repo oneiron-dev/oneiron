@@ -498,6 +498,72 @@ pub(in crate::authority) fn fold_stored_log(
     (fold, base)
 }
 
+/// The stored-log fold of `entries` on a self-hosted install that pins
+/// `pin`, each row first seen at second 1 and folded at second 2 under a
+/// stale-roster window of `window_secs`: whole, and resumed past the base
+/// the fold of the first `base_len` rows keeps (None where the resumed fold
+/// declines the rest). For the integration tests' door
+/// (OWNER-ANCHOR-ROOT-RECOVERY).
+#[cfg(oneiron_test_support)]
+pub(crate) fn whole_and_resumed_folds_for_test(
+    entries: &[AuthorityLogEntry],
+    base_len: usize,
+    pin: Option<&PinnedRoot>,
+    window_secs: u64,
+) -> (AuthorityFold, Option<AuthorityFold>) {
+    let first_seen: BTreeMap<_, _> = entries
+        .iter()
+        .filter_map(|entry| Some((authority_entry_hash(entry).ok()?, 1)))
+        .collect();
+    let peers = BTreeMap::new();
+    let observations = AuthorityLocalObservations {
+        sequence_floors: BTreeMap::new(),
+        vouched: BTreeSet::new(),
+        unvouched: false,
+        policy: AuthorityObservationPolicy {
+            stale_roster_window_secs: window_secs,
+            ..AuthorityObservationPolicy::default()
+        },
+    };
+    let whole_log = StoredLog {
+        entries,
+        first_seen_at_secs: &first_seen,
+        now_secs: 2,
+        peer_consent_roots: &peers,
+        observations: &observations,
+        posture: crate::HostingPrivacyPosture::SelfHostLocal,
+        pin,
+    };
+    let (whole, _) = fold_stored_log(whole_log, None);
+    let (_, base) = fold_stored_log(
+        StoredLog {
+            entries: &entries[..base_len],
+            ..whole_log
+        },
+        None,
+    );
+    let tail: Vec<_> = entries[base_len..]
+        .iter()
+        .filter_map(|entry| Some((authority_entry_hash(entry).ok()?, entry)))
+        .collect();
+    let resumed = base.and_then(|base| {
+        fold_stored_tail(
+            StoredTail {
+                tail: &tail,
+                first_seen_at_secs: &first_seen,
+                now_secs: 2,
+                peer_consent_roots: &peers,
+                observations: &observations,
+                pinned: &BTreeSet::new(),
+                posture: crate::HostingPrivacyPosture::SelfHostLocal,
+                pin,
+            },
+            &base,
+        )
+    });
+    (whole, resumed.map(|(fold, _)| fold))
+}
+
 impl FoldBase {
     /// The fold of the base's log and the tail, the new rows on its frontier
     /// ([`side_tail`]), as the reference reaches it; None wherever a guard

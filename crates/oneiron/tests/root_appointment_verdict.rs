@@ -24,12 +24,12 @@ use oneiron::authority::{
     AuthorityEntryHash, AuthorityFold, AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry,
     AuthorityOp, AuthoritySignature, AuthorityTier, AuthorityVaultId, DeviceAuthority,
     GenesisRecoveryStep, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey, OwnerRootRecord,
-    PinnedRoot, ROLE_ADMIN, ROLE_CLOUD, ROLE_OWNER, ROOT_APPOINTMENT_SUCCESSOR_PROOF_KIND,
-    RecoveryRootId, RootAppointment, authority_entry_hash, authority_transcript,
-    decode_authority_log_entry_body, encode_authority_log_entry_body, genesis_vault_id,
-    root_appointment_challenge,
+    PinnedRoot, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
+    ROOT_APPOINTMENT_SUCCESSOR_PROOF_KIND, RecoveryRootId, RootAppointment, authority_entry_hash,
+    authority_transcript, decode_authority_log_entry_body, encode_authority_log_entry_body,
+    genesis_vault_id, root_appointment_challenge,
 };
-use oneiron::test_doors::root_appointment::fold_under_pin;
+use oneiron::test_doors::root_appointment::{fold_under_pin, whole_and_resumed_folds};
 use oneiron::world_keys::RecoveryRootSeed;
 
 const ROOT_SEED: u8 = 41;
@@ -1101,4 +1101,75 @@ fn a_later_burn_uncounts_the_appointment() {
     assert!(!fold.roster.contains_key(&key_of(&first_successor)));
     assert!(!fold.roster.contains_key(&key_of(&second_successor)));
     assert!(rootless(&fold));
+}
+
+/// A fold resumed past a base that holds a counted appointment reads it as
+/// the whole fold does (review R7): the appointment revokes every old roster
+/// key, so an approval an old key signed in its line expires once the
+/// stale-roster window passes, in the whole fold and in the resumed one.
+#[test]
+fn a_resumed_fold_expires_an_old_keys_approval_as_the_whole_fold_does() {
+    let mut log = Log::new();
+    let admin = signing(76);
+    let handoff = signed(
+        Some(log.vault_id),
+        1,
+        vec![log.genesis],
+        AuthorityOp::ReRoot {
+            new_device: device(key_of(&admin), ROLE_ADMIN),
+        },
+        &log.root_key,
+    );
+    let handoff = log.push(handoff);
+    let binding = log.sign(
+        &admin,
+        1,
+        vec![handoff],
+        AuthorityOp::BindActor {
+            authority_key: key_of(&admin),
+            actor_ref: EntityId::from_bytes([0x22; 16]).expect("an id"),
+            actor_class: "agent".to_owned(),
+            epoch: 1,
+        },
+    );
+    let successor = signing(77);
+    let appointment = log.appoint(2, vec![binding, log.owner_root], &successor);
+    let base_len = log.rows.len();
+    let enrolment = log.sign(
+        &successor,
+        1,
+        vec![appointment],
+        AuthorityOp::EnrollDevice {
+            device: device(key_of(&signing(78)), ROLE_AGENT),
+        },
+    );
+
+    let (whole, resumed) = whole_and_resumed_folds(&log.rows, base_len, Some(&log.pin), 0);
+
+    assert!(
+        whole.valid_entries.contains(&appointment),
+        "the appointment counts: {:?}",
+        whole.issues
+    );
+    assert!(
+        whole.valid_entries.contains(&enrolment),
+        "{:?}",
+        whole.issues
+    );
+    assert!(
+        whole
+            .issues
+            .contains(&AuthorityFoldIssue::StaleRosterApproval(binding)),
+        "the appointment revoked the binding's key, and the window passed: {:?}",
+        whole.issues
+    );
+    assert!(!whole.valid_entries.contains(&binding));
+    let resumed = resumed.expect("the agent's enrolment resumes from the base");
+    assert!(
+        !resumed.valid_entries.contains(&binding),
+        "the resumed fold expires the binding too: {:?}",
+        resumed.issues
+    );
+    assert_eq!(resumed.valid_entries, whole.valid_entries);
+    assert_eq!(resumed.roster, whole.roster);
 }

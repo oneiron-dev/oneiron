@@ -309,6 +309,8 @@ pub use clock_repair::{
 pub use conversation_training::ConversationTrainingView;
 pub use conversation_training_vault::ConversationLearningView;
 pub use fold_engine::*;
+#[cfg(oneiron_test_support)]
+pub(crate) use fold_resume::whole_and_resumed_folds_for_test;
 pub use fold_state::*;
 pub use forwarded_caller::{
     ForwardedCallerProof, ForwardedRequest, ForwardingDevice, ForwardingMachineProof,
