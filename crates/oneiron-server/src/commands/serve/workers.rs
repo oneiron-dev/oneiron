@@ -314,6 +314,17 @@ pub(crate) async fn start_desktop_workers(
     ));
     #[cfg(unix)]
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
+    // Hosted imports staged in the vault's data folder (ARCH-0027
+    // #hosted-import), each pass admitted as the housekeeping passes are; a
+    // restart takes each job up where it stopped.
+    #[cfg(unix)]
+    workers.push(
+        super::history_import::hosted_import::HostedImports::new(
+            config.vault_path.clone(),
+            admitted(),
+        )
+        .spawn(Arc::clone(&sync_server)),
+    );
     // Attached folders rescan after the import queue starts (OF-554).
     #[cfg(unix)]
     workers.push(crate::files_intake::spawn_rescans(Arc::clone(&sync_server)));

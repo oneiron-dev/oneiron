@@ -45,6 +45,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
+use crate::run_tree::takes_boundary_pause;
 use crate::skill_hub::pack_catalog::{HookAuthor, PackHookBinding};
 use crate::store::EngineScan;
 use crate::store::scan_count::ScanCount;
@@ -86,8 +87,10 @@ pub struct AgentTreePauseOffer {
     /// The verb that pauses them: `vault.agents.pause_tree`.
     pub verb: String,
     /// How many entries it would pause now: the saved agents that stand,
-    /// the queued and scheduled branches, runs and sends, the watchers not
-    /// held and the hooks switched on. A running branch is not paused.
+    /// the queued and scheduled branches, runs and sends, the running runs
+    /// (each pauses at its next step boundary), the watchers not held and
+    /// the hooks switched on. A landing branch, a send going out and a
+    /// branch of no run are not paused.
     pub pausable: usize,
 }
 
@@ -228,21 +231,32 @@ pub(super) fn branch_id(branch: &str) -> Result<AttemptId> {
     AttemptId::from_bytes(EntityId::from_hex(branch)?.as_bytes())
 }
 
-/// How many entries of `made` the tree pause would pause now.
-fn pausable(made: &AgentMadeBy) -> usize {
-    let waits = |state: AttemptState| state.is_ready_indexed();
+/// How many entries of `made` the tree pause would pause now; `boundary`
+/// names the running branches it pauses at their next step boundary.
+fn pausable(made: &AgentMadeBy, boundary: &BTreeSet<String>) -> usize {
+    let waits =
+        |state: AttemptState, branch: &str| state.is_ready_indexed() || boundary.contains(branch);
     made.agents
         .iter()
         .map(|agent| {
-            usize::from(agent.stands) + agent.runs.iter().filter(|run| waits(run.state)).count()
+            usize::from(agent.stands)
+                + agent
+                    .runs
+                    .iter()
+                    .filter(|run| waits(run.state, &run.branch))
+                    .count()
         })
         .sum::<usize>()
         + made
             .branches
             .iter()
-            .filter(|branch| waits(branch.state))
+            .filter(|branch| waits(branch.state, &branch.branch))
             .count()
-        + made.sends.iter().filter(|send| waits(send.state)).count()
+        + made
+            .sends
+            .iter()
+            .filter(|send| send.state.is_ready_indexed())
+            .count()
         + made.watchers.iter().filter(|watcher| !watcher.held).count()
         + made.hooks.iter().filter(|hook| hook.enabled).count()
 }
@@ -300,6 +314,8 @@ impl Vault {
             pause_offer: None,
         };
         let mut listed_branches = BTreeSet::new();
+        // The running branches a tree pause pauses at their next step.
+        let mut boundary = BTreeSet::new();
         let mut seen = BTreeSet::from([*agent]);
         let mut makers = VecDeque::from([*agent]);
         while let Some(maker) = makers.pop_front() {
@@ -313,10 +329,15 @@ impl Vault {
                     .into_iter()
                     .flatten()
                     .filter(|record| record.state.is_pending())
-                    .map(|record| AgentRunNow {
-                        branch: branch_hex(record.id),
-                        state: record.state,
-                        scheduled_at: record.scheduled_at,
+                    .map(|record| {
+                        if takes_boundary_pause(record) {
+                            boundary.insert(branch_hex(record.id));
+                        }
+                        AgentRunNow {
+                            branch: branch_hex(record.id),
+                            state: record.state,
+                            scheduled_at: record.scheduled_at,
+                        }
                     })
                     .collect();
                 let held_grants = grants
@@ -379,6 +400,9 @@ impl Vault {
                 {
                     continue;
                 }
+                if takes_boundary_pause(&record) {
+                    boundary.insert(branch_hex(record.id));
+                }
                 made.branches.push(MadeBranch {
                     branch: branch_hex(record.id),
                     made_by: maker,
@@ -402,7 +426,7 @@ impl Vault {
             + made.watchers.len()
             + made.hooks.len()
             + made.sends.len();
-        let pausable = pausable(&made);
+        let pausable = pausable(&made, &boundary);
         made.pause_offer = (pausable > 0).then(|| AgentTreePauseOffer {
             verb: PAUSE_TREE_VERB.to_owned(),
             pausable,

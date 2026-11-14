@@ -34,6 +34,11 @@ crate::side_table::side_tables! {
     /// agent's genuine local birth. Key: id16.
     AGENT_DEF_PORTABLE_BIRTH: VaultMeta b"agent_def/portable-birth/v1\0" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// An agent's plan mode (plan mode, SETTING = A): one byte, 0 `off`, 1 `optional`, 2
+    /// `required`; an agent with no row is `optional`. Key: id16(agent). The owner's authority,
+    /// so a restore keeps the live rows.
+    AGENT_DEF_PLAN_MODE: VaultMeta b"agent_def/plan-mode/v1\0" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// The grant powers one holder has (ARCH-0053:20, SPAWN-KNOB): one byte, bit 0 `spawn`,
     /// bit 1 `save_agent`; a holder with no row has both ON. Key: a tag byte (0 agent, 1 attempt, 2 reader
     /// task) then the holder's id16. Authority, so a restore keeps the live rows.

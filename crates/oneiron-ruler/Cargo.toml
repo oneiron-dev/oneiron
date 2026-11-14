@@ -1,0 +1,25 @@
+[package]
+name = "oneiron-ruler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The retrieval ruler of the oneiron engine (RESEARCH-0651 Tier 0): the retrieval pack format and the LongMemEval-S converter; it depends on no engine crate"
+repository.workspace = true
+
+[lib]
+# No doc-comment code fences in this crate.
+doctest = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_json_canonicalizer = { workspace = true }
+sha2 = "0.10"
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
