@@ -561,6 +561,7 @@ fn project_event_in_txn(
                         },
                         (occurred_at, kind == CommEventKind::ThreadLeft),
                     )),
+                    minted_thread_member_claim: None,
                     heads: Vec::new(),
                     contacts: Vec::new(),
                     source_stamped: false,
@@ -837,6 +838,7 @@ fn apply_projector_rule_in_txn(
                 Ok(ProjectorIndexDelta {
                     consumed_gate_ids,
                     projected_thread_transition: None,
+                    minted_thread_member_claim: None,
                     heads: Vec::new(),
                     contacts,
                     source_stamped: false,
