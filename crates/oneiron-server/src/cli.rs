@@ -20,6 +20,7 @@ mod hook_args;
 mod hosted_args;
 pub use graph_fs_args::GraphFsCommand;
 pub use hosted_args::{HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSelectArgs};
+pub use user_service_args::{UserServiceCommand, UserServiceInstallArgs};
 mod learning_setting_args;
 mod model_workers_args;
 pub use model_workers_args::ModelWorkersArgs;
@@ -31,6 +32,7 @@ mod vault_unlock_args;
 mod vm_args;
 pub use vm_args::HostVmArgs;
 mod seat_args;
+mod user_service_args;
 mod wake_args;
 mod widen_proposal_args;
 pub use hook_args::{
@@ -248,6 +250,11 @@ pub enum Command {
     /// selected one at its step 3.
     #[command(subcommand)]
     Hosted(HostedCommand),
+    /// This user's service for the local vault `oneiron hook` starts: write
+    /// it and start it through the person's own supervisor, stop and remove
+    /// it, or show it. Optional; without it the hook starts the vault.
+    #[command(subcommand)]
+    UserService(UserServiceCommand),
     /// Read or acknowledge a host instance wake inbox.
     Wake(WakeArgs),
     /// Scaffold a self-host node from the shipped deployment templates.
@@ -1106,6 +1113,11 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         // Blocking: a login asks its origin through a spawned `oneiron mcp`.
         Command::Hosted(command) => {
             crate::logging::off_runtime("hosted", move || commands::hosted(command)).await?
+        }
+        // Blocking: it waits on the person's supervisor.
+        Command::UserService(command) => {
+            crate::logging::off_runtime("user-service", move || commands::user_service(command))
+                .await?
         }
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),
         Command::Host(HostCommand::ReRoot(args)) => commands::host_re_root(*args),

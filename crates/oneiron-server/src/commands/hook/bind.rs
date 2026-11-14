@@ -15,8 +15,10 @@
 //!    selection, and are named in one more line when the session then starts
 //!    local ([`local_line`]);
 //! 4. a local server, started from the config every command reads when none
-//!    is named, with the hook's `--settings-file` over it. With no config
-//!    there is no vault to start, and the line names the setup step.
+//!    is named, with the hook's `--settings-file` over it: by the person's
+//!    own supervisor when `oneiron user-service install` wrote their user
+//!    service, else by the hook. With no config there is no vault to start,
+//!    and the line names the setup step.
 //!
 //! The session's first line names the vault bound. A prompt takes steps 1 to
 //! 3 exactly as a session does ([`choose`]), so it never recalls from a vault
@@ -36,14 +38,13 @@ use serde::Deserialize;
 use super::hosted_selection::{self, HostedDiscovery, HostedVault};
 use crate::commands::ConfigFiles;
 use crate::commands::local_servers::{self, LocalServer};
-use crate::config::{ServeArgs, resolve_serve_config};
+use crate::commands::user_service::{self, InstalledService};
+use crate::config::ServeArgs;
 
 /// The pin, in the per-user oneiron folder.
 const PIN_FILE: &str = "hook.toml";
 /// What a started server logs to, in the run folder.
 const SERVE_LOG: &str = "serve.log";
-/// The store file every initialized vault folder holds.
-const STORE_FILE: &str = "data.mdb";
 /// The longest one probe waits.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long after a started `serve` exits the hook waits for whoever holds
@@ -342,27 +343,18 @@ fn uses(server: &LocalServer, running: usize) -> String {
     )
 }
 
-/// Step 4: starts `serve` from the config every command reads when none is
-/// named, with `settings_file` over it as the preflight reads them, on
-/// loopback, in a process group of its own, and waits for it to answer
-/// until `deadline`. It runs on after the hook exits; the next
-/// session finds it by its runtime file. When it cannot open the vault
-/// because another process holds it, the session binds the server there
-/// once one answers.
+/// Step 4: starts the local vault in the config every command reads when
+/// none is named, with `settings_file` over it as the preflight reads them,
+/// and waits for it to answer until `deadline`. When `oneiron user-service
+/// install` wrote this user's service, the person's own supervisor starts
+/// it ([`start_user_service`]); else the hook starts `serve` itself
+/// ([`start_child`]). Either runs on after the hook exits; the next session
+/// finds it by its runtime file.
 fn start(oneiron: &Path, settings_file: Option<&Path>, deadline: Instant) -> Bound {
     let Some(config) = local_servers::config_file(&ServeArgs::default()) else {
         return Bound::none(NO_VAULT.to_owned());
     };
-    // `serve` creates a vault that is not there; the hook only starts one
-    // that is (no vault is made without `oneiron init`).
-    let Some(vault) = resolve_serve_config(&ServeArgs {
-        config: Some(config.clone()),
-        settings_file: settings_file.map(Path::to_path_buf),
-        ..ServeArgs::default()
-    })
-    .ok()
-    .map(|serve| serve.vault_path)
-    .filter(|vault| vault.join(STORE_FILE).is_file()) else {
+    let Some(vault) = local_servers::initialized_vault(&config, settings_file) else {
         return Bound::none(NO_VAULT.to_owned());
     };
     if Instant::now() >= deadline {
@@ -371,6 +363,63 @@ fn start(oneiron: &Path, settings_file: Option<&Path>, deadline: Instant) -> Bou
             config.display()
         ));
     }
+    let Some(service) = user_service::installed() else {
+        return start_child(oneiron, &config, settings_file, &vault, deadline);
+    };
+    match service.start(deadline) {
+        Ok(()) => start_user_service(&service, &config, deadline),
+        // The supervisor could not take the start (no user session bus, say):
+        // the session still gets its vault, started the way it is without a
+        // service, and is told why.
+        Err(error) => {
+            let mut bound = start_child(oneiron, &config, settings_file, &vault, deadline);
+            bound.lines.push(format!(
+                "Oneiron: the user service in {} did not start ({error:#}); the hook started \
+                 the vault itself.",
+                service.path().display()
+            ));
+            bound
+        }
+    }
+}
+
+/// Waits until `deadline` for the server the user service started to
+/// answer, and binds it.
+fn start_user_service(service: &InstalledService, config: &Path, deadline: Instant) -> Bound {
+    loop {
+        let running = running(deadline);
+        if let Some(server) = running.first() {
+            let line = format!(
+                "{} Started by its user service ({}).",
+                uses(server, running.len()),
+                service.path().display()
+            );
+            return Bound::at(server.url.clone(), vec![line]);
+        }
+        if Instant::now() >= deadline {
+            return Bound::none(format!(
+                "Oneiron: no vault bound yet; its user service ({}) is starting the local vault \
+                 in {}, and the next session will find it.",
+                service.path().display(),
+                config.display()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Starts `serve` with the arguments a user service runs
+/// ([`local_servers::local_serve_args`]), in a process group of its own,
+/// and waits for it to answer until `deadline`. When it cannot open the
+/// vault because another process holds it, the session binds the server
+/// there once one answers.
+fn start_child(
+    oneiron: &Path,
+    config: &Path,
+    settings_file: Option<&Path>,
+    vault: &Path,
+    deadline: Instant,
+) -> Bound {
     let log = local_servers::run_dir().map(|dir| dir.join(SERVE_LOG));
     let output = log.as_deref().and_then(|log| {
         local_servers::ensure_run_dir().ok()?;
@@ -385,13 +434,8 @@ fn start(oneiron: &Path, settings_file: Option<&Path>, deadline: Instant) -> Bou
         Some((stdout, stderr)) => (Stdio::from(stdout), Stdio::from(stderr)),
         None => (Stdio::null(), Stdio::null()),
     };
-    let mut command = oneiron_spawn::command(oneiron);
-    command.arg("serve").arg("--config").arg(&config);
-    if let Some(settings_file) = settings_file {
-        command.arg("--settings-file").arg(settings_file);
-    }
-    let spawned = command
-        .args(["--host", "127.0.0.1"])
+    let spawned = oneiron_spawn::command(oneiron)
+        .args(local_servers::local_serve_args(config, settings_file))
         .stdin(Stdio::null())
         .stdout(stdout)
         .stderr(stderr)
@@ -424,7 +468,7 @@ fn start(oneiron: &Path, settings_file: Option<&Path>, deadline: Instant) -> Bou
             // Most often another session started a `serve` a moment before,
             // which holds the vault and is not ready yet, so this one could
             // not open it: bind the server that answers next.
-            if !held_by_another(&vault, child.id()) && exited.elapsed() >= HOLDER_GRACE {
+            if !held_by_another(vault, child.id()) && exited.elapsed() >= HOLDER_GRACE {
                 return did_not_start();
             }
             let running = running(deadline);

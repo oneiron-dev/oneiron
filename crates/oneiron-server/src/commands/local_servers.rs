@@ -9,6 +9,7 @@
 //! its listener is bound and it is ready, and removes it on a clean stop. A
 //! file whose pid is gone is stale; a reader removes it.
 
+use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{Read as _, Write as _};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -18,10 +19,12 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::ConfigFiles;
-use crate::config::{EnvConfig, ServeArgs, default_config_path};
+use crate::config::{EnvConfig, ServeArgs, default_config_path, resolve_serve_config};
 
 /// A runtime file is a few hundred bytes; a larger one is not read.
 const MAX_FILE_BYTES: u64 = 64 * 1024;
+/// The store file every initialized vault folder holds.
+const STORE_FILE: &str = "data.mdb";
 
 /// One running server, as its runtime file names it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -62,6 +65,33 @@ pub(super) fn config_file(args: &ServeArgs) -> Option<PathBuf> {
         .or_else(|| EnvConfig::from_process().ok()?.config_path)
         .or_else(default_config_path)
         .filter(|path| path.is_file())
+}
+
+/// The vault folder `config`, with `settings_file` over it, names, when it
+/// holds an initialized vault. `serve` creates a vault that is not there;
+/// a hook or a user service only starts one that is, so no vault is made
+/// without `oneiron init`.
+pub(super) fn initialized_vault(config: &Path, settings_file: Option<&Path>) -> Option<PathBuf> {
+    resolve_serve_config(&ServeArgs {
+        config: Some(config.to_path_buf()),
+        settings_file: settings_file.map(Path::to_path_buf),
+        ..ServeArgs::default()
+    })
+    .ok()
+    .map(|serve| serve.vault_path)
+    .filter(|vault| vault.join(STORE_FILE).is_file())
+}
+
+/// The arguments of the one local `serve` this user runs for a hook: the
+/// hook's step 4 starts it with them, and the user service runs it with
+/// them, so both run the same server on loopback.
+pub(super) fn local_serve_args(config: &Path, settings_file: Option<&Path>) -> Vec<OsString> {
+    let mut args: Vec<OsString> = vec!["serve".into(), "--config".into(), config.into()];
+    if let Some(settings_file) = settings_file {
+        args.extend(["--settings-file".into(), settings_file.into()]);
+    }
+    args.extend(["--host".into(), "127.0.0.1".into()]);
+    args
 }
 
 /// This server's runtime file. Dropping it removes the file.

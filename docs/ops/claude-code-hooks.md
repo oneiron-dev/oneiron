@@ -110,6 +110,11 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
    running vault and binds the newest that answers, within the same
    `--timeout`. With no config there is no
    vault to start: the line says to set one up with `oneiron init`.
+   When `oneiron user-service install` wrote your user service
+   ([below](#the-user-service)), the hook asks your own supervisor to start
+   it instead, and binds it once it answers; the line says its user service
+   started it. If the supervisor refuses the start, the hook starts the
+   vault itself and says why.
 
 `prompt` binds the same way, by the same choice of steps 1 to 3, but never
 starts a server and prints no line of its own. A pinned or selected vault that does not answer one probe gets no recall, so a
@@ -125,6 +130,42 @@ credential where they point.
 
 Starting a server never creates a vault: the hook starts one only when the
 config's `vault_path` holds an initialized vault.
+
+### The user service
+
+Optional. A user service keeps the local vault running between sessions and
+after login, under your own supervisor, so step 2 finds it running in every
+session. The engine has one writer per vault, and the service is it.
+
+```bash
+oneiron user-service install [--config <file>] [--settings-file <file>]
+oneiron user-service remove
+oneiron user-service status
+```
+
+- `install` writes the unit and starts it. On Linux that is the systemd user
+  unit `oneiron.service` in `$XDG_CONFIG_HOME/systemd/user/` (else
+  `~/.config/systemd/user/`), made from the shipped
+  `deploy/systemd/oneiron.service` without its `PrivateTmp=` line (a user
+  manager makes a private `/tmp` only inside a user namespace, which some
+  distributions refuse); then `systemctl --user daemon-reload`, `enable` and
+  `restart`. On macOS it is the launchd agent `com.oneiron.server` in
+  `~/Library/LaunchAgents/`, with the shipped agent's label, `RunAtLoad`,
+  `KeepAlive` and logs in `~/Library/Logs/`, but no `Sockets`: the server
+  binds its configured address itself; then `launchctl bootout` and
+  `bootstrap` in your `gui/<uid>` domain. The service runs the `serve` step 4
+  runs: this binary (or `--oneiron <file>`), `serve --config <config>
+  [--settings-file <file>] --host 127.0.0.1`, with the config every command
+  reads when none is named unless you give `--config`. Run again, it writes
+  the unit anew and restarts the service.
+- `install` refuses when there is no initialized vault to run; when a unit
+  it did not write is at that path (it never overwrites one: each unit it
+  writes carries the line `Written by oneiron user-service install.`); and,
+  the first time, when a `serve` it did not start already runs that vault.
+  Stop that server first.
+- `remove` stops the service (`systemctl --user disable --now`, or
+  `launchctl bootout`) and deletes the unit `install` wrote, never another.
+- Each prints one JSON line, `{"installed", "path", "supervisor"}`.
 
 ### The hosted selection
 
