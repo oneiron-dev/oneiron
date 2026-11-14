@@ -1,5 +1,5 @@
-//! The Google Workspace REST rows for Docs and Slides (L3-17): each accepts
-//! only its own endpoint and query, never another API's path.
+//! The Google Workspace REST rows for Docs, Slides and Drive (L3-17): each
+//! accepts only its own endpoint and query, never another API's path.
 //!
 //! Fleet: `cargo test --locked -p oneiron-broker --test workspace_shapes`
 
@@ -74,4 +74,83 @@ fn docs_and_slides_rows_accept_only_their_paths() {
     assert_eq!(Shape::SlidesPresentationGet.method(), "GET");
     assert_eq!(Shape::SlidesBatchUpdate.method(), "POST");
     assert_eq!(Shape::DocsBatchUpdate.auth_prefix(), "Bearer ");
+}
+
+#[test]
+fn drive_rows_read_metadata_only() {
+    let id = "1AbC-dEf_2gHiJkLmNoPqRsTuVwXyZ0123456789ab";
+    let accepted = [
+        (
+            Shape::DriveChangesStartPageToken,
+            "/drive/v3/changes/startPageToken?supportsAllDrives=true".to_owned(),
+        ),
+        (
+            Shape::DriveChangesStartPageToken,
+            format!("/drive/v3/changes/startPageToken?supportsAllDrives=true&driveId={id}"),
+        ),
+        (
+            Shape::DriveChangesList,
+            "/drive/v3/changes?pageToken=4182&pageSize=100&includeRemoved=true&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=nextPageToken%2CnewStartPageToken%2Cchanges%28fileId%29".to_owned(),
+        ),
+        (
+            Shape::DriveFileGet,
+            format!("/drive/v3/files/{id}?supportsAllDrives=true&fields=id%2Cname%2CmimeType"),
+        ),
+    ];
+    for (shape, path) in &accepted {
+        assert_eq!(shape.check_path(path), Ok(()), "{shape:?} {path}");
+    }
+    let refused = [
+        // A content download or export: no row takes `alt`, and none has an
+        // export or download path.
+        (
+            Shape::DriveFileGet,
+            format!("/drive/v3/files/{id}?alt=media"),
+        ),
+        (
+            Shape::DriveFileGet,
+            format!("/drive/v3/files/{id}/export?mimeType=text%2Fplain"),
+        ),
+        (
+            Shape::DriveFileGet,
+            format!("/drive/v3/files/{id}?supportsAllDrives=true&acknowledgeAbuse=true"),
+        ),
+        // A parameter of another Drive row.
+        (
+            Shape::DriveChangesStartPageToken,
+            "/drive/v3/changes/startPageToken?pageToken=1".to_owned(),
+        ),
+        // The change log on the start token's row, and the reverse.
+        (
+            Shape::DriveChangesStartPageToken,
+            "/drive/v3/changes?supportsAllDrives=true".to_owned(),
+        ),
+        (
+            Shape::DriveChangesList,
+            "/drive/v3/changes/startPageToken".to_owned(),
+        ),
+        // A file listing or another API's path.
+        (Shape::DriveFileGet, "/drive/v3/files?fields=id".to_owned()),
+        (Shape::DriveFileGet, format!("/v1/documents/{id}")),
+        // A value that is not percent-encoded.
+        (
+            Shape::DriveFileGet,
+            format!("/drive/v3/files/{id}?fields=id,name"),
+        ),
+    ];
+    for (shape, path) in &refused {
+        assert_eq!(
+            shape.check_path(path),
+            Err(Refusal::Path),
+            "{shape:?} {path}"
+        );
+    }
+    for shape in [
+        Shape::DriveChangesStartPageToken,
+        Shape::DriveChangesList,
+        Shape::DriveFileGet,
+    ] {
+        assert_eq!(shape.method(), "GET", "{shape:?} only reads");
+        assert_eq!(shape.auth_prefix(), "Bearer ", "{shape:?}");
+    }
 }

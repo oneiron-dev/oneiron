@@ -1,7 +1,8 @@
 //! The built-in workspace connectors (FIX 4862; MAIL-GOOGLE = A, rows 1 and
 //! 3; L3-17): typed code-mode modules over the user's own files in Google
 //! and Microsoft 365, each a catalog name `connector.call` routes:
-//! `google.sheets`, `google.docs`, `google.slides` and `microsoft.excel`.
+//! `google.sheets`, `google.docs`, `google.slides`, `google.drive` and
+//! `microsoft.excel`.
 //! Code mode spells a call
 //! `connector["google.sheets"]["values.batchGet"](args)`; the guest's proxy
 //! sends it as the same `connector.call`.
@@ -43,6 +44,7 @@
 //! `google_connection_not_checked`.
 
 pub mod docs;
+pub mod drive;
 pub mod excel;
 mod invocation;
 mod receipt;
@@ -204,7 +206,8 @@ impl WorkspacePlan {
         }
     }
 
-    /// The id of the file the call acts on.
+    /// The id of the file the call acts on; empty for a read that acts on
+    /// no one file, such as a page of Drive's change log.
     #[must_use]
     pub fn target(&self) -> &str {
         &self.target
@@ -259,8 +262,9 @@ pub trait WorkspaceApi: Sync {
 }
 
 /// Every built-in workspace module, in catalog order.
-static MODULES: [&dyn WorkspaceApi; 4] = [
+static MODULES: [&dyn WorkspaceApi; 5] = [
     &docs::DocsApi,
+    &drive::DriveApi,
     &sheets::SheetsApi,
     &slides::SlidesApi,
     &excel::ExcelApi,

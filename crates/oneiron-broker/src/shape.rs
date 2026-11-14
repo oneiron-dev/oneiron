@@ -138,6 +138,19 @@ pub enum Shape {
     /// Slides v1 edits: `POST …/v1/presentations/{id}:batchUpdate`, JSON,
     /// Bearer.
     SlidesBatchUpdate,
+    /// Google Drive v3 (L3-17), read only: the change log's present page
+    /// token, `GET …/drive/v3/changes/startPageToken`, no body, Bearer. The
+    /// query holds only `supportsAllDrives` and `driveId`.
+    DriveChangesStartPageToken,
+    /// One page of Drive's change log, `GET …/drive/v3/changes`, no body,
+    /// Bearer. The query holds only `pageToken`, `pageSize`,
+    /// `includeRemoved`, `restrictToMyDrive`, `driveId`,
+    /// `supportsAllDrives`, `includeItemsFromAllDrives` and `fields`.
+    DriveChangesList,
+    /// One file's metadata, `GET …/drive/v3/files/{id}`, no body, Bearer.
+    /// The query holds only `supportsAllDrives` and `fields`, so no `alt`
+    /// asks for the file's content.
+    DriveFileGet,
     /// Microsoft Graph v1.0, Excel workbooks (L3-17): a workbook session,
     /// `POST …/v1.0/me/drive/items/{id}/workbook/createSession`, JSON, Bearer.
     ExcelCreateSession,
@@ -577,6 +590,39 @@ const SLIDES_BATCH_UPDATE: Row = workspace(
     Body::Json,
 );
 
+const DRIVE_CHANGES_START_PAGE_TOKEN: Row = workspace(
+    "GET",
+    &["drive", "v3", "changes", "startPageToken"],
+    None,
+    &["supportsAllDrives", "driveId"],
+    Body::Empty,
+);
+
+const DRIVE_CHANGES_LIST: Row = workspace(
+    "GET",
+    &["drive", "v3", "changes"],
+    None,
+    &[
+        "pageToken",
+        "pageSize",
+        "includeRemoved",
+        "restrictToMyDrive",
+        "driveId",
+        "supportsAllDrives",
+        "includeItemsFromAllDrives",
+        "fields",
+    ],
+    Body::Empty,
+);
+
+const DRIVE_FILE_GET: Row = workspace(
+    "GET",
+    &["drive", "v3", "files", "{id}"],
+    None,
+    &["supportsAllDrives", "fields"],
+    Body::Empty,
+);
+
 /// The workbook of one drive item, under the signed-in user's drive.
 const EXCEL_CREATE_SESSION: Row = workspace(
     "POST",
@@ -692,6 +738,9 @@ impl Shape {
             Self::DocsBatchUpdate => &DOCS_BATCH_UPDATE,
             Self::SlidesPresentationGet => &SLIDES_PRESENTATION_GET,
             Self::SlidesBatchUpdate => &SLIDES_BATCH_UPDATE,
+            Self::DriveChangesStartPageToken => &DRIVE_CHANGES_START_PAGE_TOKEN,
+            Self::DriveChangesList => &DRIVE_CHANGES_LIST,
+            Self::DriveFileGet => &DRIVE_FILE_GET,
             Self::ExcelCreateSession => &EXCEL_CREATE_SESSION,
             Self::ExcelRangeGet => &EXCEL_RANGE_GET,
             Self::ExcelRangeUpdate => &EXCEL_RANGE_UPDATE,
