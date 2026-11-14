@@ -228,18 +228,11 @@ pub(super) fn publish_artifact_pointer_in_txn(
     )? {
         return Err(Error::EntityNotFound);
     }
-    let refs = exhaust_taint_refs_in_txn(&vault.store, wtxn, &snapshot.code_artifact_id)?;
-    let stale_taint_override = match taint_state_for_refs_in_txn(&vault.store, wtxn, &refs)? {
-        ArtifactTaintState::Clean | ArtifactTaintState::TaintedLive => false,
-        ArtifactTaintState::TaintedStale => {
-            if !allow_stale_publish_in_txn(&vault.store, wtxn)? {
-                return Err(Error::Secret(SecretError::TaintedArtifactStale {
-                    artifact: snapshot.artifact.clone(),
-                }));
-            }
-            true
-        }
-    };
+    let stale_taint_override = vault.publish_stale_taint_override_in_txn(
+        wtxn,
+        &snapshot.code_artifact_id,
+        &snapshot.artifact,
+    )?;
     put_artifact_pointer_in_txn(
         &vault.store,
         wtxn,

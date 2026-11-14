@@ -6,6 +6,7 @@ mod media_query;
 
 pub use deferred_forms::DeferredServedForms;
 
+use crate::batch::export::released_body_for;
 use crate::claim::{PointRead, ReadRow, ScopedRead, ScopedReadActorKey};
 use crate::context_pack::{
     ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, DEFAULT_MAX_NEIGHBORS,
@@ -263,22 +264,31 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             producers.list(admitted.value.iter().map(|result| result.id));
         }
         let mut narrowing = admitted.receipt;
+        // Whether this reader reads each body as stored, judged in the
+        // snapshot that read the rows (ruling EXPORTDOORS Q4 = A).
         let projected = self
             .scoped_read
-            .read(
+            .read_projected(
                 &admitted
                     .value
                     .iter()
                     .map(|result| PointRead::id(result.id).at(crate::vault::ReadMode::Indexed))
                     .collect::<Vec<_>>(),
                 Some(&narrowing.applied.as_filter()),
+                |txn, rows| {
+                    Ok::<_, crate::error::Error>((
+                        self.scoped_read.reads_stored_bodies_in(txn)?,
+                        rows,
+                    ))
+                },
             )
             .map_err(|error| engine_failure(METHOD, &error))?;
         narrowing.restrict_with(&projected.receipt);
-        let total = projected.value.iter().filter(|row| row.is_some()).count();
+        let (reads_stored, rows) = projected.value;
+        let total = rows.iter().filter(|row| row.is_some()).count();
         let mut items = Vec::with_capacity(total.min(limit));
         let mut bodies = self.body_budget(view);
-        for (result, row) in admitted.value.into_iter().zip(projected.value) {
+        for (result, row) in admitted.value.into_iter().zip(rows) {
             if items.len() >= limit {
                 break;
             }
@@ -292,7 +302,8 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             else {
                 continue;
             };
-            // A body decodes only while the answer's budget holds it (H27).
+            // A body decodes only while the answer's budget holds it (H27),
+            // charged at its stored length as the /v1 doors charge theirs.
             let decoded = bodies
                 .as_mut()
                 .is_none_or(|bodies| bodies.admits(body.len()));
@@ -308,14 +319,20 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                         content_hash,
                     },
                 ),
-                _ => entity_record_from_parts(
-                    &result.id,
-                    entity_type,
-                    learned_at,
-                    Some(result.score),
-                    &body,
-                    view,
-                ),
+                _ => {
+                    // Every reader but the owner reads the body the typed
+                    // Nulled rule releases (ruling EXPORTDOORS Q4 = A).
+                    let released = released_body_for(reads_stored, entity_type, &body)
+                        .map_err(|error| engine_failure(METHOD, &error))?;
+                    entity_record_from_parts(
+                        &result.id,
+                        entity_type,
+                        learned_at,
+                        Some(result.score),
+                        released.as_deref(),
+                        view,
+                    )
+                }
             });
         }
         Ok(CoreQueryResponse {
@@ -573,12 +590,24 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                 // (FIX 7608).
                 let body = masked_asset_body(self.scoped_read.vault(), &id, entity_type, body)
                     .map_err(|error| engine_failure(method, &error))?;
+                // Every reader but the owner reads the body the typed Nulled
+                // rule releases (ruling EXPORTDOORS Q4 = A); a withheld one
+                // leaves the item without a body. A served form is read from
+                // released rows.
+                let reads_stored = self
+                    .scoped_read
+                    .reads_stored_bodies()
+                    .map_err(|error| engine_failure(method, &error))?;
+                let released = released_body_for(reads_stored, entity_type, &body)
+                    .map_err(|error| engine_failure(method, &error))?;
                 entity_record_from_parts(
                     &id,
                     entity_type,
                     learned_at,
                     None,
-                    served.as_ref().map_or(&body, |(form, _)| form),
+                    served
+                        .as_ref()
+                        .map_or(released.as_deref(), |(form, _)| Some(form.as_slice())),
                     view,
                 )
             }

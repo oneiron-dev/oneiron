@@ -32,17 +32,19 @@ fn decode_scoped_body(body: &[u8]) -> Value {
     crate::batch::export::redacted_memory_body(body)
 }
 
+/// One record as the contract serves it; `body` is the body its reader is
+/// served, `None` when that body is withheld whole.
 pub(super) fn entity_record_from_parts(
     id: &EntityId,
     entity_type: u8,
     learned_at: u64,
     score: Option<f32>,
-    body: &[u8],
+    body: Option<&[u8]>,
     view: View,
 ) -> CoreEntityRecord {
     let body = match view {
         View::Standard => None,
-        View::Summary | View::Full => Some(decode_scoped_body(body)),
+        View::Summary | View::Full => body.map(decode_scoped_body),
     };
     CoreEntityRecord {
         id: id.to_hex(),

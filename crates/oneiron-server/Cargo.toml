@@ -269,6 +269,20 @@ name = "managed_mode"
 path = "tests/managed_mode.rs"
 required-features = ["oneiron/test-hooks"]
 
+# Publishes its apps with `publish_artifact_pointer_with_tier` (`oneiron/test-hooks`) on a
+# `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
+[[test]]
+name = "artifact_private_owner_read"
+path = "tests/artifact_private_owner_read.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
+# Publishes its bundle with `publish_artifact_pointer_with_tier` (`oneiron/test-hooks`) on a
+# `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
+[[test]]
+name = "artifact_pinned_document_cache"
+path = "tests/artifact_pinned_document_cache.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
 # These three build their servers on a `MemoryKeystore` (`oneiron-keystore/test-keystore`,
 # forwarded by `oneiron/test-support`), so they take `it`'s rolling-tier features.
 [[test]]
@@ -285,6 +299,13 @@ required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-brok
 name = "facade_live_run_status"
 path = "tests/facade_live_run_status.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
+
+# L9-12's broker rerank leg registers its sentinel key in a test vault and
+# answers from the paid-leg TLS fake provider.
+[[test]]
+name = "broker_rerank"
+path = "tests/broker_rerank.rs"
+required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
 
 # The NOTE session bind probe roots its home on a `MemoryKeystore` as well.
 [[test]]
