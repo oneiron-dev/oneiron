@@ -722,6 +722,29 @@ impl Vault {
         agent: EntityId,
         classes: &BTreeSet<super::EngineControlClass>,
     ) -> Result<EntityId> {
+        Ok(self
+            .grant_engine_controls_with_check_in(owner, agent, classes, None)?
+            .0)
+    }
+
+    /// [`Self::grant_engine_controls`] as `vault.engine.controls.grant` runs
+    /// it: the owner's own act on their own proof, applying with `applied`
+    /// another asker's approved check-in for this exact grant, spent in the
+    /// mint's writer after the owner's revalidation and before the mint
+    /// (ROLES-CHECKIN 2k7; P25-SHAPE Q1 = A). Returns the grant and the
+    /// decision it ran on.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::grant_engine_controls`]; a check-in that is not an
+    /// approved ask for this grant.
+    pub(crate) fn grant_engine_controls_with_check_in(
+        &self,
+        owner: &AuthenticatedOwner,
+        agent: EntityId,
+        classes: &BTreeSet<super::EngineControlClass>,
+        applied: Option<&AppliedCheckIn<'_>>,
+    ) -> Result<(EntityId, CheckInDecision)> {
         if SystemAgent::of(agent).is_some() {
             return Err(crate::error::Error::InvalidConfig(
                 "a base agent's grant is its default grant".into(),
@@ -732,9 +755,15 @@ impl Vault {
                 "an engine.controls grant names at least one class".into(),
             ));
         }
-        let grant = self.with_write_txn_grouped(|txn| {
+        let granted = self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, &*txn)?;
-            self.mint_steward_grant_in_txn(
+            let decision = crate::check_in::owner_act_decision_in_txn(
+                self,
+                txn,
+                crate::check_in::ActClass::GrantWiden,
+                applied,
+            )?;
+            let grant = self.mint_steward_grant_in_txn(
                 txn,
                 owner,
                 agent,
@@ -743,10 +772,11 @@ impl Vault {
                     .map(|class| class.grant_verb().to_owned())
                     .collect(),
                 None,
-            )
+            )?;
+            Ok((grant, decision))
         })?;
         self.apply_pending_rebinds_after_commit();
-        Ok(grant)
+        Ok(granted)
     }
 
     /// The owner's act: takes back every `engine.controls` grant he gave

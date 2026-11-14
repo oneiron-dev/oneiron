@@ -49,6 +49,9 @@
 //! `vault.check_in.open` for the exact act; once the owner approves, he
 //! applies it here with `check_in_ref`, and the act's writer spends the ask
 //! (ROLES-CHECKIN 2k7; Engine RULING P25-SHAPE Q1 = A).
+//!
+//! `vault.engine.controls.grant` widens an agent's grant the same way, on
+//! the owner's own proof, and takes the same `check_in_ref`.
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
@@ -648,6 +651,11 @@ pub struct EngineControlsGrantRequest {
     pub agent: EntityId,
     /// At least one class.
     pub classes: BTreeSet<EngineControlClass>,
+    /// Another asker's approved check-in for this exact grant, 32 hex: the
+    /// owner applies it on their own proof, and the grant's writer spends
+    /// it (ROLES-CHECKIN 2k7). Omitted: the owner's own grant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// `vault.engine.controls.grant`'s answer.
@@ -656,21 +664,72 @@ pub struct EngineControlsGrantRequest {
 pub struct EngineControlsGranted {
     /// The grant the owner minted (32 hex).
     pub grant: EntityId,
+    /// The decision the grant ran on: the owner's own proof, naming the
+    /// asker's approved check-in it applied (ROLES-CHECKIN 2k7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 /// `vault.engine.controls.grant`: the owner lets an agent tune the engine's
 /// knobs of the named classes (S66-1; Engine RULING ROW3-GRANT-VERBS = A),
 /// through [`Vault::grant_engine_controls`]: a grant naming those classes'
 /// verbs alone, as the owner's signed act. A base agent's grant is its
-/// default grant, given back at `vault.agents.grants.restore`.
+/// default grant, given back at `vault.agents.grants.restore`. With
+/// `check_in_ref` the owner applies another asker's approved check-in for
+/// this exact grant (2k7; P25-SHAPE Q1 = A): the grant's writer spends it.
+/// The answer records the decision.
+///
+/// # Errors
+///
+/// `BAD_REQUEST` for a malformed `check_in_ref`; the owner's refusals and
+/// the grant's; a check-in that is not an approved ask for this grant.
 pub fn grant_engine_controls_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: EngineControlsGrantRequest,
 ) -> MemoryResult<EngineControlsGranted> {
+    let applied = match super::shared::check_in_ref(input.check_in_ref.as_deref())? {
+        Some(id) => Some(AppliedCheckIn {
+            id,
+            verb: "vault.engine.controls.grant",
+            effect_digest: engine_controls_grant_effect_digest(&input)?,
+        }),
+        None => None,
+    };
+    let (grant, decision) = vault.grant_engine_controls_with_check_in(
+        owner,
+        input.agent,
+        &input.classes,
+        applied.as_ref(),
+    )?;
     Ok(EngineControlsGranted {
-        grant: vault.grant_engine_controls(owner, input.agent, &input.classes)?,
+        grant,
+        check_in: Some(decision),
     })
+}
+
+/// The digest of the owner's engine.controls grant `request`: the effect an
+/// asker's `vault.check_in.open` names for `vault.engine.controls.grant`,
+/// and the one the owner's grant spends (2k7; P25-SHAPE Q1 = A). BLAKE3,
+/// key derived from `oneiron check_in engine controls grant v1`, over the
+/// request's MessagePack encoding with field names, without its
+/// `check_in_ref`: the agent and its classes, ascending.
+///
+/// # Errors
+///
+/// The request does not encode.
+pub fn engine_controls_grant_effect_digest(
+    request: &EngineControlsGrantRequest,
+) -> MemoryResult<[u8; 32]> {
+    let grant = EngineControlsGrantRequest {
+        check_in_ref: None,
+        ..request.clone()
+    };
+    let encoded = rmp_serde::to_vec_named(&grant)
+        .map_err(|_| crate::error::Error::InvariantViolation("engine controls grant encode"))?;
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in engine controls grant v1");
+    hasher.update(&encoded);
+    Ok(*hasher.finalize().as_bytes())
 }
 
 /// `vault.engine.controls.revoke`'s input: the agent whose engine.controls
