@@ -84,6 +84,8 @@ pub(crate) use self::host::executor_declarations_block;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::host::executor_system_prompt;
 #[cfg(oneiron_test_support)]
+pub(crate) use self::host::spill_before_record;
+#[cfg(oneiron_test_support)]
 pub(crate) use self::wire::{HealedExecutorReply, heal_executor_text_tracking_repairs};
 
 // FIX [LIBTEST-QUARANTINE-ENGINE-EXECUTOR-TESTS]: the lib test target's type check fails here (59 errors: E0063 x22, E0560 x20, E0308 x8, E0061 x4, E0599 x4, E0027 x1); port it, then drop this gate
