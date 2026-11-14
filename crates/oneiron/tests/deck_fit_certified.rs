@@ -185,6 +185,16 @@ fn a_deck_born_from_a_receipted_case_carries_its_receipt() -> TestResult {
             .join(CASE)
             .join("receipt.json"),
     )?;
+    // The receipt was made by the case runner built alone; this build links the engine, whose dependency graph
+    // switches flate2 to another backend. The package bytes must not follow it.
+    let opened: serde_json::Value = serde_json::from_slice(&receipt)?;
+    assert_eq!(
+        opened
+            .pointer("/input/sha256")
+            .and_then(serde_json::Value::as_str),
+        Some(oracle_cases::sha256_hex(&receipted.candidate.bytes).as_str()),
+        "the engine's build writes the bytes PowerPoint opened"
+    );
     let receipt_sha256: [u8; 32] = sha2::Sha256::digest(&receipt).into();
     assert_eq!(record.fit_receipt, Some(receipt_sha256));
 

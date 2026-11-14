@@ -363,6 +363,17 @@ record (`DeckCreationRecord`) and the contract reply (`DeckCreated`) carry
 `fit_overflows` and `fit_receipt`, the SHA-256 of the receipt that measured
 the deck.
 
+The runner above builds docedit alone, and the engine links it into a larger
+graph. The two must write the same bytes, so the package writer compresses
+every part through one DEFLATE (`miniz_oxide`, in
+`retained_opc/package/zip32.rs`), never through flate2's backend, which
+follows the build's feature set (calamine's zip turns on `zlib-rs` in the
+engine's graph). `deck_fit_certified` checks it from the engine's side:
+
+```sh
+cargo test --locked -p oneiron --all-features --test deck_fit_certified
+```
+
 A new pass over a changed case set adds its receipts here: one
 `include_bytes!` line per case, kept in step with
 `scripts/office/deck-create-v1.json`. Then run:

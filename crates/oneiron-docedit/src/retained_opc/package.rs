@@ -10,14 +10,11 @@ use crate::resource::{Dimension, Resources, wide};
 mod open;
 mod parts;
 mod zip32;
-use flate2::{Compression, read::DeflateDecoder, write::DeflateEncoder};
+use flate2::read::DeflateDecoder;
 use open::check_limits;
 pub use parts::{Relationship, rels_name};
-use std::{
-    collections::HashSet,
-    io::{Read, Write},
-};
-use zip32::{as_u32, compressed_length, get16, get32, patch16, patch32};
+use std::{collections::HashSet, io::Read};
+use zip32::{as_u32, compressed_length, deflate, get16, get32, patch16, patch32};
 
 const LOCAL: u32 = 0x0403_4b50;
 const CENTRAL: u32 = 0x0201_4b50;
@@ -402,13 +399,7 @@ impl Package {
                 let compressed = if entry.method == 0 {
                     replacement.clone()
                 } else {
-                    let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
-                    encoder
-                        .write_all(replacement)
-                        .map_err(|_| Error::Invalid("compression failed"))?;
-                    encoder
-                        .finish()
-                        .map_err(|_| Error::Invalid("compression failed"))?
+                    deflate(replacement).map_err(|_| Error::Invalid("compression failed"))?
                 };
                 let mut header = self.source[entry.local.start..entry.data.start].to_vec();
                 patch16(&mut header, 6, entry.flags & !0x000e);
@@ -439,13 +430,7 @@ impl Package {
                 let compressed = if entry.method == 0 {
                     replacement.clone()
                 } else {
-                    let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
-                    encoder
-                        .write_all(replacement)
-                        .map_err(|_| Error::Invalid("compression failed"))?;
-                    encoder
-                        .finish()
-                        .map_err(|_| Error::Invalid("compression failed"))?
+                    deflate(replacement).map_err(|_| Error::Invalid("compression failed"))?
                 };
                 patch16(&mut record, 8, entry.flags & !0x000e);
                 patch32(&mut record, 16, crc32fast::hash(replacement));
