@@ -312,6 +312,13 @@ name = "delete_authority_served_door"
 path = "tests/delete_authority_served_door.rs"
 required-features = ["oneiron/test-support"]
 
+# Census L8-07's composer egress cases keep a lens world on this machine through
+# `oneiron/test-support`'s owner door.
+[[test]]
+name = "task_brief_egress"
+path = "tests/task_brief_egress.rs"
+required-features = ["oneiron/test-support"]
+
 # The off-record stretch pack cases serve the owner's root from a `MemoryKeystore` too.
 [[test]]
 name = "off_record_room_context_pack"

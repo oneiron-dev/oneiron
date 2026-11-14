@@ -17,15 +17,16 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use oneiron::llm::manifest::ModelRole;
+use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
 use oneiron::task_verb::{TaskBriefDraftRequest, TaskBriefModel, TaskBriefModelBinding};
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage,
-    LlmMessageRole, LlmRequest, ModelLocality, ModelTierRef, ResponseFormat, RetryableLlmError,
-    TierPrecedence,
+    LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
+    RetryableLlmError, TierPrecedence,
 };
 
-use crate::models::CallDeadline;
+use crate::models::{CallDeadline, OfferLadder};
 use crate::server::SyncServer;
 
 /// The role whose seat drafts.
@@ -87,33 +88,13 @@ impl TaskBriefModel for HostTaskBriefModel {
             .ai
             .seat(ROLE)
             .ok_or_else(|| refused("no [models.roles.local_reasoner] seat is bound"))?;
-        let purpose = CallPurpose::Other {
-            name: PURPOSE.to_owned(),
-        };
-        let call = LlmRequest {
-            model: seat.model.clone(),
-            envelope: CallEnvelope {
-                seat_effort: None,
-                scope: Default::default(),
-                tier: TierPrecedence::for_purpose(&purpose, ModelTierRef(PURPOSE.to_owned())),
-                purpose,
-                class: CallClass::BestEffort,
-                response_format: ResponseFormat::Json {
-                    schema: request.schema.clone(),
-                },
-                locality: seat.locality,
-                host_keyless: false,
-                host_paid: false,
-            },
-            messages: vec![
-                message(LlmMessageRole::System, request.instruction),
-                message(LlmMessageRole::User, request.input),
-            ],
-            tools: Vec::new(),
-            params: BTreeMap::new(),
-            provider_options: BTreeMap::new(),
-            host_segments: None,
-        };
+        let call = draft_call(
+            &seat.model,
+            seat.locality,
+            request.instruction,
+            request.input,
+            request.schema,
+        );
         let admitted = server.ai.admit_role(vault, ROLE, call).map_err(|refusal| {
             refused(&format!("the local reasoner call was refused: {refusal}"))
         })?;
@@ -148,40 +129,87 @@ impl TaskBriefModel for HostTaskBriefModel {
             meter,
             crate::decision_verdict::rung_payer(),
         );
-        let wait_budget = admitted.ladder.cooling_wait_budget(DRAFT_TIME_LIMIT);
-        let answered = self.runtime.block_on(async {
-            tokio::time::timeout(
-                DRAFT_TIME_LIMIT,
-                admitted.ladder.generate_recorded_by(
-                    &run,
-                    admitted.request,
-                    None,
-                    &|| true,
-                    CallDeadline::waits_within(wait_budget),
-                ),
-            )
-            .await
-            .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))
-        });
-        let (response, binding) = answered
-            .map_err(|error| refused(&format!("the local reasoner call failed: {error}")))?;
-        // A fallback rung that answered from a third party is not a local
-        // draft: its reply is dropped.
-        if binding.rung.locality == ModelLocality::ThirdParty {
-            return Err(refused(
-                "a third-party rung answered the local reasoner call; its draft is dropped",
-            ));
-        }
-        Ok(response
-            .message
-            .content
-            .iter()
-            .filter_map(|part| match part {
-                ContentPart::Text { text, .. } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect())
+        self.runtime
+            .block_on(send_draft(&admitted.ladder, &run, admitted.request))
     }
+}
+
+/// One draft call to the seat serving `model` at `locality`: the engine's
+/// instruction, the prompt `input`, and a reply constrained to `schema`.
+pub(crate) fn draft_call(
+    model: &ModelId,
+    locality: ModelLocality,
+    instruction: &str,
+    input: &str,
+    schema: &serde_json::Value,
+) -> LlmRequest {
+    let purpose = CallPurpose::Other {
+        name: PURPOSE.to_owned(),
+    };
+    LlmRequest {
+        model: model.clone(),
+        envelope: CallEnvelope {
+            seat_effort: None,
+            scope: Default::default(),
+            tier: TierPrecedence::for_purpose(&purpose, ModelTierRef(PURPOSE.to_owned())),
+            purpose,
+            class: CallClass::BestEffort,
+            response_format: ResponseFormat::Json {
+                schema: schema.clone(),
+            },
+            locality,
+            host_keyless: false,
+            host_paid: false,
+        },
+        messages: vec![
+            message(LlmMessageRole::System, instruction),
+            message(LlmMessageRole::User, input),
+        ],
+        tools: Vec::new(),
+        params: BTreeMap::new(),
+        provider_options: BTreeMap::new(),
+        host_segments: None,
+    }
+}
+
+/// Sends one draft `call` on `ladder`, metered on `run`, and answers with
+/// the reply's text.
+pub(crate) async fn send_draft(
+    ladder: &OfferLadder,
+    run: &RunAdmission,
+    call: LlmRequest,
+) -> MemoryResult<String> {
+    let wait_budget = ladder.cooling_wait_budget(DRAFT_TIME_LIMIT);
+    let answered = tokio::time::timeout(
+        DRAFT_TIME_LIMIT,
+        ladder.generate_recorded_by(
+            run,
+            call,
+            None,
+            &|| true,
+            CallDeadline::waits_within(wait_budget),
+        ),
+    )
+    .await
+    .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()));
+    let (response, binding) =
+        answered.map_err(|error| refused(&format!("the local reasoner call failed: {error}")))?;
+    // A fallback rung that answered from a third party is not a local
+    // draft: its reply is dropped.
+    if binding.rung.locality == ModelLocality::ThirdParty {
+        return Err(refused(
+            "a third-party rung answered the local reasoner call; its draft is dropped",
+        ));
+    }
+    Ok(response
+        .message
+        .content
+        .iter()
+        .filter_map(|part| match part {
+            ContentPart::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect())
 }
 
 fn refused(why: &str) -> MemoryError {
