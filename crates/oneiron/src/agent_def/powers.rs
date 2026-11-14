@@ -324,17 +324,8 @@ impl Vault {
     }
 }
 
-/// The kind of holder `vault.agents.powers.set` names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentPowerHolderKind {
-    /// An agent definition: its root grant.
-    Agent,
-    /// One dispatched attempt of an agent.
-    Attempt,
-    /// One reader child, by its task id.
-    ReaderTask,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::agent_def::powers::AgentPowerHolderKind;
 
 /// `vault.agents.powers.set`: the holder, the grant the owner expects it to
 /// hold, and the one it sets.

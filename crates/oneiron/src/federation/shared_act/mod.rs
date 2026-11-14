@@ -7,6 +7,7 @@
 //! and once it has erased the record [`Vault::record_erase_completion`]
 //! writes the act's receipt and tells the Owners (OF-150); a Member's or
 //! Admin's ask for one is `erase_ask`.
+mod actor_erase;
 mod erase_ask;
 mod execute;
 mod export_records;
