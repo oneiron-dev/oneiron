@@ -27,6 +27,65 @@ pub fn safe_read_asset_text<P: EntityStore + TombstoneStore>(
     safe_read_text(ports, txn, id)
 }
 
+/// The validity flag bag of one asset-text read (ARCH-0005a, Read patterns:
+/// canon's `_validity`): each flag names one reason the strict read
+/// [`safe_read_asset_text`] gives no text, for a UI badge or a monitor.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AssetTextValidity {
+    /// The derived hash the caller holds is not the source hash: the asset
+    /// changed after its text was derived.
+    pub hash_mismatch: bool,
+    /// The row is deleted (its tombstone stands).
+    pub deleted: bool,
+    /// The row is marked stale (its source was withdrawn, or a walk is
+    /// pending), or its served body carries `stale: true`.
+    pub stale: bool,
+    /// The store serves no live row under the id: none was written, or the
+    /// store's own read gate withholds it.
+    pub absent: bool,
+}
+
+impl AssetTextValidity {
+    /// Whether every check passed, so the read serves the text.
+    pub fn is_valid(&self) -> bool {
+        !(self.hash_mismatch || self.deleted || self.stale || self.absent)
+    }
+}
+
+/// The diagnostic record of one asset-text read: the text the strict read
+/// serves, with the flags that explain its absence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssetTextRead {
+    /// The body bytes, present only when [`AssetTextValidity::is_valid`]:
+    /// the record never serves words the strict read withholds.
+    pub body: Option<Vec<u8>>,
+    /// Why the body is absent, if it is.
+    pub validity: AssetTextValidity,
+}
+
+/// [`safe_read_asset_text`] as a diagnostic record (ARCH-0005a, Read patterns):
+/// every check runs, even after one fails, and each sets its flag. The body is
+/// present only when no flag is set, and then it is the strict read's text.
+pub fn safe_read_asset_text_diagnostic<P: EntityStore + TombstoneStore>(
+    ports: &P,
+    txn: &P::Read<'_>,
+    id: &EntityId,
+    derived_hash: &[u8; 32],
+    source_hash: &[u8; 32],
+) -> Result<AssetTextRead> {
+    let row = ports.port_entity_get(txn, id)?;
+    let deleted = ports.port_tombstone_is_deleted(txn, id)?;
+    let marked_stale = super::TombstoneStoreRead::port_deletion_state(ports, txn, id)?.stale;
+    let validity = AssetTextValidity {
+        hash_mismatch: derived_hash != source_hash,
+        deleted,
+        stale: marked_stale || row.as_ref().is_some_and(|row| body_is_stale(&row.body)),
+        absent: row.is_none(),
+    };
+    let body = row.filter(|_| validity.is_valid()).map(|row| row.body);
+    Ok(AssetTextRead { body, validity })
+}
+
 /// Whether `id`'s own words are withdrawn in this snapshot: deleted, marked
 /// stale, covered by a pending source walk (I1, I2), or kept only under a
 /// legal-hold use limit after a refused privacy erasure (OF-470 C6). A door
