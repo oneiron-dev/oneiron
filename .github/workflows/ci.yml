@@ -185,6 +185,7 @@ jobs:
           cargo install --locked cargo-deny@0.19.4 --root "$HOME/ci/tools"
           # test_move_gate_selftest.py runs the refactor move gate's self-test, scripts/refactor/tools/v2_selftest.py (H137).
           python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
+          python3 -m unittest discover -s scripts/audit -p 'test_mutant_screen.py' -v
           cargo run --locked -p oneiron-sdk-generator -- --check
           python3 scripts/code-sandbox/generate.py --check
           python3 -m unittest discover -s scripts/tests -p 'test_microvm_artifacts.py' -v
