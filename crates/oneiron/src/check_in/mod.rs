@@ -52,6 +52,7 @@ mod policy;
 mod receipt;
 mod resolve;
 mod role_preset;
+mod room_add;
 pub(crate) mod tables;
 mod verb_act_class;
 mod waits;
@@ -80,6 +81,8 @@ pub(crate) use pending::{
     answer_pending_check_in_in_txn, erase_pending_check_in_actor_in_txn,
     keyed_pending_check_in_in_txn, open_keyed_pending_check_in_in_txn, pending_check_in_in_txn,
 };
+pub use room_add::{ROOM_ADD_FROM_NOW_REASON, ROOM_ADD_NOT_GRANTED_REASON, room_add_effect_digest};
+pub(crate) use room_add::{agent_add_is_from_now, room_add_check_in_in_txn};
 // The doors 2c and 2e-2l call; until then only `test_doors::check_in` does.
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use pending::{

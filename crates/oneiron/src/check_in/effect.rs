@@ -156,7 +156,7 @@ pub(crate) fn person_door_check_in_in_txn(
 }
 
 /// Spends the settled ask `id` for `act`, in the door's writer.
-fn spend_in_txn(
+pub(super) fn spend_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     act: &DoorAct<'_>,
