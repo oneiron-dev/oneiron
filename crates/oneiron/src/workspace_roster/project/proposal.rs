@@ -4,17 +4,13 @@
 //! authorised tap mints it. No tap, no project: a card writes no project and
 //! confers no authority, and the question never runs under the turn's writer.
 use super::{ProjectMintReceipt, ROOM_PROJECT, invalid};
-use crate::agent_dispatch::{
-    AgentDispatchOutcome, AgentDispatcher, AgentSpawnContext, DispatchAgent,
-};
+use crate::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
 use crate::attempt_queue::{
     AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
     FailAttempt,
 };
 use crate::claim::ClaimReadStatus;
-use crate::claim::dispatch_target::AgentDispatchTarget;
 use crate::consent::AuthenticatedOwner;
-use crate::context_projection::ContextSpec;
 use crate::edge::EdgeActorClass;
 use crate::error::GateError;
 use crate::genui::{
@@ -250,8 +246,9 @@ fn enqueue_detection_in_txn(
 /// as its latest source instead of queuing another. The witness passes no
 /// `message` or `author` for a turn that is not a person's own words on
 /// record. A project's home room is a project already: there only a thread
-/// asks, toward its conversion. A conversation showing an unanswered card
-/// asks nothing more.
+/// asks, toward its conversion, and never the goal-intake interview's
+/// thread, which holds the project's own goal. A conversation showing an
+/// unanswered card asks nothing more.
 pub(crate) fn stage_project_detection_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -267,11 +264,15 @@ pub(crate) fn stage_project_detection_in_txn(
     let thread = if ROOM_PROJECT.contains(&vault.store, txn, &conversation)? {
         match rooms::TURNS.get(&vault.store, txn, &turn)? {
             // A reply's card converts its whole thread: record the root.
-            Some(row) if row.thread_of.is_some() && row.converted_project.is_none() => Some(
-                rooms::room_thread_turns_in_txn(vault, txn, conversation, turn)?
+            Some(row) if row.thread_of.is_some() && row.converted_project.is_none() => {
+                let root = rooms::room_thread_turns_in_txn(vault, txn, conversation, turn)?
                     .and_then(|selection| selection.root)
-                    .ok_or_else(invalid)?,
-            ),
+                    .ok_or_else(invalid)?;
+                if vault.is_goal_interview_thread_in_txn(txn, root)? {
+                    return Ok(());
+                }
+                Some(root)
+            }
             _ => return Ok(()),
         }
     } else {
@@ -502,8 +503,9 @@ impl Vault {
     /// card pinned on a thread in a project's room is born by conversion under
     /// that project, any other at the root, never both. The card turns Minted
     /// in the birth's own write, and an exact retry returns the recorded
-    /// receipt. After a fresh birth the card's leader is dispatched to run
-    /// the goal-intake interview in the new home room, seeded by the card.
+    /// receipt. After a fresh birth the owner's tap opens the goal-intake
+    /// interview in the new home room, seeded by the card, and its leader is
+    /// dispatched to run it.
     /// A conversion picks its room host among the leaders present in
     /// `tap_session`, the sitting the tap came from; with none, among the
     /// source message's sitting.
@@ -547,53 +549,103 @@ impl Vault {
                 mark_minted_in_txn(self, txn, &key, receipt)
             })?
         };
-        if fresh && let Err(error) = self.dispatch_goal_intake(card, &receipt, tap.occurred_at) {
+        if fresh
+            && let Err(error) = self.dispatch_goal_intake(card, &receipt, owner, tap.occurred_at)
+        {
             tracing::warn!(project = %receipt.project_id, %error, "goal-intake interview not dispatched");
         }
         Ok(receipt)
     }
 
     /// The minted project's leader, as an ordinary attempt with no TASK, runs
-    /// the goal-intake skill in the new home room. The brief names references
-    /// only: the card is the interview's first turn, read back through
+    /// the goal-intake skill in the new home room. The owner's tap opens the
+    /// interview there first: the card's turn is the thread's root, and the
+    /// leader's interview TASK bound to it lets the leader speak in it
+    /// ([`Self::open_project_goal_interview`]). A home room with no header
+    /// to open it on, a converted project's, gets the run alone, as does an
+    /// opening that is refused. The brief names references only: the card
+    /// is the interview's first turn, read back through
     /// [`Self::project_goal_interview_context`].
     fn dispatch_goal_intake(
         &self,
         card: &ProjectProposalCard,
         receipt: &ProjectMintReceipt,
+        owner: &AuthenticatedOwner,
         now: u64,
     ) -> Result<AgentDispatchOutcome> {
         let project = EntityId::from_hex(&receipt.project_id).map_err(|_| invalid())?;
         let leader = canonical(&card.leader_agent_def_ref)?;
         let home_room = super::home_room_id(project)?;
-        let brief = serde_json::json!({
-            "goal_intake": {
-                "skill": "goal-intake",
-                "project": project.to_hex(),
-                "home_room": home_room.to_hex(),
-                "card": card.card_id,
-            }
-        });
+        match self.open_project_goal_interview(
+            owner,
+            &card.card_id,
+            project,
+            home_room,
+            leader,
+            now,
+        ) {
+            Ok(Some(outcome)) => return Ok(outcome),
+            Ok(None) => {}
+            // The opening is one write: a refusal lands none of it, and the
+            // run is dispatched alone, as before the interview had a thread.
+            Err(error) => tracing::warn!(
+                project = %receipt.project_id,
+                %error,
+                "goal interview thread not opened; its intake run is dispatched alone"
+            ),
+        }
         // The interview is a root run in the new project, which has no run of
         // its own yet to be its parent: the entry the dispatch writer proves
         // against this card admits it.
-        AgentDispatcher::new(self)
-            .admitting_goal_intake(&card.card_id, project, home_room, leader)
-            .dispatch_with_context(
-                DispatchAgent {
-                    target: AgentDispatchTarget::Custom(leader),
-                    parent_attempt: None,
-                    dedupe_key: Some(format!("project-goal-intake:{}", project.to_hex())),
-                    run_id: Some(format!("project:{}", project.to_hex())),
-                    now,
-                },
-                AgentSpawnContext {
-                    project_ref: Some(project),
-                    ..AgentSpawnContext::default()
-                }
-                .with_context_spec(ContextSpec::default().with_briefing(brief.to_string()))
-                .with_origin_conversation(home_room),
-            )
+        AgentDispatcher::new(self).dispatch_goal_intake(
+            &card.card_id,
+            project,
+            home_room,
+            leader,
+            now,
+        )
+    }
+
+    /// Stores `card_id` as a card the owner's tap minted `project` from, led
+    /// by `leader`, on `principal`'s `source` (conversation, message): the
+    /// stored card a goal-intake interview of `project` is proved against,
+    /// for a lib test on a vault's own project.
+    #[cfg(test)]
+    pub(crate) fn put_minted_card_for_test(
+        &self,
+        card_id: &str,
+        project: EntityId,
+        leader: EntityId,
+        principal: EntityId,
+        source: (EntityId, EntityId),
+    ) -> Result<()> {
+        let (conversation, message) = source;
+        let card = ProjectProposalCard::new(
+            card_id,
+            principal.to_hex(),
+            message.to_hex(),
+            ProjectGoalDraft {
+                goal: "Answer requests".into(),
+                why: "Reduce repeats".into(),
+                axes: vec!["accuracy".into()],
+            },
+            ProjectProposalPicks {
+                leader_agent_def_ref: leader.to_hex(),
+                board_human_refs: vec![principal.to_hex()],
+                budget_share_bps: 0,
+                starting_skill_refs: Vec::new(),
+            },
+        )?;
+        let record = ProjectCardRecord {
+            card,
+            conversation,
+            detection: message,
+            drafted_by: RosterActor::Actor(leader),
+            state: ProjectCardState::Minted { project },
+            at: 1,
+            history: false,
+        };
+        self.with_write_txn(|txn| CARDS.put(&self.store, txn, &card_key(card_id), &record))
     }
 }
 

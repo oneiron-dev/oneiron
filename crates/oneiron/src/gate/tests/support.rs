@@ -198,15 +198,17 @@ pub(super) fn check_external_effect_policy_with_budget(
                 mut charge,
             } => {
                 exhausted = true;
-                if on_exhaust == EffectorBudgetOnExhaust::Suspend {
-                    crate::connector_key::suspend_connector_key_in_txn(
-                        store,
-                        wtxn,
-                        &target.key_id,
-                        &target.key,
-                        crate::connector_key::budget_exhausted_reason(&location),
-                        crate::unix_seconds_now(),
-                    )?;
+                if on_exhaust == EffectorBudgetOnExhaust::Suspend
+                    && let crate::connector_key::SuspendAdmission::Suspended(_) =
+                        crate::connector_key::suspend_connector_key_in_txn(
+                            store,
+                            wtxn,
+                            &target.key_id,
+                            &target.key,
+                            crate::connector_key::SuspendCause::BudgetExhausted(&location),
+                            crate::unix_seconds_now(),
+                        )?
+                {
                     charge.read.status = ConnectorKeyStatus::Suspended;
                 }
                 charge

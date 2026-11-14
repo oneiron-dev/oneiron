@@ -41,6 +41,14 @@ crate::side_table::side_tables! {
     /// body hash32. Key: id16 (project).
     PROJECT_GOAL_INTAKE_POINTER_WRITE: VaultMeta b"project.goal_intake.pointer_write/" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// One minted project's goal-intake interview (OF-501): the card that minted it, the
+    /// interview's thread root in the home room, the leader's open interview TASK and the last
+    /// intake run that loaded the goal-intake skill. Key: id16 (project).
+    PROJECT_GOAL_INTAKE_RUN: VaultMeta b"project.goal_intake.run.v1/" Named
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// The project whose goal-intake interview a thread root opens. Key: id16 (thread root).
+    PROJECT_GOAL_INTAKE_THREAD: VaultMeta b"project.goal_intake.thread.v1/" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// A full goal revision proposal (LEARNING-01): the proposed record, the goal claim and
     /// generation it revises, its proposer, reasons, evidence, diff and any dismissal. Never the
     /// goal in force. Key: id16 (project) + id16 (proposal).
