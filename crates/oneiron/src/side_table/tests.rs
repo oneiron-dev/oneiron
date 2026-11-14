@@ -335,6 +335,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "AGENT_DEF_TREE_PAUSE",
         "AGENT_WORKFLOW_RECORD",
         "ARTIFACT_PUBLISH_ADMISSION",
+        "ATTEMPT_CHECK_RECORD",
         "AUTHORITY_CACHE_GENERATION",
         "AUTHORITY_HOST_ROOT_SLIP_CACHE",
         "AUTHORITY_MESH_MACHINE",

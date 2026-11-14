@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 
 use super::{RepoRunAnswer, RepoRunBinding, refusal_error, repo_target};
 use crate::EntityId;
+use crate::attempt_queue::AttemptId;
 use crate::checkout::lease::{CheckoutLeaseAct, CheckoutRepoOps};
 use crate::codebase::RepoRef;
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
@@ -66,11 +67,15 @@ pub fn with_host_door_base(
 }
 
 /// The run's own checkout of a served repo, as admitted and read.
-struct RunCheckout {
-    served: String,
-    lease: CheckoutLeaseAct,
+pub(super) struct RunCheckout {
+    pub(super) served: String,
+    pub(super) lease: CheckoutLeaseAct,
     /// The PROJECT the run's admission bound its anchor in.
-    project: EntityId,
+    pub(super) project: EntityId,
+    /// The leased try the run's admission bound.
+    pub(super) attempt: AttemptId,
+    /// The try's generation at admission.
+    pub(super) generation: u32,
 }
 
 impl Memory<'_> {
@@ -258,7 +263,7 @@ impl Memory<'_> {
     /// The run admitted to edit `git_ref` of `repo` over `paths`, and the
     /// run's own live lease `checkout`.`epoch` on the anchor's served store:
     /// held by the run's actor, for the run's TASK, at the vault's time.
-    fn repo_run_checkout(
+    pub(super) fn repo_run_checkout(
         &self,
         binding: &RepoRunBinding,
         repo: EntityId,
@@ -288,6 +293,8 @@ impl Memory<'_> {
             served,
             lease,
             project: admitted.membership.bounds.project,
+            attempt: admitted.attempt,
+            generation: admitted.generation,
         })
     }
 

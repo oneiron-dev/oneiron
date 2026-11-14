@@ -8,6 +8,7 @@
 //! Authority is the owner's live proof alone (`Memory::code_owner`). The
 //! lease holder and the proposal actor are always that caller.
 
+mod check_records;
 mod conflict_types;
 mod conflicts;
 mod leases;
@@ -16,6 +17,7 @@ mod resolutions;
 mod secrets;
 mod types;
 
+pub use check_records::*;
 pub use conflict_types::*;
 pub use secrets::*;
 pub use types::*;
