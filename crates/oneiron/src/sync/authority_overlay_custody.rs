@@ -25,9 +25,11 @@
 //! (`crate::authority::install_authority_overlay_key_in_txn`,
 //! `crate::authority::retire_authority_overlay_subject_in_txn`), so a row
 //! opens or closes from that writer's commit on. Retirements go before keys,
-//! and an erased subject refuses a key on every install. Seals are never
-//! stored. A holder's debt clears only when its inventory names the key
-//! destroyed there.
+//! and an erased subject refuses a key on every install. A page's inputs
+//! (its peer's session key and erased subjects) are checked before its first
+//! write, and a machine's new offer closes the session its home held for the
+//! machine's last page. Seals are never stored. A holder's debt clears only
+//! when its inventory names the key destroyed there.
 //!
 //! Nothing here does network I/O or judges who the peer is: the residence
 //! doors admit only a machine of the owner's that its socket proved
@@ -272,11 +274,45 @@ fn page_of(
     }
 }
 
+/// The target for keys `sender` seals to `receiver`'s session `session` in
+/// vault `vault_id`.
+///
+/// # Errors
+/// A session key that does not import.
+fn live_target(
+    vault_id: &[u8; 32],
+    sender: &EntityId,
+    receiver: &EntityId,
+    session: &OverlayKeySession,
+) -> Result<LiveTarget> {
+    Ok(LiveTarget {
+        machine: *receiver,
+        session: SessionBinding {
+            binding: session_binding(vault_id, sender, receiver),
+            nonce: session.nonce,
+        },
+        ephemeral: HybridPublicKey::from_bytes(&session.ephemeral)
+            .map_err(|_| refused("the receiver's session key does not import"))?,
+    })
+}
+
+/// Refuses `erased`, a peer's erased subjects, when one names no ref: an
+/// install learns of an erase only through a key of the subject, so its own
+/// inventory names at least one, and a subject named with none is a
+/// malformed page.
+fn check_erased(erased: &BTreeMap<EntityId, ErasedSubject>) -> Result<()> {
+    if erased.values().any(|erased| erased.refs.is_empty()) {
+        return Err(refused("an erased subject names no key"));
+    }
+    Ok(())
+}
+
 /// Retires here each subject of `erased`, which `peer` named erased, that
 /// this install does not already name erased under every one of those refs:
 /// the authority's key event, one grouped writer per subject, then custody's
 /// finisher after the commits. Then clears `peer`'s debts for each key it
-/// names destroyed. A subject named with no ref retires nothing.
+/// names destroyed. The caller has refused a subject named with no ref
+/// ([`check_erased`]).
 fn retire_erased(
     vault: &Vault,
     local: &OverlayInventory,
@@ -285,11 +321,10 @@ fn retire_erased(
 ) -> Result<()> {
     let mut staged = false;
     for (subject, theirs) in erased {
-        if theirs.refs.is_empty()
-            || local
-                .erased
-                .get(subject)
-                .is_some_and(|ours| ours.refs.is_superset(&theirs.refs))
+        if local
+            .erased
+            .get(subject)
+            .is_some_and(|ours| ours.refs.is_superset(&theirs.refs))
         {
             continue;
         }
@@ -385,29 +420,17 @@ fn install_keys(
     installed
 }
 
-/// Seals each of `keys`, held here, to `receiver`'s session `session`, each
-/// one's holder debt recorded first. One that does not export (retired or
-/// erased since the inventory) is logged and left out.
+/// Seals each of `keys`, held here, to `target`, each one's holder debt
+/// recorded first. One that does not export (retired or erased since the
+/// inventory) is logged and left out.
 fn export_keys(
     vault: &Vault,
-    vault_id: &[u8; 32],
-    sender: &EntityId,
-    receiver: &EntityId,
-    session: &OverlayKeySession,
+    target: &LiveTarget,
     keys: impl IntoIterator<Item = (EntityId, [u8; 32])>,
-) -> Result<Vec<OverlaySentKey>> {
-    let target = LiveTarget {
-        machine: *receiver,
-        session: SessionBinding {
-            binding: session_binding(vault_id, sender, receiver),
-            nonce: session.nonce,
-        },
-        ephemeral: HybridPublicKey::from_bytes(&session.ephemeral)
-            .map_err(|_| refused("the receiver's session key does not import"))?,
-    };
+) -> Vec<OverlaySentKey> {
     let mut sent = Vec::new();
     for (subject, key_ref) in keys {
-        match export_key(&vault.store, &subject, &key_ref, &target) {
+        match export_key(&vault.store, &subject, &key_ref, target) {
             Ok(sealed) => sent.push(OverlaySentKey {
                 subject,
                 key_ref,
@@ -418,7 +441,7 @@ fn export_keys(
             }
         }
     }
-    Ok(sent)
+    sent
 }
 
 /// The machine's half: the page of this install's inventory after `after`
@@ -452,17 +475,20 @@ pub fn offer_overlay_page(
 }
 
 /// The home's half of one page: `machine`, a machine of the owner's its
-/// socket proved, offered `offer` to `home`, this install's machine. Retires
-/// the machine's erased subjects first, then answers: the home's erased
-/// subjects in the page, its keys the machine lacks (sealed to the
-/// machine's session), the machine's keys it wants, and a session for them,
-/// which it holds in memory until [`receive_keys`]. On a first page whose
-/// digest matches and where neither side waits on the other's proof, it
-/// answers `same` and carries nothing.
+/// socket proved, offered `offer` to `home`, this install's machine. First
+/// closes the session it held for the machine's last page, and refuses a
+/// session key that does not import or an erased subject named with no ref,
+/// before any write. Then retires the machine's erased subjects, and
+/// answers: the home's erased subjects in the page, its keys the machine
+/// lacks (sealed to the machine's session), the machine's keys it wants,
+/// and a session for them, which it holds in memory until [`receive_keys`].
+/// On a first page whose digest matches and where neither side waits on the
+/// other's proof, it answers `same` and carries nothing.
 ///
 /// # Errors
 /// A vault with no authority genesis; a session key that does not import;
-/// the random source failed; storage, custody and key-event faults.
+/// an erased subject named with no ref; the random source failed; storage,
+/// custody and key-event faults.
 pub(crate) fn answer_offer(
     vault: &Vault,
     home: &EntityId,
@@ -470,6 +496,10 @@ pub(crate) fn answer_offer(
     offer: &OverlayOffer,
 ) -> Result<OverlayAnswer> {
     let vault_id = vault_id(vault)?;
+    let binding = session_binding(&vault_id, machine, home);
+    sessions().retain(|entry| entry.binding.binding != binding);
+    let target = live_target(&vault_id, home, machine, &offer.session)?;
+    check_erased(&offer.erased)?;
     let mut local = overlay_inventory(&vault.store)?;
     if offer.after.is_none()
         && offer.digest == digest(&local)
@@ -497,7 +527,7 @@ pub(crate) fn answer_offer(
             !theirs.ready.contains(&(*subject, *key_ref)) && !theirs.erased.contains_key(subject)
         })
         .copied();
-    let keys = export_keys(vault, &vault_id, home, machine, &offer.session, send)?;
+    let keys = export_keys(vault, &target, send);
     let wanted: BTreeSet<(EntityId, [u8; 32])> = theirs
         .ready
         .iter()
@@ -558,14 +588,18 @@ pub(crate) fn receive_keys(
     Ok(install_keys(vault, home, machine, &session, keys))
 }
 
-/// The machine's half of the home's answer to `offer`: retires the home's
-/// erased subjects, installs the home's keys (sealed to `session`), and
-/// seals each key the home wants, of those this page offered, to the home's
-/// session. Returns the keys to send the home; none when it wants none.
+/// The machine's half of the home's answer to `offer`: refuses a session
+/// key that does not import or an erased subject named with no ref, before
+/// any write; retires the home's erased subjects, installs the home's keys
+/// (sealed to `session`), and seals each key the home wants, of those this
+/// page offered and of a subject the answer does not name erased, to the
+/// home's session. Returns the keys to send the home; none when it wants
+/// none.
 ///
 /// # Errors
 /// A vault with no authority genesis; a session key that does not import;
-/// storage, custody and key-event faults.
+/// an erased subject named with no ref; storage, custody and key-event
+/// faults.
 pub fn apply_overlay_answer(
     vault: &Vault,
     machine: &EntityId,
@@ -577,17 +611,23 @@ pub fn apply_overlay_answer(
     if answer.same {
         return Ok(Vec::new());
     }
+    let vault_id = vault_id(vault)?;
+    let target = answer
+        .session
+        .as_ref()
+        .map(|theirs| live_target(&vault_id, machine, home, theirs))
+        .transpose()?;
+    check_erased(&answer.erased)?;
     let local = overlay_inventory(&vault.store)?;
     retire_erased(vault, &local, home, &answer.erased)?;
     install_keys(vault, machine, home, session, answer.keys);
-    let Some(theirs) = answer.session else {
+    let Some(target) = target else {
         return Ok(Vec::new());
     };
-    let wanted = answer
-        .wanted
-        .into_iter()
-        .filter(|key| offer.ready.contains(key));
-    export_keys(vault, &vault_id(vault)?, machine, home, &theirs, wanted)
+    let wanted = answer.wanted.into_iter().filter(|(subject, key_ref)| {
+        offer.ready.contains(&(*subject, *key_ref)) && !answer.erased.contains_key(subject)
+    });
+    Ok(export_keys(vault, &target, wanted))
 }
 
 /// One whole round between two installs of one vault, in this process and

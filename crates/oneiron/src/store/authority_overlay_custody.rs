@@ -466,15 +466,30 @@ pub(crate) fn overlay_inventory(store: &Store) -> Result<OverlayInventory> {
 /// ready, of a subject not erased here, travels. `target`'s machine is
 /// recorded as a holder of it, synced, before the seal is returned, so an
 /// erase of the subject owes that holder's retirement whatever happens next.
+/// The key is checked again once the holder is on record: a retirement that
+/// committed after the first check refuses the seal, and one that commits
+/// after the second owes the holder's retirement.
 ///
 /// # Errors
 /// An archived vault; a key not held here live and ready, or of an erased
-/// subject; custody and sealing faults.
+/// subject, at either check; custody and sealing faults.
 pub(crate) fn export_key(
     store: &Store,
     subject: &EntityId,
     key_ref: &[u8; 32],
     target: &LiveTarget,
+) -> Result<TransitSeal> {
+    export_key_checked(store, subject, key_ref, target, || Ok(()))
+}
+
+/// [`export_key`], running `before_read` between its first check and its
+/// read of the key: the seam a test retires the subject through.
+fn export_key_checked(
+    store: &Store,
+    subject: &EntityId,
+    key_ref: &[u8; 32],
+    target: &LiveTarget,
+    before_read: impl FnOnce() -> Result<()>,
 ) -> Result<TransitSeal> {
     if store.core.gate_custody_archived() {
         return Err(Error::Store(StoreError::ArchivedVault));
@@ -485,16 +500,8 @@ pub(crate) fn export_key(
         .local()
         .ok_or_else(|| CustodyKind::ErasableKey.corrupt())?;
     let item = item(subject, key_ref);
-    {
-        let txn = store.env.read_txn()?;
-        let known = subject_keys_in_txn(store, &txn, &custody, subject, &[], &[])?;
-        if !KEY_READY.contains(store, &txn, key_ref)?
-            || custody.erasable_state(&item)? != EntryState::Live
-            || subject_erased_in_txn(store, &txn, &custody, subject, &known)?
-        {
-            return Err(CustodyKind::ErasableKey.corrupt());
-        }
-    }
+    check_exportable(store, &custody, subject, &item)?;
+    before_read()?;
     let secret = custody.read_erasable(&item)?;
     custody.record_holder(key_ref, &target.machine)?;
     let mut plain = Zeroizing::new(Vec::with_capacity(TRANSIT_LEN));
@@ -502,7 +509,28 @@ pub(crate) fn export_key(
     plain.extend_from_slice(subject.as_bytes());
     plain.extend_from_slice(&item.incarnation);
     plain.extend_from_slice(secret.expose());
-    seal_transit(target, key_ref, &plain)
+    let sealed = seal_transit(target, key_ref, &plain)?;
+    check_exportable(store, &custody, subject, &item)?;
+    Ok(sealed)
+}
+
+/// Refuses `item`, the overlay key of `subject`, unless it is held here
+/// live and ready and `subject` is not erased here, in one snapshot.
+fn check_exportable(
+    store: &Store,
+    custody: &LocalCustody<'_>,
+    subject: &EntityId,
+    item: &ErasableItem,
+) -> Result<()> {
+    let txn = store.env.read_txn()?;
+    let known = subject_keys_in_txn(store, &txn, custody, subject, &[], &[])?;
+    if !KEY_READY.contains(store, &txn, &item.key_ref)?
+        || custody.erasable_state(item)? != EntryState::Live
+        || subject_erased_in_txn(store, &txn, custody, subject, &known)?
+    {
+        return Err(CustodyKind::ErasableKey.corrupt());
+    }
+    Ok(())
 }
 
 /// The subject and key that `sealed`, a transit record for the ref
