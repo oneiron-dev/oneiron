@@ -149,7 +149,7 @@ export {
   type MessageRowReactionsProps,
   type MessageRowReactionProps,
 } from './patterns/MessageRow'
-export { HoverBar, type HoverBarProps } from './patterns/HoverBar'
+export { HoverBar, toolbarActions, type HoverBarProps } from './patterns/HoverBar'
 export { DayDivider, type DayDividerProps } from './patterns/DayDivider'
 export { RunFoot, type RunFootProps, type RunFootCallProps, type RunSubState } from './patterns/RunFoot'
 export { formatElapsed } from './patterns/run-elapsed'
@@ -306,6 +306,7 @@ export {
   type InfoNotePlacement,
   type NoteRect,
 } from './lib/info-note'
+export { rovingMoveForKey, rovingTarget, setRovingStop, type RovingMove, type RovingItem } from './lib/roving-focus'
 export { placeFloating, anchorInViewport, type Side, type Align, type Placement, type PlacementOptions } from './lib/placement'
 export { bayerThreshold, easeOutQuart, develop, BAYER_8X8 } from './lib/dither'
 export { useResolvedScheme, resolveScheme, type Scheme } from './lib/scheme'
