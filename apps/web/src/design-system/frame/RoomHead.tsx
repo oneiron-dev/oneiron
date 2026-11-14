@@ -40,6 +40,9 @@ export interface RoomHeadProps extends Omit<PlaceHeadProps, 'tabs' | 'children'>
   onAddPin?: () => void
   /* The room's pins: Tabs.Pin elements, in order. */
   children?: React.ReactNode
+  /* The id of the region that shows the room's view, when no Tabs.Panel
+     draws it: the fixed tabs and the folded pins name it. */
+  controls?: string
 }
 
 /* The head line of a room: its name (PlaceHead), the tabs on the same
@@ -59,6 +62,7 @@ export function RoomHead({
   outlineOpen,
   onAddPin,
   icon,
+  controls,
   className,
   children,
   ...props
@@ -69,9 +73,11 @@ export function RoomHead({
   let tabs: React.ReactNode
   if (pins === 'head') {
     tabs = (
-      <Tabs.List foldValue={ROOM_VIEWS.pinned} aria-label="views of this room" className="sl-room-head-tabs">
-        <Tabs.Tab value={ROOM_VIEWS.talk}>talk</Tabs.Tab>
-        <Tabs.Tab value={ROOM_VIEWS.files} count={filesCount}>
+      <Tabs.List foldValue={ROOM_VIEWS.pinned} foldControls={controls} aria-label="views of this room" className="sl-room-head-tabs">
+        <Tabs.Tab value={ROOM_VIEWS.talk} controls={controls}>
+          talk
+        </Tabs.Tab>
+        <Tabs.Tab value={ROOM_VIEWS.files} count={filesCount} controls={controls}>
           files
         </Tabs.Tab>
         <Tabs.Divider />
@@ -82,11 +88,13 @@ export function RoomHead({
   } else if (pins === 'tab') {
     tabs = (
       <Tabs.List aria-label="views of this room" className="sl-room-head-tabs">
-        <Tabs.Tab value={ROOM_VIEWS.talk}>talk</Tabs.Tab>
-        <Tabs.Tab value={ROOM_VIEWS.files} count={filesCount}>
+        <Tabs.Tab value={ROOM_VIEWS.talk} controls={controls}>
+          talk
+        </Tabs.Tab>
+        <Tabs.Tab value={ROOM_VIEWS.files} count={filesCount} controls={controls}>
           files
         </Tabs.Tab>
-        <Tabs.Tab value={ROOM_VIEWS.pinned} count={pinnedCount ?? pinParts.length}>
+        <Tabs.Tab value={ROOM_VIEWS.pinned} count={pinnedCount ?? pinParts.length} controls={controls}>
           pinned
         </Tabs.Tab>
       </Tabs.List>

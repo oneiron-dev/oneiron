@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import * as React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { Tabs } from '../src/design-system/primitives/Tabs'
+import { Tabs, tabControlsId } from '../src/design-system/primitives/Tabs'
+import { RoomHead } from '../src/design-system/frame/RoomHead'
 
 const TABS_CSS = readFileSync(new URL('../src/design-system/primitives/Tabs.css', import.meta.url), 'utf8')
 
@@ -65,5 +66,58 @@ describe('the tab list holds only tabs', () => {
     )
     assert.doesNotMatch(html, /sl-tabs-row/)
     assert.match(html, /^<div class="sl-tabs"><div role="tablist"/)
+  })
+})
+
+describe('a tab names only a region that is there', () => {
+  test('tabs without panels carry no aria-controls', () => {
+    const html = renderToStaticMarkup(
+      <Tabs defaultValue="mentions">
+        <Tabs.List aria-label="activity views">
+          <Tabs.Tab value="threads">threads</Tabs.Tab>
+          <Tabs.Tab value="mentions">mentions</Tabs.Tab>
+        </Tabs.List>
+      </Tabs>,
+    )
+    assert.doesNotMatch(html, /aria-controls=/)
+  })
+
+  test('the caller names its own region with controls', () => {
+    const html = renderToStaticMarkup(
+      <Tabs defaultValue="q4">
+        <Tabs.List aria-label="views">
+          <Tabs.Tab value="talk" controls="room-view">
+            talk
+          </Tabs.Tab>
+          <Tabs.Pin value="q4" icon="chart" pinnedBy="Metryon" controls="room-view">
+            Q4 view
+          </Tabs.Pin>
+        </Tabs.List>
+      </Tabs>,
+    )
+    assert.equal((html.match(/aria-controls="room-view"/g) ?? []).length, 2)
+  })
+
+  test('a mounted panel is named by the tab for its value, and only that tab', () => {
+    const panels = new Set(['messages'])
+    assert.equal(tabControlsId(undefined, panels, 'messages', 'p-messages'), 'p-messages')
+    assert.equal(tabControlsId(undefined, panels, 'files', 'p-files'), undefined)
+    assert.equal(tabControlsId('room-view', panels, 'files', 'p-files'), 'room-view')
+    assert.equal(tabControlsId(undefined, new Set(), undefined, 'p-'), undefined)
+  })
+
+  test('RoomHead hands its region to the fixed tabs and the folded pins', () => {
+    const html = renderToStaticMarkup(
+      <Tabs value="talk">
+        <RoomHead title="acme-forecast" pins="head" controls="room-view">
+          <Tabs.Pin value="q4" icon="chart" pinnedBy="Metryon">
+            Q4 view
+          </Tabs.Pin>
+        </RoomHead>
+      </Tabs>,
+    )
+    /* talk, files and the folded-pins tab; the pin names none of its own. */
+    assert.equal((html.match(/aria-controls="room-view"/g) ?? []).length, 3)
+    assert.equal((html.match(/aria-controls=/g) ?? []).length, 3)
   })
 })

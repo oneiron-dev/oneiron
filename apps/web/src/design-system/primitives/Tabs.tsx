@@ -10,6 +10,11 @@ interface TabsContextValue {
   value: string
   setValue: (value: string) => void
   baseId: string
+  /* The values that have a Tabs.Panel on screen. */
+  panels: ReadonlySet<string>
+  /* A Tabs.Panel reports its value while mounted; the returned function
+     takes it back. */
+  registerPanel: (value: string) => () => void
 }
 
 const TabsContext = React.createContext<TabsContextValue | null>(null)
@@ -22,6 +27,24 @@ function useTabsContext(part: string): TabsContextValue {
 
 /* Values become part of element ids. */
 const idPart = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, '_')
+
+/* What a tab's aria-controls names: the caller's region (`controls`), else
+   the Tabs.Panel drawn for its value, else nothing, so a tab never points
+   at an element that is not in the document. */
+export function tabControlsId(controls: string | undefined, panels: ReadonlySet<string>, value: string | undefined, panelId: string): string | undefined {
+  if (controls) return controls
+  return value !== undefined && panels.has(value) ? panelId : undefined
+}
+
+/* Counts per value, so two panels for one value register and leave
+   independently. */
+function countIn(counts: ReadonlyMap<string, number>, value: string, step: 1 | -1): Map<string, number> {
+  const next = new Map(counts)
+  const n = (next.get(value) ?? 0) + step
+  if (n > 0) next.set(value, n)
+  else next.delete(value)
+  return next
+}
 
 /* What a pin says about itself in its tooltip, after who pinned it. */
 export const PIN_NOTE = 'Everyone here sees it, and the agents working in this room keep it in view.'
@@ -49,7 +72,13 @@ export type TabsProps = TabsValueProps & Omit<React.ComponentPropsWithRef<'div'>
 function TabsRoot({ value: valueProp, defaultValue, onValueChange, className, ...props }: TabsProps) {
   const [value, setValue] = useControllableState(valueProp, defaultValue ?? '', onValueChange)
   const baseId = useSafeId('sl-tabs')
-  const ctx = React.useMemo(() => ({ value, setValue, baseId }), [value, setValue, baseId])
+  const [panelCounts, setPanelCounts] = React.useState<ReadonlyMap<string, number>>(() => new Map())
+  const registerPanel = React.useCallback((panel: string) => {
+    setPanelCounts((counts) => countIn(counts, panel, 1))
+    return () => setPanelCounts((counts) => countIn(counts, panel, -1))
+  }, [])
+  const panels = React.useMemo<ReadonlySet<string>>(() => new Set(panelCounts.keys()), [panelCounts])
+  const ctx = React.useMemo(() => ({ value, setValue, baseId, panels, registerPanel }), [value, setValue, baseId, panels, registerPanel])
   return (
     <TabsContext.Provider value={ctx}>
       <div className={cx('sl-tabs', className)} {...props} />
@@ -64,13 +93,16 @@ export interface TabsListProps extends React.ComponentPropsWithRef<'div'> {
   foldValue?: string
   /* The folded tab's tooltip and accessible name. */
   foldLabel?: string
+  /* The id of the caller's region the folded tab shows, when no Tabs.Panel
+     draws the pinned list. */
+  foldControls?: string
 }
 
 /* The row of tabs. Left and Right move focus and select (wrapping); Home and
    End jump to the ends. Only the selected tab is in the tab order. The
    element with role tablist holds only tabs: a Tabs.Add among the children
    is drawn after it, in the same row, where the last pin ends. */
-function TabsList({ ref, foldValue, foldLabel = 'Pinned in this room', className, onKeyDown, children, ...props }: TabsListProps) {
+function TabsList({ ref, foldValue, foldLabel = 'Pinned in this room', foldControls, className, onKeyDown, children, ...props }: TabsListProps) {
   const ctx = useTabsContext('Tabs.List')
   const listRef = React.useRef<HTMLDivElement | null>(null)
   const rowRef = React.useRef<HTMLDivElement | null>(null)
@@ -168,7 +200,7 @@ function TabsList({ ref, foldValue, foldLabel = 'Pinned in this room', className
             id={`${ctx.baseId}-tab-${idPart(foldValue)}`}
             aria-label={`${foldLabel}, ${pins.length}`}
             aria-selected={foldSelected}
-            aria-controls={`${ctx.baseId}-panel-${idPart(foldValue)}`}
+            aria-controls={tabControlsId(foldControls, ctx.panels, foldValue, `${ctx.baseId}-panel-${idPart(foldValue)}`)}
             tabIndex={foldSelected ? 0 : -1}
             data-value={foldValue}
             data-state={foldSelected ? 'active' : 'inactive'}
@@ -195,9 +227,12 @@ export interface TabsTabProps extends Omit<React.ComponentPropsWithRef<'button'>
   value: string
   /* A count after the name, as a figure. */
   count?: number | string
+  /* The id of the caller's region this tab shows, when no Tabs.Panel draws
+     its view. With neither, the tab names no region. */
+  controls?: string
 }
 
-function TabsTab({ value, count, className, type = 'button', onClick, children, ...props }: TabsTabProps) {
+function TabsTab({ value, count, controls, className, type = 'button', onClick, children, ...props }: TabsTabProps) {
   const ctx = useTabsContext('Tabs.Tab')
   const selected = ctx.value === value
   return (
@@ -206,7 +241,7 @@ function TabsTab({ value, count, className, type = 'button', onClick, children, 
       role="tab"
       id={`${ctx.baseId}-tab-${idPart(value)}`}
       aria-selected={selected}
-      aria-controls={`${ctx.baseId}-panel-${idPart(value)}`}
+      aria-controls={tabControlsId(controls, ctx.panels, value, `${ctx.baseId}-panel-${idPart(value)}`)}
       tabIndex={selected ? 0 : -1}
       data-value={value}
       data-state={selected ? 'active' : 'inactive'}
@@ -237,13 +272,16 @@ export type TabsPinProps = TabsPinTarget &
     pinnedBy: string
     /* The tooltip's sentence. */
     note?: string
+    /* The id of the caller's region a pinned view shows, when no
+       Tabs.Panel draws it. */
+    controls?: string
   }
 
 /* A tab for a pinned thing: its kind symbol (or the portrait of a pinned
    message's writer) and its name, cut at 17 characters. The tooltip says
    who pinned it and what a pin does. A pinned message is not a view: it
    never becomes selected; pressing it calls onGo. */
-function TabsPin({ value, onGo, icon, mark, pinnedBy, note = PIN_NOTE, className, type = 'button', onClick, children, ...props }: TabsPinProps) {
+function TabsPin({ value, onGo, icon, mark, pinnedBy, note = PIN_NOTE, controls, className, type = 'button', onClick, children, ...props }: TabsPinProps) {
   const ctx = useTabsContext('Tabs.Pin')
   const goes = pinPress({ value, onGo }) === 'go'
   const selected = !goes && ctx.value === value
@@ -254,7 +292,7 @@ function TabsPin({ value, onGo, icon, mark, pinnedBy, note = PIN_NOTE, className
         role="tab"
         id={goes ? undefined : `${ctx.baseId}-tab-${idPart(value ?? '')}`}
         aria-selected={selected}
-        aria-controls={goes ? undefined : `${ctx.baseId}-panel-${idPart(value ?? '')}`}
+        aria-controls={goes ? undefined : tabControlsId(controls, ctx.panels, value, `${ctx.baseId}-panel-${idPart(value ?? '')}`)}
         tabIndex={selected ? 0 : -1}
         data-value={goes ? undefined : value}
         data-state={selected ? 'active' : 'inactive'}
@@ -307,9 +345,14 @@ export interface TabsPanelProps extends React.ComponentPropsWithRef<'div'> {
   value: string
 }
 
+/* The view of one tab. While mounted it tells the tabs it is there, so the
+   tab for its value names it with aria-controls. A caller that draws the
+   selected view itself renders one panel with the selected value. */
 function TabsPanel({ value, className, ...props }: TabsPanelProps) {
   const ctx = useTabsContext('Tabs.Panel')
   const selected = ctx.value === value
+  const { registerPanel } = ctx
+  useIsomorphicLayoutEffect(() => registerPanel(value), [registerPanel, value])
   return (
     <div
       role="tabpanel"
