@@ -370,7 +370,7 @@ pub(super) fn build_structural_kind_registry(
                 // the persisted row stays in vault_meta untouched, and its
                 // prefix stays reserved here so no new dynamic pack can mint
                 // short ids colliding with rows already written under it.
-                prefixes.insert(registration.short_id_prefix.clone());
+                prefixes.insert(registration.short_id_prefix);
                 continue;
             }
             return Err(Error::CorruptedIndex("structural kind registry"));

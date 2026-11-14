@@ -666,11 +666,15 @@ pub(super) fn merge_pact_states(
 }
 
 /// `admitted_by` is the roster key that signed the device in; `None` for a
-/// genesis root and for an owner's enrolled device key, which starts its own
-/// custody line (FIX 5896). Custody is sticky: a key the host attests as its
-/// root and a key marked for the cloud are the host's, and so is every key
-/// such a key admitted, directly or through others (`key_admitters`),
-/// whatever the successor's own labels say.
+/// genesis root and for an owner's enrolled device key. Custody follows the
+/// act, not the key (census L7-14; DEC-0005 #will-sweep): the owner's act
+/// starts its own custody line (his enrolled key, FIX 5896), and his machine
+/// answers stand through any carrier whatever its custody (#2982). A key the
+/// host admits alone stays the host's (DEC-0005 #will-sweep-kept: the
+/// operator alone acts as nobody). So a key the host attests as its root and
+/// a key marked for the cloud are the host's, and so is every key such a key
+/// admitted, directly or through others (`key_admitters`), whatever the
+/// successor's own labels say.
 pub(super) fn upsert_device(
     state: &mut FoldState,
     device: &DeviceAuthority,

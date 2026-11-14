@@ -12,8 +12,9 @@
 //! actual fonts and script shaping, which emission does not have, so text,
 //! tables and charts come back `FitUnverified`; an estimate chose the slide
 //! and never certifies it. `fontScale` and `lnSpcReduction` are never
-//! written.
+//! written. The `deck-create-v1` oracle case set ([`oracle_cases`]) replays `emit` once per case and pins the candidates.
 mod check;
+pub mod oracle_cases;
 mod slide;
 #[cfg(test)]
 pub(crate) mod tests;

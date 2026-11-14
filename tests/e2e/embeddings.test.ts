@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, test } from "bun:test";
 import { createServer } from "node:net";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -10,7 +10,7 @@ import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { loadBuildManifest, loadFixtures, requireAsset } from "./support/fixtures.ts";
 import { ScriptedProviders, embeddingReply } from "./support/providers.ts";
 import type { ProviderStep } from "./support/providers.ts";
-import { Artifacts, LIMITS, ManagedProcess, assertFlowActive, defineFile, isolatedEnv, ownResource, redactor, secretHex, tempRoot } from "./support/run.ts";
+import { Artifacts, LIMITS, ManagedProcess, assertFlowActive, defineFile, expect, isolatedEnv, ownResource, redactor, secretHex, tempRoot } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";

@@ -170,6 +170,7 @@ impl ManagedArgs {
             ),
             seal_signing_url: nonempty(args.seal_signing_url.as_deref()),
             seal_organ: args.seal_organ.clone(),
+            image_organ: args.image_organ.clone(),
             esign_delivery_outbox: args.esign_delivery_outbox_dir.clone(),
             publisher_training_outbox: args.publisher_training_outbox_dir.clone(),
             browser_runtime: args.browser_runtime.clone(),
@@ -213,6 +214,7 @@ impl ManagedArgs {
             ("seal-chain-file", &managed.seal_chain),
             ("seal-trust-file", &managed.seal_trust),
             ("seal-organ", &managed.seal_organ),
+            ("image-organ", &managed.image_organ),
             ("esign-delivery-outbox-dir", &managed.esign_delivery_outbox),
             (
                 "publisher-training-outbox-dir",

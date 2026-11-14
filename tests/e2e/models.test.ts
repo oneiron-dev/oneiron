@@ -1,10 +1,10 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, test } from "bun:test";
 import { verify } from "node:crypto";
 import { EngineFixture } from "./support/engine.ts";
 import { loadFixtures } from "./support/fixtures.ts";
 import type { Profile } from "./support/fixtures.ts";
 import type { PublicHttpClient, WireReply } from "./support/clients.ts";
-import { defineFile } from "./support/run.ts";
+import { defineFile, expect } from "./support/run.ts";
 
 const profile: Profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";

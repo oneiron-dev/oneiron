@@ -13,28 +13,9 @@ use crate::store::Store;
 use crate::workspace_roster::rooms::{RoomTurn, require_member, room_thread_turns_in_txn, turn_in};
 use crate::{EntityId, Result, Vault};
 use heed::{RoTxn, RwTxn};
-use serde::{Deserialize, Serialize};
 
-/// Four witnessed turns of one agent question, human answer, agent draft, human confirmation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GoalInterviewTurns {
-    pub question: EntityId,
-    pub answer: EntityId,
-    pub draft: EntityId,
-    pub confirmation: EntityId,
-}
-
-impl GoalInterviewTurns {
-    /// The digest a human confirms: the project's goal generation, recorded
-    /// when the draft was shown (8 bytes, big-endian), then the draft's bytes.
-    pub fn confirmation_digest(draft: &str, generation: u64) -> String {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(&generation.to_be_bytes());
-        hasher.update(draft.as_bytes());
-        hasher.finalize().to_hex().to_string()
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::project::goal::interview::GoalInterviewTurns;
 
 /// A project's goal generation. Key: id16 (project).
 const GENERATIONS: SideTable<EntityId, u64, Raw> =

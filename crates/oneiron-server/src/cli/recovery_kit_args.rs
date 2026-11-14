@@ -162,11 +162,31 @@ pub struct RecoveryKitIssueArgs {
     /// Where one piece lives, given three times in point order: `paper`,
     /// `password-manager`, `own-email`, `file-elsewhere`, `file-here`,
     /// `file-on:<machine>`, `other-machine:<machine>`, `trusted-person`,
-    /// `security-key`, `passphrase` or `this-machine`: this install's keystore
+    /// `security-key`, `passphrase`, `this-machine`: this install's keystore
     /// keeps that piece, and a restore here reads it back (refused while the
-    /// keystore is off).
+    /// keystore is off), or, for `issue-vault-key` only, `passkey`: the
+    /// synced passkey `--passkey-credential` names keeps it, sealed into the
+    /// vault key's `kit_point` wrap.
     #[arg(long = "home", value_name = "HOME", required = true)]
     pub homes: Vec<String>,
+
+    /// With a `passkey` home: the passkey's credential name, as `vault-key
+    /// add-passkey` names one.
+    #[arg(long, value_name = "NAME", requires = "passkey_prf_file")]
+    pub passkey_credential: Option<String>,
+
+    /// With a `passkey` home: an owner-only file holding the passkey's PRF
+    /// output (32 raw bytes, 64 hex digits or base64url) at the PRF input
+    /// `vault-key status` prints for the vault and that name.
+    #[arg(long, value_name = "FILE", requires = "passkey_credential")]
+    pub passkey_prf_file: Option<PathBuf>,
+
+    /// `issue-vault-key` only: turn on "Nobody but me" with "any 2 pieces" in
+    /// the same write. The sheet, password and passkey wraps go, every escrow
+    /// recipient but the world kit's is retired, and from then on two of
+    /// this kit's pieces restore the vault.
+    #[arg(long)]
+    pub any_two_pieces: bool,
 
     /// The directory each stored piece is written to as `piece-<x>.txt`: its
     /// recovery code, readable by its owner alone.

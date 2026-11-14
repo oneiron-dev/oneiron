@@ -1,20 +1,9 @@
 //! Strict serde adapters for ids and provenance in local healer receipts.
 use crate::{EntityId, claim::ClaimSource};
+#[doc(hidden)]
+pub(super) use oneiron_verb_wire::self_heal::receipt_serde::id;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
-pub(super) mod id {
-    use super::*;
-    pub(in crate::self_heal) fn serialize<S: Serializer>(
-        id: &EntityId,
-        s: S,
-    ) -> Result<S::Ok, S::Error> {
-        id.to_hex().serialize(s)
-    }
-    pub(in crate::self_heal) fn deserialize<'de, D: Deserializer<'de>>(
-        d: D,
-    ) -> Result<EntityId, D::Error> {
-        EntityId::from_hex(&String::deserialize(d)?).map_err(D::Error::custom)
-    }
-}
+
 pub(super) mod ids {
     use super::*;
     pub(in crate::self_heal) fn serialize<S: Serializer>(
