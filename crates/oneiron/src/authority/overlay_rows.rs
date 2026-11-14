@@ -273,6 +273,7 @@ pub(crate) fn stage_carried_overlays_in_txn<'b>(
 /// Each sealed row of `subject` this vault holds an overlay row for: its
 /// entry hash and its overlay row. No index by subject: a key event reads
 /// every overlay row's head, and key events are rare.
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
 fn subject_overlays_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -292,6 +293,7 @@ fn subject_overlays_in_txn(
 /// may change, each row as a put of it would touch them; with `index`, each
 /// such row's agent-grant member posting is staged too. Both hooks are keyed
 /// upserts and sets: running them again for a row changes nothing.
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
 fn open_row_hooks_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -339,6 +341,7 @@ fn open_row_hooks_in_txn(
 /// # Errors
 /// As `store::authority_overlay_custody::install_key_in_txn`; a stored row
 /// of `subject` whose hooks fail.
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
 pub(crate) fn install_authority_overlay_key_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -370,6 +373,7 @@ pub(crate) fn install_authority_overlay_key_in_txn(
 /// # Errors
 /// As `store::authority_overlay_custody::retire_subject_keys_in_txn`;
 /// storage faults.
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
 pub(crate) fn retire_authority_overlay_subject_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,

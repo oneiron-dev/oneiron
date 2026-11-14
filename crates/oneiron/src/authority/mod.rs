@@ -232,9 +232,14 @@ pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
 pub(crate) use overlay_rows::{
     AUTHORITY_OVERLAY_ROW_MAX, CarriedOverlays, carried_overlays_in_txn,
     decode_carried_authority_fold_row_in_txn, decode_vault_authority_fold_row_in_txn,
-    install_authority_overlay_key_in_txn, open_carried_authority_body_in_txn,
-    open_vault_authority_body_in_txn, retire_authority_overlay_subject_in_txn,
+    open_carried_authority_body_in_txn, open_vault_authority_body_in_txn,
     stage_carried_overlays_in_txn,
+};
+// Census L5-22 1a-iii: the key events the vault's custody carrier
+// (`crate::sync::authority_overlay_custody`) delivers.
+#[cfg_attr(not(feature = "sync"), allow(unused_imports))]
+pub(crate) use overlay_rows::{
+    install_authority_overlay_key_in_txn, retire_authority_overlay_subject_in_txn,
 };
 // The export secret work body and its sealed result (FIX 4624(b)).
 pub use export_secret_work::{

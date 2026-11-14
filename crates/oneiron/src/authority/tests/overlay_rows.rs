@@ -5,10 +5,13 @@
 
 use super::*;
 use crate::side_table::{self, Raw, SideTable};
+#[cfg(feature = "sync")]
 use crate::store::authority_overlay_custody::{
-    deliver_authority_overlay_custody_for_test,
-    deliver_authority_overlay_custody_then_abort_for_test,
-    retire_authority_overlay_subject_for_test,
+    deliver_authority_overlay_custody_for_test, retire_authority_overlay_subject_for_test,
+};
+#[cfg(feature = "sync")]
+use crate::sync::authority_overlay_custody::{
+    answer_offer, offer_overlay_page, run_round_for_test, run_round_then_abort_for_test,
 };
 use crate::{OpenOptions, Vault, VaultConfig, VaultStorageId};
 
@@ -370,13 +373,16 @@ fn an_adopted_image_over_a_sealed_row_lands_every_row_and_grants_nothing() {
 }
 
 /// T-ARC (census L5-22 1a-iii, RULING 11:52): a sealed mint lands on
-/// another install as structure and its slip grants nothing. Custody delivers
-/// the subject's key; the same stored row opens and the fold counts it from
-/// then on, with no reimport, and still after a reopen.
+/// another install as structure and its slip grants nothing. The live carrier
+/// delivers the subject's key; the same stored row opens without reimport.
+/// A matching inventory answers same, a second round changes nothing, and
+/// the mint still counts after a reopen.
 #[test]
+#[cfg(feature = "sync")]
 fn a_sealed_row_opens_and_counts_once_custody_delivers_its_key() {
     let home_dir = tempfile::tempdir().unwrap();
     let home = Vault::open(home_dir.path(), VaultConfig::default()).unwrap();
+    let home_id = EntityId::now();
     let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
     let root = home.ensure_host_root_slip(&issuer).unwrap();
     let mut claims = root.claims.clone();
@@ -387,13 +393,14 @@ fn a_sealed_row_opens_and_counts_once_custody_delivers_its_key() {
     let mint_row = home.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
     let id = authority_log_entity_id_from_hash(&mint_row).unwrap();
     let entry = home.get_authority_log_entry(&id).unwrap().unwrap();
-    let subject = authority_overlay_subject(&entry.op).unwrap();
+    let _subject = authority_overlay_subject(&entry.op).unwrap();
     let (history, overlays) = home
         .export_signed_authority_history_with_overlays()
         .unwrap();
 
     let other_dir = tempfile::tempdir().unwrap();
     let other = Vault::open(other_dir.path(), VaultConfig::default()).unwrap();
+    let other_id = EntityId::now();
     other
         .import_signed_authority_history(&history, &overlays)
         .unwrap();
@@ -405,7 +412,7 @@ fn a_sealed_row_opens_and_counts_once_custody_delivers_its_key() {
         assert!(!other.capability_slip_id_is_live(&slip_id).unwrap());
     }
 
-    deliver_authority_overlay_custody_for_test(&home, &other, &subject).unwrap();
+    run_round_for_test(&home, &home_id, &other, &other_id).unwrap();
     {
         let fold = other.authority_fold().unwrap();
         assert!(
@@ -419,7 +426,10 @@ fn a_sealed_row_opens_and_counts_once_custody_delivers_its_key() {
         assert_eq!(other.export_signed_authority_history().unwrap(), history);
     }
 
-    deliver_authority_overlay_custody_for_test(&home, &other, &subject).unwrap();
+    let (offer, _session) = offer_overlay_page(&home, &home_id, &other_id, None).unwrap();
+    let answer = answer_offer(&other, &other_id, &home_id, &offer).unwrap();
+    assert!(answer.same, "the delivered inventories answer same");
+    run_round_for_test(&home, &home_id, &other, &other_id).unwrap();
     {
         let fold = other.authority_fold().unwrap();
         assert!(fold.valid_entries.contains(&mint_row));
@@ -438,13 +448,16 @@ fn a_sealed_row_opens_and_counts_once_custody_delivers_its_key() {
 }
 
 /// T-ERASED (census L5-22 1a-iii, RULING 11:52): the home retires the
-/// subject and its own row closes at once. Retirement reaches another
-/// install with no secret; the row stays a pass-through there for good,
-/// after a reopen too, and a live key for the subject is refused.
+/// subject and its own row closes at once. The live carrier brings retirement
+/// without a secret; the row stays a pass-through after a reopen too. The
+/// key event refuses a stale live key, and a round carries retirement back
+/// to the spare so neither install grants the slip.
 #[test]
+#[cfg(feature = "sync")]
 fn an_erased_subject_stays_a_pass_through_for_good() {
     let home_dir = tempfile::tempdir().unwrap();
     let home = Vault::open(home_dir.path(), VaultConfig::default()).unwrap();
+    let home_id = EntityId::now();
     let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
     let root = home.ensure_host_root_slip(&issuer).unwrap();
     let mut claims = root.claims.clone();
@@ -462,16 +475,18 @@ fn an_erased_subject_stays_a_pass_through_for_good() {
 
     let other_dir = tempfile::tempdir().unwrap();
     let other = Vault::open(other_dir.path(), VaultConfig::default()).unwrap();
+    let other_id = EntityId::now();
     other
         .import_signed_authority_history(&history, &overlays)
         .unwrap();
     let spare_dir = tempfile::tempdir().unwrap();
     let spare = Vault::open(spare_dir.path(), VaultConfig::default()).unwrap();
+    let spare_id = EntityId::now();
     spare
         .import_signed_authority_history(&history, &overlays)
         .unwrap();
-    deliver_authority_overlay_custody_for_test(&home, &spare, &subject).unwrap();
-    deliver_authority_overlay_custody_for_test(&home, &other, &subject).unwrap();
+    run_round_for_test(&home, &home_id, &spare, &spare_id).unwrap();
+    run_round_for_test(&home, &home_id, &other, &other_id).unwrap();
     {
         let fold = other.authority_fold().unwrap();
         assert!(fold.valid_entries.contains(&mint_row));
@@ -504,7 +519,7 @@ fn an_erased_subject_stays_a_pass_through_for_good() {
         );
     }
 
-    deliver_authority_overlay_custody_for_test(&home, &other, &subject).unwrap();
+    run_round_for_test(&home, &home_id, &other, &other_id).unwrap();
     {
         let fold = other.authority_fold().unwrap();
         assert!(fold.pass_through_entries.contains(&mint_row));
@@ -529,16 +544,30 @@ fn an_erased_subject_stays_a_pass_through_for_good() {
     assert!(!fold.valid_entries.contains(&mint_row));
     assert!(!fold.slips.mints.contains_key(&slip_id));
     assert!(!other.capability_slip_id_is_live(&slip_id).unwrap());
+
+    run_round_for_test(&spare, &spare_id, &other, &other_id).unwrap();
+    let fold = other.authority_fold().unwrap();
+    assert!(fold.pass_through_entries.contains(&mint_row));
+    assert!(!fold.valid_entries.contains(&mint_row));
+    assert!(!fold.slips.mints.contains_key(&slip_id));
+    assert!(!other.capability_slip_id_is_live(&slip_id).unwrap());
+    let spare_fold = spare.authority_fold().unwrap();
+    assert!(spare_fold.pass_through_entries.contains(&mint_row));
+    assert!(!spare_fold.valid_entries.contains(&mint_row));
+    assert!(!spare_fold.slips.mints.contains_key(&slip_id));
+    assert!(!spare.capability_slip_id_is_live(&slip_id).unwrap());
 }
 
-/// T-ABORT (census L5-22 1a-iii, PLAN-L5-22-1A-III-6 pick 1): a delivery
-/// whose writer aborts leaves the key file but no ready mark. The row stays
-/// structure, after a reopen too; the next delivery commits and the row
-/// opens.
+/// T-ABORT (census L5-22 1a-iii, PLAN-L5-22-1A-III-6 pick 1): the live
+/// carrier's home install writer aborts after the key event, leaving the key
+/// file but no ready mark. The row stays structure after a reopen too; the
+/// next round commits and the row opens.
 #[test]
+#[cfg(feature = "sync")]
 fn a_key_an_aborted_writer_installed_opens_nothing_until_a_delivery_commits() {
     let home_dir = tempfile::tempdir().unwrap();
     let home = Vault::open(home_dir.path(), VaultConfig::default()).unwrap();
+    let home_id = EntityId::now();
     let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
     let root = home.ensure_host_root_slip(&issuer).unwrap();
     let mut claims = root.claims.clone();
@@ -549,17 +578,18 @@ fn a_key_an_aborted_writer_installed_opens_nothing_until_a_delivery_commits() {
     let mint_row = home.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
     let id = authority_log_entity_id_from_hash(&mint_row).unwrap();
     let entry = home.get_authority_log_entry(&id).unwrap().unwrap();
-    let subject = authority_overlay_subject(&entry.op).unwrap();
+    let _subject = authority_overlay_subject(&entry.op).unwrap();
     let (history, overlays) = home
         .export_signed_authority_history_with_overlays()
         .unwrap();
 
     let other_dir = tempfile::tempdir().unwrap();
     let other = Vault::open(other_dir.path(), VaultConfig::default()).unwrap();
+    let other_id = EntityId::now();
     other
         .import_signed_authority_history(&history, &overlays)
         .unwrap();
-    deliver_authority_overlay_custody_then_abort_for_test(&home, &other, &subject).unwrap();
+    run_round_then_abort_for_test(&home, &home_id, &other, &other_id).unwrap();
     {
         let fold = other.authority_fold().unwrap();
         assert!(
@@ -584,7 +614,7 @@ fn a_key_an_aborted_writer_installed_opens_nothing_until_a_delivery_commits() {
         assert!(!other.capability_slip_id_is_live(&slip_id).unwrap());
     }
 
-    deliver_authority_overlay_custody_for_test(&home, &other, &subject).unwrap();
+    run_round_for_test(&home, &home_id, &other, &other_id).unwrap();
     let fold = other.authority_fold().unwrap();
     assert!(fold.valid_entries.contains(&mint_row));
     assert!(!fold.pass_through_entries.contains(&mint_row));

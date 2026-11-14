@@ -3,7 +3,8 @@
 
 pub(crate) use oneiron_store::home_handoff_custody::seal::*;
 
-use super::{KeyRef, LiveTarget, TransitSeal, VerifiedHolder};
+use super::{KeyRef, LiveTarget, SessionBinding, TransitSeal};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use getrandom::SysRng;
 use oneiron_crypto::{
@@ -67,13 +68,16 @@ pub(super) fn open_content(
         .map_err(|error| open_refused(&error, "erasable key content"))
 }
 
-/// Seals `plain` (the key's 81-byte transit record: purpose 1 | parent 16 |
+/// Seals `plain` (a key's 81-byte transit record: purpose | parent 16 |
 /// incarnation 32 | secret 32) to `target.ephemeral`, the live session's
 /// ephemeral hybrid public key: never a machine's long-lived key. Binds the
-/// target machine, the session binding and nonce, and `key_ref`.
-pub(super) fn seal_transit(
+/// target machine, the session binding and nonce, and `key_ref`. The home
+/// handoff's keys (purpose 1) and the authority overlay's (purpose 5, census
+/// L5-22 1a-iii) travel in it, each carrier under a session binding of its
+/// own and each receiver admitting only its own purpose.
+pub(crate) fn seal_transit(
     target: &LiveTarget,
-    key_ref: &KeyRef,
+    key_ref: &[u8; 32],
     plain: &[u8],
 ) -> Result<TransitSeal> {
     let machine = target.machine.as_bytes();
@@ -81,7 +85,7 @@ pub(super) fn seal_transit(
         suite: AEAD,
         purpose: Purpose::ErasableKey,
         epoch: CRYPTO_EPOCH,
-        key_id: key_ref.as_bytes(),
+        key_id: key_ref,
         recipient: machine,
         vault_id: &target.session.binding,
     };
@@ -89,7 +93,7 @@ pub(super) fn seal_transit(
         machine,
         &target.session.binding,
         &target.session.nonce,
-        key_ref.as_bytes(),
+        key_ref,
     );
     seal_with_aad(
         &params,
@@ -107,32 +111,28 @@ pub(super) fn seal_transit(
 
 /// Opens a transit seal on the target with `session`, the session-ephemeral
 /// secret matching `target.ephemeral`, checking the same binding from the
-/// receiving side: `holder.target` (this machine), `holder.session.binding`,
-/// `holder.session.nonce`, and `key_ref`.
-pub(super) fn open_transit(
+/// receiving side: `receiver` (this machine), `binding.binding`,
+/// `binding.nonce`, and `key_ref`.
+pub(crate) fn open_transit(
     session: &oneiron_crypto::HybridSecretKey,
-    holder: &VerifiedHolder,
-    key_ref: &KeyRef,
+    receiver: &EntityId,
+    binding: &SessionBinding,
+    key_ref: &[u8; 32],
     sealed: &TransitSeal,
 ) -> Result<Zeroizing<Vec<u8>>> {
-    let machine = holder.target.as_bytes();
+    let machine = receiver.as_bytes();
     let policy = OpenPolicy {
         purpose: Purpose::ErasableKey,
-        vault_id: &holder.session.binding,
+        vault_id: &binding.binding,
         recipient: machine,
-        key_id: key_ref.as_bytes(),
+        key_id: key_ref,
         wraps: &[WrapType::HybridCapsule],
         aead_suites: &[AEAD],
         kem_suites: &[KEM],
         min_epoch: CRYPTO_EPOCH,
         argon2_max: Argon2Cost::RFC9106_SECOND,
     };
-    let aad = transit_aad(
-        machine,
-        &holder.session.binding,
-        &holder.session.nonce,
-        key_ref.as_bytes(),
-    );
+    let aad = transit_aad(machine, &binding.binding, &binding.nonce, key_ref);
     Envelope::parse(sealed.as_bytes())
         .map_err(|error| open_refused(&error, "the key in transit"))?
         .open_with_aad(OpenKey::Hybrid(session), &policy, &aad)

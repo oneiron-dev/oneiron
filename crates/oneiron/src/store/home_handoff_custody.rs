@@ -24,6 +24,8 @@
 
 mod seal;
 
+pub(crate) use seal::{open_transit, seal_transit};
+
 use heed::{RoTxn, RwTxn};
 use oneiron_crypto::{HybridPublicKey, HybridSecretKey};
 use zeroize::Zeroizing;
@@ -296,7 +298,7 @@ pub(crate) fn export(s: &Store, k: KeyRef, target: &LiveTarget) -> Result<Transi
     plain.extend_from_slice(&item.parent);
     plain.extend_from_slice(&item.incarnation);
     plain.extend_from_slice(secret.expose());
-    seal::seal_transit(target, &k, &plain)
+    seal::seal_transit(target, &k.0, &plain)
 }
 
 /// The key and its bytes a transit record names, for the ref `k`.
@@ -337,7 +339,7 @@ pub(crate) fn install_received(
     if store.core.gate_custody_archived() {
         return Err(archived());
     }
-    let plain = seal::open_transit(w.session, holder, &k, sealed)?;
+    let plain = seal::open_transit(w.session, &holder.target, &holder.session, &k.0, sealed)?;
     let (item, secret) = received(k, &plain)?;
     drop(plain);
     let actor = EntityId::from_bytes(item.parent)?;
@@ -544,9 +546,10 @@ pub(crate) fn open_content(s: &Store, k: KeyRef, aad: &[u8], c: &[u8]) -> Result
     Ok(Content::Open(seal::open_content(&k, &key, aad, c)?))
 }
 
-/// Every retired key's copy a holder still keeps: what the carrier asks
-/// each holder to retire after local retirement and completion of that
-/// subject's custody journal obligations.
+/// Every retired home handoff key's copy a holder still keeps: what the
+/// carrier asks each holder to retire after local retirement and completion
+/// of that subject's custody journal obligations. A debt for a key of
+/// another purpose is that purpose's carrier's.
 ///
 /// # Errors
 /// Custody faults.
@@ -559,6 +562,13 @@ pub(crate) fn holder_retirements(s: &Store) -> Result<Vec<HolderRetirement>> {
         let Some(item) = custody.erasable_by_ref(&key_ref)? else {
             continue;
         };
+        // Only a handoff key's holder hears the handoff's retire request,
+        // which refuses every other purpose (FIX 23943); an authority
+        // overlay key's holder clears through the overlay carrier (census
+        // L5-22 1a-iii).
+        if item.purpose != ErasablePurpose::HomeHandoff {
+            continue;
+        }
         if custody.erasable_state(&item)? == EntryState::Retired {
             let obligations = s.custody_obligations_of(&item.subject(&custody)?)?;
             if obligations.is_empty() || obligations.iter().any(|(_, done)| !done) {

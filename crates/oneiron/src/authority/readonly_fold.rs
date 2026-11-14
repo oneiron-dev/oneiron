@@ -70,6 +70,7 @@ fn authority_overlay_openness_epoch(store: &Store, txn: &heed::RoTxn<'_>) -> Res
 /// key installed, a subject retired): the openness epoch and the authority
 /// cache generation move together, so no cached fold answers past it and no
 /// later fold resumes from a base folded before it.
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
 pub(crate) fn note_authority_overlay_openness_change_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,

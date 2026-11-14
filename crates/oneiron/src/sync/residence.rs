@@ -7,6 +7,7 @@
 mod tests;
 
 mod admission;
+mod authority_overlay_custody;
 mod authority_parts;
 mod authority_tail;
 mod base_projection;
@@ -35,6 +36,13 @@ mod window_index;
 mod world_base_rows;
 mod world_eviction;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
+pub use authority_overlay_custody::{
+    ErasedSubject, OVERLAY_PAGE_SUBJECTS, OverlayAnswer, OverlayKeySession, OverlayOffer,
+    OverlayPageSession, OverlaySentKey, apply_overlay_answer, authority_overlay_keys,
+    authority_overlay_offer, offer_overlay_page, overlay_answer_from_wire, overlay_answer_to_wire,
+    overlay_keys_from_wire, overlay_keys_to_wire, overlay_offer_from_wire, overlay_offer_to_wire,
+    overlay_wire_from_hex, overlay_wire_hex,
+};
 pub use authority_parts::{
     AUTHORITY_ENTRY_PART_MAX, AUTHORITY_PAGE_INLINE_BYTES, AuthorityAppendPart,
     AuthorityAppendStage, AuthorityEntryPart, AuthorityEntryRef, AuthorityPartedPage,
