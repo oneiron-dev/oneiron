@@ -161,9 +161,34 @@ impl Vault {
         // A fence its erase committed reaches key custody now (FIX 11211).
         self.store.journal_staged_fence_facts();
         let outcome = outcome?;
+        // The delete has committed, so every step below runs even when an
+        // earlier one fails (ARCH-0038, delete-rail progress after a partial
+        // failure). A failed step keeps its queue row and the next pass
+        // resumes it. The first error still reaches the caller, so a confirmed
+        // erase records this delete as failed, as before.
+        let mut first_error: Option<Error> = None;
+        let mut keep_error = |error: Error, step: &'static str| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                step,
+                "a step after a committed delete failed; the next pass retries"
+            );
+            first_error.get_or_insert(error);
+        };
         // The dependents past the first batch go before the delete returns.
-        self.finish_dependent_walks()?;
-        while self.collect_lfs_garbage(32)? != 0 {}
+        if let Err(error) = self.finish_dependent_walks() {
+            keep_error(error, "dependent walks");
+        }
+        loop {
+            match self.collect_lfs_garbage(32) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(error) => {
+                    keep_error(error, "lfs garbage");
+                    break;
+                }
+            }
+        }
         // A masked Git copy whose sources this delete moved is retired once
         // nothing owns it (FIX 7608, FIX 9107); a failure is logged.
         crate::origin::secret_projection::disposal::collect_after_delete(self);
@@ -173,12 +198,14 @@ impl Vault {
         // An erased mail message's opened attachments go with it (FIX 12559).
         crate::mail_pack::collect_after_delete(self);
         #[cfg(unix)]
-        self.collect_released_result_bodies(256)?;
+        if let Err(error) = self.collect_released_result_bodies(256) {
+            keep_error(error, "released result bodies");
+        }
         self.finish_gate_decision_retirements_after_commit();
         // FIX 10466: the bodies and keys of the snapshots this erase retired,
         // unless a publication holds their files (housekeeping retries).
         self.try_finish_inference_snapshot_retirements_after_commit();
-        Ok(outcome)
+        first_error.map_or(Ok(outcome), Err)
     }
 
     /// Mechanical ARCH-0038 deletion of a room record without the actor-bound
