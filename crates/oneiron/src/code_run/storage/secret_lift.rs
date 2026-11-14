@@ -2,7 +2,6 @@
 //! Dismissing a proposal never clears its occurrence's secret or taint marks.
 
 use heed::RoTxn;
-use serde::{Deserialize, Serialize};
 
 use super::super::replay::ResultOccurrence;
 use super::records::{CodeRunSecretLiftProposal, RAW_OUTPUT_SECRETS, lift_proposal};
@@ -19,50 +18,11 @@ const DISMISSED: SideTable<String, CodeRunSecretLiftDismissal, Named> =
 const CONTENT_KIND: &str = "code_run_secret_lift";
 const DISMISSED_REASON: &str = "gate.code_run.secret_lift_dismissed";
 
-/// The exact occurrence whose proposal the owner dismisses.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeRunSecretLiftDismiss {
-    pub handle: String,
-    pub occurrence: String,
-}
-
-/// Lists code-run lift proposals, optionally dismissing one first.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeRunSecretLiftRequest {
-    #[serde(default)]
-    pub dismiss: Option<CodeRunSecretLiftDismiss>,
-}
-
-/// A proposal's value-free wire form. No body or secret value is read.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeRunSecretLiftProposalView {
-    pub handle: String,
-    pub occurrence: String,
-    pub detector_reason: String,
-    pub suggested_secret_name: String,
-}
-
-/// The owner's dismissal and the Gate receipt committed with it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeRunSecretLiftDismissal {
-    pub handle: String,
-    pub occurrence: String,
-    pub dismissed_by: String,
-    pub dismissed_at: u64,
-    pub receipt: String,
-}
-
-/// The open proposals after this call, and its dismissal if requested.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeRunSecretLiftStatus {
-    pub proposals: Vec<CodeRunSecretLiftProposalView>,
-    pub dismissed: Option<CodeRunSecretLiftDismissal>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::code_run::storage::secret_lift::{
+    CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal, CodeRunSecretLiftProposalView,
+    CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
+};
 
 impl From<CodeRunSecretLiftProposal> for CodeRunSecretLiftProposalView {
     fn from(proposal: CodeRunSecretLiftProposal) -> Self {

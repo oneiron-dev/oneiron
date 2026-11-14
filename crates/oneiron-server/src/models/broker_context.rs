@@ -7,13 +7,13 @@
 //! checked as the broker will check it, the broker is reached, and only then
 //! is the key read at the door (effector `broker:model`, zeroizing bytes) and
 //! handed over with that one request. No key is read once into a long-lived
-//! bearer or a default header. The built-in Google Sheets connector sends
-//! through it too (`sheets`), its OAuth access token read at its own
-//! custody door by the engine. An outside import's git exchanges go through
-//! the same broker (OSH-3, `git`).
+//! bearer or a default header. The built-in workspace connectors
+//! (`google.sheets`) send through it too (`workspace`), their OAuth access
+//! token read at its own custody door by the engine. An outside import's git
+//! exchanges go through the same broker (OSH-3, `git`).
 mod git;
 mod secret_use;
-mod sheets;
+mod workspace;
 
 pub(crate) use git::WeakBrokerContext;
 

@@ -193,6 +193,6 @@ impl Vault {
         if let (Some(lane), Some(made_by)) = (lane, &row.made_by) {
             admission::admit_made_by_in_txn(self, wtxn, lane, made_by, row.retained_by)?;
         }
-        self.put_pending_in_txn(wtxn, artifact_id, row, staged)
+        self.put_pending_in_txn(wtxn, artifact_id, row, staged, None)
     }
 }

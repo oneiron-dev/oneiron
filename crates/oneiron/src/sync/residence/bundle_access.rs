@@ -71,9 +71,20 @@ pub struct PadAccessRequest {
     pub target: PadAdmissionTarget,
     /// The kept generations it asks for; `None` for every one.
     pub generations: Option<Vec<SealedBundleGeneration>>,
-    /// Generations whose offered grant the target itself found unusable,
-    /// back to pending; the home takes these from that machine alone.
-    pub invalid: Vec<SealedBundleGeneration>,
+    /// Offers the target itself found unusable, back to pending; the home
+    /// takes these from that machine alone.
+    pub invalid: Vec<InvalidPadOffer>,
+}
+
+/// One offer its target could not use, as the home answered it: an offer
+/// goes back to pending only while the home still holds exactly this grant,
+/// so a replacement offered meanwhile is kept (FIX 22389), as a publication
+/// pair's invalidation does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InvalidPadOffer {
+    pub generation: SealedBundleGeneration,
+    /// The offered grant's bytes, exactly as the home answered them.
+    pub grant: Vec<u8>,
 }
 
 /// What a machine of the owner's may serve: the grants it may issue, and the
@@ -190,24 +201,29 @@ fn kept_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<SealedBundleGener
 }
 
 /// A pending row for `target` in each of `kept` that `generations` names
-/// (all with `None`) and that has none, and each of `reset` whose offer is
-/// back to pending.
+/// (all with `None`) and that has none, and each offer of `reset` back to
+/// pending while the row still holds exactly that offer.
 fn ensure_in(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     kept: &[SealedBundleGeneration],
     target: &PadAdmissionTarget,
     generations: Option<&[SealedBundleGeneration]>,
-    reset: &[SealedBundleGeneration],
+    reset: &[InvalidPadOffer],
 ) -> Result<()> {
     for generation in kept {
         let key = grant_key(generation, target);
         let held = ACCESS.get_bytes(&vault.store, wtxn, &key)?;
         let asked = held.is_none() && generations.is_none_or(|named| named.contains(generation));
-        let invalid = reset.contains(generation)
-            && held
-                .as_ref()
-                .is_some_and(|row| row.first() == Some(&OFFERED));
+        let offered = match held.as_deref() {
+            Some([OFFERED, grant @ ..]) => Some(grant),
+            _ => None,
+        };
+        let invalid = offered.is_some_and(|grant| {
+            reset
+                .iter()
+                .any(|offer| offer.generation == *generation && offer.grant == grant)
+        });
         if asked || invalid {
             ACCESS.put(&vault.store, wtxn, &key, &vec![PENDING])?;
         }
@@ -218,8 +234,9 @@ fn ensure_in(
 /// Takes each of `requests` whose target stands as the owner's here under the
 /// key it names: a pending grant row in each kept generation it asks for that
 /// has none. Only the machine `peer` proved, asking for itself, sets an offer
-/// it could not use back to pending. Returns the targets taken; any other
-/// waits, unanswered, until this home's authority stands it.
+/// it could not use back to pending, and only while that offer is still the
+/// one held. Returns the targets taken; any other waits, unanswered, until
+/// this home's authority stands it.
 ///
 /// # Errors
 ///
@@ -460,5 +477,76 @@ impl Vault {
             }
             Ok(())
         })
+    }
+}
+
+/// The home's own steps under [`ensure_sealed_pad_access`] and
+/// [`offer_sealed_pad_access`], past the authority fold, for the integration
+/// tests (FIX 22389; `test_doors::pad_offer_invalidation`).
+#[cfg(oneiron_test_support)]
+pub(crate) mod test_door {
+    use super::{ACCESS, OFFERED, PENDING, PadAccessRequest, ensure_in, grant_key};
+    use crate::Vault;
+    use crate::error::Result;
+    use crate::world_keys::{PadAdmissionTarget, SealedBundleGeneration};
+
+    /// One grant row as stored: no grant yet, an offer and its grant's
+    /// bytes, or bytes of neither form.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub enum GrantRow {
+        Pending,
+        Offered(Vec<u8>),
+        Other(Vec<u8>),
+    }
+
+    /// The home's ensure of `request`, asked by its target itself, over the
+    /// kept generations `kept`.
+    pub(crate) fn ensure_as_target(
+        vault: &Vault,
+        kept: &[SealedBundleGeneration],
+        request: &PadAccessRequest,
+    ) -> Result<()> {
+        vault.with_write_txn_grouped(|wtxn| {
+            ensure_in(
+                vault,
+                wtxn,
+                kept,
+                &request.target,
+                request.generations.as_deref(),
+                &request.invalid,
+            )
+        })
+    }
+
+    /// Keeps `grant` as `target`'s offer in `generation`, as an accepted
+    /// offer is stored.
+    pub fn put_offer(
+        vault: &Vault,
+        generation: &SealedBundleGeneration,
+        target: &PadAdmissionTarget,
+        grant: &[u8],
+    ) -> Result<()> {
+        let row = [&[OFFERED][..], grant].concat();
+        vault.with_write_txn_grouped(|wtxn| {
+            ACCESS.put(&vault.store, wtxn, &grant_key(generation, target), &row)
+        })
+    }
+
+    /// `target`'s grant row in `generation`, if any.
+    pub fn grant_row(
+        vault: &Vault,
+        generation: &SealedBundleGeneration,
+        target: &PadAdmissionTarget,
+    ) -> Result<Option<GrantRow>> {
+        let txn = vault.store.env.read_txn()?;
+        let Some(row) = ACCESS.get_bytes(&vault.store, &txn, &grant_key(generation, target))?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(match row.as_slice() {
+            [PENDING] => GrantRow::Pending,
+            [OFFERED, grant @ ..] => GrantRow::Offered(grant.to_vec()),
+            other => GrantRow::Other(other.to_vec()),
+        }))
     }
 }

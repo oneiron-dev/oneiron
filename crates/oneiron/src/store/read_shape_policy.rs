@@ -42,33 +42,9 @@ pub const READ_SHAPE_EXPLORE_SHARE: SettingSpec = SettingSpec {
     seed: 0.05,
 };
 
-/// What a run reads memory through. Both shapes reach the same memory under
-/// the run's grant; the shape is the environment the run's brief names.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Serialize,
-    Deserialize,
-    schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum ReadShape {
-    /// The typed memory verbs: the seeded default (RD-12).
-    Verbs,
-    /// The graph_fs mount, read with coreutils.
-    Mount,
-}
-
-impl ReadShape {
-    /// Both arms, the seeded default first: a tied draw picks the verbs.
-    pub const ALL: [Self; 2] = [Self::Verbs, Self::Mount];
-}
+/// What a run reads memory through: a wire value, so the pin request below the
+/// engine names it too.
+pub use oneiron_verb_wire::verbs::retrieval::ReadShape;
 
 /// Which evidence decided a pick.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

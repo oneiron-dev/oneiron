@@ -3,7 +3,10 @@
 //! cites its inputs names the rows of the very value it read.
 
 use super::fit::cached_fit;
-use super::{SettingMode, SettingScope, SettingSpec, read_scopes, read_scopes_in_txn, scoped_row};
+use super::{
+    SettingMode, SettingScope, SettingSpec, StoredSettingRow, read_scopes, read_scopes_in_txn,
+    scoped_row,
+};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -61,7 +64,8 @@ pub(crate) fn setting_value_scoped_in_txn(
 /// changes it, so no holder's pin at a narrower scope stands over it,
 /// whichever of the two was set first. The read's project is the project
 /// scope among `scopes` (FIX 6038): a project's fit, and its goal's, are
-/// keyed by it.
+/// keyed by it. A holder's row on a work budget reads no higher than the
+/// owner's seed or pin at that row's scope ([`capped_row_in_txn`]).
 ///
 /// # Errors
 ///
@@ -85,17 +89,12 @@ pub(super) fn resolve_in_txn(
                 ));
             }
             if holder_pin.is_none() {
-                holder_pin = Some(row);
+                holder_pin = Some((scope, row));
             }
         }
     }
-    if let Some(row) = holder_pin {
-        return Ok((
-            row.value,
-            Decided::Owner {
-                witness: row.witness,
-            },
-        ));
+    if let Some((scope, row)) = holder_pin {
+        return capped_row_in_txn(store, txn, spec, scope, row);
     }
     let project = scopes.iter().find_map(|scope| match scope {
         SettingScope::Project(project) => Some(*project),
@@ -135,12 +134,7 @@ pub(super) fn resolve_in_txn(
             }
         }
         if let Some(row) = scoped_row(store, txn, spec, SettingMode::Seed, scope)? {
-            return Ok((
-                row.value,
-                Decided::Owner {
-                    witness: row.witness,
-                },
-            ));
+            return capped_row_in_txn(store, txn, spec, scope, row);
         }
     }
     if let Some(value) = cached_fit(store, txn, spec, None, None, None)? {
@@ -153,13 +147,36 @@ pub(super) fn resolve_in_txn(
     }
     Ok(
         match scoped_row(store, txn, spec, SettingMode::Seed, &SettingScope::Vault)? {
-            Some(row) => (
-                row.value,
-                Decided::Owner {
-                    witness: row.witness,
-                },
-            ),
+            Some(row) => capped_row_in_txn(store, txn, spec, &SettingScope::Vault, row)?,
             None => (spec.seed, Decided::Catalog),
         },
     )
+}
+
+/// The value and witness of the stored `row` over `scope` that decides a
+/// read. A holder's row on a work budget reads no higher than the owner's
+/// own seed or pin for that knob at the same scope, the cap the holder's
+/// door checks ([`super::holder::is_work_budget`]): a cap the owner set or
+/// lowered after the holder's row decides instead, cited by its own act
+/// (HOLDER-WORK-BUDGET-CAP-ORDER, RULING ROW4-HOLDER-BUDGET-CAP = B). The
+/// holder's row stays stored, so raising the cap revives it.
+fn capped_row_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    spec: &SettingSpec,
+    scope: &SettingScope,
+    row: StoredSettingRow,
+) -> Result<(f64, Decided)> {
+    let (mut value, mut witness) = (row.value, row.witness);
+    if row.by_holder && super::holder::is_work_budget(spec.key) {
+        for mode in [SettingMode::Pin, SettingMode::Seed] {
+            if let Some(cap) = scoped_row(store, txn, spec, mode, scope)?
+                && !cap.by_holder
+                && cap.value < value
+            {
+                (value, witness) = (cap.value, cap.witness);
+            }
+        }
+    }
+    Ok((value, Decided::Owner { witness }))
 }

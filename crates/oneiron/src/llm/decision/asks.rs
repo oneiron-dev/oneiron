@@ -106,16 +106,8 @@ pub struct DecisionAsk {
     pub prefilled_reason: Option<String>,
 }
 
-/// The answer the ladder held when it asked, and the provider that read it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AskPrior {
-    pub answer: DecisionAnswer,
-    pub probability: Option<f64>,
-    pub provider: ProviderPin,
-    pub paired: Option<PairedReading>,
-    pub person: Option<PairedReading>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::llm::decision::asks::AskPrior;
 
 /// What a role's holder answered.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -178,6 +170,18 @@ impl DecisionAsk {
     #[must_use]
     pub fn is_open(&self) -> bool {
         self.answer.is_none() && self.withdrawn_at.is_none()
+    }
+
+    /// Drops the pack state this ask was asked over once what it named is
+    /// gone (FIX 3520), and withdraws the ask at `now` while it stands: no
+    /// holder answers over a snapshot that is no longer kept. Its question,
+    /// evidence, times and any answer stay. Whether the ask changed.
+    pub(super) fn forget_pack_state(&mut self, now: u64) -> bool {
+        let open = self.is_open();
+        if open {
+            self.withdrawn_at = Some(now);
+        }
+        self.pack_state.take().is_some() || open
     }
 
     fn is_open_for(&self, request: &HumanDecisionRequest) -> bool {
@@ -258,6 +262,32 @@ impl Vault {
     pub fn withdraw_decision_ask(&self, seq: u64) -> Result<bool> {
         let withdrawn =
             self.with_write_txn_grouped(|txn| self.withdraw_decision_ask_in_txn(txn, seq))?;
+        if withdrawn {
+            self.signal_decision_answer(seq);
+        }
+        Ok(withdrawn)
+    }
+
+    /// Withdraws ask `seq` as [`Self::withdraw_decision_ask`] does, and drops the pack
+    /// state it was asked over, answered or not: what that state named is gone, as when
+    /// an actor's erase took the health check a pass was asking (FIX 3520). Its question,
+    /// evidence, times and any answer stay. `false` when it was already answered or
+    /// withdrawn. Its waiters wake once the withdrawal committed (FIX 4706).
+    ///
+    /// # Errors
+    ///
+    /// No such ask; storage errors.
+    pub fn withdraw_decision_ask_dropping_state(&self, seq: u64) -> Result<bool> {
+        let withdrawn = self.with_write_txn_grouped(|txn| {
+            let mut ask = ASKS
+                .get(&self.store, &*txn, &seq)?
+                .ok_or_else(|| invalid("no such decision ask"))?;
+            let open = ask.is_open();
+            if ask.forget_pack_state(self.store.clock.now_recorded_at()) {
+                ASKS.put(&self.store, txn, &seq, &ask)?;
+            }
+            Ok(open)
+        })?;
         if withdrawn {
             self.signal_decision_answer(seq);
         }

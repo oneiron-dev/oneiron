@@ -46,8 +46,10 @@ pub use self::scopes::{
     delegated_custody_scopes_for_grant, delegated_custody_subject_scope,
 };
 
-const MAX_DELEGATED_GRANT_REF_BYTES: usize = 256;
-const MAX_DELEGATED_GRANT_SCOPES: usize = 8;
+#[doc(hidden)]
+use oneiron_verb_wire::channel_identity::custody::{
+    MAX_DELEGATED_GRANT_REF_BYTES, MAX_DELEGATED_GRANT_SCOPES,
+};
 
 /// OAuth scope classes a `delegated_grant` row may carry.
 ///

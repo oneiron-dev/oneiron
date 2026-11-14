@@ -19,6 +19,10 @@ crate::side_table::side_tables! {
     /// Esign outbound dispatch marker. Key: bytes32.
     ESIGN_DISPATCH_MARKER: VaultMeta b"esign.dispatch.v1/" Raw
         [restore: refuse "e-sign capabilities"] [family: unclassified] [tier: canonical];
+    /// Every QR capability digest a document's seals printed, in mint order, as concatenated
+    /// 32-byte digests. Key: id16 (document).
+    ESIGN_DOCUMENT_QR_CAPABILITY_INDEX: VaultMeta b"esign.document_qr_capability.v1/" Raw
+        [restore: refuse "e-sign capabilities"] [family: unclassified] [tier: canonical];
     /// Held automated sign act, one per recipient. Key: hex32/string.
     ESIGN_HELD_SIGNING: VaultMeta b"esign.held_signing.v1/" Named
         [restore: refuse_image_entities "e-sign ceremonies"]
@@ -52,6 +56,10 @@ crate::side_table::side_tables! {
     /// recipient (or `all`); value window u64be + count u64be.
     ESIGN_PUBLIC_RATE_V2: VaultMeta b"esign.public_rate.v2/" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// QR capability row: the sealed manifest it was printed in, its expiry and its revocation.
+    /// Key: bytes32 (the capability's SHA-256 digest).
+    ESIGN_QR_CAPABILITY: VaultMeta b"esign.qr_capability.v1/" Named
+        [restore: refuse "e-sign capabilities"] [family: unclassified] [tier: canonical];
     /// Recipient live capability index: every digest minted for the recipient, in mint order, as
     /// concatenated 32-byte digests. Key: id16 (document) + string (recipient id).
     ESIGN_RECIPIENT_CAPABILITY_INDEX: VaultMeta b"esign.recipient_capability.v1/" Raw

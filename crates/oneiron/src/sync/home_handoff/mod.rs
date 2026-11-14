@@ -51,6 +51,8 @@ mod lineage;
 mod registry;
 mod restore;
 mod routes;
+#[cfg(oneiron_test_support)]
+mod section_doors;
 mod store;
 mod table;
 mod transfer;
@@ -80,6 +82,8 @@ pub(crate) use registry::{
 };
 pub(crate) use restore::{HomeManaged, keep_move_through, restore_managed_keys};
 pub(crate) use routes::{feed_fallback_route, feed_routes};
+#[cfg(oneiron_test_support)]
+pub(crate) use section_doors::carry_section_for_doors;
 pub(crate) use store::{handoff_status_in_txn, incomplete_in_txn, record_incomplete_in_txn};
 pub(crate) use table::{
     ActorContent, HomeTable, HomeTableRegistration, ImageRows, Partitioned, TableAdopt,

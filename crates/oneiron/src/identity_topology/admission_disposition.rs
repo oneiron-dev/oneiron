@@ -550,11 +550,11 @@ impl SealTrust {
         core: &StoredIdentityOpEvent,
     ) -> Result<SealStanding> {
         match &fact.authority {
-            // Today's admission exactly: this vault's own seal, else a
-            // trusted machine's.
+            // This vault's own seal, else a trusted machine's or the host's
+            // own node's.
             SealAuthority::Engine(_) => {
                 if SEALED_HERE.get(store, rtxn, &HexId(*id))? == Some(fact.seal_bytes())
-                    || signer_is_mine(self.fold(store, rtxn)?, &fact.signer_pk)
+                    || engine_signer_counts(self.fold(store, rtxn)?, &fact.signer_pk)
                 {
                     Ok(SealStanding::Admitted)
                 } else {
@@ -590,17 +590,23 @@ impl SealTrust {
     }
 }
 
-/// The one reader of machine standing for seals: a machine mine under this
-/// install's pin whose trusted identity signs with `signer` (world privacy
-/// P6b: a chain this install does not trust never lends a machine its key).
-fn signer_is_mine(roster: &AuthorityFold, signer: &[u8; 32]) -> bool {
-    roster.mine_machine_by_key(signer).is_some()
+/// The one reader of machine standing for engine seals: a machine mine under
+/// this install's pin whose trusted identity signs with `signer` (world
+/// privacy P6b: a chain this install does not trust never lends a machine
+/// its key), or the host's own node (L7-34; ARCH-0055 `#seal-standing-open`:
+/// the host's merges count on a paired replica, will over substrate). The
+/// host's node stays not mine: this reader alone counts it, so its seals
+/// count and nothing else it signs does. A rented machine or an execution
+/// node is neither, and its engine seal stays inert.
+fn engine_signer_counts(roster: &AuthorityFold, signer: &[u8; 32]) -> bool {
+    roster.mine_machine_by_key(signer).is_some() || roster.hosted_node_by_key(signer).is_some()
 }
 
 /// Whether the seal standing differs from the one the last authority write
-/// or Grant delete reconciled against, recording the new digest: the mine
-/// signers, and the decision seals' carriers, owners, causal evidence and
-/// named Grants (`act_admission::decision_standing_digest_in_txn`). A roster
+/// or Grant delete reconciled against, recording the new digest: the engine
+/// signers that count ([`engine_signer_counts`]), and the decision seals'
+/// carriers, owners, causal evidence and named Grants
+/// (`act_admission::decision_standing_digest_in_txn`). A roster
 /// change, a carrier's removal or new revision, a seal's causal point
 /// arriving, or an owner's or Grant's revocation decides again which seals
 /// count, so the stored shell edges must follow it; an authority write that
@@ -618,8 +624,12 @@ pub(super) fn mine_signers_changed_in_txn(
     let mut signers: Vec<[u8; 32]> = roster
         .machines
         .keys()
-        .filter_map(|machine| roster.trusted_machine(*machine))
-        .map(|trusted| trusted.profile.machine_key)
+        .filter_map(|machine| {
+            roster
+                .trusted_machine(*machine)
+                .map(|trusted| trusted.profile.machine_key)
+                .or_else(|| roster.hosted_node_key(*machine))
+        })
         .collect();
     signers.sort_unstable();
     signers.dedup();

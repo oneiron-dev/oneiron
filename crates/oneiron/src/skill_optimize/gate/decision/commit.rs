@@ -80,8 +80,10 @@ pub(super) fn decide_in_txn(
             "world outcome labels moved while the judge was measuring",
         ));
     }
-    if goal_definition_in_txn(vault, wtxn, &target_of(staged)?)?.revision != basis.goal_revision
-        || goal_definition_in_txn(vault, wtxn, &target_of(staged)?)?.goal_id != basis.goal_id
+    // Integrity: compare only the id and revision in the scored basis.
+    if goal_definition_in_txn(vault, wtxn, &target_of(staged)?, None)?.revision
+        != basis.goal_revision
+        || goal_definition_in_txn(vault, wtxn, &target_of(staged)?, None)?.goal_id != basis.goal_id
     {
         return Err(retry("goal definition moved while the scorer was thinking"));
     }

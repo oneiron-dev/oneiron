@@ -19,10 +19,11 @@
 //! 4. hands each attempt the driver does not run itself to a
 //!    `ConsolidationExecutor` over the caller's backend, with a fresh
 //!    `PromotionWriterSink` for that attempt, and records what it came to and
-//!    what its sink promoted. Three shapes never reach it: a compaction's
+//!    what its sink promoted. Four shapes never reach it: a compaction's
 //!    check, a claim source re-check and an urgent digest's harm question,
 //!    which the driver leaves to the host's executor to judge on a model or
-//!    ladder the host lends. The kit lends none, so each parks unrun, as a
+//!    ladder the host lends, and the strength archive, which runs in the
+//!    host's job adapter. The kit lends none, so each parks unrun, as a
 //!    host that lends none parks it ([`DreamerAttemptRun::unlent`]). A
 //!    resident's dream and its free time for its human, which run on the
 //!    resident model a host lends, complete with no units, as a host that
@@ -99,8 +100,8 @@ use oneiron::dreamer_runner::maintenance::digest::{
     DIGEST_ASSESS_FACET, DIGEST_ASSESS_UNLENT_PARK_REASON,
 };
 use oneiron::dreamer_runner::maintenance::{
-    CLAIM_SOURCE_RECHECK_FACET, COMPACTION_CHECK_FACET, CoachSkillOptimizer, claim_source_recheck,
-    compaction_check,
+    CLAIM_SOURCE_RECHECK_FACET, COMPACTION_CHECK_FACET, CONSOLIDATION_STRENGTH_FACET,
+    CoachSkillOptimizer, claim_source_recheck, compaction_check, strength,
 };
 use oneiron::dreamer_runner::{
     DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND, DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
@@ -764,9 +765,10 @@ impl DreamerAttemptExecutor for PassExecutor<'_, '_> {
 
 /// What a host that lends nothing answers for `attempt_type`, as
 /// oneiron-server's Dreamer host does with nothing lent: the driver leaves a
-/// compaction's check (FIX 4465 B), a claim source re-check (FIX 15414) and
-/// an urgent digest's harm question (OF-194) to the host's executor, and a
-/// `ConsolidationExecutor` runs none of them, so each parks. A resident's
+/// compaction's check (FIX 4465 B), a claim source re-check (FIX 15414), an
+/// urgent digest's harm question (OF-194) and the strength archive (untangle
+/// 6.9c) to the host's executor, and a `ConsolidationExecutor` runs none of
+/// them, so each parks. A resident's
 /// dream (OF-490) and its free time for its human (FIX 4453) end without
 /// their work, completed with no units: a park would strand the nightly item
 /// and a retry would loop every pass. A PERSON `about` line and a scope
@@ -786,6 +788,8 @@ fn unlent_answer(attempt_type: &str) -> Option<DreamerAttemptExecution> {
         Some(compaction_check::unlent())
     } else if attempt_type == CLAIM_SOURCE_RECHECK_FACET {
         Some(claim_source_recheck::unlent())
+    } else if attempt_type == CONSOLIDATION_STRENGTH_FACET {
+        Some(strength::unlent())
     } else if attempt_type == DIGEST_ASSESS_FACET {
         Some(DreamerAttemptExecution::Park {
             reason: DIGEST_ASSESS_UNLENT_PARK_REASON.to_owned(),
