@@ -2,6 +2,7 @@
 //! Winners and coverage are rebuilt, never stored as learning claims.
 use serde::{Deserialize, Serialize};
 
+use super::producers;
 use super::{
     ArchiveAxesProposal, ArchiveAxesRequest, ArchiveCell, ArchiveCellJudge, ArchiveCellJudgment,
     ArchiveDescriptor, ArchiveOutputRef, ArchiveOutputScore, ArchiveQualityMetric,
@@ -14,7 +15,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::workspace_roster::GoalRecord;
 use crate::{AttemptId, EntityId, Error, Result, Vault};
 
-const ARCHIVES: SideTable<[u8; 16], CampaignArchiveRecord, Named> =
+pub(super) const ARCHIVES: SideTable<[u8; 16], CampaignArchiveRecord, Named> =
     SideTable::new(&side_table::AUTORESEARCH_OUTPUT_ARCHIVE);
 const REPLAYS: SideTable<([u8; 16], [u8; 16]), ArchiveReplayOutputs, Named> =
     SideTable::new(&side_table::AUTORESEARCH_OUTPUT_REPLAY);
@@ -121,16 +122,17 @@ pub(crate) fn attempt(id: EntityId) -> Result<AttemptId> {
     AttemptId::from_bytes(id.as_bytes())
 }
 
-fn campaign_error(error: CampaignError) -> Error {
+pub(super) fn campaign_error(error: CampaignError) -> Error {
     match error {
         CampaignError::Decision(error) => error,
         other => invalid(&other.to_string()),
     }
 }
 
-/// The controller supplies an already receipted recipe result. The same
+/// The controller supplies an engine-recorded recipe result (its receipt is
+/// checked against the producer record after the pin is built). The same
 /// proposal function validates and freezes both descriptor kinds.
-struct ReceiptedRecipe(ArchiveAxesProposal);
+pub(super) struct ReceiptedRecipe(pub(super) ArchiveAxesProposal);
 impl CoachArchiveAxesRecipe for ReceiptedRecipe {
     fn propose_axes(
         &self,
@@ -157,7 +159,7 @@ impl ArchiveCellJudge for ReceiptedPlacement {
     }
 }
 
-fn goal_in_txn(
+pub(super) fn goal_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     binding: &ResearchBinding,
@@ -206,13 +208,72 @@ fn entity_type_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, entity: &EntityId) -
     Ok(header.entity_type)
 }
 
-fn output_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, output: &ArchiveOutputRef) -> Result<()> {
-    if entity_type_in_txn(vault, txn, &output.entity)? == crate::registry::ENTITY_TYPE_SKILL {
+pub(super) fn task_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, task: &EntityId) -> Result<()> {
+    if entity_type_in_txn(vault, txn, task)? != crate::registry::ENTITY_TYPE_TASK {
+        return Err(invalid("an output archive is pinned to a task"));
+    }
+    Ok(())
+}
+
+/// A live output, never a skill variant, at a revision it holds: an
+/// ARTIFACT's revision is one of its retained versions' content hash (64
+/// lowercase hex), any other entity's a document revision it owns (its
+/// `RevisionRef`, 32 lowercase hex). A revision the entity never held, or
+/// no longer keeps, is refused.
+pub(super) fn output_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    output: &ArchiveOutputRef,
+) -> Result<()> {
+    let kind = entity_type_in_txn(vault, txn, &output.entity)?;
+    if kind == crate::registry::ENTITY_TYPE_SKILL {
         return Err(invalid(
             "the campaign archive holds outputs, never skill variants",
         ));
     }
+    let never_held = || invalid("the output names a revision it does not hold");
+    if kind == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT {
+        let version = vault
+            .blob_artifact_versions_in_txn(txn, &output.entity)?
+            .into_iter()
+            .find(|version| lower_hex(&version.content_hash) == output.revision)
+            .ok_or_else(never_held)?
+            .version;
+        vault
+            .blob_artifact_version_metadata_in_txn(txn, &output.entity, version)?
+            .ok_or_else(never_held)?;
+        return Ok(());
+    }
+    let revision = revision_ref(&output.revision).ok_or_else(never_held)?;
+    if !crate::vault::entity_revision::entity_owns_revision_in_txn(
+        &vault.store,
+        txn,
+        &output.entity,
+        revision,
+    )? {
+        return Err(never_held());
+    }
     Ok(())
+}
+
+fn lower_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// A `RevisionRef` from its 32 lowercase hex characters, and nothing else.
+fn revision_ref(text: &str) -> Option<crate::vault::RevisionRef> {
+    if text.len() != 32
+        || !text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return None;
+    }
+    let mut revision = [0_u8; 16];
+    for (index, byte) in revision.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).ok()?;
+    }
+    Some(crate::vault::RevisionRef(revision))
 }
 
 pub(crate) fn read_in_txn(
@@ -225,7 +286,7 @@ pub(crate) fn read_in_txn(
         .ok_or(invalid("the campaign has no installed output archive"))
 }
 
-fn rebuild(record: &CampaignArchiveRecord) -> Result<OutputArchive> {
+pub(super) fn rebuild(record: &CampaignArchiveRecord) -> Result<OutputArchive> {
     OutputArchive::rebuild(record.pin.clone(), &record.placements, &record.scores)
         .map_err(campaign_error)
 }
@@ -257,9 +318,7 @@ pub(crate) fn install_in_txn(
     let root = attempt(input.root)?;
     let binding = research::binding_in_txn(vault, txn, root)?;
     let goal = goal_in_txn(vault, txn, &binding, input.project, input.goal_ref)?;
-    if entity_type_in_txn(vault, txn, &input.task)? != crate::registry::ENTITY_TYPE_TASK {
-        return Err(invalid("an output archive is pinned to a task"));
-    }
+    task_in_txn(vault, txn, &input.task)?;
     for output in &input.sample_outputs {
         output_in_txn(vault, txn, output)?;
     }
@@ -275,6 +334,8 @@ pub(crate) fn install_in_txn(
         &ReceiptedRecipe(input.proposal),
     )
     .map_err(campaign_error)?;
+    producers::check_axes_receipt_in_txn(vault, txn, input.root, None, &pin)?;
+    producers::ruler_in_txn(vault, txn, pin.quality_metric())?;
     install_pin(vault, txn, root, input.project, pin)
 }
 
@@ -320,6 +381,8 @@ pub(crate) fn repropose_in_txn(
             &ReceiptedRecipe(input.proposal),
         )
         .map_err(campaign_error)?;
+    producers::check_axes_receipt_in_txn(vault, txn, input.new_root, Some(input.root), &pin)?;
+    producers::ruler_in_txn(vault, txn, pin.quality_metric())?;
     install_pin(vault, txn, new_root, old.project, pin)
 }
 
@@ -338,36 +401,51 @@ pub(crate) fn record_in_txn(
             "the output names another archive descriptor revision",
         ));
     }
-    let placement = match input.placement {
+    let (placement, embedding) = match input.placement {
         CampaignArchivePlacement::Judgment { judgment } => {
             let output = judgment.output.clone();
-            record
+            let placed = record
                 .pin
-                .judge_output(&output, &ReceiptedPlacement(judgment))
+                .judge_output(&output, &ReceiptedPlacement(judgment));
+            (placed, None)
         }
         CampaignArchivePlacement::Embedding {
             output,
             receipt,
             model_revision,
             embedding,
-        } => record
-            .pin
-            .place_embedding(output, receipt, &model_revision, &embedding),
-    }
-    .map_err(campaign_error)?;
+        } => {
+            let placed = record
+                .pin
+                .place_embedding(output, receipt, &model_revision, &embedding);
+            (placed, Some((model_revision, embedding)))
+        }
+    };
+    let placement = placement.map_err(campaign_error)?;
     if placement.output != input.score.output {
         return Err(invalid(
             "placement and scoring must name the same output revision",
         ));
     }
     output_in_txn(vault, txn, &placement.output)?;
+    producers::check_placement_receipt_in_txn(
+        vault,
+        txn,
+        input.root,
+        &placement,
+        embedding
+            .as_ref()
+            .map(|(model, vector)| (model.as_str(), vector.as_slice())),
+    )?;
+    let score =
+        producers::check_score_receipt_in_txn(vault, txn, input.root, &record.pin, &input.score)?;
     // Exact retries keep one copy of each original receipt. Rebuild refuses
     // any conflicting placement, score, cell or definition before the write.
     if !record.placements.contains(&placement) {
         record.placements.push(placement);
     }
-    if !record.scores.contains(&input.score) {
-        record.scores.push(input.score);
+    if !record.scores.contains(&score) {
+        record.scores.push(score);
     }
     let answer = view(&record)?;
     ARCHIVES.put(&vault.store, txn, root.as_bytes(), &record)?;
