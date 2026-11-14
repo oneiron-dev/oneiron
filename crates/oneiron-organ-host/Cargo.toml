@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "The engine side of the organ protocol: spawn, pool, budget, regions, sandbox"
 repository.workspace = true
-homepage.workspace = true
 
 [lib]
 doctest = false

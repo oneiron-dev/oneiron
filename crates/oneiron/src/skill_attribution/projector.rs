@@ -170,8 +170,8 @@ pub fn run_attribution_projector_with_decisions(
                 world: None,
                 type_ref: None,
                 attempt_receipt: Some(evidence.receipt_ref.clone()),
-                judge_revision: revision.clone(),
-                judge_model: trace.model.clone(),
+                judge_revision: revision,
+                judge_model: trace.model,
                 sources: known,
             };
             unclear.push((
