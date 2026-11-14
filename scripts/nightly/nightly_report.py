@@ -19,6 +19,12 @@ subcommand reads files the job wrote:
                                   selection's args
   binaries PLAN NAME              the names of a selection's test binaries: its
                                   integration tests, and its bins for the bench
+  delete-binaries PLAN NAME MESSAGES TARGET
+                                  delete a selection's test binaries: the
+                                  executables cargo's JSON messages (MESSAGES,
+                                  the build's stdout) name for them, with their
+                                  hard links; prints the step's line, exit 1
+                                  when a binary was not found or refused
   bench-inputs ROOT WORK DATE HEAD
                                   write the bench jobs' input files into WORK
   bench-jobs BIN WORK             one line per bench job: name, expected exit
@@ -67,6 +73,7 @@ import bisect
 import json
 import os
 import re
+import stat
 import statistics
 import sys
 import time
@@ -338,8 +345,139 @@ def selection_args(chosen: dict, entry: dict) -> list[str]:
 
 
 def selection_binaries(entry: dict) -> list[str]:
-    """The names a selection's test binaries carry in the target's deps dir: its integration tests and bins."""
+    """The names of a selection's test binaries: its integration tests and bins."""
     return [*entry["tests"], *entry.get("bin_targets", [])]
+
+
+def built_executables(messages: Path) -> list[dict] | None:
+    """The executables cargo's compiler-artifact messages name, or None when the build wrote no messages file.
+
+    MESSAGES is a build's stdout under `--cargo-message-format json-render-diagnostics`: one JSON message a line.
+    Cargo reports a fresh unit's artifact too, so the messages of the build that passed name every binary the
+    selection runs, wherever the toolchain puts it.
+    """
+    if not messages.is_file():
+        return None
+    built = []
+    for line in messages.read_text(errors="replace").splitlines():
+        if not line.startswith("{"):
+            continue
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if message.get("reason") == "compiler-artifact" and message.get("executable"):
+            target = message.get("target", {})
+            built.append({"name": target.get("name"), "kind": target.get("kind", []), "path": message["executable"]})
+    return built
+
+
+def delete_binaries(entry: dict, messages: Path, target: Path) -> dict:
+    """Delete a selection's test binaries, and the bench's bin; what was deleted, by which way, and what was not.
+
+    A binary's paths come from cargo's own messages: each executable they name for one of the selection's test
+    targets (kind test) or bins (kind bin: its unit test binary and the bin itself). The layout differs by
+    toolchain: test binaries sat in debug/deps until rustc 1.100, which puts them in
+    debug/build/<package>/<hash>/out/ and makes no debug/deps. Only a name the messages do not name falls back to
+    the old layout's debug/deps glob (and a bin to debug/<bin>). Every hard link of a deleted file goes too: a
+    bin's copy in debug/ is a hard link of its build copy, and deleting one name alone frees nothing. A path that
+    does not resolve inside the target dir is never deleted.
+    """
+    tests, bins = set(entry["tests"]), set(entry.get("bin_targets", []))
+    built = built_executables(messages)
+    found: dict[str, list[Path]] = {name: [] for name in selection_binaries(entry)}
+    named = set()
+    for artifact in built or []:
+        name, kinds = artifact["name"], artifact["kind"]
+        if (name in tests and "test" in kinds) or (name in bins and "bin" in kinds):
+            found[name].append(Path(artifact["path"]))
+            named.add(name)
+    debug = target / "debug"
+    for name in found:
+        if name in named:
+            continue
+        pattern = re.compile(re.escape(name.replace("-", "_")) + r"-[0-9a-f]{16}")
+        if (debug / "deps").is_dir():
+            found[name] += sorted(p for p in (debug / "deps").iterdir() if pattern.fullmatch(p.name))
+        if name in bins:
+            found[name].append(debug / name)
+    root = Path(os.path.realpath(target))
+    refused: list[str] = []
+    files: dict[Path, tuple[str, tuple[int, int]]] = {}
+    inodes: dict[tuple[int, int], int] = {}
+    for name, paths in found.items():
+        for path in paths:
+            # the parent resolved and the name kept: a symlink is judged by where it sits, never followed
+            where = Path(os.path.realpath(path.parent)) / path.name
+            if not where.is_relative_to(root) or where == root:
+                refused.append(str(path))
+                continue
+            try:
+                status = os.lstat(where)
+            except OSError:
+                continue
+            if stat.S_ISREG(status.st_mode) or stat.S_ISLNK(status.st_mode):  # unlink never follows a symlink
+                key = (status.st_dev, status.st_ino)
+                files[where] = (name, key)
+                inodes[key] = status.st_nlink if stat.S_ISREG(status.st_mode) else 1
+    if any(links > 1 for links in inodes.values()):
+        linked = {key for key, links in inodes.items() if links > 1}
+        places = [debug, debug / "deps"]
+        candidates = [p for place in places if place.is_dir() for p in place.iterdir()]
+        if (debug / "build").is_dir():
+            candidates += [p for p in (debug / "build").rglob("*")]
+        for path in candidates:
+            try:
+                status = os.lstat(path)
+            except OSError:
+                continue
+            key = (status.st_dev, status.st_ino)
+            if key in linked and stat.S_ISREG(status.st_mode) and path not in files:
+                owner = next(name for name, k in files.values() if k == key)
+                files[path] = (owner, key)
+    deleted: dict[str, int] = {}
+    freed: set[tuple[int, int]] = set()
+    kb = 0
+    for path, (name, key) in sorted(files.items()):
+        try:
+            blocks = os.lstat(path).st_blocks
+            path.unlink()
+        except OSError:
+            continue
+        deleted[name] = deleted.get(name, 0) + 1
+        if key not in freed:
+            freed.add(key)
+            kb += blocks // 2
+    return {
+        "files": sum(deleted.values()),
+        "kb": kb,
+        "cargo_named": sorted(named & set(deleted)),
+        "deps_fallback": sorted(set(deleted) - named),
+        "not_found": [name for name in found if name not in deleted],
+        "refused": refused,
+        "messages": built is not None,
+    }
+
+
+def delete_incomplete(result: dict) -> bool:
+    """A delete that found no file for one of the selection's binaries, or refused a path."""
+    return bool(result["not_found"] or result["refused"])
+
+
+def delete_line(name: str, result: dict) -> str:
+    """The delete step's `## NIGHTLY delete-<selection> rc=<0|1> ...` line (rc=1: the delete was incomplete)."""
+    rc = 1 if delete_incomplete(result) else 0
+    line = (
+        f"## NIGHTLY delete-{name} rc={rc} files={result['files']} kb={result['kb']}"
+        f" cargo_named={len(result['cargo_named'])} deps_fallback={len(result['deps_fallback'])}"
+    )
+    if result["not_found"]:
+        line += " not_found=" + ",".join(result["not_found"])
+    if result["refused"]:
+        line += f" refused={len(result['refused'])}"
+    if not result["messages"]:
+        line += " messages=missing"
+    return line
 
 
 def drop(chosen: dict, name: str, reason: str) -> None:
@@ -1110,6 +1248,11 @@ def main(argv: list[str]) -> int:
     command = commands.add_parser("binaries")
     command.add_argument("plan", type=Path)
     command.add_argument("name")
+    command = commands.add_parser("delete-binaries")
+    command.add_argument("plan", type=Path)
+    command.add_argument("name")
+    command.add_argument("messages", type=Path, help="the selection's build stdout: cargo's JSON messages")
+    command.add_argument("target", type=Path, help="the cargo target dir")
     command = commands.add_parser("bench-inputs")
     command.add_argument("root", type=Path)
     command.add_argument("work", type=Path)
@@ -1176,6 +1319,11 @@ def main(argv: list[str]) -> int:
                 print(" ".join(selection_args(chosen, entry)))
     elif args.command == "binaries":
         print("\n".join(selection_binaries(find_selection(json.loads(args.plan.read_text()), args.name))))
+    elif args.command == "delete-binaries":
+        entry = find_selection(json.loads(args.plan.read_text()), args.name)
+        result = delete_binaries(entry, args.messages, args.target)
+        print(delete_line(args.name, result))
+        return 1 if delete_incomplete(result) else 0
     elif args.command == "bench-inputs":
         bench_inputs(args.root, args.work, args.date, args.head)
     elif args.command == "bench-jobs":
