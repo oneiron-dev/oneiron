@@ -437,6 +437,31 @@ pub fn legal_hold_erase_effect_digest(
     *hasher.finalize().as_bytes()
 }
 
+/// The digest of erasing `entity`'s text history through `through`, or
+/// through the engine's own boundary when `None` (a NOTE's oldest pin, as
+/// `vault.notes.history_purge` always asks): the effect an asker's
+/// `vault.check_in.open` names for `vault.notes.history_purge`, and the one
+/// the Owner's erase spends (2k2; P25-SHAPE Q1 = A). BLAKE3, key derived
+/// from `oneiron check_in text history erase v1`, over the entity's 16 id
+/// bytes, then one byte 0, or one byte 1, the frontier's length as eight
+/// big-endian bytes and its bytes.
+#[must_use]
+pub fn text_history_erase_effect_digest(entity: &EntityId, through: Option<&[u8]>) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in text history erase v1");
+    hasher.update(entity.as_bytes());
+    match through {
+        Some(frontier) => {
+            let len = u64::try_from(frontier.len()).unwrap_or(u64::MAX);
+            hasher
+                .update(&[1])
+                .update(&len.to_be_bytes())
+                .update(frontier)
+        }
+        None => hasher.update(&[0]),
+    };
+    *hasher.finalize().as_bytes()
+}
+
 /// The digest of erasing the frozen request of outbound call `call_seq` of
 /// attempt `attempt`: the effect an asker's `vault.check_in.open` names for
 /// `vault.outbound_calls.request.erase`, and the one the Owner's erase
