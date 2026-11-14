@@ -208,11 +208,19 @@ impl Vault {
     /// answered as it stands, unchanged. The owner's proof, the agent, the
     /// conversation and the grant are read in the write's own transaction.
     ///
+    /// The grant widens the agent's reads: a grant that changes is the
+    /// owner's own act on their own proof, and with `applied` they apply
+    /// another asker's approved check-in for this exact grant, spent in the
+    /// same writer after the owner's act is recorded (ROLES-CHECKIN 2k8;
+    /// P25-SHAPE Q1 = A). The decision comes back beside the change; an
+    /// unchanged grant spends nothing and records none.
+    ///
     /// # Errors
     /// `owner` no longer proves the vault's owner; `EntityNotFound` when
     /// `agent` names no live agent, `conversation` names no live connector
     /// conversation, or the row at the grant's id is no witness-read grant;
-    /// or the vault write fails.
+    /// a check-in that is not an approved ask for this grant; or the vault
+    /// write fails.
     pub(crate) fn grant_connector_witness_read_grant(
         &self,
         owner: &AuthenticatedOwner,
@@ -220,9 +228,14 @@ impl Vault {
         agent: EntityId,
         conversation: EntityId,
         granted_at: u64,
-    ) -> Result<WitnessReadGrantChange> {
+        applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> Result<(
+        WitnessReadGrantChange,
+        Option<crate::check_in::CheckInDecision>,
+    )> {
         let id = connector_witness_read_grant_id(agent, conversation)?;
         let admitted = std::cell::Cell::new(None);
+        let mut decision = None;
         let (grant, changed) = self.put_admitted_access_grant(
             &id,
             granted_at,
@@ -262,15 +275,25 @@ impl Vault {
                     id,
                     surface,
                     AccessGrantActChange::Grant,
-                )
+                )?;
+                decision = Some(crate::check_in::owner_act_decision_in_txn(
+                    self,
+                    txn,
+                    crate::check_in::ActClass::GrantWiden,
+                    applied,
+                )?);
+                Ok(())
             },
         )?;
-        Ok(WitnessReadGrantChange {
-            grant_ref: id,
-            grant,
-            conversation,
-            changed,
-        })
+        Ok((
+            WitnessReadGrantChange {
+                grant_ref: id,
+                grant,
+                conversation,
+                changed,
+            },
+            decision,
+        ))
     }
 
     /// Whether `agent` names a live agent and `conversation` a live

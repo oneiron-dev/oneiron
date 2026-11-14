@@ -45,7 +45,8 @@ pub use self::optional_memory::{
     OptionalMemoryProfile,
 };
 pub use self::plan_mode::{
-    AgentPlanMode, AgentPlanModeSetRequest, AgentPlanModeView, set_agent_plan_mode_from_request_as,
+    AgentPlanMode, AgentPlanModeSetRequest, AgentPlanModeView, agent_plan_mode_set_effect_digest,
+    set_agent_plan_mode_from_request_as,
 };
 pub(crate) use self::plan_mode::{refuse_plan_from_off_agent_in_txn, refuse_unplanned_run_in_txn};
 pub use self::powers::{
