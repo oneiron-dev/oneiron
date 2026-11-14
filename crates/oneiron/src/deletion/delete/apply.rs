@@ -6,7 +6,7 @@ use crate::store::GateDecisionRecord;
 
 use super::super::erase::{ProvenanceCapture, stage_sweep_refs_in_txn};
 use super::super::gate::{
-    GatedDeletion, reverify_deletion_authority_before_publication,
+    GatedDeletion, journal_deletion_in_txn, reverify_deletion_authority_before_publication,
     reverify_deletion_authority_when_unpublished, revoke_guest_grants_in_txn,
 };
 use super::super::rendezvous::{
@@ -120,6 +120,9 @@ impl Vault {
                 self.store
                     .append_gate_decision_in_txn(&mut wtxn, decision)?;
             }
+            // The run that asked it keeps the delete in its journal, in the
+            // scrub that commits it (ARCH-0040 #revert-run).
+            journal_deletion_in_txn(self, gate.as_ref(), &mut wtxn, id, false)?;
         }
         if !existed || !reason.publishes_crdt_tombstone() {
             clear_own_topology_delete_in_txn(

@@ -322,7 +322,9 @@ side_tables! {
         [restore: content] [family: structure] [tier: canonical];
     /// The serve health check past a threshold (OF-520): one check per crossing subject, and
     /// how far the check has read each kind of kept crossing. Key: "check:" string (the
-    /// subject) | "cursor:" string (the crossing kind, and a limits row's key).
+    /// subject) | "cursor:" string (the crossing kind, and a limits row's key). An own-rate
+    /// subject ends in its actor, and that actor's erase takes the check.
     WIRE_HEALTH_CHECK: SyncState b"wire:health:v1:" Named
-        [restore: content] [family: unclassified] [tier: canonical];
+        [restore: content] [family: unclassified] [tier: canonical]
+        => crate::own_rate::erase_health_check_actor_in_txn;
 }

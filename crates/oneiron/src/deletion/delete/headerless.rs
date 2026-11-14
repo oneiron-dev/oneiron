@@ -5,8 +5,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::super::gate::{
-    GatedDeletion, refuse_claim, reverify_deletion_authority_when_unpublished,
-    revoke_guest_grants_in_txn,
+    GatedDeletion, journal_deletion_in_txn, refuse_claim,
+    reverify_deletion_authority_when_unpublished, revoke_guest_grants_in_txn,
 };
 use super::super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::super::rendezvous::{
@@ -263,6 +263,17 @@ impl Vault {
             gate_decision.as_ref(),
             id,
             tombstone.reason,
+        )?;
+        // The run that asked it keeps the delete in its journal, in the purge
+        // that commits it (ARCH-0040 #revert-run). The scope probe above
+        // found residue, so this delete removed something even when that was
+        // only index rows with no entity record.
+        journal_deletion_in_txn(
+            self,
+            gate,
+            &mut wtxn,
+            id,
+            reason.active_store_hard_purge_v1(),
         )?;
         if reason == DeleteReason::UserDelete {
             // A headerless soft deletion still retires proposals. Its

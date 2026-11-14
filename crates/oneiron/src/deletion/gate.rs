@@ -108,6 +108,10 @@ pub(crate) struct GatedDeletion<'a> {
     /// The owner act the delete carries out, when its door bound one (FIX
     /// 11883): an erase's custody revokes reach his other machines under it.
     owner_act: Option<&'a crate::secret_custody::EraseOwnerAct<'a>>,
+    /// The code run that asks this delete, when its door bound one
+    /// (ARCH-0040 #revert-run): the write that commits the delete joins it
+    /// to that run's change journal.
+    run: Option<&'a str>,
 }
 
 impl<'a> GatedDeletion<'a> {
@@ -159,6 +163,7 @@ impl<'a> GatedDeletion<'a> {
             claim: None,
             guest_revoke: None,
             owner_act: None,
+            run: None,
         }
     }
 
@@ -177,6 +182,7 @@ impl<'a> GatedDeletion<'a> {
             claim: None,
             guest_revoke: None,
             owner_act: None,
+            run: None,
         }
     }
 
@@ -205,6 +211,12 @@ impl<'a> GatedDeletion<'a> {
         self
     }
 
+    /// Binds the code run that asks the delete (ARCH-0040 #revert-run).
+    pub(crate) fn with_run(mut self, run: Option<&'a str>) -> Self {
+        self.run = run;
+        self
+    }
+
     pub(super) fn note_soft_scrub_committed(&self) {
         self.soft_scrub_committed.set(true);
     }
@@ -221,6 +233,24 @@ pub(super) fn claim_in_txn(
 ) -> Result<()> {
     match gate.and_then(|gate| gate.claim) {
         Some(claim) => (claim.apply)(txn, &tombstone.request_id, receipt),
+        None => Ok(()),
+    }
+}
+
+/// Joins the delete of `id` to the change journal of the code run `gate`
+/// binds, in `txn`, the write that commits it: a soft delete's scrub, or an
+/// erase's purge (`erase`). With no run bound it records nothing.
+pub(super) fn journal_deletion_in_txn(
+    vault: &crate::Vault,
+    gate: Option<&GatedDeletion<'_>>,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    erase: bool,
+) -> Result<()> {
+    match gate.and_then(|gate| gate.run) {
+        Some(run) => {
+            crate::memory::run_review::record_run_deletion_in_txn(&vault.store, txn, run, id, erase)
+        }
         None => Ok(()),
     }
 }
