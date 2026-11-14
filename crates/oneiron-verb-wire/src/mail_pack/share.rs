@@ -13,6 +13,11 @@ pub struct MailThreadShareRequest {
     /// The PERSON the thread is shared with, or no longer shared with,
     /// 32-hex.
     pub person_ref: String,
+    /// A share only: the approved check-in of this member's earlier share
+    /// of another's thread with this person, which waited on it; the share
+    /// spends it (ROLES-CHECKIN 2k8f). Omitted otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// What a share or an unshare did.
@@ -28,4 +33,10 @@ pub struct MailThreadShareReceipt {
     pub changed: bool,
     /// Everyone the thread is shared with now, 32-hex.
     pub shared_with: Vec<String>,
+    /// A share's check-in decision: the Owner's `own_proof`, a share of the
+    /// caller's own mail `own_item`, a member's share of another's thread
+    /// under their role (with the check-in it spent); none for an unshare
+    /// or an unjudged caller.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }

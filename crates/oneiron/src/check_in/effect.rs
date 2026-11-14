@@ -842,6 +842,19 @@ pub fn shared_policy_propose_effect_digest(
     Ok(*hasher.finalize().as_bytes())
 }
 
+/// The digest of sharing mail thread `thread`, the thread audience policy
+/// the share's `record_ref` resolves to in its writer, with PERSON `person`:
+/// the effect a member's `vault.mail.threads.share` of another's thread is
+/// judged over (2k8f2; P25-SHAPE Q1 = A). Every row of a thread names one
+/// share. BLAKE3, key derived from `oneiron check_in mail thread share v1`,
+/// over the thread policy's and the person's 16 id bytes.
+#[must_use]
+pub fn mail_thread_share_effect_digest(thread: &EntityId, person: &EntityId) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in mail thread share v1");
+    hasher.update(thread.as_bytes()).update(person.as_bytes());
+    *hasher.finalize().as_bytes()
+}
+
 /// The digest of opening ordinary room `room`'s shared pins to every
 /// current member: the effect a member's `vault.rooms.pins.policy.set` to
 /// `members` on a room another created is judged over (2k8f; P25-SHAPE Q1
