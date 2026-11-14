@@ -37,15 +37,10 @@ impl PublishBoundaryHarness {
     /// the only way to build the orphan-vector residue the headerless delete
     /// door needs.
     pub(super) fn open_for_vector_residue(label: &str, live_window: bool) -> Self {
-        Self::open_with_config(
-            label,
-            live_window,
-            VaultConfig {
-                embedding_model: Some("test/model@v1".to_owned()),
-                dimensions: RESIDUE_VECTOR_DIMS,
-                ..VaultConfig::default()
-            },
-        )
+        let mut config = VaultConfig::device();
+        config.embedding_model = Some("test/model@v1".to_owned());
+        config.dimensions = RESIDUE_VECTOR_DIMS;
+        Self::open_with_config(label, live_window, config)
     }
 
     pub(super) fn open_with_config(label: &str, live_window: bool, config: VaultConfig) -> Self {

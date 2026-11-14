@@ -1,6 +1,7 @@
 //! What one served exchange may cost the machine: how long it may sit idle,
-//! how long a push waits for its repository, the memory and disk floors its
-//! door scan keeps, and the disk floor what it holds past memory keeps.
+//! how long a push waits for its repository, how long its command section may
+//! take to arrive, the memory and disk floors its door scan keeps, and the
+//! disk floor what it holds past memory keeps.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,6 +27,11 @@ pub struct ExchangeBounds {
     pub idle: Duration,
     /// How long a push waits for the repository another writer holds.
     pub repository_wait: Duration,
+    /// How long a push's command section may take to arrive whole, from its
+    /// first read, before the push is refused as an idle stall and the
+    /// repository it holds is let go. A host serves
+    /// `SERVE_COMMAND_SECTION_TIMEOUT`.
+    pub command_section: Duration,
     /// The floors the door's scan keeps.
     pub scan: ScanBounds,
     /// The free disk a push's command section keeps when it is held past

@@ -4,16 +4,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, PoisonError};
 
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::posterior::Posterior;
 use oneiron::receipt::{ReceiptKind, ReceiptQuery, ReceiptScanPosition};
 use oneiron::skill::SkillRecord;
 use oneiron::skill_attribution::{AttributionVerdict, attribution_judgments};
 use oneiron::skill_optimize::{
     AxisArm, ConfidenceInterval, GoalAxisBandit, HeldOutReplayNotes, OnlineAxisSample,
-    PROVENANCE_OPTIMIZE_OF_ENTITY_KEY, skill_edit_goal,
+    PROVENANCE_OPTIMIZE_OF_ENTITY_KEY, SkillEditGoal, skill_edit_goal, skill_edit_goal_as_owner,
 };
 use oneiron::skill_reliability::{SkillReliabilityPosterior, effective_skill_outcome};
-use oneiron::{EntityId, Error, Result};
+use oneiron::{EntityId, Error, Result, Vault};
 use serde_json::{Value, json};
 
 use super::{ATTEMPT_RECEIPT, ServeReplayJudge, invalid, now, person_minutes};
@@ -79,6 +80,22 @@ impl<'a> ServeAxisBandit<'a> {
         Self::judged_by(judge, proposal, judge)
     }
 
+    /// [`Self::for_proposal`] for the owner's measurement door: the goal is
+    /// read under `owner`'s live proof, never the Coach's read grant, so a
+    /// Coach narrowed off `read` does not stop the owner's measurement
+    /// (review round 1 of #7553).
+    /// # Errors
+    /// As [`Self::for_proposal`], and a proof that no longer holds the vault.
+    pub fn for_proposal_as_owner(
+        judge: &'a ServeReplayJudge,
+        proposal: &EntityId,
+        owner: &AuthenticatedOwner,
+    ) -> Result<Self> {
+        Self::with_goal_read(judge, proposal, judge, |vault, skill| {
+            skill_edit_goal_as_owner(vault, owner, skill)
+        })
+    }
+
     /// The slice of `proposal` on `judge`'s arms, each pull's axis question
     /// asked of `notes`: the Coach lends its judge on the wake pass's clock,
     /// so a pull it starts stops by the time the pass has left.
@@ -89,7 +106,17 @@ impl<'a> ServeAxisBandit<'a> {
         proposal: &EntityId,
         notes: &'a dyn HeldOutReplayNotes,
     ) -> Result<Self> {
-        let vault = &judge.vault;
+        Self::with_goal_read(judge, proposal, notes, skill_edit_goal)
+    }
+
+    /// The slice of `proposal`, its revised skill's goal read by `read_goal`.
+    fn with_goal_read(
+        judge: &'a ServeReplayJudge,
+        proposal: &EntityId,
+        notes: &'a dyn HeldOutReplayNotes,
+        read_goal: impl FnOnce(&Vault, &EntityId) -> Result<SkillEditGoal>,
+    ) -> Result<Self> {
+        let vault: &Vault = &judge.vault;
         let staged = vault
             .get_skill_record(proposal)?
             .ok_or(Error::EntityNotFound)?;
@@ -99,7 +126,7 @@ impl<'a> ServeAxisBandit<'a> {
         let current = vault
             .get_skill_record(&target)?
             .ok_or(Error::EntityNotFound)?;
-        let goal = skill_edit_goal(vault, &target)?;
+        let goal = read_goal(vault, &target)?;
         judge.word_axes(&goal.axes);
         // Each axis by its name and kind under the goal's revision: the joined
         // project goal's text, why, measure and bound stay in the project

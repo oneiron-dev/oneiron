@@ -49,7 +49,8 @@ use super::resolution::PolicyManifestResolution;
 
 use crate::source_audience::SourceAudienceBirth;
 pub(crate) use crate::store::witness_message_body::{
-    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER, WitnessMessageEnvelope,
+    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_COUNTERPARTY, WITNESS_AUTHOR_SYSTEM,
+    WITNESS_AUTHOR_USER, WitnessMessageEnvelope,
 };
 use crate::store::witness_message_body::{
     source_bound_witness_message_envelope_denial, witness_message_envelope_denial,
@@ -88,6 +89,7 @@ impl<'a> WitnessMessageAuthorization<'a> {
 /// actor binding are all read from the same snapshot the write commits under.
 /// A refusal is an `Err`, which aborts the caller's transaction: no MESSAGE
 /// row, edge, text posting, TURN re-put or session-activity bump survives it.
+/// A `counterparty` row meets this ordinary local ceiling, not the System floor.
 ///
 /// # Errors
 ///
@@ -360,6 +362,7 @@ pub(crate) fn canonical_witness_message_body_for_test(
         author,
         message_type,
         content,
+        parts: None,
         metadata: None,
         is_visible,
         order,
@@ -396,6 +399,13 @@ pub(crate) fn canonical_witness_message_body_for_test(
 ///   writes content, and `machine` stands on this vault's machine roster on a
 ///   profile that PERSON answered for. One member's machine never names
 ///   another member, and an agent's row stays refused here.
+/// * `counterparty`: another party's words that an own machine imported,
+///   such as received mail (FIX 15412). The bucket names who spoke, never
+///   who wrote: the writer is `machine`, so the row passes where the same
+///   import passed as `user` before FIX 15412. That is a personal vault
+///   whose embedded owner PERSON is live while `machine` stands on its
+///   roster, or a shared vault whose row names, by its `AuthoredBy` edge, the
+///   member whose machine `machine` is, as for `user` above.
 /// * `system`: the engine's own voice, never a replay's.
 ///
 /// Every row it does not admit, a body that is no canonical envelope first
@@ -414,8 +424,14 @@ pub(crate) fn validate_own_device_witness_message_body(
     body: &[u8],
 ) -> Result<()> {
     let author = validate_canonical_witness_message_body(body);
-    if let (Ok(WitnessMessageBodyAuthor::User | WitnessMessageBodyAuthor::Companion), Some(actor)) =
-        (&author, authored_by)
+    if let (
+        Ok(
+            WitnessMessageBodyAuthor::User
+            | WitnessMessageBodyAuthor::Companion
+            | WitnessMessageBodyAuthor::Counterparty,
+        ),
+        Some(actor),
+    ) = (&author, authored_by)
     {
         // As below, a store fault admits nothing and refuses.
         match member_speaks_from(store, txn, machine, actor) {
@@ -443,7 +459,10 @@ pub(crate) fn validate_own_device_witness_message_body(
             ),
         }
     }
-    if matches!(author, Ok(WitnessMessageBodyAuthor::User)) {
+    if matches!(
+        author,
+        Ok(WitnessMessageBodyAuthor::User | WitnessMessageBodyAuthor::Counterparty)
+    ) {
         // A store fault reading the roster or the vault's kind admits nothing
         // and refuses as the replicated door does, so the row is quarantined
         // as today rather than failing its window.
@@ -452,7 +471,7 @@ pub(crate) fn validate_own_device_witness_message_body(
             Ok(false) => {}
             Err(error) => tracing::warn!(
                 kind = ?error.kind(),
-                "an own machine's user MESSAGE: the owner and roster did not read; refused as a replay"
+                "an own machine's user or counterparty MESSAGE: the owner and roster did not read; refused as a replay"
             ),
         }
     }

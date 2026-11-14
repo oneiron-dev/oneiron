@@ -387,7 +387,7 @@ impl Vault {
                 continue;
             }
             if let Some(disclosure) = disclosure
-                && !disclosure.admits(&self.store, &txn, &id, ENTITY_TYPE_CLAIM, Some(&body))?
+                && !disclosure.admits_in(self, &txn, &id, ENTITY_TYPE_CLAIM, Some(&body))?
             {
                 continue;
             }

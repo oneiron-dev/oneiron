@@ -2,7 +2,8 @@
 //! quick-xml checked a start tag's attributes for duplicates pairwise, so one
 //! tag with n attributes cost O(n^2) (RUSTSEC-2026-0194). The fork's own
 //! expanded-name duplicate check (word_xml.rs) scanned the same way until
-//! FIX TEST-RED-DOCEDIT-STEMMA-BUDGET.
+//! FIX TEST-RED-DOCEDIT-STEMMA-BUDGET, and its namespace scope scanned each
+//! tag's declarations per prefix until FIX STEMMA-NS-PREFIX-SCAN.
 
 use std::io::{Cursor, Read, Write};
 use std::time::{Duration, Instant};
@@ -60,6 +61,30 @@ fn start_tag_with_many_attributes_parses_in_bounded_time() {
     assert!(
         elapsed < Duration::from_secs(5),
         "{ATTRIBUTES} attributes on one start tag took {elapsed:?}"
+    );
+    assert_eq!(text, accepted_text(INPUT));
+}
+
+#[test]
+fn start_tag_with_many_namespace_declarations_parses_in_bounded_time() {
+    // Each prefixed attribute resolves its prefix against the declarations on
+    // its own tag. Equal-length prefixes, so a scan of the declarations
+    // compares ~5e9 pairs byte by byte. Keying them by prefix keeps it linear.
+    const PREFIXES: usize = 100_000;
+    let attributes: Vec<String> = (0..PREFIXES)
+        .map(|index| {
+            format!("xmlns:p{index:06}=\"urn:oneiron:ns:{index}\" p{index:06}:x=\"{index}\"")
+        })
+        .collect();
+    let bytes = with_paragraph_attributes(&attributes.join(" "));
+
+    let started = Instant::now();
+    let text = accepted_text(&bytes);
+    let elapsed = started.elapsed();
+
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "{PREFIXES} namespace declarations and prefixed attributes on one start tag took {elapsed:?}"
     );
     assert_eq!(text, accepted_text(INPUT));
 }

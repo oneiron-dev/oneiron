@@ -282,6 +282,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Read,
     ),
     (
+        "image-organ",
+        |args| args.image_organ.is_some(),
+        ArgvUse::Read,
+    ),
+    (
         "esign-delivery-outbox-dir",
         |args| args.esign_delivery_outbox_dir.is_some(),
         ArgvUse::Read,

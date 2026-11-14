@@ -1,0 +1,13 @@
+//! Moved from `crates/oneiron/src/autoreason_campaign/archive/axes.rs` (lib split W1: wire types below the lib).
+//! `oneiron` re-exports each item at its old path.
+
+use serde::Deserialize;
+use serde::Serialize;
+
+/// One categorical dimension proposed from this task's goal and samples.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ArchiveAxis {
+    pub name: String,
+    pub bins: Vec<String>,
+}

@@ -144,6 +144,10 @@ impl fmt::Debug for ServeConfig {
             )
             .field("hooks", &self.hooks)
             .field("maximum_tier", &self.maximum_tier)
+            .field(
+                "off_record_dump_suppression",
+                &self.off_record_dump_suppression,
+            )
             .field("device_class", &self.device_class)
             .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
             .field(

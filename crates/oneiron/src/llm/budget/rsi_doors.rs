@@ -2,53 +2,15 @@
 //! shares once, read both unit-labelled lines, top up one exact limiting
 //! line, and hold or resume new loop work. The ledger in `rsi` owns every
 //! admission rule; these doors only check the owner's proof and project.
-use serde::{Deserialize, Serialize};
 
 use super::rsi::{RsiBudgetConfig, RsiBudgetError, RsiTopUp};
 use crate::consent::AuthenticatedOwner;
 use crate::{Result, Vault};
 
-/// The vault RSI line itself: no selector names another vault's line.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RsiLineRequest {}
-
-/// One named share of the token line, advisory unless pinned.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RsiShareView {
-    pub label: String,
-    pub units: u64,
-    pub pinned: bool,
-}
-
-/// The token-denominated loop line.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RsiWorkLineView {
-    pub unit: String,
-    pub limit: u64,
-    pub spent: u64,
-    pub reserved: u64,
-}
-
-/// The exposure-denominated exploration line, independent of token spend.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RsiExposureLineView {
-    pub unit: String,
-    pub limit: u64,
-    pub spent: u64,
-    pub reserved: u64,
-}
-
-/// Both RSI lines, their shares and the hold that stops new loop work
-/// without killing admitted work. Resource depletion reads here as
-/// `suspended`, never as a terminal failure.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RsiLineView {
-    pub work_line: RsiWorkLineView,
-    pub shares: Vec<RsiShareView>,
-    pub exposure_line: RsiExposureLineView,
-    pub suspended: bool,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::llm::budget::rsi_doors::{
+    RsiExposureLineView, RsiLineRequest, RsiLineView, RsiShareView, RsiWorkLineView,
+};
 
 fn rsi_error(error: RsiBudgetError) -> crate::Error {
     match error {

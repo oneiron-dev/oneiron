@@ -9,18 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::context_board::{GateExplanation, MemoryExplanation};
 use crate::{RetrievalScoreBreakdown, RetrievalScoreComponent};
 
-/// `vault.explain.memory`'s input: the memory, and the session that was
-/// served it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ExplainMemoryRequest {
-    /// Hex entity id of the memory.
-    pub entity: String,
-    /// The board or pack session that was served the memory; the caller's
-    /// active session when absent.
-    #[serde(default)]
-    pub session_id: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::explain::{ExplainGateRequest, ExplainMemoryRequest};
 
 /// The serving run's score breakdown for one memory alone.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -60,14 +50,6 @@ pub struct ExplainMemoryReply {
     /// The run's score breakdown for this row alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub score: Option<ExplainScoreEvidence>,
-}
-
-/// `vault.explain.gate`'s input: one gate receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ExplainGateRequest {
-    /// Gate receipt id, `gate:<hex>`.
-    pub receipt: String,
 }
 
 /// One system notice a gate decision raised.

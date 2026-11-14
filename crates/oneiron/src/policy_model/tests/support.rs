@@ -277,6 +277,11 @@ pub(super) fn hosted_row(
         category: category.to_owned(),
         action,
         text: text.to_owned(),
+        basis: HostedLegalBasis {
+            kind: HostedLegalBasisKind::Law,
+            subject: HOSTED_JURISDICTION.to_owned(),
+            reference: "test-law-reference".to_owned(),
+        },
     }
 }
 
@@ -460,14 +465,20 @@ pub(super) fn text_response(body: String) -> LlmResponse {
     LlmResponse {
         message: LlmMessage {
             role: LlmMessageRole::Assistant,
-            content: vec![ContentPart::Text { text: body }],
+            content: vec![ContentPart::Text {
+                text: body,
+                signature: None,
+            }],
         },
         usage: LlmUsage {
             input: LlmInputUsage::default(),
             output: LlmOutputUsage::default(),
             raw_provider: JsonValue::Null,
+            call_metadata: None,
         },
         finish_reason: FinishReason::Stop,
+        reply_assertions: Default::default(),
+        token_scores: None,
     }
 }
 
@@ -482,8 +493,11 @@ pub(super) fn multi_part_response(content: Vec<ContentPart>) -> LlmResponse {
             input: LlmInputUsage::default(),
             output: LlmOutputUsage::default(),
             raw_provider: JsonValue::Null,
+            call_metadata: None,
         },
         finish_reason: FinishReason::Stop,
+        reply_assertions: Default::default(),
+        token_scores: None,
     }
 }
 
@@ -561,7 +575,7 @@ pub(super) fn system_text(request: &LlmRequest) -> Option<String> {
         .find(|message| message.role == LlmMessageRole::System)
         .and_then(|message| {
             message.content.iter().find_map(|part| match part {
-                ContentPart::Text { text } => Some(text.clone()),
+                ContentPart::Text { text, .. } => Some(text.clone()),
                 _ => None,
             })
         })
@@ -841,6 +855,7 @@ impl LlmBackend for SplitAnswerBackend {
             .iter()
             .map(|text| ContentPart::Text {
                 text: (*text).to_owned(),
+                signature: None,
             })
             .collect();
         Box::pin(async move {
@@ -853,8 +868,11 @@ impl LlmBackend for SplitAnswerBackend {
                     input: LlmInputUsage::default(),
                     output: LlmOutputUsage::default(),
                     raw_provider: JsonValue::Null,
+                    call_metadata: None,
                 },
                 finish_reason: FinishReason::Stop,
+                reply_assertions: Default::default(),
+                token_scores: None,
             })
         })
     }

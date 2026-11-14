@@ -463,12 +463,15 @@ pub(crate) async fn execute_context_pack(
 }
 
 /// The live stretch a pack reads beside base: the one its request names
-/// (`x-oneiron-session`), for the vault's owner on their proof, so the turn
-/// board of a chat turn taken there reads the stretch's rows. Any other
-/// caller, and a stretch the owner cannot bind now (gone, closing, closed, or
-/// a room they are not in), reads base alone, as a pack did before. Whether a
-/// room's rows are opaque to every non-owner reader is open (ARCH-0052
-/// #e5-read-union-open; ASK L6-12-NON-OWNER).
+/// (`x-oneiron-session`), so the turn board of a chat turn taken there reads
+/// the stretch's rows. The vault's owner binds it on their proof. A person or
+/// agent on their own live slip binds a room's stretch while on that room's
+/// roster (ARCH-0052 #e5-read-union-open = B, ROOM-PACK-MEMBER-BIND), and
+/// each row is read under that member's own key, so a member's agent gets
+/// what that member's key reads, never more. Any other caller, and a stretch
+/// the reader cannot bind now (gone, closing, closed, a room they are not in,
+/// or, for anyone but the owner, a stretch entered alone), reads base alone,
+/// as a pack did before.
 fn context_pack_room<'v>(
     server: &'v SyncServer,
     auth: &CoreAuth,
@@ -476,17 +479,50 @@ fn context_pack_room<'v>(
     let Some(key) = auth.off_record_session() else {
         return Ok(None);
     };
-    let Ok(owner) = crate::api::owner_routes::owner(auth, server) else {
+    let rooms = server.vault.off_record_session_vault();
+    let bound = if let Ok(owner) = crate::api::owner_routes::owner(auth, server) {
+        let owner = owner
+            .revalidate(&server.vault)
+            .map_err(|error| core_engine_error("context-pack owner proof failed", error))?;
+        rooms.bind_pack_reader(key, owner)
+    } else {
+        let Some(member) = context_pack_room_member(server, auth)? else {
+            return Ok(None);
+        };
+        rooms.bind_pack_member(key, member)
+    };
+    bound.map_err(|error| core_engine_error("context-pack stretch bind failed", error))
+}
+
+/// The person or agent a pack's caller is, on their own live slip, who may
+/// read a room's stretch as a member of it, as the off-record doors bind one
+/// (`bound_session`). `None` for a host credential, which names no person, a
+/// managed owner's attestation, which keeps no slip to check again, any other
+/// actor class, and a slip no longer live.
+fn context_pack_room_member(
+    server: &SyncServer,
+    auth: &CoreAuth,
+) -> Result<Option<oneiron::EntityId>, ApiError> {
+    if auth.is_host_holder() || auth.managed_owner().is_some() {
+        return Ok(None);
+    }
+    let Some(slip) = auth.verified_slip() else {
         return Ok(None);
     };
-    let owner = owner
-        .revalidate(&server.vault)
-        .map_err(|error| core_engine_error("context-pack owner proof failed", error))?;
-    server
+    let Ok((actor, class)) = crate::api::facade::facade_actor(server, auth) else {
+        return Ok(None);
+    };
+    if !matches!(
+        class,
+        oneiron::EdgeActorClass::Human | oneiron::EdgeActorClass::Agent
+    ) {
+        return Ok(None);
+    }
+    let live = server
         .vault
-        .off_record_session_vault()
-        .bind_pack_reader(key, owner)
-        .map_err(|error| core_engine_error("context-pack stretch bind failed", error))
+        .capability_slip_is_live(slip)
+        .map_err(|error| core_engine_error("context-pack slip check failed", error))?;
+    Ok(live.then_some(actor))
 }
 
 /// The agent signal feed rides the context pack of the agent's next turn:

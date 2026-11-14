@@ -131,6 +131,8 @@ pub(crate) enum CoreRunTreeInterventionEffect {
     AlreadyRedirected,
     /// A cancel the caller does not stand to make: nothing changed (FIX 8219).
     Proposed,
+    /// A running run pauses at its next step boundary.
+    PausingAtNextStep,
 }
 
 /// Runtime attempt tree response, as its flat table (FIX 11107): every
@@ -670,6 +672,9 @@ pub(crate) fn core_run_tree_intervention_effect(
         oneiron::AttemptInterventionEffect::Cancelled => CoreRunTreeInterventionEffect::Cancelled,
         oneiron::AttemptInterventionEffect::AlreadyCancelled => {
             CoreRunTreeInterventionEffect::AlreadyCancelled
+        }
+        oneiron::AttemptInterventionEffect::PausingAtNextStep => {
+            CoreRunTreeInterventionEffect::PausingAtNextStep
         }
     }
 }

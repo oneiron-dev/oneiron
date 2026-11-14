@@ -120,12 +120,17 @@ impl Vault {
     }
     /// The sealer runs outside the writer lock. Immutable original versions
     /// are always used, including for owner-authorized reseals.
+    ///
+    /// `qr_page_url` is the public QR page (an https URL with no fragment).
+    /// The seal mints a fresh QR capability and prints the page with it as
+    /// the fragment on each item's certificate page; the capability is bound
+    /// only when the seal commits ([`super::qr_capability`]).
     pub fn seal_esign_attempt(
         &self,
         attempt: &AttemptRecord,
         sealer: &dyn EsignSealer,
         profile: SealProfile,
-        canonical_url: &str,
+        qr_page_url: &str,
     ) -> std::result::Result<SealedDocument, EsignSealError> {
         let document = EntityId::from_bytes(
             attempt
@@ -219,6 +224,10 @@ impl Vault {
             (state, rows, originals, images)
         };
         let fingerprint = snapshot_hash(&rows)?;
+        // One QR capability per seal pass: every item prints it, and only
+        // the sealed commit below binds its digest.
+        let qr = super::qr_capability::EsignQrCapability::mint()?;
+        let canonical_url = super::qr_capability::certificate_url(qr_page_url, &qr);
         let pinned_inputs = originals.iter().fold(0u64, |held, (_, bytes)| {
             held.saturating_add(bytes.capacity() as u64)
         });
@@ -236,7 +245,7 @@ impl Vault {
                 item: index as u32,
                 state: &state,
                 audit: &rows,
-                canonical_url,
+                canonical_url: &canonical_url,
                 signature_images: &images,
                 pinned_buffer_bytes,
             };
@@ -378,6 +387,7 @@ impl Vault {
                 now,
             )?;
             CANONICAL.put(&self.store, txn, &document, &manifest)?;
+            super::qr_capability::bind_sealed_in_txn(self, txn, &qr, document, &manifest, now)?;
             RESULT.put(
                 &self.store,
                 txn,

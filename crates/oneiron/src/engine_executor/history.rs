@@ -30,15 +30,8 @@ pub struct FoldHistory {
     pub next: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct FoldHistoryEpoch {
-    pub summary_ref: String,
-    pub epoch: u64,
-    pub from: u64,
-    pub through: u64,
-    /// None when the source was withdrawn; the retained boundary remains.
-    pub text: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::engine_executor::history::FoldHistoryEpoch;
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FoldHistoryStep {

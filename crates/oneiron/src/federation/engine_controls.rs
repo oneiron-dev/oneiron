@@ -40,7 +40,9 @@ const ENGINE_CONTROL_CHANGE: SideTable<EntityId, EngineControlChange, Named> =
 
 /// The class of knob a change touches. Each class has its own grant verb
 /// ([`Self::grant_verb`]); the class names the change in its receipt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum EngineControlClass {
     /// Maintenance schedules and cadences: compaction, cleanup, retention

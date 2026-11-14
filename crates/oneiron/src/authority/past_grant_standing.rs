@@ -85,7 +85,7 @@ fn load_history(store: &Store, txn: &heed::RoTxn<'_>) -> Result<LoadedHistory> {
     let mut parents: BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>> = BTreeMap::new();
     let mut bodies: BTreeMap<AuthorityEntryHash, AuthorityLogEntry> = BTreeMap::new();
     for (_, body) in authority_log_rows_in_txn(store, txn)? {
-        let entry = decode_authority_log_entry_body(&body)?;
+        let entry = decode_stored_authority_log_body(&body)?;
         let hash = authority_entry_hash(&entry)?;
         if let Some(prior) = parents.get(&hash) {
             if *prior != entry.parent_hashes {

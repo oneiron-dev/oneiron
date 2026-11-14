@@ -118,7 +118,7 @@ impl Vault {
             now,
             None,
             None,
-            None,
+            Some(write.made_by()),
             false,
             true,
             Some(write),

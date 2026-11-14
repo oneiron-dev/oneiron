@@ -306,7 +306,7 @@ fn adapter_capability_is_not_permission_and_an_owner_grant_can_enable_risk()
 // the provider's exact-channel send grant remains in the pack below.
 fn clear_bootstrap_policy(vault: &Vault) -> crate::Result<()> {
     let id = crate::gate::default_policy_manifest_id()?;
-    vault.with_write_txn(|wtxn| crate::batch::deindex_entity_for_test(&vault.store, wtxn, &id))
+    vault.with_write_txn(|wtxn| crate::batch::deindex_entity_for_test(&vault, wtxn, &id))
 }
 
 // The test author writes comm control claims through the ordinary gate too.

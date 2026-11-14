@@ -52,8 +52,8 @@ const SECRET_PRESENT_BY: SecretPresentBy = SecretPresentBy::RecordId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SecretPresentBy {
     /// The record the name resolved to, by its id: a name re-registered
-    /// since cannot swap the credential, and a record revoked or suspended
-    /// since refuses at its door, so nothing is sent.
+    /// since cannot swap the credential, and a record revoked since
+    /// refuses at its door, so nothing is sent.
     RecordId,
 }
 
@@ -239,7 +239,7 @@ impl Vault {
     /// the value, as [`Vault::inject_secret_record_at_door`].
     ///
     /// # Errors
-    /// The door's refusal, a record revoked or suspended since included:
+    /// The door's refusal, a record revoked since included:
     /// then nothing was sent.
     pub fn present_resolved_secret_at_door(
         &self,

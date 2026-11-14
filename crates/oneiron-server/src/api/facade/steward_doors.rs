@@ -2,7 +2,8 @@
 //! the member asks a shared vault's Steward files and its Owners and Admins
 //! apply or decline (`vault.members.ask*`), under the caller's own shared
 //! person proof as the other `vault.members.*` doors take it; and the
-//! owner's narrowing of a system agent's grant and read of the engine-control
+//! owner's narrowing of a system agent's grant, its grant back, the
+//! engine.controls grant and revoke, and the read of the engine-control
 //! receipts, under the vault owner's proof. `host_doors` re-exports them, so
 //! the generated HTTP facade handler and the MCP dispatcher call them by the
 //! name every host door has. Each engine door checks its grant again in its
@@ -11,9 +12,11 @@ use std::sync::Arc;
 
 use oneiron::federation::{SharedActExecutionReceipt, SharedMemberAsk};
 use oneiron::task_verb::sdk::{
-    self, EmptyRequest, EngineControlChangeEntry, EngineDefaultGrantEntry,
-    SharedMemberAskIdRequest, SharedMemberAskRequest, SharedVaultRequest,
-    SystemAgentGrantNarrowRequest, SystemAgentGrantNarrowed,
+    self, EmptyRequest, EngineControlChangeEntry, EngineControlsGrantRequest,
+    EngineControlsGranted, EngineControlsRevokeRequest, EngineControlsRevoked,
+    EngineDefaultGrantEntry, SharedMemberAskIdRequest, SharedMemberAskRequest, SharedVaultRequest,
+    SystemAgentGrantNarrowRequest, SystemAgentGrantNarrowed, SystemAgentGrantRestoreRequest,
+    SystemAgentGrantRestored,
 };
 
 use super::host_doors::support::{Listed, MaybeListed};
@@ -118,6 +121,64 @@ pub(crate) async fn vault_agents_grants_narrow(
                 grant: Some(grant), ..
             } => vec![agent, *grant],
             _ => vec![agent],
+        },
+    )
+    .await
+}
+
+/// `vault.agents.grants.restore`: the owner gives a base agent its default
+/// grant back, listing the agent.
+pub(crate) async fn vault_agents_grants_restore(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SystemAgentGrantRestoreRequest,
+) -> Listed<SystemAgentGrantRestored> {
+    let agent = input.agent;
+    as_owner_naming(
+        server,
+        auth,
+        "vault.agents.grants.restore",
+        move |server, owner| sdk::restore_system_agent_grant_as(server.vault(), owner, input),
+        move |_| vec![agent],
+    )
+    .await
+}
+
+/// `vault.engine.controls.grant`: the owner lets an agent tune the engine's
+/// knobs of some classes, listing the agent and the grant it minted.
+pub(crate) async fn vault_engine_controls_grant(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: EngineControlsGrantRequest,
+) -> Listed<EngineControlsGranted> {
+    let agent = input.agent;
+    as_owner_naming(
+        server,
+        auth,
+        "vault.engine.controls.grant",
+        move |server, owner| sdk::grant_engine_controls_as(server.vault(), owner, input),
+        move |granted| vec![agent, granted.grant],
+    )
+    .await
+}
+
+/// `vault.engine.controls.revoke`: the owner takes back an agent's
+/// engine.controls grants, listing the agent and each grant revoked.
+pub(crate) async fn vault_engine_controls_revoke(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: EngineControlsRevokeRequest,
+) -> Listed<EngineControlsRevoked> {
+    let agent = input.agent;
+    as_owner_naming(
+        server,
+        auth,
+        "vault.engine.controls.revoke",
+        move |server, owner| sdk::revoke_engine_controls_as(server.vault(), owner, input),
+        move |revoked| {
+            let mut rows = vec![agent];
+            rows.extend(&revoked.revoked);
+            rows
         },
     )
     .await

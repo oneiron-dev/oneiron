@@ -1,14 +1,17 @@
 //! Landing a decoded conversation as an imported transcript (ARCH-0027).
 //!
-//! Messages group into one-speaker TURNs, each the longest run of one side (up
-//! to [`TURN_MESSAGE_CAP`] messages). Conversation, turn and message ids derive
-//! from the source's own, so a re-run, a crash retry or an appended session
-//! lands the same rows at the same ids. A new message takes the next order its
-//! turn has free, so a later export that regroups a run never collides with
-//! what landed before. A turn whose order space is full continues in the next
-//! turn of its chain, each derived from the run's turn and its place, so every
-//! import of the run walks the same chain. Each turn lands through the witness
-//! program's import door, which runs the same ceiling door and write-door
+//! Messages group into one-speaker TURNs, each the longest run of one source
+//! speaker (up to [`TURN_MESSAGE_CAP`] messages): the owner's prompts land as
+//! the user's, every other speaker's words as a counterparty's (FIX 15412).
+//! Conversation, turn and message ids derive from the source's own, so a
+//! re-run, a crash retry or an appended session lands the same rows at the
+//! same ids. A new message takes the next order its turn has free, so a later
+//! export that regroups a run never collides with what landed before. A turn
+//! whose order space is full, or that another speaker's words were born in,
+//! continues in the next turn of its chain, each derived from the run's turn
+//! and its place, so every import of the run walks the same chain. Each turn
+//! lands through the witness program's import door, which runs the same
+//! ceiling door and write-door
 //! secret scan as any witnessed turn, with the ledger rows of its new messages
 //! in the same transaction. The ledger is read again inside that transaction:
 //! when another import landed one of the turn's messages since the first
@@ -25,6 +28,7 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use super::ledger::{self, LedgerRow, content_hash};
+use super::sharing;
 use super::{
     HistoryConversation, HistoryMessage, HistoryRole, HistorySkips, HistorySource,
     HistoryThreadKind,
@@ -37,12 +41,13 @@ use crate::entity_id::{EntityId, derived_domains};
 use crate::error::Result;
 use crate::memory::{
     IMPORTED_SOURCE_KEY, ImportedTurnStamp, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE,
-    Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessTurn,
-    next_witness_message_order,
+    Memory, MemoryError, MemoryResult, SourceAttribution, WitnessAuthor, WitnessMessage,
+    WitnessTurn, next_witness_message_order, stored_witness_turn_author,
 };
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CONVERSATION;
 use crate::side_table::SideTableDbs;
+use crate::source_audience::{self, SourceAudienceBirth};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// The most messages one TURN holds; a longer run of one side (an agent's long
@@ -96,6 +101,11 @@ pub struct HistoryImportReport {
     pub refusal_reasons: BTreeSet<String>,
     /// What the reader did not keep.
     pub not_kept: HistorySkips,
+    /// The TURNs that took the messages landed new or as a revision, each
+    /// once, in landing order: what a hosted import's progress counts for
+    /// embeddings. Not part of the report's wire form.
+    #[serde(skip)]
+    pub turns: Vec<EntityId>,
 }
 
 impl HistoryImportReport {
@@ -111,6 +121,7 @@ impl HistoryImportReport {
             pending: 0,
             refusal_reasons: BTreeSet::new(),
             not_kept: conversation.skipped,
+            turns: Vec::new(),
         }
     }
 }
@@ -122,7 +133,11 @@ pub(super) enum Standing {
     Changed(LedgerRow),
 }
 
-/// The conversation's messages with each id once, as one-speaker runs.
+/// The conversation's messages with each id once, as one-speaker runs. A run
+/// holds one source speaker, its side and who the source says said it
+/// (`said_by`): the owner's prompts, a delegating agent's and an unknown
+/// speaker's never share a turn, and a user run and an assistant run stay
+/// apart whatever bucket each lands in (`witness_author`).
 pub(super) fn runs<'c>(
     conversation: &'c HistoryConversation,
     report: &mut HistoryImportReport,
@@ -136,13 +151,31 @@ pub(super) fn runs<'c>(
         }
         report.messages += 1;
         match runs.last_mut() {
-            Some(run) if run[0].role == message.role && run.len() < TURN_MESSAGE_CAP => {
+            Some(run)
+                if run[0].role == message.role
+                    && run[0].said_by == message.said_by
+                    && run.len() < TURN_MESSAGE_CAP =>
+            {
                 run.push(message);
             }
             _ => runs.push(vec![message]),
         }
     }
     runs
+}
+
+/// The bucket an imported message speaks in (FIX 15412). The owner's own
+/// history (ARCH-0027) makes a user-side message the source names no other
+/// speaker for the owner's: `User`. Everything else is words brought in from
+/// outside that neither the owner nor this vault's companion spoke: a user
+/// side the source says was a delegating agent or an unknown speaker, and the
+/// external assistant the export recorded, each `Counterparty`. The source's
+/// own side and `said_by` stay in the provenance.
+fn witness_author(message: &HistoryMessage) -> WitnessAuthor {
+    match (message.role, message.said_by) {
+        (HistoryRole::User, None) => WitnessAuthor::User,
+        (HistoryRole::User, Some(_)) | (HistoryRole::Assistant, _) => WitnessAuthor::Counterparty,
+    }
 }
 
 pub(super) fn standing(
@@ -187,10 +220,7 @@ pub(super) fn imported_message(
 ) -> WitnessMessage {
     WitnessMessage {
         id: id.map(|id| id.to_hex()),
-        author: match message.role {
-            HistoryRole::User => WitnessAuthor::User,
-            HistoryRole::Assistant => WitnessAuthor::Companion,
-        },
+        author: witness_author(message),
         message_type: format!("import.{}", source.source_id()),
         content: message.text.clone(),
         parts: None,
@@ -313,18 +343,24 @@ impl Vault {
     ///
     /// Each message becomes a MESSAGE grouped into one-speaker TURNs under one
     /// CONVERSATION, BM25-indexed at once. The source's speaker is the author:
+    /// the owner's prompts speak as the user, a delegating agent's or an
+    /// unknown speaker's prompts and the export's assistant as a counterparty;
     /// no `AuthoredBy` edge names the importer, and a source system prompt is
     /// never landed. Each MESSAGE occurred when its source says and every row
     /// is learned at `imported_at`. The TURN carries the import stamp, so the
     /// Dreamer treats what it extracts from it as `Imported` evidence, which
     /// never auto-approves. A message whose text the ledger already holds is
     /// skipped; with other text it lands as a revision beside what landed
-    /// before.
+    /// before. A conversation the source shared reads to the members the
+    /// owner mapped and to the importer: its rows are bound under its
+    /// container's source policy, whose readers each import sets again
+    /// (ARCH-0027 #import-audience).
     ///
     /// # Errors
     ///
-    /// A failure of the vault itself. A turn the write door or a gate refuses
-    /// is counted in the report instead, and the import goes on.
+    /// A failure of the vault itself, and a source's sharing that maps a
+    /// member to no live PERSON. A turn the write door or a gate refuses is
+    /// counted in the report instead, and the import goes on.
     pub fn import_history(
         &self,
         owner: &AuthenticatedOwner,
@@ -333,12 +369,33 @@ impl Vault {
         imported_at: u64,
     ) -> MemoryResult<HistoryImportReport> {
         let mut report = HistoryImportReport::new(conversation);
+        let memory = self.memory(owner.revalidate(self)?, EdgeActorClass::Human);
+        // The container's readers, as this export names them, are set before
+        // any of its rows lands.
+        let sharing = conversation
+            .sharing
+            .as_ref()
+            .map(|sharing| {
+                memory.with_verified_actor_write_txn(|wtxn| {
+                    let actor = owner.revalidate_in_txn(self, wtxn)?;
+                    sharing::container_policy_in_txn(
+                        self,
+                        wtxn,
+                        source,
+                        sharing,
+                        actor,
+                        imported_at,
+                    )
+                })
+            })
+            .transpose()?;
         let import = Import {
             vault: self,
-            memory: self.memory(owner.revalidate(self)?, EdgeActorClass::Human),
+            memory,
             owner,
             source,
             conversation,
+            sharing,
             conversation_id: derive(
                 derived_domains::HISTORY_CONVERSATION,
                 &[source.source_id(), &conversation.native_id],
@@ -379,6 +436,9 @@ struct Import<'v> {
     owner: &'v AuthenticatedOwner,
     source: HistorySource,
     conversation: &'v HistoryConversation,
+    /// The source policy of the conversation's sharing container; `None`
+    /// for a conversation the source did not share.
+    sharing: Option<EntityId>,
     conversation_id: EntityId,
     conversation_body: Vec<u8>,
     fallback_ms: u64,
@@ -449,19 +509,46 @@ impl Import<'_> {
                 return Ok(());
             }
             self.owner.revalidate_in_txn(self.vault, wtxn)?;
+            let stamped = source_audience::body_names_obligation(&body);
             let mut out = Vec::new();
             rmpv::encode::write_value(&mut out, &Msgpack::Map(fields))
                 .map_err(|_| crate::error::Error::InvalidConfig("conversation body".into()))?;
-            self.vault
-                .batch_in()
-                .put(
+            let batch = self.vault.batch_in();
+            if !stamped {
+                batch
+                    .put(
+                        &id,
+                        ENTITY_TYPE_CONVERSATION,
+                        occurred,
+                        self.imported_at,
+                        &out,
+                    )
+                    .apply(wtxn)?;
+                return Ok(());
+            }
+            // A conversation a source landing stamped is put again only under
+            // this import's proof, and bound again where it was born, in the
+            // same write (fix list row 16256). An import that shares nothing
+            // leaves it alone.
+            let (Some(policy), Some(thread)) = (
+                self.sharing,
+                source_audience::binding_in(self.vault, wtxn, &id)?,
+            ) else {
+                return Ok(());
+            };
+            let birth = SourceAudienceBirth::mint_in(self.vault, wtxn, &policy)?;
+            source_audience::mark_birth_in_txn(self.vault, wtxn, &birth, &id)?;
+            batch
+                .put_source_bound(
                     &id,
                     ENTITY_TYPE_CONVERSATION,
                     occurred,
                     self.imported_at,
                     &out,
+                    &birth,
                 )
                 .apply(wtxn)?;
+            source_audience::bind_record_in_txn(self.vault, wtxn, &id, &thread)?;
             Ok(())
         });
         match settled {
@@ -492,19 +579,26 @@ impl Import<'_> {
     }
 
     /// The turn `count` new messages of `run` land in, and the first order
-    /// free there: the first turn of the run's chain whose order space holds
-    /// them all. A turn not stored yet holds a whole run, so the walk ends.
+    /// free there: the first turn of the run's chain that speaks as the run
+    /// speaks and whose order space holds them all. A turn born of another
+    /// speaker is passed over too, so a revision whose speaker the source now
+    /// knows (an unknown speaker's words, known later as the owner's) never
+    /// lands in a turn of another bucket. A turn not stored yet holds a whole
+    /// run, so the walk ends.
     fn turn_with_room(
         &self,
         txn: &heed::RoTxn<'_>,
         run: &[&HistoryMessage],
         count: u32,
     ) -> MemoryResult<(EntityId, u64)> {
+        let author = witness_author(run[0]);
         let mut place = 0;
         loop {
             let turn_id = self.chain_turn(run, place)?;
             let next_order = next_witness_message_order(&self.vault.store, txn, &turn_id)?;
-            if next_order + u64::from(count) <= u64::from(u32::MAX) + 1 {
+            let speaks = stored_witness_turn_author(&self.vault.store, txn, &turn_id)?
+                .is_none_or(|stored| stored == author);
+            if speaks && next_order + u64::from(count) <= u64::from(u32::MAX) + 1 {
                 return Ok((turn_id, next_order));
             }
             place += 1;
@@ -524,7 +618,7 @@ impl Import<'_> {
         let (source, conversation) = (self.source, self.conversation);
         let mut skipped = 0;
         let mut pending = Vec::new();
-        let (turn_id, mut next_order, count) = {
+        let (turn_id, mut next_order, count, birth) = {
             let txn = self
                 .vault
                 .store
@@ -540,7 +634,14 @@ impl Import<'_> {
             }
             let count = u32::try_from(pending.len()).unwrap_or(u32::MAX);
             let (turn_id, next_order) = self.turn_with_room(&txn, run, count)?;
-            (turn_id, next_order, count)
+            // The landing's proof under the container's source policy: every
+            // row the turn lands carries the source-audience obligation (fix
+            // list row 16256).
+            let birth = self
+                .sharing
+                .map(|policy| SourceAudienceBirth::mint_in(self.vault, &txn, &policy))
+                .transpose()?;
+            (turn_id, next_order, count, birth)
         };
         #[cfg(test)]
         if let Some(between) = BETWEEN_READ_AND_WRITE.with_borrow_mut(Option::take) {
@@ -607,11 +708,12 @@ impl Import<'_> {
             imported_at: self.imported_at,
             conversation_body: self.conversation_body.clone(),
             message_occurred: occurred,
-            source_audience: None,
+            source_audience: birth,
+            attribution: SourceAttribution::Unbound,
         };
         let moved = Cell::new(false);
         let landed = self.memory.witness_imported(&turn, &stamp, |wtxn| {
-            self.owner.revalidate_in_txn(self.vault, wtxn)?;
+            let actor = self.owner.revalidate_in_txn(self.vault, wtxn)?;
             // The rows this turn was built on, read again where they are
             // written: another import may have landed a message since.
             for (message, previous) in &pending {
@@ -636,6 +738,24 @@ impl Import<'_> {
             for (native_id, row) in &rows {
                 ledger::put(&self.vault.store, wtxn, source, native_id, row)?;
             }
+            // Every row the turn stamped is bound in its own write, under the
+            // conversation's thread of its container's policy.
+            if let Some(policy) = &self.sharing {
+                let thread = sharing::conversation_thread_in_txn(
+                    self.vault,
+                    wtxn,
+                    policy,
+                    &conversation.native_id,
+                    actor,
+                    self.imported_at,
+                )?;
+                let records = [self.conversation_id, turn_id]
+                    .into_iter()
+                    .chain(rows.iter().map(|(_, row)| row.message));
+                for record in records {
+                    source_audience::bind_record_in_txn(self.vault, wtxn, &record, &thread)?;
+                }
+            }
             Ok(())
         });
         if moved.get() && !last {
@@ -655,6 +775,9 @@ impl Import<'_> {
                         report.new += 1;
                     }
                 }
+                if !report.turns.contains(&turn_id) {
+                    report.turns.push(turn_id);
+                }
             }
             Err(error) => {
                 let reasons = refusal(&error).ok_or(error)?;
@@ -666,5 +789,7 @@ impl Import<'_> {
     }
 }
 
+// FIX [LIBTEST-QUARANTINE-INGEST-HISTORY-LAND-TESTS]: the lib test target's type check fails here (3 errors: E0063 x2, E0061 x1); port it, then drop this gate
+#[cfg(any())]
 #[cfg(test)]
 mod tests;

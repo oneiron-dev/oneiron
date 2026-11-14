@@ -49,6 +49,7 @@ mod call_context;
 mod campaign_doors;
 mod campaign_split_doors;
 mod channel_doors;
+mod check_in_doors;
 mod checkout_doors;
 mod claim_settle_doors;
 mod cleanup_doors;
@@ -130,12 +131,17 @@ mod host_door_rows {
 pub(in crate::api) use host_door_rows::needs_caller_credential;
 pub(super) mod host_doors;
 mod host_trigger_doors;
+// The hosted import's verbs (ARCH-0027 #hosted-import).
+mod hosted_import_doors;
 mod hub_doors;
 mod hyde_doors;
 mod identity;
 mod identity_doors;
 mod identity_topology_doors;
+mod image_edit_doors;
 mod inbox_group_doors;
+// The inquiry rows (INQUIRE-1 PR 5): the asking side and the member side.
+mod inquiry_doors;
 mod invocations;
 mod invoke;
 mod learning_doors;
@@ -169,6 +175,7 @@ mod output;
 pub(super) mod owner_binding;
 mod pack_preview_doors;
 mod persona_doors;
+mod plan_doc_doors;
 mod plugin_section_doors;
 mod policy_doors;
 mod proactivity_digest_doors;

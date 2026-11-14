@@ -75,12 +75,8 @@ pub enum NoteLifecycleStatus {
     Tombstoned,
 }
 
-/// `vault.notes.seal` and `vault.notes.lifecycle`: the NOTE named.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NoteRefRequest {
-    pub note_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::note::lifecycle::NoteRefRequest;
 
 /// `vault.notes.lifecycle`: where one NOTE stands, and its seal.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

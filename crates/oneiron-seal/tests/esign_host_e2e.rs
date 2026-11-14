@@ -329,10 +329,9 @@ fn ready(dir: &std::path::Path) -> TestResult<Ready> {
         oneiron::store::GateDecisionId::now(),
     )?;
     let capabilities = vault.issue_esign_capabilities(&owner_auth, id)?;
-    let canonical_url = format!(
-        "https://example.test/sign#{}",
-        capabilities[0].1.expose_for_delivery()
-    );
+    // The QR page the certificate names; the seal adds its own QR
+    // capability as the fragment.
+    let canonical_url = "https://example.test/esign/verify".to_owned();
     oneiron::test_support::mark_esign_sent(&vault, id, actor, now)?;
     assert!(!vault.esign_document(id)?.ready_to_seal());
     let capability = capabilities.into_iter().next().ok_or("no capability")?.1;

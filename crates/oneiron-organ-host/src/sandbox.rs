@@ -8,10 +8,13 @@
 //! allows it, nice +10. Open files are the engine's own limits, the
 //! machine's descriptor floor: a call or reply carries any number of
 //! regions across its frames (protocol 2.0, FIX 6190), and the runtime
-//! closes each input's descriptor once it has mapped it. Not built: a syscall
-//! filter. No parent-death signal: Linux ties it to the spawning thread,
-//! which may be a short-lived worker; the organ runtime exits at EOF on its
-//! socket.
+//! closes each input's descriptor once it has mapped it. On Linux every
+//! organ then starts under a seccomp deny-list (`syscall_filter`, census
+//! L4-09): ptrace, mount, bpf, kexec, module load, perf_event_open, the
+//! keyring, userfaultfd and process_vm_* kill it. Not built: the canon's
+//! syscall allow-list (FIX [ORGAN-SECCOMP-ALLOW-LIST]). No parent-death
+//! signal: Linux ties it to the spawning thread, which may be a short-lived
+//! worker; the organ runtime exits at EOF on its socket.
 //!
 //! A third-party organ also starts inside a filesystem fence (FIX 7885,
 //! ARCH-0075): it reads the system's own files, its program and its spec's
@@ -56,6 +59,8 @@ mod landlock;
 mod scratch;
 #[cfg(target_os = "macos")]
 mod seatbelt;
+#[cfg(target_os = "linux")]
+mod syscall_filter;
 
 pub(crate) use fence::Cell;
 pub(crate) use scratch::Scratch;
@@ -79,6 +84,10 @@ struct Plan {
     /// itself to before exec (FIX 7885).
     #[cfg(target_os = "linux")]
     landlock: Option<std::os::fd::OwnedFd>,
+    /// Every organ's syscall filter, which the child installs after
+    /// `no_new_privs` (census L4-09).
+    #[cfg(target_os = "linux")]
+    syscalls: syscall_filter::SyscallFilter,
 }
 
 /// What [`command`] set up that the start reads back once the child runs.
@@ -137,6 +146,8 @@ fn confine(
         .as_ref()
         .map(|scratch| landlock::ruleset(spec, scratch.path()))
         .transpose()?;
+    #[cfg(target_os = "linux")]
+    let syscalls = syscall_filter::SyscallFilter::deny_list()?;
     let plan = Plan {
         #[cfg(target_os = "linux")]
         data: grant,
@@ -158,6 +169,8 @@ fn confine(
         join: cell.as_ref().ok().map(|cell| cell.procs().to_owned()),
         #[cfg(target_os = "linux")]
         landlock,
+        #[cfg(target_os = "linux")]
+        syscalls,
     };
     command
         .env_clear()
@@ -173,8 +186,8 @@ fn confine(
     // SAFETY: the closure runs in the child between fork and exec, after the
     // descriptors are in place. It only makes async-signal-safe calls
     // (open, write, close, setpgid, setrlimit, prctl, landlock_restrict_self,
-    // unshare, setpriority) on values computed before the fork, and
-    // allocates nothing.
+    // unshare, setpriority) on values computed before the fork, the syscall
+    // filter's program included, and allocates nothing.
     unsafe {
         command.pre_exec(move || plan.apply());
     }
@@ -281,7 +294,11 @@ impl Plan {
                 libc::write(fd, word.as_ptr().cast(), word.len());
             }
         }
-        Ok(())
+        // The syscall filter, after `no_new_privs` and once the namespaces
+        // are made: nothing the child still does before exec is a denied
+        // call. An error fails the start, so the organ never runs
+        // unfiltered (census L4-09).
+        self.syscalls.install()
     }
 }
 

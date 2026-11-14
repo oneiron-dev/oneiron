@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, PoisonError, mpsc};
 
 use super::{ArtifactServedFile, ArtifactSnapshotSelector};
 use crate::batch::secret_scan::ContainerReader;
+use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
 use oneiron_store::batch::secret_scan::container::{
@@ -75,11 +76,13 @@ impl Vault {
         path: &str,
         token: Option<&str>,
         principal: Option<EntityId>,
+        owner: Option<&AuthenticatedOwner>,
     ) -> Result<Option<ArtifactServedFile>> {
         let vault = Arc::clone(self);
         let artifact = artifact.to_owned();
         let path = path.to_owned();
         let token = token.map(str::to_owned);
+        let owner = owner.cloned();
         let (checkpoint_tx, checkpoint_rx) = tokio::sync::mpsc::unbounded_channel();
         let (resume_tx, resume_rx) = mpsc::channel();
         let reader = ContainerReader {
@@ -96,6 +99,7 @@ impl Vault {
                 &path,
                 token.as_deref(),
                 principal,
+                owner.as_ref(),
                 &reader,
             );
             reader

@@ -1,12 +1,14 @@
-//! `tasks.wait({agents, all?, n_of?, step_key})` (slice 6.5b): a run's wait
-//! over AGENT children it spawned with `self.agents.spawn`, beside the
-//! reader-children wait the same row takes. The wait is the caller's own
-//! attempt's: each child must be an attempt that attempt spawned in its run,
-//! and every miss answers one refusal. A wait that is done answers its
-//! reduction, kept under its step key. One that is not parks an executor's
-//! run on it, and the write that ends a child delivers the reduction as the
-//! run's reply. A caller with no executor step to park, a host door's, is
-//! answered the reduction as it stands, and asks again under the same key.
+//! `tasks.wait({agents, all?, n_of?, until?, step_key})` (slice 6.5b): a
+//! run's wait over AGENT children it spawned with `self.agents.spawn`,
+//! beside the reader-children wait the same row takes. The wait is the
+//! caller's own attempt's: each child must be an attempt that attempt
+//! spawned in its run, and every miss answers one refusal. A wait that is
+//! done answers its reduction, kept under its step key. One that is not
+//! parks an executor's run on it, and the write that ends a child, or the
+//! due sweep once its `until` has passed ([AGENT-WAIT-DEADLINE]), delivers
+//! the reduction as the run's reply. A caller with no executor step to park,
+//! a host door's, is answered the reduction as it stands, and asks again
+//! under the same key.
 
 use std::collections::HashSet;
 
@@ -29,10 +31,10 @@ impl HostSelfDispatcher<'_> {
     /// The wait of this run's own attempt over the AGENT children `agents`
     /// names. `park` says the caller is an executor's step, which a wait
     /// that is not done parks; any other caller is answered the reduction as
-    /// it stands. A call that names reader children, a request or a cutoff
-    /// beside the agents, a bad id, policy or step key, a run bound to a
-    /// room or to no agent attempt, or an attempt that is not this run's own
-    /// child fails, and nothing waits.
+    /// it stands. A call that names reader children or a request beside the
+    /// agents, a bad id, policy or step key, a run bound to a room or to no
+    /// agent attempt, or an attempt that is not this run's own child fails,
+    /// and nothing waits.
     pub(super) fn dispatch_agent_wait(
         &self,
         call: &TaskWaitSetCall,
@@ -47,7 +49,7 @@ impl HostSelfDispatcher<'_> {
                 disk_floor: None,
             })
         };
-        if !call.tasks.is_empty() || call.request.is_some() || call.until.is_some() {
+        if !call.tasks.is_empty() || call.request.is_some() {
             return Ok(failed("task_wait_invalid"));
         }
         let mut seen = HashSet::with_capacity(agents.len());
@@ -78,7 +80,15 @@ impl HostSelfDispatcher<'_> {
             return Ok(failed("task_wait_unbound"));
         };
         Ok(
-            match open_agent_wait(vault, self.actor, parent, &children, policy, &call.step_key)? {
+            match open_agent_wait(
+                vault,
+                self.actor,
+                parent,
+                &children,
+                policy,
+                &call.step_key,
+                call.until,
+            )? {
                 AgentWaitOpen::Reduced { wait, result } if park && !result.done => {
                     SelfDispatchOutcome::DurableWait(SelfDurableWait {
                         wait_id: wait,

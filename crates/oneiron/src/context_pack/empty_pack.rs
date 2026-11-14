@@ -72,20 +72,15 @@ pub(super) fn projected_context_pack_empty_reason(
 /// [`ContextPack::empty`]: crate::ContextPack::empty
 /// [`UnfinalizedContextPack::finish_projected_json`]: crate::context_pack::UnfinalizedContextPack::finish_projected_json
 pub fn refresh_projected_empty_context(pack: &mut ContextPack) {
-    // An abstained retrieval keeps its state beside the L2 base (FIX 22309).
-    let abstained = pack
-        .empty
-        .as_ref()
-        .is_some_and(|empty| matches!(empty.reason, EmptyReason::BelowThreshold));
-    if !pack.results.is_empty()
-        || !pack.neighbors.is_empty()
-        || (pack.l2_base.is_some() && !abstained)
-        || !pack.capabilities.is_empty()
-    {
+    if !pack.results.is_empty() || !pack.neighbors.is_empty() || !pack.capabilities.is_empty() {
         pack.empty = None;
         return;
     }
-    if pack.empty.is_some() {
+    // A state already set stays, beside the L2 base too: the base answers no
+    // query, so an abstained retrieval, or one its reader's filter left
+    // empty, keeps saying so (FIX 22309, E2E RETRIEVAL-06). An L2 base with
+    // no state set is an answered pack.
+    if pack.empty.is_some() || pack.l2_base.is_some() {
         return;
     }
 

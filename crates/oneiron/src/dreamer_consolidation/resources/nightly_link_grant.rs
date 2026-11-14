@@ -27,11 +27,8 @@ fn nightly_link_bound(actor: WriteActor) -> Result<GrantBound> {
     )
 }
 
-/// The owner grants the vault's own Dreamer its existing nightly-link bound.
-/// The writer is resolved by the vault, never supplied by the caller.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NightlyLinkGrantRequest {}
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_consolidation::resources::nightly_link_grant::NightlyLinkGrantRequest;
 
 /// Mint the same bound the nightly landing door checks, with the normal
 /// standing-grant receipt and revocation lifecycle. Nothing is minted by default.

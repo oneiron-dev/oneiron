@@ -27,15 +27,8 @@ use crate::registry::{
 };
 use crate::serialize::ExportBody;
 
-/// Which agent to share, and the born-with text to send with it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackExportRequest {
-    pub agent_ref: String,
-    /// The born-with text to send with the pack; absent sends none (OF-491).
-    #[serde(default)]
-    pub travel: Option<TravelChoice>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::share_travel::agent_pack_export::AgentPackExportRequest;
 
 /// The travelling AgentPack folder, with what travelled and what stayed home.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

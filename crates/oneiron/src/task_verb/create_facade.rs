@@ -135,6 +135,9 @@ impl Memory<'_> {
         // leaves no partial entity and burns no rate slot.
         let validated = validate_task_create(self.vault(), spec, now)?;
         let direct = self.with_verified_actor_write_txn(|wtxn| {
+            // Plan mode `required`: a brief-less TASK pins no plan, so it
+            // starts no run of such an agent but the owner's.
+            self.require_plan_admission_in(&*wtxn, validated.assignee, None)?;
             let ceiling =
                 task_actor_ceiling(self.vault(), &*wtxn, self.actor(), self.actor_class())?;
             if ceiling != PolicyApprovalCeiling::Auto {

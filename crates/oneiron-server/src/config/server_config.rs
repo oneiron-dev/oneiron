@@ -480,6 +480,12 @@ pub struct ServeConfig {
     /// [`oneiron::PAGE_SEAL_WARNING`]). The tier is chosen when the vault is
     /// created; a sealed vault opens sealed whatever this says.
     pub maximum_tier: bool,
+    /// `off_record_dump_suppression`: whether a process that holds an
+    /// off-record room turns its core dumps off (ARCH-0052 threat-model
+    /// note; census row L6-18). On by default; `false`, or
+    /// `ONEIRON_OFF_RECORD_DUMP_SUPPRESSION=false`, lets the owner attach a
+    /// debugger or keep a core file. `oneiron doctor` reports it.
+    pub off_record_dump_suppression: bool,
     /// `device_class = "phone"` or `"computer"`: what kind of machine this
     /// install is, as this host declares it (FIX 3349). Its enrolment carries
     /// it for the owner to approve; it is never read off the operating
@@ -596,6 +602,7 @@ impl Default for ServeConfig {
             hosted_kms_key_ref: None,
             hooks: true,
             maximum_tier: false,
+            off_record_dump_suppression: true,
             device_class: vault.machine_device_class,
             esign_delivery_outbox_dir: None,
             publisher_training_outbox_dir: None,

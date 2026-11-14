@@ -232,6 +232,12 @@ pub enum StoreError {
     /// another one, or a page seal bound to another; nothing was rewritten.
     #[error("this vault store holds another storage id than the one the open adopts")]
     StorageIdMismatch,
+    /// A custody door for one purpose of erasable key was handed the ref of
+    /// a key custody holds for another purpose (FIX 23943: the home
+    /// handoff's retire door, given a grant's scope opening ref). The key
+    /// was not touched, and nothing else the request named was staged.
+    #[error("the erasable key ref names a key of another purpose; it was not touched")]
+    ErasableKeyPurposeMismatch,
 }
 
 /// What was wrong with one side-table row.
@@ -290,6 +296,7 @@ impl StoreError {
             Self::SideTableKeyUndeclared { .. } => ErrorKind::SideTableKeyUndeclared,
             Self::ArchivedVault => ErrorKind::ArchivedVault,
             Self::StorageIdMismatch => ErrorKind::StorageIdMismatch,
+            Self::ErasableKeyPurposeMismatch => ErrorKind::ErasableKeyPurposeMismatch,
         }
     }
 }

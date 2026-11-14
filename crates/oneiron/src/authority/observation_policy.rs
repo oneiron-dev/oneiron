@@ -153,7 +153,12 @@ impl RawValue for AuthorityObservationPolicy {
             log_headroom_ancestor_pairs: values[6],
             log_fold_memory_floor_bytes: (values[7] != 0).then_some(values[7]),
         };
-        policy.validate()?;
+        // The write door validates every policy it stores, so a stored row
+        // that fails the check is store damage, not a setting to refuse
+        // (ARCH-0006a #list-read-built).
+        policy
+            .validate()
+            .map_err(|_| Error::CorruptedIndex("authority observation policy"))?;
         Ok(policy)
     }
 }

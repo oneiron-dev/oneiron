@@ -17,8 +17,12 @@ pub(crate) fn live_share_for_holder_in_txn(
     let Some((share, _)) = read_share_in_txn(&vault.store, txn, share_id)? else {
         return Ok(None);
     };
+    // The share's end is a wall-clock edge handed to its recipient (DEC-0006
+    // duration amendment; `AccessGrant::expires_at`): a caller's slip-clock
+    // `now` can bring it forward, never put it back past the recording clock.
+    let at = now.max(crate::ports::job_recorded_at_in_txn(&vault.store, txn)?);
     if share.recipient_ref != *holder
-        || share.grant().effective_status_at(now) != AccessGrantStatus::Active
+        || share.grant().effective_status_at(at) != AccessGrantStatus::Active
         || !crate::vault::live_entity_row_in_txn(&vault.store, txn, share_id)?.is_live()
     {
         return Ok(None);

@@ -398,6 +398,7 @@ impl JobQueue for Memory {
             state: AttemptState::Queued,
             lease_owner: None,
             attempt_count: 0,
+            lease_expirations: Vec::new(),
             claimed_at: None,
             scheduled_at: None,
             retry_of: None,
@@ -420,6 +421,7 @@ impl JobQueue for Memory {
             executor_model: None,
             executor_seat: None,
             executor_role: None,
+            planned_binding: None,
             read_set: None,
             cancel_state: Default::default(),
             result_ref: None,
@@ -427,6 +429,10 @@ impl JobQueue for Memory {
             asks: Vec::new(),
             placement: None,
             history: Vec::new(),
+            active_pause: None,
+            terminal_exhaust: None,
+            signal_intents: Vec::new(),
+            budget_refusal: None,
         };
         txn.jobs.insert(*record.id.as_bytes(), record.clone());
         Ok(EnqueueOutcome::Enqueued(record))

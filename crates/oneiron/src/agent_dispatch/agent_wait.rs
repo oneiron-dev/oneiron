@@ -1,6 +1,6 @@
 //! A run's wait over the AGENT children it spawned (slice 6.5b, primitive
-//! D): `tasks.wait({agents, all?, n_of?, step_key})`, the children named by
-//! the attempt ids `self.agents.spawn` answered with.
+//! D): `tasks.wait({agents, all?, n_of?, until?, step_key})`, the children
+//! named by the attempt ids `self.agents.spawn` answered with.
 //!
 //! One wait is one row, keyed by the waiting attempt and its step key. Its
 //! first done reduction is kept and answers every later call of that key,
@@ -9,6 +9,15 @@
 //! of an attempt ends in, reduces the waits that name the child in the
 //! child's own transaction, and a done one is delivered there as the reply
 //! of each run parked on it.
+//!
+//! A wait may name `until`, unix milliseconds ([AGENT-WAIT-DEADLINE]). Once
+//! it has passed, a reduction that meets no policy is done as `cutoff`, with
+//! what is still pending. While such a wait is not done, a `d` row keyed by
+//! its `until` stands beside its `w` rows, and the host's housekeeping pass
+//! calls [`Vault::settle_due_agent_waits`], which reduces each due wait and
+//! delivers it. So a run parked on a wait is answered at its deadline though
+//! no child ended. A later call under the same step key keeps the first
+//! call's `until`, as the reader wait does.
 //!
 //! The wait reads state only: each child's terminal state and the ref of
 //! the result it attached. A child's words stay in its own lane.
@@ -36,12 +45,17 @@ pub(crate) fn agent_dispatch_child_wait_accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<AgentWaitSet, Raw>(bytes)
 }
 
-/// The tagged index rows the declaration names: `w`, a child's waits.
+/// The tagged index rows the declaration names: `w`, a child's waits, and
+/// `d`, the unsettled waits that name an `until`, in the order they come due.
 const INDEX: SideTable<Vec<u8>, Vec<u8>, Raw> =
     SideTable::new(&side_table::AGENT_DISPATCH_CHILD_WAIT_INDEX);
 
 /// A `w` row's value: a presence marker.
 const WAITER: &[u8] = b"w";
+/// A `d` row's value: a presence marker.
+const DUE: &[u8] = b"d";
+/// The most due waits one write of the due sweep settles.
+const DUE_PAGE: usize = 256;
 /// What a stored row that does not read as a wait is.
 const CORRUPT: &str = "agent child wait set";
 /// The state of a child whose row was pruned: it had ended before that.
@@ -73,8 +87,8 @@ pub struct AgentWaitSetResult {
     /// Whether the wait is over. A done reduction is kept, and answers every
     /// later call of the same step key.
     pub done: bool,
-    /// Why it is done: `all`, `quorum` or `impossible`; `None` while it is
-    /// not.
+    /// Why it is done: `all`, `quorum`, `impossible` or `cutoff` (its
+    /// `until` passed first); `None` while it is not.
     pub reason: Option<String>,
 }
 
@@ -99,6 +113,11 @@ struct AgentWaitSet {
     policy: AgentWaitPolicy,
     step_key: String,
     settled: Option<AgentWaitSetResult>,
+    /// When the wait is done at the latest, unix milliseconds; `None` for a
+    /// wait with no deadline, and for every wait kept before one could name
+    /// it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    until: Option<u64>,
 }
 
 impl RawValue for AgentWaitSet {
@@ -176,10 +195,38 @@ fn waiter_wait(key: &[u8]) -> Result<EntityId> {
     EntityId::from_bytes(bytes)
 }
 
+/// A `d` row's key: its tag, the wait's `until` big-endian, so the rows sort
+/// by when they come due, and the wait.
+fn due_key(until_ms: u64, wait: EntityId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(25);
+    key.push(b'd');
+    key.extend_from_slice(&until_ms.to_be_bytes());
+    key.extend_from_slice(wait.as_bytes());
+    key
+}
+
+/// The wait a `d` row's key names, when its `until` has come by `now_ms`;
+/// `None` once it is later.
+fn due_wait(key: &[u8], now_ms: u64) -> Result<Option<EntityId>> {
+    let until: [u8; 8] = key
+        .get(1..9)
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or(Error::CorruptedIndex("agent child wait due key"))?;
+    if u64::from_be_bytes(until) > now_ms {
+        return Ok(None);
+    }
+    let wait: [u8; 16] = key
+        .get(9..25)
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or(Error::CorruptedIndex("agent child wait due key"))?;
+    EntityId::from_bytes(wait).map(Some)
+}
+
 /// Opens, or reads again, the wait `step_key` names for `parent`, the
 /// attempt `actor` runs as, over `children` in the order given, and reduces
 /// it, all in one write. A new wait is admitted only over children `parent`
-/// spawned in its own run; a kept one answers what it kept.
+/// spawned in its own run, and is done at `until` at the latest; a kept one
+/// answers what it kept, under the `until` it was opened with.
 ///
 /// # Errors
 ///
@@ -191,6 +238,7 @@ pub(crate) fn open_agent_wait(
     children: &[AttemptId],
     policy: AgentWaitPolicy,
     step_key: &str,
+    until: Option<u64>,
 ) -> Result<AgentWaitOpen> {
     let wait = agent_wait_id(parent, step_key)?;
     let queue = AttemptQueue::new(vault);
@@ -231,6 +279,7 @@ pub(crate) fn open_agent_wait(
                     policy,
                     step_key: step_key.to_owned(),
                     settled: None,
+                    until,
                 };
                 WAITS.put(&vault.store, wtxn, &wait, &set)?;
                 for child in children {
@@ -241,10 +290,13 @@ pub(crate) fn open_agent_wait(
                         &WAITER.to_vec(),
                     )?;
                 }
+                if let Some(until) = until {
+                    INDEX.put(&vault.store, wtxn, &due_key(until, wait), &DUE.to_vec())?;
+                }
                 set
             }
         };
-        let result = settle_in_txn(vault, &queue, wtxn, set, None)?;
+        let result = settle_in_txn(vault, &queue, wtxn, set, None, crate::unix_millis_now())?;
         Ok(AgentWaitOpen::Reduced { wait, result })
     })
 }
@@ -270,16 +322,18 @@ fn spawned_by(
     Ok(payload.parent_attempt == Some(parent.id) && row.run_id == parent.run_id)
 }
 
-/// Reduces `set` over its children's rows as `txn` holds them. `ended` is a
-/// row the caller's own transaction just ended, read in place of its stored
-/// copy. A child stands as the newest try of its retry lineage; a lineage
-/// with no one newest try stands as the try the wait named. Only a completed
-/// child counts toward a quorum.
+/// Reduces `set` over its children's rows as `txn` holds them, at `now_ms`.
+/// `ended` is a row the caller's own transaction just ended, read in place
+/// of its stored copy. A child stands as the newest try of its retry
+/// lineage; a lineage with no one newest try stands as the try the wait
+/// named. Only a completed child counts toward a quorum. A wait whose
+/// `until` has come and that meets no policy is done as `cutoff`.
 fn reduce(
     queue: &AttemptQueue<'_>,
     txn: &heed::RoTxn<'_>,
     set: &AgentWaitSet,
     ended: Option<&AttemptRecord>,
+    now_ms: u64,
 ) -> Result<AgentWaitSetResult> {
     let mut settled = Vec::new();
     let mut pending = Vec::new();
@@ -317,6 +371,7 @@ fn reduce(
         AgentWaitPolicy::All if pending.is_empty() => Some("all"),
         AgentWaitPolicy::NOf { n } if completed >= n as usize => Some("quorum"),
         AgentWaitPolicy::NOf { n } if completed + pending.len() < n as usize => Some("impossible"),
+        _ if set.until.is_some_and(|until| now_ms >= until) => Some("cutoff"),
         _ => None,
     };
     Ok(AgentWaitSetResult {
@@ -328,20 +383,22 @@ fn reduce(
     })
 }
 
-/// Reduces `set` in the caller's transaction. A first done reduction is
-/// kept, its index rows go, and it is delivered as the reply of every run
-/// parked on the wait. A settled set answers the reduction it kept.
+/// Reduces `set` in the caller's transaction at `now_ms`. A first done
+/// reduction is kept, its index rows go, its due row with them, and it is
+/// delivered as the reply of every run parked on the wait. A settled set
+/// answers the reduction it kept.
 fn settle_in_txn(
     vault: &Vault,
     queue: &AttemptQueue<'_>,
     wtxn: &mut heed::RwTxn<'_>,
     mut set: AgentWaitSet,
     ended: Option<&AttemptRecord>,
+    now_ms: u64,
 ) -> Result<AgentWaitSetResult> {
     if let Some(result) = &set.settled {
         return Ok(result.clone());
     }
-    let result = reduce(queue, wtxn, &set, ended)?;
+    let result = reduce(queue, wtxn, &set, ended, now_ms)?;
     if !result.done {
         return Ok(result);
     }
@@ -351,9 +408,12 @@ fn settle_in_txn(
         let child = agent_wait_attempt(child).ok_or(Error::CorruptedIndex(CORRUPT))?;
         INDEX.delete(&vault.store, wtxn, &waiter_key(child, set.id))?;
     }
+    if let Some(until) = set.until {
+        INDEX.delete(&vault.store, wtxn, &due_key(until, set.id))?;
+    }
     let reply = serde_json::to_value(&result)
         .map_err(|_| Error::InvariantViolation("agent wait answer encode"))?;
-    crate::code_run::deliver_wait_in_txn(vault, wtxn, set.id, &reply, crate::unix_millis_now())?;
+    crate::code_run::deliver_wait_in_txn(vault, wtxn, set.id, &reply, now_ms)?;
     Ok(result)
 }
 
@@ -375,6 +435,7 @@ pub(crate) fn settle_agent_child_waits_in_txn(
         return Ok(());
     }
     let queue = AttemptQueue::new(vault);
+    let now_ms = crate::unix_millis_now();
     // Every earlier try of the ended row is read, however long the lineage:
     // the wait's index row stands under the try it named. A walk that meets
     // a row twice stops.
@@ -399,9 +460,56 @@ pub(crate) fn settle_agent_child_waits_in_txn(
                 .get(&vault.store, wtxn, &wait)?
                 .filter(|set| set.settled.is_none())
             {
-                settle_in_txn(vault, &queue, wtxn, set, Some(ended))?;
+                settle_in_txn(vault, &queue, wtxn, set, Some(ended), now_ms)?;
             }
         }
     }
     Ok(())
+}
+
+impl Vault {
+    /// The due sweep of the waits over AGENT children
+    /// ([AGENT-WAIT-DEADLINE]): every wait whose `until` has come by
+    /// `now_ms`, unix milliseconds, and that nothing settled first is
+    /// reduced (`cutoff`, unless a policy is met in the same reduction),
+    /// kept, and delivered as the reply of every run parked on it, and its
+    /// due row goes. The host calls it on each housekeeping pass. Each page
+    /// of due rows is one write. Answers how many due rows it took.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, and a stored wait or due row that does not decode.
+    pub fn settle_due_agent_waits(&self, now_ms: u64) -> Result<usize> {
+        let queue = AttemptQueue::new(self);
+        let mut taken = 0;
+        loop {
+            let page = self.with_write_txn_grouped(|wtxn| {
+                let mut due = Vec::new();
+                for row in INDEX.iter_from(&self.store, wtxn, b"d")? {
+                    let (key, _) = row?;
+                    let Some(wait) = due_wait(&key, now_ms)? else {
+                        break;
+                    };
+                    due.push((key, wait));
+                    if due.len() == DUE_PAGE {
+                        break;
+                    }
+                }
+                for (key, wait) in &due {
+                    if let Some(set) = WAITS
+                        .get(&self.store, wtxn, wait)?
+                        .filter(|set| set.settled.is_none())
+                    {
+                        settle_in_txn(self, &queue, wtxn, set, None, now_ms)?;
+                    }
+                    INDEX.delete(&self.store, wtxn, key)?;
+                }
+                Ok(due.len())
+            })?;
+            taken += page;
+            if page < DUE_PAGE {
+                return Ok(taken);
+            }
+        }
+    }
 }

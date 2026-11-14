@@ -40,6 +40,7 @@ pub(super) fn decode_agent_definition_value(value: &Value) -> Result<AgentDefini
     let mut refusal = None;
     let mut models = None;
     let mut compaction_model = None;
+    let mut optional_memory = None;
     let mut seen = [false; AGENT_DEF_BODY_KEYS.len()];
 
     for (key, value) in entries {
@@ -56,6 +57,13 @@ pub(super) fn decode_agent_definition_value(value: &Value) -> Result<AgentDefini
         if seen[index] {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "duplicate body key",
+            )));
+        }
+        // The added key is encoded last, so a body that carries it re-encodes
+        // to its own bytes only when nothing follows it (Sol #1523 F2).
+        if optional_memory.is_some() {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "optional_memory must be the last body key",
             )));
         }
         seen[index] = true;
@@ -224,6 +232,11 @@ pub(super) fn decode_agent_definition_value(value: &Value) -> Result<AgentDefini
             KEY_REFUSAL => refusal = Some(decode_refusal_dial(value)?),
             KEY_MODELS => models = Some(decode_agent_models(value)?),
             KEY_COMPACTION_MODEL => compaction_model = Some(decode_compaction_model(value)?),
+            KEY_OPTIONAL_MEMORY => {
+                optional_memory = Some(super::optional_memory::decode_optional_memory_profile(
+                    value,
+                )?);
+            }
             _ => unreachable!("index resolved from AGENT_DEF_BODY_KEYS"),
         }
     }
@@ -287,6 +300,7 @@ pub(super) fn decode_agent_definition_value(value: &Value) -> Result<AgentDefini
         refusal,
         models: models.unwrap_or_default(),
         compaction_model,
+        optional_memory,
     };
     validate_agent_definition(&definition)?;
     Ok(definition)

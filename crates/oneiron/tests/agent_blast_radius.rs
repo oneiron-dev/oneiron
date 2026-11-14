@@ -8,9 +8,16 @@
 //! switch-off lists both; `vault.agents.made_by.get` lists what an agent
 //! made, a definition it saved and what that one made included, and leaves
 //! out what another agent made; `vault.agents.pause_tree` pauses what waits
-//! in one act with one receipt, a running branch listed and not paused, and
-//! `vault.agents.resume_tree` restores exactly what it paused; the
-//! switch-off answer offers the pause with its count.
+//! in one act with one receipt, and `vault.agents.resume_tree` restores
+//! exactly what it paused; the switch-off answer offers the pause with its
+//! count.
+//!
+//! A running child pauses at its next step boundary (Engine RULING
+//! PAUSE-BOUNDARY-SCOPE = B, 13 Nov): its run, driven here by the engine
+//! executor with a scripted model and runtime, stops once the step it was
+//! running has committed, and after the resume its next lease runs on at
+//! the next step, no step run twice. A resume before any step took the
+//! pause withdraws it, and the run goes on unpaused.
 //!
 //! The owner's calls go through the verbs by name on the embedded owner's
 //! handle, as the facade does. The agent's spawn and save go through the
@@ -21,7 +28,10 @@
 //! the TASK under the agent (OF-532); the fixture lands that row directly:
 //! the owner creates it with the agent as its owner.
 
-use std::sync::Arc;
+use std::future::Future;
+use std::pin::pin;
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll, Waker};
 
 use oneiron::agent_def::{
     AgentCeiling, AgentDefinition, AgentDefinitionPutDisposition, AgentScope,
@@ -35,14 +45,25 @@ use oneiron::attempt_queue::{
 };
 use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use oneiron::code_run::{
-    HostSelfDispatcher, SelfAgentSpawnCall, SelfAgentSpawnResult, SelfCall, SelfDispatchOutcome,
-    SelfDispatcher, parse_agent_put_request,
+    CodeRunDeterminism, HostSelfDispatcher, SelfAgentSpawnCall, SelfAgentSpawnResult, SelfCall,
+    SelfDispatchOutcome, SelfDispatcher, parse_agent_put_request,
 };
 use oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
+use oneiron::engine_executor::{
+    EngineExecutorConfig, EngineExecutorLimits, EngineExecutorOutcome, EngineNativeExecutor,
+    JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
+};
 use oneiron::housekeeping::HousekeepingBudget;
+use oneiron::llm::ReplyAssertions;
+use oneiron::prompt::workspace_test_prompt_package_root;
+use oneiron::run_tree::{RunBranchSignal, RunSignalState, RunTreeAdapter};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::TaskCreateSpec;
-use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
+use oneiron::{
+    BudgetLease, ContentPart, EdgeActorClass, EntityId, FatalLlmError, FinishReason, LlmBackend,
+    LlmGenerateFuture, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, LlmStreamResult,
+    LlmUsage, ModelId, ModelLocality, ModelTierRef, TimeRange, Vault, VaultConfig, WriteActor,
+};
 use rmpv::Value as RmpValue;
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -65,6 +86,9 @@ const RESUME_REASON: &str = "gate.allow.owner_agent_tree_resume";
 
 /// The lease owner this test claims rows as.
 const WORKER: &str = "agent-blast-radius";
+
+/// The run the author's root attempt serves; the children it spawns join it.
+const RUN: &str = "run-agent-blast-radius";
 
 /// How far ahead of the fixture's clock each watcher ticks, seconds.
 const WATCH_AHEAD: u64 = 3_600;
@@ -145,7 +169,7 @@ fn fixture() -> TestResult<Fixture> {
             target: AgentDispatchTarget::Custom(agent),
             parent_attempt: None,
             dedupe_key: None,
-            run_id: None,
+            run_id: Some(RUN.to_owned()),
             now,
         })?
     else {
@@ -471,8 +495,9 @@ fn no_members() -> Value {
 /// The ruled test: the author spawns a child that waits and one that runs,
 /// owns a watcher and saved an agent. The owner's pause_tree switches the
 /// saved agent off, pauses the waiting child and holds the watcher's tick
-/// in one act with one receipt; the running child is listed, not paused.
-/// resume_tree restores each, and a repeat answers that resume.
+/// in one act with one receipt; the running child is to pause at its next
+/// step boundary. resume_tree restores each and withdraws the running
+/// child's pause, which no step took; a repeat answers that resume.
 #[test]
 fn pause_tree_pauses_the_child_and_the_watcher_and_resume_tree_restores_them() -> TestResult {
     let f = fixture()?;
@@ -486,13 +511,13 @@ fn pause_tree_pauses_the_child_and_the_watcher_and_resume_tree_restores_them() -
     let before = as_owner(&f, MADE_BY, json!({"agent_def_ref": f.agent}))?;
     assert_eq!(
         before["pause_offer"],
-        json!({"verb": PAUSE_TREE, "pausable": 3}),
-        "the saved agent, the waiting child and the watcher: {before}"
+        json!({"verb": PAUSE_TREE, "pausable": 4}),
+        "the saved agent, the waiting child, the running child and the watcher: {before}"
     );
 
     let paused = as_owner(&f, PAUSE_TREE, json!({"agent_def_ref": f.agent}))?;
     assert_eq!(paused["agent_def_ref"], id_json(f.agent), "{paused}");
-    assert_eq!(paused["count"], json!(3), "{paused}");
+    assert_eq!(paused["count"], json!(4), "{paused}");
     assert_eq!(
         paused["paused"]["agents"],
         json!([saved.to_hex()]),
@@ -510,10 +535,11 @@ fn pause_tree_pauses_the_child_and_the_watcher_and_resume_tree_restores_them() -
     );
     assert_eq!(paused["paused"]["hooks"], json!([]), "{paused}");
     assert_eq!(
-        paused["running"],
+        paused["pausing_at_next_step"],
         json!([hex(running)]),
-        "a running branch is listed, not paused: {paused}"
+        "a running branch pauses at its next step boundary: {paused}"
     );
+    assert_eq!(paused["running"], json!([]), "{paused}");
     assert!(paused["running_cancel_door"].as_str().is_some(), "{paused}");
     assert!(
         paused["receipt_ref"]
@@ -534,6 +560,11 @@ fn pause_tree_pauses_the_child_and_the_watcher_and_resume_tree_restores_them() -
     assert_eq!(resumed["already_resumed"], json!(false), "{resumed}");
     assert_eq!(resumed["resumed"], paused["paused"], "{resumed}");
     assert_eq!(resumed["left_as_found"], no_members(), "{resumed}");
+    assert_eq!(
+        resumed["withdrawn"],
+        json!([hex(running)]),
+        "no step took the running child's pause: {resumed}"
+    );
     assert_eq!(tree_receipts(&f, RESUME_REASON)?, 1, "one receipt");
     assert_eq!(state(&f, child)?, AttemptState::Queued);
     assert!(enabled(&f, saved)?, "the saved agent is back on");
@@ -659,5 +690,278 @@ fn a_held_watcher_ticks_only_after_resume_tree() -> TestResult {
         json!([]),
         "after the resume the tick releases, late, and settles the watch TASK: {ticked}"
     );
+    Ok(())
+}
+
+fn block_on_ready<F: Future>(future: F) -> F::Output {
+    let waker = Waker::noop();
+    let mut cx = Context::from_waker(waker);
+    let mut future = pin!(future);
+    match future.as_mut().poll(&mut cx) {
+        Poll::Ready(output) => output,
+        Poll::Pending => panic!("executor future unexpectedly pending"),
+    }
+}
+
+/// A model that answers every step with one program and counts the
+/// requests it received.
+struct CountingBackend {
+    requests: Mutex<usize>,
+}
+
+impl CountingBackend {
+    fn new() -> Self {
+        Self {
+            requests: Mutex::new(0),
+        }
+    }
+
+    fn requests(&self) -> usize {
+        *self.requests.lock().expect("the request count")
+    }
+}
+
+impl LlmBackend for CountingBackend {
+    fn generate<'a>(
+        &'a self,
+        _request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        *self.requests.lock().expect("the request count") += 1;
+        let mut usage = LlmUsage::zero();
+        usage.raw_provider = json!({});
+        let response = LlmResponse {
+            message: LlmMessage {
+                role: LlmMessageRole::Assistant,
+                content: vec![ContentPart::Text {
+                    text: "console.log('step');".to_owned(),
+                    signature: None,
+                }],
+            },
+            usage,
+            finish_reason: FinishReason::Stop,
+            reply_assertions: ReplyAssertions::default(),
+            token_scores: None,
+        };
+        Box::pin(async move { Ok(response) })
+    }
+
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(FatalLlmError::InvalidRequest.into())
+    }
+}
+
+/// A runtime whose every step runs and leaves the run going on.
+struct PendingRuntime;
+
+impl JsCodeModeRuntime for PendingRuntime {
+    fn run_step(
+        &mut self,
+        _step: JsCodeModeStep<'_>,
+        _host: &mut dyn JsCodeModeHost,
+    ) -> oneiron::Result<JsCodeModeStepOutcome> {
+        Ok(JsCodeModeStepOutcome::pending("step observation"))
+    }
+}
+
+/// Runs the leased child `leased`, the worker agent's run, through the
+/// engine executor, as its worker does, for at most `soft_steps` steps: each
+/// step asks `backend` once.
+fn run_child(
+    f: &Fixture,
+    leased: &AttemptRecord,
+    backend: &CountingBackend,
+    soft_steps: u32,
+) -> TestResult<EngineExecutorOutcome> {
+    let actor = WriteActor::new(f.worker, EdgeActorClass::Agent);
+    let gated = HostSelfDispatcher::for_leased_agent_attempt(&f.vault, actor, leased)?;
+    let lease = BudgetLease::for_test("agent-blast-radius");
+    let mut runtime = PendingRuntime;
+    let config = EngineExecutorConfig {
+        run_id: EntityId::from_bytes(*leased.id.as_bytes())?,
+        task: "count carefully".to_owned(),
+        prompt_package_root: workspace_test_prompt_package_root()?,
+        model: ModelId::new("seat/generative_reasoner@1cadcf6de87a")?,
+        model_locality: ModelLocality::OwnServer,
+        seat_effort: None,
+        global_tier: ModelTierRef("executor-tier".to_owned()),
+        determinism: CodeRunDeterminism::new(1_719_000_001_000, [7_u8; 32]),
+        limits: EngineExecutorLimits { soft_steps },
+        wake: None,
+    };
+    let mut executor = EngineNativeExecutor::new(&f.vault, backend, &lease, &mut runtime, &gated);
+    Ok(block_on_ready(executor.run(&config)).map_err(|error| format!("the run: {error:?}"))?)
+}
+
+/// How a run returned, as its status reads.
+fn status(outcome: &EngineExecutorOutcome) -> String {
+    format!("{:?}", outcome.status)
+}
+
+/// The run signals on branch `id` of the fixture's run.
+fn branch_signals(f: &Fixture, id: AttemptId) -> TestResult<Vec<RunBranchSignal>> {
+    Ok(RunTreeAdapter::new(&f.vault)
+        .read_branch_signals(id, RUN)?
+        .ok_or("the branch's signals read")?)
+}
+
+/// The engine RULING PAUSE-BOUNDARY-SCOPE = B: the owner's pause_tree
+/// pauses a running child at its next step boundary. The step it was
+/// running commits, the run stops before its next model request, and its
+/// row stands under a person's pause that names the owner. resume_tree
+/// resumes it; its next lease runs on at the next step, and no step runs
+/// twice.
+#[test]
+fn pause_tree_pauses_a_running_child_at_its_next_step_boundary() -> TestResult {
+    let f = fixture()?;
+    let running = spawn_child(&f, "blast-running")?;
+    let leased = claim(&f.vault, running)?;
+
+    let paused = as_owner(&f, PAUSE_TREE, json!({"agent_def_ref": f.agent}))?;
+    assert_eq!(
+        paused["pausing_at_next_step"],
+        json!([hex(running)]),
+        "{paused}"
+    );
+    assert_eq!(paused["count"], json!(1), "{paused}");
+    assert_eq!(
+        state(&f, running)?,
+        AttemptState::Leased,
+        "its step runs on"
+    );
+
+    let backend = CountingBackend::new();
+    let outcome = run_child(&f, &leased, &backend, 3)?;
+    assert_eq!(
+        status(&outcome),
+        "Paused { next_step_seq: 1 }",
+        "the step that was running commits, then the run stops"
+    );
+    assert_eq!(backend.requests(), 1, "no model request after the boundary");
+    let row = AttemptQueue::new(&f.vault)
+        .get(running)?
+        .ok_or("the branch's row reads back")?;
+    assert_eq!(row.state, AttemptState::Paused);
+    assert_eq!(row.lease_owner, None, "its lease is released");
+    let event = row.events.last().ok_or("the pause is on the row")?;
+    assert_eq!(event.kind, AttemptInterventionKind::Pause);
+    assert_eq!(event.actor, f.owner.to_hex(), "the owner's pause");
+    let signals = branch_signals(&f, running)?;
+    assert_eq!(signals.len(), 1, "{signals:?}");
+    assert_eq!(
+        signals[0].state,
+        RunSignalState::Settled,
+        "the pause is taken"
+    );
+
+    let resumed = as_owner(
+        &f,
+        RESUME_TREE,
+        json!({"pause_ref": paused["pause_ref"].clone()}),
+    )?;
+    assert_eq!(
+        resumed["resumed"]["branches"],
+        json!([hex(running)]),
+        "{resumed}"
+    );
+    assert_eq!(resumed["withdrawn"], json!([]), "{resumed}");
+    assert_eq!(state(&f, running)?, AttemptState::Queued);
+
+    let released = claim(&f.vault, running)?;
+    let again = CountingBackend::new();
+    let outcome = run_child(&f, &released, &again, 2)?;
+    assert_eq!(
+        status(&outcome),
+        "Yielded { next_step_seq: 3 }",
+        "the run goes on at step 1"
+    );
+    assert_eq!(again.requests(), 2, "steps 1 and 2 ask the model");
+    let steps: Vec<u64> = outcome
+        .replay_record
+        .step_checkpoints
+        .iter()
+        .map(|checkpoint| checkpoint.seq)
+        .collect();
+    assert_eq!(steps, vec![0, 1, 2], "no step runs twice");
+    Ok(())
+}
+
+/// A resume before any step took the pause withdraws it: no later step
+/// takes it, and the run goes on unpaused.
+#[test]
+fn resume_tree_withdraws_a_boundary_pause_the_run_never_took() -> TestResult {
+    let f = fixture()?;
+    let running = spawn_child(&f, "blast-running")?;
+    let leased = claim(&f.vault, running)?;
+
+    let paused = as_owner(&f, PAUSE_TREE, json!({"agent_def_ref": f.agent}))?;
+    assert_eq!(
+        paused["pausing_at_next_step"],
+        json!([hex(running)]),
+        "{paused}"
+    );
+    let resumed = as_owner(
+        &f,
+        RESUME_TREE,
+        json!({"pause_ref": paused["pause_ref"].clone()}),
+    )?;
+    assert_eq!(resumed["withdrawn"], json!([hex(running)]), "{resumed}");
+    assert_eq!(resumed["resumed"], no_members(), "{resumed}");
+    assert_eq!(resumed["left_as_found"], no_members(), "{resumed}");
+    assert!(
+        branch_signals(&f, running)?.is_empty(),
+        "the pause is withdrawn"
+    );
+
+    let backend = CountingBackend::new();
+    let outcome = run_child(&f, &leased, &backend, 2)?;
+    assert_eq!(
+        status(&outcome),
+        "Yielded { next_step_seq: 2 }",
+        "the run goes on unpaused"
+    );
+    assert_eq!(state(&f, running)?, AttemptState::Leased);
+    Ok(())
+}
+
+/// The engine RULING PAUSE-BOUNDARY-SCOPE = B: `vault.runs.pause` on a
+/// running branch posts the same boundary pause instead of refusing. A
+/// repeat before the boundary posts nothing more. The run stops after the
+/// step it was running, and `vault.runs.resume` queues it again.
+#[test]
+fn runs_pause_pauses_a_running_branch_at_its_next_step_boundary() -> TestResult {
+    let f = fixture()?;
+    let running = spawn_child(&f, "blast-running")?;
+    let leased = claim(&f.vault, running)?;
+
+    let pausing = as_owner(&f, "vault.runs.pause", json!({"branch": hex(running)}))?;
+    assert_eq!(
+        pausing["effect"],
+        json!("pausing_at_next_step"),
+        "{pausing}"
+    );
+    assert_eq!(pausing["branch"]["state"], json!("Leased"), "{pausing}");
+    let again = as_owner(&f, "vault.runs.pause", json!({"branch": hex(running)}))?;
+    assert_eq!(again["effect"], json!("pausing_at_next_step"), "{again}");
+    assert_eq!(
+        branch_signals(&f, running)?.len(),
+        1,
+        "a repeat posts no second pause"
+    );
+
+    let backend = CountingBackend::new();
+    let outcome = run_child(&f, &leased, &backend, 3)?;
+    assert_eq!(
+        status(&outcome),
+        "Paused { next_step_seq: 1 }",
+        "the step that was running commits, then the run stops"
+    );
+    assert_eq!(state(&f, running)?, AttemptState::Paused);
+    let paused = as_owner(&f, "vault.runs.pause", json!({"branch": hex(running)}))?;
+    assert_eq!(paused["effect"], json!("already_paused"), "{paused}");
+
+    let resumed = as_owner(&f, "vault.runs.resume", json!({"branch": hex(running)}))?;
+    assert_eq!(resumed["effect"], json!("resumed"), "{resumed}");
+    assert_eq!(state(&f, running)?, AttemptState::Queued);
     Ok(())
 }

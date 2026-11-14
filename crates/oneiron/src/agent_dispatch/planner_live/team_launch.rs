@@ -380,6 +380,9 @@ impl AgentDispatcher<'_> {
             run_id: anchor.run_id.map(str::to_owned),
             now: at,
         };
+        // Plan mode: a team an agent launches answers for its seat once, at
+        // its leader; the members are the leader's own.
+        self.refuse_unplanned_child_in_txn(wtxn, anchor.parent, plan.plan.agent_def)?;
         let leader =
             self.queue_fresh_in_txn(wtxn, dispatch(anchor.parent, "leader"), leader_context)?;
         let Some(pattern) = team_pattern(plan.plan.shape.pattern) else {

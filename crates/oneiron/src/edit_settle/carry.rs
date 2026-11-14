@@ -28,10 +28,11 @@ use serde::{Deserialize, Serialize};
 
 use super::codec::{RECORD, settlement_key_parts};
 use super::pending::{PENDING, PendingProposalView};
-use super::receipts::{already_settled, manifest_ref, settlement_receipt_record};
+use super::receipts::{manifest_ref, settlement_receipt_record};
 use super::records::{
     SettleConsent, SettleOutcomeKind, SettleSelectOutcome, SettledReview, SettlementRecord,
 };
+use super::ref_state::{RefMove, move_ref_in_txn};
 use crate::Vault;
 use crate::anchored_annotation::ReanchorSummary;
 use crate::blob_artifact::read_blob_artifact_head_in_txn;
@@ -332,9 +333,7 @@ impl Vault {
         let key = settlement_key_parts(artifact, &held.run_ref);
         let manifest_hash = manifest_ref(&held.manifest)?;
         let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
-        if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
-            return Err(already_settled(&existing));
-        }
+        move_ref_in_txn(&self.store, wtxn, &key, RefMove::Settle)?;
         let head = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact)?
             .ok_or(Error::EntityNotFound)?;
         let record = SettlementRecord {

@@ -1,0 +1,17 @@
+{
+  "name": "vault.agents.plan_mode.set",
+  "description": "The owner sets an agent's plan mode, when it still has the expected one: required (a run another starts needs an approved plan), optional (the default) or off (it proposes no plan).",
+  "input": "crate::agent_def::AgentPlanModeSetRequest",
+  "output": "crate::agent_def::AgentPlanModeView",
+  "call": "crate::agent_def::set_agent_plan_mode_from_request_as(memory.vault(), &memory.embedded_owner(\"vault.agents.plan_mode.set\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "grant_widen",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

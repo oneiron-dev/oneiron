@@ -31,10 +31,58 @@ pub enum GpuRegistryError {
     #[error("invalid GPU registry input")]
     InvalidInput,
 }
+const MINUTES_PER_DAY: u16 = 24 * 60;
+/// The widest UTC offset in use (UTC+14:00), in minutes.
+const MAX_UTC_OFFSET_MINUTES: i16 = 14 * 60;
+/// The daily hours a pod takes new leases, read in one fixed UTC offset
+/// (CROSS-ARCH-0024 #my-network 07: embeddings can run on the GPU box at
+/// night). `start` is the first minute in, `end` the first minute out; a
+/// start later than the end runs across midnight.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GpuPodHours {
+    start_minute: u16,
+    end_minute: u16,
+    utc_offset_minutes: i16,
+}
+impl GpuPodHours {
+    /// Minutes after local midnight. A start equal to the end names no
+    /// hours, so it is refused rather than read as all day or none.
+    pub fn new(
+        start_minute: u16,
+        end_minute: u16,
+        utc_offset_minutes: i16,
+    ) -> Result<Self, GpuRegistryError> {
+        if start_minute >= MINUTES_PER_DAY
+            || end_minute >= MINUTES_PER_DAY
+            || start_minute == end_minute
+            || !(-MAX_UTC_OFFSET_MINUTES..=MAX_UTC_OFFSET_MINUTES).contains(&utc_offset_minutes)
+        {
+            return Err(GpuRegistryError::InvalidInput);
+        }
+        Ok(Self {
+            start_minute,
+            end_minute,
+            utc_offset_minutes,
+        })
+    }
+    /// Whether `now` (Unix seconds) falls inside these hours.
+    pub fn contains(self, now: u64) -> bool {
+        let local_seconds = i128::from(now) + i128::from(self.utc_offset_minutes) * 60;
+        let minute = local_seconds.rem_euclid(86_400) / 60;
+        let (start, end) = (i128::from(self.start_minute), i128::from(self.end_minute));
+        if start < end {
+            start <= minute && minute < end
+        } else {
+            minute >= start || minute < end
+        }
+    }
+}
 #[derive(Clone, Debug)]
 struct Pod {
     capacity: usize,
     health: GpuHealth,
+    /// `None`: the pod takes leases at any hour.
+    hours: Option<GpuPodHours>,
 }
 /// One registry instance belongs to exactly one region. The host serializes it.
 #[derive(Debug)]
@@ -69,7 +117,28 @@ impl GpuRegistry {
         if id.is_empty() || capacity == 0 {
             return Err(GpuRegistryError::InvalidInput);
         }
-        self.pods.insert(id, Pod { capacity, health });
+        self.pods.insert(
+            id,
+            Pod {
+                capacity,
+                health,
+                hours: None,
+            },
+        );
+        Ok(())
+    }
+    /// Limits a registered pod's new leases to `hours`; `None` lifts the
+    /// limit. A lease taken inside the hours still renews to its end, so a
+    /// batch begun there is never split.
+    pub fn set_hours(
+        &mut self,
+        id: &str,
+        hours: Option<GpuPodHours>,
+    ) -> Result<(), GpuRegistryError> {
+        self.pods
+            .get_mut(id)
+            .ok_or(GpuRegistryError::InvalidInput)?
+            .hours = hours;
         Ok(())
     }
     pub fn set_health(&mut self, id: &str, health: GpuHealth) -> Result<(), GpuRegistryError> {
@@ -83,8 +152,9 @@ impl GpuRegistry {
     pub fn expire(&mut self, now: u64) {
         self.leases.retain(|_, lease| lease.expires_at > now);
     }
-    /// Sample two distinct healthy pods, then choose the lower normalized load.
-    /// `entropy` is fresh host randomness, not a pod- or client-selected value.
+    /// Sample two distinct healthy pods inside their hours, then choose the
+    /// lower normalized load. `entropy` is fresh host randomness, not a pod-
+    /// or client-selected value.
     pub fn acquire(&mut self, now: u64, entropy: [u64; 2]) -> Result<GpuLease, GpuRegistryError> {
         self.expire(now);
         let candidates: Vec<_> = self
@@ -92,7 +162,9 @@ impl GpuRegistry {
             .iter()
             .filter_map(|(id, pod)| {
                 let load = self.leases.values().filter(|l| &l.pod == id).count();
-                (pod.health.healthy() && load < pod.capacity).then_some((id, load, pod.capacity))
+                let in_hours = pod.hours.is_none_or(|hours| hours.contains(now));
+                let open = pod.health.healthy() && in_hours && load < pod.capacity;
+                open.then_some((id, load, pod.capacity))
             })
             .collect();
         if candidates.is_empty() {

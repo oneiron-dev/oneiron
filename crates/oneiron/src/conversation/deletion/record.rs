@@ -30,20 +30,25 @@ fn check_delete(
     subject: Option<EntityId>,
 ) -> Result<RoomRole> {
     actor_in_txn(&vault.store, txn, actor)?;
-    let author = if let Some((message_room, author)) = message_room_author(vault, txn, record)? {
-        if message_room != room {
-            return Err(denied());
-        }
-        author
-    } else {
-        if conversation_of(&vault.store, txn, &record)? != room {
-            return Err(denied());
-        }
-        author_in(vault, txn, record)?
-    };
+    // `author` is who the record speaks for, which a GDPR subject is matched
+    // against; `native` is the writer it proves, the only one an author
+    // delete or a self-GDPR shortcut opens for (FIX 15412).
+    let (author, native) =
+        if let Some((message_room, author)) = message_room_author(vault, txn, record)? {
+            if message_room != room {
+                return Err(denied());
+            }
+            (author, native_message_author(vault, txn, record, author)?)
+        } else {
+            if conversation_of(&vault.store, txn, &record)? != room {
+                return Err(denied());
+            }
+            let author = author_in(vault, txn, record)?;
+            (author, author)
+        };
     match reason {
         DeleteReason::UserDelete | DeleteReason::UserHardDelete
-            if author == Some(actor.entity_ref()) =>
+            if native == Some(actor.entity_ref()) =>
         {
             authorize(vault, txn, actor)?;
             require_room_policy(
@@ -85,7 +90,7 @@ fn check_delete(
             Ok(role)
         }
         DeleteReason::GdprDelete if subject.is_some() && subject == author => {
-            let personal = Some(actor.entity_ref()) == author;
+            let personal = Some(actor.entity_ref()) == native;
             let role = if personal {
                 authorize(vault, txn, actor)?;
                 RoomRole::Member
@@ -167,15 +172,24 @@ impl Vault {
                 let ids = messages_in_turn(self, &txn, record, cursor)?;
                 let mut targets = Vec::new();
                 for id in &ids {
-                    match message_room_author(self, &txn, *id)? {
-                        Some((owner, _)) if owner != room => return Err(denied()),
-                        Some((_, author))
-                            if reason == DeleteReason::PolicyDelete
-                                || author == subject.or(Some(actor.entity_ref())) =>
-                        {
-                            targets.push(*id);
-                        }
-                        _ => {}
+                    let Some((owner, author)) = message_room_author(self, &txn, *id)? else {
+                        continue;
+                    };
+                    if owner != room {
+                        return Err(denied());
+                    }
+                    // A subject's erasure selects what speaks for it; the
+                    // actor's own delete, only what it natively wrote.
+                    let selected = reason == DeleteReason::PolicyDelete
+                        || match subject {
+                            Some(_) => author == subject,
+                            None => {
+                                native_message_author(self, &txn, *id, author)?
+                                    == Some(actor.entity_ref())
+                            }
+                        };
+                    if selected {
+                        targets.push(*id);
                     }
                 }
                 drop(txn);

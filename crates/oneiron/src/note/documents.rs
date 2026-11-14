@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::batch::secret_scan::{Lifted, Part, admit_parts_in_txn};
-use crate::error::{Error, RecordError, Result};
+use crate::error::Result;
 use crate::provenance::ActorStamp;
 use crate::side_table::{self, HexId, Raw, RawValue, SideTable};
 use crate::{EntityId, Vault};
@@ -356,9 +356,9 @@ impl NoteDocument {
     }
 }
 
-pub(crate) fn invalid(reason: &'static str) -> Error {
-    Error::Record(RecordError::InvalidNoteBody(reason))
-}
+#[doc(hidden)]
+pub(crate) use oneiron_verb_wire::note::documents::invalid;
+
 /// Commits `doc` under the program-edit stamp of `action`, naming the
 /// writer's stamp token in the actor's place (FIX 10930).
 fn stamp_program_edit(doc: &LoroDoc, stamp: ActorStamp, at: u64, action: &str) {

@@ -25,8 +25,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Serialize};
-
 use super::{FIELD_EXPORT_EXCLUDED, FIELD_EXPORT_EXCLUDED_REASONS, TrainingPair};
 use crate::authority::AuthorityView;
 use crate::claim::ScopedRead;
@@ -336,6 +334,14 @@ fn source_people_in(
             Err(_) => return Ok(SourcePeople::Unknown(room)),
         }
     } else {
+        // An imported MESSAGE's AuthoredBy names who its source says spoke,
+        // never a native writer: its speakers are unknown here, so the
+        // explicit-source consent route decides (FIX 15412).
+        if entity_type == crate::registry::ENTITY_TYPE_MESSAGE
+            && crate::memory::imported_message_in_txn(&vault.store, rtxn, &source)?
+        {
+            return Ok(SourcePeople::Unknown(source));
+        }
         let mut authors = Vec::new();
         for edge in vault.store.port_edges(
             rtxn,
@@ -385,43 +391,10 @@ fn source_people_in(
     Ok(SourcePeople::Owner)
 }
 
-/// FIX 11352: who a source a training run's corpus would hold to the
-/// owner's tick holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ReservoirSourcePeople {
-    /// Someone other than the acting owner and the vault's own agents.
-    Others,
-    /// People that cannot be read.
-    Unknown,
-}
-
-/// FIX 11352: one source a training run's corpus would hold to the owner's
-/// "I obtained consent" tick.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ReservoirSourceRow {
-    /// The key a tick names: a TURN's conversation, else the source row.
-    pub source: EntityId,
-    pub people: ReservoirSourcePeople,
-    /// The scope's pairs that rest on it.
-    pub pairs: u64,
-    /// Whether the ticks the preview was given name it.
-    pub consented: bool,
-}
-
-/// FIX 11352: what a training run's corpus over one reservoir scope would
-/// hold, read before the owner prepares it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ReservoirSourcePreview {
-    /// The pairs the corpus would carry under the ticks given.
-    pub carried: u64,
-    /// The pairs the source check would leave out under them, by reason
-    /// code.
-    pub excluded: BTreeMap<String, u64>,
-    /// Each source with other people or people that cannot be read, in key
-    /// order: what the owner ticks.
-    pub sources: Vec<ReservoirSourceRow>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::edit_distance::reservoir::eligibility::{
+    ReservoirSourcePeople, ReservoirSourcePreview, ReservoirSourceRow,
+};
 
 /// FIX 11352: the preview of a training run's corpus over `scope`, under
 /// `consented`, the ticks the owner gave so far: each source its pairs rest

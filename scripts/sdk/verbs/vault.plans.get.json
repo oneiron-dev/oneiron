@@ -1,0 +1,19 @@
+{
+  "name": "vault.plans.get",
+  "description": "Reads a plan-doc through its NOTE's own read: its text, typed body, revision hash and state (in review, approved or rejected), which holds only while the text is the revision the owner answered.",
+  "input": "crate::note::PlanDocRequest",
+  "output": "crate::claim::ScopedReadResult<Option<crate::note::PlanDocView>>",
+  "call": "memory.read_plan_doc(&input)?",
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "openapi": true
+}

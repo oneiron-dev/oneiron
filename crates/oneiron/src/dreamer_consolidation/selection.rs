@@ -30,7 +30,8 @@ pub struct SelectionConfig {
     pub frequency_scale: u64,
     pub diversity_scale: u64,
     pub recency_window_ms: u64,
-    /// Maximum extraction calls in flight; low-trust partitions still run serially.
+    /// Maximum extraction calls in flight; a partition with a tool-output,
+    /// imported or unknown-lineage member still runs serially.
     pub extraction_parallelism: usize,
     /// Maximum TURNs in one neighbourhood child.
     pub extraction_turns_per_child: usize,

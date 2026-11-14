@@ -895,11 +895,16 @@ fn held_receipts(
 
 /// The policies `map`'s bindings still reach, each thread's source
 /// included, and the keys of every revision and receipt of any other policy.
-fn unreferenced_policies(map: &LoroMap) -> Vec<String> {
+/// The binding and the derived carriers of a row of `removed` reach nothing,
+/// as once they went (fix list row 17211).
+fn unreferenced_policies(map: &LoroMap, removed: &BTreeSet<EntityId>) -> Vec<String> {
     let carried = carriers(map);
     let bound: BTreeSet<EntityId> = carried
         .iter()
         .flat_map(|(_, carried)| match carried {
+            Carrier::Record { row, .. } | Carrier::Derived { row, .. } if removed.contains(row) => {
+                Vec::new()
+            }
             Carrier::Record { policy, .. } => vec![*policy],
             // A derived row's policies are its bindings (fix list row 17207).
             Carrier::Derived { policies, .. } => policies.iter().copied().collect(),
@@ -948,9 +953,11 @@ fn unreferenced_policies(map: &LoroMap) -> Vec<String> {
 
 /// Removes the binding of the row `id` from `doc`, and every machine's
 /// derived carrier of it (fix list row 17207); the canonical binding and
-/// floor stand. Each policy no binding reaches any longer goes at the
-/// window's next export or persist ([`refresh_and_scrub`]), once for a whole
-/// batch. Whether the map changed. The caller pins history and commits.
+/// floor stand. Each policy no binding reaches any longer goes in the
+/// removal's own commit, once for the whole batch: its commit owner calls
+/// [`prune_unreached_policies`] (fix list row 17211), and the window's next
+/// export or persist ([`refresh_and_scrub`]) is the backstop. Whether the
+/// map changed. The caller pins history and commits.
 ///
 /// # Errors
 ///
@@ -969,6 +976,47 @@ pub(crate) fn remove_record(doc: &LoroDoc, id: &EntityId) -> Result<bool> {
         map_delete(&map, map_key)?;
     }
     Ok(!keys.is_empty())
+}
+
+/// Whether removing the bindings of the rows `removed` would leave a policy
+/// revision or receipt in `doc`'s map that no binding reaches. A publication
+/// reads it before its removal, so it pins the window before its writer
+/// opens (fix list row 17211). Reads the document only.
+pub(crate) fn removal_prunes_policies(doc: &LoroDoc, removed: &BTreeSet<EntityId>) -> bool {
+    holds_map(doc) && !unreferenced_policies(&doc.get_map(SOURCE_AUDIENCES_MAP), removed).is_empty()
+}
+
+/// Deletes from `doc`'s map each policy revision and receipt no binding
+/// reaches any longer, in the caller's pending batch, once for a whole
+/// removal batch (fix list row 17211). These are the keys
+/// [`refresh_and_scrub`] prunes, and refresh stays the backstop. `pin` names
+/// the window pinned history-free before the first key goes. A publication
+/// pins before its writer opens ([`removal_prunes_policies`]), because LMDB
+/// cannot nest the pin's writer inside it, and so it passes `None`. No
+/// writer opens when nothing is unreached, and nothing commits. Whether
+/// anything went.
+///
+/// # Errors
+///
+/// The pin's storage failures; map write failures.
+pub(crate) fn prune_unreached_policies(
+    vault: &Vault,
+    doc: &LoroDoc,
+    pin: Option<&WindowKey>,
+) -> Result<bool> {
+    if !holds_map(doc) {
+        return Ok(false);
+    }
+    let map = doc.get_map(SOURCE_AUDIENCES_MAP);
+    let unreached = unreferenced_policies(&map, &BTreeSet::new());
+    if unreached.is_empty() {
+        return Ok(false);
+    }
+    pin_history_free(vault, pin)?;
+    for map_key in &unreached {
+        map_delete(&map, map_key)?;
+    }
+    Ok(true)
 }
 
 /// The rows `doc`'s entity map carries, by their canonical keys.
@@ -1076,7 +1124,7 @@ pub(crate) fn refresh_and_scrub(
         }
         changed = true;
     }
-    let unreferenced = unreferenced_policies(&map);
+    let unreferenced = unreferenced_policies(&map, &BTreeSet::new());
     if !unreferenced.is_empty() {
         if gone.is_empty() {
             pin_history_free(vault, pin)?;

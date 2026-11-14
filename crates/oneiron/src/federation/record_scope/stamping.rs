@@ -553,7 +553,8 @@ pub(crate) fn stamp_leader_project(
 /// owner answered the topic's ask, read in `txn`, the project selector moves to
 /// the audience they chose: only me is the default (private) project and a
 /// project is that project. The source's own sharing keeps the evidence's
-/// stamp, since a history import carries no source audience. A claim from a
+/// stamp: the rows of a conversation its source shared read to that source's
+/// readers, and the claim reads by their lineage. A claim from a
 /// batch that raised the ask, a topic with no settled rule, or a chosen project
 /// no longer visible keeps `scope` as it was. Never called on an existing row.
 pub(crate) fn stamp_import_audience_birth(

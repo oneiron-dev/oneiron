@@ -277,6 +277,9 @@ struct PolicySettings {
     pinned_split: Option<FreeTimeSplit>,
     cap_shown_at_ms: u64,
     set_at: u64,
+    /// The boundary a holder's schedule move holds the next cycle to
+    /// (FABLE-6918-1), so the new home opens no cycle before it either.
+    holder_not_before: Option<u64>,
     surface: Option<SurfaceKind>,
     prior: [u8; 32],
 }
@@ -291,6 +294,7 @@ pub(super) fn scrubbed_policy(record: &FreeTimePolicyRecord) -> PolicyFacts {
             pinned_split: policy.pinned_split,
             cap_shown_at_ms: policy.cap_shown_at_ms,
             set_at: policy.set_at,
+            holder_not_before: policy.holder_not_before,
             surface: policy
                 .surface
                 .as_ref()
@@ -369,6 +373,7 @@ pub(super) fn rejoin_policy(
         set_by_agent: acting.map(|(acting, _)| acting),
         set_grant: acting.and_then(|(_, grant)| grant),
         set_at: settings.set_at,
+        holder_not_before: settings.holder_not_before,
         surface: surface_of(settings.surface, machine),
         prior: settings.prior,
     });
