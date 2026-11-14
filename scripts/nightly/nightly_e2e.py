@@ -217,6 +217,7 @@ def runner_env(facts: dict, report: Path, temp: Path) -> dict[str, str]:
         "E2E_TEMP_ROOT": str(temp),
         "E2E_BUILD_MANIFEST": facts["manifest"],
         "E2E_BUILD_MANIFEST_SHA256": facts["sha256"],
+        "E2E_NIGHTLY": "1",  # run.ts runs a suite.nightly budget case only under this; else it reports BLOCKED
     }
 
 

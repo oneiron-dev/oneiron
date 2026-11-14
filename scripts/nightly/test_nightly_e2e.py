@@ -281,6 +281,7 @@ class NightTest(unittest.TestCase):
         self.assertNotIn("NIGHTLY_E2E_TEST_SENTINEL", env)
         self.assertEqual(env["E2E_BUILD_MANIFEST"], str((self.fixture.set / "manifest.json").resolve()))
         self.assertEqual(env["E2E_BUILD_MANIFEST_SHA256"], self.fixture.digest)
+        self.assertEqual(env["E2E_NIGHTLY"], "1")  # run.ts's NIGHTLY_ENV: suite.nightly cases run, not BLOCKED
         self.assertTrue(env["E2E_REPORT_DIR"].endswith("/runs/e2e-01/report"))
         self.assertEqual(calls[0]["workers"], "2")
         self.assertEqual(calls[0]["script"], str(self.fixture.checkout.resolve() / "tests/e2e/support/run.ts"))
