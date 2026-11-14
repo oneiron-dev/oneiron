@@ -61,6 +61,7 @@ pub mod corpus_scope;
 mod decay;
 mod deferred;
 mod demotion;
+pub(crate) mod enforcement_read;
 mod evidence_support;
 mod expression_archive;
 mod expression_preference;

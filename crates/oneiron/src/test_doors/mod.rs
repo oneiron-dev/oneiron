@@ -26,6 +26,7 @@ pub mod code_run_write_identity;
 pub mod code_view_fork;
 pub mod connector_key_suspend;
 pub mod consolidation;
+pub mod contact_family_heads;
 pub mod credit_decay_fit;
 pub mod dag_append;
 pub mod derivation_floor;
