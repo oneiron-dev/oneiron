@@ -387,12 +387,6 @@ pub(super) fn compact_window_with(
     for (_, bytes) in &update_rows {
         import_doc(&doc, bytes)?;
     }
-    // A window a cut rooted at its tip, with no `u:w:` row on top, holds no
-    // history: its tip is its shallow root. Taken before any scrub.
-    let history_free_tip = (update_rows.is_empty()
-        && doc.is_shallow()
-        && doc.shallow_since_frontiers() == doc.oplog_frontiers())
-    .then(|| doc.oplog_frontiers());
 
     // A shallow snapshot drops every row's history, and the erased and
     // withdrawn rows' bytes with it: each row the window carries or carried,
@@ -451,16 +445,6 @@ pub(super) fn compact_window_with(
     let found = crate::sync::window::replace_withdrawn_carriers(vault, &doc, &withdrawn.cutoffs)?;
     withdrawn.held.extend(found.held);
     let scrub_sends = !withdrawn.due.is_empty() || full_carriers;
-
-    // Census L6-07: a history-free window no scrub or withdrawal changed,
-    // with no queued sends to drop, would be cut to what it holds. It is not
-    // rewritten, and peers are not sent to a full resync of it again.
-    doc.commit();
-    if !scrub_sends && history_free_tip.is_some_and(|tip| tip == doc.oplog_frontiers()) {
-        #[cfg(test)]
-        before_compact_write(vault, key, &snapshot_bytes)?;
-        return settle_unchanged_window(vault, address, snapshot_bytes.as_deref(), &destroyed);
-    }
 
     // Strict shallow cut at the latest frontiers (FIX 6520): live state
     // byte-exact, op history (the payload carrier) dropped, identity kept, VV
