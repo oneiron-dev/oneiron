@@ -65,6 +65,11 @@ pub(super) fn editor_routes() -> Router<Arc<SyncServer>> {
 /// `[limits] esign_body_bytes` row, so no `DefaultBodyLimit` sits on these
 /// routes. The sessions live in this router's own registry.
 pub(super) fn public_routes() -> Router<Arc<SyncServer>> {
+    public_routes_over(SigningSessions::default())
+}
+
+/// The public signing routes over `sessions`.
+fn public_routes_over(sessions: SigningSessions) -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/sign", get(page))
         // A signing link is `/sign#<token>`: a capability in the request path
@@ -78,8 +83,32 @@ pub(super) fn public_routes() -> Router<Arc<SyncServer>> {
         .route("/sign/image", post(image))
         .route("/sign/preview", post(presentation::preview))
         .route("/sign/signature", post(presentation::signature))
-        .layer(axum::Extension(SigningSessions::default()))
+        .layer(axum::Extension(sessions))
         .layer(axum::middleware::from_fn(private_response))
+}
+
+/// The test door's handle on a public signing router's sessions.
+#[cfg(oneiron_test_support)]
+pub(crate) struct SigningRegistry(SigningSessions);
+
+#[cfg(oneiron_test_support)]
+impl SigningRegistry {
+    /// How many links, pending exchanges and open sessions the router
+    /// holds.
+    pub(crate) fn held(&self) -> (usize, usize, usize) {
+        self.0.held()
+    }
+}
+
+/// The public signing routes, as `build_app` merges them, over a registry
+/// the test door can read.
+#[cfg(oneiron_test_support)]
+pub(crate) fn public_routes_with_registry() -> (Router<Arc<SyncServer>>, SigningRegistry) {
+    let sessions = SigningSessions::default();
+    (
+        public_routes_over(sessions.clone()),
+        SigningRegistry(sessions),
+    )
 }
 
 /// `POST /sign/exchange`: the one door that reads a link's capability, from

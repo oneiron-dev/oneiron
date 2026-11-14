@@ -193,6 +193,20 @@ impl SigningSessions {
     }
 }
 
+#[cfg(oneiron_test_support)]
+impl SigningSessions {
+    /// How many links, pending exchanges and open sessions the registry
+    /// holds: the test door's view.
+    pub(super) fn held(&self) -> (usize, usize, usize) {
+        let registry = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        (
+            registry.links.len(),
+            registry.exchanges.len(),
+            registry.sessions.len(),
+        )
+    }
+}
+
 impl Registry {
     /// Drops every exchange past its lifetime, and each link left with
     /// neither an exchange nor a session.
