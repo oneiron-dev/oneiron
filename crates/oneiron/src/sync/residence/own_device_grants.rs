@@ -21,6 +21,15 @@
 //! withdrawn grant refuses there too and cannot come back. Nothing is rebuilt
 //! from a mint's claims, and a member's or a guest's grant is never served
 //! here.
+//!
+//! A row lands from any home, proven or not (Engine RULING
+//! SYNC-HOME-UNANSWERED = B, 14 Nov: never gate the owner on his own vault):
+//! it confers nothing beyond the live signed slip of the machine's own fold
+//! that binds it, whose scope is the slip's own. A withdrawal replays only
+//! from a home that proved itself a machine of the vault: it carries no
+//! signature, its replay withdraws the grant for good, and every later
+//! pairing of the owner names the same grant. A revoke the owner signs
+//! still reaches the machine at once, through its authority log.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -59,7 +68,8 @@ pub struct OwnDeviceGrantAdmission {
     /// already.
     pub withdrawn: BTreeSet<EntityId>,
     /// The grants refused: not asked for, not a person's own-device grant
-    /// for a holder whose live slip names it, or refused by the ladder.
+    /// for a holder whose live slip names it, refused by the ladder, or a
+    /// withdrawal served by a home that proved no machine of this vault.
     pub refused: BTreeSet<EntityId>,
 }
 
@@ -228,11 +238,17 @@ pub fn own_device_grant_states(
 /// asked for, a row of another kind or holder, and a tombstone over a row of
 /// another kind are refused, and nothing is written for them.
 ///
-/// The rows and tombstones carry no signature of their own, and a replayed
-/// withdrawal erases the grant for good. So `home`, the machine the answering
-/// connection proved, must still stand here as a machine of this vault on
-/// the key it proved; from any other answerer every grant is refused and
-/// nothing is written.
+/// The rows and tombstones carry no signature of their own. A row confers
+/// nothing beyond the live signed slip of this machine's own fold that binds
+/// it, so it lands whichever home served it: a home that has not proved
+/// itself yet never keeps the owner from his device (Engine RULING
+/// SYNC-HOME-UNANSWERED = B). A replayed withdrawal erases the grant for
+/// good, and every later pairing of the owner names the same grant, so a
+/// withdrawal replays only while `home`, the machine the answering
+/// connection proved, still stands here as a machine of this vault on the
+/// key it proved. From any other answerer it is refused and nothing is
+/// written; a revoke the owner signs reaches this machine through its
+/// authority log instead.
 ///
 /// # Errors
 ///
@@ -244,12 +260,7 @@ pub fn admit_own_device_grants(
     served: Vec<(EntityId, OwnDeviceGrantState)>,
 ) -> Result<OwnDeviceGrantAdmission> {
     let mut admission = OwnDeviceGrantAdmission::default();
-    if !matches!(vault.peer_machine_stands(home), PeerMachine::Proven { .. }) {
-        admission
-            .refused
-            .extend(served.into_iter().map(|(id, _)| id));
-        return Ok(admission);
-    }
+    let home_proven = matches!(vault.peer_machine_stands(home), PeerMachine::Proven { .. });
     for (id, state) in served {
         let Some(holders) = asked.get(&id) else {
             admission.refused.insert(id);
@@ -264,7 +275,7 @@ pub fn admit_own_device_grants(
                 }
             }
             OwnDeviceGrantState::Withdrawn(tombstone) => {
-                if replay_withdrawal(vault, id, &tombstone)? {
+                if home_proven && replay_withdrawal(vault, id, &tombstone)? {
                     admission.withdrawn.insert(id);
                 } else {
                     admission.refused.insert(id);

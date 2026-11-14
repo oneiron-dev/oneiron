@@ -118,10 +118,13 @@ type HomeMachineAnswer = { readonly machine: string; readonly role: string | nul
 /**
  * The owner answers his home "yours", as a surface asks him once the vault
  * first serves. Until he answers, the serving install's MACHINE stands in the
- * `unanswered` role, which proves no connection (MachineRole::answered), so a
- * device he joins to it takes no own-device grant from it and never admits
- * him. Called right after the home starts, so the checkpoint the device's
- * pairing link pins already holds the answer. Read back on the home.
+ * `unanswered` role, which proves no connection (MachineRole::answered): a
+ * device he joins to it still takes his own-device grant and admits him, but
+ * replays no grant withdrawal from it (Engine RULING SYNC-HOME-UNANSWERED = B,
+ * 14 Nov). SYNC-01/04/05 answer it as the setup step a surface asks for;
+ * SYNC-09 never does. Called right after the home starts, so the checkpoint
+ * the device's pairing link pins already holds the answer. Read back on the
+ * home.
  * Doors: GET /v1/owner/roots (this install's machine), GET and POST
  * /v1/owner/machines/answer.
  */
@@ -1060,6 +1063,10 @@ suite.todo(test, "SYNC-08", "waits on an EngineFixture opt-in that binds the mes
  *   log, so it cannot sign a machine proof yet; once that log lands the device
  *   renews at once, keeps its holder key, and goes on syncing on the renewed
  *   credential.
+ * Its home stays unanswered: the owner never answers it "yours", so the
+ *   device joins a home that proves no machine of the vault yet, and still
+ *   admits its owner with no 401 (Engine RULING SYNC-HOME-UNANSWERED = B,
+ *   14 Nov; job 26 on set 15f8c6941c6 got the 401 here).
  * Doors: EngineFixture.startDevicePeer (DevicePeer.enrolledCredential, read
  *   before the first launch, and readCredential: the credential file that
  *   `device enrol` names and the renewal replaces); on the home
@@ -1080,7 +1087,6 @@ suite.todo(test, "SYNC-08", "waits on an EngineFixture opt-in that binds the mes
  */
 suite.test(test, "SYNC-09", "A freshly enrolled device renews its paired credential once its first sync lands the vault's authority, keeps its holder key, and goes on syncing on the renewed credential", async () => {
   const home = await EngineFixture.start({ id: "SYNC-09", profile });
-  await answerHomeYours(home);
   const device = await home.startDevicePeer({ id: "SYNC-09-device" });
   const machine = sync01DeviceMachine(device);
   const enrolled = credentialParts(device.enrolledCredential);
