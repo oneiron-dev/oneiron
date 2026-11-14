@@ -334,7 +334,9 @@ pub enum WorkspaceWireOutcome {
     Answered { status: u16, body: Value },
     /// The provider answered a content read
     /// ([`WorkspaceEndpoint::answers_content`]) with a success: the file's
-    /// content, the credential stripped.
+    /// content as it came. The broker never rewrites it: a content reply
+    /// that holds a form of the credential, or a run encoded too deep to
+    /// rule one out, fails whole there and arrives as [`Self::Uncertain`].
     Content(WorkspaceContent),
     /// Nothing reached the provider: why, as a code.
     NotSent(String),

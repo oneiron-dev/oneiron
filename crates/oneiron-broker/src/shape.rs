@@ -844,6 +844,15 @@ impl Shape {
         self.row().streams
     }
 
+    /// Whether the reply is one file's content, answered whole or not at
+    /// all: Drive's download and export. The strip would hand back other
+    /// bytes as the file, so a reply it would change fails with
+    /// [`crate::Failure::ReplyHoldsKey`] instead of being redacted.
+    #[must_use]
+    pub const fn answers_file_content(self) -> bool {
+        matches!(self, Self::DriveFileDownload | Self::DriveFileExport)
+    }
+
     /// The path prefix of the one redirect this shape follows, under the same
     /// origin and with the key.
     pub(crate) const fn redirect(self) -> Option<&'static str> {
