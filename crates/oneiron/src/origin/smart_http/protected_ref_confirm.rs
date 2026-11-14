@@ -285,7 +285,11 @@ impl ProtectedRefDecision {
             if let Some(repo) = repo {
                 let coverage = protected_move.coverage_effect(repo)?;
                 if covering_bypass_ref_in_txn(&vault.store, &rtxn, &coverage)?.is_some() {
-                    decision.passes.bypassed.push(coverage);
+                    // One move named twice, through a symbolic ref and its
+                    // referent, is receipted once.
+                    if !decision.passes.bypassed.contains(&coverage) {
+                        decision.passes.bypassed.push(coverage);
+                    }
                     continue;
                 }
             }
