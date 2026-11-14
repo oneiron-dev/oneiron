@@ -7,6 +7,7 @@
 //! and once it has erased the record [`Vault::record_erase_completion`]
 //! writes the act's receipt and tells the Owners (OF-150); a Member's or
 //! Admin's ask for one is `erase_ask`.
+mod actor_erase;
 mod erase_ask;
 mod execute;
 mod export_records;
@@ -282,6 +283,11 @@ pub struct SharedActExecutionReceipt {
     /// its copy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detach: Option<DetachReport>,
+    /// The check-in decision the change ran on (2i; P24-SHAPE Q9 = A): its
+    /// act class, the actor's role, the mode, why it went, and the check-in
+    /// it spent. `None` for a change no door judges by check-in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
     pub completed_at: u64,
 }
 
@@ -627,8 +633,38 @@ impl Vault {
         starter: &AuthenticatedOwner,
         vault_id: u64,
     ) -> Result<PendingAuthorityAct> {
+        self.propose_delete_vault_with_check_in(starter, vault_id, None)
+    }
+    /// [`Self::propose_delete_vault`], judged by check-in (2j; P24-SHAPE Q7
+    /// and Q9 = A): the act records the Owner's decision, and with
+    /// `check_in_ref`, an asker's approved check-in for this vault's delete
+    /// ([`crate::check_in::vault_delete_effect_digest`]), which the Owner
+    /// applies on their own proof: it is spent in the start's writer and the
+    /// act names its requester. The veto window, the Owner executors and
+    /// every other gate of the act stay.
+    ///
+    /// # Errors
+    /// As [`Self::propose_delete_vault`]; a `check_in_ref` that names no
+    /// approved, unspent check-in for this vault's delete.
+    pub fn propose_delete_vault_with_check_in(
+        &self,
+        starter: &AuthenticatedOwner,
+        vault_id: u64,
+        check_in_ref: Option<EntityId>,
+    ) -> Result<PendingAuthorityAct> {
         let plan = encode(&DeleteVaultPlan { v: PLAN_VERSION })?;
-        self.start_authority_act(starter, vault_id, SharedActKind::DeleteVault.as_str(), plan)
+        self.start_authority_act_checked(
+            starter,
+            vault_id,
+            SharedActKind::DeleteVault.as_str(),
+            plan,
+            super::pending_act::StartCheckIn {
+                verb: "vault.shared.propose_delete",
+                act: crate::check_in::ActClass::VaultDelete,
+                effect_digest: crate::check_in::vault_delete_effect_digest(vault_id),
+                applies: check_in_ref,
+            },
+        )
     }
     /// Start a `transfer_ownership` act: the starter, a live Owner, hands
     /// ownership to `to`, a live person who is not yet an Owner.
@@ -776,6 +812,26 @@ impl Vault {
         Ok(Some(stored.delivery()))
     }
 
+    /// Records `decision`, the check-in decision the change ran on, in its
+    /// stored receipt, in the change's writer (2i, 2j; P24-SHAPE Q9 = A): a
+    /// membership door's own decision, or the one an act recorded at its
+    /// start. `None` leaves the receipt as it is.
+    fn record_receipt_check_in_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        receipt: &mut SharedActExecutionReceipt,
+        decision: Option<crate::check_in::CheckInDecision>,
+    ) -> Result<()> {
+        if decision.is_none() {
+            return Ok(());
+        }
+        receipt.check_in = decision;
+        self.store
+            .vault_meta
+            .put(txn, &key(RECEIPT_PREFIX, &receipt.id), &encode(&*receipt)?)?;
+        Ok(())
+    }
+
     /// Persist the receipt and one notice to each live Owner, the actor and
     /// every holder the change concerns, in the change's own writer.
     #[allow(clippy::too_many_arguments)]
@@ -816,6 +872,7 @@ impl Vault {
             authorizer: authorizer.as_ref().map(EntityId::to_hex),
             proposer: None,
             detach: effect.detach,
+            check_in: None,
             completed_at: now,
         };
         self.store

@@ -102,8 +102,7 @@ impl Vault {
         let refs = intent.refs.len();
         for (batch, start) in (0..refs).step_by(ORIGIN_REF_UPDATE_BATCH).enumerate() {
             let mut observed = false;
-            for index in start..(start + ORIGIN_REF_UPDATE_BATCH).min(refs) {
-                let entry = &mut intent.refs[index];
+            for entry in &mut intent.refs[start..(start + ORIGIN_REF_UPDATE_BATCH).min(refs)] {
                 if entry.status != ReceivePackRefStatus::Pending {
                     continue;
                 }

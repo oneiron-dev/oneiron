@@ -412,6 +412,7 @@ fn fork_project(
                 version: &record.version,
                 instructions: &record.desc,
                 held_out_receipts: &held_out,
+                goal: None,
             })
             .map_err(|error| match error {
                 Error::InvalidConfig(_) => refused("the judge abstained on a project tree fork"),

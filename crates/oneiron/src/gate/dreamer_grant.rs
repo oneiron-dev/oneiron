@@ -82,41 +82,6 @@ fn reach_in(
 pub(crate) const DREAMER_LANDING_ROWS_REF: &str =
     "policy:dreamer:actor_ceiling_auto+generated_permit";
 
-/// The live policy's verdict on a Dreamer write that takes back what it landed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DreamerLandingVerdict {
-    /// The policy frontier hash it was judged under.
-    pub(crate) frontier: [u8; 32],
-    /// What it was judged by, for the receipt's grant field: the Steward grant's id once a host minted it (untangle
-    /// 6.3), else [`DREAMER_LANDING_ROWS_REF`].
-    pub(crate) grant_ref: String,
-}
-
-/// The live policy's verdict, in the caller's transaction, on a Dreamer write that takes back what it landed (the
-/// strength archive, X02): `None` once the owner narrowed or removed what lets it land. While no host has minted the
-/// Dreamer's Steward grant, that is its Auto actor ceiling and its `Generated` permit; after, the grant's `derive`
-/// (which yields those rows) and its `archive` ("archive inside its grant", the Steward ruling). Its read grant is the
-/// scoped read's to apply.
-///
-/// # Errors
-///
-/// The policy's resolution.
-pub(crate) fn dreamer_landing_verdict_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    actor: crate::WriteActor,
-) -> Result<Option<DreamerLandingVerdict>> {
-    // One judge (untangle 6.7a): the archive case of the derive verdict.
-    Ok(
-        super::derive_verdict_in_txn(store, txn, actor, super::DeriveCapability::Archive, None)?
-            .ok()
-            .map(|allowance| DreamerLandingVerdict {
-                frontier: allowance.frontier,
-                grant_ref: allowance.grant_ref,
-            }),
-    )
-}
-
 /// The trusted pack the grant edits, and its body: the one owner-authored
 /// pack, else the seeded default, else (a vault with no trusted pack) the
 /// shipped default at its id.
