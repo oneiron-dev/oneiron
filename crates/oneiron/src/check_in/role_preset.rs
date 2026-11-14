@@ -104,7 +104,8 @@ pub enum RoleDefault {
 pub struct RolePresetRow {
     pub role: RolePreset,
     /// The capability envelope of the role's grant. The Deputy rides the
-    /// Admin envelope; its delegated Owner Grant is a later build.
+    /// Admin envelope; its delegated Owner powers are the Owner-issued agent
+    /// Grant it holds beside its membership (P24-SHAPE Q1 = A).
     pub powers: FederationGrantPreset,
 }
 

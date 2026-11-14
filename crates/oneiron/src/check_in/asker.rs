@@ -12,18 +12,22 @@
 //! * the caller is the vault owner, who holds every power and acts on its
 //!   own proof, or an agent on its own live owner Grant that lists the verb
 //!   (`principal_standing`, the rule every agent verb door reads): that
-//!   Grant's role is the asker's role, and its bounds say whether it holds
-//!   the power where the effect sits. An agent with no such Grant lacks the
-//!   power: absent, or propose where a role its live Grants give may propose
-//!   the act. Any other caller is refused (Q10; persons without a Grant are
-//!   FIX row CHECK-IN-PERSON-CALLER-NO-GRANT);
+//!   Grant carries the agent's delegated Owner powers, and its bounds say
+//!   whether it holds the power where the effect sits. The asker's role is
+//!   its live membership row's on the Grant's vault, so a Deputy house reads
+//!   the Deputy column; an agent with no membership, or at the Owner role
+//!   before agent Owner keys, reads the Grant's own role, Delegate
+//!   ([`grant_role`]; P24-SHAPE Q1 = A). An agent with no such Grant lacks
+//!   the power: absent, or propose where a role it reads may propose the
+//!   act. Any other caller is refused (Q10; persons without a Grant are FIX
+//!   row CHECK-IN-PERSON-CALLER-NO-GRANT);
 //! * no explicit mode row is read (the change path is PR 3), no standing row
 //!   covers an ask by digest, and the unsure test is always unsure: no
 //!   decision model judges an agent's act yet, so an act asked when unsure
 //!   waits (Q5).
 
 use super::act_class::ActClass;
-use super::chain::{covers_effect, grant_in_txn};
+use super::chain::{covers_effect, grant_in_txn, grant_role, membership_role_in_txn};
 use super::mode::CheckInMode;
 use super::policy::CheckInScope;
 use super::resolve::{
@@ -110,7 +114,8 @@ const ROLE_LACKS_POWER: &str = "the caller's role does not hold the power for th
 /// The caller as the verbs admit it.
 enum Asker {
     Owner,
-    /// An agent and the live owner Grant listing the verb.
+    /// An agent and the live owner Grant listing the verb, at the role it
+    /// reads ([`grant_role`]).
     Agent {
         agent: EntityId,
         grant: EntityId,
@@ -118,7 +123,7 @@ enum Asker {
         holds_power: bool,
     },
     /// An agent no live owner Grant lists the verb for, with the roles its
-    /// live owner Grants give it.
+    /// live owner Grants read.
     Unpowered {
         roles: Vec<RolePreset>,
         why: &'static str,
@@ -286,10 +291,11 @@ fn asker_in_txn(
             let Some(grant) = grant_in_txn(vault, txn, &grant_id)? else {
                 return unpowered_in_txn(memory, txn, NO_GRANT_LISTS_VERB);
             };
+            let membership = membership_role_in_txn(vault, txn, actor, &grant.scope)?;
             Ok(Asker::Agent {
                 agent: actor,
                 grant: grant_id,
-                role: RolePreset::of_grant_role(grant.role),
+                role: grant_role(&grant, membership),
                 holds_power: covers_effect(&grant, scope),
             })
         }
@@ -298,8 +304,9 @@ fn asker_in_txn(
     }
 }
 
-/// An agent without the power, with the roles its live owner Grants give
-/// it: each names it, stands now and was given by a live owner.
+/// An agent without the power, with the roles its live owner Grants read
+/// ([`grant_role`]): each names it, stands now and was given by a live
+/// owner.
 fn unpowered_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
@@ -308,15 +315,17 @@ fn unpowered_in_txn(
     let vault = memory.vault();
     let now = vault.instant_in_txn(txn)?.secs();
     let owners = crate::policy_model::owners_in_txn(vault, txn)?;
-    let roles = crate::federation::agent_grants_for_store_in_txn(&vault.store, txn)?
-        .into_iter()
-        .filter(|standing| {
-            standing.grant.member_ref == memory.actor()
-                && standing.stands_at(now)
-                && owners.contains(&standing.delegated_by)
-        })
-        .map(|standing| RolePreset::of_grant_role(standing.grant.role))
-        .collect();
+    let mut roles = Vec::new();
+    for standing in crate::federation::agent_grants_for_store_in_txn(&vault.store, txn)? {
+        if standing.grant.member_ref != memory.actor()
+            || !standing.stands_at(now)
+            || !owners.contains(&standing.delegated_by)
+        {
+            continue;
+        }
+        let membership = membership_role_in_txn(vault, txn, memory.actor(), &standing.grant.scope)?;
+        roles.push(grant_role(&standing.grant, membership));
+    }
     Ok(Asker::Unpowered { roles, why })
 }
 
