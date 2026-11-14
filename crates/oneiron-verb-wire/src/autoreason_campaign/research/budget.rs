@@ -5,7 +5,7 @@ use crate::research_budget::RsiSpendPurpose;
 use serde::Deserialize;
 use serde::Serialize;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ResearchReservationLine {
     /// Token-denominated loop work, by purpose.

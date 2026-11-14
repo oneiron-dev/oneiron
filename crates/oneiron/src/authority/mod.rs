@@ -493,7 +493,8 @@ pub(crate) use principal_standing::{
 };
 pub(crate) use principal_standing::{
     NoStanding, PACT_STANDING_LAPSED, PrincipalStanding, StandingHome, live_agent_principal_in,
-    principal_standing_in, principal_standing_in_txn, principal_standing_or_lapse_in_txn,
+    principal_standing_covering_or_lapse_in_txn, principal_standing_in, principal_standing_in_txn,
+    principal_standing_or_lapse_in_txn,
 };
 pub(crate) use readonly_fold::AuthorityView;
 pub(crate) use readonly_fold::authority_view_readonly_for_store_in_txn;
