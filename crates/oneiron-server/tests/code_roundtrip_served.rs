@@ -9,7 +9,10 @@
 //! commits one change on a stock clone of the export and pushes it back
 //! through the same door; the queue checks it and lands it on green, and
 //! the green export is byte-equal to the push. A member holding no such
-//! Grant is refused at the door.
+//! Grant is refused at the door. After the same loop, the owner reads what
+//! the live workbench shows (repo, task, fork and proposal, head and green,
+//! check results, the exact public diff) through the served verbs, and
+//! each answer names the loop's own ids.
 //!
 //! Two departures from the example, both of transport only: the member
 //! pushes through the direct door under a `git_push` Grant rather than a run
@@ -548,10 +551,30 @@ fn hex(bytes: &[u8]) -> String {
 
 #[test]
 fn imported_repo_survives_a_stock_change_and_reexports_byte_equal() -> TestResult {
-    on_engine_stack(round_trip)
+    on_engine_stack(|| async { round_trip().await.map(drop) })
 }
 
-async fn round_trip() -> TestResult {
+/// What one round trip leaves for the reads after it: the served app and
+/// the ids the loop made.
+struct RoundTrip {
+    fx: Fixture,
+    project: String,
+    code_repo: String,
+    snapshot: String,
+    source_commit: String,
+    task: String,
+    checkout: String,
+    epoch: Value,
+    work_ref: String,
+    baseline: String,
+    first_commit: String,
+    provenance: Value,
+    candidate: Value,
+    proposal: Value,
+    seal: Value,
+}
+
+async fn round_trip() -> TestResult<RoundTrip> {
     let fx = Fixture::new().await?;
     let project = fx.vault.root_project()?.to_hex();
     let registered = fx
@@ -576,6 +599,7 @@ async fn round_trip() -> TestResult {
 
     // The owner's checkout, which every export names.
     let checkout = EntityId::now().to_hex();
+    let task = fx.owner_task("export the greeter skill")?;
     let lease = fx
         .ok(
             "S2 checkout claim",
@@ -584,7 +608,7 @@ async fn round_trip() -> TestResult {
             json!({
                 "checkout": checkout,
                 "repo": snapshot,
-                "task": fx.owner_task("export the greeter skill")?,
+                "task": task,
                 "task_class": "edit",
                 "ttl_seconds": 3600,
                 "declared_idempotent": false,
@@ -960,6 +984,369 @@ async fn round_trip() -> TestResult {
         (&clone, &pushed),
     )
     .await?;
+    let candidate = ingress["candidate"].clone();
+    let proposal = proposals[0].clone();
+    Ok(RoundTrip {
+        fx,
+        project,
+        code_repo,
+        snapshot,
+        source_commit,
+        task,
+        checkout,
+        epoch,
+        work_ref,
+        baseline,
+        first_commit,
+        provenance,
+        candidate,
+        proposal,
+        seal,
+    })
+}
+
+/// L4-06 PR 2 (FIX 6869: the engine must "expose every read the workbench
+/// needs through the SDK (repo, task, fork/proposal, head/green, check
+/// result, exact public diff), typed"): after one round trip the owner
+/// reads each through its served verb, and each answer names the loop's
+/// own ids. Every read is checked and every miss is listed, so one run
+/// names each read that is missing or wrong.
+#[test]
+fn workbench_reads_name_the_loops_repo_task_fork_head_check_and_diff() -> TestResult {
+    on_engine_stack(workbench_reads)
+}
+
+/// The reads that answered wrong or not at all, each with its answer.
+#[derive(Default)]
+struct Misses(Vec<String>);
+
+impl Misses {
+    /// One facade read as the owner; a refusal is a miss and reads as null.
+    async fn read(
+        &mut self,
+        fx: &Fixture,
+        read: &str,
+        verb: &str,
+        body: Value,
+    ) -> TestResult<Value> {
+        let (status, answer) = fx.call(&fx.owner, verb, body).await?;
+        if status == 200 {
+            return Ok(answer);
+        }
+        self.0
+            .push(format!("{read}: {verb} answered {status}: {answer}"));
+        Ok(Value::Null)
+    }
+
+    fn check(&mut self, read: &str, what: &str, holds: bool, answer: &Value) {
+        if !holds {
+            self.0.push(format!("{read}: {what}: {answer}"));
+        }
+    }
+}
+
+/// Whether `list` is an array with an item that `matches`.
+fn any(list: &Value, matches: impl Fn(&Value) -> bool) -> bool {
+    list.as_array()
+        .is_some_and(|items| items.iter().any(matches))
+}
+
+fn names(list: &Value, id: &Value) -> bool {
+    any(list, |item| item == id)
+}
+
+async fn workbench_reads() -> TestResult {
+    let rt = round_trip().await?;
+    let fx = &rt.fx;
+    let mut misses = Misses::default();
+    let fork_session = rt.candidate["fork_session"].clone();
+    let batches = rt.candidate["batch_refs"].clone();
+    let mut works = vec![json!(rt.work_ref)];
+    works.extend(
+        rt.candidate["check_work_refs"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default(),
+    );
+
+    // Repo: the anchor, its import, its green, and its links to the
+    // loop's fork, push and checks.
+    let repo = misses
+        .read(
+            fx,
+            "repo",
+            "vault.code.repos.get",
+            json!({"repo": rt.code_repo}),
+        )
+        .await?;
+    misses.check(
+        "repo",
+        "repo, project and served name",
+        repo["repo"] == json!(rt.code_repo)
+            && repo["project"] == json!(rt.project)
+            && repo["served_repo"] == json!(SERVED_REPO),
+        &repo,
+    );
+    misses.check(
+        "repo",
+        "the loop's import",
+        any(&repo["imports"], |import| {
+            import["anchor"]["snapshot"] == json!(rt.snapshot)
+                && import["anchor"]["source_commit"] == json!(rt.source_commit)
+        }),
+        &repo,
+    );
+    misses.check(
+        "repo",
+        "green is the seal; the push's fork, ingress and checks are linked",
+        repo["green_revision"] == rt.seal
+            && names(&repo["fork_sessions"], &fork_session)
+            && any(&repo["ingress"], |ingress| {
+                ingress["provenance"] == rt.provenance && ingress["ref_name"] == json!(REF)
+            })
+            && works
+                .iter()
+                .all(|work| names(&repo["check_work_refs"], work)),
+        &repo,
+    );
+
+    // Task: the checkout the exports name holds the loop's TASK, and the
+    // TASKS section and the TASK's card read it by its id.
+    let lease = misses
+        .read(
+            fx,
+            "task",
+            "vault.code.checkout.get",
+            json!({"checkout": rt.checkout}),
+        )
+        .await?;
+    misses.check(
+        "task",
+        "the checkout names the TASK, its holder and its epoch",
+        lease["value"]["task"] == json!(rt.task)
+            && lease["value"]["checkout"] == json!(rt.checkout)
+            && lease["value"]["holder"] == json!(fx.owner_actor.to_hex())
+            && lease["value"]["epoch"] == rt.epoch,
+        &lease,
+    );
+    let section = misses.read(fx, "task", "describe", json!({})).await?;
+    misses.check(
+        "task",
+        "the TASKS section has the TASK's row, open and assigned",
+        section["kind"] == json!("tasks_section")
+            && any(&section["rows"], |row| {
+                row["id"] == json!(rt.task)
+                    && row["is_intent"] == json!(true)
+                    && matches!(
+                        row["status"].as_str(),
+                        Some("queued" | "scheduled" | "running")
+                    )
+                    && row["assignee"].is_string()
+            }),
+        &section,
+    );
+    let card = misses
+        .read(fx, "task", "describe", json!({"task_ref": rt.task}))
+        .await?;
+    misses.check(
+        "task",
+        "the TASK's card",
+        card["kind"] == json!("task_card")
+            && card["lines"][0]
+                .as_str()
+                .is_some_and(|line| line.contains(rt.task.as_str())),
+        &card,
+    );
+
+    // Fork and proposal: the push's fork on the baseline, its proposal
+    // and its sealed revision.
+    let fork = misses
+        .read(
+            fx,
+            "fork",
+            "vault.code.forks.get",
+            json!({"repo": rt.code_repo, "fork_session": fork_session}),
+        )
+        .await?;
+    misses.check(
+        "fork",
+        "the push's fork on the baseline",
+        fork["repo"] == json!(rt.code_repo)
+            && fork["fork_session"] == fork_session
+            && fork["base_revision"] == json!(rt.baseline)
+            && rt.candidate["base_revision"] == json!(rt.baseline),
+        &fork,
+    );
+    misses.check(
+        "fork",
+        "its proposal, sealed revision, push and SKILL.md",
+        names(&fork["proposal_refs"], &rt.proposal)
+            && names(&fork["revision_refs"], &rt.seal)
+            && fork["ingress"]["provenance"] == rt.provenance
+            && fork["ingress"]["ref_name"] == json!(REF)
+            && any(&fork["documents"], |document| {
+                document["path"] == json!("SKILL.md") && document["proposal_ref"] == rt.proposal
+            }),
+        &fork,
+    );
+    let proposal = misses
+        .read(
+            fx,
+            "proposal",
+            "vault.code.proposal_view",
+            json!({"proposal_ref": rt.proposal}),
+        )
+        .await?;
+    misses.check(
+        "proposal",
+        "the received SKILL.md change, applied",
+        proposal["proposal_ref"] == rt.proposal
+            && proposal["operation_kind"] == json!("received_files")
+            && proposal["status"] == json!("Applied")
+            && any(&proposal["files"], |file| file["path"] == json!("SKILL.md")),
+        &proposal,
+    );
+
+    // Head and green: the queue's pointers, its green export, and the
+    // push's batch.
+    let observed = misses
+        .read(
+            fx,
+            "head/green",
+            "vault.code.merge_queue.observe",
+            json!({"repo": rt.code_repo, "batches": batches}),
+        )
+        .await?;
+    misses.check(
+        "head/green",
+        "head and green are the repo's queue pointers, nothing pending",
+        observed["head_commit"] == repo["queue"]["head_commit"]
+            && observed["green_commit"] == repo["queue"]["green_commit"]
+            && observed["head_commit"] == observed["green_commit"]
+            && observed["pending_slow_batch_refs"] == json!([]),
+        &observed,
+    );
+    misses.check(
+        "head/green",
+        "the green export is the seal, unheld",
+        observed["green_export"]["tested_revision"] == rt.seal
+            && observed["green_export"]["green_commit"] == observed["green_commit"]
+            && observed["green_export"]["hold"].is_null(),
+        &observed,
+    );
+    misses.check(
+        "head/green",
+        "the push's batch carries its proposal",
+        any(&batches, |batch| {
+            any(&observed["batches"], |view| {
+                view["batch_ref"] == *batch && names(&view["proposals"], &rt.proposal)
+            })
+        }),
+        &observed,
+    );
+
+    // Check results: the baseline's and the push's checks passed, each
+    // with a completed receipt whose tests passed.
+    misses.check(
+        "check",
+        "the push has a check",
+        works.len() > 1,
+        &rt.candidate,
+    );
+    for work in &works {
+        let status = misses
+            .read(
+                fx,
+                "check",
+                "vault.code.merge_queue.check_status",
+                json!({"repo": rt.code_repo, "work_ref": work}),
+            )
+            .await?;
+        misses.check(
+            "check",
+            "the work passed",
+            status["work_ref"] == *work
+                && matches!(status["status"].as_str(), Some("passed" | "settled"))
+                && (*work != json!(rt.work_ref)
+                    || status["baseline_commit"] == json!(rt.source_commit)),
+            &status,
+        );
+        let Some(receipt_ref) = status["receipt_refs"][0].as_str() else {
+            misses.check("check", "the work names a receipt", false, &status);
+            continue;
+        };
+        let receipts = misses
+            .read(
+                fx,
+                "check",
+                "vault.code.checks.get",
+                json!({"repo": rt.code_repo, "work_ref": work, "receipt_ref": receipt_ref}),
+            )
+            .await?;
+        misses.check(
+            "check",
+            "a completed receipt whose tests passed",
+            receipts["receipt_ref"] == json!(receipt_ref)
+                && any(&receipts["receipts"], |attempt| {
+                    attempt["completed"] == json!(true) && attempt["tests_passed"] == json!(true)
+                }),
+            &receipts,
+        );
+    }
+
+    // The exact public diff: the first export's tree against the sealed
+    // push, one changed file, each side's bytes.
+    let preview_request = json!({
+        "repo": SERVED_REPO,
+        "code_repo": rt.code_repo,
+        "checkout": rt.checkout,
+        "epoch": rt.epoch,
+        "revision": rt.seal,
+        "ref_name": REF,
+        "expected_old_oid": rt.first_commit,
+        "endpoint": fx.endpoint,
+    });
+    let preview = misses
+        .read(
+            fx,
+            "diff",
+            "vault.code.export.preview",
+            preview_request.clone(),
+        )
+        .await?;
+    let delta = &preview["preview"];
+    misses.check(
+        "diff",
+        "ready and exact, one change: SKILL.md",
+        preview["state"] == json!("ready")
+            && delta["exact"] == json!(true)
+            && delta["files"].as_array().map(Vec::len) == Some(1)
+            && delta["files"][0]["path"] == json!("SKILL.md"),
+        &preview,
+    );
+    for (side, bytes) in [("before", SKILL_V1), ("after", SKILL_V2)] {
+        let file = misses
+            .read(
+                fx,
+                "diff",
+                "vault.code.export.preview.read",
+                json!({"preview": preview_request, "handle": delta["files"][0][side]["handle"]}),
+            )
+            .await?;
+        misses.check(
+            "diff",
+            side,
+            file["state"] == json!("ready") && file["file"]["bytes"] == json!(bytes),
+            &file,
+        );
+    }
+
+    assert!(
+        misses.0.is_empty(),
+        "{} workbench read(s) missing or wrong:\n{}",
+        misses.0.len(),
+        misses.0.join("\n")
+    );
     Ok(())
 }
 
