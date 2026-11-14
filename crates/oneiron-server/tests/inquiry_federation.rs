@@ -36,7 +36,10 @@
 //!   refused, and never gets the held answer back (review round 2 of
 //!   #7603);
 //! - the member opens, lists and closes a statement on an edge
-//!   (`vault.inquiry.scope.open` / `.list` / `.close`).
+//!   (`vault.inquiry.scope.open` / `.list` / `.close`);
+//! - the member changes an edge's terms after the mint
+//!   (`vault.inquiry.edge.terms.change`, FIX INQUIRY-STANDING-PER-KEEP): a
+//!   narrowing and a widening each read back, and an unknown mode refuses.
 //!
 //! Red on main: none of the ten verbs and no inquiry route exists, so the
 //! facade answers 404 at the first call. Fleet command:
@@ -383,7 +386,11 @@ async fn thursday() -> Thursday {
             json!({"company_vault": hex(&company.vault_id), "company_name": COMPANY}),
         )
         .await;
-    assert_eq!(edge["check_in_mode"], "auto", "{edge}");
+    assert_eq!(
+        edge["check_in_modes"],
+        json!({"task": "auto", "copy": "manual"}),
+        "{edge}"
+    );
     assert_eq!(edge["keep_allowed"], "task", "{edge}");
     let edge_grant = edge["grant"].as_str().expect("edge grant").to_owned();
     let reciprocal = company
@@ -946,11 +953,11 @@ fn the_member_opens_lists_and_closes_a_statement_on_an_edge() {
                 json!({
                     "company_vault": hex(&UNOPENED_COMPANY),
                     "company_name": COMPANY,
-                    "check_in_mode": "manual",
+                    "check_in_modes": {"task": "manual"},
                 }),
             )
             .await;
-        assert_eq!(edge["check_in_mode"], "manual", "{edge}");
+        assert_eq!(edge["check_in_modes"]["task"], "manual", "{edge}");
         let grant = edge["grant"].clone();
 
         let empty = member
@@ -992,6 +999,67 @@ fn the_member_opens_lists_and_closes_a_statement_on_an_edge() {
             status,
             StatusCode::OK,
             "a bad company vault is refused: {refusal}"
+        );
+    });
+}
+
+#[test]
+fn the_member_changes_an_edges_terms_after_the_mint() {
+    run_on_engine_stack("inquiry-federation-terms", || async {
+        let member = Host::open("member");
+        let edge = member
+            .verb(
+                "vault.inquiry.edge.mint",
+                json!({"company_vault": hex(&UNOPENED_COMPANY), "company_name": COMPANY}),
+            )
+            .await;
+        let grant = edge["grant"].clone();
+
+        let narrowed = member
+            .verb(
+                "vault.inquiry.edge.terms.change",
+                json!({"grant": grant, "check_in_modes": {"copy": "never"}}),
+            )
+            .await;
+        assert_eq!(narrowed["outcome"], "narrowed", "{narrowed}");
+        assert_eq!(
+            narrowed["edge"]["check_in_modes"],
+            json!({"task": "auto", "copy": "never"}),
+            "{narrowed}"
+        );
+        assert_eq!(
+            narrowed["edge"]["grant"], grant,
+            "the edge is not re-minted"
+        );
+
+        let widened = member
+            .verb(
+                "vault.inquiry.edge.terms.change",
+                json!({
+                    "grant": grant,
+                    "check_in_modes": {"task": "full-access"},
+                    "keep_allowed": "copy",
+                }),
+            )
+            .await;
+        assert_eq!(widened["outcome"], "widened", "{widened}");
+        assert_eq!(
+            widened["edge"]["check_in_modes"],
+            json!({"task": "full-access", "copy": "never"}),
+            "{widened}"
+        );
+        assert_eq!(widened["edge"]["keep_allowed"], "copy", "{widened}");
+
+        let (status, refusal) = member
+            .owner_call(
+                "/v1/core/facade/vault.inquiry.edge.terms.change",
+                json!({"grant": grant, "check_in_modes": {"task": "sometimes"}}),
+            )
+            .await;
+        assert_ne!(
+            status,
+            StatusCode::OK,
+            "an unknown mode is refused: {refusal}"
         );
     });
 }

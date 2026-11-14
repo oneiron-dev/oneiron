@@ -8,7 +8,7 @@
 //! - The member side: `vault.inquiry.answer` (the member's word leaves the
 //!   vault; act `outbound_send`), `vault.inquiry.list` ("Asked about you"),
 //!   `vault.inquiry.scope.open` / `.close` / `.list`, and
-//!   `vault.inquiry.edge.mint` / `.revoke`.
+//!   `vault.inquiry.edge.mint` / `.revoke` / `.terms.change`.
 //!
 //! The engine doors in `crate::inquiry` judge every act; these fns only
 //! parse the wire and project the answer. A row that signs with the host's
@@ -26,7 +26,7 @@ use crate::inquiry::{
     InquiryAnswer, InquiryCheckInMode, InquiryDecider, InquiryEdge, InquiryEdgeReciprocalGrant,
     InquiryEdgeRequest, InquiryKeep, InquiryLogEntry, InquiryMemberAnswer, InquiryRoute,
     InquiryRouteRequest, InquiryScopeItem, InquirySendRequest, InquirySent, InquiryStatement,
-    InquiryTierCeiling, InquiryTransport,
+    InquiryTermsChange, InquiryTierCeiling, InquiryTransport,
 };
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::receipt::{GuestRevokeResponse, project_guest_revoke};
@@ -128,9 +128,31 @@ pub struct InquiryReciprocalGrantMinted {
     pub pact_direction: FederationDirectionScope,
 }
 
+/// The check-in mode for each keep an inquiry may ask for, as an input
+/// names them; an absent keep takes its default (or, on a change, stays).
+/// Each mode is `never` (never answer), `manual` (always ask the member),
+/// `auto` (ask when unsure) or `full-access` (answer from the scope without
+/// asking).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InquiryKeepModesInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy: Option<String>,
+}
+
+/// The check-in mode the edge saved for each keep.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct InquiryKeepModesView {
+    pub task: String,
+    pub copy: String,
+}
+
 /// `vault.inquiry.edge.mint`'s input: the company's vault (64 hex) and name,
 /// and the edge's terms. An absent term takes the member default: tier
-/// `unstamped`, mode `auto`, keep `task`, no expiry.
+/// `unstamped`, modes `auto` for `task` and `manual` for `copy`, keep
+/// `task`, no expiry.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct InquiryEdgeMintRequest {
@@ -139,15 +161,35 @@ pub struct InquiryEdgeMintRequest {
     /// `unstamped`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tier_ceiling: Option<String>,
-    /// `manual` (always ask the member), `auto` (ask when unsure) or
-    /// `full-access` (answer from the scope without asking).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub check_in_mode: Option<String>,
+    pub check_in_modes: Option<InquiryKeepModesInput>,
     /// `task` or `copy`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keep_allowed: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<u64>,
+}
+
+/// `vault.inquiry.edge.terms.change`'s input: the edge, and the terms the
+/// member changes; an absent term stays.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InquiryEdgeTermsChangeRequest {
+    /// The edge's Connect guest grant.
+    pub grant: EntityId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_modes: Option<InquiryKeepModesInput>,
+    /// `task` or `copy`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_allowed: Option<String>,
+}
+
+/// `vault.inquiry.edge.terms.change`'s answer: the edge as it now stands,
+/// and how the change moved it: `unchanged`, `narrowed` or `widened`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct InquiryEdgeTermsChanged {
+    pub edge: InquiryEdgeView,
+    pub outcome: String,
 }
 
 /// One inquiry edge, as the member's vault stores it, with the pact
@@ -159,7 +201,7 @@ pub struct InquiryEdgeView {
     pub guest_actor: EntityId,
     pub opened_world: EntityId,
     pub tier_ceiling: String,
-    pub check_in_mode: String,
+    pub check_in_modes: InquiryKeepModesView,
     pub keep_allowed: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<u64>,
@@ -358,7 +400,10 @@ fn edge_view(edge: &InquiryEdge) -> MemoryResult<InquiryEdgeView> {
         guest_actor: edge.guest_actor,
         opened_world: edge.terms.opened_world,
         tier_ceiling: edge.terms.tier_ceiling.as_str().to_owned(),
-        check_in_mode: edge.terms.check_in_mode.as_str().to_owned(),
+        check_in_modes: InquiryKeepModesView {
+            task: edge.terms.check_in_modes.task.as_str().to_owned(),
+            copy: edge.terms.check_in_modes.copy.as_str().to_owned(),
+        },
         keep_allowed: edge.terms.keep_allowed.as_str().to_owned(),
         expires_at: edge.expires_at,
         pact_direction: edge.pact_direction()?,
@@ -538,6 +583,27 @@ fn parse_token<T>(
         .transpose()
 }
 
+/// The change of modes `input` names, each parsed; an absent keep is
+/// `None`, and the change names no keep allowed.
+fn keep_modes_change(input: Option<&InquiryKeepModesInput>) -> MemoryResult<InquiryTermsChange> {
+    let Some(input) = input else {
+        return Ok(InquiryTermsChange::default());
+    };
+    Ok(InquiryTermsChange {
+        task: parse_token(
+            "check_in_modes.task",
+            input.task.as_deref(),
+            InquiryCheckInMode::from_token,
+        )?,
+        copy: parse_token(
+            "check_in_modes.copy",
+            input.copy.as_deref(),
+            InquiryCheckInMode::from_token,
+        )?,
+        keep_allowed: None,
+    })
+}
+
 /// `vault.inquiry.edge.mint`: the member's inquiry edge to one company
 /// ([`Vault::mint_inquiry_edge`]), on the member defaults where a term is
 /// absent.
@@ -559,12 +625,12 @@ pub fn mint_inquiry_edge_as(
     )? {
         request.tier_ceiling = tier;
     }
-    if let Some(mode) = parse_token(
-        "check_in_mode",
-        input.check_in_mode.as_deref(),
-        InquiryCheckInMode::from_token,
-    )? {
-        request.check_in_mode = mode;
+    let modes = keep_modes_change(input.check_in_modes.as_ref())?;
+    if let Some(mode) = modes.task {
+        request.check_in_modes.task = mode;
+    }
+    if let Some(mode) = modes.copy {
+        request.check_in_modes.copy = mode;
     }
     if let Some(keep) = parse_token(
         "keep_allowed",
@@ -589,6 +655,46 @@ pub fn mint_inquiry_edge_embedded(
 ) -> MemoryResult<InquiryEdgeView> {
     let owner = memory.embedded_owner("vault.inquiry.edge.mint")?;
     mint_inquiry_edge_as(memory.vault(), &owner, input)
+}
+
+/// `vault.inquiry.edge.terms.change`: the member changes an edge's terms
+/// after the mint ([`Vault::change_inquiry_edge_terms`]); an absent term
+/// stays.
+///
+/// # Errors
+///
+/// A term that does not parse; the engine's refusals.
+pub fn change_inquiry_edge_terms_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: InquiryEdgeTermsChangeRequest,
+) -> MemoryResult<InquiryEdgeTermsChanged> {
+    let change = InquiryTermsChange {
+        keep_allowed: parse_token(
+            "keep_allowed",
+            input.keep_allowed.as_deref(),
+            InquiryKeep::from_token,
+        )?,
+        ..keep_modes_change(input.check_in_modes.as_ref())?
+    };
+    let changed = vault.change_inquiry_edge_terms(owner, input.grant, change)?;
+    Ok(InquiryEdgeTermsChanged {
+        edge: edge_view(&changed.edge)?,
+        outcome: changed.outcome.as_str().to_owned(),
+    })
+}
+
+/// `vault.inquiry.edge.terms.change` on an embedded handle.
+///
+/// # Errors
+///
+/// No embedded owner; as [`change_inquiry_edge_terms_as`].
+pub fn change_inquiry_edge_terms_embedded(
+    memory: &Memory<'_>,
+    input: InquiryEdgeTermsChangeRequest,
+) -> MemoryResult<InquiryEdgeTermsChanged> {
+    let owner = memory.embedded_owner("vault.inquiry.edge.terms.change")?;
+    change_inquiry_edge_terms_as(memory.vault(), &owner, input)
 }
 
 /// `vault.inquiry.edge.revoke` on a server: [`Vault::revoke_inquiry_edge`]
