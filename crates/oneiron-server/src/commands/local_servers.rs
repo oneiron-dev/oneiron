@@ -68,9 +68,10 @@ pub(super) fn config_file(args: &ServeArgs) -> Option<PathBuf> {
 }
 
 /// The vault folder `config`, with `settings_file` over it, names, when it
-/// holds an initialized vault. `serve` creates a vault that is not there;
-/// a hook or a user service only starts one that is, so no vault is made
-/// without `oneiron init`.
+/// holds an initialized vault, made absolute against this process's folder,
+/// where a relative `vault_path` was looked up. `serve` creates a vault that
+/// is not there; a hook or a user service only starts one that is, so no
+/// vault is made without `oneiron init`.
 pub(super) fn initialized_vault(config: &Path, settings_file: Option<&Path>) -> Option<PathBuf> {
     resolve_serve_config(&ServeArgs {
         config: Some(config.to_path_buf()),
@@ -80,16 +81,24 @@ pub(super) fn initialized_vault(config: &Path, settings_file: Option<&Path>) -> 
     .ok()
     .map(|serve| serve.vault_path)
     .filter(|vault| vault.join(STORE_FILE).is_file())
+    .and_then(|vault| std::path::absolute(vault).ok())
 }
 
 /// The arguments of the one local `serve` this user runs for a hook: the
 /// hook's step 4 starts it with them, and the user service runs it with
-/// them, so both run the same server on loopback.
-pub(super) fn local_serve_args(config: &Path, settings_file: Option<&Path>) -> Vec<OsString> {
+/// them, so both run the same server on loopback. `--vault-path` names the
+/// `vault` [`initialized_vault`] found: a service starts in another folder,
+/// where a relative `vault_path` in the config would name another vault.
+pub(super) fn local_serve_args(
+    config: &Path,
+    settings_file: Option<&Path>,
+    vault: &Path,
+) -> Vec<OsString> {
     let mut args: Vec<OsString> = vec!["serve".into(), "--config".into(), config.into()];
     if let Some(settings_file) = settings_file {
         args.extend(["--settings-file".into(), settings_file.into()]);
     }
+    args.extend(["--vault-path".into(), vault.into()]);
     args.extend(["--host".into(), "127.0.0.1".into()]);
     args
 }
