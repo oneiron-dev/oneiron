@@ -19,6 +19,12 @@
 //! `mint; withdrawn`, its pair for a withdrawal no counted entry names (FIX
 //! 22193, `agent_grant_act`).
 //!
+//! A row whose op records an owner act names who decided it (`act_author`):
+//! the owner himself, a person acting in their own right (a writer's carried
+//! custody revoke), or an agent under its Grant. So the owner can tell his
+//! own act from anyone else's (Engine RULING L6-03-CARRY-AUDIT-AUTHOR, 14 Nov
+//! 08:35).
+//!
 //! On a vault that adopted a checkpoint image (OF-469), the page also lists
 //! cold rows: entries the adopted image covers that this vault does not
 //! store. They merge into the same entity-id order and cursor as the stored
@@ -132,6 +138,24 @@ pub enum AuthorityAuditOrder {
     EntryRefAscending,
 }
 
+/// Who decided the owner act an op records: the act's `owner` and `by`
+/// (`oneiron_authority::authority::ActBy`). Ids are hex.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "by")]
+pub enum AuthorityAuditActAuthor {
+    /// The owner's own act: `owner` is that owner's PERSON.
+    Owner { owner: String },
+    /// A PERSON's own act in their own right, not as an owner: the custody
+    /// revoke of a key the person wrote and ruled no secret.
+    Person { person: String },
+    /// An agent's act under its live Grant, for `owner`.
+    Agent {
+        owner: String,
+        agent: String,
+        grant: String,
+    },
+}
+
 /// One AUTHORITY_LOG entry, projected.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthorityAuditRow {
@@ -167,6 +191,10 @@ pub struct AuthorityAuditRow {
     /// What the op acts on: a slip id, a confirm id, a pact id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject_ref: Option<String>,
+    /// Who decided the owner act the op records; `None` on an op that
+    /// records none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub act_author: Option<AuthorityAuditActAuthor>,
     /// A federation lifecycle op's grant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant_ref: Option<String>,
@@ -850,6 +878,7 @@ fn project_row(
         seq: entry.seq,
         vault_ref: entry.vault_id.as_ref().map(|id| hex_lower(id)),
         subject_ref: fields.subject_ref,
+        act_author: carried_act::carried_owner_act(&entry.op).map(carried_act::act_author),
         grant_ref: fields.grant_ref,
         receipt_ref: fields.receipt_ref,
         affected_grants: fields.affected_grants,
