@@ -6,9 +6,8 @@
 use super::{CodeFixExport, QUEUE, all_public};
 use crate::{EntityId, Result, Vault};
 
-/// One record a batch carries: its public id and the worlds its failure
-/// touched (local only, never sent).
-pub(in crate::failure_signals) type CodeFixShare = (String, Vec<EntityId>);
+#[doc(hidden)]
+pub(in crate::failure_signals) use oneiron_records::failure_signals::code_fix::queue::CodeFixShare;
 
 impl Vault {
     /// Reads up to `limit` sealed records this deployment may still send, in
