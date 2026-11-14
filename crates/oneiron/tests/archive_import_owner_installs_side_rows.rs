@@ -534,18 +534,16 @@ fn backup_tuple(vault: &oneiron::Vault) -> (String, Vec<u8>, Vec<u8>) {
 
 #[test]
 fn an_inert_copy_never_displaces_the_source_live_setting() {
-    // The first vault stores the live choice once to read its tuple, then
-    // the first older choice whose tuple files before it.
-    let live = dest_backup_policy();
+    // The first vault stores nine choices in turn to read each one's tuple.
+    // The choice whose tuple files last is the live one and the choice whose
+    // tuple files first is the older one, so the older copy files before the
+    // live tuple whatever the hashes give. The first vault then holds the
+    // older choice.
     let (_first_dir, first) = open_source_vault();
     let first_owner = owner_proof(&first);
-    first
-        .set_backup_policy(&first_owner, live)
-        .expect("the first owner stores the live choice");
-    let live_tuple = backup_tuple(&first);
-    let mut older = None;
-    'search: for every_hours in [6, 24] {
-        for keep in 1..=10 {
+    let mut candidates = Vec::new();
+    for every_hours in [6, 12, 24] {
+        for keep in [3, 5, 7] {
             let choice = BackupPolicy {
                 enabled: true,
                 every_hours,
@@ -553,15 +551,25 @@ fn an_inert_copy_never_displaces_the_source_live_setting() {
             };
             first
                 .set_backup_policy(&first_owner, choice)
-                .expect("the first owner stores an older choice");
-            let tuple = backup_tuple(&first);
-            if retained_tuple_key(&tuple) < retained_tuple_key(&live_tuple) {
-                older = Some((choice, tuple));
-                break 'search;
-            }
+                .expect("the first owner stores a candidate choice");
+            candidates.push((choice, backup_tuple(&first)));
         }
     }
-    let (older, older_tuple) = older.expect("one of twenty choices files before the live one");
+    candidates.sort_by_key(|(_, tuple)| retained_tuple_key(tuple));
+    let (older, older_tuple) = candidates.first().cloned().expect("nine candidate choices");
+    let (live, live_tuple) = candidates.last().cloned().expect("nine candidate choices");
+    assert!(
+        retained_tuple_key(&older_tuple) < retained_tuple_key(&live_tuple),
+        "the older choice's tuple files before the live one: {candidates:?}"
+    );
+    first
+        .set_backup_policy(&first_owner, older)
+        .expect("the first owner stores the older choice");
+    assert_eq!(
+        backup_tuple(&first),
+        older_tuple,
+        "the first vault holds the older choice"
+    );
     let first_archive = export_whole(&first);
 
     let (_middle_dir, middle) = open_later_vault();
