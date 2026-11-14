@@ -285,7 +285,8 @@ impl ServedConnectorCallHost {
 
     /// Polls `task` once: its credential presented again through its own
     /// door, then, when the owner asked the task to stop, one `tasks/cancel`
-    /// (L8-29), then one `tasks/get` in its session.
+    /// (L8-29), then, while no issuer hold stands, one `tasks/get` in its
+    /// session.
     fn poll_remote_task(&mut self, task: &DueRemoteTask) -> Result<Polled, &'static str> {
         let view = FrozenToolCallView::read(&task.call).map_err(|_| "frozen_call_unread")?;
         let connector = self
@@ -358,6 +359,14 @@ impl ServedConnectorCallHost {
         };
         if !admitted {
             return Err("binding_not_admitted");
+        }
+        // An issuer hold may have committed since the credential was
+        // presented, above all during the stop's round trip: the keyed
+        // call's binding is read again just before the poll presents the
+        // kept header once more (FIX 12166), and while a hold stands nothing
+        // more is sent.
+        if issuer_held(&self.vault, task) {
+            return Err("issuer_held");
         }
         let request = json!({
             "jsonrpc": "2.0",
