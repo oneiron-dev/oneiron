@@ -19,6 +19,10 @@ serde_bytes = "0.11"
 # Fleet traffic seeds explicit actor read permits through the bounded
 # test-support fixture door; the benchmark is not a shipped engine host.
 oneiron = { path = "../oneiron", features = ["sync", "test-support"] }
+# Census L9-34: the action bench deletes in its temp vaults, and a delete
+# signs its receipt with the install's key, so each vault gets a keystore in
+# process memory, as a test host's vault does.
+oneiron-keystore = { path = "../oneiron-keystore", features = ["test-keystore"] }
 oneiron-llm-openai = { path = "../oneiron-llm-openai" }
 oneiron-organ-protocol = { path = "../oneiron-organ-protocol" }
 rustix = { version = "1.1", features = ["net", "process"] }
