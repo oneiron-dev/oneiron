@@ -323,7 +323,7 @@ class PruneTest(unittest.TestCase):
                 self.assertEqual(
                     nightly_report.main(["prune", str(plan_file), "tests-01", str(failed), str(metadata)]), 0
                 )
-                nightly_report.main(["tests", str(plan_file), "tests-01"])
+                nightly_report.main(["binaries", str(plan_file), "tests-01"])
                 nightly_report.main(["args", str(plan_file), "--name", "libs"])
                 nightly_report.main(["args", str(plan_file)])
                 self.assertEqual(nightly_report.main(["drop", str(plan_file), "libs", "a reason"]), 3)
@@ -702,6 +702,11 @@ class BudgetSetTest(unittest.TestCase):
                 crate = REPO / Path(row["source"]).parts[0] / Path(row["source"]).parts[1]
                 self.assertIn(f'name = "{row["package"]}"', (crate / "Cargo.toml").read_text())
                 text = source.read_text()
+                if row["kind"] == "job":  # a bench job's metric (PR 10b2)
+                    import nightly_bench  # noqa: PLC0415 (the bench module came with the job rows)
+
+                    self.assertIn(row["binary"], [job[0] for job in nightly_bench.BENCH_JOBS])
+                    continue
                 if row["match"] == "=":
                     self.assertIn(f"fn {row['test'].rsplit('::', 1)[-1]}(", text)
                 elif row["match"] == "~":

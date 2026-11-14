@@ -4,10 +4,11 @@
 Standard library only. scripts/nightly/run_nightly.sh calls it; each
 subcommand reads files the job wrote:
 
-  plan METADATA [--shard-files N] [--cursor FILE] [--budget-set SET]
+  plan METADATA [--shard-files N] [--cursor FILE] [--budget-set SET] [--bench]
                                   the night's selections: the lib tests, the
-                                  budget tests, then the integration tests,
-                                  whole or in shards from the cursor on
+                                  budget tests, oneiron-bench, then the
+                                  integration tests, whole or in shards from
+                                  the cursor on
   advance PLAN NAME CURSOR        move the cursor past a finished shard
   deadline HH:MM                  the epoch of the next HH:MM, Japan time
   failed-units LOG...             the test build units cargo could not compile
@@ -16,7 +17,12 @@ subcommand reads files the job wrote:
   drop PLAN NAME REASON           drop a selection
   args PLAN [--name NAME]         `<name> <args...>` per selection, or one
                                   selection's args
-  tests PLAN NAME                 a selection's integration test names
+  binaries PLAN NAME              the names of a selection's test binaries: its
+                                  integration tests, and its bins for the bench
+  bench-inputs ROOT WORK DATE HEAD
+                                  write the bench jobs' input files into WORK
+  bench-jobs BIN WORK             one line per bench job: name, expected exit
+                                  code, then its command (tab-separated)
   field JSON KEY                  one top-level value of a JSON object
   census ROOT                     the lib-test quarantine gates in a tree (TSV)
   budget-filter SET [--metadata METADATA]
@@ -27,7 +33,8 @@ subcommand reads files the job wrote:
   summary ...                     the night's verdict: prints the one summary
                                   line and writes summary.json, summary.txt,
                                   results-store.json, flake-row.json,
-                                  budget-samples.json and budget-row.json
+                                  budget-samples.json, budget-row.json and
+                                  bench-row.json
 
 A quarantine gate is a `// FIX [LIBTEST-QUARANTINE-<ID>]` comment followed by
 `#[cfg(any())]` on the item it switches off (OPUS-MAINFIX's lib-test
@@ -46,6 +53,11 @@ median of its first 5 passing nights (budget-samples.json carries them from
 night to night) until a PR commits it to scripts/nightly/budget-baseline.tsv:
 the night that reaches 5 writes budget-baseline-proposal.tsv. The band is
 report only: it never makes the night red.
+
+oneiron-bench (PR 10b2) is left out of the workspace selections and runs in
+a `bench` selection of its own every night, then the bench jobs: see
+scripts/nightly/nightly_bench.py. A `job` row of the budget set times a bench
+job's metrics in the same per-host band as the budget tests.
 """
 
 from __future__ import annotations
@@ -62,6 +74,8 @@ import xml.etree.ElementTree as ElementTree
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from nightly_bench import BENCH_PACKAGE, bench_inputs, bench_job_commands, bench_report
 
 COULD_NOT_COMPILE = re.compile(r"^error: could not compile `(?P<package>[^`]+)` \((?P<unit>[^)]*)\)")
 UNIT = re.compile(r'^(?P<target>lib|bin|test|example|bench|build script)(?: "(?P<name>[^"]+)")?(?P<test> test)?$')
@@ -99,9 +113,11 @@ STAGES = ("verdict", "libtest", "quarantine", "pending")
 FLIPS_IN_ROW = 50
 
 # The budget set and its per-host baselines (PR 10b). A row's match is = (the
-# exact test name), ~ (a part of it) or ^ (its start).
+# exact test name), ~ (a part of it) or ^ (its start). A `job` row (PR 10b2)
+# names a bench job's metrics: its binary column is the job, its test column
+# the metric.
 BUDGET_COLUMNS = ("id", "package", "kind", "binary", "match", "test", "source", "bound")
-BUDGET_KINDS = ("lib", "test")
+BUDGET_KINDS = ("lib", "test", "job")
 BUDGET_MATCHES = ("=", "~", "^")
 BUDGET_BASELINE_COLUMNS = ("host", "test", "seconds", "nights", "first", "last")
 BUDGET_BASELINE_NIGHTS = 5  # a baseline is the median of a host's first 5 passing nights
@@ -158,8 +174,9 @@ def plan(
     cursor: dict | None = None,
     always_excluded: tuple[str, ...] = ALWAYS_EXCLUDED,
     budget: list[dict[str, str]] | None = None,
+    bench: bool = False,
 ) -> dict:
-    """The night's selections: the lib tests, the budget tests, then the integration tests.
+    """The night's selections: the lib tests, the budget tests, oneiron-bench, then the integration tests.
 
     `libs` selects every lib test and bin test (`--lib --bins`) and the
     pending-door tool's own test. The integration tests follow by name
@@ -180,6 +197,11 @@ def plan(
     gets one sample a night though a shard comes round only every few nights.
     Its args are a shard's, so features unify as for the shards. It is left
     out when no row's test target is in a selected package.
+
+    With `bench` (run_nightly.sh always asks for it), a `bench` selection
+    follows and runs every night when oneiron-bench is a workspace member
+    left out of the other selections: its bins' unit tests and its
+    integration tests, with `--workspace` kept (BENCH_PACKAGE).
     """
     owners = {
         name: [p for p in packages if p not in always_excluded] for name, packages in test_owners(metadata).items()
@@ -203,6 +225,14 @@ def plan(
     )
     if budget_tests:
         selections.append({"name": "budget", "kind": "budget", "excluded": [], "bins": False, "tests": budget_tests})
+    bench_package = next((p for p in workspace_packages(metadata) if p["name"] == BENCH_PACKAGE), None)
+    if bench and bench_package is not None and BENCH_PACKAGE in always_excluded:
+        bins = sorted(t["name"] for t in bench_package["targets"] if "bin" in t["kind"] and t.get("test", True))
+        tests = integration_tests(bench_package)
+        if bins or tests:
+            selections.append(
+                {"name": "bench", "kind": "bench", "excluded": [], "bins": False, "bin_targets": bins, "tests": tests}
+            )
     order = []
     for number, first in enumerate(range(0, len(ordered), size), start=1):
         tests = ordered[first : first + size]
@@ -259,13 +289,20 @@ def find_selection(chosen: dict, name: str) -> dict:
 
 def selection_args(chosen: dict, entry: dict) -> list[str]:
     args = ["--workspace"]
-    args += [arg for package in [*chosen["always_excluded"], *entry["excluded"]] for arg in ("--exclude", package)]
+    excluded = entry["excluded"] if entry["kind"] == "bench" else [*chosen["always_excluded"], *entry["excluded"]]
+    args += [arg for package in excluded for arg in ("--exclude", package)]
     if entry["kind"] == "libs":
         args.append("--lib")
     if entry["bins"]:
         args.append("--bins")
+    args += [arg for name in entry.get("bin_targets", []) for arg in ("--bin", name)]
     args += [arg for name in entry["tests"] for arg in ("--test", name)]
     return args
+
+
+def selection_binaries(entry: dict) -> list[str]:
+    """The names a selection's test binaries carry in the target's deps dir: its integration tests and bins."""
+    return [*entry["tests"], *entry.get("bin_targets", [])]
 
 
 def drop(chosen: dict, name: str, reason: str) -> None:
@@ -281,7 +318,9 @@ def prune(chosen: dict, name: str, failed: list[dict[str, str]], metadata: dict)
     `--bins`; a failed test target drops its name, and with it that name in
     the other packages that share it. A failed lib or build script, or a
     failed build that names no new unit, drops the selection: what failed
-    cannot be told apart from what depends on it.
+    cannot be told apart from what depends on it. In the bench selection a
+    failed bin drops the selection (its integration tests and the bench jobs
+    run it), and a failed bin test leaves that bin's unit tests out.
     """
     entry = find_selection(chosen, name)
     owners = test_owners(metadata)
@@ -297,9 +336,17 @@ def prune(chosen: dict, name: str, failed: list[dict[str, str]], metadata: dict)
         units = ", ".join(f"{u['package']} ({u['kind']}{' ' + u['name'] if u['name'] else ''})" for u in fatal)
         drop(chosen, name, f"did not compile: {units}")
         return False
+    if entry["kind"] == "bench":
+        bins = ", ".join(f"{u['package']} (bin {u['name']})" for u in failed if u["kind"] == "bin")
+        if bins:
+            drop(chosen, name, f"did not compile: {bins}")
+            return False
     for unit in failed:
         package, kind, unit_name = unit["package"], unit["kind"], unit["name"]
-        if kind == "bin" and package not in entry["excluded"]:
+        if kind == "bin-test" and unit_name in entry.get("bin_targets", []):
+            entry["bin_targets"].remove(unit_name)
+            leave_out(package, kind, unit_name, "did not compile")
+        elif kind == "bin" and package not in entry["excluded"]:
             entry["excluded"].append(package)
             leave_out(package, "package", unit_name, "its bin did not compile")
         elif kind == "lib-test" and entry["kind"] == "libs" and package not in entry["excluded"]:
@@ -315,13 +362,13 @@ def prune(chosen: dict, name: str, failed: list[dict[str, str]], metadata: dict)
                     "did not compile" if owner == package else "shares its name with a test target that did not compile"
                 )
                 leave_out(owner, kind, unit_name, shared)
-    excluded = set(entry["excluded"]) | set(chosen["always_excluded"])
+    excluded = set(entry["excluded"]) | (set() if entry["kind"] == "bench" else set(chosen["always_excluded"]))
     entry["tests"] = [t for t in entry["tests"] if not all(owner in excluded for owner in owners.get(t, []))]
     entry["excluded"].sort()
     if json.dumps(entry, sort_keys=True) == before:
         drop(chosen, name, "the build failed again and named no new failed unit")
         return False
-    if entry["kind"] in ("tests", "budget") and not entry["tests"]:
+    if entry["kind"] in ("tests", "budget", "bench") and not selection_binaries(entry):
         drop(chosen, name, "every unit is left out")
         return False
     return True
@@ -621,6 +668,8 @@ def budget_filter(
     )
     terms = []
     for row in rows:
+        if row["kind"] == "job":
+            continue  # a bench job's metric, not a nextest test
         if packages is not None:
             package = packages.get(row["package"])
             if package is None:
@@ -654,8 +703,20 @@ def budget_row_matches(row: dict[str, str], key: str) -> bool:
     return test.startswith(row["test"])
 
 
-def budget_not_run_reason(row: dict[str, str], chosen: dict, gates: list[dict[str, str]]) -> str:
-    if row["package"] in chosen["always_excluded"]:
+def budget_not_run_reason(
+    row: dict[str, str], chosen: dict, gates: list[dict[str, str]], jobs: dict[str, dict] | None = None
+) -> str:
+    if row["package"] == BENCH_PACKAGE and BENCH_PACKAGE in chosen["always_excluded"]:
+        dropped = next((d for d in chosen["dropped"] if d["selection"] == "bench"), None)
+        if dropped:
+            return f"the bench selection was dropped ({dropped['reason']})"
+        if not any(entry["kind"] == "bench" for entry in chosen["selections"]):
+            return f"{row['package']} is left out of the nightly"
+        if row["kind"] == "job":
+            job = (jobs or {}).get(row["binary"])
+            if job is None or not job["ran"]:
+                return f"the bench job {row['binary']} did not run" + (f" ({job['why']})" if job else "")
+    elif row["package"] in chosen["always_excluded"]:
         return f"{row['package']} is left out of the nightly"
     if row["kind"] == "lib":
         probe = {f"{row['package']} {row['test']}": "pass"}
@@ -750,18 +811,23 @@ def budget_report(
     }
 
 
+def seconds_text(value: float) -> str:
+    """Two decimals, or three significant digits under a second (a bench p99 is milliseconds)."""
+    return f"{value:.2f}" if value >= 1 else f"{value:.3g}"
+
+
 def budget_text(entry: dict, host: str) -> str:
     if entry["band"] == "no-sample":
         return f"budget {entry['test']}: {entry['outcome']} tonight, no sample"
     if entry["band"] == "pending":
         return (
-            f"budget {entry['test']}: {entry['seconds']:.2f} s, baseline pending"
+            f"budget {entry['test']}: {seconds_text(entry['seconds'])} s, baseline pending"
             f" ({entry['nights']}/{BUDGET_BASELINE_NIGHTS} nights on {host})"
         )
     change = (entry["seconds"] / entry["baseline"] - 1) * 100 if entry["baseline"] else 0.0
     return (
-        f"budget {entry['test']}: {entry['seconds']:.2f} s, baseline {entry['baseline']:.2f} s ({entry['source']}),"
-        f" {entry['band']} band ({change:+.0f}%)"
+        f"budget {entry['test']}: {seconds_text(entry['seconds'])} s,"
+        f" baseline {seconds_text(entry['baseline'])} s ({entry['source']}), {entry['band']} band ({change:+.0f}%)"
     )
 
 
@@ -783,15 +849,16 @@ def summary(args: argparse.Namespace) -> int:
     tonight = {**results["libtest"], **results["verdict"]}
     store = json.loads(Path(args.previous).read_text()) if args.previous and Path(args.previous).is_file() else {}
     budget_rows = read_budget_set(Path(args.budget_set)) if args.budget_set and Path(args.budget_set).is_file() else []
+    bench = bench_report(out, chosen, args.date, args.head)
     budget = budget_report(
         budget_rows,
-        tonight,
-        stage_seconds(out),
+        {**tonight, **bench["outcomes"]},
+        {**stage_seconds(out), **bench["metrics"]},
         json.loads(Path(args.budget_samples).read_text())
         if args.budget_samples and Path(args.budget_samples).is_file()
         else {},
         read_tsv(Path(args.budget_baseline)) if args.budget_baseline and Path(args.budget_baseline).is_file() else [],
-        lambda row: budget_not_run_reason(row, chosen, gates),
+        lambda row: budget_not_run_reason(row, chosen, gates, bench["jobs"]),
         args.host,
         args.date,
         args.head,
@@ -813,6 +880,7 @@ def summary(args: argparse.Namespace) -> int:
         reasons.append("the pending-door tool did not run")
     elif pending_door.get("expired", 0):
         reasons.append(f"{pending_door['expired']} pending-door test(s) past their date")
+    reasons += bench["reasons"]
     red = bool(reasons)
     streak = red_nights(history, red)
 
@@ -833,6 +901,7 @@ def summary(args: argparse.Namespace) -> int:
         f" red_nights={streak}"
         f" budget_in={budget['in']} budget_out={budget['out']} budget_pending={budget['pending']}"
         f" budget_not_run={len(budget['not_run'])}"
+        f" bench_jobs={bench['ran']}/{bench['planned']} bench_promises={bench['kept']}/{bench['checked']}"
     )
     if red_ids:
         line += " ported_red_ids=" + ",".join(red_ids)
@@ -859,6 +928,7 @@ def summary(args: argparse.Namespace) -> int:
         "flipped": flipped,
         "quarantine": report,
         "budget": {key: value for key, value in budget.items() if key != "samples"},
+        "bench": {key: value for key, value in bench.items() if key not in ("outcomes", "reasons")},
     }
     (out / "summary.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     (out / "results-store.json").write_text(
@@ -893,6 +963,21 @@ def summary(args: argparse.Namespace) -> int:
         ],
     }
     (out / "budget-row.json").write_text(json.dumps(budget_row, sort_keys=True) + "\n")
+    bench_row_path = out / "bench-row.json"
+    bench_row_path.unlink(missing_ok=True)
+    if bench["selected"]:
+        bench_row = {
+            "date": args.date,
+            "head": args.head,
+            "host": args.host,
+            "jobs": {
+                name: {"rc": job["rc"], "seconds": job["seconds"], "ran": job["ran"]}
+                for name, job in bench["jobs"].items()
+            },
+            "metrics": {key.removeprefix(f"{BENCH_PACKAGE}::"): value for key, value in bench["metrics"].items()},
+            "promises": {entry["promise"]: entry["state"] for entry in bench["promises"]},
+        }
+        bench_row_path.write_text(json.dumps(bench_row, sort_keys=True) + "\n")
     proposal_path = out / "budget-baseline-proposal.tsv"
     proposal_path.unlink(missing_ok=True)
     if budget["proposal"]:
@@ -930,6 +1015,15 @@ def summary(args: argparse.Namespace) -> int:
                 f", failed: {', '.join(entry['failed'])}" if entry["failed"] else ""
             )
             text.append(f"ported {gate_id}: {entry['state']}{detail}")
+    text += [
+        f"bench job {name}: exit {job['rc']} (expected {job['expected']}), {job['seconds']} s"
+        + ("" if job["ran"] else f", did not run as expected: {job['why']}")
+        for name, job in bench["jobs"].items()
+    ]
+    text += [
+        f"bench promise {entry['promise']} ({entry['retired']}): {entry['state']}, {entry['detail']}"
+        for entry in bench["promises"]
+    ]
     text += [budget_text(entry, args.host) for entry in budget["tests"]]
     text += [f"budget not run: {entry['id']} ({entry['reason']})" for entry in budget["not_run"]]
     if budget["proposed"]:
@@ -952,6 +1046,7 @@ def main(argv: list[str]) -> int:
     command.add_argument("--shard-files", type=int, default=0)
     command.add_argument("--cursor", type=Path, help="the cursor file; absent or empty starts at the first name")
     command.add_argument("--budget-set", type=Path, help="scripts/nightly/budget-set.tsv: adds the budget selection")
+    command.add_argument("--bench", action="store_true", help="adds oneiron-bench's own selection")
     command = commands.add_parser("advance")
     command.add_argument("plan", type=Path)
     command.add_argument("name")
@@ -970,9 +1065,17 @@ def main(argv: list[str]) -> int:
     command = commands.add_parser("args")
     command.add_argument("plan", type=Path)
     command.add_argument("--name", help="print only this selection's args")
-    command = commands.add_parser("tests")
+    command = commands.add_parser("binaries")
     command.add_argument("plan", type=Path)
     command.add_argument("name")
+    command = commands.add_parser("bench-inputs")
+    command.add_argument("root", type=Path)
+    command.add_argument("work", type=Path)
+    command.add_argument("date")
+    command.add_argument("head")
+    command = commands.add_parser("bench-jobs")
+    command.add_argument("binary")
+    command.add_argument("work")
     command = commands.add_parser("field")
     command.add_argument("json", type=Path)
     command.add_argument("key")
@@ -1002,7 +1105,7 @@ def main(argv: list[str]) -> int:
     elif args.command == "plan":
         cursor = json.loads(args.cursor.read_text()) if args.cursor and args.cursor.is_file() else None
         budget = read_budget_set(args.budget_set) if args.budget_set else None
-        chosen = plan(json.loads(args.metadata.read_text()), args.shard_files, cursor, budget=budget)
+        chosen = plan(json.loads(args.metadata.read_text()), args.shard_files, cursor, budget=budget, bench=args.bench)
         print(json.dumps(chosen, indent=2))
     elif args.command == "advance":
         chosen = json.loads(args.plan.read_text())
@@ -1029,8 +1132,13 @@ def main(argv: list[str]) -> int:
                 print(" ".join([entry["name"], *selection_args(chosen, entry)]))
             elif entry["name"] == args.name:
                 print(" ".join(selection_args(chosen, entry)))
-    elif args.command == "tests":
-        print("\n".join(find_selection(json.loads(args.plan.read_text()), args.name)["tests"]))
+    elif args.command == "binaries":
+        print("\n".join(selection_binaries(find_selection(json.loads(args.plan.read_text()), args.name))))
+    elif args.command == "bench-inputs":
+        bench_inputs(args.root, args.work, args.date, args.head)
+    elif args.command == "bench-jobs":
+        for name, expected, command in bench_job_commands(args.binary, args.work):
+            print("\t".join([name, str(expected), *command]))
     elif args.command == "field":
         value = json.loads(args.json.read_text()).get(args.key)
         print("" if value is None else value)
