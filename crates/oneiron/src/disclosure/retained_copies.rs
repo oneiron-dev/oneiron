@@ -46,15 +46,20 @@ pub(crate) fn retained_copy_admits(
         return Ok(true);
     };
     for (pact, asks) in crate::deletion::courtesy_retained_pacts_in(store, rtxn)? {
-        if !crate::federation::world_registered_to_pact_in(store, rtxn, &pact, world)? {
-            continue;
-        }
-        // With no sync, no ledger or mapping is read: a retained ask covers
-        // every world its pact registered.
+        // A copied inquiry answer's world is never registered to its pact
+        // (`record_engine_delivery_in_txn`): the delivery ledger ties the
+        // copy to the pact instead.
+        let registered = crate::federation::world_registered_to_pact_in(store, rtxn, &pact, world)?;
+        // With no sync, no epoch or mapping is read: a retained ask covers
+        // every world its pact registered and every copy its pact delivered.
         #[cfg(not(feature = "sync"))]
-        let covered = !asks.is_empty();
+        let covered = !asks.is_empty()
+            && (registered
+                || crate::federation::delivery_record::pact_delivered_record_in(
+                    store, rtxn, &pact, *id,
+                )?);
         #[cfg(feature = "sync")]
-        let covered = retained_ask_covers(store, rtxn, &pact, &asks, id, world)?;
+        let covered = retained_ask_covers(store, rtxn, &pact, &asks, id, world, registered)?;
         if covered {
             return Ok(false);
         }
@@ -63,12 +68,15 @@ pub(crate) fn retained_copy_admits(
 }
 
 /// Whether one of `asks`, the retained asks under `pact`, covers the copy
-/// `id` in `world`, a foreign world `pact` registered (FIX 1322): an ask
-/// whose named worlds land in `world` here (one that names none asks about
-/// every world the pact delivered), when the pact first delivered `id` at or
-/// before the ask's epoch cutoff, as the delivery ledger reads in `rtxn`.
-/// What cannot be read covers, as the ask's whole pact did before: a named
-/// world that maps to nothing known, or a copy the ledger names no epoch for.
+/// `id` in the foreign `world` (FIX 1322): an ask whose named worlds land in
+/// `world` here (one that names none asks about every world the pact
+/// delivered), when the pact first delivered `id` at or before the ask's
+/// epoch cutoff, as the delivery ledger reads in `rtxn`. In a world the pact
+/// `registered`, what cannot be read covers, as the ask's whole pact did
+/// before: a named world that maps to nothing known, or a copy the ledger
+/// names no epoch for. In a world it never registered, as a copied inquiry
+/// answer's, only the ledger ties the copy to the pact, so a copy it names
+/// no delivery of is not the pact's.
 #[cfg(feature = "sync")]
 fn retained_ask_covers(
     store: &Store,
@@ -77,6 +85,7 @@ fn retained_ask_covers(
     asks: &[IncomingCooperativeDeletion],
     id: &EntityId,
     world: EntityId,
+    registered: bool,
 ) -> Result<bool> {
     // Read once, for the first ask that names `world`.
     let mut delivered: Option<Option<u64>> = None;
@@ -89,7 +98,7 @@ fn retained_ask_covers(
                 first
             }
         };
-        if first.is_none_or(|epoch| epoch <= ask.epoch_cutoff) {
+        if first.map_or(registered, |epoch| epoch <= ask.epoch_cutoff) {
             return Ok(true);
         }
     }

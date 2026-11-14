@@ -15,6 +15,24 @@
 //!   `unavailable`;
 //! - a re-send with the same id writes the next receipt of that inquiry.
 //!
+//! INQUIRE-1 PR 6 (federation.md #inquiry-copy; Engine ruling INQUIRE-SHAPE
+//! Q9 = A): the copy landing.
+//! - with `inquiry_keep = copy`, each answered statement lands as one CLAIM
+//!   about the member's PERSON, in the foreign WORLD derived from the
+//!   member's vault and the world the member opened, with its text and
+//!   source and no member record id; it is attributed by a delivery record
+//!   (pact, epoch, member vault, the member's edge grant) and not held with
+//!   the task; its world is not registered to the pact, so the copy does not
+//!   read stale when the member leaves; a re-send lands on the same CLAIMs;
+//! - a caller re-using one inquiry id for a second member lands that
+//!   member's copy on CLAIMs of its own: the first member's copies keep
+//!   their subject, world, text and attribution;
+//! - a `task` answer and an unanswered `copy` inquiry land nothing;
+//! - once the member ends the pact and asks for the copies' deletion, a
+//!   retain-under-basis answer keeps them out of shared reads, as it does a
+//!   courtesy copy in a world the pact registered (BIZ-LEGAL-0004 B2); a
+//!   second member's copy, under another pact, stays readable.
+//!
 //! The member host is a double in this process; the member-side admit and
 //! the member host's route are later PRs.
 //!
@@ -26,6 +44,10 @@ use oneiron::authority::{
     AuthorityVaultId, CapabilitySlip, HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::deletion::{
+    CooperativeDeletionAnswer, CooperativeDeletionDispositionKind, CooperativeDeletionIngress,
+    CooperativeDeletionRetention, encode_signed_cooperative_deletion_request,
+};
 use oneiron::federation::FederationGrantRole;
 use oneiron::housekeeping::HousekeepingBudget;
 use oneiron::inquiry::{
@@ -47,10 +69,16 @@ const SHARED: u64 = 42;
 const ASKER_BYTES: [u8; 16] = [0xE1; 16];
 const COMPANY: &str = "Acme";
 const MEMBER: &str = "owen";
+/// The second member, for the copy tests that ask two members.
+const OTHER_MEMBER: &str = "yuki";
 const MEMBER_HOST: &str = "https://member.example";
 const QUESTION: &str = "Is owen in the office on Thursday?";
 /// The member's word.
 const OUT_THURSDAY: &str = "Out Thursday. Back Friday.";
+/// The member's companion's answer: provisional.
+const BUSY_THURSDAY: &str = "Busy Thursday.";
+/// The predicate an inquiry statement is a CLAIM of.
+const STATEMENT_PREDICATE: &str = "profile.statement";
 /// A peer vault no fixture opens.
 const UNOPENED_PEER: AuthorityVaultId = [0xbd; 32];
 
@@ -160,7 +188,7 @@ fn asking() -> Asking {
         )
         .expect("the company's shared vault");
     let seat = seat(&company);
-    let edge = activate_edge(&member, &company);
+    let edge = activate_edge(&member, &company, MEMBER);
     let slip = mint_slip(&member, &edge, company.issuer.binding_key());
     let fixture = Asking {
         member,
@@ -198,8 +226,9 @@ fn seat(company: &Side) -> EntityId {
 }
 
 /// The member's inquiry edge to the company and the company's reciprocal
-/// grant, bound by the existing Connect offer and accept.
-fn activate_edge(member: &Side, company: &Side) -> InquiryEdge {
+/// grant for the member `name`, bound by the existing Connect offer and
+/// accept.
+fn activate_edge(member: &Side, company: &Side, name: &str) -> InquiryEdge {
     let edge = member
         .vault
         .mint_inquiry_edge(
@@ -209,7 +238,7 @@ fn activate_edge(member: &Side, company: &Side) -> InquiryEdge {
         .expect("the member mints the inquiry edge");
     let reciprocal = company
         .vault
-        .mint_inquiry_edge_reciprocal_grant(&company.proof, member.vault_id, MEMBER)
+        .mint_inquiry_edge_reciprocal_grant(&company.proof, member.vault_id, name)
         .expect("the company Owner mints the reciprocal grant");
     let offer = member
         .vault
@@ -261,6 +290,27 @@ impl Asking {
         }
     }
 
+    /// A second member `name` of the company: its own vault (`seed`), seat,
+    /// inquiry edge, Connect pact and route. Returns its side and its seat.
+    fn open_other_member(&self, seed: u8, name: &str) -> (Side, EntityId) {
+        let other = side(seed);
+        let other_seat = seat(&self.company);
+        let other_edge = activate_edge(&other, &self.company, name);
+        let other_slip = mint_slip(&other, &other_edge, self.company.issuer.binding_key());
+        self.company
+            .vault
+            .open_inquiry_route(
+                &self.company.proof,
+                &self.company.issuer,
+                &InquiryRouteRequest {
+                    member_vault_id: other.vault_id,
+                    ..self.route_request(other_seat, other_slip)
+                },
+            )
+            .expect("the company Owner opens the second member's route");
+        (other, other_seat)
+    }
+
     fn request(&self, task: EntityId, inquiry_id: Option<EntityId>) -> InquirySendRequest {
         InquirySendRequest {
             shared_vault_id: SHARED,
@@ -290,6 +340,81 @@ impl Asking {
     }
 
     /// Every `inquiry` receipt of `inquiry`, in the order they were written.
+    /// Installs the company's `inquiry` policy row with `keep`.
+    fn install_keep(&self, keep: &str) {
+        let policy = serde_json::json!({
+            "schema_version": "1.2",
+            "pack_id": "inquiry-asking-side",
+            "pack_version": "1.0.0",
+            "min_engine_version": "0.0.0",
+            "defaults": {},
+            "rules": [],
+            "actor_ceilings": [],
+            "inquiry": { "version": 1, "keep": keep },
+        });
+        self.company
+            .vault
+            .install_owner_policy_manifest(
+                &self.company.proof,
+                EntityId::now(),
+                rmp_serde::to_vec_named(&policy).expect("encode"),
+                self.company.vault.now_recorded_at(),
+            )
+            .expect("the company Owner installs the inquiry row");
+    }
+
+    /// Every inquiry-statement CLAIM about the member in the company vault.
+    fn copies(&self) -> Vec<(EntityId, oneiron::claim::ClaimBody)> {
+        self.copies_about(self.seat)
+    }
+
+    /// Every inquiry-statement CLAIM about the PERSON `seat` in the company
+    /// vault.
+    fn copies_about(&self, seat: EntityId) -> Vec<(EntityId, oneiron::claim::ClaimBody)> {
+        let mut copies: Vec<_> = self
+            .company
+            .vault
+            .claims_for_subject(&seat)
+            .expect("claims about the member")
+            .into_iter()
+            .filter_map(|id| {
+                let body = self.company.vault.get_claim(&id).expect("claim read")?;
+                (body.predicate == STATEMENT_PREDICATE).then_some((id, body))
+            })
+            .collect();
+        copies.sort_by_key(|(id, _)| *id);
+        copies
+    }
+
+    /// The foreign WORLD the member's copies land in: derived from the
+    /// company's pact with the member's vault and the world the member
+    /// opened.
+    fn copy_world(&self) -> EntityId {
+        let (pact, _) = self.company_pact();
+        oneiron::federation::pact_foreign_world(
+            &self.company.vault.authority_fold().expect("fold"),
+            &pact,
+            self.edge.terms.opened_world,
+        )
+        .expect("derive")
+        .expect("the pact")
+        .entity_id()
+    }
+
+    /// The company's Active Connect pact with the member's vault, and its
+    /// consent epoch.
+    fn company_pact(&self) -> ([u8; 32], u64) {
+        let fold = self.company.vault.authority_fold().expect("authority fold");
+        let mut live = fold.federation_pacts.iter().filter(|(_, state)| {
+            state.peer_vault_id == self.member.vault_id
+                && state.status == oneiron::authority::FederationPactStatus::Active
+        });
+        let (Some((pact, state)), None) = (live.next(), live.next()) else {
+            panic!("one Active pact with the member's vault");
+        };
+        (*pact, state.pact_epoch)
+    }
+
     fn receipts(&self, inquiry: &Inquiry) -> Vec<ReceiptRecord> {
         let mut query = ReceiptQuery::new(100);
         query.kinds = [ReceiptKind::Inquiry].into();
@@ -303,7 +428,13 @@ impl Asking {
 /// What the member host double answers.
 #[derive(Clone, Copy)]
 enum Reply {
-    Answered { valid_until: u64 },
+    Answered {
+        valid_until: u64,
+    },
+    /// The member's word and the companion's answer.
+    AnsweredWithCompanion {
+        valid_until: u64,
+    },
     Pending,
     Stopped,
 }
@@ -363,6 +494,19 @@ impl InquiryTransport for MemberHost {
                     &inquiry,
                     vec![
                         InquiryStatement::new(OUT_THURSDAY, StatementSource::MemberWord)
+                            .expect("statement"),
+                    ],
+                    valid_until,
+                )
+                .expect("answer"),
+            ),
+            Reply::AnsweredWithCompanion { valid_until } => Some(
+                InquiryAnswer::answered(
+                    &inquiry,
+                    vec![
+                        InquiryStatement::new(OUT_THURSDAY, StatementSource::MemberWord)
+                            .expect("statement"),
+                        InquiryStatement::new(BUSY_THURSDAY, StatementSource::CompanionOfMember)
                             .expect("statement"),
                     ],
                     valid_until,
@@ -716,4 +860,319 @@ fn opening_a_route_refuses_another_vaults_slip_another_host_no_seat_and_no_owner
         &seat_proof,
     );
     assert!(format!("{refused:?}").contains("owner"), "{refused:?}");
+}
+
+#[test]
+fn a_copy_answer_lands_foreign_attributed_and_is_not_held() {
+    let fixture = asking();
+    fixture.install_keep("copy");
+    let host = MemberHost::new(Reply::AnsweredWithCompanion {
+        valid_until: fixture.company.vault.now_recorded_at() + 3_600,
+    });
+    let sent = fixture.send(&host, fixture.task);
+    assert_eq!(sent.outcome, InquiryOutcome::Answered);
+    assert_eq!(
+        host.calls.lock().expect("calls")[0].inquiry.keep,
+        InquiryKeep::Copy,
+        "the inquiry tells the member the company keeps a copy"
+    );
+    assert!(!sent.held, "a copied answer is not held with the task");
+    assert_eq!(fixture.held(fixture.task, &sent), None);
+
+    let (pact, epoch) = fixture.company_pact();
+    let world = fixture.copy_world();
+    let copies = fixture.copies();
+    assert_eq!(copies.len(), 2, "one CLAIM per statement: {copies:?}");
+    let mut landed = Vec::new();
+    for (_, body) in &copies {
+        assert_eq!(
+            body.world,
+            Some(world),
+            "the copy sits in the foreign world"
+        );
+        assert_eq!(body.source, Some(oneiron::claim::ClaimSource::Imported));
+        assert_eq!(body.lifecycle, oneiron::claim::ClaimLifecycleStatus::Active);
+        let text = body
+            .value
+            .as_str()
+            .expect("the statement's text")
+            .to_owned();
+        let evidence = body
+            .evidence
+            .as_ref()
+            .expect("evidence")
+            .as_map()
+            .expect("a map");
+        let field = |name: &str| {
+            evidence
+                .iter()
+                .find(|(key, _)| key.as_str() == Some(name))
+                .and_then(|(_, value)| value.as_str())
+                .map(str::to_owned)
+        };
+        assert_eq!(field("inquiry"), Some(sent.inquiry.id.to_hex()));
+        landed.push((text, field("statement_source").expect("its source")));
+        let written = format!("{body:?}");
+        assert!(
+            !written.contains(&fixture.edge.terms.opened_world.to_hex()),
+            "no id of the member's vault lands: {written}"
+        );
+    }
+    landed.sort();
+    assert_eq!(
+        landed,
+        [
+            (BUSY_THURSDAY.to_owned(), "companion_of_member".to_owned()),
+            (OUT_THURSDAY.to_owned(), "member_word".to_owned()),
+        ]
+    );
+
+    let ids: Vec<EntityId> = copies.iter().map(|(id, _)| *id).collect();
+    let history = fixture
+        .company
+        .vault
+        .federation_delivery_history(&ids)
+        .expect("delivery history");
+    assert_eq!(
+        history.len(),
+        2,
+        "one delivery record per copy: {history:?}"
+    );
+    for record in &history {
+        assert!(ids.contains(&record.source_ref));
+        assert_eq!(record.delivering_pact, pact);
+        assert_eq!(record.consent_epoch, epoch);
+        assert_eq!(record.source_vault, fixture.member.vault_id);
+        assert_eq!(
+            record.grant_ref, fixture.edge.grant,
+            "the member's edge grant"
+        );
+        assert_eq!(record.world, Some(world));
+    }
+    assert!(
+        oneiron::federation::registered_foreign_worlds_for_pact(&fixture.company.vault, &pact)
+            .expect("registered worlds")
+            .is_empty(),
+        "the copy's world is not registered to the pact: it stays when the member leaves"
+    );
+
+    let again = fixture
+        .company
+        .vault
+        .send_inquiry(&fixture.request(fixture.task, Some(sent.inquiry.id)), &host)
+        .expect("the re-send");
+    assert_eq!(again.outcome, InquiryOutcome::Answered);
+    let again: Vec<EntityId> = fixture.copies().iter().map(|(id, _)| *id).collect();
+    assert_eq!(again, ids, "a re-send lands on the same CLAIMs");
+    assert_eq!(fixture.receipts(&sent.inquiry).len(), 2);
+}
+
+#[test]
+fn a_re_used_id_for_another_member_lands_on_that_members_own_claims() {
+    let fixture = asking();
+    fixture.install_keep("copy");
+    let valid_until = fixture.company.vault.now_recorded_at() + 3_600;
+    let host = MemberHost::new(Reply::AnsweredWithCompanion { valid_until });
+    let first = fixture.send(&host, fixture.task);
+    assert_eq!(first.outcome, InquiryOutcome::Answered);
+    let first_ids: Vec<EntityId> = fixture.copies().iter().map(|(id, _)| *id).collect();
+    assert_eq!(first_ids.len(), 2, "the first member's two statements land");
+
+    // A second member: its own vault, seat, inquiry edge, Connect pact and
+    // route.
+    let (_other, other_seat) = fixture.open_other_member(0x44, OTHER_MEMBER);
+
+    host.set(Reply::Answered { valid_until });
+    let mut request = fixture.request(fixture.task, Some(first.inquiry.id));
+    request.member = other_seat;
+    let second = fixture
+        .company
+        .vault
+        .send_inquiry(&request, &host)
+        .expect("the send to the second member");
+    assert_eq!(second.outcome, InquiryOutcome::Answered);
+    assert_eq!(
+        second.inquiry.id, first.inquiry.id,
+        "the caller re-used the first inquiry's id"
+    );
+
+    let world = fixture.copy_world();
+    let first_copies = fixture.copies();
+    let ids: Vec<EntityId> = first_copies.iter().map(|(id, _)| *id).collect();
+    assert_eq!(ids, first_ids, "the first member's copies stand");
+    let mut texts_landed = Vec::new();
+    for (_, body) in &first_copies {
+        let about_first = matches!(
+            body.subject,
+            oneiron::ClaimSubject::Entity(subject) if subject == fixture.seat
+        );
+        assert!(
+            about_first,
+            "a first member's copy stays about the first member"
+        );
+        assert_eq!(body.world, Some(world), "and in the first member's world");
+        texts_landed.push(body.value.as_str().expect("text").to_owned());
+    }
+    texts_landed.sort();
+    assert_eq!(texts_landed, [BUSY_THURSDAY, OUT_THURSDAY]);
+
+    let second_copies = fixture.copies_about(other_seat);
+    assert_eq!(
+        second_copies.len(),
+        1,
+        "the second member's statement lands once: {second_copies:?}"
+    );
+    let (second_id, second_body) = &second_copies[0];
+    assert!(
+        !first_ids.contains(second_id),
+        "the second member's copy lands on a CLAIM of its own"
+    );
+    assert!(
+        second_body.world.is_some() && second_body.world != Some(world),
+        "the second member's copy sits in its own foreign world"
+    );
+
+    let history = fixture
+        .company
+        .vault
+        .federation_delivery_history(&first_ids)
+        .expect("delivery history");
+    assert_eq!(history.len(), 2, "one delivery per first copy: {history:?}");
+    for record in &history {
+        assert_eq!(
+            record.source_vault, fixture.member.vault_id,
+            "each first copy is attributed to the first member's vault"
+        );
+    }
+}
+
+#[test]
+fn a_task_answer_and_an_unanswered_copy_land_nothing() {
+    let fixture = asking();
+    let host = MemberHost::answering(&fixture.company);
+    let sent = fixture.send(&host, fixture.task);
+    assert_eq!(sent.outcome, InquiryOutcome::Answered);
+    assert!(sent.held);
+    assert!(fixture.copies().is_empty(), "a task answer lands nothing");
+
+    fixture.install_keep("copy");
+    host.set(Reply::Pending);
+    let pending = fixture.send(&host, fixture.other_task);
+    assert_eq!(pending.outcome, InquiryOutcome::Pending);
+    host.set(Reply::Stopped);
+    let stopped = fixture.send(&host, fixture.other_task);
+    assert_eq!(stopped.outcome, InquiryOutcome::Unavailable);
+    assert!(
+        fixture.copies().is_empty(),
+        "a pending or unavailable copy inquiry lands nothing"
+    );
+}
+
+#[test]
+fn a_retained_courtesy_ask_keeps_the_copied_answers_out_of_shared_reads() {
+    let fixture = asking();
+    fixture.install_keep("copy");
+    let valid_until = fixture.company.vault.now_recorded_at() + 3_600;
+    let host = MemberHost::new(Reply::AnsweredWithCompanion { valid_until });
+    let sent = fixture.send(&host, fixture.task);
+    assert_eq!(sent.outcome, InquiryOutcome::Answered);
+    let ids: Vec<EntityId> = fixture.copies().iter().map(|(id, _)| *id).collect();
+    assert_eq!(ids.len(), 2, "the member's two statements land");
+
+    // A second member's copy, under a pact of its own that the ask is not
+    // about.
+    let (_other, other_seat) = fixture.open_other_member(0x44, OTHER_MEMBER);
+    host.set(Reply::Answered { valid_until });
+    let mut request = fixture.request(fixture.other_task, None);
+    request.member = other_seat;
+    let other_sent = fixture
+        .company
+        .vault
+        .send_inquiry(&request, &host)
+        .expect("the send to the second member");
+    assert_eq!(other_sent.outcome, InquiryOutcome::Answered);
+    let other_ids: Vec<EntityId> = fixture
+        .copies_about(other_seat)
+        .iter()
+        .map(|(id, _)| *id)
+        .collect();
+    assert_eq!(other_ids.len(), 1, "the second member's statement lands");
+
+    let admits = |id: EntityId| {
+        door::retained_copy_admits(&fixture.company.vault, id).expect("the retained-copy check")
+    };
+    for id in ids.iter().chain(&other_ids) {
+        assert!(
+            admits(*id),
+            "with no ask filed, a shared read admits each copy"
+        );
+    }
+
+    // The member ends the pact and asks, about every world, for what the
+    // pact delivered up to its end; the company Owner keeps the copies
+    // under a basis.
+    let (pact, epoch) = fixture.company_pact();
+    let ended = fixture
+        .member
+        .vault
+        .disconnect_connect_as(&fixture.member.proof, &fixture.member.issuer, pact)
+        .expect("the member ends the pact");
+    let cutoff = ended.terminal_epoch.unwrap_or(ended.pact_epoch);
+    assert!(
+        epoch <= cutoff,
+        "the ask's cutoff {cutoff} covers the copies' delivery epoch {epoch}"
+    );
+    let nonce = [0x5a; 16];
+    let pages = fixture
+        .member
+        .issuer
+        .sign_cooperative_deletion_request(&fixture.member.vault, &pact, Vec::new(), cutoff, nonce)
+        .expect("the member signs the ask");
+    assert_eq!(pages.len(), 1, "an ask about every world is one page");
+    let now = fixture.company.vault.now_recorded_at();
+    let bytes = encode_signed_cooperative_deletion_request(&pages[0]).expect("encode the ask");
+    assert_eq!(
+        fixture
+            .company
+            .vault
+            .receive_cooperative_deletion_request(&bytes, now)
+            .expect("the company receives the ask"),
+        CooperativeDeletionIngress::Filed
+    );
+    fixture
+        .company
+        .vault
+        .answer_cooperative_deletion_as(
+            &fixture.company.proof,
+            &pact,
+            &nonce,
+            &CooperativeDeletionAnswer {
+                kind: CooperativeDeletionDispositionKind::RetainUnderBasis,
+                reason_code: Some("business_record".to_owned()),
+                review_at: Some(now + 86_400),
+                delete: Vec::new(),
+                hold: Vec::new(),
+                retention: Some(CooperativeDeletionRetention {
+                    records: ids.clone(),
+                    basis_code: "legitimate_interest".to_owned(),
+                    retention_class: "business_record".to_owned(),
+                }),
+                restrict: Vec::new(),
+                restriction_notice_given: Vec::new(),
+                redact: Vec::new(),
+            },
+            now,
+        )
+        .expect("the company Owner keeps the copies under a basis");
+
+    for id in &ids {
+        assert!(
+            !admits(*id),
+            "a retained ask keeps the member's copied answer out of shared reads"
+        );
+    }
+    assert!(
+        admits(other_ids[0]),
+        "the second member's copy, under another pact, stays readable"
+    );
 }
