@@ -27,8 +27,10 @@ use ed25519_dalek::{Signer, SigningKey};
 use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SlotKind};
 
 use crate::authority::{
-    ActAuthority, AuthorityKey, CheckpointRootSigner, EnrolledOwnerKey, HostSlipIssuer,
-    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, checkpoint_statement_domain, invalid_authority,
+    ACTOR_CLASS_HUMAN, ActAuthority, AuthorityEntryHash, AuthorityKey, AuthorityLogEntry,
+    AuthorityOp, AuthorityVaultId, CheckpointRootSigner, EnrolledOwnerKey, HostSlipIssuer,
+    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, RecoveryRootId, authority_transcript,
+    checkpoint_statement_domain, invalid_authority, root_appointment_challenge,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -72,6 +74,40 @@ impl OwnerRootSigner {
     fn sign_possession(&self, challenge: &[u8]) -> Vec<u8> {
         self.signing.sign(challenge).to_bytes().to_vec()
     }
+
+    /// A root appointment's proof of possession for this key as its
+    /// successor (OWNER-ANCHOR-ROOT-RECOVERY): its signature over
+    /// [`root_appointment_challenge`] for `vault_id`, `root` and `parents`.
+    pub(crate) fn sign_appointment_challenge(
+        &self,
+        vault_id: &AuthorityVaultId,
+        root: &RecoveryRootId,
+        parents: &[AuthorityEntryHash],
+    ) -> Result<Vec<u8>> {
+        let challenge = root_appointment_challenge(vault_id, root, parents, &self.public_key())?;
+        Ok(self.sign_possession(&challenge))
+    }
+
+    /// This key's signature, as an appointed successor root, over the
+    /// authority transcript of `entry`: its own binding of an owner as
+    /// `human`, which it signs right after its appointment. Refused for any
+    /// other row.
+    pub(crate) fn sign_successor_binding(&self, entry: &AuthorityLogEntry) -> Result<Vec<u8>> {
+        let own = self.root();
+        let binds_self = matches!(&entry.op, AuthorityOp::BindActor {
+            authority_key,
+            actor_class,
+            ..
+        } if *authority_key == own && actor_class == ACTOR_CLASS_HUMAN);
+        if !binds_self || entry.signer.public_key != own || !entry.cosigns.is_empty() {
+            return Err(invalid_authority());
+        }
+        Ok(self
+            .signing
+            .sign(&authority_transcript(entry)?)
+            .to_bytes()
+            .to_vec())
+    }
 }
 
 impl CheckpointRootSigner for OwnerRootSigner {
@@ -103,6 +139,26 @@ impl Vault {
         let machine = self.prepare_install_signing()?;
         let seed = super::slot_seed(keystore.as_ref(), &self.owner_signing_slot(machine))?;
         Ok(OwnerRootSigner::from_seed(&seed))
+    }
+
+    /// A new owner signing key for this install, made in its
+    /// [`SlotKind::OwnerSigning`] slot from the OS CSPRNG after the slot's
+    /// seed is dropped: a root appointment's successor
+    /// (OWNER-ANCHOR-ROOT-RECOVERY), which must be a key no row names. Never
+    /// the slot's existing key, which the roster may name, live or revoked.
+    ///
+    /// # Errors
+    /// `KeystoreUnavailable` while the host installed no keystore; the
+    /// keystore's own refusal.
+    pub(crate) fn fresh_device_owner_signing_key(&self) -> Result<OwnerRootSigner> {
+        let keystore = self.device_keystore()?;
+        let machine = self.prepare_install_signing()?;
+        let slot = self.owner_signing_slot(machine);
+        DeviceKeystore::delete(keystore.as_ref(), &slot).map_err(super::keystore_error)?;
+        Ok(OwnerRootSigner::from_seed(&*super::slot_seed(
+            keystore.as_ref(),
+            &slot,
+        )?))
     }
 
     /// The owner enrols this install's own owner signing key, made in its

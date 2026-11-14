@@ -337,6 +337,20 @@ fn ancestry_of(
     Some(ancestry)
 }
 
+/// The verdict of the appointment at `hash` over `rows`, which hold it and
+/// its ancestry: what the fold of any install that pins its root judges it,
+/// a burn elsewhere in that install's log aside ([`judge_anchor`]). Pending
+/// while `rows` lack an ancestor.
+pub(super) fn verdict_of_row(
+    rows: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    hash: &AuthorityEntryHash,
+) -> AppointmentVerdict {
+    match rows.get(hash).and_then(|entry| ancestry_of(rows, entry)) {
+        Some(ancestry) => verdict_of(rows, *hash, &ancestry),
+        None => AppointmentVerdict::Pending,
+    }
+}
+
 /// The verdicts already reached, by appointment hash. A verdict is a function
 /// of the hash alone (the row names its ancestry by content), so one map
 /// serves every fold of the process. It keeps only completed verdicts, never

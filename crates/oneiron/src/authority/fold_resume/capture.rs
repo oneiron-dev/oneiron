@@ -24,13 +24,15 @@ pub(in crate::authority) struct FoldCapture {
 }
 
 /// What a root appointment's proof fold settled: each surviving row's state,
-/// the raw merge of them before any restrictive fact, and the handoffs whose
-/// fences closed. A counted appointment's recovered world is made of these
-/// (PLAN v3 section 6).
+/// the raw merge of them before any restrictive fact, the handoffs whose
+/// fences closed, and the rows of each closed conflict. A counted
+/// appointment's recovered world is made of the first three (PLAN v3 section
+/// 6); the appointment door names its witnesses from the last (section 7).
 pub(in crate::authority) struct ProofParts {
     pub(in crate::authority) states: BTreeMap<AuthorityEntryHash, FoldState>,
     pub(in crate::authority) merged: FoldState,
     pub(in crate::authority) closed_handoffs: BTreeSet<AuthorityEntryHash>,
+    pub(in crate::authority) closed_conflicts: Vec<BTreeSet<AuthorityEntryHash>>,
 }
 
 /// The frontier an image build keeps fold states at, and what it kept of the
@@ -100,6 +102,7 @@ impl FoldCapture {
                 states: parts.states.clone(),
                 merged: parts.merged,
                 closed_handoffs: parts.closed_handoffs,
+                closed_conflicts: parts.closed_conflicts,
             }));
         } else if let Some(image) = &self.image {
             *image.fold.borrow_mut() =
@@ -130,6 +133,8 @@ pub(in crate::authority) struct OnceParts<'a> {
     pub(in crate::authority) revoke_facts: RevokeFacts,
     pub(in crate::authority) retired_keys: BTreeSet<AuthorityKey>,
     pub(in crate::authority) closed_handoffs: BTreeSet<AuthorityEntryHash>,
+    /// The rows of each closed conflict (`Retirements::closed_conflicts`).
+    pub(in crate::authority) closed_conflicts: Vec<BTreeSet<AuthorityEntryHash>>,
     pub(in crate::authority) unsettled: bool,
     pub(in crate::authority) counted_ancestor_pairs: u64,
     pub(in crate::authority) issues: Vec<AuthorityFoldIssue>,
@@ -196,6 +201,7 @@ impl Once {
             revoke_facts,
             retired_keys,
             closed_handoffs,
+            closed_conflicts: _,
             unsettled,
             counted_ancestor_pairs,
             issues,

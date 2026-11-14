@@ -521,6 +521,7 @@ pub(super) fn fold_authority_log_once(
             revoke_facts,
             retired_keys,
             closed_handoffs: retirements.handoffs(),
+            closed_conflicts: retirements.closed_conflicts(),
             unsettled: retirements.unsettled(),
             counted_ancestor_pairs,
             issues,

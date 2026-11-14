@@ -344,6 +344,18 @@ impl AuthenticatedOwner {
             .is_some_and(|credential| credential.claims().delegation.is_some())
     }
 
+    /// Whether the owner authenticated on this install itself: no transport
+    /// bound a capability, a person's or a request's credential to the proof,
+    /// and no host authenticated it from a host action. The root appointment
+    /// door takes only such a proof (OWNER-ANCHOR-ROOT-RECOVERY, PLAN v3
+    /// section 7).
+    pub(crate) fn is_unbound(&self) -> bool {
+        self.credential.is_none()
+            && self.person_credential.is_none()
+            && self.request_credential.is_none()
+            && self.host_action.is_none()
+    }
+
     /// The slip a transport bound this proof to: the owner's credential, or
     /// a person's ([`Vault::bind_person_credential`]).
     fn carried_slip(&self) -> Option<&crate::authority::VerifiedSlip> {

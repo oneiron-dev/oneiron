@@ -212,7 +212,7 @@ const PENDING_KIT_ROOT_RULE: PendingKitRootRule =
 impl Vault {
     /// Runs a root door's checks in a read snapshot, before this install's
     /// machine identity is minted.
-    fn precheck_root_door<T>(
+    pub(super) fn precheck_root_door<T>(
         &self,
         owner: &AuthenticatedOwner,
         check: impl FnOnce(&heed::RoTxn<'_>, &AuthorityFold) -> Result<T>,
@@ -226,7 +226,7 @@ impl Vault {
     /// The kit-restored seed rule in `txn`: the seed's root, and whether the
     /// door publishes it first. A locally pending root is refused unless a
     /// stored or carried record matches it ([`PENDING_KIT_ROOT_RULE`]).
-    fn kit_seed_gate_in_txn(
+    pub(super) fn kit_seed_gate_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         fold: &AuthorityFold,

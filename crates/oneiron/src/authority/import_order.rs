@@ -34,13 +34,16 @@ fn is_consent_row(op: &AuthorityOp) -> bool {
     matches!(op, AuthorityOp::Genesis { .. }) || admits_device(op).is_some_and(is_consent_device)
 }
 
-/// A row the door's structure reads: a consent row, a machine revision, or
-/// a root record, which names an owner anchor.
+/// A row the door's structure reads: a consent row, a machine revision, a
+/// root record, which names an owner anchor, or a root appointment, which
+/// admits its successor.
 fn is_structural(op: &AuthorityOp) -> bool {
     is_consent_row(op)
         || matches!(
             op,
-            AuthorityOp::MachineProfile(_) | AuthorityOp::OwnerRoot(_)
+            AuthorityOp::MachineProfile(_)
+                | AuthorityOp::OwnerRoot(_)
+                | AuthorityOp::RootAppointment(_)
         )
 }
 
@@ -143,6 +146,9 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
             family: FrontierJoinFamily::Anchor,
             ..
         }) => vec![Grant::Anchor(entry.signer_key().clone())],
+        // A root appointment waits for its signer to be an owner anchor, as
+        // the anchor's own rows do (OWNER-ANCHOR-ROOT-RECOVERY).
+        AuthorityOp::RootAppointment(_) => vec![Grant::Anchor(entry.signer_key().clone())],
         // The owner's kit push (FIX 6053) waits for its signer to be an
         // owner anchor, as an anchored machine revision does.
         AuthorityOp::OwnerWorkRequest(request) if request.kit_root().is_some() => {
