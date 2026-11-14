@@ -438,10 +438,13 @@ impl SyncServer {
     }
 }
 
-struct IndexedProvider {
+struct IndexedProvider<'vault> {
     provider: Arc<dyn QueryEmbedder>,
+    /// The vault whose rows it embeds: it releases each request a provider
+    /// off this device sends.
+    vault: &'vault oneiron::Vault,
 }
-impl oneiron::memory::IndexedRevisionEmbedder for IndexedProvider {
+impl oneiron::memory::IndexedRevisionEmbedder for IndexedProvider<'_> {
     fn embed_revision(
         &self,
         input: &oneiron::memory::IndexedRevisionInput,
@@ -458,13 +461,23 @@ impl oneiron::memory::IndexedRevisionEmbedder for IndexedProvider {
         let payload = input.payload().ok_or(oneiron::Error::InvariantViolation(
             "idle publication asked for a revision with nothing to embed",
         ))?;
-        let values = self
-            .provider
-            .embed_marked(&[oneiron::embed::PendingEmbeddingInput {
-                entity_id: input.entity,
-                payload,
-                pending_embedding_token: input.source_revision_ref.0.to_vec(),
-            }])?;
+        let inputs = [oneiron::embed::PendingEmbeddingInput {
+            entity_id: input.entity,
+            payload,
+            pending_embedding_token: input.source_revision_ref.0.to_vec(),
+        }];
+        // A provider off this device sends the revision only once the vault
+        // releases it toward that provider, as the pending worker's sends: a
+        // row a device-local world keeps is refused and sent nowhere
+        // (DEC-0005 #private-world-vectors).
+        let values = if self.provider.locality() == oneiron::embed::EmbedderLocality::OnDevice {
+            self.provider.embed_marked(&inputs)?
+        } else {
+            let destination = self.provider.endpoint();
+            self.provider.embed_released(&inputs, &|rows| {
+                self.vault.release_embed_rows(rows, &destination)
+            })?
+        };
         let mut values = values.into_iter();
         let value = values.next().ok_or(oneiron::Error::InvariantViolation(
             "indexed provider returned no vector",
@@ -491,6 +504,7 @@ impl SyncServer {
             .ok_or(oneiron::Error::InvariantViolation("missing idle embedder"))?;
         let provider = IndexedProvider {
             provider: slot.ensure_ready_for(self.vault())?,
+            vault: self.vault(),
         };
         if provider.provider.locality() == oneiron::embed::EmbedderLocality::ThirdParty {
             return Err(oneiron::Error::InvalidConfig(
@@ -509,3 +523,6 @@ impl SyncServer {
         )
     }
 }
+
+#[cfg(test)]
+mod idle_release_tests;
