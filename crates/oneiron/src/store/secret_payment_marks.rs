@@ -19,9 +19,9 @@ pub(crate) const PAYMENT_MARK: SideTable<EntityId, SecretPaymentMark, Named> =
 /// The owner's stored answer on one custody record: whether it is a payment
 /// credential, and the Gate receipt of the act that set it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SecretPaymentMark {
-    pub payment: bool,
-    pub receipt: String,
+pub(crate) struct SecretPaymentMark {
+    pub(crate) payment: bool,
+    pub(crate) receipt: String,
 }
 
 /// Drops the payment mark on the custody record `custody`, whose row is
