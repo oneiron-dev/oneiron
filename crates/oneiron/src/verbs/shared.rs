@@ -27,6 +27,20 @@ pub struct SharedVaultRequest {
     pub vault_id: u64,
 }
 
+/// `vault.shared.propose_delete`'s input: the shared vault, and the approved
+/// check-in of another asker the starting Owner applies, when one is named.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SharedDeleteProposeRequest {
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
+    pub vault_id: u64,
+    /// An asker's approved check-in for this vault's delete, 32 hex: the
+    /// Owner applies it on their own proof, and the act names its asker.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
+}
+
 /// `vault.shared.propose_transfer`'s input: the starter, a live Owner, hands
 /// the vault to `to`, then keeps `from_keeps` or leaves when it is absent.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -297,8 +311,8 @@ fn person_id(field: &str, hex: &str) -> MemoryResult<EntityId> {
         .map_err(|_| MemoryError::bad_request(format!("{field} is not an entity id")))
 }
 
-/// The settled check-in a membership call names, when it names one.
-fn check_in_ref(hex: Option<&str>) -> MemoryResult<Option<EntityId>> {
+/// The settled check-in a call names, when it names one.
+pub(super) fn check_in_ref(hex: Option<&str>) -> MemoryResult<Option<EntityId>> {
     hex.map(|hex| {
         EntityId::from_hex(hex)
             .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))
@@ -306,13 +320,16 @@ fn check_in_ref(hex: Option<&str>) -> MemoryResult<Option<EntityId>> {
     .transpose()
 }
 
-/// `vault.shared.propose_delete`: start the vault's `delete_vault` act.
+/// `vault.shared.propose_delete`: start the vault's `delete_vault` act. The
+/// act records the Owner's check-in decision; with `check_in_ref` the Owner
+/// applies an asker's approved check-in for this delete (2j).
 pub fn propose_shared_delete(
     vault: &Vault,
     starter: &AuthenticatedOwner,
-    input: SharedVaultRequest,
+    input: SharedDeleteProposeRequest,
 ) -> MemoryResult<PendingAuthorityAct> {
-    Ok(vault.propose_delete_vault(starter, input.vault_id)?)
+    let check_in = check_in_ref(input.check_in_ref.as_deref())?;
+    Ok(vault.propose_delete_vault_with_check_in(starter, input.vault_id, check_in)?)
 }
 
 /// `vault.shared.propose_transfer`: start a `transfer_ownership` act.

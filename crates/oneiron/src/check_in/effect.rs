@@ -64,7 +64,7 @@ pub(crate) struct DoorAct<'a> {
 /// The check-in decision an act's family receipt records (P24-SHAPE Q9 =
 /// A): the act class, the role it was judged under, the mode and why it
 /// went.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CheckInDecision {
     /// The act class's token.
@@ -79,6 +79,11 @@ pub struct CheckInDecision {
     pub basis: String,
     /// The check-in the act spent, 32 hex.
     pub check_in: Option<String>,
+    /// Who asked for the act, PERSON or agent id hex, when an Owner applied
+    /// another asker's approved check-in on their own proof (P24-SHAPE Q7 =
+    /// A); none for an act its own actor asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requester: Option<String>,
 }
 
 /// What a door does with its act.
@@ -209,5 +214,72 @@ fn decision(
         mode: mode.map(|mode| mode.as_str().to_owned()),
         basis: basis.to_owned(),
         check_in: check_in.as_ref().map(EntityId::to_hex),
+        requester: None,
     }
+}
+
+/// The digest of deleting shared vault `vault_id`: the effect an asker's
+/// `vault.check_in.open` names for `vault.shared.propose_delete`, and the
+/// one an Owner's start of the `delete_vault` act spends (2j; P24-SHAPE Q7 =
+/// A). BLAKE3, key derived from `oneiron check_in vault delete v1`, over the
+/// vault id as eight big-endian bytes.
+#[must_use]
+pub fn vault_delete_effect_digest(vault_id: u64) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in vault delete v1");
+    hasher.update(&vault_id.to_be_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+/// The digest of erasing `record`, with or without every other record
+/// holding its bytes: the effect an asker's `vault.check_in.open` names for
+/// `vault.records.erase_confirm`, and the one an Owner's confirm spends (2j;
+/// P24-SHAPE Q7 = A). BLAKE3, key derived from `oneiron check_in record erase
+/// v1`, over the record's 16 id bytes and one byte, 1 when the erase takes
+/// the same bytes too.
+#[must_use]
+pub fn record_erase_effect_digest(record: &EntityId, also_same_bytes: bool) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in record erase v1");
+    hasher.update(record.as_bytes());
+    hasher.update(&[u8::from(also_same_bytes)]);
+    *hasher.finalize().as_bytes()
+}
+
+/// The decision of an Owner's own act on a catastrophe row: the Owner acts
+/// on their own proof (P24-SHAPE Q9 = A), where the act's door asks for it.
+pub(crate) fn owner_own_proof_decision(act: ActClass) -> CheckInDecision {
+    CheckInDecision {
+        act_class: act.as_str().to_owned(),
+        role: RolePreset::Owner.as_str().to_owned(),
+        mode: None,
+        basis: "own_proof".to_owned(),
+        check_in: None,
+        requester: None,
+    }
+}
+
+/// Spends `id`, another asker's settled check-in for `verb`'s `act` over
+/// `effect_digest`, in the writer of the Owner who applies the act on their
+/// own proof (2j; P24-SHAPE Q7 = A). The answer is no proof of its own: the
+/// Owner's proof runs the act, and every gate of the act's door still
+/// holds. Returns the asker, the act's requester.
+///
+/// # Errors
+///
+/// No such row; another verb's or act class's ask; another effect; an ask
+/// that is not eligible or already spent; storage errors.
+pub(crate) fn spend_applied_check_in_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    verb: &str,
+    act: ActClass,
+    effect_digest: &[u8; 32],
+    now: u64,
+) -> Result<EntityId> {
+    let row = pending_check_in_in_txn(&vault.store, txn, id)?.ok_or(Error::EntityNotFound)?;
+    if row.verb != verb || row.act != act {
+        return Err(refuse("the check-in is another act's ask"));
+    }
+    consume_pending_check_in_in_txn(vault, txn, id, effect_digest, now)?;
+    Ok(row.asker)
 }

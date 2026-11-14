@@ -23,9 +23,8 @@ pub use owner_recovery::OwnerRecoveryAuthorization;
 pub(super) use pending_execution::UnsignedExecution;
 
 use super::{
-    ChangeRecord, DetachOutcome, DetachReport, Effect, RECEIPT_PREFIX, RemoveOwnerPlan,
-    SharedActExecutionReceipt, SharedActKind, SharedVaultChange, decode, encode, invalid, key,
-    live_owners, non_root,
+    ChangeRecord, DetachOutcome, DetachReport, Effect, RemoveOwnerPlan, SharedActExecutionReceipt,
+    SharedActKind, SharedVaultChange, decode, invalid, live_owners, non_root,
 };
 use crate::authority::{
     CapabilitySlip, HostSlipIssuer, MembershipExecutionCause, OwnerHandover, OwnerHandoverCause,
@@ -254,7 +253,7 @@ impl Vault {
     /// `member`'s membership grant row in the vault and its role, delegate
     /// and `engine.controls` grants aside: the grant a person's pending
     /// check-in climbs the ladder from.
-    fn member_grant_in_txn(
+    pub(crate) fn member_grant_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         vault_id: u64,
@@ -769,14 +768,7 @@ impl Vault {
         let mut receipt = self.record_shared_change_in_txn(
             &mut txn, id, vault_id, None, actor_id, owners, effect, None, record, None, now,
         )?;
-        if decision.is_some() {
-            receipt.check_in = decision;
-            self.store.vault_meta.put(
-                &mut txn,
-                &key(RECEIPT_PREFIX, &receipt.id),
-                &encode(&receipt)?,
-            )?;
-        }
+        self.record_receipt_check_in_in_txn(&mut txn, &mut receipt, decision)?;
         if let Some(ask) = ask {
             self.apply_member_ask_in_txn(&mut txn, ask, actor_id, &mut receipt, now)?;
         }

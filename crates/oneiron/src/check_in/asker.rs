@@ -36,10 +36,11 @@ use super::resolve::{
 };
 use super::role_preset::RolePreset;
 use super::verb_act_class::{VerbActClass, verb_act_class};
-use crate::authority::{NoStanding, principal_standing_or_lapse_in_txn};
+use crate::authority::{NoStanding, principal_standing_covering_or_lapse_in_txn};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::federation::FederationGrant;
 use crate::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult,
 };
@@ -257,7 +258,10 @@ fn judge_act(
 
 /// The caller, in `txn`: its actor binding and any credential it presented
 /// checked first; then the live vault owner, or an agent with its standing
-/// for `verb`.
+/// for `verb`: the first of its Grants that stand for `verb` whose bounds
+/// cover the effect at `scope`, else the first that stands (review round 1
+/// of #7715 and #7716: an earlier Grant narrowed away from the effect hid a
+/// later one that reaches it).
 fn asker_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
@@ -283,7 +287,15 @@ fn asker_in_txn(
             "the caller is neither the vault owner nor an agent",
         ));
     }
-    match principal_standing_or_lapse_in_txn(vault, txn, actor, EdgeActorClass::Agent, verb)? {
+    let covers = |grant: &FederationGrant| covers_effect(grant, scope);
+    match principal_standing_covering_or_lapse_in_txn(
+        vault,
+        txn,
+        actor,
+        EdgeActorClass::Agent,
+        verb,
+        &covers,
+    )? {
         Ok(standing) => {
             let Some(grant_id) = standing.grant else {
                 return unpowered_in_txn(memory, txn, NO_GRANT_LISTS_VERB);
