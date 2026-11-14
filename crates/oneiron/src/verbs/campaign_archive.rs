@@ -115,11 +115,16 @@ pub fn research_archive_propose_axes(
     Ok(CampaignArchiveAxesQueued { request })
 }
 
-/// One axes request's state, for its campaign's controller.
+/// One axes request's state, for its campaign's controller. The axes are
+/// drawn from the samples' words, so the state serves only a caller who
+/// reads every sample now, as the caller who queued the request had to: a
+/// read grant revoked since the request withholds its answer (#7966 review
+/// round 1).
 pub fn research_archive_proposal(
     memory: &Memory<'_>,
     input: CampaignArchiveProposalRequest,
 ) -> MemoryResult<CampaignArchiveProposalState> {
+    let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
     let txn = memory
         .vault()
         .store
@@ -128,6 +133,12 @@ pub fn research_archive_proposal(
         .map_err(crate::Error::from)?;
     let record = axes_job::request_record_in_txn(memory.vault(), &txn, input.request)?;
     controller_in_txn(memory, &txn, Some(attempt(record.root())?))?;
+    if lane
+        .entities_readable_in_txn(&txn, &record.sample_entities())?
+        .contains(&false)
+    {
+        return Err(crate::Error::EntityNotFound.into());
+    }
     Ok(record.into_state())
 }
 

@@ -28,6 +28,7 @@ pub use judge::{
     ArchiveJudgeAsk, ArchiveJudgeHost, ArchiveJudgeQuestion, CampaignArchiveJudge,
     CampaignArchiveJudged,
 };
+pub(crate) use producers::erase_producer_actor_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use producers::producer_record_count;
 pub use producers::{
