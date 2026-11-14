@@ -41,6 +41,10 @@ pub enum CatastropheClass {
     /// erase, no bypass covers it, and no standing grant makes it automatic:
     /// an agent's widen always asks a holder in the moment.
     WorldPrivacyWiden,
+    /// A force-push, history rewrite or delete of a protected ref (ARCH-0068
+    /// RC4; DEC-0006 names it one-way). The owner's scoped bypass covers it
+    /// (L8-51).
+    ProtectedRefRewriteOrDelete,
 }
 
 impl CatastropheClass {
@@ -54,6 +58,7 @@ impl CatastropheClass {
             Self::SecurityControlDisable => "security_control_disable",
             Self::MassSecretExport => "mass_secret_export",
             Self::WorldPrivacyWiden => "world_privacy_widen",
+            Self::ProtectedRefRewriteOrDelete => "protected_ref_rewrite_or_delete",
         }
     }
 
@@ -75,6 +80,7 @@ impl CatastropheClass {
             "security_control_disable" => Some(Self::SecurityControlDisable),
             "mass_secret_export" => Some(Self::MassSecretExport),
             "world_privacy_widen" => Some(Self::WorldPrivacyWiden),
+            "protected_ref_rewrite_or_delete" => Some(Self::ProtectedRefRewriteOrDelete),
             _ => None,
         }
     }

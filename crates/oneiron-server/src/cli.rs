@@ -60,8 +60,9 @@ pub use owner_args::{
 };
 pub use owner_args::{
     LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs, LegalHoldWidenArgs,
-    LegalHoldsCommand, SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultKeyArgs,
-    VaultKeyCommand, VaultKeyNamedArgs, VaultKeyResealArgs,
+    LegalHoldsCommand, RecoveryPresetArg, SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs,
+    VaultKeyArgs, VaultKeyCommand, VaultKeyNamedArgs, VaultKeyRecoveryPresetArgs,
+    VaultKeyResealArgs,
 };
 pub use owner_args::{
     PackRemoveArgs, PacksCommand, SubscriptionListArgs, SubscriptionPutArgs,

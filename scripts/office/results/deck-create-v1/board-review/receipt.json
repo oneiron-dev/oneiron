@@ -1,0 +1,603 @@
+{
+  "binding": {
+    "case": "board-review",
+    "case_manifest_sha256": "bed43798aebb9b067607d0d0a8eac4e6e21ab926c0190d0f50dc61341df46f5c",
+    "case_set": "deck-create-v1",
+    "source": "474effa8c4e5b91093911eb6489117e0faa20ea7"
+  },
+  "detail": "PDFKit rasterized 7 page(s)",
+  "dialog_dismissals": [],
+  "environment": {
+    "font_account": "owner-console",
+    "font_inventory_sha256": "e14cb7e38f1cbf13de0f2894ce865836b36b960dad36a9d36188148cbcf69637",
+    "font_role": "owner",
+    "harness": "one-2531-v1",
+    "locale": "",
+    "macos": "27.0",
+    "macos_build": "26A428",
+    "observer": "system-events",
+    "pdfkit": "27.0",
+    "powerpoint": "16.113.2",
+    "raster_scale": 2
+  },
+  "fit": [
+    {
+      "block": "a-title",
+      "bound_emu": [
+        6004337,
+        670560
+      ],
+      "detail": "",
+      "frame_emu": [
+        457200,
+        274638,
+        8229600,
+        1143000
+      ],
+      "inner_emu": [
+        8046720,
+        1051560
+      ],
+      "kind": "text",
+      "name": "Title 1",
+      "planned_emu": [
+        457200,
+        274638,
+        8229600,
+        1143000
+      ],
+      "shape_id": 2,
+      "shape_index": 1,
+      "slide": 1,
+      "verdict": "fits"
+    },
+    {
+      "block": "a-claim",
+      "bound_emu": [
+        6547548,
+        1072896
+      ],
+      "detail": "",
+      "frame_emu": [
+        457200,
+        1600200,
+        8229600,
+        4525963
+      ],
+      "inner_emu": [
+        8046720,
+        4434523
+      ],
+      "kind": "text",
+      "name": "Content Placeholder 2",
+      "planned_emu": [
+        457200,
+        1600200,
+        8229600,
+        4525963
+      ],
+      "shape_id": 3,
+      "shape_index": 2,
+      "slide": 1,
+      "verdict": "fits"
+    },
+    {
+      "block": "h-title",
+      "bound_emu": [
+        1156589,
+        304800
+      ],
+      "detail": "",
+      "frame_emu": [
+        457200,
+        273050,
+        3008313,
+        1162050
+      ],
+      "inner_emu": [
+        2825433,
+        1070610
+      ],
+      "kind": "text",
+      "name": "Title 1",
+      "planned_emu": [
+        457200,
+        273050,
+        3008313,
+        1162050
+      ],
+      "shape_id": 2,
+      "shape_index": 1,
+      "slide": 2,
+      "verdict": "fits"
+    },
+    {
+      "block": "h-one",
+      "bound_emu": [
+        2599563,
+        487680
+      ],
+      "detail": "",
+      "frame_emu": [
+        3575050,
+        273050,
+        5111750,
+        5853113
+      ],
+      "inner_emu": [
+        4928870,
+        5761673
+      ],
+      "kind": "text",
+      "name": "Content Placeholder 2",
+      "planned_emu": [
+        3575050,
+        273050,
+        5111750,
+        5853113
+      ],
+      "shape_id": 3,
+      "shape_index": 2,
+      "slide": 2,
+      "verdict": "fits"
+    },
+    {
+      "block": "h-two",
+      "bound_emu": [
+        743331,
+        213360
+      ],
+      "detail": "",
+      "frame_emu": [
+        457200,
+        1435100,
+        3008313,
+        4691063
+      ],
+      "inner_emu": [
+        2825433,
+        4599623
+      ],
+      "kind": "text",
+      "name": "Text Placeholder 3",
+      "planned_emu": [
+        457200,
+        1435100,
+        3008313,
+        4691063
+      ],
+      "shape_id": 4,
+      "shape_index": 3,
+      "slide": 2,
+      "verdict": "fits"
+    },
+    {
+      "block": "b-title",
+      "bound_emu": [
+        5579332,
+        670560
+      ],
+      "detail": "",
+      "frame_emu": [
+        457200,
+        274638,
+        8229600,
+        1143000
+      ],
+      "inner_emu": [
+        8046720,
+        1051560
+      ],
+      "kind": "text",
+      "name": "Title 1",
+      "planned_emu": [
+        457200,
+        274638,
+        8229600,
+        1143000
+      ],
+      "shape_id": 2,
+      "shape_index": 1,
+      "slide": 3,
+      "verdict": "fits"
+    },
+    {
+      "block": "b-revenue",
+      "bound_emu": null,
+      "detail": "PowerPoint's AppleScript dictionary exposes no chart text layout",
+      "frame_emu": [
+        457200,
+        1600200,
+        4038600,
+        4525963
+      ],
+      "inner_emu": null,
+      "kind": "chart",
+      "name": "Chart 3",
+      "planned_emu": [
+        457200,
+        1600200,
+        4038600,
+        4525963
+      ],
+      "shape_id": 3,
+      "shape_index": 2,
+      "slide": 3,
+      "verdict": "inconclusive"
+    },
+    {
+      "block": "b-cost",
+      "bound_emu": null,
+      "detail": "PowerPoint's AppleScript dictionary exposes no chart text layout",
+      "frame_emu": [
+        4648200,
+        1600200,
+        4038600,
+        4525963
+      ],
+      "inner_emu": null,
+      "kind": "chart",
+      "name": "Chart 4",
+      "planned_emu": [
+        4648200,
+        1600200,
+        4038600,
+        4525963
+      ],
+      "shape_id": 4,
+      "shape_index": 3,
+      "slide": 3,
+      "verdict": "inconclusive"
+    },
+    {
+      "block": "c-title",
+      "bound_emu": [
+        5637402,
+        670560
+      ],
+      "detail": "",
+      "frame_emu": [
+        457200,
+        274638,
+        8229600,
+        1143000
+      ],
+      "inner_emu": [
+        8046720,
+        1051560
+      ],
+      "kind": "text",
+      "name": "Title 1",
+      "planned_emu": [
+        457200,
+        274638,
+        8229600,
+        1143000
+      ],
+      "shape_id": 2,
+      "shape_index": 1,
+      "slide": 4,
+      "verdict": "fits"
+    },
+    {
+      "block": "c-one",
+      "bound_emu": [
+        3667125,
+        3566160
+      ],
+      "detail": "",
+      "frame_emu": [
+        457200,
+        1600200,
+        4023360,
+        4525963
+      ],
+      "inner_emu": [
+        3840480,
+        4434523
+      ],
+      "kind": "text",
+      "name": "TextBox 3",
+      "planned_emu": [
+        457200,
+        1600200,
+        4023360,
+        4525963
+      ],
+      "shape_id": 3,
+      "shape_index": 2,
+      "slide": 4,
+      "verdict": "fits"
+    },
+    {
+      "block": "c-two",
+      "bound_emu": [
+        3667125,
+        3566160
+      ],
+      "detail": "",
+      "frame_emu": [
+        4663440,
+        1600200,
+        4023360,
+        4525963
+      ],
+      "inner_emu": [
+        3840480,
+        4434523
+      ],
+      "kind": "text",
+      "name": "TextBox 4",
+      "planned_emu": [
+        4663440,
+        1600200,
+        4023360,
+        4525963
+      ],
+      "shape_id": 4,
+      "shape_index": 3,
+      "slide": 4,
+      "verdict": "fits"
+    },
+    {
+      "block": "c-title",
+      "bound_emu": [
+        1500569,
+        304800
+      ],
+      "detail": "",
+      "frame_emu": [
+        457200,
+        273050,
+        3008313,
+        1162050
+      ],
+      "inner_emu": [
+        2825433,
+        1070610
+      ],
+      "kind": "text",
+      "name": "Title 1",
+      "planned_emu": [
+        457200,
+        273050,
+        3008313,
+        1162050
+      ],
+      "shape_id": 2,
+      "shape_index": 1,
+      "slide": 5,
+      "verdict": "fits"
+    },
+    {
+      "block": "c-three",
+      "bound_emu": [
+        2431542,
+        3200400
+      ],
+      "detail": "",
+      "frame_emu": [
+        457200,
+        1435100,
+        3008313,
+        4691063
+      ],
+      "inner_emu": [
+        2825433,
+        4599623
+      ],
+      "kind": "text",
+      "name": "Text Placeholder 3",
+      "planned_emu": [
+        457200,
+        1435100,
+        3008313,
+        4691063
+      ],
+      "shape_id": 3,
+      "shape_index": 2,
+      "slide": 5,
+      "verdict": "fits"
+    },
+    {
+      "block": "d-title",
+      "bound_emu": [
+        1499553,
+        304800
+      ],
+      "detail": "",
+      "frame_emu": [
+        457200,
+        273050,
+        3008313,
+        1162050
+      ],
+      "inner_emu": [
+        2825433,
+        1070610
+      ],
+      "kind": "text",
+      "name": "Title 1",
+      "planned_emu": [
+        457200,
+        273050,
+        3008313,
+        1162050
+      ],
+      "shape_id": 2,
+      "shape_index": 1,
+      "slide": 6,
+      "verdict": "fits"
+    },
+    {
+      "block": "d-table",
+      "bound_emu": null,
+      "detail": "PowerPoint's AppleScript dictionary gives no table rows",
+      "frame_emu": [
+        3575050,
+        273050,
+        5111750,
+        5853113
+      ],
+      "inner_emu": null,
+      "kind": "table",
+      "name": "Table 3",
+      "planned_emu": [
+        3575050,
+        273050,
+        5111750,
+        5853113
+      ],
+      "shape_id": 3,
+      "shape_index": 2,
+      "slide": 6,
+      "verdict": "inconclusive"
+    },
+    {
+      "block": "d-claim",
+      "bound_emu": [
+        1807274,
+        213360
+      ],
+      "detail": "",
+      "frame_emu": [
+        457200,
+        1435100,
+        3008313,
+        4691063
+      ],
+      "inner_emu": [
+        2825433,
+        4599623
+      ],
+      "kind": "text",
+      "name": "Text Placeholder 3",
+      "planned_emu": [
+        457200,
+        1435100,
+        3008313,
+        4691063
+      ],
+      "shape_id": 4,
+      "shape_index": 3,
+      "slide": 6,
+      "verdict": "fits"
+    },
+    {
+      "block": "f-title",
+      "bound_emu": [
+        4629881,
+        670560
+      ],
+      "detail": "",
+      "frame_emu": [
+        457200,
+        274638,
+        8229600,
+        1143000
+      ],
+      "inner_emu": [
+        8046720,
+        1051560
+      ],
+      "kind": "text",
+      "name": "Title 1",
+      "planned_emu": [
+        457200,
+        274638,
+        8229600,
+        1143000
+      ],
+      "shape_id": 2,
+      "shape_index": 1,
+      "slide": 7,
+      "verdict": "fits"
+    },
+    {
+      "block": "f-claim",
+      "bound_emu": [
+        1922145,
+        487680
+      ],
+      "detail": "",
+      "frame_emu": [
+        457200,
+        1600200,
+        8229600,
+        4525963
+      ],
+      "inner_emu": [
+        8046720,
+        4434523
+      ],
+      "kind": "text",
+      "name": "Content Placeholder 2",
+      "planned_emu": [
+        457200,
+        1600200,
+        8229600,
+        4525963
+      ],
+      "shape_id": 3,
+      "shape_index": 2,
+      "slide": 7,
+      "verdict": "fits"
+    }
+  ],
+  "fit_script_sha256": "409cea1e7911046e94d195ee62d136e0e1bfd5bddbb64c3cbd27c400daa80aa1",
+  "input": {
+    "bytes": 115195,
+    "sha256": "1fdf0f5727afe3abe3eec187fb94dff0d29a5d62d22ee9e89ad067cd3c996b8e"
+  },
+  "outputs": {
+    "page-0001.png": {
+      "bytes": 62275,
+      "sha256": "ce5a4bae048ba9a252a3e3e365c8385349bcca53bc694f6ab820e6f85c1de9e9"
+    },
+    "page-0002.png": {
+      "bytes": 44447,
+      "sha256": "1ff7f090f3f976ad85d66cb27b202b28912dfe8fd69787b14314b5f2a7063781"
+    },
+    "page-0003.png": {
+      "bytes": 71883,
+      "sha256": "18209ecf7791841da6a05dfbaa206b00b94adf74f378fb691cbcbf2dc30c3327"
+    },
+    "page-0004.png": {
+      "bytes": 86060,
+      "sha256": "9baa80651ccf0527ef9bc3f2f034ac2e0957521f6950d06d49861a0c7c3d8380"
+    },
+    "page-0005.png": {
+      "bytes": 84869,
+      "sha256": "78afd54967c099f05ebd14fbafdab8a5f1554fc7e10c3a8bb320d9ef0ac7fdba"
+    },
+    "page-0006.png": {
+      "bytes": 65158,
+      "sha256": "b109e6ede81fa2e418948c92946860ae519e0c61e5573a63505b4affec17c771"
+    },
+    "page-0007.png": {
+      "bytes": 42741,
+      "sha256": "790f29cbf8fc5faa5cd7e8ccc8eb6eb194bab20462a4beccc066d5cd89da3b32"
+    },
+    "reference.pptx": {
+      "bytes": 44038,
+      "sha256": "2620a7f1adad4a1b70b16b4d4c8c9805787922235f3348dd44cfd2cc7eb28fa2"
+    },
+    "render.pdf": {
+      "bytes": 88746,
+      "sha256": "9bb033f9f1c1f739801abe3651cc07d0d4add06bd10ab4504468a12793e75dd0"
+    }
+  },
+  "pages": 7,
+  "raster_detail": "pages=7",
+  "saveback_normalized": {
+    "fields": [
+      "dc:creator",
+      "cp:lastModifiedBy"
+    ],
+    "part": "docProps/core.xml",
+    "value": "Oneiron oracle",
+    "written_sha256": "11eae8fb3b385723928ae86d8cb45d07a1d43a820a3dc951d24d2c66d246d05f"
+  },
+  "staged_input_sha256": "1fdf0f5727afe3abe3eec187fb94dff0d29a5d62d22ee9e89ad067cd3c996b8e",
+  "status": "clean"
+}

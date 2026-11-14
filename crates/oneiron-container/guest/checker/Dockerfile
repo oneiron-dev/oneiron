@@ -1,5 +1,5 @@
 # The merge queue checker guest (README.md): the trusted helper, Python 3,
-# Git, Rust 1.96 under /opt, the native build closure of the workspace's
+# Git, Rust 1.100 under /opt, the native build closure of the workspace's
 # `cargo check --locked --workspace --all-features`, and a dependency store
 # preseeded from the baseline lockfile. Built on a Linux host by build.sh
 # here, which puts this directory's checker.py, this checkout's builds of
@@ -46,7 +46,7 @@ RUN apt-get update \
 # Rust under /opt, readable and runnable by any uid (an OCI guest runs as
 # 10001, a native session's child as 65534). rustup-init 1.29.1 for the
 # image's architecture, kept only once its SHA-256 is the release's, installs
-# the toolchain under the name the seed plan selects (`RUSTUP_TOOLCHAIN=1.96`)
+# the toolchain under the name the seed plan selects (`RUSTUP_TOOLCHAIN=1.100`)
 # with rust-toolchain.toml's profile and components.
 ENV CARGO_HOME=/opt/cargo RUSTUP_HOME=/opt/rustup PATH=/opt/cargo/bin:$PATH
 ARG TARGETARCH
@@ -60,7 +60,7 @@ RUN case "$TARGETARCH" in \
  && echo "$sum  /tmp/rustup-init" | sha256sum -c - \
  && chmod 0755 /tmp/rustup-init \
  && /tmp/rustup-init -y --no-modify-path --profile minimal \
-      --default-toolchain 1.96 --component rustfmt,clippy \
+      --default-toolchain 1.100 --component rustfmt,clippy \
  && rm /tmp/rustup-init \
  && chmod -R a+rX /opt/cargo /opt/rustup
 

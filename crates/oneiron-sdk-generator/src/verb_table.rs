@@ -15,7 +15,7 @@ pub(crate) const VERBS_DIR: &str = "scripts/sdk/verbs";
 
 /// ARCH-0082 #act-table: every row states the act class of the act it makes (`act_class`), by the ruled names
 /// (VERB-SURFACE-DESIGN 3.1, VS-CHECKIN-NAMES = A), in the order of `crate::check_in::ActClass::ALL`.
-pub(crate) const ACT_CLASSES: [&str; 20] = [
+pub(crate) const ACT_CLASSES: [&str; 21] = [
     "reversible_work",
     "spawn",
     "spend_over_cap",
@@ -36,18 +36,19 @@ pub(crate) const ACT_CLASSES: [&str; 20] = [
     "world_widen",
     "grant_widen",
     "grant_widen_own",
+    "protected_ref_rewrite_or_delete",
 ];
 /// `read` marks a read: check-in is never asked for one, and only a Read row states it. `unstated` marks a row
 /// whose effect has no proven undo class, so it holds on silence. No default fills a missing class (ARCH-0082:212).
-pub(crate) const ACT_CLASS_VALUES: [&str; 22] = {
-    let mut values = [""; 22];
+pub(crate) const ACT_CLASS_VALUES: [&str; 23] = {
+    let mut values = [""; 23];
     let mut at = 0;
     while at < ACT_CLASSES.len() {
         values[at] = ACT_CLASSES[at];
         at += 1;
     }
-    values[20] = "read";
-    values[21] = "unstated";
+    values[21] = "read";
+    values[22] = "unstated";
     values
 };
 
