@@ -1,7 +1,8 @@
 //! The health check past a threshold (OF-520, ARCH-0044 C5). Wire counters,
-//! `[limits]` rows, engine scans and the e-sign ceremony's burst counters
-//! (ARCH-0064a) keep their crossings as questions, and
-//! none refuses for a count. This worker reads the kept crossings off every
+//! `[limits]` rows, engine scans, the e-sign ceremony's burst counters
+//! (ARCH-0064a) and own actors' advisory rate windows keep their crossings as
+//! questions, and none refuses for a count. This worker reads the kept
+//! crossings off every
 //! lock and write path and asks each one typed question on the host's ladder:
 //! "is everything okay: a bot, or a valid burst?". A known actor under a
 //! grant passes at the rule rung, the model rungs answer the rest, and a
@@ -75,6 +76,9 @@ pub enum CrossingSource {
     Esign,
     /// One caller's `ai.verdict` spend past its window's check (FIX 1123).
     Spend,
+    /// One own actor's acts of one kind past their advisory rate: its first
+    /// crossing in a window (ARCH-0044 C5).
+    OwnRate,
 }
 
 /// Who answered a check.
@@ -192,8 +196,20 @@ pub fn checks(vault: &Vault) -> Result<Vec<HealthCheck>> {
     }
 }
 
-fn put_check(vault: &Vault, check: &HealthCheck) -> Result<()> {
-    vault.sync_state_put(&format!("{CHECK}{}", check.subject), &encode(check)?)
+/// Writes an asked or answered check back over its row, and whether it did.
+/// A row gone since the pass read it stays gone: an actor's erase takes its
+/// own-rate checks (FIX 3520), and a pass that read one before must not
+/// write it back.
+fn put_check(vault: &Vault, check: &HealthCheck) -> Result<bool> {
+    let key = format!("{CHECK}{}", check.subject);
+    let body = encode(check)?;
+    vault.with_write_txn_grouped(|txn| {
+        let kept = vault.sync_state_get_in_write_txn(txn, &key)?.is_some();
+        if kept {
+            vault.sync_state_put_in_write_txn(txn, &key, &body)?;
+        }
+        Ok(kept)
+    })
 }
 
 /// Whether `actor`, as the wire counted it, is a known actor under a grant:
@@ -333,7 +349,7 @@ fn ask_to(vault: &Vault, check: &HealthCheck) -> Result<Option<AskTo>> {
 }
 
 /// Asks one held check on the ladder and binds the decision to its unit.
-fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<()> {
+pub(crate) fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<()> {
     let vault = server.vault();
     let host = server.decision_host();
     let wording = host.wire_health_wording().unwrap_or(WORDING).to_owned();
@@ -357,16 +373,19 @@ fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<(
         &RetrievalDeadline::hard(Instant::now(), ASK_BUDGET),
     )?;
     let now = oneiron_vault_contract::now_ts();
+    // The unit claim outlives the check, so an own-rate crossing is bound
+    // without its actor (FIX 3520).
+    let crossing = oneiron::own_rate::health_bound_crossing(&check.crossing);
     let bound = vault.bind_health_answer(&HealthAnswer {
         principal: owner,
         question: &question,
         dial,
         decision: &decision,
-        crossing: &check.crossing,
+        crossing: &crossing,
         binding: &binding(),
         now,
     })?;
-    let (question, unit) = (question.id.to_hex(), bound.unit.to_hex());
+    let (question_id, unit) = (question.id.to_hex(), bound.unit.to_hex());
     check.state = match &decision.answer {
         DecisionAnswer::Choice(answer) if decision.human_ask.is_none() => CheckState::Answered {
             answer: answer.clone(),
@@ -379,10 +398,13 @@ fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<(
                     .map_or(DecisionRung::Rule, |pin| pin.rung),
             ),
             at: now,
-            question,
+            question: question_id,
             unit,
         },
-        _ => CheckState::Asked { question, unit },
+        _ => CheckState::Asked {
+            question: question_id,
+            unit,
+        },
     };
     check.asked_in = Some(wording);
     if let CheckState::Answered { answer, .. } = &check.state
@@ -395,7 +417,16 @@ fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<(
             "the health check answered bot; the work it covers still runs"
         );
     }
-    put_check(vault, &check)
+    if put_check(vault, &check)? || !matches!(check.state, CheckState::Asked { .. }) {
+        return Ok(());
+    }
+    // An actor's erase took the check while the ladder asked it (FIX 3520):
+    // the ask it queued holds the crossing as the state it was asked over,
+    // so it drops that state and leaves the owner's queue.
+    if let Some(queued) = vault.latest_decision_ask(&question, owner)? {
+        vault.withdraw_decision_ask_dropping_state(queued.seq)?;
+    }
+    Ok(())
 }
 
 /// Looks for a role holder's answer to an asked check. The answer is what
@@ -432,15 +463,13 @@ fn poll(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<
         question: question.clone(),
         unit: unit.clone(),
     };
-    put_check(server.vault(), &check)
+    put_check(server.vault(), &check).map(drop)
 }
 
 /// One pass: fold every new crossing in, ask each held check, and look for
 /// the owner's answers. A check that fails stays as it was for the next pass.
-fn sweep(server: &SyncServer) -> Result<()> {
-    for crossing in unread(server)? {
-        fold(server.vault(), crossing)?;
-    }
+pub(crate) fn sweep(server: &SyncServer) -> Result<()> {
+    fold_unread(server)?;
     let open: Vec<HealthCheck> = checks(server.vault())?
         .into_iter()
         .filter(HealthCheck::open)
@@ -462,6 +491,14 @@ fn sweep(server: &SyncServer) -> Result<()> {
         if let Err(error) = asked {
             tracing::warn!(%error, %subject, "wire health check stays held for the next pass");
         }
+    }
+    Ok(())
+}
+
+/// Folds every crossing kept since the last pass into its check.
+pub(crate) fn fold_unread(server: &SyncServer) -> Result<()> {
+    for crossing in unread(server)? {
+        fold(server.vault(), crossing)?;
     }
     Ok(())
 }

@@ -18,7 +18,7 @@
 #                             inside the Dockerfile's own base stage, then
 #                             builds the Dockerfile here from a context of
 #                             checker.py, those binaries and that archive;
-#                             the image installs Rust 1.96 and fetches the
+#                             the image installs Rust 1.100 and fetches the
 #                             lockfile's dependency store.
 # --store-id, with any route, prints the id this docker store answers the
 # image as (`docker image inspect` .Id) instead: the manifest digest under
@@ -116,7 +116,7 @@ PY
 receipt() {
   "$ONEIRON_CHECKER_DOCKER" run --rm -i --network none --entrypoint /usr/bin/python3 \
     --env "IMAGE=$2" --env "SOURCE_COMMIT=$3" --env "CARGO_LOCK_SHA256=$4" \
-    --env RUSTUP_TOOLCHAIN=1.96 \
+    --env RUSTUP_TOOLCHAIN=1.100 \
     "$1" - > "$ONEIRON_CHECKER_OUT/image.json" <<'PY'
 import hashlib
 import json
@@ -289,7 +289,7 @@ lock_sha256=$(sha256sum "$context/tree/Cargo.lock" | cut -d' ' -f1)
 # stay in it; only the two binaries are copied out, owned by this user.
 "$ONEIRON_CHECKER_DOCKER" build --target base --iidfile "$context/base-id" "$context" >&2
 builder=$("$ONEIRON_CHECKER_DOCKER" create --workdir /src \
-  --env RUSTUP_TOOLCHAIN=1.96 --env CARGO_TARGET_DIR=/build/target \
+  --env RUSTUP_TOOLCHAIN=1.100 --env CARGO_TARGET_DIR=/build/target \
   "$(cat "$context/base-id")" sh -c \
   'cargo build --release --locked -p oneiron-container --bin oneiron-fence && cargo build --release --locked -p oneiron-guest')
 "$ONEIRON_CHECKER_DOCKER" cp "$context/tree/." "$builder:/src" >&2
