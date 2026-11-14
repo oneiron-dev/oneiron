@@ -277,6 +277,21 @@ impl AuthorityFold {
             .map(|(hash, folded)| (*hash, folded.request.as_ref()))
     }
 
+    /// The keyed digest each admitted sealed-file ruling names (Engine
+    /// RULING PLAN-SEALED-FILE-RULING-CARRY), with the owner whose act it
+    /// is, for every install to keep the bytes it names as written. Every
+    /// admitted request is read, as the ruled screens are
+    /// ([`Self::custody_revoke_screens`]): each ruling stands.
+    pub(crate) fn ruled_files(&self) -> impl Iterator<Item = ([u8; 32], EntityId)> + '_ {
+        self.owner_work
+            .requests
+            .values()
+            .filter_map(|folded| match folded.request.work {
+                OwnerWorkBody::FileRuling(work) => Some((work.digest, folded.request.act.owner)),
+                _ => None,
+            })
+    }
+
     /// Owner work requests and results that are valid without effect.
     pub(crate) fn refused_owner_work(&self) -> &BTreeSet<AuthorityEntryHash> {
         &self.owner_work.refused

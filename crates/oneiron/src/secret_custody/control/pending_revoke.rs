@@ -73,7 +73,7 @@ fn signing_unavailable(error: &Error) -> bool {
 /// Whether this install can carry an owner act in `txn` now: a live machine
 /// profile under its loaded install key. Keys not loaded here are a "not
 /// yet", never a failure.
-pub(super) fn can_carry_in_txn(
+pub(crate) fn can_carry_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     fold: &AuthorityFold,

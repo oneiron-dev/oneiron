@@ -578,7 +578,11 @@ impl Vault {
                 self.store.env.path().to_path_buf(),
                 Arc::clone(seal.shared_page_key()),
             );
-        self.sync_page_custody()
+        self.sync_page_custody()?;
+        // The data key is held, as at any unlock (Engine RULING
+        // PLAN-SEALED-FILE-RULING-CARRY; REVIEW-7912 F7).
+        self.resume_file_rulings_at_unlock();
+        Ok(())
     }
 
     /// Rewrites the page-seal mirror from the vault's key state, when its
