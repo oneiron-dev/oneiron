@@ -396,6 +396,32 @@ pub enum AuthorityEntryRead {
     Sealed(AuthorityEntryScaffold),
 }
 
+impl AuthorityEntryRead {
+    /// The vault named by the entry, absent for genesis.
+    pub fn vault_id(&self) -> Option<AuthorityVaultId> {
+        match self {
+            Self::Open(entry) => entry.vault_id,
+            Self::Sealed(scaffold) => scaffold.vault_id,
+        }
+    }
+
+    /// The parent entry hashes named by the entry.
+    pub fn parent_hashes(&self) -> &[AuthorityEntryHash] {
+        match self {
+            Self::Open(entry) => &entry.parent_hashes,
+            Self::Sealed(scaffold) => &scaffold.parent_hashes,
+        }
+    }
+
+    /// The entry's primary signature.
+    pub fn signer(&self) -> &AuthoritySignature {
+        match self {
+            Self::Open(entry) => &entry.signer,
+            Self::Sealed(scaffold) => &scaffold.signer,
+        }
+    }
+}
+
 /// Reads a stored entry body with no store at hand: an unsealed row opens
 /// whole; a sealed row answers its verified scaffold, for a reader that
 /// needs only the envelope or the op kind (a kind filter, a hash or parent

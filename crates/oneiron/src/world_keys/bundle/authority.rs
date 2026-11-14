@@ -36,7 +36,9 @@ use super::{
     open_outer, parse_frame, put_counted, seal_outer, seal_slots,
 };
 use crate::Vault;
-use crate::authority::{AuthorityEntryHash, authority_entry_hash, decode_authority_log_entry_body};
+use crate::authority::{
+    AuthorityEntryHash, AuthorityEntryRead, authority_entry_hash, read_authority_log_entry_body,
+};
 use crate::entity_id::EntityId;
 #[cfg(feature = "sync")]
 use crate::error::SecretError;
@@ -382,11 +384,14 @@ impl Vault {
 fn by_entry_hash(entries: impl IntoIterator<Item = Vec<u8>>) -> Result<HashedEntries> {
     let mut out = HashedEntries::new();
     for bytes in entries {
-        let entry = decode_authority_log_entry_body(&bytes)?;
-        let hash = authority_entry_hash(&entry)?;
+        let read = read_authority_log_entry_body(&bytes)?;
+        let hash = match &read {
+            AuthorityEntryRead::Open(entry) => authority_entry_hash(entry)?,
+            AuthorityEntryRead::Sealed(scaffold) => scaffold.hash,
+        };
         out.entry(hash).or_insert(HashedEntry {
             bytes,
-            parents: entry.parent_hashes,
+            parents: read.parent_hashes().to_vec(),
         });
     }
     Ok(out)

@@ -23,8 +23,8 @@ use super::door_rows::DoorInput;
 use super::{INPUTS, MAX_INPUT_BYTES, RelayedInput, held_input_in_txn, part_key};
 use crate::Vault;
 use crate::authority::{
-    AuthorityEntryHash, AuthorityKey, AuthorityOp, OwnerWorkBody, authority_entry_hash,
-    decode_authority_log_entry_body,
+    AuthorityEntryHash, AuthorityEntryRead, AuthorityKey, AuthorityOp, OwnerWorkBody,
+    authority_entry_hash, read_authority_log_entry_body,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -324,9 +324,12 @@ pub(crate) fn keep_witnessed_input_in_txn(
     }
     let signer = signing.verifying_key().to_bytes();
     let signed = input.witness.len() > MAX_INPUT_BYTES
-        && decode_authority_log_entry_body(&input.witness).is_ok_and(
-            |entry| matches!(entry.signer_key(), AuthorityKey::Ed25519(key) if *key == signer),
-        );
+        && read_authority_log_entry_body(&input.witness).is_ok_and(|read| {
+            matches!(
+                &read.signer().public_key,
+                AuthorityKey::Ed25519(key) if *key == signer
+            )
+        });
     if !signed {
         return door.keep_in_txn(vault, wtxn, &input, |_| {});
     }
@@ -436,14 +439,17 @@ pub(crate) fn witness_joined_in_txn(
     if digest(COMMIT_DOMAIN, &whole) != group.commitment {
         return Ok(WitnessJoin::Missing);
     }
-    let proves = decode_authority_log_entry_body(&whole).is_ok_and(|entry| {
-        authority_entry_hash(&entry).is_ok_and(|hash| hash == group.request)
-            && matches!(entry.signer_key(), AuthorityKey::Ed25519(key) if *key == group.signer)
-            && matches!(
-                &entry.op,
-                AuthorityOp::OwnerWorkRequest(request)
-                    if matches!(&request.work, OwnerWorkBody::Custody { input: Some(named), .. } if named == digest_named)
-            )
+    let proves = read_authority_log_entry_body(&whole).is_ok_and(|read| match read {
+        AuthorityEntryRead::Open(entry) => {
+            authority_entry_hash(&entry).is_ok_and(|hash| hash == group.request)
+                && matches!(entry.signer_key(), AuthorityKey::Ed25519(key) if *key == group.signer)
+                && matches!(
+                    &entry.op,
+                    AuthorityOp::OwnerWorkRequest(request)
+                        if matches!(&request.work, OwnerWorkBody::Custody { input: Some(named), .. } if named == digest_named)
+                )
+        }
+        AuthorityEntryRead::Sealed(_) => false,
     });
     Ok(if proves {
         WitnessJoin::Verified

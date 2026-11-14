@@ -40,7 +40,7 @@ use super::kernel::hex_lower;
 use crate::Vault;
 use crate::authority::{
     AuthorityCheckpointRow, AuthorityFold, VerifiedAuthorityCheckpoint,
-    cached_adopted_authority_checkpoint_in_txn,
+    cached_adopted_authority_checkpoint_in_txn, open_vault_authority_body_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -50,7 +50,7 @@ use crate::ports::{EntityRecord, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use oneiron_authority::authority::{
     AuthorityKey, AuthorityLogEntry, AuthorityOp, FederationLifecycleKind, OwnerWorkKind,
-    authority_entry_hash, authority_log_entity_id_from_hash, decode_authority_log_entry_body,
+    authority_entry_hash, authority_log_entity_id_from_hash,
 };
 use oneiron_contracts::authority::{AUTHORITY_HASH_LEN, AuthorityEntryHash};
 use oneiron_contracts::memory::MemoryResult;
@@ -378,7 +378,7 @@ impl Vault {
                         }
                         continue;
                     }
-                    let entry = decode_authority_log_entry_body(&record.body)?;
+                    let entry = open_vault_authority_body_in_txn(&self.store, &txn, &record.body)?;
                     let mut row = project_row(id, &record, &entry, &fold, &issues)?;
                     agent_grant_act::pair_marked_withdrawal(self, &txn, &entry.op, &mut row)?;
                     if query.kinds.is_empty() || query.kinds.contains(&row.event_kind) {

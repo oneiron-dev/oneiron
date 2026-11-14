@@ -76,7 +76,9 @@ pub(crate) fn machine_history_host_context(
         let id = id?;
         let raw = EntityStoreRead::port_entity_raw(store, txn, &id)?
             .ok_or(Error::CorruptedIndex("authority head row"))?;
-        let entry = super::super::decode_authority_log_entry_body(
+        let entry = super::super::open_vault_authority_body_in_txn(
+            store,
+            txn,
             raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
                 .ok_or(Error::CorruptedIndex("authority head header"))?,
         )?;

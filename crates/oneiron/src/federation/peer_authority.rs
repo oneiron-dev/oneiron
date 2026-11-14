@@ -3,9 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::authority::{
-    AuthorityFold, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthorityVaultId,
-    authority_entry_hash, decode_authority_log_entry_body, fold_peer_authority_log,
-    folded_peer_device_is_consent_root, genesis_vault_id,
+    AuthorityEntryRead, AuthorityFold, AuthorityKey, AuthorityLogEntry, AuthorityOp,
+    AuthorityVaultId, authority_entry_hash, authority_overlay_unavailable, fold_peer_authority_log,
+    folded_peer_device_is_consent_root, genesis_vault_id, read_authority_log_entry_body,
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, RecordError, Result};
@@ -67,25 +67,39 @@ fn peer_authority_row_prefix(peer_vault_id: &AuthorityVaultId) -> String {
 ///
 /// Admitted bytes live in `sync_state` only. They never enter AUTHORITY_LOG entity
 /// storage and never touch the local roster.
+///
+/// A sealed row (census L5-22) is admitted by its verified scaffold: its
+/// overlay is the peer's and never opens here. It is stored all the same, so
+/// the peer's stored log shows the row rather than a silent gap, and the
+/// peer's fold refuses while it holds one (`decode_peer_authority_row`).
 pub fn admit_peer_authority_log_entry(
     vault: &Vault,
     peer_vault_id: &AuthorityVaultId,
     bytes: &[u8],
 ) -> Result<()> {
-    let entry = decode_authority_log_entry_body(bytes)?;
-    let entry_vault_id = match entry.op {
-        // Genesis carries no `vault_id` field — its id IS its content hash.
-        AuthorityOp::Genesis { .. } => genesis_vault_id(&entry)?,
-        // `validate_shape` (which the decode above ran) already refuses a
-        // non-genesis entry without a vault id, so this arm's `None` is
-        // structurally unreachable; it resolves to the same refusal rather than
-        // to a panic.
-        _ => entry.vault_id.ok_or_else(peer_authority_vault_mismatch)?,
+    let (entry_vault_id, entry_hash) = match read_authority_log_entry_body(bytes)? {
+        AuthorityEntryRead::Open(entry) => {
+            let vault_id = match entry.op {
+                // Genesis carries no `vault_id` field — its id IS its content hash.
+                AuthorityOp::Genesis { .. } => genesis_vault_id(&entry)?,
+                // `validate_shape` (which the decode above ran) already refuses a
+                // non-genesis entry without a vault id, so this arm's `None` is
+                // structurally unreachable; it resolves to the same refusal rather
+                // than to a panic.
+                _ => entry.vault_id.ok_or_else(peer_authority_vault_mismatch)?,
+            };
+            (vault_id, authority_entry_hash(&entry)?)
+        }
+        // The scaffold check ran the same envelope rules: only a genesis has
+        // no vault id, and its id is the hash of its canonical bytes.
+        AuthorityEntryRead::Sealed(scaffold) => {
+            (scaffold.vault_id.unwrap_or(scaffold.hash), scaffold.hash)
+        }
     };
     if entry_vault_id != *peer_vault_id {
         return Err(peer_authority_vault_mismatch());
     }
-    let key = peer_authority_row_key(peer_vault_id, &authority_entry_hash(&entry)?);
+    let key = peer_authority_row_key(peer_vault_id, &entry_hash);
     vault.with_write_txn_grouped(|wtxn| {
         if PEER_AUTHORITY.contains(&vault.store, wtxn, &key)? {
             return Ok(());
@@ -101,6 +115,8 @@ pub fn admit_peer_authority_log_entry(
 ///
 /// The fold must root at the peer we filed the rows under; anything else is a
 /// log we cannot attribute, and it is refused rather than reported as a roster.
+/// A log holding a sealed row answers the overlay-unavailable error: the fold
+/// would leave that row and every row after it out.
 pub fn peer_authority_roster(
     vault: &Vault,
     peer_vault_id: &AuthorityVaultId,
@@ -133,9 +149,11 @@ pub fn peer_consent_roots(fold: &AuthorityFold) -> BTreeSet<AuthorityKey> {
 ///
 /// Discovers the distinct `peerauth:` peers in `sync_state` and refolds each
 /// one. A peer whose rows do not fold back to the vault id they were filed
-/// under contributes NOTHING — that is the pinned-key-only FED-01 baseline, not
-/// a refusal. Which bytes arrive is the relay's choice, and a withheld genesis
-/// must never be able to fail the LOCAL fold.
+/// under, or who holds a sealed row (its fold would stop short of every row
+/// after it, a later revocation included), contributes NOTHING — that is the
+/// pinned-key-only FED-01 baseline, not a refusal. Which bytes arrive is the
+/// relay's choice, and a withheld genesis must never be able to fail the
+/// LOCAL fold.
 pub(crate) fn admitted_peer_consent_roots_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -147,14 +165,21 @@ pub(crate) fn admitted_peer_consent_roots_for_store_in_txn(
     txn: &heed::RoTxn<'_>,
 ) -> Result<BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>> {
     let mut by_peer: BTreeMap<String, Vec<AuthorityLogEntry>> = BTreeMap::new();
+    let mut sealed_peers = BTreeSet::new();
     for (key, raw) in PEER_AUTHORITY.scan(store, txn)? {
-        by_peer
-            .entry(peer_authority_row_key_group(&key)?)
-            .or_default()
-            .push(decode_peer_authority_row(&raw)?);
+        let group = peer_authority_row_key_group(&key)?;
+        match decode_peer_authority_row(&raw)? {
+            Some(entry) => by_peer.entry(group).or_default().push(entry),
+            None => {
+                sealed_peers.insert(group);
+            }
+        }
     }
     let mut roots = BTreeMap::new();
     for (prefix, entries) in by_peer {
+        if sealed_peers.contains(&prefix) {
+            continue;
+        }
         let fold = fold_peer_authority_log(&entries);
         if let Some(vault_id) = fold.vault_id
             && peer_authority_row_prefix(&vault_id) == prefix
@@ -170,26 +195,36 @@ fn peer_authority_entries_in_txn(
     txn: &heed::RoTxn<'_>,
     peer_vault_id: &AuthorityVaultId,
 ) -> Result<Vec<AuthorityLogEntry>> {
-    PEER_AUTHORITY
-        .scan_from(
-            &vault.store,
-            txn,
-            peer_authority_row_prefix(peer_vault_id).as_bytes(),
-        )?
-        .into_iter()
-        .map(|(_, raw)| decode_peer_authority_row(&raw))
-        .collect()
+    let mut entries = Vec::new();
+    for (_, raw) in PEER_AUTHORITY.scan_from(
+        &vault.store,
+        txn,
+        peer_authority_row_prefix(peer_vault_id).as_bytes(),
+    )? {
+        let Some(entry) = decode_peer_authority_row(&raw)? else {
+            return Err(authority_overlay_unavailable());
+        };
+        entries.push(entry);
+    }
+    Ok(entries)
 }
 
 /// Decodes one STORED peer row.
 ///
-/// These bytes already passed admission, so a decode failure here is local
-/// storage corruption, not a bad peer body — and it propagates. Skipping the
-/// row would silently hand back a roster folded over a subset of what we hold,
-/// which is exactly the shape an attacker with write access would want.
-fn decode_peer_authority_row(raw: &[u8]) -> Result<AuthorityLogEntry> {
-    decode_authority_log_entry_body(raw)
-        .map_err(|_| Error::CorruptedIndex("peer authority log row"))
+/// A sealed row verifies as a scaffold and answers `None`: a peer's overlay
+/// never opens under this vault's custody, and each caller refuses that
+/// peer's fold rather than fold around the row.
+/// These bytes already passed admission, so any other decode failure here
+/// is local storage corruption, not a bad peer body — and it propagates.
+/// Skipping such a row would silently hand back a roster folded over a
+/// subset of what we hold, which is exactly the shape an attacker with
+/// write access would want.
+fn decode_peer_authority_row(raw: &[u8]) -> Result<Option<AuthorityLogEntry>> {
+    match read_authority_log_entry_body(raw) {
+        Ok(AuthorityEntryRead::Open(entry)) => Ok(Some(entry)),
+        Ok(AuthorityEntryRead::Sealed(_)) => Ok(None),
+        Err(_) => Err(Error::CorruptedIndex("peer authority log row")),
+    }
 }
 
 /// `{peer}:` — the grouping prefix of one stored row's key (after the table prefix).

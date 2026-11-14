@@ -218,7 +218,8 @@ impl WindowRows {
                 return Err(invalid("pad outside window residence"));
             }
         } else if header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG
-            && let Ok(entry) = crate::authority::decode_authority_log_entry_body(body)
+            && let Ok(crate::authority::AuthorityEntryRead::Open(entry)) =
+                crate::authority::read_authority_log_entry_body(body)
             && let Some(side) = crate::authority::side_world(&entry.op)
         {
             // A world's side rows, its key wraps and the joins of their
@@ -246,7 +247,7 @@ impl WindowRows {
             crate::note::decode_note_core_using(body, crate::note::NoteKind::wire)?;
         }
         if header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
-            crate::authority::validate_authority_log_entry_body_bytes(body)?;
+            crate::authority::read_authority_log_entry_body(body)?;
         }
         Ok(())
     }

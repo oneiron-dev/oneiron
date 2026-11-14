@@ -23,8 +23,8 @@ use super::*;
 /// # Errors
 ///
 /// A record of another type, or a header or an entry that does not decode;
-/// a pin row that does not decode, or an adoption whose image is missing or
-/// no longer verifies.
+/// a sealed genesis (the overlay-unavailable error); a pin row that does not
+/// decode, or an adoption whose image is missing or no longer verifies.
 pub(crate) fn folded_vault_id_of_records(
     records: &[(Vec<u8>, Vec<u8>)],
     adopted_pin: Option<&[u8]>,
@@ -40,7 +40,20 @@ pub(crate) fn folded_vault_id_of_records(
         let body = raw
             .get(ENTITY_METADATA_HEADER_LEN..)
             .ok_or(Error::CorruptedIndex("entity header"))?;
-        entries.push(decode_stored_authority_log_body(body)?);
+        // The source's overlay records open only under its own custody, so a
+        // sealed row is read by its verified scaffold. Only a genesis roots a
+        // vault id (every other entry inherits its parents'), so a sealed row
+        // of another kind changes no root and is left out; a sealed genesis
+        // cannot be judged without its overlay and answers unavailable.
+        let read = read_authority_log_entry_body(body)
+            .map_err(|_| Error::CorruptedIndex("stored authority log row"))?;
+        match read {
+            AuthorityEntryRead::Open(entry) => entries.push(entry),
+            AuthorityEntryRead::Sealed(scaffold) if scaffold.op_kind == OP_KIND_GENESIS => {
+                return Err(authority_overlay_unavailable());
+            }
+            AuthorityEntryRead::Sealed(_) => {}
+        }
     }
     let Some(pin_row) = adopted_pin else {
         return Ok(fold_authority_log(&entries).vault_id);

@@ -82,7 +82,10 @@ pub(super) fn carried_request_kind(
     hash: &AuthorityEntryHash,
 ) -> Option<OwnerWorkKind> {
     let body = image.rows.get(hash)?.body.as_ref()?;
-    request_kind(&decode_authority_log_entry_body(body).ok()?)
+    match read_authority_log_entry_body(body).ok()? {
+        AuthorityEntryRead::Open(entry) => request_kind(&entry),
+        AuthorityEntryRead::Sealed(_) => None,
+    }
 }
 
 /// Settlement drops every row above a main-log row it refuses (a retired

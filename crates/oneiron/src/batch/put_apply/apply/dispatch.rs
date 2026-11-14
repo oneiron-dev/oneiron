@@ -200,10 +200,10 @@ pub(super) fn dispatch_put_type(
                 data,
                 fixed.posture,
             )?;
-        } else {
-            oneiron_authority::authority::validate_authority_log_entry_body_bytes(data)?;
         }
-        let entry = oneiron_authority::authority::decode_authority_log_entry_body(data)?;
+        // A sealed row opens with its overlay record (census L5-22); the
+        // decode validates the body.
+        let entry = crate::authority::open_vault_authority_body_in_txn(store, wtxn, data)?;
         let entry_hash = oneiron_authority::authority::authority_entry_hash(&entry)?;
         // ONE-1604-D1 chokepoint: every materialization path funnels through
         // here, so the store-key bind, the append-only guard, and the

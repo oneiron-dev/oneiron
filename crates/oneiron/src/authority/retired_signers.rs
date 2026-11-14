@@ -391,7 +391,7 @@ pub(crate) fn stored_authority_row(
     }
     Ok(raw
         .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-        .and_then(|body| decode_authority_log_entry_body(body).ok()))
+        .and_then(|body| crate::authority::open_vault_authority_body_in_txn(store, txn, body).ok()))
 }
 
 /// The row at `hash` as a door's retired-standing walk reads it

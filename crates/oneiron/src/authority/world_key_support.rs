@@ -158,7 +158,11 @@ pub(crate) fn own_world_key_records_in_txn(
     let mut records = Vec::new();
     let mut stored = BTreeSet::new();
     for (_, body) in authority_log_rows_in_txn(store, txn)? {
-        let entry = decode_stored_authority_log_body(&body)?;
+        let read = read_authority_log_entry_body(&body)
+            .map_err(|_| crate::error::Error::CorruptedIndex("stored authority log row"))?;
+        let AuthorityEntryRead::Open(entry) = read else {
+            continue;
+        };
         if !own(&entry) {
             continue;
         }

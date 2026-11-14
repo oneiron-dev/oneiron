@@ -378,11 +378,15 @@ impl AuthorityCheckpointV2 {
         }
         for row in self.rows.values_mut() {
             let is_residence = row.body.as_ref().is_some_and(|body| {
-                decode_authority_log_entry_body(body).is_ok_and(|entry| {
-                    matches!(
+                read_authority_log_entry_body(body).is_ok_and(|read| match read {
+                    AuthorityEntryRead::Open(entry) => matches!(
                         entry.op,
                         AuthorityOp::ResidenceDirective(_) | AuthorityOp::ResidenceResult(_)
-                    )
+                    ),
+                    AuthorityEntryRead::Sealed(scaffold) => {
+                        scaffold.op_kind == OP_KIND_RESIDENCE_DIRECTIVE
+                            || scaffold.op_kind == OP_KIND_RESIDENCE_RESULT
+                    }
                 })
             });
             if is_residence {
@@ -673,7 +677,7 @@ impl Vault {
         let store = &self.store;
         let mut held = BTreeMap::new();
         for (_, body) in super::readonly_fold::authority_log_rows_in_txn(store, txn)? {
-            let entry = decode_authority_log_entry_body(&body)?;
+            let entry = open_vault_authority_body_in_txn(store, txn, &body)?;
             let hash = authority_entry_hash(&entry)?;
             if only.is_none_or(|only| only.contains(&hash)) {
                 held.insert(hash, (entry, body));

@@ -36,9 +36,10 @@ use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::Vault;
 use crate::authority::{
     AUTHORITY_HISTORY_PAGE_MAX, AuthorityCheckpointAttestation, AuthorityCheckpointPin,
-    AuthorityCheckpointV2, AuthorityEntryHash, AuthorityHistoryFetch, AuthorityHistoryRequest,
-    AuthorityHistorySelection, AuthorityRepairOutcome, authority_entry_hash,
-    decode_authority_log_entry_body, side_world,
+    AuthorityCheckpointV2, AuthorityEntryHash, AuthorityEntryRead, AuthorityHistoryFetch,
+    AuthorityHistoryRequest, AuthorityHistorySelection, AuthorityRepairOutcome,
+    authority_entry_hash, decode_authority_log_entry_body, read_authority_log_entry_body,
+    side_world,
 };
 use crate::sync::client::SyncClientConfig;
 use crate::sync::residence::{
@@ -442,14 +443,18 @@ fn refused_parent_hashes(
 ) -> BTreeSet<AuthorityEntryHash> {
     let mut parents = BTreeSet::new();
     for entry in entries {
-        let Ok(body) = decode_authority_log_entry_body(entry) else {
+        let Ok(read) = read_authority_log_entry_body(entry) else {
             continue;
         };
-        let Ok(hash) = authority_entry_hash(&body) else {
-            continue;
+        let hash = match &read {
+            AuthorityEntryRead::Open(body) => match authority_entry_hash(body) {
+                Ok(hash) => hash,
+                Err(_) => continue,
+            },
+            AuthorityEntryRead::Sealed(scaffold) => scaffold.hash,
         };
         if refused.contains(&hash) {
-            parents.extend(body.parent_hashes.iter().copied());
+            parents.extend(read.parent_hashes().iter().copied());
         }
     }
     parents

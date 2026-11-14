@@ -19,7 +19,7 @@ pub(super) fn history_in_txn(
 ) -> Result<BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>> {
     let mut history = BTreeMap::new();
     for (id, bytes) in authority_log_rows_in_txn(&vault.store, txn)? {
-        let entry = decode_stored_authority_log_body(&bytes)?;
+        let entry = decode_stored_authority_log_body(&vault.store, txn, &bytes)?;
         let hash = authority_entry_hash(&entry)?;
         if authority_log_entity_id_from_hash(&hash)? != id {
             return Err(Error::CorruptedIndex("authority history key"));

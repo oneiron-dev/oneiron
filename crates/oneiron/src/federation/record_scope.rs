@@ -570,9 +570,15 @@ pub(crate) fn record_world_in(
     // So do a world's side rows, its key wraps and the joins of their
     // leaves (FIX 11868); its settings entries are base reality.
     if kind == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
-        return Ok(crate::authority::decode_authority_log_entry_body(data)
-            .ok()
-            .map(|entry| crate::authority::side_world(&entry.op)));
+        // A sealed row is one of the overlay kinds, never a side-world kind,
+        // so it reads as base reality once its scaffold verifies.
+        return match crate::authority::read_authority_log_entry_body(data) {
+            Ok(crate::authority::AuthorityEntryRead::Open(entry)) => {
+                Ok(Some(crate::authority::side_world(&entry.op)))
+            }
+            Ok(crate::authority::AuthorityEntryRead::Sealed(_)) => Ok(Some(None)),
+            Err(_) => Ok(None),
+        };
     }
     // A NOTE, an ASSET and a caption sit where their live worlds place them
     // (FIX 9433, FIX 22223).

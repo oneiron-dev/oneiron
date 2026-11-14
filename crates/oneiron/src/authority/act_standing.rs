@@ -414,7 +414,7 @@ fn capture_in_txn(
     }
     let entries = authority_log_rows_in_txn(store, txn)?
         .into_iter()
-        .map(|(_, body)| decode_stored_authority_log_body(&body))
+        .map(|(_, body)| decode_stored_authority_log_body(store, txn, &body))
         .collect::<Result<Vec<_>>>()?;
     let parents = entries
         .iter()
@@ -462,7 +462,7 @@ fn capture_past_adopted(
             held_covered.insert(*hash);
             continue;
         }
-        let entry = decode_stored_authority_log_body(&body)?;
+        let entry = decode_stored_authority_log_body(store, txn, &body)?;
         let hash = authority_entry_hash(&entry)?;
         if image.rows.contains_key(&hash) {
             held_covered.insert(hash);

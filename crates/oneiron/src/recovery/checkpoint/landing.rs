@@ -500,7 +500,7 @@ fn validate_checkpoint_entity_row(blob: &[u8]) -> Result<()> {
     let body = &blob[crate::batch::ENTITY_METADATA_HEADER_LEN..];
     crate::batch::validate_local_identity_body(header.entity_type, body)?;
     if header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG
-        && crate::authority::validate_authority_log_entry_body_bytes(body).is_err()
+        && crate::authority::read_authority_log_entry_body(body).is_err()
     {
         return Err(codec_error());
     }

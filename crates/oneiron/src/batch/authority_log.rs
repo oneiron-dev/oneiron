@@ -190,8 +190,9 @@ pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
     posture: crate::HostingPrivacyPosture,
     beside: crate::store::authority_rows::RowsBeside<'_>,
 ) -> Result<()> {
-    oneiron_authority::authority::validate_authority_log_entry_body_bytes(data)?;
-    let entry = oneiron_authority::authority::decode_authority_log_entry_body(data)?;
+    // A sealed row opens with its overlay record, carried beside it (census
+    // L5-22); the decode validates the body.
+    let entry = crate::authority::open_vault_authority_body_in_txn(store, wtxn, data)?;
     let entry_hash = oneiron_authority::authority::authority_entry_hash(&entry)?;
     // ONE-1604-D1 mirror at the replicated door: content-address + append-only
     // are STORE checks, not ancestry checks — the door stays structural +

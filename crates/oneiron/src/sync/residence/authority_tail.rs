@@ -20,9 +20,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Vault;
 use crate::authority::{
-    AuthorityCheckpointAttestation, AuthorityEntryHash, AuthorityHistoryFetch,
+    AuthorityCheckpointAttestation, AuthorityEntryHash, AuthorityEntryRead, AuthorityHistoryFetch,
     AuthorityHistoryPage, PeerMachine, WorldPrivacyView, authority_entry_hash,
-    decode_authority_log_entry_body, side_world,
+    decode_authority_log_entry_body, read_authority_log_entry_body, side_world,
 };
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::error::{Error, Result, SyncProtocolValidation};
@@ -58,9 +58,12 @@ pub fn held_authority_entries(vault: &Vault) -> Result<BTreeSet<AuthorityEntryHa
         let body = raw
             .get(ENTITY_METADATA_HEADER_LEN..)
             .ok_or(Error::CorruptedIndex("authority row header"))?;
-        held.insert(authority_entry_hash(&decode_authority_log_entry_body(
-            body,
-        )?)?);
+        let read = read_authority_log_entry_body(body)?;
+        let hash = match &read {
+            AuthorityEntryRead::Open(entry) => authority_entry_hash(entry)?,
+            AuthorityEntryRead::Sealed(scaffold) => scaffold.hash,
+        };
+        held.insert(hash);
     }
     Ok(held)
 }

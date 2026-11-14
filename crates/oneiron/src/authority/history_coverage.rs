@@ -186,11 +186,15 @@ fn held_history_request_in_txn(
     named.extend(super::readonly_fold::resumed_hashes_in_txn(store, txn)?);
     let mut vault_id = None;
     for (_, body) in super::readonly_fold::authority_log_rows_in_txn(store, txn)? {
-        let entry = decode_authority_log_entry_body(&body)?;
-        held.insert(authority_entry_hash(&entry)?);
-        named.extend(entry.parent_hashes.iter().copied());
+        let read = read_authority_log_entry_body(&body)?;
+        let hash = match &read {
+            AuthorityEntryRead::Open(entry) => authority_entry_hash(entry)?,
+            AuthorityEntryRead::Sealed(scaffold) => scaffold.hash,
+        };
+        held.insert(hash);
+        named.extend(read.parent_hashes().iter().copied());
         if vault_id.is_none() {
-            vault_id = entry.vault_id;
+            vault_id = read.vault_id();
         }
     }
     let checkpoint = match super::checkpoint::checkpoint_head_coverage_in_txn(store, txn)? {

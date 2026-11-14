@@ -1033,12 +1033,20 @@ pub(super) fn crdt_carrier_is_admissible_authority_row(id: &EntityId, carrier: &
     {
         return false;
     }
-    let Ok(entry) =
-        crate::authority::decode_authority_log_entry_body(&carrier[ENTITY_METADATA_HEADER_LEN..])
+    let Ok(read) =
+        crate::authority::read_authority_log_entry_body(&carrier[ENTITY_METADATA_HEADER_LEN..])
     else {
         return false;
     };
-    crate::authority::authority_log_entity_id(&entry).is_ok_and(|derived| derived == *id)
+    match read {
+        crate::authority::AuthorityEntryRead::Open(entry) => {
+            crate::authority::authority_log_entity_id(&entry).is_ok_and(|derived| derived == *id)
+        }
+        crate::authority::AuthorityEntryRead::Sealed(scaffold) => {
+            crate::authority::authority_log_entity_id_from_hash(&scaffold.hash)
+                .is_ok_and(|derived| derived == *id)
+        }
+    }
 }
 
 /// Appended REDACTION_AUDIT rows stay local: an erase's sweep-completion row

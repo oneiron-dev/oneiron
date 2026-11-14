@@ -145,9 +145,9 @@ pub(super) fn genesis_entry(seed: u8, ts: u64) -> AuthorityLogEntry {
         genesis_nonce: [seed.wrapping_add(10); 32],
         recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
     };
-    // Rule 4: the genesis golden vector pins this entry's bytes, so the seed
-    // is fixed here, never sampled. The attestation evidence above is present,
-    // so the shape check expects Some.
+    // The genesis golden vector pins this entry's bytes. Its attestation
+    // evidence is of the SoftwareArgon2id kind, which names no device, so the
+    // op has no overlay leaf and the shape check expects no seed.
     let entry = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: None,
@@ -161,7 +161,7 @@ pub(super) fn genesis_entry(seed: u8, ts: u64) -> AuthorityLogEntry {
         },
         cosigns: Vec::new(),
         ts,
-        overlay_seed: Some([0x5e; 32]),
+        overlay_seed: None,
     };
     sign_ed(entry, &signing)
 }

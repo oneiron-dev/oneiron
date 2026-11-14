@@ -46,6 +46,9 @@ pub enum AuthorityEntryStatus {
 struct PreparedAuthorityLogRows {
     ids: Vec<EntityId>,
     ops: Vec<BatchOp>,
+    /// The overlay records of the sealed rows (census L5-22), stored before
+    /// the batch door reads the rows back.
+    overlays: Vec<super::overlay_rows::PreparedOverlay>,
     pending: Option<super::history_admission::PendingAuthorityHistory>,
 }
 
@@ -57,9 +60,17 @@ impl PreparedAuthorityLogRows {
         vault: &Vault,
         wtxn: &mut heed::RwTxn<'_>,
     ) -> Result<super::history_admission::AuthorityPut> {
-        let Self { ids, ops, pending } = self;
+        let Self {
+            ids,
+            ops,
+            overlays,
+            pending,
+        } = self;
         if ops.is_empty() {
             return Ok(super::history_admission::AuthorityPut::Stored(ids));
+        }
+        for overlay in &overlays {
+            super::overlay_rows::put_overlay_in_txn(&vault.store, wtxn, overlay)?;
         }
         apply_ops(
             &vault.store,
@@ -197,6 +208,7 @@ impl Vault {
     ) -> Result<PreparedAuthorityLogRows> {
         let mut ids = Vec::with_capacity(entries.len());
         let mut ops = Vec::with_capacity(entries.len());
+        let mut overlays = Vec::new();
         // Rows of this batch, for an ancestry that runs through one.
         let mut batch = BTreeMap::new();
         let mut staged = Vec::with_capacity(entries.len());
@@ -244,7 +256,10 @@ impl Vault {
                 return Err(invalid_authority());
             }
             let data = encode_authority_log_entry_body(entry)?;
-            crate::authority::validate_authority_log_entry_body_bytes(&data)?;
+            // The body opens with its own overlay record, if it seals one.
+            if let Some(overlay) = super::overlay_rows::prepare_overlay(entry, &data)? {
+                overlays.push(overlay);
+            }
             let id = authority_log_entity_id(entry)?;
             ids.push(id);
             ops.push(BatchOp::Put {
@@ -263,6 +278,7 @@ impl Vault {
             return Ok(PreparedAuthorityLogRows {
                 ids,
                 ops,
+                overlays,
                 pending: None,
             });
         }
@@ -293,7 +309,12 @@ impl Vault {
             .into_iter()
             .filter_map(|index| ops[index].take())
             .collect();
-        Ok(PreparedAuthorityLogRows { ids, ops, pending })
+        Ok(PreparedAuthorityLogRows {
+            ids,
+            ops,
+            overlays,
+            pending,
+        })
     }
 
     /// Reads and decodes one AUTHORITY_LOG entry by entity id.
@@ -311,7 +332,8 @@ impl Vault {
         if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
-        decode_stored_authority_log_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+        decode_stored_authority_log_body(&self.store, &rtxn, &raw[ENTITY_METADATA_HEADER_LEN..])
+            .map(Some)
     }
 
     /// The status of the AUTHORITY_LOG entry `hash` names, read in one
@@ -337,7 +359,11 @@ impl Vault {
             if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
                 return Err(Error::InvalidEntityType(header.entity_type));
             }
-            let entry = decode_stored_authority_log_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            let entry = decode_stored_authority_log_body(
+                &self.store,
+                &rtxn,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            )?;
             // The id is the hash's first 16 bytes; a stored entry with
             // another full hash is a different entry.
             if authority_entry_hash(&entry)? == *hash {
@@ -402,8 +428,12 @@ impl Vault {
                     return Err(Error::CorruptedIndex("type index row kind mismatch"));
                 }
                 let authority_entry =
-                    decode_stored_authority_log_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-                let hash = authority_entry_hash(&authority_entry)?;
+                    read_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+                        .map_err(|_| Error::CorruptedIndex("stored authority log row"))?;
+                let hash = match authority_entry {
+                    AuthorityEntryRead::Open(entry) => authority_entry_hash(&entry)?,
+                    AuthorityEntryRead::Sealed(scaffold) => scaffold.hash,
+                };
                 let sidecar_key = authority_first_seen_sidecar_key(&hash);
                 if !AUTHORITY_FIRST_SEEN.contains(&self.store, wtxn, &sidecar_key)? {
                     // fix-leg 4: the persisted value is THIS vault's local

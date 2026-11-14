@@ -51,6 +51,13 @@ crate::side_table::side_tables! {
     /// hash32. Value: the row's canonical signed bytes.
     AUTHORITY_HISTORY_PENDING: VaultMeta b"authority.history.pending.v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// One authority row's erasable overlay (census L5-22; DEC-0005 #vault:8): the values the
+    /// row's scaffold holds only as commitments, and the seed that keys them, sealed under the
+    /// erasable key of the subject the row names (`store::authority_overlay_custody`). Written
+    /// in the writer that appends the row; unopenable once the subject's key is retired. Key:
+    /// hash32 (the row's entry hash). Value: subject (16) | key ref (32) | envelope.
+    AUTHORITY_OVERLAY: VaultMeta b"authority.overlay.v1:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// One signed authority row a repair page staged while this vault's history is incomplete
     /// (OF-469): no held history, admitted only when the stage closes the gap. Key: hash32.
     AUTHORITY_HISTORY_STAGE: VaultMeta b"authority.history.stage.v1:" Raw

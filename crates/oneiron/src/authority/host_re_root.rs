@@ -243,7 +243,7 @@ fn head_re_roots_to(
             let body = raw
                 .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
                 .ok_or(Error::CorruptedIndex("authority head header"))?;
-            decode_authority_log_entry_body(body)?
+            open_vault_authority_body_in_txn(store, txn, body)?
         }
         None => match super::adopted_evidence::CarriedRows::default().get(store, txn, head)? {
             Some(entry) => entry,

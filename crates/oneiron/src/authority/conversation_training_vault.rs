@@ -432,7 +432,10 @@ impl Vault {
         {
             return Ok(None);
         }
-        let entry = decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let read = read_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let AuthorityEntryRead::Open(entry) = read else {
+            return Ok(None);
+        };
         Ok(match &entry.op {
             AuthorityOp::ConversationTrainingVaultSet(set)
                 if authority_entry_hash(&entry)? == act =>

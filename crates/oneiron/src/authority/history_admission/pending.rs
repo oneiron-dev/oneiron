@@ -188,7 +188,7 @@ fn pending_rows_in_txn(
         .scan(store, txn)?
         .into_iter()
         .map(|(hash, bytes)| {
-            let entry = decode_authority_log_entry_body(&bytes)?;
+            let entry = open_vault_authority_body_in_txn(store, txn, &bytes)?;
             if authority_entry_hash(&entry)? != hash {
                 return Err(crate::error::Error::CorruptedIndex(
                     "authority history pending key",

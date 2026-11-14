@@ -338,6 +338,8 @@ pub(crate) use oneiron_store::replay_only_commits;
 pub mod world_authority;
 pub(crate) mod world_pad_rows;
 pub use oneiron_store::world_registration_keys;
+// Census L5-22: the erasable overlay of authority log entries.
+pub(crate) mod authority_overlay_custody;
 // FIX 12569: a vault's own drafter artifact keys.
 pub(crate) mod drafter_custody;
 // FIX 7907, 7958: a federation grant's scope opening keys.

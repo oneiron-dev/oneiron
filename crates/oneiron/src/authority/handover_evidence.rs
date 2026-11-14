@@ -75,7 +75,10 @@ impl crate::Vault {
             }
         };
         for (_, body) in authority_log_rows_in_txn(&self.store, txn)? {
-            let Ok(entry) = decode_authority_log_entry_body(&body) else {
+            let Ok(read) = read_authority_log_entry_body(&body) else {
+                continue;
+            };
+            let AuthorityEntryRead::Open(entry) = read else {
                 continue;
             };
             take(authority_entry_hash(&entry)?, &entry);

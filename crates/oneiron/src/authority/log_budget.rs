@@ -359,7 +359,7 @@ pub(super) fn door_view(
             {
                 continue;
             }
-            entries.push(decode_authority_log_entry_body(&body)?);
+            entries.push(open_vault_authority_body_in_txn(store, txn, &body)?);
         }
         // The structure reads the image's carried rows as the stored rows
         // they stand for: it admits what the covered history admitted, never

@@ -229,7 +229,7 @@ pub(super) fn write_stage_order(
 ) -> crate::error::Result<Vec<usize>> {
     let (mut stored, mut resident) = (Vec::new(), BTreeSet::new());
     for (_, body) in authority_log_rows_in_txn(store, txn)? {
-        let entry = decode_authority_log_entry_body(&body)?;
+        let entry = open_vault_authority_body_in_txn(store, txn, &body)?;
         resident.insert(authority_entry_hash(&entry)?);
         stored.push(entry);
     }
