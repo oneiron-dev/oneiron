@@ -321,6 +321,11 @@ fn scan_screened(
     for op in &mut *copy {
         match op {
             BatchOp::Put { id, data, .. } => {
+                // A kept array, map or number under a credential name reads
+                // as nil, as the mask leaves it (REVIEW-7873 P1).
+                if let Some(screened) = kept_encoded_members_screened(kept, id, data) {
+                    replace_wiped(data, screened);
+                }
                 // A recovery phrase the owner kept, split over the body's
                 // parts, is screened word by word where the door reads it
                 // (REVIEW-7060 P1).
@@ -344,6 +349,78 @@ fn scan_screened(
         }
     }
     scan_batch_ops(store, wtxn, &copy)
+}
+
+/// `data` of `record` with each credential field whose value is neither text
+/// nor bytes, and whose encoding the owner ruled no secret or kept as text
+/// there, read as nil, in the body's own form (JSON or MessagePack); `None`
+/// when none sits there. Custody holds such a value as its encoding (FIX
+/// SEALED-VALUE-RESTORE-KEEPS-ENCODED-TEXT), which a JSON body never spells,
+/// so [`KeptValues::screened`] fills nothing, and the door's field rule reads
+/// any value under a credential name as a hit. The mask's own pass skips the
+/// same member (`Masker::mask_member`, `is_kept`), so a restore of the value
+/// lands instead of rolling back on its own re-scan (REVIEW-7873 P1).
+fn kept_encoded_members_screened(
+    kept: &KeptValues,
+    record: &EntityId,
+    data: &[u8],
+) -> Option<Vec<u8>> {
+    if !kept.holds_record(record) {
+        return None;
+    }
+    // The door's decoder takes JSON first (`decode_members`).
+    let (mut tree, json) = match serde_json::from_slice::<Value>(data) {
+        Ok(tree) => (tree, true),
+        Err(_) => {
+            let mut cursor = std::io::Cursor::new(data);
+            let tree = rmpv::decode::read_value(&mut cursor)
+                .ok()
+                .filter(|_| cursor.position() == data.len() as u64)?;
+            (tree, false)
+        }
+    };
+    let mut screened = None;
+    if null_kept_encoded_members(kept, record, &mut tree) {
+        let mut out = Vec::with_capacity(data.len());
+        let written = if json {
+            serde_json::to_writer(&mut out, &tree).is_ok()
+        } else {
+            rmpv::encode::write_value(&mut out, &tree).is_ok()
+        };
+        if written {
+            screened = Some(out);
+        } else {
+            out.zeroize();
+        }
+    }
+    wipe::wipe_value(&mut tree);
+    screened
+}
+
+/// [`kept_encoded_members_screened`] over one value and each value under it:
+/// whether it set a member to nil.
+fn null_kept_encoded_members(kept: &KeptValues, record: &EntityId, value: &mut Value) -> bool {
+    match value {
+        Value::Array(items) => items.iter_mut().fold(false, |changed, item| {
+            null_kept_encoded_members(kept, record, item) | changed
+        }),
+        Value::Map(fields) => fields.iter_mut().fold(false, |changed, (key, member)| {
+            let encoded_whole = credential_member(key, member)
+                && !matches!(member, Value::String(_) | Value::Binary(_));
+            if encoded_whole {
+                let mut bytes = Zeroizing::new(Vec::new());
+                if rmpv::encode::write_value(&mut *bytes, member).is_ok()
+                    && kept.holds(record, &bytes)
+                {
+                    wipe::wipe_value(member);
+                    *member = Value::Nil;
+                    return true;
+                }
+            }
+            null_kept_encoded_members(kept, record, member) | changed
+        }),
+        _ => false,
+    }
 }
 
 /// `data` of `record` with the words of each recovery phrase the owner kept
