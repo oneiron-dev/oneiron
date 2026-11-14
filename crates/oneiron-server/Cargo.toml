@@ -343,6 +343,12 @@ name = "member_sync_socket"
 path = "tests/member_sync_socket.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
+# The member lane's client half uses the same HOME fixture and grant hook.
+[[test]]
+name = "member_sync_lane"
+path = "tests/member_sync_lane.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
 # DEL-2's core HTTP delete door roots its server on a `MemoryKeystore` too.
 [[test]]
 name = "delete_authority_served_door"
