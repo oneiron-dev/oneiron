@@ -3,6 +3,7 @@
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test conflicts_page`.
 #![cfg(oneiron_test_support)]
 
+use oneiron::dreamer_consolidation::ConflictReviewScope;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryResult};
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::coach::define_agent;
@@ -10,7 +11,7 @@ use oneiron::test_doors::consolidation::{consolidate_unbound_turn_pair, open_dre
 use oneiron::test_doors::derive::{
     Claim, Derived, Named, commit, narrow_steward_grant_to_project, open_conflict, witness_turn,
 };
-use oneiron::test_doors::steward::{STEWARD_VERBS, dreamer, stand_steward_grant};
+use oneiron::test_doors::steward::{STEWARD_VERBS, dreamer, owner, stand_steward_grant};
 use oneiron::test_doors::untangle_regressions::seed_named_person;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use serde_json::{Value, json};
@@ -278,6 +279,49 @@ fn a_conflict_with_a_member_the_reader_does_not_read_is_left_out() -> ConflictsP
     // out for the narrowed Dreamer.
     let owner = vault.ensure_embedded_owner_actor()?;
     let whole = read_conflicts_page(&vault, owner, EdgeActorClass::Human, json!({}))?;
+    assert_eq!(page_markers(&whole), vec![marker.to_hex()]);
+    Ok(())
+}
+
+/// A conflict whose subject the owner holds is the owner's to answer: the
+/// Dreamer's page leaves it out, and the owner's page under proof serves it.
+#[test]
+fn a_conflict_the_owner_holds_is_left_out_for_the_dreamer() -> ConflictsPageTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = open_conflicts_vault(&dir)?;
+    let person = seed_person(&vault, "owen")?;
+    let turn = witness_turn(&vault, "call me owen")?;
+    let actor = dreamer(&vault)?;
+    stand_steward_grant(&vault, actor, &STEWARD_VERBS)?;
+    let (first, second) = commit_conflicting_pair(
+        &vault,
+        actor,
+        person,
+        turn,
+        "run-1",
+        "preference.coffee",
+        ("an oat milk flat white", "a cortado"),
+    )?;
+    let marker = open_conflict(&vault, second, first)?;
+    let before = read_conflicts_page(&vault, actor, EdgeActorClass::System, json!({}))?;
+    assert_eq!(
+        page_markers(&before),
+        vec![marker.to_hex()],
+        "the Dreamer pages the conflict before the hold"
+    );
+    let proof = owner(&vault)?;
+    let owner_actor = vault.ensure_embedded_owner_actor()?;
+    vault
+        .memory(owner_actor, EdgeActorClass::Human)
+        .hold_dreamer_conflict_review(&proof, ConflictReviewScope::Subject(person))?;
+    let held = read_conflicts_page(&vault, actor, EdgeActorClass::System, json!({}))?;
+    assert!(
+        page_markers(&held).is_empty(),
+        "the held conflict is the owner's"
+    );
+    assert!(held["next"].is_null());
+    assert!(!held.to_string().contains(&marker.to_hex()));
+    let whole = read_conflicts_page(&vault, owner_actor, EdgeActorClass::Human, json!({}))?;
     assert_eq!(page_markers(&whole), vec![marker.to_hex()]);
     Ok(())
 }
