@@ -1,18 +1,24 @@
-//! L2-08 (ARCH-0026 #sieve-open): words a TURN's edges or a document edit
-//! change reach the turn's listeners. A witnessed TURN's words are its MESSAGE children by
-//! `PartOf`, each read with its `BelongsTo` and its speaker's `AuthoredBy`.
-//! An edge write that unlinks a MESSAGE from the turn, links one into it, or
-//! rebinds a MESSAGE's speaker changes what the turn says with no write to
-//! the turn or to any MESSAGE's text. Before, no door told the Dreamer, the
-//! sieve, the projector, the tagger or the embedder: a turn a round had
-//! already read stayed read at its old words. Now the edge's own commit
-//! admits the turn as a TURN whose words changed: a turn a round may have
-//! read (a scope's watermark passed it) takes a re-dirty carrier, pending for
-//! every consolidation scope, as a TURN put behind a watermark does; the
-//! sieve and the projector owe it a read; and the tagger and the embedder
-//! mark it at its new words. A document edit of a MESSAGE inside a turn a
-//! round read ("an edit after consolidation") re-dirtied nothing for
-//! consolidation either; it is admitted the same way now.
+//! L2-08 (ARCH-0026 #sieve-open): words a TURN's edges, a deleted MESSAGE or
+//! a document edit change reach the turn's listeners. A witnessed TURN's words
+//! are its MESSAGE children by `PartOf`, each read with its `BelongsTo` and its
+//! speaker's `AuthoredBy`. An edge write that links a MESSAGE into the turn,
+//! or binds another speaker to one of its MESSAGEs, changes what the turn says
+//! with no write to the turn or to any MESSAGE's text. Before, no door told the
+//! Dreamer, the sieve, the projector, the tagger or the embedder: a turn a
+//! round had already read stayed read at its old words. Now the edge's own
+//! commit admits the turn as a TURN whose words changed: a turn a round may
+//! have read (a scope's watermark passed it) takes a re-dirty carrier, pending
+//! for every consolidation scope, as a TURN put behind a watermark does; the
+//! sieve and the projector owe it a read; and the tagger and the embedder mark
+//! it at its new words.
+//!
+//! A witnessed MESSAGE's own bindings are fixed (`memory/witness/validation.rs`:
+//! a new parent or actor is a refusal), so no edge door takes one out of its
+//! turn; its author deleting it does. The erase hook already owed the sieve a
+//! read of the words the turn keeps; now a turn a round read is pending again
+//! for every scope too. A document edit of a MESSAGE inside a turn a round
+//! read ("an edit after consolidation") re-dirtied nothing for consolidation
+//! either; it is admitted the same way now.
 //!
 //! The carrier and the embedding marker have no public read, and a round's
 //! watermark is settled without a model; all three go through the test door
@@ -24,13 +30,15 @@
 
 use oneiron::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, TextField};
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
-use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::turn_words::{
-    embedding_marker, redirty_pending, settle_every_scope_on_turn, stored_turn,
+    embedding_marker, redirty_pending, settle_every_scope_on_turn,
 };
 use oneiron::test_support::{bind_host_owner, provision_engine_machines, test_host_issuer};
-use oneiron::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
+use oneiron::{
+    DeleteReason, EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig, WriteActor,
+};
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -70,11 +78,31 @@ fn bound_fixture() -> Fixture {
     }
 }
 
+/// [`fixture`] with no embedder, opened as the process that owns the vault
+/// (the writer lease the owner's doors ask for) and with its install's key
+/// store loaded: a delete signs its receipt with the install's key.
+fn deleting_fixture() -> Fixture {
+    let dir = tempfile::tempdir().expect("temporary vault");
+    let vault = Vault::open_owned(dir.path(), VaultConfig::device()).expect("fresh owned vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    Fixture {
+        _dir: dir,
+        vault,
+        owner,
+    }
+}
+
 impl Fixture {
     /// A turn the owner said, one MESSAGE per entry of `words`, in its own
     /// conversation: the turn's id and its MESSAGEs' ids in order. A new turn
     /// is new work on its own key, so it holds no re-dirty carrier.
     fn witness_turn(&self, words: &[&str]) -> (EntityId, Vec<EntityId>) {
+        self.witness_turn_in(EntityId::now(), words)
+    }
+
+    /// [`Self::witness_turn`] in the conversation `room`.
+    fn witness_turn_in(&self, room: EntityId, words: &[&str]) -> (EntityId, Vec<EntityId>) {
         let turn = EntityId::now();
         let ids: Vec<EntityId> = words.iter().map(|_| EntityId::now()).collect();
         let messages = words
@@ -96,7 +124,7 @@ impl Fixture {
         self.vault
             .memory(self.owner, EdgeActorClass::Human)
             .witness(&WitnessTurn {
-                conversation_ref: EntityId::now().to_hex(),
+                conversation_ref: room.to_hex(),
                 turn_ref: Some(turn.to_hex()),
                 thread_audience: None,
                 messages,
@@ -140,24 +168,42 @@ impl Fixture {
     }
 }
 
-/// A MESSAGE unlinked from a turn every scope has read takes its words out
-/// of the turn: the turn is pending again for every consolidation scope.
-#[test]
-fn a_message_unlinked_from_a_read_turn_re_dirties_the_turn() {
-    let fixture = fixture(false);
-    let (turn, messages) = fixture.witness_turn(&["the ferry leaves at nine", "bring the map"]);
+/// The author deletes a MESSAGE of a turn every scope has read with
+/// `reason`: the turn keeps its row and its other words, and is pending again
+/// for every consolidation scope.
+fn a_message_deleted_from_a_read_turn_re_dirties_the_turn(reason: DeleteReason) {
+    let fixture = deleting_fixture();
+    let room = EntityId::now();
+    let (turn, messages) =
+        fixture.witness_turn_in(room, &["the ferry leaves at nine", "bring the map"]);
     fixture.read_by_every_scope(&turn);
 
-    let removed = fixture
+    fixture
         .vault
-        .delete_edge(&messages[1], EdgeKind::PartOf, &turn)
-        .expect("unlink the second message");
+        .delete_room_record(
+            room,
+            messages[1],
+            WriteActor::new(fixture.owner, EdgeActorClass::Human),
+            reason,
+        )
+        .expect("the author deletes the second message");
 
-    assert!(removed, "the message was part of the turn");
     assert!(
         fixture.redirty_pending(&turn),
-        "the read turn whose words lost a message is pending again"
+        "the read turn whose words lost a message is pending again ({reason:?})"
     );
+}
+
+/// A soft delete scrubs the MESSAGE's words and keeps its shell.
+#[test]
+fn a_message_deleted_from_a_read_turn_re_dirties_the_turn_on_a_soft_delete() {
+    a_message_deleted_from_a_read_turn_re_dirties_the_turn(DeleteReason::UserDelete);
+}
+
+/// A hard delete takes the MESSAGE's row and its edges, its `PartOf` included.
+#[test]
+fn a_message_deleted_from_a_read_turn_re_dirties_the_turn_on_a_hard_delete() {
+    a_message_deleted_from_a_read_turn_re_dirties_the_turn(DeleteReason::UserHardDelete);
 }
 
 /// A MESSAGE linked into another read turn adds its words there, and its
@@ -185,11 +231,10 @@ fn a_message_linked_into_a_second_read_turn_re_dirties_both_turns() {
     );
 }
 
-/// A member MESSAGE's speaker rebound in one batch, the old `AuthoredBy`
-/// removed and a new one written, changes who said a read turn's words: the
-/// turn is pending again.
+/// Another speaker bound to a member MESSAGE of a read turn changes who said
+/// the turn's words: the turn is pending again.
 #[test]
-fn a_rebound_speaker_on_a_member_message_re_dirties_the_read_turn() {
+fn a_speaker_bound_to_a_member_message_re_dirties_the_read_turn() {
     let fixture = fixture(false);
     let (turn, messages) = fixture.witness_turn(&["the ferry leaves at nine"]);
     fixture.read_by_every_scope(&turn);
@@ -197,15 +242,12 @@ fn a_rebound_speaker_on_a_member_message_re_dirties_the_read_turn() {
 
     fixture
         .vault
-        .batch()
-        .delete_edge(&messages[0], EdgeKind::AuthoredBy, &fixture.owner)
-        .edge(&messages[0], EdgeKind::AuthoredBy, &yuki, 1.0)
-        .commit()
-        .expect("rebind the message's speaker");
+        .put_edge(&messages[0], EdgeKind::AuthoredBy, &yuki, 1.0)
+        .expect("bind another speaker to the message");
 
     assert!(
         fixture.redirty_pending(&turn),
-        "the read turn whose speaker changed is pending again"
+        "the read turn whose speakers changed is pending again"
     );
 }
 
@@ -268,71 +310,34 @@ fn a_document_edit_of_a_read_turns_message_re_dirties_the_turn() {
     );
 }
 
-/// With an embedder configured, an unlinked turn owes a vector of its new
-/// words, read or not: its embedding marker is written again at them. A turn
-/// no round has passed takes no carrier: its own key is still ahead of every
-/// round, which reads its new words there.
+/// With an embedder configured, a turn that gains a MESSAGE owes a vector of
+/// its new words, read or not: its embedding marker is written again at them.
+/// A turn no round has passed takes no carrier: its own key is still ahead of
+/// every round, which reads its new words there.
 #[test]
-fn a_rewired_turn_is_marked_for_its_vector_at_its_new_words() {
+fn a_turn_that_gains_a_message_is_marked_for_its_vector_at_its_new_words() {
     let fixture = fixture(true);
-    let (turn, messages) = fixture.witness_turn(&["the ferry leaves at nine", "bring the map"]);
+    let (turn, _) = fixture.witness_turn(&["the ferry leaves at nine"]);
     let witnessed = embedding_marker(&fixture.vault, &turn)
         .expect("read the marker")
         .expect("the witness marks the turn for its vector");
+    let (_, other_messages) = fixture.witness_turn(&["bring the map"]);
 
     fixture
         .vault
-        .delete_edge(&messages[1], EdgeKind::PartOf, &turn)
-        .expect("unlink the second message");
+        .put_edge(&other_messages[0], EdgeKind::PartOf, &turn, 1.0)
+        .expect("link the other turn's message into the turn");
 
-    let rewired = embedding_marker(&fixture.vault, &turn)
+    let linked = embedding_marker(&fixture.vault, &turn)
         .expect("read the marker")
         .expect("the turn still owes a vector");
     assert_ne!(
-        rewired, witnessed,
+        linked, witnessed,
         "the marker is written again at the turn's new words"
     );
     assert!(
         !fixture.redirty_pending(&turn),
         "a turn no round has passed takes no carrier"
-    );
-}
-
-/// A batch that puts a read turn again as it stands and unlinks one of its
-/// MESSAGEs changes the turn's words: the turn is marked for its vector at
-/// them and is pending again for every scope. A put of a stored TURN's row
-/// tells the embedder nothing; only a TURN the batch births is new work on its
-/// own key.
-#[test]
-fn a_read_turn_put_again_beside_an_unlink_is_marked_at_its_new_words() {
-    let fixture = fixture(true);
-    let (turn, messages) = fixture.witness_turn(&["the ferry leaves at nine", "bring the map"]);
-    fixture.read_by_every_scope(&turn);
-    let witnessed = embedding_marker(&fixture.vault, &turn)
-        .expect("read the marker")
-        .expect("the witness marks the turn for its vector");
-    let (occurred, learned_at, body) = stored_turn(&fixture.vault, &turn)
-        .expect("read the turn")
-        .expect("the turn is stored");
-
-    fixture
-        .vault
-        .batch()
-        .put(&turn, ENTITY_TYPE_TURN, occurred, learned_at, &body)
-        .delete_edge(&messages[1], EdgeKind::PartOf, &turn)
-        .commit()
-        .expect("put the turn again and unlink its second message");
-
-    let rewired = embedding_marker(&fixture.vault, &turn)
-        .expect("read the marker")
-        .expect("the turn still owes a vector");
-    assert_ne!(
-        rewired, witnessed,
-        "the marker is written again at the turn's new words"
-    );
-    assert!(
-        fixture.redirty_pending(&turn),
-        "the read turn whose words lost a message is pending again"
     );
 }
 
