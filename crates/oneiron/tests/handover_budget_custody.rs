@@ -1,5 +1,6 @@
-//! Handover budget custody, PR 1 (FIX 4889; L8-28): a handed-over agent run
-//! carries its spend, and the taker reserves only the remainder.
+//! Handover budget custody (FIX 4889; L8-28): a handed-over agent run
+//! carries its spend, and the taker reserves only the remainder (PR 1); the
+//! custody machine keeps one counter for the run (PR 2).
 //!
 //! Two machines of one vault, each with its own live window manager, as a
 //! host runs them. Machine A dispatches one agent run under a root spend
@@ -7,7 +8,10 @@
 //! as a closing process does, which stamps A's share on the run TASK. The
 //! TASK rides the shared base window to machine B, the elected MACRO home,
 //! which takes the run at expiry: B pins only the launch's reservation less
-//! A's share, and waits when nothing is left.
+//! A's share, and waits when nothing is left. A, whose tree funded the
+//! launch, keeps the run's scope open while B runs it: the root goes on
+//! holding the whole carve, the other machine's share folds into the scope
+//! when the run ends or comes back, and the root is charged once.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test handover_budget_custody`.
@@ -242,4 +246,132 @@ fn taker_waits_when_the_reservation_is_spent() {
             .is_none(),
         "B holds no scope for a run whose reservation is spent"
     );
+}
+
+#[test]
+fn old_machine_standdown_keeps_the_remainder_held() {
+    let (a, b) = machines();
+    let x = dispatched_run(&a, &b, 20);
+    let reap = b
+        .vault
+        .reap_agent_run_leases(&|_: &AgentDefinition| true)
+        .unwrap();
+    assert_eq!(reap.taken, 1, "B takes the run A released");
+    let doc_a = a.doc();
+    let doc_b = b.doc();
+    exchange(&doc_a, &doc_b);
+    a.vault.resume_executor_leases();
+    let claimed = AgentDispatcher::new(&a.vault)
+        .claim_agent_run(x, "pump-a", T0)
+        .unwrap();
+    assert!(claimed.is_none(), "A stands down: B holds the run");
+    let scope_id = SpendScopeId::for_attempt(&x);
+    let x_scope = AgentDispatcher::new(&a.vault)
+        .read_spend_scope(&scope_id)
+        .unwrap()
+        .unwrap();
+    // PR 1 head: Closed (stand-down settled it; R free 80).
+    assert_eq!(x_scope.state, SpendState::Open);
+    assert_eq!(x_scope.spent_units, 20);
+    assert_eq!(x_scope.cap_units, RUN_BUDGET);
+    let (agent, _) = a
+        .vault
+        .get_seeded_agent_definition_by_logical_id(DEFAULT_BASE_LOGICAL_ID)
+        .unwrap()
+        .unwrap();
+    let root = SpendScopeId::launch("handover-budget-custody-root").unwrap();
+    let second = AgentDispatcher::new(&a.vault).dispatch_with_context(
+        DispatchAgent {
+            target: AgentDispatchTarget::Custom(agent),
+            parent_attempt: None,
+            dedupe_key: None,
+            run_id: Some("handover-budget-custody-second".to_owned()),
+            now: T0,
+        },
+        AgentSpawnContext::default()
+            .with_spend(SpawnSpend {
+                scope: root.clone(),
+            })
+            .with_budget(50)
+            .with_depth_remaining(1),
+    );
+    // PR 1 head: Ok (R free 80, so the 50 carve fits).
+    assert!(
+        second.is_err(),
+        "a 50 carve does not fit in R free 40 while X holds its carve"
+    );
+    // The refusal is R's room, not the second launch itself: a 30 carve fits.
+    let third = AgentDispatcher::new(&a.vault)
+        .dispatch_with_context(
+            DispatchAgent {
+                target: AgentDispatchTarget::Custom(agent),
+                parent_attempt: None,
+                dedupe_key: None,
+                run_id: Some("handover-budget-custody-third".to_owned()),
+                now: T0,
+            },
+            AgentSpawnContext::default()
+                .with_spend(SpawnSpend { scope: root })
+                .with_budget(30)
+                .with_depth_remaining(1),
+        )
+        .unwrap();
+    assert!(
+        matches!(third, AgentDispatchOutcome::Dispatched(_)),
+        "a 30 carve fits in R free 40"
+    );
+}
+
+#[test]
+fn run_back_home_reopens_the_same_scope() {
+    let (a, b) = machines();
+    let x = dispatched_run(&a, &b, 20);
+    let reap = b
+        .vault
+        .reap_agent_run_leases(&|_: &AgentDefinition| true)
+        .unwrap();
+    assert_eq!(reap.taken, 1, "B takes the run A released");
+    let doc_a = a.doc();
+    let doc_b = b.doc();
+    exchange(&doc_a, &doc_b);
+    a.vault.resume_executor_leases();
+    let claimed = AgentDispatcher::new(&a.vault)
+        .claim_agent_run(x, "pump-a", T0)
+        .unwrap();
+    assert!(claimed.is_none(), "A stands down: B holds the run");
+    assert!(
+        AgentDispatcher::new(&b.vault)
+            .claim_agent_run(x, "pump-b", T0 + 2)
+            .unwrap()
+            .is_some(),
+        "B claims the run it took"
+    );
+    AgentDispatcher::new(&b.vault)
+        .charge(&SpendScopeId::for_attempt(&x), 30)
+        .unwrap();
+    assert_eq!(b.vault.release_agent_run_leases().unwrap(), 1);
+    let doc_a = a.doc();
+    let doc_b = b.doc();
+    exchange(&doc_a, &doc_b);
+    // B is the elected home, so A takes after the non-home grace: held_until
+    // T0+2 plus 300 seconds.
+    a.clock.set(T0 + 400);
+    let reap = a
+        .vault
+        .reap_agent_run_leases(&|_: &AgentDefinition| true)
+        .unwrap();
+    assert_eq!(reap.taken, 1, "A takes the run back");
+    let scope_id = SpendScopeId::for_attempt(&x);
+    let x_scope = AgentDispatcher::new(&a.vault)
+        .read_spend_scope(&scope_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(x_scope.scope, scope_id);
+    // PR 1 head: Closed (stand-down settled it, so the take keeps no open scope).
+    assert_eq!(x_scope.state, SpendState::Open);
+    // PR 1 head: spent 20 (settled at stand-down, B's 30 never folded).
+    assert_eq!(x_scope.spent_units, 50);
+    assert_eq!(x_scope.cap_units, RUN_BUDGET);
+    let root = SpendScopeId::launch("handover-budget-custody-root").unwrap();
+    assert_eq!(x_scope.parent, Some(root));
 }
