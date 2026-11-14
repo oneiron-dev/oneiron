@@ -22,7 +22,8 @@
 //! fixture state.
 //!
 //! Fleet command: `cargo test --locked -p oneiron-server --all-features
-//! --test quota_answer_requires_vault_owner`.
+//! --features oneiron/test-support --test quota_answer_requires_vault_owner`
+//! (the target's required feature: it brings `MemoryKeystore`).
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 #[path = "support/engine_stack.rs"]
