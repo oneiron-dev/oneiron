@@ -6,7 +6,9 @@
 //! named by the file's own id, since no custody record holds any of it. The
 //! owner's not-a-secret answer clears the seal: a masked reader is served the
 //! file, and a put of the same bytes is not sealed again. Only the owner
-//! answers it, and only not a secret: no value left the file.
+//! answers it, and only not a secret: no value left the file. A seal of bytes
+//! the file no longer holds needs no answer, and its card says so (Engine
+//! RULING 14 Nov 15:27).
 
 use std::sync::Arc;
 
@@ -15,6 +17,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use oneiron::secret_custody::{FoundKeyAction, FoundKeyCard, SecretSight};
 use oneiron::store::GateDecisionId;
+use oneiron::verbs::FoundKeyCardReply;
 use oneiron::{EntityId, ErrorKind, TimeRange, Vault, VaultConfig};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -306,11 +309,62 @@ fn the_answer_clears_only_the_seal_of_the_bytes_the_file_holds_now() -> TestResu
         ),
         "the earlier bytes, which the owner did not see, stay sealed"
     );
-    let open = notice_cards(&vault, &owner, &id, true)?;
+    let earlier: Vec<FoundKeyCard> = seal_cards(&vault, &owner, &id)?
+        .into_iter()
+        .filter(|card| card.settled.is_none())
+        .collect();
     assert_eq!(
-        open.len(),
+        earlier.len(),
         1,
-        "the earlier bytes' seal stays open: {open:?}"
+        "the earlier bytes' seal stays open: {earlier:?}"
+    );
+    assert!(
+        notice_cards(&vault, &owner, &id, true)?.is_empty(),
+        "and waits on no answer (Engine RULING 14 Nov 15:27)"
+    );
+    Ok(())
+}
+
+/// A file put again with bytes the door does not seal keeps its earlier
+/// bytes' seal open, yet nothing waits on the owner (Engine RULING 14 Nov
+/// 15:27: "the card must not look like an unanswered question"): the card
+/// offers no action and says what is true, the owner's open list leaves the
+/// file out, and the file as it is now is served.
+#[test]
+fn a_seal_of_earlier_bytes_says_no_answer_is_needed() -> TestResult {
+    let (_dir, vault, owner) = open_vault()?;
+    let (id, _) = put_sealed_file(&vault)?;
+    let now = b"deploy notes, no key here\n".to_vec();
+    put_asset(&vault, &id, 2, &now)?;
+    let cards = seal_cards(&vault, &owner, &id)?;
+    assert_eq!(
+        cards.len(),
+        1,
+        "FIXTURE: only the earlier bytes are sealed: {cards:?}"
+    );
+    let card = &cards[0];
+    assert!(
+        card.settled.is_none(),
+        "the earlier bytes stay sealed: {card:?}"
+    );
+    assert!(
+        card.actions.is_empty(),
+        "the card offers no action: {card:?}"
+    );
+    let served = serde_json::to_value(FoundKeyCardReply::from(card.clone()))?;
+    assert_eq!(
+        served["note"],
+        "an earlier version of this file held a sealed value; it stays withheld; no answer is needed",
+        "the card says what is true: {served}"
+    );
+    assert!(
+        notice_cards(&vault, &owner, &id, true)?.is_empty(),
+        "the owner's open list holds nothing to answer"
+    );
+    assert_eq!(
+        masked_read(&vault, &id)?,
+        Ok(now),
+        "the file as it is now is served"
     );
     Ok(())
 }

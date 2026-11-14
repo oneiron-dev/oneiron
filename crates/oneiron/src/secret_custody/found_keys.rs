@@ -131,6 +131,10 @@ pub struct FoundKeyCard {
     pub settled: Option<FoundKeySettled>,
     /// What the owner may still do about it.
     pub actions: Vec<FoundKeyAction>,
+    /// What is true of one the owner need not answer, though it is open: a
+    /// seal of bytes the file no longer holds (Engine RULING 14 Nov 15:27).
+    /// `None` on every other card.
+    pub note: Option<String>,
 }
 
 /// The keys found in one record, and each file the write door sealed whole
@@ -143,10 +147,18 @@ struct FoundKeys {
 }
 
 impl FoundKeys {
-    /// Whether the owner has not yet acted on a key or a seal here.
-    fn is_open(&self) -> bool {
-        self.keys.iter().any(|key| key.settled.is_none())
-            || self.seals.iter().any(|seal| seal.settled.is_none())
+    /// Whether a key or a seal here waits for the owner's answer. A seal of
+    /// bytes the file no longer holds needs none (Engine RULING 14 Nov
+    /// 15:27).
+    fn is_open_in_txn(&self, store: &Store, txn: &RoTxn<'_>, record: &EntityId) -> Result<bool> {
+        if self.keys.iter().any(|key| key.settled.is_none()) {
+            return Ok(true);
+        }
+        if self.seals.iter().all(|seal| seal.settled.is_some()) {
+            return Ok(false);
+        }
+        let live = sealed_file::live_file_hash_in_txn(store, txn, record)?;
+        Ok(self.seals.iter().any(|seal| seal.is_answerable(live)))
     }
 
     /// When the latest key or seal here was found.
@@ -175,10 +187,15 @@ impl FoundKeys {
             .keys
             .iter()
             .map(|key| actions::card_in_txn(vault, txn, record, key));
+        let live = if self.seals.is_empty() {
+            None
+        } else {
+            sealed_file::live_file_hash_in_txn(&vault.store, txn, record)?
+        };
         let seals = self
             .seals
             .iter()
-            .map(|seal| seal.card_in_txn(&vault.store, txn, record));
+            .map(|seal| seal.card_in_txn(&vault.store, txn, record, live));
         keys.chain(seals).collect()
     }
 }
@@ -635,7 +652,8 @@ impl Vault {
     /// The found-key notices for the owner, newest first: each record the
     /// mask lifted keys out of, with each key's handle, kind, place, what
     /// the owner did about it and what they may still do. `open_only` keeps
-    /// the records with a key the owner has not acted on. No value is read.
+    /// the records with a key or a seal that waits for the owner's answer.
+    /// No value is read.
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
@@ -651,7 +669,7 @@ impl Vault {
         let mut rows = Vec::new();
         for row in FOUND.iter_from(&self.store, &txn, &[])? {
             let (record, found) = row?;
-            if open_only && !found.is_open() {
+            if open_only && !found.is_open_in_txn(&self.store, &txn, &record)? {
                 continue;
             }
             let latest = found.latest();
