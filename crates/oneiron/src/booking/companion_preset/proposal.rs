@@ -193,6 +193,7 @@ pub fn companion_solve_request(
         window,
         constraint,
         visitor_tz,
+        duration_min: None,
     }
 }
 /// Asks the shared oracle and freezes a curated shortlist, one opaque token per

@@ -234,6 +234,7 @@ fn event_type(buffer: u16) -> EventTypeConfig {
             preferred_hours: Vec::new(),
         }],
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     }
 }
 
@@ -283,6 +284,7 @@ pub(super) fn booking_publications() -> Result<Case> {
             title: "Intro".to_owned(),
             duration_min: 30,
             description: String::new(),
+            allowed_durations_min: Vec::new(),
         }],
         event_config_hashes: [(key.0.clone(), booking_config_hash(&event_type(0))?)].into(),
         constraint_field: ConstraintFieldConfig {

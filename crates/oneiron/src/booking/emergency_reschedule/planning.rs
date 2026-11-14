@@ -250,6 +250,8 @@ pub(crate) fn solve_live(
             window,
             constraint: booking.context.constraint.clone(),
             visitor_tz: booking.context.visitor_tz.clone(),
+            // A move keeps the booked length (BK-VARIABLE-DURATION).
+            duration_min: SolveRequest::slot_duration_min(booking.occurrence),
         },
         booking.calendar.event_ref,
     )

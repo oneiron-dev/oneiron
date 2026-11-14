@@ -156,6 +156,7 @@ fn page(vault: &Vault, page_seed: u8, host_seed: u8) {
             preferred_hours: Vec::new(),
         }],
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     };
     let body = ClaimBody::new(
         BOOKING_EVENT_TYPE_PREDICATE,

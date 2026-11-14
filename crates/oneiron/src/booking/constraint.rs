@@ -248,6 +248,26 @@ pub struct SolveRequest {
     pub window: TimeRange,
     pub constraint: Option<ConstraintObject>,
     pub visitor_tz: String,
+    /// The meeting length asked, in minutes (BK-VARIABLE-DURATION). `None`:
+    /// the event type's default. A length the event type does not offer
+    /// solves to no slot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_min: Option<u16>,
+}
+
+impl SolveRequest {
+    /// The length `slot` names, in whole minutes, for a solve over exactly
+    /// that slot: a hold, a confirm or a move asks its own slot's length. A
+    /// slot of no whole-minute length (or one too long) names none, and its
+    /// solve at the default length cannot offer it.
+    #[must_use]
+    pub fn slot_duration_min(slot: TimeRange) -> Option<u16> {
+        let secs = slot.end.checked_sub(slot.start)?;
+        if secs % 60 != 0 {
+            return None;
+        }
+        u16::try_from(secs / 60).ok()
+    }
 }
 
 /// Exact host choice made by routing for one half-open slot. This travels to

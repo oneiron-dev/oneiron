@@ -144,6 +144,7 @@ fn confirm_with_real_solver_in_zone(
             },
             constraint: None,
             visitor_tz: visitor_zone.to_owned(),
+            duration_min: None,
         })
         .unwrap();
     assert!(

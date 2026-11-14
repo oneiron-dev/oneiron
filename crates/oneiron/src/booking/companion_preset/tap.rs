@@ -186,6 +186,7 @@ fn first_still_offered(
             window: revalidate_window(&choice.slot),
             constraint: None,
             visitor_tz: proposal.visitor_tz.clone(),
+            duration_min: None,
         })?;
         // Equality, not containment: the oracle's UTC bounds are authoritative.
         if solved.slots.iter().any(|slot| {

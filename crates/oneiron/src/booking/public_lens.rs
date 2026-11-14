@@ -36,6 +36,10 @@ pub struct EventTypeCard {
     pub title: String,
     pub duration_min: u32,
     pub description: String,
+    /// The lengths a visitor may pick, as the event type's configuration
+    /// lists them (BK-VARIABLE-DURATION). Empty: `duration_min` alone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_durations_min: Vec<u32>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -379,6 +383,7 @@ mod tests {
             },
             constraint: None,
             visitor_tz: "UTC".to_owned(),
+            duration_min: None,
         };
         let mask = slot_mask(
             &request,
@@ -399,6 +404,7 @@ mod tests {
                 title: "Introduction".to_owned(),
                 duration_min: 10,
                 description: "Fixture description".to_owned(),
+                allowed_durations_min: Vec::new(),
             }],
             project_at_rung(&[], DisclosureRung::Full, SurfaceClass::Public, Some(&mask))
                 .expect("public clamp"),

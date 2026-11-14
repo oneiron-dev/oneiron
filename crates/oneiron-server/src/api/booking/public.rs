@@ -101,7 +101,9 @@ pub(crate) async fn render_public_booking_page(
     let hint = oneiron::booking::parse_booking_slot_link(query.as_deref()).filter(|hint| {
         publication.event_types.iter().any(|card| {
             card.key == hint.event_type
-                && hint.end_utc - hint.start_utc == u64::from(card.duration_min) * 60
+                && hint_duration_min(hint).is_some_and(|minutes| {
+                    super::public_availability::card_offers_minutes(card, u32::from(minutes))
+                })
         })
     });
     let input = if let Some(hint) = &hint {
@@ -117,6 +119,7 @@ pub(crate) async fn render_public_booking_page(
             visitor_tz: hint.visitor_tz.clone(),
             constraint: None,
             session_ref: session,
+            duration_min: hint_duration_min(hint),
         }
     } else {
         publication
@@ -128,6 +131,7 @@ pub(crate) async fn render_public_booking_page(
         window: input.window,
         constraint: None,
         visitor_tz: input.visitor_tz.clone(),
+        duration_min: input.duration_min,
     };
     let response = execute_booking_operation(
         &server,
@@ -172,6 +176,14 @@ pub(crate) async fn render_public_booking_page(
         ApiError::internal_server_error("public booking model assembly failed")
     })?;
     public_booking_page_json(model, PublicBookingPageToken(page_token), hint.as_ref()).map(Json)
+}
+
+/// The length a slot link's interval names, in whole minutes.
+fn hint_duration_min(hint: &oneiron::booking::BookingSlotLinkHint) -> Option<u16> {
+    SolveRequest::slot_duration_min(oneiron::TimeRange {
+        start: hint.start_utc,
+        end: hint.end_utc,
+    })
 }
 
 fn public_booking_page_json(
@@ -377,6 +389,9 @@ mod availability_tests;
 #[cfg(test)]
 #[path = "client_address_tests.rs"]
 mod client_address_tests;
+#[cfg(test)]
+#[path = "public_duration_tests.rs"]
+mod duration_tests;
 #[cfg(test)]
 #[path = "public_fixture.rs"]
 mod fixture;

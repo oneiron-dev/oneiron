@@ -47,6 +47,9 @@ pub(super) fn unoffered_slot_answer(
         window: offerability_window(slot),
         constraint: constraint.cloned(),
         visitor_tz: input.visitor_tz.clone(),
+        // The selected slot names its length (BK-VARIABLE-DURATION): a slot
+        // of a length the event type does not offer is never offered.
+        duration_min: SolveRequest::slot_duration_min(slot),
     })?;
     rows.extend(producers.take());
     if solved

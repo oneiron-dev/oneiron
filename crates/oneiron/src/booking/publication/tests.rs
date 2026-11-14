@@ -83,6 +83,7 @@ fn fixture_config() -> EventTypeConfig {
             preferred_hours: Vec::new(),
         }],
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     }
 }
 
@@ -101,6 +102,7 @@ fn publication() -> BookingPagePublication {
             title: "Owner supplied title".to_owned(),
             duration_min: 30,
             description: "Owner supplied description".to_owned(),
+            allowed_durations_min: Vec::new(),
         }],
         constraint_field: ConstraintFieldConfig {
             enabled: false,

@@ -431,6 +431,7 @@ fn fixture_config() -> EventTypeConfig {
             preferred_hours: Vec::new(),
         }],
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     }
 }
 

@@ -177,6 +177,12 @@ impl Fixture {
         let mut input = publication_input(page, published, from, until);
         input.value["event_config_hashes"]["intro"] =
             json!(oneiron::booking::booking_config_hash(&self.config).expect("hash"));
+        // The card lists the lengths its configuration offers
+        // (BK-VARIABLE-DURATION); the publication gate holds them equal.
+        if !self.config.allowed_durations_min.is_empty() {
+            input.value["event_types"][0]["allowed_durations_min"] =
+                json!(self.config.allowed_durations_min);
+        }
         let receipt = self
             .server
             .vault
@@ -291,6 +297,7 @@ pub(super) fn fixture_config() -> EventTypeConfig {
             preferred_hours: Vec::new(),
         }],
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     }
 }
 
@@ -314,6 +321,7 @@ pub(super) fn publication_input(
             title: "Fixture event".to_owned(),
             duration_min: 30,
             description: "Fixture description".to_owned(),
+            allowed_durations_min: Vec::new(),
         }],
         constraint_field: ConstraintFieldConfig {
             enabled: true,
@@ -405,6 +413,7 @@ pub(super) fn availability() -> BookingOperationRequest {
         visitor_tz: "UTC".to_owned(),
         constraint: None,
         session_ref: "fixture".to_owned(),
+        duration_min: None,
     })
 }
 

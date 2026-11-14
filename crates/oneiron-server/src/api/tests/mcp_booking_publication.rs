@@ -38,6 +38,7 @@ fn config(host: oneiron::EntityId) -> EventTypeConfig {
             preferred_hours: Vec::new(),
         }],
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     }
 }
 
@@ -56,6 +57,7 @@ fn publication(config: &EventTypeConfig, owner_display: &str) -> serde_json::Val
             title: "Intro".to_owned(),
             duration_min: 30,
             description: "A first call".to_owned(),
+            allowed_durations_min: Vec::new(),
         }],
         constraint_field: ConstraintFieldConfig {
             enabled: false,

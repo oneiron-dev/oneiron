@@ -57,6 +57,7 @@ fn synthetic_config() -> EventTypeConfig {
             start_minute: 10 * 60,
             end_minute: 22 * 60,
         }],
+        allowed_durations_min: Vec::new(),
     }
 }
 

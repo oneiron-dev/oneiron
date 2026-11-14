@@ -92,6 +92,7 @@ fn listing(nth: u64) -> BookingAvailabilityInput {
         visitor_tz: "UTC".to_owned(),
         constraint: None,
         session_ref: format!("turn-{nth}"),
+        duration_min: None,
     }
 }
 

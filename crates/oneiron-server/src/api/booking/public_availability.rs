@@ -33,6 +33,7 @@ fn query(input: &BookingAvailabilityInput, authority: &PublicBookingAuthority) -
     let material = serde_json::to_vec(&serde_json::json!({
         "event_type": input.event_type, "window": {"start": input.window.start, "end": input.window.end},
         "visitor_tz": input.visitor_tz, "constraint": input.constraint, "authority": authority,
+        "duration_min": input.duration_min,
     }))
     .ok()?;
     let digest = domain_digest(QUERY_DIGEST_DOMAIN, &material);
@@ -43,24 +44,33 @@ pub(super) fn validate_public_request(
     publication: &BookingPagePublication,
     request: &BookingOperationRequest,
 ) -> Result<(), ApiError> {
-    let (event, has_constraint) = match request {
-        BookingOperationRequest::Availability(input) => {
-            (&input.event_type, input.constraint.is_some())
-        }
+    let (event, has_constraint, duration_min) = match request {
+        BookingOperationRequest::Availability(input) => (
+            &input.event_type,
+            input.constraint.is_some(),
+            input.duration_min,
+        ),
         BookingOperationRequest::Book(BookingBookInput::Hold(input)) => {
-            (&input.event_type, input.constraint.is_some())
+            (&input.event_type, input.constraint.is_some(), None)
         }
         _ => return Ok(()),
     };
-    if !publication
-        .event_types
-        .iter()
-        .any(|card| card.key == *event)
-        || (has_constraint && !publication.constraint_field.enabled)
+    // A length off the card is not part of this publication, as an unlisted
+    // event type is not (BK-VARIABLE-DURATION).
+    if !publication.event_types.iter().any(|card| {
+        card.key == *event
+            && duration_min.is_none_or(|minutes| card_offers_minutes(card, u32::from(minutes)))
+    }) || (has_constraint && !publication.constraint_field.enabled)
     {
         return Err(public::public_booking_not_found());
     }
     Ok(())
+}
+
+/// Whether an event card offers a meeting of `minutes`: its default length,
+/// or one of the lengths it lists for the visitor to pick.
+pub(super) fn card_offers_minutes(card: &oneiron::booking::EventTypeCard, minutes: u32) -> bool {
+    minutes == card.duration_min || card.allowed_durations_min.contains(&minutes)
 }
 
 pub(super) fn recheck(
@@ -162,6 +172,7 @@ pub(super) fn solve(
         window: input.window,
         constraint,
         visitor_tz: input.visitor_tz.clone(),
+        duration_min: input.duration_min,
     };
     let producers = oneiron::memory::ProducerRows::default();
     let (oracle, mut sources) =

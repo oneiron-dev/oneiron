@@ -348,6 +348,8 @@ fn confirm_in_writer(
             window,
             constraint: hold.constraint.clone(),
             visitor_tz: hold.visitor_tz.clone(),
+            // The held slot names its length (BK-VARIABLE-DURATION).
+            duration_min: SolveRequest::slot_duration_min(hold.slot),
         })
     };
     let solved = solve_over(confirm_solve_window(hold.slot)?)?;
@@ -518,6 +520,7 @@ pub(crate) fn execute_reschedule(
                     window: inclusive_occurrence(spec.new_slot)?,
                     constraint: spec.constraint.clone(),
                     visitor_tz: spec.visitor_tz.clone(),
+                    duration_min: SolveRequest::slot_duration_min(spec.new_slot),
                 },
                 &context.owner_refs,
                 event_ref,

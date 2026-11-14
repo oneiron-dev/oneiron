@@ -251,6 +251,7 @@ pub async fn run_constraint_turn(
         window: request.window,
         constraint: Some(constraint.clone()),
         visitor_tz: visitor_tz.clone(),
+        duration_min: None,
     })?;
 
     if solve_result.slots.is_empty() {

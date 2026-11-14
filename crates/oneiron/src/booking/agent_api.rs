@@ -204,6 +204,11 @@ pub struct BookingAvailabilityInput {
     pub visitor_tz: String,
     pub constraint: Option<BookingConstraintInput>,
     pub session_ref: String,
+    /// The meeting length the visitor picked, in minutes, from the event
+    /// card's `allowed_durations_min` (BK-VARIABLE-DURATION). Absent: the
+    /// event type's default. A hold names no length: its slot is the length.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_min: Option<u16>,
 }
 
 /// Stage one of booking: soft-hold a solved slot.

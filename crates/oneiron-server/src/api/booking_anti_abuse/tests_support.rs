@@ -126,6 +126,7 @@ pub(crate) mod tests {
                     preferred_hours: Vec::new(),
                 }],
                 flex_windows: Vec::new(),
+                allowed_durations_min: Vec::new(),
             },
         };
         let mut body = ClaimBody::new(

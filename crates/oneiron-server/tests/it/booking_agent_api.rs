@@ -130,6 +130,7 @@ fn event_type_config(key: &str, host: EntityId, calendar: EntityId) -> EventType
             preferred_hours: Vec::new(),
         }],
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     }
 }
 

@@ -187,6 +187,7 @@ impl Fixture {
             },
             constraint: None,
             visitor_tz: "UTC".to_owned(),
+            duration_min: None,
         })
         .expect("solve the fixture day")
         .slots
@@ -369,6 +370,7 @@ fn fixture_config() -> EventTypeConfig {
             preferred_hours: Vec::new(),
         }],
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     }
 }
 
