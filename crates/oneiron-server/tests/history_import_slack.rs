@@ -5,8 +5,10 @@
 //! members Slack shares it with whom the map gives a vault person, and to the
 //! owner; a public channel's members are the whole workspace. Every other
 //! member is a contact: its name is kept and it reads nothing. A workspace
-//! with no member mapped reads to the owner alone, and the run says so. On
-//! main `slack` is no `import` subcommand.
+//! with no member mapped reads to the owner alone, and the run says so. Every
+//! TURN the import births is born under the workspace's own facet (Engine
+//! ruling L2-18-WORKSPACE-FACET-CARRIER = A). On main `slack` is no `import`
+//! subcommand.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --features oneiron/test-support --test history_import_slack`
 #![cfg(oneiron_test_support)]
@@ -16,10 +18,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use oneiron::ingest::history::HistorySource;
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON};
 use oneiron::test_doors::history_import_rows::imported_message_rows;
 use oneiron::test_doors::source_audience_binding::reads;
-use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{EdgeKind, EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::Value;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -347,5 +349,44 @@ fn a_workspace_with_no_member_mapped_reads_to_the_owner_alone() -> TestResult {
             }
         }
     }
+    Ok(())
+}
+
+#[test]
+fn the_imports_turns_are_born_under_the_workspaces_facet() -> TestResult {
+    let home = Home::new()?;
+    let members = home.members(r#"{"U0": "owner"}"#)?;
+    let export = home.zip(&[])?;
+    let report = landed(&home.import(&export, &members)?)?;
+    let named = report["workspace"]["facet"]
+        .as_str()
+        .ok_or("the report names the workspace's facet")?;
+    let facet = EntityId::from_hex(named).map_err(|_| "the facet is an id in hex")?;
+    let vault = home.open()?;
+    for native_id in ["C1:1761955300.000100", "G1:1761955600.000100"] {
+        let rows = imported_message_rows(&vault, HistorySource::Slack, native_id)?
+            .ok_or_else(|| format!("message {native_id} did not land"))?;
+        assert_eq!(
+            vault.targets(&rows.turn, EdgeKind::FacetOf, Some(ENTITY_TYPE_FACET))?,
+            vec![facet],
+            "the TURN of {native_id} is born under the workspace's facet"
+        );
+        for row in [rows.conversation, rows.message] {
+            assert!(
+                vault.targets(&row, EdgeKind::FacetOf, None)?.is_empty(),
+                "{native_id}: a CONVERSATION or MESSAGE keeps its substrate facet"
+            );
+        }
+    }
+    assert!(
+        vault.facets_of(&home.owner)?.contains(&facet),
+        "the owner wears the workspace's facet"
+    );
+    drop(vault);
+    let again = landed(&home.import(&export, &members)?)?;
+    assert_eq!(
+        again["workspace"]["facet"], report["workspace"]["facet"],
+        "a later import finds the workspace's facet by name"
+    );
     Ok(())
 }

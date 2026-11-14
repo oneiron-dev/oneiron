@@ -11,8 +11,11 @@
 //! whom the map gives a vault person, and to the owner. Every other member
 //! is a contact: its name and words are kept, and it reads nothing. A
 //! workspace where no member is mapped reads to the owner alone, and the
-//! run says so on stderr. The output is the import's JSON document of
-//! counts, with the workspace's member counts beside it.
+//! run says so on stderr. Every TURN the import births is born under the
+//! workspace's own facet, named after it ([`oneiron::Vault::history_import_facet`];
+//! Engine ruling L2-18-WORKSPACE-FACET-CARRIER = A). The output is the
+//! import's JSON document of counts, with the workspace's member counts and
+//! its facet beside it.
 
 use std::fs::File;
 use std::io::{self, Write};
@@ -48,6 +51,10 @@ struct Workspace<'a> {
     /// No member is mapped to a vault person, so every conversation reads to
     /// the owner alone.
     owner_only: bool,
+    /// The FACET the import's TURNs are born under, in hex; absent when the
+    /// owner stands for no live person to wear one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    facet: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -100,11 +107,14 @@ pub(in crate::commands) fn import_slack(args: ImportSlackArgs) -> anyhow::Result
     vault
         .import_history_members(&owner, SOURCE, &decoded.key, &roster)
         .map_err(|error| anyhow::anyhow!("import stopped: {error}"))?;
+    let facet = vault
+        .history_import_facet(&owner, &name, imported_at)
+        .map_err(|error| anyhow::anyhow!("import stopped: {error}"))?;
     let mut totals = Totals::default();
     let mut reports: Vec<HistoryImportReport> = Vec::with_capacity(decoded.conversations.len());
     for (done, conversation) in decoded.conversations.iter().enumerate() {
         let report = vault
-            .import_history(&owner, SOURCE, conversation, imported_at)
+            .import_history_in_facet(&owner, SOURCE, conversation, imported_at, facet)
             .map_err(|error| anyhow::anyhow!("import stopped: {error}"))?;
         totals.add(&report);
         reports.push(report);
@@ -126,6 +136,7 @@ pub(in crate::commands) fn import_slack(args: ImportSlackArgs) -> anyhow::Result
             name: &name,
             members: counts,
             owner_only,
+            facet: facet.map(|facet| facet.to_hex()),
         },
         import: ImportOutcome {
             source: SOURCE.source_id(),
