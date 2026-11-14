@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "repo": "oneiron-dev/oneiron",
+  "cut": "2026-11-10T00:00:00+09:00",
+  "cap_minutes": 60,
+  "prompt_budget": 30,
+  "tasks": [
+    {
+      "id": "settle-supersession",
+      "pr": 6930,
+      "base": "6bfd3f6d96428dfe7c3be540222b795bd1ce4b79",
+      "merged": "9f1fe1ab6d42bac325de574487fc2e73507c31dc",
+      "intent": null,
+      "tests": [
+        {
+          "argv": ["cargo", "test", "--locked", "-p", "oneiron", "--all-features", "--test", "claim_settle_supersession"]
+        }
+      ],
+      "sealed": ["crates/oneiron/tests/claim_settle_supersession.rs"]
+    },
+    {
+      "id": "world-set-partition",
+      "pr": 7216,
+      "base": "b42d688ca42e4e4696aefad63d0e0fdd3335d772",
+      "merged": "a6bcdc0eaa3fb10e12fc36316b53e2b37102ef95",
+      "intent": null,
+      "tests": [
+        {
+          "argv": ["cargo", "test", "--locked", "-p", "oneiron", "--all-features", "--test", "context_pack_world_set_partition"]
+        }
+      ],
+      "sealed": ["crates/oneiron/tests/context_pack_world_set_partition.rs"],
+      "collaboration": {
+        "parts": [
+          {
+            "writer": "query",
+            "intent": null,
+            "files": ["crates/oneiron/src/context_pack/builder/query.rs", "crates/oneiron/src/context_pack/world_partition.rs"]
+          },
+          {
+            "writer": "unfinalized",
+            "intent": null,
+            "files": ["crates/oneiron/src/context_pack/builder/unfinalized.rs", "crates/oneiron/src/context_pack/world_partition.rs"]
+          },
+          {
+            "writer": "partition",
+            "intent": null,
+            "files": ["crates/oneiron/src/context_pack/world_partition.rs"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "declared-cardinality",
+      "pr": 7055,
+      "base": "8f49b5f42fdf532e556a2d367c3a588f5661bf3a",
+      "merged": "b57b61c440bb866bcb0abb4746e29e7a1d075f8b",
+      "intent": null,
+      "tests": [
+        {
+          "argv": ["cargo", "test", "--locked", "-p", "oneiron", "--all-features", "--test", "claim_declared_cardinality"]
+        }
+      ],
+      "sealed": ["crates/oneiron/tests/claim_declared_cardinality.rs"]
+    }
+  ],
+  "checks": {
+    "memory": { "arms": ["no_memory", "vault_memory"] },
+    "navigation": { "arms": ["grep_only", "symbol_graph"], "third": "no_memory" },
+    "collaboration": { "arms": ["oneiron_writers", "git_worktrees"], "task": "world-set-partition", "writers": 3 },
+    "prep": 3,
+    "repairs_max": 9
+  }
+}
