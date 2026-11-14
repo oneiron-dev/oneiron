@@ -12,8 +12,8 @@ use std::sync::Arc;
 use ed25519_dalek::SigningKey;
 use oneiron::EntityId;
 use oneiron::authority::{
-    HostSlipIssuer, MachineDeviceClass, MachineRole, PredictedResidenceSet, ResidenceAct,
-    ResidenceResultStatus,
+    ActSurface, HostSlipIssuer, MachineDeviceClass, MachineOwnership, MachineRole,
+    PredictedResidenceSet, ResidenceAct, ResidenceResultStatus,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
@@ -31,7 +31,9 @@ use oneiron::{Vault, VaultConfig};
 use super::device_world_follow::{FIXTURE_HOST_SECRET, now_secs};
 use super::device_world_follow_live::{FakeHome, HomeEvent, PredictedHome};
 
-/// A device vault holding two worlds readable everywhere.
+/// A device vault holding two worlds readable everywhere. The owner answers its machine as a work
+/// or school machine: its proof stands here, so it takes the owner's residence directives (FIX
+/// 8888), and it is still never "mine".
 struct Device {
     _dir: tempfile::TempDir,
     vault: Arc<Vault>,
@@ -57,6 +59,15 @@ impl Device {
         let owner = vault
             .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
             .expect("authenticated owner");
+        vault
+            .set_machine_role(
+                &owner,
+                ActSurface::ThisInstall,
+                local_machine(&vault),
+                MachineRole::Owned(MachineOwnership::WorkSchool),
+                None,
+            )
+            .expect("the owner answers the device's machine");
         let founder = vault
             .create_world(&owner, "Founder world", vault.now_recorded_at())
             .expect("founder world");
@@ -189,7 +200,7 @@ fn note_session(device: &Device) -> NoteSyncSession {
 }
 
 /// The device's connection to `url`, opened with a residence selector and a NOTE session.
-fn connection(device: &Device, url: String) -> SyncConnection {
+fn device_connection(device: &Device, url: String) -> SyncConnection {
     SyncConnection::new(
         device.manager(),
         ConnectionConfig {
@@ -267,7 +278,7 @@ fn a_predicted_machine_fetches_its_windows() {
             .expect("the thin index anchor");
         let predicted = Arc::new(PredictedHome::default());
         let (url, _seen) = start_home(Arc::clone(&predicted)).await;
-        let connection = connection(&device, url);
+        let connection = device_connection(&device, url);
         let parent = issue(
             &device,
             ResidenceAct::SyncPredicted {
@@ -344,7 +355,7 @@ fn a_phone_waits_for_wifi_and_power() {
             .expect("the thin index anchor");
         let predicted = Arc::new(PredictedHome::default());
         let (url, _seen) = start_home(Arc::clone(&predicted)).await;
-        let connection = connection(&device, url);
+        let connection = device_connection(&device, url);
         let parent = issue(
             &device,
             ResidenceAct::SyncPredicted {
@@ -419,7 +430,7 @@ fn a_dropped_window_is_demoted_never_deleted() {
         let window = WindowKey::for_world(now_secs(), device.founder);
         let predicted = Arc::new(PredictedHome::default());
         let (url, mut seen) = start_home(Arc::clone(&predicted)).await;
-        let connection = connection(&device, url);
+        let connection = device_connection(&device, url);
         let parent = issue(
             &device,
             ResidenceAct::SyncPredicted {
@@ -456,7 +467,7 @@ fn a_dropped_window_is_demoted_never_deleted() {
         // The window as fetched: its prediction marker and its promotion.
         device
             .vault
-            .sync_state_put(&format!("pr:w:{window}"), &[1])
+            .sync_state_put(&format!("pr:w:{window}"), &[])
             .expect("the prediction marker");
         device
             .vault
@@ -542,7 +553,7 @@ fn a_followed_world_is_neither_fetched_nor_evicted_by_prediction() {
                 .expect("the thin index anchor");
             let predicted = Arc::new(PredictedHome::default());
             let (url, _seen) = start_home(Arc::clone(&predicted)).await;
-            let connection = connection(&device, url);
+            let connection = device_connection(&device, url);
             connection
                 .set_followed_worlds(BTreeSet::from([device.founder]))
                 .expect("the owner's pick");
@@ -611,13 +622,13 @@ fn a_followed_world_is_neither_fetched_nor_evicted_by_prediction() {
             // The followed window as fetched earlier: dropping it must only drop the marker.
             device
                 .vault
-                .sync_state_put(&format!("pr:w:{window}"), &[1])
+                .sync_state_put(&format!("pr:w:{window}"), &[])
                 .expect("the prediction marker");
             // A second prediction drops the window and the document, strictly after the first.
             tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
             let second = predicted_set(&[], &[]);
             serve(&predicted, &second);
-            let prediction = append_prediction(
+            append_prediction(
                 &device.vault,
                 &issuer(),
                 local_machine(&device.vault),
@@ -674,7 +685,7 @@ fn a_home_down_machine_keeps_its_prediction() {
         let window = WindowKey::for_world(now_secs(), device.founder);
         let predicted = Arc::new(PredictedHome::default());
         let (url, _seen) = start_home(Arc::clone(&predicted)).await;
-        let connection = connection(&device, url);
+        let connection = device_connection(&device, url);
         let parent = issue(
             &device,
             ResidenceAct::SyncPredicted {
@@ -706,7 +717,7 @@ fn a_home_down_machine_keeps_its_prediction() {
         );
         device
             .vault
-            .sync_state_put(&format!("pr:w:{window}"), &[1])
+            .sync_state_put(&format!("pr:w:{window}"), &[])
             .expect("the prediction marker");
         device
             .vault
@@ -719,7 +730,7 @@ fn a_home_down_machine_keeps_its_prediction() {
             listener.local_addr().expect("listener address")
         );
         drop(listener);
-        let down = connection(&device, dead);
+        let down = device_connection(&device, dead);
         run_predicted_pass(&down)
             .await
             .expect("a frozen pass stays quiet");
@@ -763,7 +774,7 @@ fn a_prediction_without_its_live_parent_is_refused() {
 
             // After the owner's SyncOpened the predicted level ended: a prediction is refused.
             let device = Device::open();
-            let connection = connection(&device, url.clone());
+            let connection = device_connection(&device, url.clone());
             let stale = issue(
                 &device,
                 ResidenceAct::SyncPredicted {
@@ -816,7 +827,7 @@ fn a_prediction_without_its_live_parent_is_refused() {
 
             // A body that is not the digest's is refused with the digest reason.
             let device = Device::open();
-            let connection = connection(&device, url.clone());
+            let connection = device_connection(&device, url.clone());
             let parent = issue(
                 &device,
                 ResidenceAct::SyncPredicted {
@@ -866,7 +877,7 @@ fn a_prediction_without_its_live_parent_is_refused() {
 
             // A prediction whose parent is not the owner's live predicted level is refused.
             let device = Device::open();
-            let connection = connection(&device, url.clone());
+            let connection = device_connection(&device, url.clone());
             let first = issue(
                 &device,
                 ResidenceAct::SyncPredicted {
@@ -926,7 +937,7 @@ fn a_prediction_without_its_live_parent_is_refused() {
 
             // A prediction a newer one replaced is refused, and the newer one applies.
             let device = Device::open();
-            let connection = connection(&device, url);
+            let connection = device_connection(&device, url);
             let parent = issue(
                 &device,
                 ResidenceAct::SyncPredicted {
