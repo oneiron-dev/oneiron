@@ -381,6 +381,8 @@ pub use self::consent_wait::{
 };
 
 pub(crate) use self::dispatcher::kept_reveal_lease;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::dispatcher::resumed_write_meets_recorded_row;
 pub use self::dispatcher::{SecretUseAnswer, SecretUseRecord, SecretUseStatus, kept_reveal_answer};
 
 pub use self::dispatcher::workflow_operations;

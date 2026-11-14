@@ -492,6 +492,13 @@ const CATALOG_ROLES: &[(&str, CatalogRole)] = &[
         Ok(item(row, "mcp_scope")?.is_str("born"))
     }),
     ("writes", |_, row| Ok(item(row, "scope")?.is_str("Write"))),
+    // A host door whose own check asks the owner's credential or a person's proof (`host_door_proof`): the dispatch
+    // refuses an agent's call before the door runs, so `can({verb})` answers `person` for one.
+    ("takes_person_proof", |_, row| {
+        Ok(row
+            .get("host_door_proof")
+            .is_some_and(|proof| proof.is_str("owner") || proof.is_str("shared_person")))
+    }),
     ("proposes", |_, row| Ok(flag(row, "proposes"))),
     ("is_task_work", |_, row| Ok(flag(row, "task_work"))),
     ("takes_task_decisions", |_, row| {

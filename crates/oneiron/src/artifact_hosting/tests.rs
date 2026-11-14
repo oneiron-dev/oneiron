@@ -179,7 +179,14 @@ fn artifact_link_capability_survives_reopen_and_unpublish_kills_hash_url() -> Re
     let (tier, token) = ArtifactServeTier::mint_link_token();
     assert!(
         vault
-            .resolve_authorized_artifact_file("site", selector, "index.html", Some(&token), None)?
+            .resolve_authorized_artifact_file(
+                "site",
+                selector,
+                "index.html",
+                Some(&token),
+                None,
+                None
+            )?
             .is_none()
     );
     vault.publish_artifact_pointer_with_tier(
@@ -190,7 +197,7 @@ fn artifact_link_capability_survives_reopen_and_unpublish_kills_hash_url() -> Re
     )?;
     assert!(
         vault
-            .resolve_authorized_artifact_file("site", selector, "index.html", None, None)?
+            .resolve_authorized_artifact_file("site", selector, "index.html", None, None, None)?
             .is_none()
     );
     assert!(
@@ -200,13 +207,21 @@ fn artifact_link_capability_survives_reopen_and_unpublish_kills_hash_url() -> Re
                 selector,
                 "index.html",
                 Some(&"0".repeat(64)),
+                None,
                 None
             )?
             .is_none()
     );
     assert!(
         vault
-            .resolve_authorized_artifact_file("site", selector, "index.html", Some(&token), None)?
+            .resolve_authorized_artifact_file(
+                "site",
+                selector,
+                "index.html",
+                Some(&token),
+                None,
+                None
+            )?
             .is_some()
     );
     drop(vault);
@@ -220,13 +235,27 @@ fn artifact_link_capability_survives_reopen_and_unpublish_kills_hash_url() -> Re
     );
     assert!(
         vault
-            .resolve_authorized_artifact_file("site", selector, "index.html", Some(&token), None)?
+            .resolve_authorized_artifact_file(
+                "site",
+                selector,
+                "index.html",
+                Some(&token),
+                None,
+                None
+            )?
             .is_some()
     );
     vault.unpublish_artifact_pointer("site", ArtifactPointerChannel::Published)?;
     assert!(
         vault
-            .resolve_authorized_artifact_file("site", selector, "index.html", Some(&token), None)?
+            .resolve_authorized_artifact_file(
+                "site",
+                selector,
+                "index.html",
+                Some(&token),
+                None,
+                None
+            )?
             .is_none()
     );
     Ok(())
@@ -790,7 +819,14 @@ fn blob_link_tier_survives_reopen_and_requires_live_pointer() -> Result<()> {
     let artifact = id.to_hex();
     assert!(
         vault
-            .resolve_authorized_artifact_file(&artifact, selector, "export", Some(&token), None)?
+            .resolve_authorized_artifact_file(
+                &artifact,
+                selector,
+                "export",
+                Some(&token),
+                None,
+                None
+            )?
             .is_none()
     );
     vault.publish_blob_artifact_pointer_with_tier(
@@ -808,12 +844,19 @@ fn blob_link_tier_survives_reopen_and_requires_live_pointer() -> Result<()> {
     );
     assert!(
         vault
-            .resolve_authorized_artifact_file(&artifact, selector, "export", None, None)?
+            .resolve_authorized_artifact_file(&artifact, selector, "export", None, None, None)?
             .is_none()
     );
     assert_eq!(
         vault
-            .resolve_authorized_artifact_file(&artifact, selector, "export", Some(&token), None)?
+            .resolve_authorized_artifact_file(
+                &artifact,
+                selector,
+                "export",
+                Some(&token),
+                None,
+                None
+            )?
             .expect("live token serves pinned blob")
             .bytes,
         b"report"
@@ -829,13 +872,27 @@ fn blob_link_tier_survives_reopen_and_requires_live_pointer() -> Result<()> {
     );
     assert!(
         vault
-            .resolve_authorized_artifact_file(&artifact, selector, "export", Some(&token), None)?
+            .resolve_authorized_artifact_file(
+                &artifact,
+                selector,
+                "export",
+                Some(&token),
+                None,
+                None
+            )?
             .is_some()
     );
     assert!(vault.unpublish_blob_artifact_pointer(&id, ArtifactPointerChannel::Published)?);
     assert!(
         vault
-            .resolve_authorized_artifact_file(&artifact, selector, "export", Some(&token), None)?
+            .resolve_authorized_artifact_file(
+                &artifact,
+                selector,
+                "export",
+                Some(&token),
+                None,
+                None
+            )?
             .is_none()
     );
     Ok(())
