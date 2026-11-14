@@ -294,7 +294,7 @@ impl ProbedHome {
     async fn probe(&self) -> Option<bool> {
         let (request, binding, _) =
             super::handshake::upgrade_request(&self.vault, &self.config, false).ok()?;
-        let carried = super::handshake::carries_credential(&request, binding.as_ref());
+        let carried = super::handshake::upgrade_carries_credential(&request, binding.as_ref());
         let dialer = self.config.mesh_dialer.as_deref();
         let mut socket = match crate::sync::carrier::connect_sync_socket(request, dialer).await {
             Ok((socket, _)) => socket,

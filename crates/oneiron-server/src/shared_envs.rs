@@ -329,7 +329,8 @@ impl SharedEnvRegistry {
     /// already-recorded leave calls the same idempotent confirmation again,
     /// so an interrupted purge resumes instead of looking complete. The
     /// caller holds each handle so shutdown joins the checks. A refusal or
-    /// failure (a 401 included) warns and retries, never reads as a leave.
+    /// failure (a 401 or 403 included) warns and retries, never reads as a
+    /// leave.
     pub(crate) fn leave_check_round(&self, now: u64) -> Vec<tokio::task::JoinHandle<()>> {
         let due: Vec<(SharedEnvKey, Arc<Vault>, Arc<SyncConnection>, bool, u64)> = {
             let envs = self.lock();
@@ -406,7 +407,7 @@ impl SharedEnvRegistry {
 
     /// One env's check: the POST, bounded; the outcome applied back to the
     /// registry from the task itself. A clean answer covers the `refused`
-    /// 401 upgrades its round read.
+    /// 401 and 403 upgrades its round read.
     fn spawn_leave_check(
         &self,
         key: SharedEnvKey,
@@ -472,7 +473,7 @@ impl SharedEnvRegistry {
     }
 
     /// Notes a clean check round for one env: its next check is an hour
-    /// out, unless a 401 upgrade came after the round read `refused`.
+    /// out, unless a 401 or 403 upgrade came after the round read `refused`.
     /// Failures leave both alone, so they retry next round.
     fn note_leave_check(&self, key: &SharedEnvKey, now: u64, refused: u64) {
         if let Some(entry) = self.lock().get_mut(key) {

@@ -21,7 +21,7 @@ mod replay;
 mod resync_markers;
 mod upgrade;
 
-pub(super) use self::upgrade::{carries_credential, upgrade_request};
+pub(super) use self::upgrade::{upgrade_carries_credential, upgrade_request};
 
 impl SyncConnection {
     /// Queue-overflow check, run between reconnect attempts.

@@ -270,12 +270,13 @@ sets it.
 
 At start, serve opens every entry and keeps its handle. Each active membership gets its own
 window manager and sync connection; one bad environment is logged and skipped without stopping
-the others. A membership whose lane slip names a member grant that the environment holds no copy
-of yet starts no lane: a member's lane never falls back to full replication, and member sync
-without that copy is not built. Once an hour, the lifecycle tick asks the engine's verified leave door for each
+the others. A membership whose lane slip names a member grant that the environment holds no live
+copy of yet starts no lane: a member's lane never falls back to full replication, and member sync
+without that live copy is not built. Once an hour, the lifecycle tick asks the engine's verified leave door for each
 active membership. A refusal or failed check is not a leave. A home that answers the lane's
 upgrade with 401 or 403 makes that check due at the next round. After a 403, which refuses that
-credential the socket, the lane does not redial on it until serve starts again. Only a verified
+credential the socket, the lane does not redial on it while this serve runs; the next serve
+dials again on the same credential. Only a verified
 notice detaches the lane. The environment's own durable leave receipt is the record; there is
 no second registry in the vault and no new side table.
 

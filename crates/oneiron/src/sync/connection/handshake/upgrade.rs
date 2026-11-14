@@ -69,7 +69,7 @@ pub(in crate::sync::connection) fn upgrade_request(
 
 /// Whether `request` carries a credential: the slip its `binding` proves, or
 /// a bearer token.
-pub(in crate::sync::connection) fn carries_credential(
+pub(in crate::sync::connection) fn upgrade_carries_credential(
     request: &Request,
     binding: Option<&UpgradeBinding>,
 ) -> bool {
@@ -91,7 +91,7 @@ impl SyncConnection {
         let (request, binding, withheld) =
             upgrade_request(self.manager.vault(), config, client.peer_session.is_some())
                 .map_err(SessionFault::Local)?;
-        let carried = carries_credential(&request, binding.as_ref());
+        let carried = upgrade_carries_credential(&request, binding.as_ref());
         if withheld && !client.cleartext_withhold_logged {
             client.cleartext_withhold_logged = true;
             tracing::warn!("sync server is clear ws off loopback and mesh: no credential sent");
