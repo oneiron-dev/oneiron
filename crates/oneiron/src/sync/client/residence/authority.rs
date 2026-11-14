@@ -29,7 +29,7 @@ use base64::Engine;
 use serde::Deserialize;
 use serde_json::json;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::base::home_withheld_worlds;
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
@@ -37,14 +37,13 @@ use crate::Vault;
 use crate::authority::{
     AUTHORITY_HISTORY_PAGE_MAX, AuthorityCheckpointAttestation, AuthorityCheckpointPin,
     AuthorityCheckpointV2, AuthorityEntryHash, AuthorityEntryRead, AuthorityHistoryFetch,
-    AuthorityHistoryRequest, AuthorityHistorySelection, AuthorityRepairOutcome,
-    authority_entry_hash, decode_authority_log_entry_body, read_authority_log_entry_body,
-    side_world,
+    AuthorityHistoryRequest, AuthorityHistorySelection, AuthorityRepairOutcome, CarriedOverlays,
+    authority_entry_hash, read_authority_log_entry_body, side_world,
 };
 use crate::sync::client::SyncClientConfig;
 use crate::sync::residence::{
     AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_ENTRY_PART_MAX, AUTHORITY_TAIL_PAGE_MAX,
-    held_authority_entries, held_authority_history, import_authority_page,
+    held_authority_entries, held_authority_history_with_overlays, import_authority_page,
 };
 use crate::sync::transport::TransportError;
 
@@ -60,6 +59,8 @@ const APPEND_PAGE_BYTES: usize = AUTHORITY_ENTRY_PART_MAX;
 #[derive(Deserialize)]
 struct AuthorityTailReply {
     entries: Vec<String>,
+    #[serde(default)]
+    overlays: BTreeMap<String, String>,
     /// On the last page: the entries this machine named that the home
     /// lacks, as concatenated 32-byte hashes in base64.
     #[serde(default)]
@@ -76,6 +77,8 @@ struct AuthorityTailReply {
 struct AuthorityRangeReply {
     selection: String,
     rows: Vec<String>,
+    #[serde(default)]
+    overlays: BTreeMap<String, String>,
     #[serde(default)]
     next: Option<String>,
     /// The rows the page names by reference, fetched in parts (FIX 8246).
@@ -95,6 +98,30 @@ struct AuthorityCheckpointReply {
 
 fn storage(error: crate::Error) -> TransportError {
     TransportError::Storage(error.to_string())
+}
+
+fn decode_overlays(wire: BTreeMap<String, String>) -> Result<CarriedOverlays, TransportError> {
+    wire.into_iter()
+        .map(|(hash, row)| {
+            let hash = base64::engine::general_purpose::STANDARD
+                .decode(hash)
+                .ok()
+                .and_then(|raw| <[u8; 32]>::try_from(raw).ok())
+                .ok_or_else(refused)?;
+            let row = base64::engine::general_purpose::STANDARD
+                .decode(row)
+                .map_err(|_| refused())?;
+            Ok((hash, row))
+        })
+        .collect()
+}
+
+fn encode_overlays(overlays: &CarriedOverlays) -> BTreeMap<String, String> {
+    let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+    overlays
+        .iter()
+        .map(|(hash, row)| (encode(hash), encode(row)))
+        .collect()
 }
 
 impl SyncClient {
@@ -171,9 +198,11 @@ pub(crate) async fn catch_up_authority(
             .map(|entry| base64::engine::general_purpose::STANDARD.decode(entry))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| refused())?;
-        let entries = parts::join_page(&mut rpc, entries, reply.parted).await?;
+        let overlays = decode_overlays(reply.overlays)?;
+        let (entries, overlays) =
+            parts::join_page(&mut rpc, entries, reply.parted, overlays).await?;
         let count = entries.len();
-        let page = import_authority_page(vault, &entries).map_err(storage)?;
+        let page = import_authority_page(vault, &entries, &overlays).map_err(storage)?;
         taken += page.written;
         if !page.refused.is_empty() {
             tracing::debug!(refused = page.refused.len(), "authority entries refused");
@@ -339,53 +368,75 @@ async fn append_authority(
     }
     let mut pages = Vec::new();
     let mut page: Vec<Vec<u8>> = Vec::new();
+    let mut page_overlays = CarriedOverlays::new();
     let mut bytes = 0;
     // The rows this machine holds: an adopted machine not yet hydrated holds
-    // no covered row, and the full export refuses there.
-    let history = held_authority_history(vault).map_err(storage)?;
+    // no covered row, and the full export refuses there. Bodies and their
+    // opaque overlay rows are read in one synchronous read.
+    let (history, overlays) = held_authority_history_with_overlays(vault).map_err(storage)?;
     // Read after the history, so a settings edit it holds is judged too.
     let withheld = home_withheld_worlds(vault, rpc.home);
     for entry in history {
-        let body = decode_authority_log_entry_body(&entry).map_err(storage)?;
-        if let Some(world) = side_world(&body.op)
-            && withheld
-                .as_ref()
-                .is_none_or(|worlds| worlds.contains(&world))
-        {
-            continue;
-        }
-        let hash = authority_entry_hash(&body).map_err(storage)?;
+        let read = read_authority_log_entry_body(&entry).map_err(storage)?;
+        let hash = match &read {
+            AuthorityEntryRead::Open(body) => {
+                if let Some(world) = side_world(&body.op)
+                    && withheld
+                        .as_ref()
+                        .is_none_or(|worlds| worlds.contains(&world))
+                {
+                    continue;
+                }
+                authority_entry_hash(body).map_err(storage)?
+            }
+            AuthorityEntryRead::Sealed(scaffold) => scaffold.hash,
+        };
         if !wanted.contains(&hash) {
             continue;
         }
-        // An entry past one page goes alone, in parts (FIX 8246).
-        let alone = entry.len() > APPEND_PAGE_BYTES;
+        let row = overlays.get(&hash);
+        let entry_bytes = entry.len() + row.map_or(0, Vec::len);
+        // An entry past one page with its overlay row goes alone, in parts
+        // (FIX 8246).
+        let alone = entry_bytes > APPEND_PAGE_BYTES;
         if !page.is_empty()
             && (alone
                 || page.len() == AUTHORITY_TAIL_PAGE_MAX
-                || bytes + entry.len() > APPEND_PAGE_BYTES)
+                || bytes + entry_bytes > APPEND_PAGE_BYTES)
         {
-            pages.push(std::mem::take(&mut page));
+            pages.push((
+                std::mem::take(&mut page),
+                std::mem::take(&mut page_overlays),
+            ));
             bytes = 0;
         }
-        bytes += entry.len();
+        bytes += entry_bytes;
         page.push(entry);
+        if let Some(row) = row {
+            page_overlays.insert(hash, row.clone());
+        }
         if alone {
-            pages.push(std::mem::take(&mut page));
+            pages.push((
+                std::mem::take(&mut page),
+                std::mem::take(&mut page_overlays),
+            ));
             bytes = 0;
         }
     }
     if !page.is_empty() {
-        pages.push(page);
+        pages.push((page, page_overlays));
     }
     let mut accepted = 0;
-    for (index, page) in pages.into_iter().enumerate() {
+    for (index, (page, overlays)) in pages.into_iter().enumerate() {
         if index > 0 && index % MAX_PAGES == 0 {
             tokio::task::yield_now().await;
         }
         let reply: AuthorityAppendReply = match page.as_slice() {
-            [entry] if entry.len() > APPEND_PAGE_BYTES => {
-                parts::append_authority_parts(rpc, entry).await?
+            [entry]
+                if entry.len() + overlays.values().map(Vec::len).sum::<usize>()
+                    > APPEND_PAGE_BYTES =>
+            {
+                parts::append_authority_parts(rpc, entry, &overlays).await?
             }
             _ => {
                 let entries: Vec<String> = page
@@ -393,8 +444,14 @@ async fn append_authority(
                     .map(|entry| base64::engine::general_purpose::STANDARD.encode(entry))
                     .collect();
                 serde_json::from_value(
-                    rpc.request("residence.authority.append", json!({ "entries": entries }))
-                        .await?,
+                    rpc.request(
+                        "residence.authority.append",
+                        json!({
+                            "entries": entries,
+                            "overlays": encode_overlays(&overlays),
+                        }),
+                    )
+                    .await?,
                 )
                 .map_err(|_| refused())?
             }
@@ -518,7 +575,7 @@ async fn repair_authority_history(
             }
         };
         let covered = matches!(fetch.selection, AuthorityHistorySelection::Covered { .. });
-        let Some((rows, next)) = fetch_authority_range(rpc, &fetch).await? else {
+        let Some((rows, overlays, next)) = fetch_authority_range(rpc, &fetch).await? else {
             // A home that keeps no such image refuses the covered pass: the
             // round goes on by exact hash.
             if covered {
@@ -534,7 +591,7 @@ async fn repair_authority_history(
             }
             break;
         }
-        let outcome = match vault.import_signed_authority_repair_page(&rows) {
+        let outcome = match vault.import_signed_authority_repair_page(&rows, &overlays) {
             Ok(outcome) => outcome,
             Err(error) => {
                 tracing::warn!(%error, "authority repair page refused");
@@ -582,7 +639,7 @@ async fn repair_authority_history(
 async fn fetch_authority_range(
     rpc: &mut ResidenceRpc,
     fetch: &AuthorityHistoryFetch,
-) -> Result<Option<(Vec<Vec<u8>>, Option<AuthorityEntryHash>)>, TransportError> {
+) -> Result<Option<(Vec<Vec<u8>>, CarriedOverlays, Option<AuthorityEntryHash>)>, TransportError> {
     let packed = |hashes: &BTreeSet<AuthorityEntryHash>| {
         base64::engine::general_purpose::STANDARD
             .encode(hashes.iter().flatten().copied().collect::<Vec<u8>>())
@@ -636,7 +693,8 @@ async fn fetch_authority_range(
         .map(|row| base64::engine::general_purpose::STANDARD.decode(row))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| refused())?;
-    let rows = parts::join_page(rpc, rows, reply.parted).await?;
+    let overlays = decode_overlays(reply.overlays)?;
+    let (rows, overlays) = parts::join_page(rpc, rows, reply.parted, overlays).await?;
     let next = reply
         .next
         .map(|next| {
@@ -647,5 +705,5 @@ async fn fetch_authority_range(
                 .ok_or_else(refused)
         })
         .transpose()?;
-    Ok(Some((rows, next)))
+    Ok(Some((rows, overlays, next)))
 }

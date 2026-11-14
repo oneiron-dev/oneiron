@@ -21,8 +21,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::Vault;
 use crate::authority::{
     AuthorityCheckpointAttestation, AuthorityEntryHash, AuthorityEntryRead, AuthorityHistoryFetch,
-    AuthorityHistoryPage, PeerMachine, WorldPrivacyView, authority_entry_hash,
-    decode_authority_log_entry_body, read_authority_log_entry_body, side_world,
+    AuthorityHistoryPage, CarriedOverlays, PeerMachine, WorldPrivacyView, authority_entry_hash,
+    carried_overlays_in_txn, read_authority_log_entry_body, side_world,
 };
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::error::{Error, Result, SyncProtocolValidation};
@@ -73,13 +73,33 @@ pub fn held_authority_entries(vault: &Vault) -> Result<BTreeSet<AuthorityEntryHa
 /// a vault that adopted a checkpoint image and is not yet hydrated, that is a
 /// covered row the image carries. So unlike the full export
 /// ([`Vault::export_signed_authority_history`]), it never refuses for the
-/// covered rows such a vault lacks (OF-469 slice E).
+/// covered rows such a vault lacks (OF-469 slice E). The bodies of
+/// [`held_authority_history_with_overlays`] without the map.
 ///
 /// # Errors
 ///
 /// A row that does not decode; storage errors.
 pub fn held_authority_history(vault: &Vault) -> Result<Vec<Vec<u8>>> {
-    let mut rows = BTreeMap::new();
+    Ok(held_authority_history_with_overlays(vault)?.0)
+}
+
+/// Every signed authority entry this replica holds, with the overlay rows it
+/// holds for the sealed ones among them (census L5-22 1a-ii): the same order
+/// as [`held_authority_history`], parents first, ties by hash, with the rows
+/// read in the same read txn that took the bodies
+/// ([`carried_overlays_in_txn`]). A sealed row whose overlay is not held here
+/// has no entry. Envelope metadata (hash, parents) reads from
+/// [`read_authority_log_entry_body`], so sealed rows order without opening.
+///
+/// # Errors
+///
+/// A row that does not decode; storage errors.
+pub fn held_authority_history_with_overlays(
+    vault: &Vault,
+) -> Result<(Vec<Vec<u8>>, CarriedOverlays)> {
+    let mut rows: BTreeMap<AuthorityEntryHash, (Vec<u8>, Vec<AuthorityEntryHash>)> =
+        BTreeMap::new();
+    let overlays;
     {
         let txn = vault.store.env.read_txn()?;
         for id in vault
@@ -93,12 +113,19 @@ pub fn held_authority_history(vault: &Vault) -> Result<Vec<Vec<u8>>> {
             let body = raw
                 .get(ENTITY_METADATA_HEADER_LEN..)
                 .ok_or(Error::CorruptedIndex("authority row header"))?;
-            let entry = decode_authority_log_entry_body(body)?;
-            rows.insert(
-                authority_entry_hash(&entry)?,
-                (body.to_vec(), entry.parent_hashes),
-            );
+            let read = read_authority_log_entry_body(body)?;
+            let (hash, parents) = match &read {
+                AuthorityEntryRead::Open(entry) => {
+                    (authority_entry_hash(entry)?, entry.parent_hashes.clone())
+                }
+                AuthorityEntryRead::Sealed(scaffold) => {
+                    (scaffold.hash, scaffold.parent_hashes.clone())
+                }
+            };
+            rows.insert(hash, (body.to_vec(), parents));
         }
+        let bodies: Vec<&[u8]> = rows.values().map(|(bytes, _)| bytes.as_slice()).collect();
+        overlays = carried_overlays_in_txn(&vault.store, &txn, bodies)?;
     }
     let mut waiting: BTreeMap<AuthorityEntryHash, usize> = BTreeMap::new();
     let mut children: BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>> = BTreeMap::new();
@@ -136,7 +163,7 @@ pub fn held_authority_history(vault: &Vault) -> Result<Vec<Vec<u8>>> {
     if !waiting.is_empty() {
         return Err(Error::InvariantViolation("authority history order"));
     }
-    Ok(history)
+    Ok((history, overlays))
 }
 
 /// FIX 922 item 11 call: the tail and range leave out, for a machine that may not read a world,
@@ -145,13 +172,14 @@ pub fn held_authority_history(vault: &Vault) -> Result<Vec<Vec<u8>>> {
 pub(super) const ITEM11_AUTHORITY_FILTER_SCOPE: bool = true;
 
 /// The signed entries this home holds and `held` lacks, parents first, at most
-/// `limit`, for a linked machine of the vault whose proof stands here. Each
-/// entry's parents are in `held` or earlier in the page, so the page imports
-/// whole. Refused for any other peer: the log names grants, machines and
-/// settings. The side branch of a world that may not be readable on the
-/// machine is left out before the page is counted, so a short page is still
-/// the last: no main-log row, and no other world's row, names one of its
-/// rows.
+/// `limit`, for a linked machine of the vault whose proof stands here, with the
+/// overlay rows this home holds for the sealed ones among them, keyed by entry
+/// hash (census L5-22 1a-ii). Each entry's parents are in `held` or earlier in
+/// the page, so the page imports whole. Refused for any other peer: the log
+/// names grants, machines and settings. The side branch of a world that may not
+/// be readable on the machine is left out before the page is counted, so a short
+/// page is still the last: no main-log row, and no other world's row, names one
+/// of its rows. Only the overlays of the entries served are kept.
 ///
 /// # Errors
 ///
@@ -161,10 +189,10 @@ pub fn authority_tail_for(
     peer: PeerMachine,
     held: &BTreeSet<AuthorityEntryHash>,
     limit: usize,
-) -> Result<Vec<Vec<u8>>> {
+) -> Result<(Vec<Vec<u8>>, CarriedOverlays)> {
     require_owner_machine(vault, peer)?;
     let limit = limit.clamp(1, AUTHORITY_TAIL_PAGE_MAX);
-    let history = held_authority_history(vault)?;
+    let (history, overlays) = held_authority_history_with_overlays(vault)?;
     // Read after the history, so a settings edit it holds is judged too.
     let withheld = if ITEM11_AUTHORITY_FILTER_SCOPE {
         let txn = vault.store.env.read_txn()?;
@@ -173,20 +201,33 @@ pub fn authority_tail_for(
         BTreeSet::new()
     };
     let mut page = Vec::new();
+    let mut served = CarriedOverlays::new();
     for bytes in history {
-        let entry = decode_authority_log_entry_body(&bytes)?;
-        if side_world(&entry.op).is_some_and(|world| withheld.contains(&world)) {
+        let read = read_authority_log_entry_body(&bytes)?;
+        let side = match &read {
+            AuthorityEntryRead::Open(entry) => side_world(&entry.op),
+            // Sealed rows are never side-branch rows (no sealed op kind carries
+            // world key records), so never withheld.
+            AuthorityEntryRead::Sealed(_) => None,
+        };
+        if side.is_some_and(|world| withheld.contains(&world)) {
             continue;
         }
-        let hash = authority_entry_hash(&entry)?;
+        let hash = match &read {
+            AuthorityEntryRead::Open(entry) => authority_entry_hash(entry)?,
+            AuthorityEntryRead::Sealed(scaffold) => scaffold.hash,
+        };
         if !held.contains(&hash) {
+            if let Some(row) = overlays.get(&hash) {
+                served.insert(hash, row.clone());
+            }
             page.push(bytes);
             if page.len() == limit {
                 break;
             }
         }
     }
-    Ok(page)
+    Ok((page, served))
 }
 
 /// The page of `fetch` this home serves a linked machine whose proof stands
@@ -328,9 +369,10 @@ pub struct AuthorityAppendProgress {
 /// signature, parent and standing is checked and the log refolds here, so
 /// nothing the machine asserts is trusted beyond the signed bytes. Each
 /// entry's parents are held here or earlier in `entries`; an entry the door
-/// refuses holds back only itself and what stands on it. Returns how many
-/// rows the import wrote, or `None` for a peer that is not a proven linked
-/// machine.
+/// refuses holds back only itself and what stands on it. `overlays` carries the
+/// opaque overlay rows of the sealed entries among them, keyed by entry hash.
+/// Returns how many rows the import wrote, or `None` for a peer that is not a
+/// proven linked machine.
 ///
 /// # Errors
 ///
@@ -339,12 +381,17 @@ pub fn authority_append_for(
     vault: &Vault,
     peer: PeerMachine,
     entries: &[Vec<u8>],
+    overlays: &CarriedOverlays,
 ) -> Result<Option<usize>> {
-    Ok(authority_append_progress_for(vault, peer, entries)?.map(|progress| progress.written))
+    Ok(
+        authority_append_progress_for(vault, peer, entries, overlays)?
+            .map(|progress| progress.written),
+    )
 }
 
 /// [`authority_append_for`] with each entry's outcome: no entry of an
-/// append is dropped for the append's length (FIX 8887).
+/// append is dropped for the append's length (FIX 8887). `overlays` carries the
+/// opaque overlay rows of the sealed entries among them, keyed by entry hash.
 ///
 /// # Errors
 ///
@@ -353,18 +400,23 @@ pub fn authority_append_progress_for(
     vault: &Vault,
     peer: PeerMachine,
     entries: &[Vec<u8>],
+    overlays: &CarriedOverlays,
 ) -> Result<Option<AuthorityAppendProgress>> {
     if !owner_machine(vault, peer)? {
         return Ok(None);
     }
     let mut progress = AuthorityAppendProgress::default();
     // Parents first: a slice's parents were imported, or refused, with an
-    // earlier slice.
+    // earlier slice. Each slice stages from the whole map; rows for no body
+    // of the slice are not stored.
     for slice in entries.chunks(AUTHORITY_APPEND_WORK_SLICE) {
-        let import = import_authority_page(vault, slice)?;
+        let import = import_authority_page(vault, slice, overlays)?;
         progress.written += import.written;
         for entry in slice {
-            let hash = authority_entry_hash(&decode_authority_log_entry_body(entry)?)?;
+            let hash = match read_authority_log_entry_body(entry)? {
+                AuthorityEntryRead::Open(body) => authority_entry_hash(&body)?,
+                AuthorityEntryRead::Sealed(scaffold) => scaffold.hash,
+            };
             if import.refused.contains(&hash) {
                 progress.refused.insert(hash);
             } else {
@@ -385,20 +437,25 @@ pub struct AuthorityPageImport {
 }
 
 /// Imports one page of signed authority entries, parents first, through the
-/// door for a history held in part ([`Vault::import_signed_authority_page`]).
-/// When the door refuses the page whole, each entry is tried alone in order,
-/// so one refused entry (a fork on a retired key, say) holds back only itself
-/// and the entries that stand on it.
+/// door for a history held in part ([`Vault::import_signed_authority_page`]),
+/// with the opaque overlay rows of the sealed entries among them (`overlays`,
+/// keyed by entry hash). When the door refuses the page whole, each entry is
+/// tried alone in order, so one refused entry (a fork on a retired key, say)
+/// holds back only itself and the entries that stand on it.
 ///
 /// # Errors
 ///
 /// An entry that does not decode; an error that judges no entry, such as
 /// storage.
-pub fn import_authority_page(vault: &Vault, entries: &[Vec<u8>]) -> Result<AuthorityPageImport> {
+pub fn import_authority_page(
+    vault: &Vault,
+    entries: &[Vec<u8>],
+    overlays: &CarriedOverlays,
+) -> Result<AuthorityPageImport> {
     if entries.is_empty() {
         return Ok(AuthorityPageImport::default());
     }
-    match vault.import_signed_authority_page(entries) {
+    match vault.import_signed_authority_page(entries, overlays) {
         Ok(ids) => {
             return Ok(AuthorityPageImport {
                 written: ids.len(),
@@ -410,8 +467,11 @@ pub fn import_authority_page(vault: &Vault, entries: &[Vec<u8>]) -> Result<Autho
     }
     let mut outcome = AuthorityPageImport::default();
     for entry in entries {
-        let hash = authority_entry_hash(&decode_authority_log_entry_body(entry)?)?;
-        match vault.import_signed_authority_page(std::slice::from_ref(entry)) {
+        let hash = match read_authority_log_entry_body(entry)? {
+            AuthorityEntryRead::Open(body) => authority_entry_hash(&body)?,
+            AuthorityEntryRead::Sealed(scaffold) => scaffold.hash,
+        };
+        match vault.import_signed_authority_page(std::slice::from_ref(entry), overlays) {
             Ok(ids) => outcome.written += ids.len(),
             Err(error) if remote_rejection_reason(&error).is_some() => {
                 outcome.refused.insert(hash);

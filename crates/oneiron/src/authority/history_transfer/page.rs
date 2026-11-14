@@ -40,8 +40,15 @@ impl Vault {
     /// stands: one genesis and vault, retired standing, the store door's
     /// order and judgement, and the refold before commit. One refused entry
     /// writes nothing.
-    pub fn import_signed_authority_page(&self, blobs: &[Vec<u8>]) -> Result<Vec<EntityId>> {
-        match self.import_page_in(decode_page(blobs)?, false)? {
+    pub fn import_signed_authority_page(
+        &self,
+        blobs: &[Vec<u8>],
+        overlays: &CarriedOverlays,
+    ) -> Result<Vec<EntityId>> {
+        let rtxn = self.store.env.read_txn()?;
+        let decoded = decode_page_in_txn(&self.store, &rtxn, blobs, overlays)?;
+        drop(rtxn);
+        match self.import_page_in(decoded, false, overlays)? {
             PageVerdict::Landed(ids) => Ok(ids),
             PageVerdict::Retired(_) => Err(retired_standing_refusal()),
         }
@@ -55,9 +62,16 @@ impl Vault {
         &self,
         mut decoded: Vec<DecodedRow>,
         staged: bool,
+        overlays: &CarriedOverlays,
     ) -> Result<PageVerdict> {
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
+        stage_carried_overlays_in_txn(
+            &self.store,
+            &mut txn,
+            decoded.iter().map(|(_, bytes, _)| bytes.as_slice()),
+            overlays,
+        )?;
         let mut merged = history_in_txn(self, &txn)?;
         let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
         let (adopted, evidence) = adopted_context_in_txn(&self.store, &txn)?;
@@ -175,11 +189,17 @@ pub(in crate::authority) enum PageVerdict {
 /// bytes and the entry they decode to.
 pub(in crate::authority) type DecodedRow = (AuthorityEntryHash, Vec<u8>, AuthorityLogEntry);
 
-/// A page's rows, decoded and hashed, in the caller's order.
-pub(in crate::authority) fn decode_page(blobs: &[Vec<u8>]) -> Result<Vec<DecodedRow>> {
+/// A page's rows, decoded and hashed, in the caller's order, with the
+/// overlay rows the page carried beside them.
+pub(in crate::authority) fn decode_page_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    blobs: &[Vec<u8>],
+    overlays: &CarriedOverlays,
+) -> Result<Vec<DecodedRow>> {
     let mut decoded = Vec::with_capacity(blobs.len());
     for bytes in blobs {
-        let entry = decode_authority_log_entry_body(bytes)?;
+        let entry = open_carried_authority_body_in_txn(store, txn, bytes, overlays)?;
         decoded.push((authority_entry_hash(&entry)?, bytes.clone(), entry));
     }
     Ok(decoded)

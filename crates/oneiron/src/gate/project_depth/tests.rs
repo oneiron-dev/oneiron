@@ -147,7 +147,10 @@ fn immutable_edits_merge_restrictively_and_causal_raise_supersedes_seen_heads() 
         1,
         b"owner",
     )?;
-    b.import_signed_authority_history(&a.export_signed_authority_history()?)?;
+    b.import_signed_authority_history(
+        &a.export_signed_authority_history()?,
+        &crate::authority::CarriedOverlays::new(),
+    )?;
     crate::workspace_roster::set_project_depth_signed_for_test(&a, id, 2, &author, 2, 0xB8)?;
     let a_fact = contributions_for_test(&a, id)?
         .into_iter()
@@ -255,7 +258,10 @@ fn predecessor_and_owner_history_can_arrive_after_edits_without_widening() -> Re
         1,
         b"owner",
     )?;
-    target.import_signed_authority_history(&history[..1])?; // genesis, not BindActor
+    target.import_signed_authority_history(
+        &history[..1],
+        &crate::authority::CarriedOverlays::new(),
+    )?; // genesis, not BindActor
     put_manifest_for_test(&target, birth.0, &birth.1, 3)?;
     let leader = EntityId::from_hex(&target.project(parent)?.unwrap().leader)?;
     target.put_project(
@@ -267,7 +273,10 @@ fn predecessor_and_owner_history_can_arrive_after_edits_without_widening() -> Re
     assert_eq!(target.project(id)?.unwrap().depth, 0);
     put_manifest_for_test(&target, second.0, &second.1, 5)?; // retry drain, no loss
     assert_eq!(target.project(id)?.unwrap().depth, 0);
-    target.import_signed_authority_history(&history[1..])?;
+    target.import_signed_authority_history(
+        &history[1..],
+        &crate::authority::CarriedOverlays::new(),
+    )?;
     assert_eq!(
         target.project(id)?.unwrap().depth,
         0,
@@ -298,7 +307,7 @@ fn predecessor_and_owner_history_can_arrive_after_edits_without_widening() -> Re
         1,
         b"owner",
     )?;
-    fresh.import_signed_authority_history(&history)?;
+    fresh.import_signed_authority_history(&history, &crate::authority::CarriedOverlays::new())?;
     put_manifest_for_test(&fresh, second.0, &second.1, 8)?;
     assert!(fresh.project(id)?.is_none());
     put_manifest_for_test(&fresh, first.0, &first.1, 9)?;

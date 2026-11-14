@@ -2,11 +2,14 @@
 //! and the owner's repair of a damaged authority clock floor (FIX 10106).
 //! The engine owns signature checks, append-only storage and the local fold;
 //! these DTOs only carry the original signed envelopes over JSON.
+use std::collections::BTreeMap;
+
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::authority::CarriedOverlays;
 pub use crate::authority::{AuthorityClockRepair, AuthorityClockRepairOutcome};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};
@@ -19,6 +22,11 @@ use crate::memory::{MemoryError, MemoryResult};
 #[serde(deny_unknown_fields)]
 pub struct SignedAuthorityHistory {
     pub entries: Vec<String>,
+    /// The sealed rows' opaque AUTHORITY_OVERLAY rows beside their bodies:
+    /// base64 entry hash (BLAKE3 of the stored body bytes) to base64 row.
+    /// Empty for a history with no sealed row.
+    #[serde(default)]
+    pub overlays: BTreeMap<String, String>,
 }
 
 /// The content-addressed authority entry ids returned by the atomic import.
@@ -34,12 +42,16 @@ pub fn export_authority_history_as_owner(
     owner: &AuthenticatedOwner,
 ) -> MemoryResult<SignedAuthorityHistory> {
     owner.revalidate(vault)?;
-    let entries = vault
-        .export_signed_authority_history()?
+    let (bodies, overlays) = vault.export_signed_authority_history_with_overlays()?;
+    let entries = bodies
         .into_iter()
         .map(|bytes| STANDARD.encode(bytes))
         .collect();
-    Ok(SignedAuthorityHistory { entries })
+    let overlays = overlays
+        .into_iter()
+        .map(|(hash, row)| (STANDARD.encode(hash), STANDARD.encode(row)))
+        .collect();
+    Ok(SignedAuthorityHistory { entries, overlays })
 }
 
 /// `vault.authority.history.import`: the engine verifies and folds the
@@ -59,8 +71,24 @@ pub fn import_authority_history_as_owner(
             })
         })
         .collect::<MemoryResult<Vec<_>>>()?;
+    let mut overlays = CarriedOverlays::new();
+    for (key, value) in input.overlays {
+        let hash: [u8; 32] = STANDARD
+            .decode(key)
+            .map_err(|_| {
+                MemoryError::bad_request("overlays keys must be base64 32-byte entry hashes")
+            })?
+            .try_into()
+            .map_err(|_| {
+                MemoryError::bad_request("overlays keys must be base64 32-byte entry hashes")
+            })?;
+        let row = STANDARD.decode(value).map_err(|_| {
+            MemoryError::bad_request("overlays values must be base64 sealed overlay rows")
+        })?;
+        overlays.insert(hash, row);
+    }
     let entry_refs = vault
-        .import_signed_authority_history(&blobs)?
+        .import_signed_authority_history(&blobs, &overlays)?
         .into_iter()
         .map(|id| id.to_hex())
         .collect();

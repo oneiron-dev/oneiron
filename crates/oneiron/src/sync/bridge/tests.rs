@@ -5228,7 +5228,10 @@ fn observer_b_replays_signed_owner_project_depth_and_rejects_tampering() -> crat
         1,
         b"owner",
     )?;
-    b.import_signed_authority_history(&a.export_signed_authority_history()?)?;
+    b.import_signed_authority_history(
+        &a.export_signed_authority_history()?,
+        &crate::authority::CarriedOverlays::new(),
+    )?;
     let doc = LoroDoc::new();
     let materializer = Arc::new(Materializer::new());
     let _subscription = register_observer_b(&doc, &b, &materializer, "2026-03");
@@ -5337,7 +5340,10 @@ fn observer_b_project_depth_authority_dependency_survives_retry_until_bind() -> 
         1,
         b"owner",
     )?;
-    target.import_signed_authority_history(&history[..1])?;
+    target.import_signed_authority_history(
+        &history[..1],
+        &crate::authority::CarriedOverlays::new(),
+    )?;
     let doc = LoroDoc::new();
     let materializer = Arc::new(Materializer::new());
     let window = "2026-03";
@@ -5365,7 +5371,10 @@ fn observer_b_project_depth_authority_dependency_survives_retry_until_bind() -> 
     );
     crate::sync::window::forward_rematerialize(&target, &doc, &materializer, &window_key)?;
     assert_eq!(target.project(id)?.unwrap().depth, 0);
-    target.import_signed_authority_history(&history[1..])?;
+    target.import_signed_authority_history(
+        &history[1..],
+        &crate::authority::CarriedOverlays::new(),
+    )?;
     assert_eq!(
         target.project(id)?.unwrap().depth,
         2,
@@ -5423,7 +5432,10 @@ fn observer_b_bootstraps_signed_default_birth_and_edit_on_fresh_replica() -> cra
         1,
         b"owner",
     )?;
-    b.import_signed_authority_history(&a.export_signed_authority_history()?)?;
+    b.import_signed_authority_history(
+        &a.export_signed_authority_history()?,
+        &crate::authority::CarriedOverlays::new(),
+    )?;
     let doc = LoroDoc::new();
     let materializer = Arc::new(Materializer::new());
     let window = "2026-03";

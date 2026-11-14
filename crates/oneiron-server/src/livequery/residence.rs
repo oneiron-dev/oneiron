@@ -412,6 +412,8 @@ struct AuthorityCheckpointRequest {
 #[serde(deny_unknown_fields)]
 struct AuthorityAppendRequest {
     entries: Vec<String>,
+    #[serde(default)]
+    overlays: std::collections::BTreeMap<String, String>,
 }
 
 /// A part of an authority entry a page named by reference (FIX 8246): the
@@ -433,6 +435,8 @@ struct AuthorityAppendPartRequest {
     total: u64,
     offset: u64,
     part: String,
+    #[serde(default)]
+    overlay: Option<String>,
 }
 
 pub(super) fn run(

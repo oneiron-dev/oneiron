@@ -208,7 +208,10 @@ fn a_replica_that_refused_a_fenced_row_takes_the_next_edit() {
     let dir = tempfile::tempdir().unwrap();
     let replica = Vault::open(dir.path(), VaultConfig::default()).unwrap();
     replica
-        .import_signed_authority_history(&host.vault.export_signed_authority_history().unwrap())
+        .import_signed_authority_history(
+            &host.vault.export_signed_authority_history().unwrap(),
+            &CarriedOverlays::new(),
+        )
         .unwrap();
     replica
         .put_authority_log_entry(&handoff, TimeRange { start: 3, end: 3 }, 3)

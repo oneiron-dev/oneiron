@@ -1085,7 +1085,9 @@ fn an_admin_genesis_line_imports_with_its_host_a_slip_issuer() {
         .collect();
     let dir = tempfile::tempdir().unwrap();
     let target = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
-    target.import_signed_authority_history(&history).unwrap();
+    target
+        .import_signed_authority_history(&history, &CarriedOverlays::new())
+        .unwrap();
     let fold = target.authority_fold().unwrap();
     assert!(!fold.authority_log_past_bound() && !fold.vault_root_is_conflicted());
 }
@@ -1115,8 +1117,10 @@ fn a_complete_history_imports_past_the_bound_in_any_order() {
     history.reverse();
     let dir = tempfile::tempdir().unwrap();
     let target = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
-    with_rows_per_signer_for_test(BOUND, || target.import_signed_authority_history(&history))
-        .unwrap();
+    with_rows_per_signer_for_test(BOUND, || {
+        target.import_signed_authority_history(&history, &CarriedOverlays::new())
+    })
+    .unwrap();
     let fold = target.authority_fold().unwrap();
     assert!(!fold.authority_log_past_bound() && !fold.vault_root_is_conflicted());
     assert!(fold.slips.mints.len() > 10 * BOUND);
@@ -1173,8 +1177,10 @@ fn a_history_whose_issuer_admission_is_a_sibling_imports_in_any_order() {
     history.push(encode_authority_log_entry_body(&handoff).unwrap());
     let dir = tempfile::tempdir().unwrap();
     let target = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
-    with_rows_per_signer_for_test(BOUND, || target.import_signed_authority_history(&history))
-        .unwrap();
+    with_rows_per_signer_for_test(BOUND, || {
+        target.import_signed_authority_history(&history, &CarriedOverlays::new())
+    })
+    .unwrap();
     assert!(!target.authority_fold().unwrap().authority_log_past_bound());
 }
 
@@ -1182,7 +1188,9 @@ fn a_history_whose_issuer_admission_is_a_sibling_imports_in_any_order() {
 fn imported(history: &[Vec<u8>]) -> AuthorityFold {
     let dir = tempfile::tempdir().unwrap();
     let target = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
-    target.import_signed_authority_history(history).unwrap();
+    target
+        .import_signed_authority_history(history, &CarriedOverlays::new())
+        .unwrap();
     target.authority_fold().unwrap()
 }
 

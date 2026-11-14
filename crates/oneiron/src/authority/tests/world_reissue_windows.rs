@@ -109,7 +109,10 @@ fn pinned_replica(
     let dir = tempfile::tempdir().unwrap();
     let replica = Vault::open(dir.path(), VaultConfig::default()).unwrap();
     replica
-        .import_signed_authority_history(&install.vault.export_signed_authority_history().unwrap())
+        .import_signed_authority_history(
+            &install.vault.export_signed_authority_history().unwrap(),
+            &CarriedOverlays::new(),
+        )
         .unwrap();
     replica
         .with_write_txn_grouped(|wtxn| write_pinned_root_in_txn(&replica.store, wtxn, pin, None))

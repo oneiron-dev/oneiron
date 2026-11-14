@@ -36,7 +36,7 @@ use std::ops::Bound;
 
 use serde::Deserialize;
 
-use super::history_transfer::{DecodedRow, decode_page, history_in_txn};
+use super::history_transfer::{DecodedRow, decode_page_in_txn, history_in_txn};
 use super::*;
 use crate::error::{Error, RecordError, Result};
 use crate::{EntityId, Vault};
@@ -180,6 +180,10 @@ pub struct AuthorityHistoryPage {
     pub unheld: BTreeSet<AuthorityEntryHash>,
     /// The cursor for the next page; none on the last.
     pub next: Option<AuthorityEntryHash>,
+    /// The opaque AUTHORITY_OVERLAY row of each sealed row in `rows` that
+    /// this vault holds, keyed by entry hash: a receiver stages them with
+    /// the rows, never resealed.
+    pub overlays: CarriedOverlays,
 }
 
 /// The evidence an asker itself holds for each hash: those requested, and
@@ -455,6 +459,7 @@ fn authority_history_page_in_txn(
     } else {
         None
     };
+    let overlays = carried_overlays_in_txn(&vault.store, txn, rows.iter().map(Vec::as_slice))?;
     Ok(AuthorityHistoryPage {
         vault_id,
         checkpoint,
@@ -462,6 +467,7 @@ fn authority_history_page_in_txn(
         rows,
         unheld,
         next,
+        overlays,
     })
 }
 
@@ -505,7 +511,7 @@ fn ancestry_closed(
 /// against what this vault holds and staged on the caller's snapshot, with
 /// their archive coverage. Every
 /// held and staged row decoded, so its bytes are canonical and its
-/// signatures verify; so did every page row (`decode_page`). The vault is
+/// signatures verify; so did every page row (`decode_page_in_txn`). The vault is
 /// this vault's own, else the genesis of the checkpoint pin it adopted, else
 /// `expected`, else the one the first page row names.
 fn verification_in_txn(
@@ -652,8 +658,8 @@ impl Vault {
         if page.selection != fetch.selection.id() {
             return Err(refused("a history page served for another selection"));
         }
-        let decoded = decode_page(&page.rows)?;
         let txn = self.store.env.read_txn()?;
+        let decoded = decode_page_in_txn(&self.store, &txn, &page.rows, &page.overlays)?;
         let selection = authority_history_selection_in_txn(self, &txn, &fetch.selection)?;
         if let Some(image) = &selection.image
             && decoded.iter().any(|(hash, _, _)| !image.contains(hash))

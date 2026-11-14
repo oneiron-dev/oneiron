@@ -933,7 +933,10 @@ fn a_removal_holds_whichever_sibling_arrived_first() {
         let dir = tempfile::tempdir().unwrap();
         let replica = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
         replica
-            .import_signed_authority_history(&host.vault.export_signed_authority_history().unwrap())
+            .import_signed_authority_history(
+                &host.vault.export_signed_authority_history().unwrap(),
+                &CarriedOverlays::new(),
+            )
             .unwrap();
         for (vault, order) in [
             (&host.vault, [&removal, &sibling]),
@@ -1047,7 +1050,10 @@ fn a_removal_holds_over_a_withdrawal_that_arrived_late() {
         let dir = tempfile::tempdir().unwrap();
         let replica = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
         replica
-            .import_signed_authority_history(&host.vault.export_signed_authority_history().unwrap())
+            .import_signed_authority_history(
+                &host.vault.export_signed_authority_history().unwrap(),
+                &CarriedOverlays::new(),
+            )
             .unwrap();
         for (vault, order) in [
             (&host.vault, [&first, &second, &sibling]),
@@ -1144,7 +1150,10 @@ fn a_removal_never_proves_below_its_ancestrys_sequence() {
     let dir = tempfile::tempdir().unwrap();
     let replica = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
     replica
-        .import_signed_authority_history(&host.vault.export_signed_authority_history().unwrap())
+        .import_signed_authority_history(
+            &host.vault.export_signed_authority_history().unwrap(),
+            &CarriedOverlays::new(),
+        )
         .unwrap();
     for (vault, order) in [
         (&host.vault, [&mint, &removal, &sibling]),

@@ -307,7 +307,11 @@ fn no_door_admits_a_new_row_on_a_retired_roots_resident_row() {
     );
     let mut history = vault.export_signed_authority_history().unwrap();
     history.push(encode_authority_log_entry_body(&fork).unwrap());
-    assert!(vault.import_signed_authority_history(&history).is_err());
+    assert!(
+        vault
+            .import_signed_authority_history(&history, &CarriedOverlays::new())
+            .is_err()
+    );
     #[cfg(feature = "sync")]
     assert!(
         vault

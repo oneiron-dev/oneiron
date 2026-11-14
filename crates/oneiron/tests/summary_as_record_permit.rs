@@ -781,7 +781,10 @@ fn a_reply_placed_before_its_landing_edge_lands_after_it() -> TestResult {
     // signature verifies there as it does here.
     let receiver_dir = tempfile::tempdir()?;
     let receiver = Vault::open_owned(receiver_dir.path(), VaultConfig::default())?;
-    receiver.import_signed_authority_history(&source.export_signed_authority_history()?)?;
+    receiver.import_signed_authority_history(
+        &source.export_signed_authority_history()?,
+        &std::collections::BTreeMap::new(),
+    )?;
     // One window, R's edges before H's ClaimOf.
     let (window, _count) = oneiron::test_doors::scope_summary::replay_landing_edges_in_order(
         source,
@@ -845,7 +848,10 @@ fn a_reply_whose_landing_has_not_arrived_waits() -> TestResult {
     let reply = landed.record.ok_or("as_record lands a reply TURN")?;
     let receiver_dir = tempfile::tempdir()?;
     let receiver = Vault::open_owned(receiver_dir.path(), VaultConfig::default())?;
-    receiver.import_signed_authority_history(&source.export_signed_authority_history()?)?;
+    receiver.import_signed_authority_history(
+        &source.export_signed_authority_history()?,
+        &std::collections::BTreeMap::new(),
+    )?;
     // First walk: R and its edges, no header H at all.
     let (window, _first) = oneiron::test_doors::scope_summary::replay_landing_edges_in_order(
         source,

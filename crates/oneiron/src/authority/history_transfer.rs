@@ -11,7 +11,7 @@ use super::adopted_evidence::AdoptedEvidence;
 
 mod page;
 
-pub(super) use page::{DecodedRow, PageVerdict, decode_page, page_root};
+pub(super) use page::{DecodedRow, PageVerdict, decode_page_in_txn, page_root};
 
 pub(super) fn history_in_txn(
     vault: &Vault,
@@ -248,6 +248,16 @@ impl Vault {
     /// the covered prefix: until every covered row is physically held here,
     /// the export refuses with the history it lacks ([`unheld_prefix`]).
     pub fn export_signed_authority_history(&self) -> Result<Vec<Vec<u8>>> {
+        Ok(self.export_signed_authority_history_with_overlays()?.0)
+    }
+
+    /// [`Self::export_signed_authority_history`] with the opaque
+    /// AUTHORITY_OVERLAY row of each sealed row it serves, read in the same
+    /// read txn as the bodies (census L5-22 1a-ii): the owner route carries
+    /// both, and the import stages the rows with the bodies.
+    pub(crate) fn export_signed_authority_history_with_overlays(
+        &self,
+    ) -> Result<(Vec<Vec<u8>>, CarriedOverlays)> {
         let txn = self.store.env.read_txn()?;
         let mut history = history_in_txn(self, &txn)?;
         if let Some(adopted) =
@@ -275,7 +285,9 @@ impl Vault {
             emitted.insert(hash);
             result.push(bytes);
         }
-        Ok(result)
+        let overlays =
+            carried_overlays_in_txn(&self.store, &txn, result.iter().map(Vec::as_slice))?;
+        Ok((result, overlays))
     }
 
     /// Imports a complete signed history, atomically, before an in-chain ReRoot.
@@ -285,14 +297,24 @@ impl Vault {
     /// attested prefix plus the signed incoming tail, not an independent
     /// replay of the whole prefix ([`AdoptedPrefix`]); a covered row the
     /// blobs carry lands as hydration.
-    pub fn import_signed_authority_history(&self, blobs: &[Vec<u8>]) -> Result<Vec<EntityId>> {
-        let mut decoded = Vec::with_capacity(blobs.len());
-        for bytes in blobs {
-            let entry = decode_authority_log_entry_body(bytes)?;
-            decoded.push((authority_entry_hash(&entry)?, bytes.clone(), entry));
-        }
+    pub fn import_signed_authority_history(
+        &self,
+        blobs: &[Vec<u8>],
+        overlays: &CarriedOverlays,
+    ) -> Result<Vec<EntityId>> {
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
+        stage_carried_overlays_in_txn(
+            &self.store,
+            &mut txn,
+            blobs.iter().map(Vec::as_slice),
+            overlays,
+        )?;
+        let mut decoded = Vec::with_capacity(blobs.len());
+        for bytes in blobs {
+            let entry = open_carried_authority_body_in_txn(&self.store, &txn, bytes, overlays)?;
+            decoded.push((authority_entry_hash(&entry)?, bytes.clone(), entry));
+        }
         let mut merged = history_in_txn(self, &txn)?;
         let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
         let (adopted, evidence) = adopted_context_in_txn(&self.store, &txn)?;
