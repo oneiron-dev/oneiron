@@ -9,6 +9,11 @@
 //! change-feed page goes on after the changes it applied, and a step of a
 //! source another step is under way on keeps that step's rest.
 //!
+//! Review round 2 (REVIEW-7782, REVIEW-7785): a page of label changes read
+//! again after a later label change to a message the step already read is
+//! applied from its start, so that change is read; an unchanged page still
+//! goes on after the messages read.
+//!
 //! The provider is a fake Gmail wire that declares Gmail's quota and logs
 //! each call; the units are counted from that log at Gmail's costs.
 //!
@@ -29,7 +34,9 @@ use oneiron::mail_pack::{
     GMAIL_MAIL_QUOTA, MAIL_WIRE_RATE_LIMITED, MailAttachmentRef, MailCall, MailCallCosts, MailFull,
     MailHeaders, MailHistoryChange, MailHistoryPage, MailHistoryRead, MailIdPage, MailListQuery,
     MailMessageRef, MailProviderWire, MailQuota, MailSyncBudget, MailSyncSource,
+    gmail_history_page,
 };
+use serde_json::{Value, json};
 
 /// The messages one listing page names, as Gmail's wire lists them.
 const PAGE_SIZE: u32 = 100;
@@ -453,6 +460,100 @@ fn a_step_paused_mid_page_goes_on_after_the_changes_it_applied() -> TestResult {
         second.landed, 1,
         "the inbox message after them lands: {second:?}"
     );
+    Ok(())
+}
+
+/// One Gmail history record: the message `index` names took `label`.
+fn label_record(history_id: u32, index: u32, label: &str) -> Value {
+    json!({
+        "id": history_id.to_string(),
+        "messages": [{"id": format!("m{index:04}")}],
+        "labelsAdded": [{
+            "message": {"id": format!("m{index:04}")},
+            "labelIds": [label],
+        }],
+    })
+}
+
+/// The changes Gmail's history page of `records` gives, read from anchor
+/// 100, as the Gmail wire reads them.
+fn gmail_page(records: &[Value]) -> Result<Vec<MailHistoryChange>, oneiron::Error> {
+    let listed = json!({"history": records, "historyId": "200"});
+    Ok(gmail_history_page(&listed, "100")?.changes)
+}
+
+/// A step reads four of five starred inbox messages and pauses, the minute
+/// spent. `then` changes the mailbox before the window opens again; the
+/// next step runs then. Answers the second step's report and the messages
+/// its header reads named.
+fn starred_page_paused_then(
+    then: impl FnOnce(&GmailFake, &mut Vec<Value>),
+) -> Result<(oneiron::mail_pack::MailSyncReport, Vec<String>), Box<dyn std::error::Error>> {
+    let mailbox = Mailbox::connect()?;
+    // A minute of 100 units: the anchor (1), a history page (2) and four
+    // metadata reads (80) fit; a fifth does not.
+    let quota = MailQuota {
+        units_per_minute: 100,
+        ..GMAIL_MAIL_QUOTA
+    };
+    let wire = GmailFake::new(0, quota, 10_000);
+    let mut records: Vec<Value> = (0..5)
+        .map(|index| label_record(110 + index, index, "STARRED"))
+        .collect();
+    *wire.feed.borrow_mut() = gmail_page(&records)?;
+    let first = mailbox.step(&wire, MailSyncBudget::default())?;
+    let until = first
+        .quota_paused_until
+        .ok_or("the page outruns the minute and the step pauses")?;
+    let read_first = wire.headers_read();
+    assert_eq!(read_first, ids(0..4), "the first step reads four messages");
+    assert_eq!(first.landed, 4, "the four land: {first:?}");
+
+    then(&wire, &mut records);
+    *wire.feed.borrow_mut() = gmail_page(&records)?;
+    // The minute window opens again.
+    std::thread::sleep(Duration::from_secs(until.saturating_sub(now()) + 1));
+    let second = mailbox.step(&wire, MailSyncBudget::default())?;
+    let read_second = wire.headers_read().split_off(read_first.len());
+    Ok((second, read_second))
+}
+
+/// REVIEW-7782 / REVIEW-7785 round 2, importer.rs:509: while the step waits
+/// for its minute, the first message it read moves to spam. Gmail's page
+/// read again still names that message once, at its place before the
+/// pause; main's step took the page as the one it began, went on after the
+/// four messages, and moved the anchor past the move, so the copy stayed
+/// live with no later change to name it.
+#[test]
+fn a_label_change_to_a_message_read_before_the_pause_is_read() -> TestResult {
+    let (second, read_second) = starred_page_paused_then(|wire, records| {
+        wire.spam.borrow_mut().insert(0);
+        records.push(label_record(120, 0, "SPAM"));
+    })?;
+    assert_eq!(
+        read_second.first().map(String::as_str),
+        Some("m0000"),
+        "the next step applies the changed page from its start: {read_second:?}"
+    );
+    assert_eq!(
+        second.kept_deleted + second.forgotten,
+        1,
+        "the message moved to spam is deleted at the provider: {second:?}"
+    );
+    Ok(())
+}
+
+/// The control: the same page read again unchanged goes on after the four
+/// messages the first step read.
+#[test]
+fn an_unchanged_page_of_label_changes_goes_on_after_the_messages_read() -> TestResult {
+    let (second, read_second) = starred_page_paused_then(|_, _| {})?;
+    assert_eq!(
+        read_second,
+        ids(4..5),
+        "the next step reads only the message after the four: {second:?}"
+    );
+    assert_eq!(second.landed, 1, "the fifth lands: {second:?}");
     Ok(())
 }
 
