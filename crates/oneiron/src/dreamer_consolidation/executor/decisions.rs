@@ -18,8 +18,15 @@ use crate::model_decision::{
 };
 
 pub(in crate::dreamer_consolidation) mod identity_choice;
+#[cfg(oneiron_test_support)]
+mod native_parity;
 mod read;
 pub(super) use identity_choice::FinalChoice;
+#[cfg(oneiron_test_support)]
+pub(crate) use native_parity::{
+    NativeFixtureMember, NativePackOutcome, NativeResolutionFixture,
+    native_resolution_snapshot_for_test,
+};
 pub(in crate::dreamer_consolidation) use read::{Decider, ScopedRead};
 
 /// The answer that names no listed id.
