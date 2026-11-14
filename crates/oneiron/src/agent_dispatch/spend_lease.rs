@@ -727,12 +727,13 @@ impl AgentDispatcher<'_> {
         // woke under no read-shape stamp records nothing, and a failed
         // record never stops the settlement.
         if scope.unit == crate::llm::run_admission::LeaseUnit::tokens()
-            && let Err(error) = crate::store::read_shape_policy::record_read_shape_units_in_txn(
-                &self.vault.store,
-                txn,
-                *child,
-                scope.spent_units,
-            )
+            && let Err(error) =
+                crate::store::read_shape_policy::record_read_shape_scope_units_in_txn(
+                    &self.vault.store,
+                    txn,
+                    *child,
+                    scope.spent_units,
+                )
         {
             tracing::warn!(?error, attempt = ?child, "a settled run's read-shape units were not recorded");
         }
@@ -751,6 +752,44 @@ impl AgentDispatcher<'_> {
         let settlement = self.settle_child_in_txn(&mut txn, child, now)?;
         txn.commit()?;
         Ok(settlement)
+    }
+
+    /// What `attempt`'s spend scope has settled so far: a retry's is the
+    /// scope of the try it retries. `None`: the attempt launched unmetered.
+    pub(crate) fn attempt_scope_spent_units(&self, attempt: AttemptId) -> Result<Option<u64>> {
+        let txn = self.vault.store.env.read_txn()?;
+        let Some(id) = self.scope_for_attempt_in_txn(&txn, attempt)? else {
+            return Ok(None);
+        };
+        Ok(SCOPE
+            .get(&self.vault.store, &txn, &id.0)?
+            .map(|scope| scope.spent_units))
+    }
+
+    /// Records a retried try's tokens on its read-shape stamp (census L9-37):
+    /// a retry keeps the run's spend scope open and spends on under it, so
+    /// the try's own tokens are the scope's total at its end, less what the
+    /// scope held when it woke. Nothing for a try that woke under no stamp,
+    /// launched unmetered, or spends another unit.
+    pub fn record_retried_read_shape_units(&self, attempt: &AttemptId) -> Result<()> {
+        let mut txn = self.vault.store.env.write_txn()?;
+        let Some(id) = self.scope_for_attempt_in_txn(&txn, *attempt)? else {
+            return Ok(());
+        };
+        let Some(scope) = SCOPE.get(&self.vault.store, &txn, &id.0)? else {
+            return Ok(());
+        };
+        if scope.unit != crate::llm::run_admission::LeaseUnit::tokens() {
+            return Ok(());
+        }
+        crate::store::read_shape_policy::record_read_shape_scope_units_in_txn(
+            &self.vault.store,
+            &mut txn,
+            *attempt,
+            scope.spent_units,
+        )?;
+        txn.commit()?;
+        Ok(())
     }
 
     fn spend_in_txn(

@@ -3,7 +3,9 @@
 //! graph_fs mount reads a leased run makes log its attempt (so a mount-shaped
 //! run's reads count toward its pick, as its search runs do), and the run's
 //! spend scope records the tokens it settled on its stamp, for the reward's
-//! token cost term.
+//! token cost term: a retried try and its retry each record their own tokens
+//! under the one scope they share, and a run's stamp takes the tokens a child
+//! settles into its scope after the run ended.
 //!
 //! On the PR 1 head this file does not compile: there is no
 //! `Memory::with_dispatch_attempt`, no `BriefReadShape` and no
@@ -16,7 +18,10 @@
 use std::sync::Arc;
 
 use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
-use oneiron::attempt_queue::{AttemptId, AttemptQueue, EnqueueAttempt, EnqueueOutcome};
+use oneiron::attempt_queue::{
+    AttemptId, AttemptQueue, ClaimAttempt, ClaimOutcome, EnqueueAttempt, EnqueueOutcome,
+    RetryAttempt, RetryOutcome,
+};
 use oneiron::context_board::{
     BriefReadShape, BriefWorkingSet, CommunicationLimits, SelfBriefState, SessionReadSet,
 };
@@ -31,6 +36,11 @@ use oneiron::{EntityId, Vault, VaultConfig};
 
 const KIND: &str = "test.read_shape_wiring";
 const NOW: u64 = 1_700_000_000;
+const WORKER: &str = "read-shape-wiring";
+const MOUNT_EXPLORE: ReadShapePick = ReadShapePick {
+    shape: ReadShape::Mount,
+    tier: ReadShapeTier::Explore,
+};
 
 /// A vault that captures retrieval telemetry, with its embedded owner.
 fn capturing_vault() -> (tempfile::TempDir, Vault, EntityId) {
@@ -129,38 +139,22 @@ fn mount_reads_of_a_leased_run_name_its_attempt() {
 fn a_settled_run_records_its_tokens_on_its_read_shape_stamp() {
     let (_dir, vault, _owner) = capturing_vault();
     let dispatcher = AgentDispatcher::new(&vault);
-    let root = SpendScopeId::launch("owen-read-shape-root").expect("launch id");
-    dispatcher
-        .open_root_spend_scope(
-            root.clone(),
-            DeclaredMaximum {
-                units: 1_000,
-                unit: LeaseUnit::tokens(),
-            },
-            Some(MaximumShown { at_ms: 12_000 }),
-            12,
-        )
-        .expect("the root opens");
+    let root = token_root(&dispatcher, "owen-read-shape-root", 1_000);
     let model = ModelId::new("test/model-a@r1").expect("model id");
 
     let stamped = enqueue(&vault);
     let unstamped = enqueue(&vault);
-    for attempt in [stamped, unstamped] {
-        let scope = reserve_child_scope(&vault, &root, &attempt, 400, 13).expect("carve");
+    let scopes = [stamped, unstamped]
+        .map(|attempt| reserve_child_scope(&vault, &root, &attempt, 400, 13).expect("carve"));
+    // The run wakes under its stamp, then spends.
+    vault
+        .stamp_read_shape(stamped, &model, MOUNT_EXPLORE)
+        .expect("the wake's stamp");
+    for scope in &scopes {
         dispatcher
             .charge(&scope.scope, 120)
             .expect("the run spends");
     }
-    vault
-        .stamp_read_shape(
-            stamped,
-            &model,
-            ReadShapePick {
-                shape: ReadShape::Mount,
-                tier: ReadShapeTier::Explore,
-            },
-        )
-        .expect("the wake's stamp");
 
     let settled = dispatcher
         .settle_child(&stamped, 14)
@@ -205,6 +199,160 @@ fn a_settled_run_records_its_tokens_on_its_read_shape_stamp() {
     assert_eq!(
         vault.read_shape_stamp(unstamped).expect("read the stamp"),
         None
+    );
+}
+
+/// A launch's root scope of `units` tokens.
+fn token_root(dispatcher: &AgentDispatcher<'_>, launch: &str, units: u64) -> SpendScopeId {
+    let root = SpendScopeId::launch(launch).expect("launch id");
+    dispatcher
+        .open_root_spend_scope(
+            root.clone(),
+            DeclaredMaximum {
+                units,
+                unit: LeaseUnit::tokens(),
+            },
+            Some(MaximumShown { at_ms: 12_000 }),
+            12,
+        )
+        .expect("the root opens");
+    root
+}
+
+/// The tokens `attempt`'s read-shape stamp records.
+fn stamped_units(vault: &Vault, attempt: AttemptId) -> Option<u64> {
+    vault
+        .read_shape_stamp(attempt)
+        .expect("read the stamp")
+        .expect("the run's stamp")
+        .model_units
+}
+
+#[test]
+fn a_retried_try_and_its_retry_each_record_their_own_tokens() {
+    let (_dir, vault, _owner) = capturing_vault();
+    let dispatcher = AgentDispatcher::new(&vault);
+    let root = token_root(&dispatcher, "owen-read-shape-retry", 1_000);
+    let model = ModelId::new("test/model-a@r1").expect("model id");
+    let queue = AttemptQueue::new(&vault);
+
+    let first = enqueue(&vault);
+    let scope = reserve_child_scope(&vault, &root, &first, 600, 13).expect("carve");
+    let ClaimOutcome::Claimed(claimed) = queue
+        .claim_kind(
+            KIND,
+            ClaimAttempt {
+                lease_owner: WORKER.to_owned(),
+                now: NOW + 1,
+            },
+        )
+        .expect("claim")
+    else {
+        panic!("the first try is claimable");
+    };
+    assert_eq!(claimed.id, first);
+    vault
+        .stamp_read_shape(first, &model, MOUNT_EXPLORE)
+        .expect("the first try's stamp");
+    dispatcher
+        .charge(&scope.scope, 100)
+        .expect("the first try spends");
+
+    // The try fails and is retried: the retry spends under the same scope.
+    let RetryOutcome::Retried(retry) = queue
+        .retry(RetryAttempt {
+            id: first,
+            lease_owner: WORKER.to_owned(),
+            attempt_count: claimed.attempt_count,
+            backoff_until: NOW + 1,
+            last_error: Some("the first try failed".to_owned()),
+            now: NOW + 1,
+        })
+        .expect("retry")
+    else {
+        panic!("a retry schedules a new try");
+    };
+    assert_eq!(retry.retry_of, Some(first));
+    dispatcher
+        .record_retried_read_shape_units(&first)
+        .expect("the retried try's tokens");
+    assert_eq!(
+        stamped_units(&vault, first),
+        Some(100),
+        "the retried try records its own tokens as it ends"
+    );
+    let retry_stamp = vault
+        .stamp_read_shape(
+            retry.id,
+            &model,
+            ReadShapePick {
+                shape: ReadShape::Verbs,
+                tier: ReadShapeTier::Seed,
+            },
+        )
+        .expect("the retry's stamp");
+    assert_eq!(retry_stamp.scope_units_at_wake, 100);
+    dispatcher
+        .charge(&scope.scope, 200)
+        .expect("the retry spends");
+
+    let settled = dispatcher
+        .settle_child(&retry.id, 14)
+        .expect("settle")
+        .expect("the run was metered");
+    assert_eq!(
+        settled.spent_units, 300,
+        "the shared scope settles both tries' tokens"
+    );
+    assert_eq!(
+        stamped_units(&vault, retry.id),
+        Some(200),
+        "the retry records only the tokens it spent"
+    );
+    assert_eq!(
+        stamped_units(&vault, first),
+        Some(100),
+        "the retry's settlement leaves the retried try's tokens"
+    );
+}
+
+#[test]
+fn a_run_stamp_takes_the_tokens_its_child_settles_after_it() {
+    let (_dir, vault, _owner) = capturing_vault();
+    let dispatcher = AgentDispatcher::new(&vault);
+    let root = token_root(&dispatcher, "owen-read-shape-late-child", 1_000);
+    let model = ModelId::new("test/model-a@r1").expect("model id");
+
+    let parent = enqueue(&vault);
+    let reader = enqueue(&vault);
+    let parent_scope = reserve_child_scope(&vault, &root, &parent, 600, 13).expect("carve");
+    let reader_scope =
+        reserve_child_scope(&vault, &parent_scope.scope, &reader, 200, 13).expect("carve");
+    vault
+        .stamp_read_shape(parent, &model, MOUNT_EXPLORE)
+        .expect("the parent's stamp");
+    dispatcher
+        .charge(&parent_scope.scope, 100)
+        .expect("the parent spends");
+    let settled = dispatcher
+        .settle_child(&parent, 14)
+        .expect("settle the parent")
+        .expect("the run was metered");
+    assert_eq!(settled.spent_units, 100);
+    assert_eq!(stamped_units(&vault, parent), Some(100));
+
+    // The parent's reader outlives it and settles into its closed scope.
+    dispatcher
+        .charge(&reader_scope.scope, 150)
+        .expect("the reader spends");
+    dispatcher
+        .settle_child(&reader, 15)
+        .expect("settle the reader")
+        .expect("the reader was metered");
+    assert_eq!(
+        stamped_units(&vault, parent),
+        Some(250),
+        "the parent's stamp takes the tokens its reader settled after it"
     );
 }
 

@@ -217,7 +217,15 @@ fn settle_held(
         ),
     )?;
     // A retry shares the run's spend scope; only an end closes it.
-    if !matches!(ended, FailureLadderOutcome::Retried { .. }) {
+    if matches!(ended, FailureLadderOutcome::Retried { .. }) {
+        // The retried try's own tokens reach its read-shape stamp now, and its
+        // retry's stamp counts from here (census L9-37). A failed record logs
+        // and the retry stands.
+        if let Err(error) = AgentDispatcher::new(vault).record_retried_read_shape_units(&attempt.id)
+        {
+            tracing::warn!(%error, attempt = ?attempt.id, "a retried run's read-shape units were not recorded");
+        }
+    } else {
         AgentDispatcher::new(vault).settle_child(&attempt.id, now)?;
         // FIX 11532: the solo run's team receipt, after its own end; a
         // receipt failure logs and the end stands.

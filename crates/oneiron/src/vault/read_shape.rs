@@ -31,7 +31,9 @@ impl Vault {
 
     /// Stamps `attempt` with `pick` for `model` unless it already holds a
     /// stamp, and returns the stamp in force: a re-leased attempt keeps the
-    /// shape its first wake picked.
+    /// shape its first wake picked. The stamp keeps what the attempt's spend
+    /// scope has settled so far: a retry spends under the scope of the try it
+    /// retries, and those units are not its run's.
     ///
     /// # Errors
     ///
@@ -43,7 +45,11 @@ impl Vault {
         model: &ModelId,
         pick: ReadShapePick,
     ) -> Result<ReadShapeStamp> {
-        self.store.stamp_read_shape(attempt, model, pick)
+        let scope_units = crate::agent_dispatch::AgentDispatcher::new(self)
+            .attempt_scope_spent_units(attempt)?
+            .unwrap_or(0);
+        self.store
+            .stamp_read_shape(attempt, model, pick, scope_units)
     }
 
     /// Picks the shape `attempt`'s run reads through as it wakes on `model`,
