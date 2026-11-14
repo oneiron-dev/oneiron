@@ -1034,6 +1034,7 @@ impl OffRecordSession<'_> {
     pub fn flip_off_record(&self) -> Result<()> {
         let mut state = session_entry_state(&self.entry)?;
         super::vault_api::set_entry_mode(
+            &self.vault.store,
             &self.entry,
             &mut state,
             &self.session_ref,
