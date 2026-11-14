@@ -844,7 +844,7 @@ mod carrier_tests {
     /// F: a page after one subject through another holds only what lies between.
     #[test]
     fn a_page_after_one_subject_through_another_holds_only_what_lies_between() {
-        let mut subjects = vec![EntityId::now(), EntityId::now(), EntityId::now()];
+        let mut subjects = [EntityId::now(), EntityId::now(), EntityId::now()];
         subjects.sort();
         let inventory = OverlayInventory {
             ready: BTreeSet::from([(subjects[0], [0x11; 32]), (subjects[1], [0x22; 32])]),
