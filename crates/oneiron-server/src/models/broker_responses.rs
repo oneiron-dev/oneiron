@@ -14,7 +14,7 @@ use futures_util::StreamExt;
 use oneiron::llm::{SingleRouteBackend, TransportFault, TransportFaultKind};
 use oneiron::{
     BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmGenerateFuture, LlmRequest,
-    LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, ModelId, RetryableLlmError,
+    LlmResult, LlmStream, LlmStreamResult, ModelId, RetryableLlmError,
 };
 use oneiron_broker::{CallHeader, Failure, Outcome, Refusal, Shape, StreamPart};
 use oneiron_llm_openai::{
@@ -45,7 +45,7 @@ struct ChainRow {
 
 /// One `key_secret` OpenAI provider's Responses sessions, with its existing
 /// broker chat backend as the fallback. `config` and `catalog` keep the
-/// original capabilities: broker chat strips Streaming, Responses does not.
+/// original capabilities, and the fallback chat keeps its own.
 pub(super) struct BrokerResponses {
     chat: Arc<BrokerBackend>,
     config: OpenAiCompatConfig,
@@ -109,7 +109,7 @@ impl BrokerResponses {
         {
             return Ok(true);
         }
-        if self.chat.request_digest(request, false)?.as_deref() == Some(digest) {
+        if self.chat.request_digest(request, stream)?.as_deref() == Some(digest) {
             return Ok(false);
         }
         Err(FatalLlmError::InvalidRequest.into())
@@ -121,24 +121,13 @@ impl BrokerResponses {
         stream: bool,
         responses: bool,
     ) -> LlmResult<()> {
-        if !responses {
-            return self.chat.preflight(request, false);
+        // The chat route's own preflight checks the request, the broker and
+        // the custody binding; a carried call's turn must build as well.
+        self.chat.preflight(request, stream)?;
+        if responses {
+            self.turn(request, stream)?;
         }
-        if !stream {
-            self.chat.preflight(request, false)?;
-        }
-        self.turn(request, stream)?;
-        if let Err(error) = self.chat.client().ready() {
-            tracing::warn!(%error, "no credential broker to send through");
-            return Err(RetryableLlmError::StreamCut.into());
-        }
-        self.chat.keys().check(self.chat.secret()).map_err(|_| {
-            tracing::warn!(
-                reason = "key_custody_refused",
-                "the custody door would refuse a provider key"
-            );
-            oneiron::FatalLlmError::Auth.into()
-        })
+        Ok(())
     }
 
     fn turn(&self, request: &LlmRequest, stream: bool) -> LlmResult<OpenAiResponsesTurn> {
@@ -459,49 +448,6 @@ fn upgrade_error(kind: TransportFaultKind, detail: impl Into<String>) -> oneiron
     .into()
 }
 
-/// Chat remains buffered even when the admitted caller asked for a stream.
-struct BufferedChat(Arc<BrokerBackend>);
-
-impl LlmBackend for BufferedChat {
-    fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
-        self.0.supports(model, capability)
-    }
-
-    fn generate<'a>(
-        &'a self,
-        request: LlmRequest,
-        lease: &'a BudgetLease,
-    ) -> LlmGenerateFuture<'a> {
-        self.0.generate(request, lease)
-    }
-
-    fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
-        Ok(LlmStream::new(futures_util::stream::once(async move {
-            let response = self.0.generate(request, lease).await?;
-            Ok(LlmStreamEvent::Done {
-                message: response.message,
-                usage: response.usage,
-                finish_reason: response.finish_reason,
-                reply_assertions: response.reply_assertions,
-            })
-        })))
-    }
-}
-
-impl SingleRouteBackend for BufferedChat {
-    fn preflight(&self, request: &LlmRequest, _stream: bool) -> LlmResult<()> {
-        self.0.preflight(request, false)
-    }
-
-    fn request_digest(&self, request: &LlmRequest, _stream: bool) -> LlmResult<Option<String>> {
-        self.0.request_digest(request, false)
-    }
-
-    fn broker_isolation(&self) -> Option<oneiron::llm::BrokerIsolation> {
-        self.0.broker_isolation()
-    }
-}
-
 impl LlmBackend for BrokerResponses {
     fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
         self.catalog
@@ -537,7 +483,7 @@ impl SingleRouteBackend for BrokerResponses {
 
     fn request_digest(&self, request: &LlmRequest, stream: bool) -> LlmResult<Option<String>> {
         if !self.carries(request) {
-            return self.chat.request_digest(request, false);
+            return self.chat.request_digest(request, stream);
         }
         self.responses_digest(request, stream).map(Some)
     }
@@ -581,18 +527,7 @@ impl SingleRouteBackend for BrokerResponses {
         digest: &str,
     ) -> LlmStreamResult<'a> {
         if !self.responses_for_digest(&request, true, digest)? {
-            // The wrapper must live as long as this stream, so keep its
-            // shared chat directly in the owned one-event future.
-            let chat = Arc::clone(&self.chat);
-            return Ok(LlmStream::new(futures_util::stream::once(async move {
-                let response = chat.generate(request, lease).await?;
-                Ok(LlmStreamEvent::Done {
-                    message: response.message,
-                    usage: response.usage,
-                    finish_reason: response.finish_reason,
-                    reply_assertions: response.reply_assertions,
-                })
-            })));
+            return self.chat.stream(request, lease);
         }
         let turn = self.turn(&request, true)?;
         let opened = async move {
@@ -618,7 +553,8 @@ impl SingleRouteBackend for BrokerResponses {
                         TransportFaultKind::NotSent | TransportFaultKind::Refused
                     ) =>
             {
-                Some(Arc::new(BufferedChat(Arc::clone(&self.chat))))
+                let chat: Arc<dyn SingleRouteBackend> = Arc::<BrokerBackend>::clone(&self.chat);
+                Some(chat)
             }
             _ => None,
         }

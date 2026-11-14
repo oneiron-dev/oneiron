@@ -35,6 +35,7 @@ mod broker_context;
 mod broker_media;
 mod broker_rerank;
 mod broker_responses;
+mod broker_stream;
 mod cache_usage;
 mod catalog;
 mod cooldown;
