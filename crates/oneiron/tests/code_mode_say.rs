@@ -389,7 +389,7 @@ fn a_say_with_no_destination_speaks_where_self_speak_speaks() -> TestResult {
     let outcome = run_program(
         &fixture,
         r#"await say("said here");
-await self.speak("spoken here");
+await self.speak({ text: "spoken here" });
 finish("spoke");"#,
     );
     assert_eq!(answer(&outcome), "spoke");
