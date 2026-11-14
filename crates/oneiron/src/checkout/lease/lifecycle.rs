@@ -158,7 +158,8 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
     ///
     /// State pins:
     /// - `Retained` records a retain decision; a retry re-runs
-    ///   inspect -> reason -> collect from scratch.
+    ///   inspect -> reason -> collect from scratch. While its holder clears
+    ///   the cause, the unexpired lease still renews and settles (FIX 22391).
     /// - `Settling` means "collection authorised under this fence": it is
     ///   written only after a full inspection passed, immediately before the
     ///   irreversible `ops.collect`. A retry *resumes* to completion once the
