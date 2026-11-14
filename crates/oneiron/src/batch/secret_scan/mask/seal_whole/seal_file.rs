@@ -34,25 +34,32 @@ impl Masker {
     /// Seals `op`, the plan's copy of a file put whose bytes as written are
     /// `written`, which the door still reads as a hit (`clean` reads a copy
     /// as the door does): each value that reads as the hit alone is marked
-    /// as one key, or the file is sealed whole. The file is stored as
-    /// written either way.
+    /// as one key, or the file is sealed whole, for `reason`, the door's
+    /// reason. The file is stored as written either way. Bytes whose seal
+    /// the owner ruled no secret are sealed no more
+    /// (L6-03-SEALED-FILE-NO-NOTICE).
     pub(super) fn seal_file(
         &mut self,
         kept: &KeptValues,
         op: &mut BatchOp,
         written: &[u8],
         clean: &dyn Fn(&BatchOp) -> bool,
+        reason: &'static str,
     ) -> Result<()> {
         let BatchOp::Put { id, .. } = op else {
             return Err(Error::InvariantViolation("a file seal read no put"));
         };
         let record = *id;
         let hash = *blake3::hash(written).as_bytes();
+        if self.ruled_seals.contains(&hash) {
+            return Ok(());
+        }
         let places = self.marked.get(&hash).cloned().unwrap_or_default();
         let (keys, sealed) = self.value_seals(kept, record, written, &places, op, clean)?;
         if keys.is_empty() && !sealed {
             return Ok(());
         }
+        let sealed = sealed.then_some(reason);
         if !keys.is_empty() {
             let united = united_places(places, &keys)?;
             self.marked.insert(hash, united);
@@ -64,7 +71,7 @@ impl Masker {
         {
             Some(file) => {
                 file.keys.extend(keys);
-                file.sealed |= sealed;
+                file.sealed = file.sealed.or(sealed);
             }
             None => self.files.push(FoundFile {
                 hash,

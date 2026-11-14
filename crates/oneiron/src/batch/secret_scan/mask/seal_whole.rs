@@ -124,7 +124,7 @@ pub(super) fn plan_seals(
         let clean =
             |op: &BatchOp| scan_screened(store, txn, kept, std::slice::from_ref(op)).is_ok();
         if let Some(written) = written_file(before) {
-            plan.seal_file(kept, op, written, &clean)?;
+            plan.seal_file(kept, op, written, &clean, refusal_reason(&refusal))?;
             continue;
         }
         if !sealable(op) {
@@ -215,6 +215,16 @@ fn seal_until_clean<T: ?Sized, S>(
         }
     }
     Err(refusal)
+}
+
+/// The scan's own reason code in the door's `refusal`.
+fn refusal_reason(refusal: &Error) -> &'static str {
+    match refusal {
+        Error::Gate(crate::error::GateError::GateWriteRejected { reason_codes, .. }) => {
+            reason_codes.last().copied().unwrap_or(REASON_DETECTED)
+        }
+        _ => REASON_DETECTED,
+    }
 }
 
 /// The bytes of `op` when it puts a file its writer wrote, which the plan

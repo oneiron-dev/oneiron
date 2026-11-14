@@ -646,8 +646,9 @@ pub(super) fn resolve_handle_in_txn(
     resolve_parsed_handle_in_txn(store, txn, short, hash)
 }
 
-/// Typed public handle lookup shared by custody and PERSON reveals.
-fn resolve_typed_handle_in_txn(
+/// Typed public handle lookup shared by custody and PERSON reveals, and by
+/// a sealed file's answer (L6-03-SEALED-FILE-NO-NOTICE).
+pub(in crate::secret_custody) fn resolve_typed_handle_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     handle: &str,

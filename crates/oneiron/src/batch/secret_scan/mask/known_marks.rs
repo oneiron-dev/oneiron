@@ -109,6 +109,7 @@ fn united(prior: Option<MaskedFile>, found: Vec<KnownMark>, at: u64) -> Result<O
         masked_at: at,
         members: Vec::new(),
         sealed: false,
+        ruled_no_secret: false,
     });
     let mut added = false;
     for found in found {

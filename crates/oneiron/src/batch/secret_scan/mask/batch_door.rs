@@ -81,8 +81,10 @@ pub(in crate::batch) fn mask_batch_ops(
     // The plan's copy, and every value it finds, are wiped however the
     // plan ends (FIX 1101).
     let mut planned = PlanOps::of(ops);
+    let (marked, ruled_seals) = marked_files(store, &*wtxn, ops)?;
     let mut plan = Masker {
-        marked: marked_files(store, &*wtxn, ops)?,
+        marked,
+        ruled_seals,
         mints: masks,
         kept,
         known: known.clone(),

@@ -31,6 +31,11 @@
 //! its value-free screen ([`ruled_screen`]) goes with the revoke to every
 //! other install of the vault.
 //!
+//! A file the write door sealed whole holds no key custody can name: its
+//! record keeps the seal beside its keys, and only the owner answers it, not
+//! a secret, by the file's own id ([`sealed_file`];
+//! L6-03-SEALED-FILE-NO-NOTICE).
+//!
 //! A batch that masks many keys in one record raises one notice for it. The
 //! mask writes inside the batch's own transaction, where no vault is at
 //! hand, so it leaves the record due ([`note_found_keys_in_txn`]); the
@@ -40,6 +45,7 @@ mod actions;
 mod page;
 mod purpose;
 mod ruled_screen;
+mod sealed_file;
 mod written_by;
 pub(crate) use purpose::purpose_questions_in_txn;
 use ruled_screen::RuledScreenKey;
@@ -48,6 +54,7 @@ pub(crate) use ruled_screen::{
 };
 
 pub(crate) use self::actions::{HANDLE_TEXT_OPEN, unmask_value};
+pub(crate) use self::sealed_file::{SealedFileNote, note_file_seals_in_txn};
 
 use std::collections::HashMap;
 
@@ -126,10 +133,54 @@ pub struct FoundKeyCard {
     pub actions: Vec<FoundKeyAction>,
 }
 
-/// The keys found in one record. It holds no value.
+/// The keys found in one record, and each file the write door sealed whole
+/// there. It holds no value.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct FoundKeys {
     keys: Vec<FoundKey>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    seals: Vec<sealed_file::FileSeal>,
+}
+
+impl FoundKeys {
+    /// Whether the owner has not yet acted on a key or a seal here.
+    fn is_open(&self) -> bool {
+        self.keys.iter().any(|key| key.settled.is_none())
+            || self.seals.iter().any(|seal| seal.settled.is_none())
+    }
+
+    /// When the latest key or seal here was found.
+    fn latest(&self) -> Option<u64> {
+        self.keys
+            .iter()
+            .map(|key| key.found_at)
+            .chain(self.seals.iter().map(|seal| seal.found_at))
+            .max()
+    }
+
+    /// How many keys and seals were found here.
+    fn count(&self) -> usize {
+        self.keys.len() + self.seals.len()
+    }
+
+    /// The owner's card of each key here, then of each seal. No value is
+    /// read.
+    fn cards_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        record: &EntityId,
+    ) -> Result<Vec<FoundKeyCard>> {
+        let keys = self
+            .keys
+            .iter()
+            .map(|key| actions::card_in_txn(vault, txn, record, key));
+        let seals = self
+            .seals
+            .iter()
+            .map(|seal| seal.card_in_txn(&vault.store, txn, record));
+        keys.chain(seals).collect()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -208,6 +259,14 @@ pub(crate) fn erase_found_key_actor_in_txn(
             }
             if key.writer == Some(*actor) {
                 key.writer = None;
+                named = true;
+            }
+        }
+        for seal in &mut found.seals {
+            if let Some(settled) = &mut seal.settled
+                && settled.by == Some(*actor)
+            {
+                settled.by = None;
                 named = true;
             }
         }
@@ -293,11 +352,11 @@ pub(crate) fn raise_found_key_notices_in_txn(vault: &Vault, txn: &mut RwTxn<'_>)
     let owners = crate::policy_model::owners_in_txn(vault, txn)?;
     for (record, found_at) in due {
         DUE.delete(&vault.store, txn, &record)?;
-        // The count of keys found there names this notice: a later write
-        // that finds more raises a new one.
+        // The count of keys and seals found there names this notice: a
+        // later write that finds more raises a new one.
         let keys = FOUND
             .get(&vault.store, txn, &record)?
-            .map_or(0, |found| found.keys.len());
+            .map_or(0, |found| found.count());
         if keys == 0 {
             continue;
         }
@@ -589,21 +648,17 @@ impl Vault {
         let mut rows = Vec::new();
         for row in FOUND.iter_from(&self.store, &txn, &[])? {
             let (record, found) = row?;
-            if open_only && found.keys.iter().all(|key| key.settled.is_some()) {
+            if open_only && !found.is_open() {
                 continue;
             }
-            let latest = found.keys.iter().map(|key| key.found_at).max();
+            let latest = found.latest();
             rows.push((latest, record, found));
         }
         rows.sort_by(|left, right| right.0.cmp(&left.0));
         rows.into_iter()
             .take(limit)
             .map(|(_, record, found)| {
-                let keys = found
-                    .keys
-                    .iter()
-                    .map(|key| actions::card_in_txn(self, &txn, &record, key))
-                    .collect::<Result<Vec<_>>>()?;
+                let keys = found.cards_in_txn(self, &txn, &record)?;
                 Ok(FoundKeyNotice { record, keys })
             })
             .collect()

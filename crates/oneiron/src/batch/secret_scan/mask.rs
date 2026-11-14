@@ -57,7 +57,7 @@ use oneiron_store::batch::secret_scan::mask::text_log;
 mod text_spans;
 mod wipe;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -78,7 +78,9 @@ use crate::file_secret_marks::MemberStep;
 use crate::ports::ShortIdStoreRead;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_SECRET_CUSTODY};
 use crate::secret_custody::KeptValues;
-use crate::secret_custody::{note_found_keys_in_txn, register_custody_in_txn};
+use crate::secret_custody::{
+    SealedFileNote, note_file_seals_in_txn, note_found_keys_in_txn, register_custody_in_txn,
+};
 use crate::secret_record::CustodyClass;
 use crate::secret_record::{CustodyWrite, FoundNote};
 use crate::secret_record::{
@@ -241,7 +243,7 @@ pub(crate) fn mark_text_value_in_txn(
         hash: *blake3::hash(text.as_bytes()).as_bytes(),
         keys,
         record,
-        sealed: false,
+        sealed: None,
     }];
     let minted = plan.mint(&CustodyWrite::of(vault), wtxn, at)?;
     let handle = minted
@@ -257,7 +259,8 @@ pub(crate) fn mark_text_value_in_txn(
 /// Records each file `files` marks: each key's span, in the file's bytes or
 /// in the member that holds it, with the custody record `minted` holds it in
 /// or the record custody held it in before, the file's band, and whether
-/// the door sealed it whole.
+/// the door sealed it whole. A file sealed whole is noted in its record's
+/// found keys, for the owner's notice (L6-03-SEALED-FILE-NO-NOTICE).
 fn put_file_marks_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -265,6 +268,7 @@ fn put_file_marks_in_txn(
     minted: &PlanValues<(String, EntityId)>,
     at: u64,
 ) -> Result<()> {
+    let mut seals = Vec::new();
     for file in files {
         // A file marked before keeps its marks; the values found since are
         // marked beside them (FIX 2781).
@@ -274,8 +278,16 @@ fn put_file_marks_in_txn(
             masked_at: at,
             members: Vec::new(),
             sealed: false,
+            ruled_no_secret: false,
         });
-        mark.sealed |= file.sealed;
+        if let Some(reason) = file.sealed {
+            mark.sealed = true;
+            seals.push(SealedFileNote {
+                record: file.record,
+                hash: file.hash,
+                reason,
+            });
+        }
         for key in file.keys {
             let custody = match key.custody {
                 Some(custody) => custody,
@@ -298,7 +310,7 @@ fn put_file_marks_in_txn(
         }
         put_masked_file_in_txn(store, wtxn, &file.hash, &mark)?;
     }
-    Ok(())
+    note_file_seals_in_txn(store, wtxn, &seals, at)
 }
 
 /// The record a batch op writes, as the mask's places name it.
@@ -481,13 +493,15 @@ impl MaskedFiles {
 }
 
 /// The key places already recorded for each file a batch puts, by its
-/// bytes' hash: a file put again keeps its mark and mints nothing.
+/// bytes' hash: a file put again keeps its mark and mints nothing. Beside
+/// them, the hashes whose seal the owner ruled no secret.
 fn marked_files(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     ops: &[BatchOp],
-) -> Result<HashMap<[u8; 32], KeyPlaces>> {
+) -> Result<(HashMap<[u8; 32], KeyPlaces>, HashSet<[u8; 32]>)> {
     let mut marked = HashMap::new();
+    let mut ruled = HashSet::new();
     for op in ops {
         if let BatchOp::Put {
             entity_type, data, ..
@@ -496,11 +510,14 @@ fn marked_files(
         {
             let hash = *blake3::hash(data).as_bytes();
             if let Some(file) = masked_file_in_txn(store, txn, &hash)? {
+                if file.ruled_no_secret {
+                    ruled.insert(hash);
+                }
                 marked.insert(hash, file.places());
             }
         }
     }
-    Ok(marked)
+    Ok((marked, ruled))
 }
 
 fn offset(at: usize) -> Result<u64> {
@@ -513,8 +530,10 @@ struct FoundFile {
     keys: Vec<FileKey>,
     /// The ASSET put that carried it, for the found-key notice (FIX 2780).
     record: EntityId,
-    /// The door sealed it whole (`seal_file`): no masked reader is served it.
-    sealed: bool,
+    /// The door sealed it whole (`seal_file`), for the scan's reason: no
+    /// masked reader is served it, and the owner's found-key notice names
+    /// it (L6-03-SEALED-FILE-NO-NOTICE).
+    sealed: Option<&'static str>,
 }
 
 /// One key a plan found in a file: the member that holds it (none for the
@@ -590,6 +609,9 @@ struct Masker {
     /// Each file's key places by its bytes' hash: marked before, or by this
     /// plan.
     marked: HashMap<[u8; 32], KeyPlaces>,
+    /// The hashes of the files a batch puts whose seal the owner ruled no
+    /// secret: none is sealed again (L6-03-SEALED-FILE-NO-NOTICE).
+    ruled_seals: HashSet<[u8; 32]>,
     /// The files this plan marks.
     files: Vec<FoundFile>,
     /// Every file put that carries a mark.
@@ -734,7 +756,7 @@ impl Masker {
             hash,
             keys,
             record: id,
-            sealed: false,
+            sealed: None,
         });
         Ok(Some(copy))
     }
@@ -775,7 +797,7 @@ impl Masker {
             hash,
             keys,
             record,
-            sealed: false,
+            sealed: None,
         });
         Ok(united)
     }

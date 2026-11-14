@@ -157,6 +157,7 @@ impl StreamKnown {
                 masked_at: crate::ports::recorded_at_in_txn(store, txn)?,
                 members: Vec::new(),
                 sealed: false,
+                ruled_no_secret: false,
             },
         };
         let mut added = false;

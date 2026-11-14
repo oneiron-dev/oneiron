@@ -10,7 +10,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::vault::Vault;
 
-use super::{FOUND, FoundKeyNotice, actions};
+use super::{FOUND, FoundKeyNotice};
 
 /// Where a page of found-key notices ends: the newest key time and the
 /// record of its last notice. As text, `<found_at>.<record as 32 hex>`.
@@ -75,10 +75,10 @@ impl Vault {
         let mut rows = Vec::new();
         for row in FOUND.iter_from(&self.store, &txn, &[])? {
             let (record, found) = row?;
-            if open_only && found.keys.iter().all(|key| key.settled.is_some()) {
+            if open_only && !found.is_open() {
                 continue;
             }
-            let latest = found.keys.iter().map(|key| key.found_at).max().unwrap_or(0);
+            let latest = found.latest().unwrap_or(0);
             if after.is_some_and(|cursor| !cursor.precedes(latest, &record)) {
                 continue;
             }
@@ -100,11 +100,7 @@ impl Vault {
         let notices = rows
             .into_iter()
             .map(|(_, record, found)| {
-                let keys = found
-                    .keys
-                    .iter()
-                    .map(|key| actions::card_in_txn(self, &txn, &record, key))
-                    .collect::<Result<Vec<_>>>()?;
+                let keys = found.cards_in_txn(self, &txn, &record)?;
                 Ok(FoundKeyNotice { record, keys })
             })
             .collect::<Result<Vec<_>>>()?;

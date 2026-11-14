@@ -108,16 +108,18 @@ impl Vault {
         }
         // Only a mark on the file's own bytes is filled as they pass; one
         // inside a member is rebuilt from the whole body below.
-        let spans = match sight {
+        let (spans, ruled) = match sight {
             SecretSight::Masked => masked_file_in_txn(&self.store, txn, expected)?
                 .filter(|mark| mark.members.is_empty())
-                .map(|mark| {
-                    mark.keys
+                .map_or((None, false), |mark| {
+                    let spans = mark
+                        .keys
                         .iter()
                         .map(|key| (key.start, key.end))
-                        .collect::<Vec<_>>()
+                        .collect::<Vec<_>>();
+                    (Some(spans), mark.ruled_no_secret && !mark.sealed)
                 }),
-            SecretSight::Owner | SecretSight::Granted => None,
+            SecretSight::Owner | SecretSight::Granted => (None, false),
         };
         if spans.as_ref().is_some_and(|spans| {
             spans
@@ -143,7 +145,9 @@ impl Vault {
             return Ok(None);
         };
         if spans.is_some() {
-            if let Some(reason) = reader.write_tree_hit(&copy, None) {
+            // A file whose seal the owner ruled no secret is not read for the
+            // hit the door sealed it for (L6-03-SEALED-FILE-NO-NOTICE).
+            if !ruled && let Some(reason) = reader.write_tree_hit(&copy, None) {
                 return Err(masked_copy_withheld(reason));
             }
             return Ok(Some(copy));
