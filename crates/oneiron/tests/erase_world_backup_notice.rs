@@ -78,6 +78,7 @@ fn preview(fixture: &OwnedVault, record: EntityId) -> TestResult<(Value, String)
                 record,
                 confirm: None,
                 also_same_bytes: false,
+                check_in_ref: None,
             })?,
         },
     )?;
@@ -118,6 +119,7 @@ fn a_world_erase_preview_and_receipt_say_old_backups_keep_an_unreadable_copy() -
             record: world,
             confirm: Some(confirm),
             also_same_bytes: false,
+            check_in_ref: None,
         },
     )?;
     assert_eq!(

@@ -312,6 +312,7 @@ pub use oneiron_contracts::memory::MEMORY_CODE_HOST_ACTION_REFUSED;
 pub use oneiron_contracts::memory::MEMORY_CODE_IDENTITY_UNSETTLED;
 pub use oneiron_contracts::memory::MEMORY_CODE_INVENTED_REFERENCE;
 pub use oneiron_contracts::memory::MEMORY_CODE_OWNER_CONFIRM_REQUIRED;
+pub use oneiron_contracts::memory::{CHECK_IN_PENDING_REASON_PREFIX, MEMORY_CODE_CHECK_IN_PENDING};
 // WILL-PLAN L13 row 03: a room's whole off-record stretch, which no
 // consent record admits a session row to manage.
 /// The recipient a host proved for a handle's repo reads (FIX 7608 2b-ii).

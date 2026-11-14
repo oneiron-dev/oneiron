@@ -174,6 +174,19 @@ pub enum ProofKind {
     DelayWindow,
 }
 
+impl ProofKind {
+    /// The settlement's `proof_kind` token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::HumanConfirm => "human_confirm",
+            Self::Key => "key",
+            Self::Quorum => "quorum",
+            Self::DelayWindow => "delay_window",
+        }
+    }
+}
+
 /// What the decision-model check (M) may do for an act.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
