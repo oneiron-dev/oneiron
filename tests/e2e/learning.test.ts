@@ -297,14 +297,17 @@ suite.todo(test, "LEARNING-07", "waits on public trainer/seat-evaluator adapter,
 // OF-577/512. Existing GET /v1/owner/coach/training-offers lists pending offers;
 // POST /answer {offer,digest,answer,training?} settles the EXACT shown snapshot;
 // POST /undo {offer} undoes a stock switch. These are real public owner routes.
-// vault.coach.training_offers.run {} runs one Coach offer pass now (owner, or a
-// holder of engine.controls.maintenance_cadence) and answers
-// {state:"ran", attempt, caller, end:{end:"drafted"|"no_offer"|"missing",
-// prerequisite?}, offers: offer ids}; .result reads the offers. The pass shares
-// the nightly pass's day budget. Missing: the training-offer skill in
-// oneiron-hub at a pinned ref (the pass loads it by name from the default hub),
-// a dated evidence window on the run, and per-candidate tokenizer counts. Do
-// not drive the private queue, wait overnight, or insert a finished offer body.
+// vault.coach.training_offers.run {window?:{from,until}} runs one Coach offer
+// pass now (owner, or a holder of engine.controls.maintenance_cadence) and
+// answers {state:"ran", attempt, caller, window, end:{end:"drafted"|"no_offer"|
+// "missing", prerequisite?}, offers: offer ids}; .result reads the offers. The
+// window dates the receipts each seat is priced on (from < until <= the vault's
+// now, at most 90 days; none = the last 30 days); date receipts through
+// POST /v1/usage/events occurred_at. The pass shares the nightly pass's day
+// budget. Missing: the training-offer skill in oneiron-hub at a pinned ref (the
+// pass loads it by name from the default hub) and per-candidate tokenizer
+// counts. Do not drive the private queue, wait overnight, or insert a finished
+// offer body.
 // Exercise receipt-backed incumbent cost vs stock switch, train and self-train
 // on the same projected workload with each tokenizer. Saving is AVOIDABLE cost;
 // include pilot/migration/re-embed in one-off cost and disclose unknowns as null,
@@ -328,7 +331,7 @@ type Learning08 = {
   answer: "decline" | "postpone" | "approve";
   changed_seats: string[];
 };
-suite.todo(test, "LEARNING-08", "waits on the training-offer skill in oneiron-hub, a dated evidence window on vault.coach.training_offers.run and per-candidate tokenizer counts");
+suite.todo(test, "LEARNING-08", "waits on the training-offer skill in oneiron-hub and per-candidate tokenizer counts");
 
 // LEARNING-09 — RSI budget holds rather than kills should work. OF-496.
 // Existing research.reserve_work {root,purpose,units,attempt?} -> reservation ID,

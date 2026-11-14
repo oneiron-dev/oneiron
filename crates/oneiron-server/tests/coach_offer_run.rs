@@ -17,9 +17,22 @@
 //!   read from the usage ledger. With the day nearly spent, the first run
 //!   drafts on what is left and the second answers `missing` /
 //!   `day_budget` with no model call; spend older than a day does not count.
+//! * `a_run_over_a_dated_window_prices_the_receipts_dated_in_it`: a run that
+//!   names a 20-day window which closed 40 days ago drafts its offer on the
+//!   two calls dated in it, not on the last 30 days' calls: the offer's
+//!   workload is that window and those two receipts, and its month is the
+//!   window's bill scaled from 20 days.
+//! * `a_run_names_only_a_dated_window_of_at_most_90_days_that_has_passed`: a
+//!   window whose from is not before its until, whose until is after the
+//!   vault's now, or which spans over 90 days is refused BAD_REQUEST with no
+//!   model call. No window reads the last 30 days; exactly 90 days up to now
+//!   is let in; a window with no seat's call in it ends `missing` /
+//!   `metered_seat`.
 //!
 //! Reads JSON only (no engine type of the new verb), so on a main without the
-//! verb every test fails on its first status assertion (404 NOT_FOUND).
+//! verb every test fails on its first status assertion (404 NOT_FOUND). On a
+//! head whose run takes no window, the last two fail on their first window:
+//! the request does not decode.
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support --test
@@ -392,28 +405,34 @@ impl Fixture {
             ("studied-call-2", now - 50),
             ("studied-call-old", now - 31 * DAY_SECS),
         ] {
-            self.record(UsageEvent {
-                owner: self.billing.0.clone(),
-                vault_id: self.billing.1.clone(),
-                idempotency_key: key.to_owned(),
-                source: Some(UsageMode::Local),
-                event_type: UsageEventType::Inference,
-                role: Some(STUDIED_ROLE.to_owned()),
-                occurred_at: Some(occurred_at),
-                agent_id: None,
-                model: Some(seat.to_owned()),
-                service: None,
-                token_counts: UsageTokenCounts {
-                    input_tokens: 40_000,
-                    output_tokens: 8_000,
-                    ..UsageTokenCounts::default()
-                },
-                cost_rates: None,
-                unpriced: Some(UnpricedReason::UnpricedModel),
-                service_amount: 0,
-                run: None,
-            });
+            self.record_studied_seat_call(seat, key, occurred_at);
         }
+    }
+
+    /// One metered call of the studied seat on `seat`'s model, of 40_000
+    /// input and 8_000 output tokens, dated `occurred_at`.
+    fn record_studied_seat_call(&self, seat: &str, key: &str, occurred_at: u64) {
+        self.record(UsageEvent {
+            owner: self.billing.0.clone(),
+            vault_id: self.billing.1.clone(),
+            idempotency_key: key.to_owned(),
+            source: Some(UsageMode::Local),
+            event_type: UsageEventType::Inference,
+            role: Some(STUDIED_ROLE.to_owned()),
+            occurred_at: Some(occurred_at),
+            agent_id: None,
+            model: Some(seat.to_owned()),
+            service: None,
+            token_counts: UsageTokenCounts {
+                input_tokens: 40_000,
+                output_tokens: 8_000,
+                ..UsageTokenCounts::default()
+            },
+            cost_rates: None,
+            unpriced: Some(UnpricedReason::UnpricedModel),
+            service_amount: 0,
+            run: None,
+        });
     }
 
     /// One settled call of an earlier offer pass: `units` spent under the
@@ -812,6 +831,146 @@ fn two_runs_in_one_day_draw_on_one_day_budget() {
             DAY_BUDGET_UNITS - left + spent <= DAY_BUDGET_UNITS,
             "the day's offer spend stays within one day's budget: {spent} of {left} left"
         );
+        fixture.finish().await;
+    });
+}
+
+#[test]
+fn a_run_over_a_dated_window_prices_the_receipts_dated_in_it() {
+    run_on_engine_stack("offer-run-dated-window", || async {
+        let fixture = Fixture::new(raise_first_option()).await;
+        fixture.install_offer_skill();
+        let seat = fixture.studied_seat_model().await;
+        let now = fixture.vault.now_recorded_at();
+        // A 20-day window that closed 40 days ago. Two of the seat's calls
+        // are dated in it, and one before it shows the window was metered
+        // throughout; the fixture's own calls (the last 31 days) come after.
+        let (from, until) = (now - 60 * DAY_SECS, now - 40 * DAY_SECS);
+        for (key, occurred_at) in [
+            ("window-call-1", now - 50 * DAY_SECS),
+            ("window-call-2", now - 45 * DAY_SECS),
+            ("before-window", now - 61 * DAY_SECS),
+        ] {
+            fixture.record_studied_seat_call(&seat, key, occurred_at);
+        }
+
+        let window = json!({"from": from, "until": until});
+        let (status, answer) = fixture
+            .as_owner(VERB, json!({"window": window.clone()}))
+            .await;
+        assert_eq!(status, StatusCode::OK, "windowed run: {answer}");
+        assert_eq!(answer["state"], "ran", "{answer}");
+        assert_eq!(
+            answer["window"], window,
+            "the run read its window: {answer}"
+        );
+        assert_eq!(answer["end"]["end"], "drafted", "{answer}");
+        assert_eq!(fixture.offer_calls(), 1, "the Coach was asked once");
+
+        let attempt = answer["attempt"].as_str().expect("attempt id");
+        let result = fixture.result_of(attempt).await;
+        let offers = result["offers"].as_array().expect("offers");
+        assert_eq!(offers.len(), 1, "{result}");
+        let workload = &offers[0]["workload"];
+        assert_eq!(workload["from"], from, "{result}");
+        assert_eq!(workload["until"], until, "{result}");
+        assert_eq!(
+            workload["calls"], 2,
+            "only the calls dated in the window: {result}"
+        );
+        assert_eq!(workload["complete"], true, "{result}");
+        let mut receipts: Vec<&str> = workload["receipt_refs"]
+            .as_array()
+            .expect("receipt refs")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        receipts.sort_unstable();
+        assert_eq!(receipts, ["window-call-1", "window-call-2"], "{result}");
+        // Two calls of 40_000 + 8_000 tokens at 2 USD a million tokens bill
+        // 0.192 USD over 20 days: 0.288 USD a month.
+        let monthly = offers[0]["cost"]["monthly_before"]
+            .as_f64()
+            .expect("the incumbent's month is priced");
+        assert!(
+            (monthly - 0.288).abs() < 1e-9,
+            "the month is the window's bill scaled from its 20 days: {result}"
+        );
+        fixture.finish().await;
+    });
+}
+
+#[test]
+fn a_run_names_only_a_dated_window_of_at_most_90_days_that_has_passed() {
+    run_on_engine_stack("offer-run-window-bounds", || async {
+        // No offer skill: a run that is let in reads the seats' calls in its
+        // window, then ends before any model call.
+        let fixture = Fixture::new(raise_first_option()).await;
+        let now = fixture.vault.now_recorded_at();
+        for (window, bound) in [
+            (
+                json!({"from": now - DAY_SECS, "until": now - DAY_SECS}),
+                "before its until",
+            ),
+            (
+                json!({"from": now - DAY_SECS, "until": now + DAY_SECS}),
+                "after the vault's now",
+            ),
+            (
+                json!({"from": now - 91 * DAY_SECS, "until": now}),
+                "at most 90 days",
+            ),
+        ] {
+            let (status, body) = fixture
+                .as_owner(VERB, json!({"window": window.clone()}))
+                .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{window}: {body}");
+            assert_eq!(body["error"]["code"], "BAD_REQUEST", "{window}: {body}");
+            assert!(
+                body["error"]["message"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("evidence window") && text.contains(bound)),
+                "{window}: the refusal names the bound it breaks: {body}"
+            );
+        }
+        assert_eq!(fixture.offer_calls(), 0, "no model call");
+
+        // No window: the nightly pass's last 30 days, which hold the seat's
+        // calls.
+        let (status, answer) = fixture.as_owner(VERB, json!({})).await;
+        assert_eq!(status, StatusCode::OK, "no window: {answer}");
+        assert_eq!(answer["state"], "ran", "{answer}");
+        let from = answer["window"]["from"].as_u64().expect("window from");
+        let until = answer["window"]["until"].as_u64().expect("window until");
+        assert!(until >= now, "the window ends at the vault's now: {answer}");
+        assert_eq!(until - from, 30 * DAY_SECS, "{answer}");
+        assert_eq!(
+            answer["end"]["prerequisite"], "offer_skill",
+            "the seat's calls were read: {answer}"
+        );
+
+        // Exactly 90 days up to now is let in, and reads the same calls.
+        let window = json!({"from": now - 90 * DAY_SECS, "until": now});
+        let (status, answer) = fixture
+            .as_owner(VERB, json!({"window": window.clone()}))
+            .await;
+        assert_eq!(status, StatusCode::OK, "90 days: {answer}");
+        assert_eq!(answer["window"], window, "{answer}");
+        assert_eq!(answer["end"]["prerequisite"], "offer_skill", "{answer}");
+
+        // A window no seat's call is dated in asks no Coach.
+        let window = json!({"from": now - 70 * DAY_SECS, "until": now - 60 * DAY_SECS});
+        let (status, answer) = fixture
+            .as_owner(VERB, json!({"window": window.clone()}))
+            .await;
+        assert_eq!(status, StatusCode::OK, "an empty window: {answer}");
+        assert_eq!(answer["window"], window, "{answer}");
+        assert_eq!(answer["end"]["end"], "missing", "{answer}");
+        assert_eq!(
+            answer["end"]["prerequisite"], "metered_seat",
+            "no seat's call is dated in it: {answer}"
+        );
+        assert_eq!(fixture.offer_calls(), 0, "no model call");
         fixture.finish().await;
     });
 }

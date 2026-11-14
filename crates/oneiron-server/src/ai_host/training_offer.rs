@@ -24,7 +24,7 @@ use oneiron::learning::learning_estimate_with_sources;
 use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::manifest::{MODEL_ROLES, ModelRole};
 use oneiron::llm::registry::ModelRegistryRow;
-use oneiron::skill_optimize::offer_doors::{OfferPassEnd, OfferPassPrerequisite};
+use oneiron::skill_optimize::offer_doors::{OfferPassEnd, OfferPassPrerequisite, OfferPassWindow};
 use oneiron::skill_optimize::offer_pilot::{
     model_offer_licence as licence, model_offer_pin as pin, training_base_pin as base_pin,
     training_destination as destination,
@@ -61,8 +61,9 @@ use sources::Sources;
 use unverifiable::{Alone, Unverifiable};
 
 const DAY_SECS: u64 = 24 * 60 * 60;
-/// The workload an offer is priced from, and the window its check reads.
-/// Canon names no window: the offer skill's own record reads 30 days.
+/// The workload the nightly pass prices an offer from, and the window its
+/// check reads. Canon names no window: the offer skill's own record reads 30
+/// days. A run-now pass may name its own dated window instead.
 const WINDOW_SECS: u64 = 30 * DAY_SECS;
 /// A month's bill, from a window's.
 const MONTH_SECS: u64 = 30 * DAY_SECS;
@@ -106,13 +107,24 @@ const fn missing(prerequisite: OfferPassPrerequisite) -> OfferPassEnd {
     OfferPassEnd::Missing { prerequisite }
 }
 
-/// Raises at most one offer for each served seat, the busiest first, and
-/// says how the pass ended. The nightly worker ignores the end; the run-now
-/// door answers it.
+/// The nightly pass's evidence window: the last [`WINDOW_SECS`] before `now`.
+pub(super) const fn rolling_window(now: u64) -> OfferPassWindow {
+    OfferPassWindow {
+        from: now.saturating_sub(WINDOW_SECS),
+        until: now,
+    }
+}
+
+/// Raises at most one offer for each served seat, the busiest first, each
+/// priced on the seat's metered calls in `window`, and says how the pass
+/// ended. The nightly worker reads [`rolling_window`] and ignores the end; the
+/// run-now door may name a dated window and answers the end. `now` is the
+/// vault's: the day budget, the skill load and the offer's own dates read it.
 pub(super) fn draft(
     server: &SyncServer,
     admitted: &DreamerAdmittedAttempt,
     now: u64,
+    window: OfferPassWindow,
 ) -> oneiron::Result<OfferPassEnd> {
     let vault = server.vault();
     // With no meter there is no workload to price an offer on.
@@ -121,7 +133,6 @@ pub(super) fn draft(
     };
     let runtime = server.ai.model_runtime();
     let (owner, vault_id) = (meter.owner(), meter.vault_id());
-    let from = now.saturating_sub(WINDOW_SECS);
     let mut seats = Vec::new();
     for role in MODEL_ROLES {
         let Some(seat) = runtime.seat(role) else {
@@ -132,7 +143,14 @@ pub(super) fn draft(
         };
         let usage = server
             .usage_ledger
-            .seat_usage(owner, vault_id, &role_key(role), None, from, now)
+            .seat_usage(
+                owner,
+                vault_id,
+                &role_key(role),
+                None,
+                window.from,
+                window.until,
+            )
             .map_err(|_| Error::InvalidConfig("the seat's usage could not be read".into()))?;
         // A seat with no metered call has no receipts to ground an offer.
         if usage.calls == 0 || usage.refs.is_empty() {
@@ -261,7 +279,7 @@ pub(super) fn draft(
             locality,
             usage,
             (&record, record_rows.as_slice()),
-            now,
+            window,
         )?
         else {
             continue;
@@ -383,8 +401,8 @@ struct Brief {
 }
 
 impl Brief {
-    /// The seat's brief, or `None` when it cannot ground an offer: no pinned
-    /// incumbent, or no option to raise.
+    /// The seat's brief over its metered calls in `window`, or `None` when it
+    /// cannot ground an offer: no pinned incumbent, or no option to raise.
     #[allow(clippy::too_many_arguments)]
     fn gather(
         vault: &Vault,
@@ -396,7 +414,7 @@ impl Brief {
         locality: ModelLocality,
         usage: SeatUsage,
         (record, record_rows): (&serde_json::Value, &[EntityId]),
-        now: u64,
+        window: OfferPassWindow,
     ) -> oneiron::Result<Option<Self>> {
         let seat = model_role_seat(role);
         let Some(current) = registry
@@ -408,10 +426,10 @@ impl Brief {
         let Some((incumbent, _)) = pin(current) else {
             return Ok(None);
         };
-        let from = now.saturating_sub(WINDOW_SECS);
+        let OfferPassWindow { from, until } = window;
         let workload = SeatWorkload {
             from,
-            until: now,
+            until,
             calls: Some(usage.calls),
             input_tokens: Some(usage.input_tokens),
             output_tokens: Some(usage.output_tokens),
@@ -548,7 +566,8 @@ impl Brief {
             "seat": self.seat,
             "incumbent": self.incumbent_data,
             "workload": {
-                "days": WINDOW_SECS / DAY_SECS,
+                "days": self.workload.until.saturating_sub(self.workload.from) as f64
+                    / DAY_SECS as f64,
                 "calls": self.usage.calls,
                 "input_tokens": self.usage.input_tokens,
                 "cache_read_tokens": self.usage.cache_read_tokens,

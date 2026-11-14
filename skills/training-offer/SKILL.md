@@ -7,8 +7,9 @@ description: Decide whether one model seat's month of work is worth a training o
 
 ## Input
 The next message is one model seat of this vault, as JSON: the model it runs
-on now, its calls over the last 30 days, and each option fixed code priced on
-that same workload at list price. An option is a stock model to switch to, or
+on now, its calls over a dated window (`workload.days` long: the last 30 days
+unless the run named another), and each option fixed code priced on that same
+workload at list price. An option is a stock model to switch to, or
 a training recipe that ran before for this seat. A price marked
 `"estimate": true` is on the incumbent's own token counts, since the
 candidate's tokenizer was not measured, so its cost may differ. The message
