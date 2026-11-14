@@ -432,28 +432,30 @@ fn value_hit(
     form: BodyForm,
     read: &dyn Fn(&[u8]) -> Option<&'static str>,
 ) -> Result<Option<&'static str>> {
-    Ok(read(&value_bytes(value, form)?))
+    Ok(read(&value_bytes(value, form)?.0))
 }
 
-/// The bytes custody holds for a sealed value: a string's or byte string's
-/// own bytes; any other value in the encoding of the body that holds it
-/// (`form`), so a revealed value reads as the body wrote it. A JSON value
+/// The bytes custody holds for a sealed value, and how it holds them: a
+/// string's or byte string's own bytes (`Raw`); any other value in the
+/// encoding of the body that holds it (`form`), so a revealed value reads
+/// as the body wrote it, and the key says which encoding, so a restore puts
+/// back the value itself (FIX SEAL-WHOLE-VALUE-HELD-RAW). A JSON value
 /// that cannot be written as JSON is held in MessagePack, as a credential
 /// field's value is (`Masker::mask_member`).
-fn value_bytes(value: &Value, form: BodyForm) -> Result<Zeroizing<Vec<u8>>> {
+fn value_bytes(value: &Value, form: BodyForm) -> Result<(Zeroizing<Vec<u8>>, HeldForm)> {
     match value {
-        Value::String(text) => Ok(Zeroizing::new(text.as_bytes().to_vec())),
-        Value::Binary(bytes) => Ok(Zeroizing::new(bytes.clone())),
+        Value::String(text) => Ok((Zeroizing::new(text.as_bytes().to_vec()), HeldForm::Raw)),
+        Value::Binary(bytes) => Ok((Zeroizing::new(bytes.clone()), HeldForm::Raw)),
         other => {
             if let BodyForm::Json = form
                 && let Ok(json) = serde_json::to_vec(other)
             {
-                return Ok(Zeroizing::new(json));
+                return Ok((Zeroizing::new(json), HeldForm::Json));
             }
             let mut bytes = Zeroizing::new(Vec::new());
             rmpv::encode::write_value(&mut *bytes, other)
                 .map_err(|_| Error::InvariantViolation("a sealed value did not encode"))?;
-            Ok(bytes)
+            Ok((bytes, HeldForm::Encoded))
         }
     }
 }
@@ -626,8 +628,15 @@ struct Sealer<'a, 'w> {
 }
 
 impl Sealer<'_, '_> {
-    /// The handle `value`, sealed whole from the record at `place`, takes.
-    fn handle(&mut self, wtxn: &mut RwTxn<'_>, place: &str, value: &[u8]) -> Result<String> {
+    /// The handle `value`, sealed whole from the record at `place` and held
+    /// as `held` says, takes.
+    fn handle(
+        &mut self,
+        wtxn: &mut RwTxn<'_>,
+        place: &str,
+        value: &[u8],
+        held: HeldForm,
+    ) -> Result<String> {
         if let Some(handle) = self.sealed.get(value) {
             return Ok(handle.clone());
         }
@@ -640,9 +649,7 @@ impl Sealer<'_, '_> {
                 place,
                 value,
                 self.reason,
-                // As a seal is held on its own stack: the bytes the seal
-                // read, a text's or a value's encoding alike.
-                HeldForm::Raw,
+                held,
                 at,
             )?,
             // With no door nothing is minted (FIX 6647): only a value
@@ -656,7 +663,7 @@ impl Sealer<'_, '_> {
     /// `text`, sealed whole from `place`: it keeps its handle as
     /// `[secret sc12]`.
     fn seal_text(&mut self, wtxn: &mut RwTxn<'_>, place: &str, text: &mut String) -> Result<()> {
-        let handle = self.handle(wtxn, place, text.as_bytes())?;
+        let handle = self.handle(wtxn, place, text.as_bytes(), HeldForm::Raw)?;
         replace_wiped(text, format!("{HANDLE_OPEN}{handle}]"));
         Ok(())
     }
@@ -671,7 +678,7 @@ impl Sealer<'_, '_> {
         path: Option<Vec<usize>>,
     ) -> Result<()> {
         let Some(path) = path else {
-            let handle = self.handle(wtxn, place, data.as_slice())?;
+            let handle = self.handle(wtxn, place, data.as_slice(), HeldForm::Raw)?;
             replace_wiped(data, format!("{HANDLE_OPEN}{handle}]").into_bytes());
             return Ok(());
         };
@@ -693,10 +700,10 @@ impl Sealer<'_, '_> {
         form: BodyForm,
         path: &[usize],
     ) -> Result<()> {
-        let value = part_at(tree, path)
+        let (value, held) = part_at(tree, path)
             .map(|part| value_bytes(&*part, form))
             .ok_or_else(unnamed)??;
-        let handle = self.handle(wtxn, place, &value)?;
+        let handle = self.handle(wtxn, place, &value, held)?;
         put_handle_at(tree, path, &handle)
     }
 }

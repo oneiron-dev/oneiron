@@ -143,7 +143,10 @@ impl Masker {
             let part = part_at(&mut tree.0, &path).ok_or(Error::InvariantViolation(
                 "a file seal's path names no value in its tree",
             ))?;
-            let value = value_bytes(part, form)?;
+            // A file keeps its bytes as written: its key is a span of them,
+            // which a ruling unmarks and never writes back, so it is held
+            // as read.
+            let (value, _) = value_bytes(part, form)?;
             self.at = Some((record, "file".to_owned()));
             self.handle(&value, reason)?;
             for gap in gaps {
