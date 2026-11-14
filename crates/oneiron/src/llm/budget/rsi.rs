@@ -6,7 +6,8 @@ use std::collections::BTreeMap;
 
 /// Durable reserve/settle/refund ledger for the RSI research-loop spend budget. Key: ().
 const RSI_LINE: SideTable<(), Line, LegacyJson> = SideTable::new(&side_table::BUDGET_RSI_LINE);
-type RsiResult<T> = std::result::Result<T, RsiBudgetError>;
+#[doc(hidden)]
+use oneiron_verb_wire::llm::budget::rsi::{RsiLine, RsiResult};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Reservation {
@@ -18,11 +19,6 @@ struct Reservation {
     overdraft: Option<RsiOverdraftReceipt>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-enum RsiLine {
-    Tokens,
-    Exposure,
-}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Line {
     config: RsiBudgetConfig,

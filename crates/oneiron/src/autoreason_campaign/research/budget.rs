@@ -24,14 +24,8 @@ const RESERVATION: SideTable<([u8; 16], EntityId), ResearchReservation, Named> =
 /// The refusal of a reservation the campaign's lease has no room for.
 const LEASE_FULL: &str = "the reservation exceeds the campaign's lease";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ResearchReservationLine {
-    /// Token-denominated loop work, by purpose.
-    Work { purpose: RsiSpendPurpose },
-    /// Exposure-denominated exploration.
-    Exploration,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::autoreason_campaign::research::budget::ResearchReservationLine;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

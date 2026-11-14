@@ -28,37 +28,10 @@ use crate::{AttemptId, EntityId, Error, Result, Vault};
 const BASIS: SideTable<([u8; 16], [u8; 16]), PromotionBasis, Named> =
     SideTable::new(&side_table::AUTORESEARCH_BASIS);
 
-/// The held-out decision, as decided by the campaign's dominance rule.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum HeldOutCall {
-    Promote,
-    Reject,
-    EscalateTradeoff,
-}
-
-/// The one sealed confirmation of a candidate. `exposure` is empty when the
-/// shot was consumed but the release never completed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ConfirmationReceipt {
-    pub cohort: EntityId,
-    pub consumed_at: u64,
-    pub exposure: Option<EntityId>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PromotionDisposition {
-    /// The candidate is the campaign's new incumbent.
-    Promoted,
-    /// The sealed referee did not see a strict win.
-    LostSealed,
-    /// The sufficiency card did not read not-worse.
-    HeldInsufficient,
-    /// The skill gate's own verdict did not accept the revision.
-    HeldGate,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::autoreason_campaign::research::promotion::{
+    ConfirmationReceipt, HeldOutCall, PromotionDisposition,
+};
 
 /// The durable promotion receipt. It carries the policy version.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
