@@ -1,8 +1,10 @@
-//! Doors for `tests/mail_counterparty_author.rs` (fix list row 15412): land one
-//! provider message through a mail sync step on a fresh vault, and read back
-//! the author each stored MESSAGE of its TURN names. Thin wrappers over
-//! production APIs only; no landing logic here. Compiled only under
-//! `--cfg oneiron_test_support` (`test_doors`); hidden, never API.
+//! Doors for `tests/mail_counterparty_author.rs` and
+//! `tests/mail_sender_person.rs` (fix list row 15412): land one provider
+//! message through a mail sync step on a fresh vault, and read back the
+//! author each stored MESSAGE of its TURN names, or the PERSON its
+//! `AuthoredBy` edge names. Thin wrappers over production APIs only; no
+//! landing logic here. Compiled only under `--cfg oneiron_test_support`
+//! (`test_doors`); hidden, never API.
 
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
@@ -22,6 +24,9 @@ const PROVIDER_ID: &str = "counterparty-msg-1";
 /// The custody name the mailbox credential is stored under.
 const CUSTODY_REF: &str = "test-mail-cred";
 
+/// The sender of a received message.
+const SENDER_ADDRESS: &str = "owen@example.com";
+
 /// The mailbox's own address and provider account.
 const MAILBOX_ADDRESS: &str = "yuki@example.com";
 const MAILBOX_ACCOUNT: &str = "test-account";
@@ -38,9 +43,9 @@ fn memory_invalid(where_: &str, error: crate::memory::MemoryError) -> Error {
 /// or, when `sent_by_mailbox`, from the mailbox to Owen.
 fn headers(received_at: u64, sent_by_mailbox: bool) -> MailHeaders {
     let (from, to) = if sent_by_mailbox {
-        (MAILBOX_ADDRESS, "owen@example.com")
+        (MAILBOX_ADDRESS, SENDER_ADDRESS)
     } else {
-        ("owen@example.com", MAILBOX_ADDRESS)
+        (SENDER_ADDRESS, MAILBOX_ADDRESS)
     };
     MailHeaders {
         provider_id: PROVIDER_ID.to_owned(),
@@ -145,6 +150,61 @@ pub fn landed_message_authors(
     now_sec: u64,
     sent_by_mailbox: bool,
 ) -> Result<Vec<String>> {
+    let turn = land_one(vault, now_sec, sent_by_mailbox)?;
+    let txn = vault.store.env.read_txn()?;
+    stored_messages(vault, &txn, &turn)?
+        .iter()
+        .map(|(_, body)| stored_author(body))
+        .collect()
+}
+
+/// What [`land_from_known_sender`] leaves for the test.
+#[doc(hidden)]
+pub struct LandedSpeakers {
+    /// The live PERSON the sender's mail party key names.
+    pub sender: EntityId,
+    /// Each stored MESSAGE's `AuthoredBy` targets, in edge order.
+    pub authored_by: Vec<Vec<EntityId>>,
+}
+
+/// Names Owen's mail party key (`email:owen@example.com`) by a live PERSON,
+/// then lands one message Owen sent to the mailbox, as
+/// [`landed_message_authors`] does, and answers each stored MESSAGE's
+/// `AuthoredBy` targets beside that PERSON.
+///
+/// # Errors
+///
+/// The vault's, or the landing's when no MESSAGE was stored.
+#[doc(hidden)]
+pub fn land_from_known_sender(vault: &Vault, now_sec: u64) -> Result<LandedSpeakers> {
+    let sender =
+        crate::comm::resolve_or_create_comm_party(vault, &format!("email:{SENDER_ADDRESS}"))
+            .map_err(|error| invalid(&format!("sender party: {error:?}")))?;
+    let turn = land_one(vault, now_sec, false)?;
+    let txn = vault.store.env.read_txn()?;
+    let mut authored_by = Vec::new();
+    for (message, _) in stored_messages(vault, &txn, &turn)? {
+        let mut targets = Vec::new();
+        for edge in vault.store.port_edges(
+            &txn,
+            &message,
+            EdgeDirection::Out,
+            Some(EdgeKind::AuthoredBy),
+            None,
+        )? {
+            targets.push(edge?.target);
+        }
+        authored_by.push(targets);
+    }
+    Ok(LandedSpeakers {
+        sender,
+        authored_by,
+    })
+}
+
+/// Connects one Google mailbox on `vault` as its embedded owner and lands
+/// one message through a sync step; answers the message's TURN.
+fn land_one(vault: &Vault, now_sec: u64, sent_by_mailbox: bool) -> Result<EntityId> {
     let owner = vault
         .ensure_embedded_owner_actor()
         .map_err(|error| invalid(&format!("embedded owner: {error:?}")))?;
@@ -201,26 +261,37 @@ pub fn landed_message_authors(
         crate::entity_id::derived_domains::MAIL_TURN,
         &[source.to_hex().as_bytes(), PROVIDER_ID.as_bytes()],
     )?;
-    let txn = vault.store.env.read_txn()?;
-    let mut authors = Vec::new();
+    Ok(turn)
+}
+
+/// Every stored MESSAGE of `turn`, with its body, in edge order.
+///
+/// # Errors
+///
+/// The vault's, or none stored.
+fn stored_messages(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<Vec<(EntityId, Vec<u8>)>> {
+    let mut messages = Vec::new();
     for edge in
         vault
             .store
-            .port_edges(&txn, &turn, EdgeDirection::In, Some(EdgeKind::PartOf), None)?
+            .port_edges(txn, turn, EdgeDirection::In, Some(EdgeKind::PartOf), None)?
     {
         let message = edge?.target;
-        let Some(raw) = vault.store.port_entity_record(&txn, &message)? else {
+        let Some(raw) = vault.store.port_entity_record(txn, &message)? else {
             continue;
         };
-        if raw.entity_type != ENTITY_TYPE_MESSAGE {
-            continue;
+        if raw.entity_type == ENTITY_TYPE_MESSAGE {
+            messages.push((message, raw.body));
         }
-        authors.push(stored_author(&raw.body)?);
     }
-    if authors.is_empty() {
+    if messages.is_empty() {
         return Err(invalid("the landing stored no MESSAGE under the mail TURN"));
     }
-    Ok(authors)
+    Ok(messages)
 }
 
 /// The `author` token a stored MESSAGE body names; a document-pointer body

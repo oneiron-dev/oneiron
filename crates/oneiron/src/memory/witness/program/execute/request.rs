@@ -56,6 +56,13 @@ pub(super) fn resolve_witness_landing<'a, 'v>(
                     "an imported turn carries one source time per message",
                 ));
             }
+            if let crate::memory::SourceAttribution::PerMessage(speakers) = &stamp.attribution
+                && speakers.len() != turn.messages.len()
+            {
+                return Err(MemoryError::bad_request(
+                    "an imported turn names one source speaker per message",
+                ));
+            }
             Landing::Base {
                 route: None,
                 continuation: None,
