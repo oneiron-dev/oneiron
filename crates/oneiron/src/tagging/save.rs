@@ -9,10 +9,15 @@
 //! more parts that the key misses is looked up by sound next, over the
 //! phonetic postings (ARCH-0024 signal 2); its hits are candidates in the
 //! same way, and two or more are a question the nightly identity re-check
-//! asks, never a merge. A miss of both mints a provisional entity under the
-//! source turn's facet. A span whose label the table leaves out is never
-//! looked up: a pronoun, which a tagger labels as a
-//! reference and not as a name, takes its antecedent's link, so a pronoun
+//! asks, never a merge. A person mention that names someone by their
+//! relationship to the speaker, `my manager`, is looked up through the
+//! speaker's role edges (ARCH-0024 signal 3, [`super::role`]) unless the key
+//! finds a real person: one person an Approved edge names is its link, two
+//! or more are candidates, and one only an Auto edge names is left to the
+//! provisional entity, which the re-check asks about. A miss of every rung
+//! mints a provisional entity under the source turn's facet. A span whose
+//! label the table leaves out is never looked up: a pronoun, which a tagger
+//! labels as a reference and not as a name, takes its antecedent's link, so a pronoun
 //! that happens to spell someone's name is never linked to them. A
 //! coreferent name the key misses takes its antecedent's link and never
 //! mints; one whose own name keys elsewhere keeps its own and is merge
@@ -28,7 +33,7 @@
 //! otherwise stays an unresolved decision. Either keeps only entities a
 //! world of the turn holds.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use sha2::{Digest, Sha256};
 
@@ -36,6 +41,7 @@ use super::input::{TurnInput, input_hash, sent_text_offset_in_txn, sole_peer, tu
 use super::marker::{TAGGING_MARKER_KIND, TaggingMarkerConfig, dedupe_key, label_kind_admitted};
 use super::output::{check_output, context_text};
 use super::provisional::{self, ProvisionalEntity};
+use super::role;
 use super::tags::{
     DerivationEnvelope, MentionLink, MentionReference, MergeEvidence, TaggedMention, TurnTags,
     readable_in_txn, replace_in_txn, tag_set_in_txn,
@@ -241,7 +247,7 @@ pub(super) fn save_with_hint_read_in_txn(
         let link = match (inherited, own) {
             (None, None) => MentionLink::Tag,
             (None, Some(kind)) => {
-                let link = linker.link(txn, kind, text)?;
+                let link = linker.link(txn, kind, text, &messages[span.message], hint_read)?;
                 linker.hinted(
                     txn,
                     link,
@@ -263,7 +269,7 @@ pub(super) fn save_with_hint_read_in_txn(
                     if inherited.kind() == Some(kind) {
                         inherited.clone()
                     } else {
-                        linker.link(txn, kind, text)?
+                        linker.link(txn, kind, text, &messages[span.message], hint_read)?
                     }
                 } else {
                     // A name that keys elsewhere than its antecedent keeps
@@ -495,8 +501,43 @@ pub(crate) fn sounds_like_in_txn(
     Linker::new(vault, txn, turn, 0)?.sounds_like(txn, kind, name)
 }
 
-/// Links mentions over the identity key, and over the phonetic postings when
-/// the key misses. It never compares names itself: candidates come only
+/// The persons the speaker of `message` names by a mention of `name` in
+/// `turn` at `now`, as the Linker's role rung finds them, for a re-check
+/// that runs outside a save.
+pub(crate) fn role_hits_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: EntityId,
+    message: &EntityId,
+    kind: u8,
+    name: &str,
+    now: u64,
+) -> Result<Vec<EntityId>> {
+    let Some(word) = role::role_word(kind, name) else {
+        return Ok(Vec::new());
+    };
+    Ok(Linker::new(vault, txn, turn, now)?
+        .role_hits(txn, kind, &word, message, HintRead::Internal)?
+        .into_keys()
+        .collect())
+}
+
+/// The role rung's answer for one mention ([`Linker::role_link`]).
+enum RoleRung {
+    /// The rung links the mention: one person a settled Approved edge
+    /// names, or two or more persons as candidates.
+    Link(MentionLink),
+    /// One person only an unsure edge names: the mention keeps its
+    /// provisional entity, and the re-check asks about that person.
+    Unsure,
+    /// The mention names no role, the key found a real person, or no edge
+    /// names anyone.
+    Abstain,
+}
+
+/// Links mentions over the identity key, over the speaker's role edges for a
+/// mention of a relationship, and over the phonetic postings when the key
+/// misses. It never compares names itself: candidates come only
 /// from those lookups.
 struct Linker<'v> {
     vault: &'v Vault,
@@ -651,14 +692,123 @@ impl<'v> Linker<'v> {
         Ok(found.into_iter().collect())
     }
 
-    /// Links a mention by its own name: the key's candidates, else the
-    /// phonetic rung's when it finds two or more, or a provisional entity
-    /// minted for it. One person who only sounds like the name is an unsure
-    /// match: the mention mints, and the nightly re-check asks whether it
-    /// is that person or someone new (OF-123).
-    fn link(&mut self, txn: &mut heed::RwTxn<'_>, kind: u8, mention: &str) -> Result<MentionLink> {
+    /// The role rung (ARCH-0024 signal 3) for the role `word`: the persons
+    /// the role edges of the speaker of `message` name
+    /// ([`role::role_edges_in_txn`]), with whether an Approved edge names
+    /// them. Each stored id is read as `actor.subject_ref`'s anchor is: it
+    /// follows redirects only to one head, which must be a live or archived
+    /// entity of `kind` in a world the turn is in; a deleted, split or
+    /// wrong-kind id names no one, never a guess. An edge counts only in a
+    /// world the turn is in. A caller's save reads only the edges its read
+    /// admits, and none with no read.
+    fn role_hits(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: u8,
+        word: &str,
+        message: &EntityId,
+        hint_read: HintRead<'_, '_>,
+    ) -> Result<BTreeMap<EntityId, bool>> {
+        let mut found = BTreeMap::new();
+        let Some(speaker) = role::speaker_in_txn(self.vault, txn, message)? else {
+            return Ok(found);
+        };
+        let (vault, now) = (self.vault, self.now);
+        let edges = match hint_read {
+            HintRead::Internal => {
+                role::role_edges_in_txn(vault, txn, &speaker, word, now, |claim| {
+                    self.shares_world(txn, claim)
+                })?
+            }
+            HintRead::Caller(None) => return Ok(found),
+            HintRead::Caller(Some(read)) => {
+                let policy = read.live_policy_manifest_in(txn)?;
+                role::role_edges_in_txn(vault, txn, &speaker, word, now, |claim| {
+                    Ok(self.shares_world(txn, claim)?
+                        && read.is_ref_readable_with_policy_in(txn, &policy, claim)?)
+                })?
+            }
+        };
+        for (person, approved) in edges {
+            let heads = vault.resolve_entity_in_txn(txn, &person)?;
+            let [head] = heads.as_slice() else {
+                continue;
+            };
+            if linkable_in_txn(&vault.store, txn, head, kind)? && self.shares_world(txn, head)? {
+                let sure: &mut bool = found.entry(*head).or_default();
+                *sure |= approved;
+            }
+        }
+        Ok(found)
+    }
+
+    /// The role rung's answer for a person mention that names someone by
+    /// their relationship to the speaker (`my manager`). Two or more
+    /// persons the speaker's role edges name are its candidates, a question
+    /// the nightly re-check asks, never a merge. One person a settled
+    /// Approved edge names is the link, in the form of an exact key hit: a
+    /// known role edge hard-links (ARCH-0024 signal 3). One only an unsure
+    /// edge names (Auto, Proposed, or held for its owner's answer) is an
+    /// unsure match (OF-123): the rung leaves the mention to its provisional
+    /// entity, and the re-check asks whether it is that person or someone
+    /// new. A real person among `keyed`, the key's candidates, wins over the
+    /// rung (signal 1).
+    fn role_link(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: u8,
+        mention: &str,
+        message: &EntityId,
+        hint_read: HintRead<'_, '_>,
+        keyed: &[EntityId],
+    ) -> Result<RoleRung> {
+        let Some(word) = role::role_word(kind, mention) else {
+            return Ok(RoleRung::Abstain);
+        };
+        for id in keyed {
+            if provisional::get_in_txn(&self.vault.store, txn, id)?.is_none() {
+                return Ok(RoleRung::Abstain);
+            }
+        }
+        let hits = self.role_hits(txn, kind, &word, message, hint_read)?;
+        let sure = hits.len() == 1 && hits.values().all(|approved| *approved);
+        Ok(if hits.len() >= 2 || sure {
+            RoleRung::Link(MentionLink::Candidates {
+                kind,
+                entities: hits.into_keys().collect(),
+            })
+        } else if hits.len() == 1 {
+            RoleRung::Unsure
+        } else {
+            RoleRung::Abstain
+        })
+    }
+
+    /// Links a mention said in `message` by its own name: a real person the
+    /// key finds; else, for a mention of the speaker's relationship, the
+    /// role rung's link when it decides one ([`Self::role_link`]); else the
+    /// key's provisional entities, the phonetic rung's persons when it finds
+    /// two or more, or a provisional entity minted for it. One person who
+    /// only sounds like the name is an unsure match: the mention mints, and
+    /// the nightly re-check asks whether it is that person or someone new
+    /// (OF-123). One person only an unsure role edge names is the same
+    /// unsure match, and the phonetic rung is not asked: persons who only
+    /// sound like the role words never stand in for the one the edge names.
+    fn link(
+        &mut self,
+        txn: &mut heed::RwTxn<'_>,
+        kind: u8,
+        mention: &str,
+        message: &EntityId,
+        hint_read: HintRead<'_, '_>,
+    ) -> Result<MentionLink> {
         let mut entities = self.candidates(txn, kind, mention)?;
-        if entities.is_empty() {
+        let unsure_role = match self.role_link(txn, kind, mention, message, hint_read, &entities)? {
+            RoleRung::Link(link) => return Ok(link),
+            RoleRung::Unsure => true,
+            RoleRung::Abstain => false,
+        };
+        if entities.is_empty() && !unsure_role {
             entities = self.sounds_like(txn, kind, mention)?;
             if entities.len() < 2 {
                 entities.clear();

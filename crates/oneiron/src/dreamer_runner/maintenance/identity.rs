@@ -371,7 +371,9 @@ pub(crate) fn recheck_page_for_test(vault: &Vault, now: u64) -> Result<Vec<Ident
 /// The name of a mention an effect may not act on yet: its ask is open, or
 /// it is still uncertain and no saved hint settles it. Provenance that names
 /// no saved mention is unsettled too, with an empty name. Reads only, in the
-/// caller's snapshot: no ask opens here.
+/// caller's snapshot: no ask opens here. The speaker's role edges are read
+/// at the vault's committed clock, so an edge's valid time counts here as
+/// it does in the save and the recheck.
 pub(crate) fn mention_unsettled_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -412,7 +414,7 @@ pub(crate) fn mention_unsettled_in_txn(
         &current,
         &text,
         IdentityAskReason::Unsettled,
-        0,
+        crate::ports::job_recorded_at_in_txn(&vault.store, txn)?,
     )?
     else {
         return Ok(None);
