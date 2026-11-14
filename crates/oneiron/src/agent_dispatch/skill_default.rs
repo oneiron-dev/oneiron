@@ -4,7 +4,8 @@ use crate::{EntityId, Result, Vault};
 
 /// Reads the configured hub's installed holder and its current loadable head
 /// in one snapshot. An absent holder or head keeps the derived reference.
-pub(super) fn workflow_default(vault: &Vault, name: &str) -> Result<EntityId> {
+/// The Coach's offer pass finds its library skill the same way.
+pub(crate) fn workflow_default(vault: &Vault, name: &str) -> Result<EntityId> {
     let fallback = || {
         EntityId::derive(
             crate::entity_id::derived_domains::BOOTSTRAP_SKILL,

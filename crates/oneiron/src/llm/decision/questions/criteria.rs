@@ -8,8 +8,8 @@ use super::super::{AnswerContract, DecisionCall};
 use crate::Result;
 use serde::{Deserialize, Serialize};
 
-/// The most bytes one criteria line holds.
-pub const MAX_CRITERION_BYTES: usize = 512;
+#[doc(hidden)]
+pub use oneiron_verb_wire::llm::decision::questions::criteria::MAX_CRITERION_BYTES;
 
 /// A question's criteria (ARCH-0076 §3): every line a yes needs, any line
 /// that makes a no, and the lines that are never a reason to say no. A

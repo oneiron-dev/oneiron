@@ -17,7 +17,6 @@
 //! The lease-aware twins ([`use_secret_grant_as_caller`],
 //! [`use_secret_grant_for_connector_call`], FIX 4313) take a secret grant the
 //! caller holds in place of a handle, and answer the same way.
-use serde::{Deserialize, Serialize};
 
 use super::connector_call::ConnectorCallReply;
 use crate::attempt_queue::AttemptId;
@@ -37,23 +36,9 @@ use crate::secret_custody::{
 };
 use crate::secret_lease::{SecretGrantCaller, SecretGrantTarget};
 
-/// `self.use`'s input: the handle, the operation, and its arguments.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SecretUseRequest {
-    /// The secret's handle, such as `sc12`, as the text or field holds it.
-    pub handle: String,
-    /// The operation, such as `slack.auth_test`.
-    pub operation: String,
-    /// The operation's arguments, a JSON object; `{}` for one that takes
-    /// none.
-    #[serde(default = "no_arguments")]
-    pub arguments: serde_json::Value,
-}
-
-fn no_arguments() -> serde_json::Value {
-    serde_json::Value::Object(serde_json::Map::new())
-}
+#[doc(hidden)]
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::secret_use::SecretUseRequest;
 
 pub use crate::code_run::{SecretUseAnswer, SecretUseRecord, SecretUseStatus};
 

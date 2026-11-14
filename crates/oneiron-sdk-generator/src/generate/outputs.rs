@@ -33,6 +33,7 @@ pub(crate) const BUILD_TIME_OUTPUTS: &[&str] = &[
     "crates/oneiron-server/src/api/mcp_gateway/generated/agent_verb_dispatch.rs",
     "crates/oneiron-uniffi/src/generated/facade_generated.rs",
     "crates/oneiron-uniffi/src/generated/facade_types_generated.rs",
+    "crates/oneiron-verb-wire/src/generated/verb_input_checks.rs",
     "crates/oneiron/src/verbs/generated/catalog_fragment.d.ts",
     "crates/oneiron/src/verbs/generated/catalog_fragment_revision.rs",
     "crates/oneiron/src/verbs/generated/code-mode.d.ts",
@@ -394,8 +395,13 @@ impl Generator {
     /// share the inventory, and the order they run in names its types).
     pub(crate) fn outputs(&mut self) -> Result<Outputs, GenerateError> {
         let facade_rows = local_facade_rows(self);
-        // sdk_generated.rs.
-        let core = super::emit_core::core(self, &facade_rows)?;
+        // sdk_generated.rs, and the wire crate's share of its input checks and schemas (lib split W3-GEN).
+        let super::emit_core::CoreTexts {
+            core,
+            wire,
+            wire_dependencies,
+        } = super::emit_core::core(self, &facade_rows)?;
+        self.wire_input_dependencies = wire_dependencies;
         let super::emit_server::FacadeDispatch {
             routes: server,
             dispatch,
@@ -431,6 +437,7 @@ impl Generator {
             uniffi_types,
         );
         files.insert("crates/oneiron/src/verbs/generated/sdk_generated.rs", core);
+        files.insert(super::wire_inputs::WIRE_INPUTS_PATH, wire);
         files.insert(
             "crates/oneiron/src/verbs/generated/verb_catalog.rs",
             catalog,
@@ -562,6 +569,7 @@ impl Generator {
             paths.extend(inventory.index.dependency_paths());
         }
         paths.extend(self.fragment_dependencies.iter().cloned());
+        paths.extend(self.wire_input_dependencies.iter().cloned());
         paths
     }
 
@@ -724,7 +732,8 @@ mod tests {
             Some(2)
         );
         assert_eq!(package_outputs("nope"), None);
-        assert_eq!(BUILD_TIME_OUTPUTS.len(), 16);
+        assert_eq!(BUILD_TIME_OUTPUTS.len(), 17);
+        assert!(BUILD_TIME_OUTPUTS.contains(&super::super::wire_inputs::WIRE_INPUTS_PATH));
     }
 
     // python3 -c "import subprocess; print(subprocess.CalledProcessError(-N, ['x']))" on nelly (3.14.7).

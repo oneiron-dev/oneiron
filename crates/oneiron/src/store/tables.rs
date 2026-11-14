@@ -699,6 +699,11 @@ crate::side_table::side_tables! {
     OWN_RATE_CHECK: VaultMeta b"own_rate.check.v1\0" Named
         [restore: not_imaged] [family: not_imaged] [tier: runtime]
         => crate::store::own_rate_rows::erase_check_actor_in_txn;
+    /// Every own-rate crossing in the order it was kept, for the host's health check to read
+    /// past its cursor (ARCH-0044 C5); kept 30 days. Key: u64be (recorded at) + id16.
+    OWN_RATE_CHECK_ORDER: VaultMeta b"own_rate.check_order.v1\0" Named
+        [restore: not_imaged] [family: not_imaged] [tier: runtime]
+        => crate::store::own_rate_rows::erase_check_order_actor_in_txn;
     /// An own actor's act count in its current window per kind. Key: id16 + kind token.
     OWN_RATE_WINDOW: VaultMeta b"own_rate.window.v1\0" Named
         [restore: not_imaged] [family: not_imaged] [tier: runtime]
@@ -956,6 +961,11 @@ crate::side_table::side_tables! {
     /// binary = C2). Key: hash32 (blake3 of the stored bytes).
     SECRET_MASK_SPANS: VaultMeta b"secret_mask:spans:v1:" Named Custody
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The owner's answer whether one custody record is a payment credential, and the Gate
+    /// receipt of the act that set it (L8-60; CROSS-ARCH-0019 `#fence-unproven`). Absent, the
+    /// record's scan-kind label hint answers. Holds no value. Key: id16 (custody record id).
+    SECRET_PAYMENT_MARK: VaultMeta b"secret_payment:mark:v1:" Named Engine
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Points a diagnostic event id at the signed detector run that produced it. Key: id16
     /// Immutable replay evidence for centroid verdicts, keyed by digest hash32.
     SELF_HEAL_CENTROID_EVIDENCE: VaultMeta b"self_heal:centroid_evidence:v1:" Named
