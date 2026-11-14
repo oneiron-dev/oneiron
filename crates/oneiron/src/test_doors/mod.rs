@@ -25,6 +25,7 @@ pub mod code_run_write_identity;
 pub mod code_view_fork;
 pub mod connector_key_suspend;
 pub mod consent_graduation_demotion;
+pub mod consent_graduation_ramp_rows;
 pub mod consolidation;
 pub mod credit_decay_fit;
 pub mod dag_append;

@@ -99,7 +99,7 @@ pub(crate) use self::fold::{
     reset_ramp_streak_in_txn,
 };
 pub(crate) use self::receipts::{demotion_revoking_grant, ramp_receipts};
-pub(crate) use self::storage::erase_demotion_actor_in_txn;
+pub(crate) use self::storage::erase_ramp_actor_in_txn;
 
 pub(crate) mod tables;
 // FIX [LIBTEST-QUARANTINE-CONSENT-GRADUATION-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
