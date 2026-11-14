@@ -266,11 +266,14 @@ pub(crate) fn transit_keys(
 /// The holder's half: stages the retirement of each of `keys` this custody
 /// holds, at `requester`'s word, carries it out at once, and clears this
 /// node's debt for `requester`'s own copy of each: it asks only for keys it
-/// retired itself. Returns how many keys it named.
+/// retired itself. Returns how many keys it named. A request that names a
+/// key custody holds for another purpose than the handoff's stages none of
+/// its keys (FIX 23943).
 ///
 /// # Errors
 ///
-/// Storage and custody faults.
+/// A key of another purpose (`StoreError::ErasableKeyPurposeMismatch`);
+/// storage and custody faults.
 pub(crate) fn retire_held(vault: &Vault, requester: EntityId, keys: &[String]) -> Result<u32> {
     let refs: Vec<KeyRef> = keys
         .iter()

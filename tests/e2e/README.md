@@ -55,8 +55,8 @@ keep their complete journey plans. Do not use native `.skip`, `.only`, `.failing
 unregistered tests, or concurrent tests.
 
 ```ts
-import { afterAll, expect, test } from "bun:test";
-import { defineFile } from "./support/run.ts";
+import { afterAll, test } from "bun:test";
+import { defineFile, expect } from "./support/run.ts";
 import { EngineFixture } from "./support/engine.ts";
 import { loadFixtures } from "./support/fixtures.ts";
 
@@ -74,8 +74,14 @@ Slots must match `fixtures/suite-plan.json`: one normally, two for heavy,
 multi-peer, browser or organ files. All helpers and subprocesses count inside
 that file's budget. A flow defaults to 30 seconds. Pass `200_000` as the last
 `suite.test` argument for the actual 180-second wake case. Do not change engine
-defaults to accelerate it. The optional profile runs only its six pinned IDs;
-other IDs are not registered for that run and do not count as default coverage.
+defaults to accelerate it. A case whose flow needs more than the 30-second PR budget
+is a **nightly budget case**: `suite.nightly(test, ID, name, body, deadlineMs)`.
+Without `E2E_NIGHTLY=1` it reports BLOCKED "nightly budget case" and its body never
+runs; the nightly E2E stage (`scripts/nightly/nightly_e2e.py`) sets `E2E_NIGHTLY=1`
+on the runner, which passes it to each case process, and the case runs as
+`suite.test` with its own deadline (at most the runner's 600-second cap). The
+optional profile runs only its six pinned IDs; other IDs are not registered for
+that run and do not count as default coverage.
 
 **G01 is binding:** if a designed verb has no current typed HTTP and SDK call,
 register `suite.todo(test, ID, "waits on <door or verb>")`. Preserve canon's typed
@@ -427,7 +433,22 @@ the booked fleet job; never run the suite outside that job or on the Mac.
 ## Reports, cleanup and redaction
 
 Every selected planned ID gets PASS, FAIL, BLOCKED or owner-deferred SKIPPED,
-duration and a reason where needed. Coverage includes the pinned row map and
+duration and a reason where needed.
+
+The runner also sets each case's status; nobody types it (E2E rules v2,
+implementation-baseline-v1 #tests-e2e; `caseStatus` in `support/run.ts`).
+`report.json` carries `status` on every result row and `statusCounts`:
+
+- PLANNED: no body ran (not registered, todo, skip, pending door, BLOCKED) or it
+  went red before any assertion;
+- PROBED: the body ran to its end and made no assertion;
+- WRITTEN: the body made at least one assertion, and no red is on record;
+- PROVEN: green with assertions, and `--red-report <earlier report.json>` holds
+  the same ID red on an assertion on another build head (a BLOCKED, deadline,
+  door, harness or cleanup red proves nothing).
+
+Assertions are counted only through the runner's `expect`: import `expect` from
+`./support/run.ts`, never from `bun:test`. Coverage includes the pinned row map and
 explicit exclusions. A run succeeds only if every selected ID is PASS or SKIPPED,
 file declarations/IDs match the plan, each PASS agrees with Bun's JUnit, each
 SKIPPED agrees with a raw JUnit skip, and the whole run (including preflight and
