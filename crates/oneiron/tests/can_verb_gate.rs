@@ -457,6 +457,7 @@ fn the_pin_gate_agrees_with_the_pin_doors() -> TestResult {
     person(&fx, fx.leader).rooms_pins_policy_set(&RoomPinPolicySet {
         room: fx.room,
         policy: RoomPinPolicy::Managers,
+        check_in_ref: None,
     })?;
     pin_and_unpin(
         &fx,

@@ -34,11 +34,31 @@ pub struct RoomUnpinReply {
     pub room: EntityId,
 }
 
-/// `vault.rooms.pins.policy.set`'s input, and its reply with the stored
-/// policy.
+/// `vault.rooms.pins.policy.set`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RoomPinPolicySet {
     pub room: EntityId,
     pub policy: RoomPinPolicy,
+    /// The approved check-in of this member's earlier opening of another's
+    /// room's pins to every member, which waited on it; the set spends it
+    /// (ROLES-CHECKIN 2k8f). Omitted otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
+}
+
+/// `vault.rooms.pins.policy.set`'s reply: the stored policy, and the
+/// check-in decision of a set that opened the pins to every member.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RoomPinPolicyReply {
+    pub room: EntityId,
+    pub policy: RoomPinPolicy,
+    /// The Owner's `own_proof`, the room's creator's `own_item`, or a
+    /// member's set under their role (with the check-in it spent). None for
+    /// a set that changed nothing or narrowed the pins to the managers, for
+    /// a home room's (its project's leader or board sets it under room
+    /// policy) and for an unjudged person.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }

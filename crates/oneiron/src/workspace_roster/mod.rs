@@ -278,7 +278,9 @@ pub use rooms::{
 };
 pub(crate) use rooms::{ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn};
 pub use rooms::{RoomMemberRoleReceipt, RoomMemberRoleSet};
-pub use rooms::{RoomPinPolicySet, RoomPinReply, RoomPinRequest, RoomUnpinReply};
+pub use rooms::{
+    RoomPinPolicyReply, RoomPinPolicySet, RoomPinReply, RoomPinRequest, RoomUnpinReply,
+};
 pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub use rooms::{
     RoomUpkeepNudge, RoomUpkeepPendingRequest, RoomUpkeepVoiceReceipt, RoomUpkeepVoiceRequest,

@@ -41,8 +41,8 @@ pub use output_guard::OutputMark;
 pub(crate) use pins::{PIN_UPDATES, served_room_body};
 pub(crate) use preview::{LatestMessage, PreviewCandidates, snippet, turn_text};
 pub use privacy_erase::RoomPersonEraseOutcome;
-pub(crate) use roles::person_role_in;
 pub(crate) use roles::{RoomHost, room_host_in_txn};
+pub(crate) use roles::{person_role_in, room_created_by_in};
 pub use session::{SessionMode, SessionPresence};
 pub use speaker_handoff::{SpeakerHandoff, SpeakerHandoffBoundary, SpeakerHandoffReceipt};
 pub use turn_actions::{

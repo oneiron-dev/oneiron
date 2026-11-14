@@ -841,3 +841,15 @@ pub fn shared_policy_propose_effect_digest(
     }
     Ok(*hasher.finalize().as_bytes())
 }
+
+/// The digest of opening ordinary room `room`'s shared pins to every
+/// current member: the effect a member's `vault.rooms.pins.policy.set` to
+/// `members` on a room another created is judged over (2k8f; P25-SHAPE Q1
+/// = A). BLAKE3, key derived from `oneiron check_in room pins open v1`,
+/// over the room's 16 id bytes.
+#[must_use]
+pub fn room_pins_open_effect_digest(room: &EntityId) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in room pins open v1");
+    hasher.update(room.as_bytes());
+    *hasher.finalize().as_bytes()
+}

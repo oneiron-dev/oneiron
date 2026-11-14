@@ -77,6 +77,22 @@ pub(crate) fn person_role_in(
     Ok(role)
 }
 
+/// Whether `actor` created ordinary room `room`: the host-local creator row
+/// its create door stored, compared as stored bytes as [`person_role_in`]
+/// compares it. Whose the room is when a member opens its pins to every
+/// member (ROLES-CHECKIN 2k8f; MEMBER-SHARE-OWN = B).
+pub(crate) fn room_created_by_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    actor: EntityId,
+) -> Result<bool> {
+    Ok(ROOM_CREATORS
+        .get_bytes(&vault.store, txn, &room)?
+        .as_deref()
+        == Some(actor.as_bytes().as_slice()))
+}
+
 /// Who may admit to a room (OF-531): its owner, or a member whose role the
 /// room policy lets delegate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -136,7 +136,9 @@ pub(crate) use participation::{
 use participation::{Claimant, agent_off_room_in_txn, require_thread_standing};
 pub(in crate::workspace_roster) use participation::{require_reader, require_thread_reader};
 pub(crate) use pins::stored_room_pins_in;
-pub use pins::{RoomPinPolicySet, RoomPinReply, RoomPinRequest, RoomUnpinReply};
+pub use pins::{
+    RoomPinPolicyReply, RoomPinPolicySet, RoomPinReply, RoomPinRequest, RoomUnpinReply,
+};
 pub use private_threads::{PrivateThreadMetadata, RoomPrivateThreadsRequest};
 pub(crate) use replica::{
     RoomSideRow, SideMerge, TurnMerge, clear_replicated_side_cell_in_txn,

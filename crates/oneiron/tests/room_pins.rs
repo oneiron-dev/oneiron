@@ -43,7 +43,8 @@ use oneiron::policy_manifest_doors::{
 use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
 use oneiron::verbs::{AgentDefinitionCreateRequest, AgentDefinitionSpec};
 use oneiron::workspace_roster::{
-    ProjectRecord, RoomMemberRoleSet, RoomPinPolicySet, RoomPinReply, RoomPinRequest,
+    ProjectRecord, RoomMemberRoleSet, RoomPinPolicyReply, RoomPinPolicySet, RoomPinReply,
+    RoomPinRequest,
 };
 use oneiron::{DeleteReason, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 
@@ -329,8 +330,12 @@ fn set_policy(
     memory: &oneiron::memory::Memory<'_>,
     room: EntityId,
     policy: RoomPinPolicy,
-) -> Result<RoomPinPolicySet, oneiron::memory::MemoryError> {
-    memory.rooms_pins_policy_set(&RoomPinPolicySet { room, policy })
+) -> Result<RoomPinPolicyReply, oneiron::memory::MemoryError> {
+    memory.rooms_pins_policy_set(&RoomPinPolicySet {
+        room,
+        policy,
+        check_in_ref: None,
+    })
 }
 
 /// (a) A member pins and unpins, and so does that member's pen agent, on the

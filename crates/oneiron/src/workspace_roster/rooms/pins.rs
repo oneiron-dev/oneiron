@@ -14,6 +14,7 @@
 use super::*;
 use crate::EdgeActorClass;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::check_in::{self, CheckInDecision, WidenAct, WidenCheckIn};
 use crate::conversation::{ConversationBody, PIN_UPDATES, RoomPin, RoomPinPolicy, RoomRole};
 use crate::error::ClaimError;
 use crate::registry::ENTITY_TYPE_CONVERSATION;
@@ -22,7 +23,7 @@ use crate::write_envelope::WriteActor;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::workspace_roster::rooms::pins::{
-    RoomPinPolicySet, RoomPinReply, RoomPinRequest, RoomUnpinReply,
+    RoomPinPolicyReply, RoomPinPolicySet, RoomPinReply, RoomPinRequest, RoomUnpinReply,
 };
 
 fn lacks(reason: &'static str) -> Error {
@@ -36,6 +37,18 @@ const NOT_MANAGER: &str = "this room lets only its managers change its pins";
 const NOT_ROOM_MANAGER: &str =
     "only the room's owner or admin, or a home room's project leader or board, sets who may pin";
 const POLICY_BY_PERSON: &str = "a person sets the room's pin policy, never an agent";
+
+/// The saved verb a pin policy set is, as check-in judges it.
+const POLICY_SET_VERB: &str = "vault.rooms.pins.policy.set";
+
+/// What one pin policy set's writer did.
+enum PolicySet {
+    /// The set ran: the stored policy, and the set's check-in decision.
+    Done(RoomPinPolicy, Option<CheckInDecision>),
+    /// A member's opening of another's room's pins waits on this pending
+    /// check-in, committed alone.
+    Waits(EntityId),
+}
 
 /// The stored body a room's pins live on: an ordinary room's
 /// [`ConversationBody`], or a home room's own stored [`ProjectRoom`] (never
@@ -217,6 +230,51 @@ fn policy_setter_in(
     Ok(body)
 }
 
+/// The check-in of `caller`'s set of `room`'s pin policy to `policy`,
+/// judged in the set's writer `txn` after [`policy_setter_in`] admitted it
+/// (ROLES-CHECKIN 2k8f; MEMBER-SHARE-OWN = B;
+/// `check_in::person_widen_check_in_in_txn`). Only a set that opens an
+/// ordinary room's pins to every member widens who changes them: the room's
+/// creator opens them at once (`own_item`), and a member who runs another's
+/// room is judged under their role. A home room's project leader or board
+/// sets its policy under room policy, unjudged (THREAD-DELETE-JUDGE = B), and
+/// a set that narrows the pins to the managers or changes nothing is not
+/// judged either, as on main; neither names a check-in.
+fn pin_policy_check_in_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    room: EntityId,
+    caller: WriteActor,
+    body: &PinnedBody,
+    policy: RoomPinPolicy,
+    check_in_ref: Option<&EntityId>,
+) -> MemoryResult<WidenCheckIn> {
+    let opens = policy == RoomPinPolicy::Members && body.policy() != policy;
+    if !opens || body.home().is_some() {
+        if check_in_ref.is_some() {
+            return Err(MemoryError::bad_request(
+                "check_in_ref names a member's waiting opening of another's room's pins; this set \
+                 waits on none",
+            ));
+        }
+        return Ok(WidenCheckIn::Go(None));
+    }
+    let actor = caller.entity_ref();
+    let widen = WidenAct {
+        actor,
+        class: caller.actor_class(),
+        owns_item: crate::conversation::room_created_by_in(vault, txn, room, actor)?,
+        verb: POLICY_SET_VERB,
+        effect_digest: check_in::room_pins_open_effect_digest(&room),
+    };
+    Ok(check_in::person_widen_check_in_in_txn(
+        vault,
+        txn,
+        &widen,
+        check_in_ref,
+    )?)
+}
+
 impl Memory<'_> {
     /// An agent bound to a room turn changes only that room's pins.
     fn require_pin_room(&self, room: EntityId) -> MemoryResult<()> {
@@ -307,28 +365,56 @@ impl Memory<'_> {
 
     /// `vault.rooms.pins.policy.set`: sets who may change `room`'s pins. Only
     /// a person who runs the room sets it ([`manager_in`]); an agent never
-    /// does.
+    /// does. Opening an ordinary room's pins to every member is judged by
+    /// check-in ([`pin_policy_check_in_in_txn`]): a Steward's or a Member's
+    /// opening of a room another created waits (`CHECK_IN_PENDING`) until
+    /// the call that names the approved check-in as `check_in_ref`.
     pub fn rooms_pins_policy_set(
         &self,
         input: &RoomPinPolicySet,
-    ) -> MemoryResult<RoomPinPolicySet> {
+    ) -> MemoryResult<RoomPinPolicyReply> {
         self.require_pin_room(input.room)?;
+        let check_in_ref = input
+            .check_in_ref
+            .as_deref()
+            .map(|hex| {
+                EntityId::from_hex(hex)
+                    .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))
+            })
+            .transpose()?;
         let vault = self.vault();
         let caller = self.write_actor();
-        let policy = vault.try_with_write_txn_grouped(|txn| {
+        let set = vault.try_with_write_txn_grouped(|txn| {
             vault.verify_write_actor_in_txn(txn, &caller)?;
             let mut body = policy_setter_in(vault, txn, input.room, caller)?;
+            let check_in = match pin_policy_check_in_in_txn(
+                vault,
+                txn,
+                input.room,
+                caller,
+                &body,
+                input.policy,
+                check_in_ref.as_ref(),
+            )? {
+                WidenCheckIn::Go(decision) => decision,
+                WidenCheckIn::Wait(id) => return Ok(PolicySet::Waits(id)),
+            };
             if body.policy() != input.policy {
                 body.set_policy(input.policy);
                 body.write_in(vault, txn, input.room)?;
             }
-            Ok::<_, MemoryError>(body.policy())
+            Ok::<_, MemoryError>(PolicySet::Done(body.policy(), check_in))
         })?;
+        let (policy, check_in) = match set {
+            PolicySet::Done(policy, check_in) => (policy, check_in),
+            PolicySet::Waits(id) => return Err(Error::CheckInPending(id.to_hex()).into()),
+        };
         #[cfg(feature = "sync")]
         vault.refresh_room_cell_in_live_window(input.room, None);
-        Ok(RoomPinPolicySet {
+        Ok(RoomPinPolicyReply {
             room: input.room,
             policy,
+            check_in,
         })
     }
 }
