@@ -719,6 +719,8 @@ impl Vault {
         vault.backfill_widen_contact_verdict_index(false)?;
         vault.backfill_standing_outbound_grant_index(false)?;
         crate::counterparty_contact::backfill_counterparty_identity_index(&vault, false)?;
+        // The PERSON party-key index, for a vault older than it (L6-22).
+        crate::store::person_party_keys::backfill_person_party_key_index(&vault, false)?;
         vault.backfill_row_deletion_fences_on_open()?;
         vault.backfill_origin_cas_intents_on_open()?;
         if matches!(seed_mode, DefaultPolicySeedMode::Required) {

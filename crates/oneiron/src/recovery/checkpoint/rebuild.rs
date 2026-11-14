@@ -261,6 +261,8 @@ pub(super) fn rebuild_auxiliary(vault: &Vault, checkpoint_time: u64) -> Result<(
     vault.backfill_widen_contact_verdict_index(true)?;
     vault.backfill_standing_outbound_grant_index(true)?;
     crate::counterparty_contact::backfill_counterparty_identity_index(vault, true)?;
+    // Restored PERSON rows bypassed the body staging that keeps their party keys.
+    crate::store::person_party_keys::backfill_person_party_key_index(vault, true)?;
     // Restored PROJECT rows bypassed the staging hook: keep their chains.
     vault.capture_project_revisions(true)?;
     crate::skill_convert::rebuild_skill_source_index(vault)?;

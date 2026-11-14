@@ -2,7 +2,6 @@
 
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
-use rmpv::Value;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -313,6 +312,12 @@ pub(in crate::campaign) fn identical_live_head_in_txn(
 /// a same-key twin therefore never hide a restriction: this leg only ever
 /// adds suppression, and a row it should not have read can only add more. An
 /// undecodable or unrelated PERSON body carries no key, exactly as before.
+///
+/// The party-key index each replica derives from the synced PERSON bodies
+/// (L6-22, ARCH-0057 H174) names the PERSONs to read, in id order. Each one
+/// still in the PERSON type index whose body carries the key is a subject:
+/// the list a walk of every PERSON gives. Until a whole index rebuild has
+/// committed, every PERSON is read.
 pub(crate) fn do_not_contact_subjects_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -323,6 +328,18 @@ pub(crate) fn do_not_contact_subjects_in_txn(
         return Ok(Vec::new());
     }
     let mut subjects = Vec::new();
+    if let Some(candidates) =
+        crate::store::person_party_keys::person_party_key_candidates_in_txn(store, txn, party_key)
+    {
+        for id in candidates {
+            if store.port_entity_type_indexed(txn, ENTITY_TYPE_PERSON, &id)?
+                && person_carries_party_key_in_txn(store, txn, &id, party_key)?
+            {
+                subjects.push(id);
+            }
+        }
+        return Ok(subjects);
+    }
     for entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_PERSON, None)? {
         let id = entry?;
         if person_carries_party_key_in_txn(store, txn, &id, party_key)? {
@@ -345,13 +362,7 @@ fn person_carries_party_key_in_txn(
     if raw.entity_type != ENTITY_TYPE_PERSON {
         return Ok(false);
     }
-    let mut cursor = std::io::Cursor::new(&raw.body);
-    let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut cursor) else {
-        return Ok(false);
-    };
-    Ok(entries.iter().any(|(key, value)| {
-        key.as_str() == Some(COMM_PARTY_KEY_FIELD) && value.as_str() == Some(party_key)
-    }))
+    Ok(crate::store::person_party_keys::person_body_party_keys(&raw.body).contains(party_key))
 }
 
 // Test-door tally of the PERSON rows the do-not-contact scan reads, per
@@ -410,10 +421,6 @@ pub(crate) fn subjects_do_not_contact_in_txn(
     }
     Ok(false)
 }
-
-/// Synced-truth field naming a comm-owned PERSON's party. Mirrors the private
-/// `comm.rs` constant; CA reads it and never writes it.
-const COMM_PARTY_KEY_FIELD: &str = "party_key";
 
 /// CLAIM ids attached to `subject` through inbound `claim_of` edges.
 fn subject_claim_ids_in_txn(

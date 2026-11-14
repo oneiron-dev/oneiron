@@ -22,3 +22,22 @@ pub fn do_not_contact_subjects(vault: &Vault, counterparty: &str) -> Result<Vec<
 pub fn take_person_party_key_reads() -> usize {
     crate::campaign::claims::take_person_party_key_reads()
 }
+
+/// Drops the PERSON party-key index and its completeness flag, as a vault
+/// file older than the index holds neither; the scan then reads every PERSON.
+///
+/// # Errors
+/// The write transaction's.
+#[doc(hidden)]
+pub fn forget_person_party_key_index(vault: &Vault) -> Result<()> {
+    crate::store::person_party_keys::forget_person_party_key_index(vault)
+}
+
+/// The rebuild of the PERSON party-key index a writable open runs.
+///
+/// # Errors
+/// None: a failed rebuild warns and leaves the index incomplete, as at open.
+#[doc(hidden)]
+pub fn backfill_person_party_key_index(vault: &Vault) -> Result<()> {
+    crate::store::person_party_keys::backfill_person_party_key_index(vault, false)
+}

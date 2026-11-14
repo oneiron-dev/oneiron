@@ -220,6 +220,8 @@ pub mod pack_predicate_rewrites;
 #[cfg(feature = "sync")]
 pub(crate) use oneiron_store::pad_object_membership;
 pub mod person_billing_account;
+// L6-22: the PERSON party-key index the do-not-contact scan reads.
+pub(crate) mod person_party_keys;
 pub mod positive_skill_proposals;
 pub(crate) mod project_kind;
 pub mod proposal_spool;
