@@ -165,6 +165,26 @@ pub(crate) fn word_sources_through_in(
     })
 }
 
+/// The summary whose words the stored revision `raw` carries: the summary a
+/// reply TURN copies, or the one a `merge.summary` header names. Its words
+/// are that summary's, so a reader judges the summary's own row too (its
+/// Tier A, its stamp), as well as the records [`word_sources_in`] names
+/// (Sol review of #7692). `None` for every other row; an association that
+/// does not decode is an error.
+pub(crate) fn carried_summary(raw: &[u8]) -> Result<Option<EntityId>> {
+    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    let names = |needle: &[u8]| body.windows(needle.len()).any(|window| window == needle);
+    match header.entity_type {
+        ENTITY_TYPE_TURN if names(b"summary") => super::codec::reply_summary(body),
+        ENTITY_TYPE_CLAIM if names(b"merge.summary") => {
+            let claim = crate::write_envelope::claim_body::decode_claim_body(body, true)?;
+            Ok(super::merge_summary_ref(&claim)?.map(|(_, summary)| summary))
+        }
+        _ => Ok(None),
+    }
+}
+
 /// The word sources of a notification body (FIX STEWARDSHIP-NOTICE-POINTER,
 /// OPUS-LEAKS). A Dreamer finding's notice (producer `dreamer.finding`)
 /// points at its finding and the finding's subject, so it reads only while

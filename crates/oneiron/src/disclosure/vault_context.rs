@@ -459,8 +459,11 @@ impl DisclosureContext {
     /// the other carriers `scope_summary::word_sources_in` names hold other
     /// records' words, so the row is admitted only with each of them, through
     /// nested copies, each judged by this context's own row test (Tier A, a
-    /// TURN's messages, the clearance, retained copies). Words whose sources
-    /// no longer resolve, or that cycle, are refused. A claim passed with
+    /// TURN's messages, the clearance, retained copies). A copy's summary
+    /// (`scope_summary::carried_summary`) is judged by that test too, so a
+    /// Tier-A summary withholds every reply and header that carries its
+    /// words. Words whose sources no longer resolve, or that cycle, are
+    /// refused. A claim passed with
     /// `claim_body` is judged on that body's words, the revision a caller
     /// serves, not on its live row's. The owner alone is admitted
     /// everything, as by [`Self::admits`].
@@ -509,12 +512,27 @@ impl DisclosureContext {
             &raw,
             |record, record_raw| {
                 // The row itself passed above, judged with its claim body.
-                if record == *id {
-                    return Ok(true);
+                if record != *id {
+                    let header = EntityMetadataHeader::parse(record_raw)
+                        .ok_or(Error::CorruptedIndex("entity header"))?;
+                    if !self.admits_row(store, rtxn, &record, header.entity_type, None)? {
+                        return Ok(false);
+                    }
                 }
-                let header = EntityMetadataHeader::parse(record_raw)
-                    .ok_or(Error::CorruptedIndex("entity header"))?;
-                self.admits_row(store, rtxn, &record, header.entity_type, None)
+                // A reply or a merge header carries a summary's words: the
+                // summary's own row is judged too, not only the records it
+                // was written from. An association that does not decode
+                // names no summary a reader may hold.
+                let Ok(carried) = crate::scope_summary::carried_summary(record_raw) else {
+                    return Ok(false);
+                };
+                let Some(summary) = carried else {
+                    return Ok(true);
+                };
+                let Some(summary_row) = store.port_entity_record(rtxn, &summary)? else {
+                    return Ok(false);
+                };
+                self.admits_row(store, rtxn, &summary, summary_row.entity_type, None)
             },
         )
     }
