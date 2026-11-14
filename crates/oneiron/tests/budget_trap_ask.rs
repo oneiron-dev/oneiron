@@ -218,7 +218,7 @@ impl llm::LlmBackend for AdmittingBackend {
 }
 
 /// A host account over the vault's resident ledger, with an allocation far above any call here.
-fn host_account(vault: &Arc<Vault>) -> oneiron::Result<Arc<HostAccount>> {
+fn host_account(vault: &Arc<Vault>) -> Result<Arc<HostAccount>, Box<dyn std::error::Error>> {
     let account = HostAccount::with_residents(llm::VaultResidentLedger::new(Arc::clone(vault)));
     account.grant(Allocation {
         reference: AllocationRef {
