@@ -139,7 +139,7 @@ pub struct RevealHandleCard {
     /// The custody name.
     pub label: String,
     pub class: String,
-    /// `active`, `suspended` or `revoked`.
+    /// `active` or `revoked`.
     pub status: String,
     /// The claim band; custody is always `restricted`.
     pub band: String,
