@@ -31,6 +31,10 @@
 //! - the company host reads a member host's answer only up to its cap: an
 //!   answer that runs past it is refused at the cap, not read to its end
 //!   (review round 1 of #7603);
+//! - a `vault.inquire` call's answer is not kept for its invocation: the
+//!   same invocation, sent again once the task ended, runs again and is
+//!   refused, and never gets the held answer back (review round 2 of
+//!   #7603);
 //! - the member opens, lists and closes a statement on an edge
 //!   (`vault.inquiry.scope.open` / `.list` / `.close`).
 //!
@@ -170,12 +174,27 @@ impl Host {
         binding: Option<String>,
         body: Vec<u8>,
     ) -> (StatusCode, Vec<u8>) {
+        self.raw_with(path, token, binding, None, body).await
+    }
+
+    /// [`Self::raw`] naming the client's `invocation` id, when given.
+    async fn raw_with(
+        &self,
+        path: &str,
+        token: Option<&str>,
+        binding: Option<String>,
+        invocation: Option<&str>,
+        body: Vec<u8>,
+    ) -> (StatusCode, Vec<u8>) {
         let mut request = Request::post(path).header("content-type", "application/json");
         if let Some(token) = token {
             request = request.header("authorization", format!("Bearer {token}"));
         }
         if let Some(binding) = binding {
             request = request.header("x-oneiron-binding", binding);
+        }
+        if let Some(invocation) = invocation {
+            request = request.header("x-oneiron-invocation", invocation);
         }
         let response = self
             .app
@@ -284,6 +303,18 @@ impl Agent {
     }
 
     async fn verb(&self, host: &Host, verb: &str, input: Value) -> (StatusCode, Value) {
+        self.call(host, verb, None, input).await
+    }
+
+    /// One call of `verb` with a fresh holder proof, naming `invocation`
+    /// when given.
+    async fn call(
+        &self,
+        host: &Host,
+        verb: &str,
+        invocation: Option<&str>,
+        input: Value,
+    ) -> (StatusCode, Value) {
         let timestamp = host.vault.now_recorded_at();
         let nonce = EntityId::now().to_hex();
         let challenge = format!("oneiron-request:{timestamp}:{nonce}");
@@ -298,10 +329,11 @@ impl Agent {
         })
         .to_string();
         let (status, bytes) = host
-            .raw(
+            .raw_with(
                 &format!("/v1/core/facade/{verb}"),
                 Some(&self.token),
                 Some(binding),
+                invocation,
                 input.to_string().into_bytes(),
             )
             .await;
@@ -467,6 +499,15 @@ fn person(vault: &Vault, id: EntityId) -> EntityId {
 
 impl Thursday {
     async fn inquire(&self, inquiry_id: Option<&Value>) -> Value {
+        let input = self.inquiry_input(inquiry_id);
+        let (status, body) = self.agent.verb(&self.company, "vault.inquire", input).await;
+        assert_eq!(status, StatusCode::OK, "vault.inquire: {body}");
+        body
+    }
+
+    /// The agent's `vault.inquire` input for its TASK, re-sending
+    /// `inquiry_id` when given.
+    fn inquiry_input(&self, inquiry_id: Option<&Value>) -> Value {
         let mut input = json!({
             "shared_vault_id": SHARED,
             "member": self.seat,
@@ -478,9 +519,7 @@ impl Thursday {
         if let Some(id) = inquiry_id {
             input["inquiry_id"] = id.clone();
         }
-        let (status, body) = self.agent.verb(&self.company, "vault.inquire", input).await;
-        assert_eq!(status, StatusCode::OK, "vault.inquire: {body}");
-        body
+        input
     }
 }
 
@@ -829,6 +868,65 @@ fn the_company_host_reads_no_answer_past_its_cap() {
             matches!(&exchanged, Err(InquiryTransportError::Refused(why)) if why.contains("too large")),
             "an answer past the cap is refused at the cap: {exchanged:?}"
         );
+    });
+}
+
+#[test]
+fn a_held_answer_is_not_sent_again_for_its_invocation_once_its_task_ended() {
+    run_on_engine_stack("inquiry-federation-invocation", || async {
+        let fixture = thursday().await;
+        let sent = fixture.inquire(None).await;
+        let inquiry_id = sent["inquiry_id"].clone();
+        let answered = fixture
+            .member
+            .verb(
+                "vault.inquiry.answer",
+                json!({"grant": fixture.edge_grant, "inquiry_id": inquiry_id, "words": OUT_THURSDAY}),
+            )
+            .await;
+        assert_eq!(answered["outcome"], "answered", "{answered}");
+
+        // One invocation, one input: the second request is the same call.
+        let invocation = EntityId::now().to_hex();
+        let input = fixture.inquiry_input(Some(&inquiry_id));
+        let (status, held) = fixture
+            .agent
+            .call(
+                &fixture.company,
+                "vault.inquire",
+                Some(&invocation),
+                input.clone(),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "vault.inquire: {held}");
+        assert_eq!(
+            held["statements"],
+            json!([{"text": OUT_THURSDAY, "source": "member_word"}]),
+            "{held}"
+        );
+        assert_eq!(held["held"], true, "held with the task: {held}");
+
+        oneiron::test_doors::inquiry::cancel_task(
+            &fixture.company.vault,
+            fixture.task,
+            fixture.company.owner,
+        )
+        .expect("the task ends");
+
+        let (status, again) = fixture
+            .agent
+            .call(&fixture.company, "vault.inquire", Some(&invocation), input)
+            .await;
+        assert!(
+            !again.to_string().contains(OUT_THURSDAY),
+            "the ended task's answer is not sent again for its invocation: {status} {again}"
+        );
+        assert_ne!(
+            status,
+            StatusCode::OK,
+            "the call runs again and finds its task ended: {again}"
+        );
+        fixture.member_listener.abort();
     });
 }
 
