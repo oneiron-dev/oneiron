@@ -384,6 +384,9 @@ mod fixture;
 #[path = "public_lifecycle_tests.rs"]
 mod lifecycle_tests;
 #[cfg(test)]
+#[path = "public_personal_link_tests.rs"]
+mod personal_link_tests;
+#[cfg(test)]
 #[path = "public_tests.rs"]
 mod tests;
 #[cfg(test)]
