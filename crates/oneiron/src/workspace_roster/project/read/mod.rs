@@ -646,22 +646,80 @@ impl<'a, 't> ProjectReader<'a, 't> {
 /// The facets a project's home room limits what is read through it: the
 /// slice facet of the authority its history folds to (owner ruling
 /// FACET-READ), never a stored row the fold does not serve. A MESSAGE or
-/// TURN said there sits in it. `None` is a room no project owns, or one whose
-/// project serves no authority or names no facet.
+/// TURN said there sits in it. `None` is a room no project owns (an ordinary
+/// conversation, or no room: a deleted project's home room goes with it), or
+/// one whose project's authority names no facet.
+///
+/// A room that names a project this vault does not hold, or holds with no
+/// authority (quarantined, pending, dark), reads `Bottom`, and so does one
+/// whose project's slices meet to nothing: never the reader's own facets
+/// (L7-39-OLDER-PEER, Engine 14 Nov 17:31).
 pub(crate) fn room_facets_in(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
 ) -> Result<Option<ScopeAxis<ScopeId>>> {
-    let Some(project) = ROOM_PROJECT.get(&vault.store, txn, &room)? else {
-        return Ok(None);
+    let project = match ROOM_PROJECT.get(&vault.store, txn, &room)? {
+        Some(project) => project,
+        None => match room_body_owner_in(vault, txn, room)? {
+            RoomBodyOwner::Ordinary => return Ok(None),
+            RoomBodyOwner::Project(project) => project,
+            RoomBodyOwner::Unnamed => return Ok(Some(ScopeAxis::Bottom)),
+        },
     };
     let Some(reader) = ProjectReader::new(&vault.store, txn, vault.privacy_posture())? else {
-        return Ok(None);
+        return Ok(Some(ScopeAxis::Bottom));
     };
-    Ok(reader
-        .effective(project)?
-        .and_then(|effective| effective.slice)
-        .and_then(|slice| slice.facet)
+    let Some(effective) = reader.effective(project)? else {
+        return Ok(Some(ScopeAxis::Bottom));
+    };
+    // `None`: contradicting slices met, and nothing fits under them.
+    let Some(slice) = effective.slice else {
+        return Ok(Some(ScopeAxis::Bottom));
+    };
+    Ok(slice
+        .facet
         .map(|facet| ScopeAxis::Some([ScopeId(facet)].into())))
+}
+
+/// Whom an unmarked room's own body names as its project, by the keys the
+/// room doors read a derived room by (`rooms::project_room_of`).
+enum RoomBodyOwner {
+    /// No row, another kind, or an ordinary conversation's body.
+    Ordinary,
+    /// The project its `project_id` names.
+    Project(EntityId),
+    /// A derived-room body that names no project this read can parse, or a
+    /// body that does not decode.
+    Unnamed,
+}
+
+fn room_body_owner_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> Result<RoomBodyOwner> {
+    let owner =
+        crate::ports::EntityStoreRead::port_entity_with_raw(&vault.store, txn, &room, |raw| {
+            let Some(header) = crate::batch::EntityMetadataHeader::parse(raw) else {
+                return Ok(RoomBodyOwner::Unnamed);
+            };
+            if header.entity_type != crate::registry::ENTITY_TYPE_CONVERSATION {
+                return Ok(RoomBodyOwner::Ordinary);
+            }
+            let Ok(body) = crate::conversation::ConversationBody::from_bytes(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            ) else {
+                return Ok(RoomBodyOwner::Unnamed);
+            };
+            Ok(match body.extra.get("project_id") {
+                Some(value) => value
+                    .as_str()
+                    .and_then(|hex| EntityId::from_hex(hex).ok())
+                    .map_or(RoomBodyOwner::Unnamed, RoomBodyOwner::Project),
+                None if body.extra.contains_key("memberIds") => RoomBodyOwner::Unnamed,
+                None => RoomBodyOwner::Ordinary,
+            })
+        })?;
+    Ok(owner.unwrap_or(RoomBodyOwner::Ordinary))
 }
