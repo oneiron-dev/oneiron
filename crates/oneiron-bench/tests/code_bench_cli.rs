@@ -5,6 +5,11 @@
 //! that arm not ready; nothing is faked." On a tree without the subcommand
 //! the binary answers "unknown BEAM invocation" and exits non-zero.
 //!
+//! `beam code-bench` grades what the writers left: the PR's sealed tests,
+//! copied from its merge commit over the tree, the diff size without them,
+//! and the transcript's turns, tokens, files opened, time and breaches of
+//! the arm's profile. A failed run is kept and counted.
+//!
 //! Each test builds a throwaway repository, so no test builds the engine.
 //!
 //! `cargo test --locked -p oneiron-bench --test code_bench_cli`.
@@ -457,4 +462,251 @@ fn a_memory_vault_seeded_after_the_cut_is_not_ready() {
     assert!(!refused.status.success());
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(stderr.contains("memory_vault.token_env"), "{stderr}");
+}
+
+const TRANSCRIPT: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/fixtures/code_bench/transcript.stream.jsonl"
+);
+/// The verb rows the symbol and graph arm calls.
+const SYMBOL_GRAPH_VERBS: [&str; 11] = [
+    "self.code.symbols.definitions",
+    "self.code.symbols.neighbors",
+    "graph_fs.cat",
+    "graph_fs.find",
+    "graph_fs.grep",
+    "graph_fs.head",
+    "graph_fs.ls",
+    "graph_fs.read_file",
+    "graph_fs.read_link",
+    "graph_fs.readdir",
+    "graph_fs.wc",
+];
+
+/// Runs a ready cell's `world.sh` and returns its tree.
+fn build_world(index: &Value, id: &str) -> PathBuf {
+    let cell = cell(index, id);
+    let built = isolated("sh")
+        .arg(cell["world"].as_str().unwrap())
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    PathBuf::from(cell["dir"].as_str().unwrap()).join("tree")
+}
+
+/// Runs `beam code-bench` on `attempts` against the plan `pack` wrote for
+/// `<tmp>/<out>`.
+fn grade(world: &World, out: &str, attempts: &Value) -> Output {
+    let path = world.dir.path().join(format!("attempts-{out}.json"));
+    let file = json!({
+        "plan": world.dir.path().join(format!("plan-{out}.json")),
+        "attempts": attempts,
+    });
+    std::fs::write(&path, file.to_string()).unwrap();
+    isolated(env!("CARGO_BIN_EXE_oneiron-bench"))
+        .args(["beam", "code-bench"])
+        .arg(&path)
+        .output()
+        .expect("the bench binary runs")
+}
+
+fn report(output: &Output) -> Value {
+    assert!(
+        output.status.success(),
+        "code-bench failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+fn summary<'a>(report: &'a Value, check: &str, arm: &str) -> &'a Value {
+    report["arms"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|line| line["check"] == check && line["arm"] == arm)
+        .unwrap_or_else(|| panic!("no {check}/{arm} line in {report:#}"))
+}
+
+#[test]
+fn the_sealed_grader_passes_the_merged_change_and_fails_the_base() {
+    let world = world();
+    let index = index(&pack(
+        &world,
+        &manifest(&world, Some(INTENT), 9),
+        "out",
+        &json!({}),
+    ));
+    let solved = build_world(&index, "navigation/alpha/grep_only");
+    std::fs::write(solved.join("src/lib.txt"), "one\ntwo\n").unwrap();
+    let untouched = build_world(&index, "navigation/gamma/grep_only");
+
+    let report = report(&grade(
+        &world,
+        "out",
+        &json!([
+            {"cell": "navigation/alpha/grep_only", "tree": solved},
+            {"cell": "navigation/gamma/grep_only", "tree": untouched},
+        ]),
+    ));
+
+    let rows = report["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "{report:#}");
+    assert_eq!(rows[0]["tests_pass"], true, "{report:#}");
+    assert_eq!(rows[0]["pass"], true);
+    assert_eq!(
+        rows[0]["diff"],
+        json!({"files": 1, "added": 1, "removed": 0}),
+        "the sealed test is never counted in the diff"
+    );
+    assert_eq!(
+        rows[1]["tests_pass"], false,
+        "the base fails the sealed test"
+    );
+    assert_eq!(rows[1]["pass"], false);
+    assert_eq!(
+        rows[1]["diff"],
+        json!({"files": 0, "added": 0, "removed": 0})
+    );
+    let line = summary(&report, "navigation", "grep_only");
+    assert_eq!(line["attempts"], 2, "a failed run is kept and counted");
+    assert_eq!(line["passes"], 1);
+    assert_eq!(line["failures"], 1);
+    assert_eq!(line["baseline"], true);
+}
+
+#[test]
+fn a_writers_own_copy_of_a_sealed_test_never_grades() {
+    let world = world();
+    let index = index(&pack(
+        &world,
+        &manifest(&world, Some(INTENT), 9),
+        "out",
+        &json!({}),
+    ));
+    let tree = build_world(&index, "memory/alpha/no_memory");
+    std::fs::create_dir_all(tree.join("tests")).unwrap();
+    std::fs::write(tree.join("tests/grade.sh"), "exit 0\n").unwrap();
+
+    let report = report(&grade(
+        &world,
+        "out",
+        &json!([{"cell": "memory/alpha/no_memory", "tree": tree}]),
+    ));
+
+    let row = &report["rows"][0];
+    assert_eq!(row["tests_pass"], false, "{report:#}");
+    assert_eq!(row["pass"], false);
+    assert_eq!(row["diff"]["files"], 0, "{report:#}");
+    assert_eq!(
+        std::fs::read_to_string(tree.join("tests/grade.sh")).unwrap(),
+        "grep -q two src/lib.txt\n",
+        "the merge commit's copy replaced the writer's"
+    );
+    assert_eq!(
+        summary(&report, "navigation", "no_memory")["attempts"],
+        1,
+        "the codemap cell is also the navigation check's third arm"
+    );
+}
+
+#[test]
+fn the_transcript_gives_turns_tokens_files_and_breaches() {
+    let world = world();
+    for verb in SYMBOL_GRAPH_VERBS {
+        let row = world.repo.join(format!("scripts/sdk/verbs/{verb}.json"));
+        std::fs::create_dir_all(row.parent().unwrap()).unwrap();
+        std::fs::write(row, json!({"name": verb}).to_string()).unwrap();
+    }
+    git_text(&world.repo, &["add", "-A"]);
+    git_text(
+        &world.repo,
+        &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "engine"],
+    );
+    let engine = git_text(&world.repo, &["rev-parse", "HEAD"]);
+    let index = index(&pack(
+        &world,
+        &manifest(&world, Some(INTENT), 9),
+        "out",
+        &json!({"code_snapshot": {
+            "url": "http://127.0.0.1:9/mcp",
+            "token_env": "CODE_BENCH_SNAPSHOT_TOKEN",
+            "engine_commit": engine,
+            "bases": [world.base],
+        }}),
+    ));
+    let cell_id = "navigation/alpha/symbol_graph";
+    let dir = PathBuf::from(cell(&index, cell_id)["dir"].as_str().unwrap());
+    let settings: Value =
+        serde_json::from_slice(&std::fs::read(dir.join("settings.json")).unwrap()).unwrap();
+    assert!(
+        settings["permissions"]["deny"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("Grep"))
+    );
+    let tree = build_world(&index, cell_id);
+
+    let report = report(&grade(
+        &world,
+        "out",
+        &json!([{"cell": cell_id, "tree": tree, "transcript": TRANSCRIPT}]),
+    ));
+
+    let row = &report["rows"][0];
+    assert_eq!(
+        row["transcript"],
+        json!({
+            "turns": 3,
+            "input_tokens": 650,
+            "output_tokens": 60,
+            "files_opened": 2,
+            "elapsed_secs": 45.0,
+            "source_control_secs": 5.0,
+            "usable_tree_secs": 40.0,
+            "breaches": ["Grep"],
+            "unreadable_lines": 0,
+        }),
+        "{report:#}"
+    );
+    assert_eq!(row["profile_breach"], true);
+    assert_eq!(row["pass"], false, "a breach never grades as a pass");
+    assert_eq!(
+        summary(&report, "navigation", "symbol_graph")["breaches"],
+        1
+    );
+}
+
+#[test]
+fn a_second_repair_in_one_arm_group_is_refused() {
+    let world = world();
+    index(&pack(
+        &world,
+        &manifest(&world, Some(INTENT), 9),
+        "out",
+        &json!({}),
+    ));
+    let missing = world.dir.path().join("no-tree");
+
+    let output = grade(
+        &world,
+        "out",
+        &json!([
+            {"cell": "memory/alpha/no_memory", "tree": missing},
+            {"cell": "memory/alpha/no_memory", "tree": missing, "repair_of": "memory/alpha/no_memory"},
+            {"cell": "memory/gamma/no_memory", "tree": missing},
+            {"cell": "memory/gamma/no_memory", "tree": missing, "repair_of": "memory/gamma/no_memory"},
+        ]),
+    );
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("a second repair in arm group memory/no_memory"),
+        "{stderr}"
+    );
 }
