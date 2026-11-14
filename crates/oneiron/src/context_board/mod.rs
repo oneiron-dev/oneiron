@@ -106,8 +106,9 @@ pub use stream::{
     AppliedStreamState, BoardEvent, BoardRenderMode, BoardSnapshot, BoardStreamFrame,
     BoardStreamRegistry, CarrierCoalesceBuffer, CoalesceOutcome, CommittedTaskBoardState,
     DeliveryClass, DeliveryPolicy, DeltaRow, FrameApplyOutcome, FrameEnqueueOutcome, FrameKind,
-    PendingDiaryReview, PendingRoomWake, RoomWakeRead, RouteObservation, StreamConnectionId,
-    StreamConnectionState, SubscriptionError, SubscriptionReceipt, SubscriptionScope, WakeEnvelope,
+    PendingDiaryReview, PendingRoomWake, PendingTaskWake, RoomWakeRead, RouteObservation,
+    StagedTaskWake, StreamConnectionId, StreamConnectionState, SubscriptionError,
+    SubscriptionReceipt, SubscriptionScope, TaskWakeKind, TaskWakeRead, WakeEnvelope,
 };
 mod layout;
 mod layout_store;

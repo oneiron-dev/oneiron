@@ -7,6 +7,7 @@ mod publish;
 mod registry;
 mod review;
 mod room_wake;
+mod task_wake;
 mod wake;
 
 #[cfg(test)]
@@ -29,6 +30,7 @@ pub(crate) use self::publish::task_for_announcement;
 pub use self::registry::{BoardStreamRegistry, StreamConnectionState};
 pub use self::review::PendingDiaryReview;
 pub use self::room_wake::{PendingRoomWake, RoomWakeRead};
+pub use self::task_wake::{PendingTaskWake, StagedTaskWake, TaskWakeKind, TaskWakeRead};
 pub use self::wake::WakeEnvelope;
 
 use super::one_line_token;
