@@ -39,7 +39,11 @@
 //! (the other key is revoked), and the two replica tests, where the row
 //! arrives before the removal and the fold, not the door, must drop it.
 //! `a_revoked_keys_withheld_handoff_installs_no_root` runs red or as a guard.
-//! Guard: `an_enrolment_the_revocation_saw_stands`.
+//! Guard: `an_enrolment_the_revocation_saw_stands`. The fold's refold of a
+//! world or owner choice above a refused row never folds back a choice the
+//! fence refuses for its own signer (REVIEW-7987); red before that:
+//! `a_revoked_install_keys_choices_stay_refused_through_the_refold` (the
+//! second choice folds again).
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test owner_enrol`.
 #![cfg(oneiron_test_support)]
@@ -51,8 +55,8 @@ use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, ActorBindingStatus,
     AuthorityAttestation, AuthorityEntryHash, AuthorityKey, AuthorityLogEntry, AuthorityOp,
-    AuthoritySignature, AuthorityTier, DeviceAuthority, HostSlipIssuer, MachineRole,
-    OwnerKeyEnrollment, ROLE_AGENT, authority_entry_hash, authority_transcript,
+    AuthoritySignature, AuthorityTier, CheckpointRootChoice, DeviceAuthority, HostSlipIssuer,
+    MachineRole, OwnerKeyEnrollment, ROLE_AGENT, authority_entry_hash, authority_transcript,
     decode_authority_log_entry_body, encode_authority_log_entry_body,
 };
 use oneiron::consent::AuthenticatedOwner;
@@ -689,5 +693,86 @@ fn a_replica_holding_a_revoked_keys_revocation_drops_it_when_the_removal_arrives
     assert!(
         replica.on_roster_live(owners_second),
         "the withheld revocation counts for nothing once the removal arrives"
+    );
+}
+
+impl Shared {
+    /// The one row the history gained since `before`.
+    fn row_since(&self, before: &[Vec<u8>]) -> AuthorityEntryHash {
+        let held: BTreeSet<&Vec<u8>> = before.iter().collect();
+        let new: Vec<AuthorityEntryHash> = self
+            .history()
+            .iter()
+            .filter(|row| !held.contains(row))
+            .map(|row| {
+                authority_entry_hash(&decode_authority_log_entry_body(row).expect("a row"))
+                    .expect("a hash")
+            })
+            .collect();
+        assert_eq!(new.len(), 1, "one new row: {new:?}");
+        new[0]
+    }
+
+    fn is_valid(&self, hash: &AuthorityEntryHash) -> bool {
+        self.vault
+            .authority_fold()
+            .expect("the fold")
+            .valid_entries
+            .contains(hash)
+    }
+}
+
+/// The host install's key carries two checkpoint policy choices of the
+/// owner, the second on the first. A host-root revocation of that key,
+/// signed on the heads before both, arrives after them. Its fence refuses
+/// both for their own signer, and the fold's refold of a choice above a
+/// refused row folds neither back (REVIEW-7987).
+#[test]
+fn a_revoked_install_keys_choices_stay_refused_through_the_refold() {
+    let shared = shared();
+    let revocation =
+        oneiron::test_doors::install_key_revocation::withheld_revocation_of_this_install(
+            &shared.vault,
+            &shared.issuer,
+        )
+        .expect("the withheld revocation of the host install's key");
+    let owner = ActAuthority::Owner(proof(&shared.vault, shared.owner), ActSurface::ThisInstall);
+    let before = shared.history();
+    shared
+        .vault
+        .set_checkpoint_policy_as(
+            &owner,
+            Some(CheckpointRootChoice {
+                roots: vec![shared.issuer.public_key()],
+                quorum: 1,
+                hardware: false,
+            }),
+            None,
+        )
+        .expect("the first choice");
+    let first = shared.row_since(&before);
+    let before = shared.history();
+    shared
+        .vault
+        .set_checkpoint_policy_as(&owner, None, None)
+        .expect("the second choice");
+    let second = shared.row_since(&before);
+    assert!(
+        shared.is_valid(&first) && shared.is_valid(&second),
+        "precondition: both choices fold before the revocation arrives"
+    );
+
+    shared
+        .vault
+        .import_signed_authority_history(&[revocation])
+        .expect("the revocation arrives");
+
+    assert!(
+        !shared.is_valid(&first),
+        "the fence refuses the first choice, signed by the revoked key off its line"
+    );
+    assert!(
+        !shared.is_valid(&second),
+        "the refold does not fold the second choice back above the refused first"
     );
 }
