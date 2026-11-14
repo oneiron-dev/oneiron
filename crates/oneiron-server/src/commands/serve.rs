@@ -394,6 +394,10 @@ pub(crate) async fn build_server(
         // The `[policy]` section's owner-plane wording and settings (FIX
         // 5042); an embedding host may set its own after this.
         .with_owner_policy_config(config.policy.owner_policy_config());
+    // The image organ the host names by its program (L4-15); organs run
+    // on unix hosts only.
+    #[cfg(unix)]
+    sync_server.install_image_organ_from_env();
     // Its browser readiness starts from the `[browser]` section and its
     // runtime binding, with no supervisor's runtime fact (FIX 7670).
     sync_server
