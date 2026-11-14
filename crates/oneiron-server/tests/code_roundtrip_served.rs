@@ -337,9 +337,18 @@ impl Fixture {
     }
 
     /// One whole checker pass of the served drain, on a blocking thread.
+    /// The host helper's scratch is one fixed path (`/tmp/queue-check`), so
+    /// the passes of this binary's tests take turns.
     async fn checker_pass(&self) -> TestResult<usize> {
+        static TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let server = Arc::clone(&self.server);
-        Ok(tokio::task::spawn_blocking(move || run_merge_queue_checker_pass(&server)).await??)
+        Ok(tokio::task::spawn_blocking(move || {
+            let _turn = TURN
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            run_merge_queue_checker_pass(&server)
+        })
+        .await??)
     }
 
     /// The owner's admission of `commit` on the default branch: its
