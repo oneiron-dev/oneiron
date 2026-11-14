@@ -1,5 +1,7 @@
-//! The Google Workspace REST rows for Docs, Slides and Drive (L3-17): each
-//! accepts only its own endpoint and query, never another API's path.
+//! The Google Workspace REST rows for Docs, Slides and Drive (L3-17;
+//! GOOGLE-DRIVE-CONTENT-READ): each accepts only its own endpoint and query,
+//! never another API's path; only Drive's download row takes `alt=media`, and
+//! only its export row a format.
 //!
 //! Fleet: `cargo test --locked -p oneiron-broker --test workspace_shapes`
 
@@ -101,8 +103,8 @@ fn drive_rows_read_metadata_only() {
         assert_eq!(shape.check_path(path), Ok(()), "{shape:?} {path}");
     }
     let refused = [
-        // A content download or export: no row takes `alt`, and none has an
-        // export or download path.
+        // A content download or export on the metadata row: only the
+        // download row takes `alt`, and only the export row its path.
         (
             Shape::DriveFileGet,
             format!("/drive/v3/files/{id}?alt=media"),
@@ -152,5 +154,106 @@ fn drive_rows_read_metadata_only() {
     ] {
         assert_eq!(shape.method(), "GET", "{shape:?} only reads");
         assert_eq!(shape.auth_prefix(), "Bearer ", "{shape:?}");
+    }
+}
+
+#[test]
+fn drive_content_rows_take_only_their_own_query() {
+    let id = "1AbC-dEf_2gHiJkLmNoPqRsTuVwXyZ0123456789ab";
+    let accepted = [
+        (
+            Shape::DriveFileDownload,
+            format!("/drive/v3/files/{id}?alt=media&supportsAllDrives=true"),
+        ),
+        (
+            Shape::DriveFileExport,
+            format!("/drive/v3/files/{id}/export?mimeType=text%2Fplain"),
+        ),
+        (
+            Shape::DriveFileExport,
+            format!(
+                "/drive/v3/files/{id}/export?mimeType=application%2Fvnd.openxmlformats-officedocument.wordprocessingml.document"
+            ),
+        ),
+    ];
+    for (shape, path) in &accepted {
+        assert_eq!(shape.check_path(path), Ok(()), "{shape:?} {path}");
+    }
+    let refused = [
+        // The download's one query, and no other: none, part of it, another
+        // order, a flagged file's override, a field mask.
+        (Shape::DriveFileDownload, format!("/drive/v3/files/{id}")),
+        (
+            Shape::DriveFileDownload,
+            format!("/drive/v3/files/{id}?alt=media"),
+        ),
+        (
+            Shape::DriveFileDownload,
+            format!("/drive/v3/files/{id}?supportsAllDrives=true&alt=media"),
+        ),
+        (
+            Shape::DriveFileDownload,
+            format!("/drive/v3/files/{id}?alt=media&supportsAllDrives=true&acknowledgeAbuse=true"),
+        ),
+        (
+            Shape::DriveFileDownload,
+            format!("/drive/v3/files/{id}?acknowledgeAbuse=true&alt=media&supportsAllDrives=true"),
+        ),
+        (
+            Shape::DriveFileDownload,
+            format!("/drive/v3/files/{id}?fields=id&alt=media&supportsAllDrives=true"),
+        ),
+        // Another Drive path on the download row: the export, a listing.
+        (
+            Shape::DriveFileDownload,
+            format!("/drive/v3/files/{id}/export?alt=media&supportsAllDrives=true"),
+        ),
+        (
+            Shape::DriveFileDownload,
+            "/drive/v3/files?alt=media&supportsAllDrives=true".to_owned(),
+        ),
+        // The export takes only its format, percent-encoded in uppercase.
+        (
+            Shape::DriveFileExport,
+            format!("/drive/v3/files/{id}/export?mimeType=text%2Fplain&alt=media"),
+        ),
+        (
+            Shape::DriveFileExport,
+            format!("/drive/v3/files/{id}/export?mimeType=text%2fplain"),
+        ),
+        (
+            Shape::DriveFileExport,
+            format!("/drive/v3/files/{id}/export?mimeType=text/plain"),
+        ),
+        // The metadata path on the export row, and the reverse.
+        (
+            Shape::DriveFileExport,
+            format!("/drive/v3/files/{id}?mimeType=text%2Fplain"),
+        ),
+        (
+            Shape::DriveFileGet,
+            format!("/drive/v3/files/{id}?alt=media&supportsAllDrives=true"),
+        ),
+        // Another API's path.
+        (
+            Shape::DriveFileDownload,
+            format!("/v1/documents/{id}?alt=media&supportsAllDrives=true"),
+        ),
+    ];
+    for (shape, path) in &refused {
+        assert_eq!(
+            shape.check_path(path),
+            Err(Refusal::Path),
+            "{shape:?} {path}"
+        );
+    }
+    for shape in [Shape::DriveFileDownload, Shape::DriveFileExport] {
+        assert_eq!(shape.method(), "GET", "{shape:?} only reads");
+        assert_eq!(shape.auth_header(), "authorization", "{shape:?}");
+        assert_eq!(shape.auth_prefix(), "Bearer ", "{shape:?}");
+        assert!(
+            !shape.streams(),
+            "{shape:?} buffers its reply up to the frame bound and fails a longer one"
+        );
     }
 }
