@@ -728,16 +728,20 @@ fn the_owners_upload_of_a_held_booking_move_says_it_was_held() {
     let (booked, _pending) = booking_fenced_by_a_pending_emergency(&fixture);
     let event = booked.calendar.event_ref;
 
-    // The owner uploads the host calendar's file with both events moved.
-    let memory = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    // The vault's owner uploads the host calendar's file with both events
+    // moved. The upload door asks for this vault's owner, the embedded owner
+    // a self-hosted root binds; the fixture bound the host key to the page's
+    // host for the emergency, so it binds the owner back first.
+    let owner_id = fixture
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    oneiron::test_support::bind_host_owner(&fixture.vault, &fixture.issuer, owner_id)
+        .expect("bind the host key to the vault's owner again");
+    let memory = fixture.vault.memory(owner_id, EdgeActorClass::Human);
     let owner = fixture
         .vault
-        .authenticate_owner(
-            fixture.host,
-            &fixture.host.to_hex(),
-            true,
-            GateDecisionId::now(),
-        )
+        .authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())
         .expect("owner proof");
     let artifact = memory
         .put_blob_artifact(&BlobArtifactInput {
