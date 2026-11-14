@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::HostError;
 use crate::handlers::AskHandlers;
-use crate::landing::propose_organ_outputs;
+use crate::landing::{land_held_organ_outputs, propose_organ_outputs};
 use crate::route::{OrganRouter, RanOn, Routed};
 use crate::shutdown;
 use crate::spec::{CallClass, LentInput, OrganCall, OrganInput, SightedInput};
@@ -288,21 +288,17 @@ impl OrganRouter {
         };
         let (call, lent) = held;
         match self.call_with(vault, call, lent, asks) {
-            Ok(Routed::Done { outcome, .. }) => match propose_organ_outputs(
-                vault,
-                &artifact,
-                &outcome,
-                &wait.run_ref,
-                wait.trigger.clone(),
-                wait.held_by,
-                wait.submitter,
-            ) {
-                Ok(proposals) => {
-                    vault.release_organ_wait(&artifact, &wait.run_ref)?;
-                    Ok(Redrive::Landed(proposals))
+            // Only the held call's own landing takes the ref it holds
+            // (FIX 22386); a call with several files still releases it here.
+            Ok(Routed::Done { outcome, .. }) => {
+                match land_held_organ_outputs(vault, &wait, &outcome) {
+                    Ok(proposals) => {
+                        vault.release_organ_wait(&artifact, &wait.run_ref)?;
+                        Ok(Redrive::Landed(proposals))
+                    }
+                    Err(err) => failed(format!("the landing refused its files: {err}")),
                 }
-                Err(err) => failed(format!("the landing refused its files: {err}")),
-            },
+            }
             Ok(Routed::Waiting(still)) => {
                 vault.note_organ_wait(&artifact, &wait.run_ref, &still.reason, now)?;
                 Ok(Redrive::Waiting(still.reason))

@@ -108,9 +108,16 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
         path,
         dry_run,
         queue,
+        hosted,
         serve,
     } = args;
     let config = resolve_serve_config(&serve)?;
+    if hosted {
+        #[cfg(unix)]
+        return hosted_import::stage_command(source, &path, &config);
+        #[cfg(not(unix))]
+        anyhow::bail!("a hosted import needs a unix host");
+    }
     if queue {
         #[cfg(unix)]
         return queue::enqueue(source, &path, &config);
@@ -525,6 +532,8 @@ pub(super) mod notes;
 
 #[cfg(unix)]
 use crate::files_intake::confined::{self, open_in, walk_logs};
+#[cfg(unix)]
+pub(crate) mod hosted_import;
 #[cfg(unix)]
 pub(super) mod queue;
 

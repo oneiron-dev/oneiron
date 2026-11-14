@@ -175,6 +175,14 @@ pub trait SingleRouteBackend: LlmBackend {
     fn broker_isolation(&self) -> Option<BrokerIsolation> {
         None
     }
+
+    /// The login-backed model seat whose plan this backend's calls spend
+    /// (SEAT-PARK-MODEL-STEP-PATH): a spent window its offer rests on names
+    /// it, so a Dreamer step parks on that seat. `None`, the default, for a
+    /// backend no login backs: an API key, a broker's custody, a local model.
+    fn model_seat(&self) -> Option<EntityId> {
+        None
+    }
 }
 
 /// How a credential broker is kept apart from the daemon (ARCH-0069

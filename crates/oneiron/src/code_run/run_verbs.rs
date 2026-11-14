@@ -505,11 +505,12 @@ pub struct TaskWaitWorldRequest {
     pub step_key: String,
 }
 
-/// `tasks.wait({agents, all?, n_of?, step_key})`: one wait over AGENT
-/// children the run spawned with `self.agents.spawn` (slice 6.5b), answered
-/// once all of them have ended, or `n_of` of them have completed. It names
-/// no deadline: a child ends by its own run, its limits, a cancel or its
-/// spawner's kill, and each of those answers the wait.
+/// `tasks.wait({agents, all?, n_of?, until?, step_key})`: one wait over
+/// AGENT children the run spawned with `self.agents.spawn` (slice 6.5b),
+/// answered once all of them have ended, or `n_of` of them have completed,
+/// or at `until`. A child ends by its own run, its limits, a cancel or its
+/// spawner's kill, and each of those answers the wait; `until` bounds it
+/// when none of them comes first ([AGENT-WAIT-DEADLINE]).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskWaitAgentsRequest {
@@ -520,6 +521,11 @@ pub struct TaskWaitAgentsRequest {
     /// Wait for this many children to complete.
     #[schemars(range(min = 1, max = "u32::MAX"))]
     pub n_of: Option<u32>,
+    /// When the wait answers at the latest, unix milliseconds: then it is
+    /// done as `cutoff`, with the children still pending. A later call under
+    /// the same step key keeps the first call's. None waits for the children.
+    #[schemars(range(max = "JS_SAFE_INTEGER"))]
+    pub until: Option<u64>,
     /// The wait's key in the run: the same key answers as the same wait.
     pub step_key: String,
 }
@@ -531,7 +537,7 @@ impl TaskWaitAgentsRequest {
             tasks: Vec::new(),
             all: self.all,
             n_of: self.n_of,
-            until: None,
+            until: self.until,
             step_key: self.step_key,
             request: None,
             agents: Some(self.agents),
