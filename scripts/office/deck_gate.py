@@ -497,17 +497,19 @@ def _stop(signum, _frame):
 
 
 def run_one(candidate: Path, output: Path, observer: str, timeout: int, custody: list[int],
-            dialogs=None) -> str | None:
+            dialogs=None, *, fit=None, binding=None) -> str | None:
     """One serial oracle run; the reason to stop the pass, if any: only the
     environment's, never a candidate's own failure. `custody` counts the
-    custody queries in a row that timed out."""
+    custody queries in a row that timed out. `fit` and `binding` ride through
+    to the oracle for the deck-create pass; both absent is this gate's run."""
     if (output / 'receipt.json').exists():
         print(f'{output.name}: kept from an earlier pass', flush=True)
         return None
     if output.exists():
         shutil.rmtree(output)  # an earlier pass stopped before writing its receipt
     output.parent.mkdir(parents=True, exist_ok=True)
-    receipt = oracle_mod.oracle(candidate, output, observer=observer, timeout=timeout, dialogs=dialogs)
+    receipt = oracle_mod.oracle(candidate, output, observer=observer, timeout=timeout, dialogs=dialogs,
+                                fit=fit, binding=binding)
     print(f"{output.name}: {receipt['status']} - {receipt['detail']}", flush=True)
     if receipt.get('cleanup_warning'):
         return f"cleanup: {receipt['cleanup_warning']}"

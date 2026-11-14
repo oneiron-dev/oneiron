@@ -87,14 +87,18 @@ def kind_of(path):
     return None
 
 
-def count_rust(text):
+def rust_test_fns(text):
+    """Yield the offset of the `fn` keyword of each test in a Rust source text.
+
+    scripts/ci/suite_census.py reads the same offsets, so the census and this
+    gate count one set of tests."""
     if "test" not in text and "quickcheck" not in text and "parameterized" not in text:
-        return 0  # every name in TEST_ATTRS contains one of these
-    tests, pending, pos = 0, False, 0
+        return  # every name in TEST_ATTRS contains one of these
+    pending, pos = False, 0
     while True:
         m = _RUST_TOKEN.search(text, pos)
         if not m:
-            return tests
+            return
         pos = m.end()
         kind = m.lastgroup
         if kind == "block":
@@ -105,11 +109,11 @@ def count_rust(text):
                     pos = b.end()
                     break
             else:
-                return tests
+                return
         elif kind == "raw":
             close = text.find('"' + m.group("hashes"), pos)
             if close < 0:
-                return tests
+                return
             pos = close + 1 + len(m.group("hashes"))
         elif kind == "attr":
             p = _RUST_PATH.match(text, pos)
@@ -118,8 +122,12 @@ def count_rust(text):
                 pending = pending or last in TEST_ATTRS
                 pos = p.end()
         elif kind == "fn" and pending:
-            tests += 1
+            yield m.start()
             pending = False
+
+
+def count_rust(text):
+    return sum(1 for _ in rust_test_fns(text))
 
 
 def count_js(text, e2e):
@@ -151,8 +159,8 @@ def git(repo, *args, data=None):
     return out.stdout
 
 
-def tree_files(repo, rev):
-    """{path: blob sha} of every counted file in rev's tree."""
+def tree_files(repo, rev, keep=kind_of):
+    """{path: blob sha} of every file in rev's tree that keep(path) accepts (default: the counted files)."""
     files = {}
     for entry in git(repo, "ls-tree", "-r", "-z", "--full-tree", rev).split(b"\0"):
         if not entry:
@@ -160,27 +168,34 @@ def tree_files(repo, rev):
         meta, path = entry.split(b"\t", 1)
         mode, typ, sha = meta.split()
         path = path.decode("utf-8", errors="replace")
-        if typ == b"blob" and mode != b"120000" and kind_of(path):
+        if typ == b"blob" and mode != b"120000" and keep(path):
             files[path] = sha.decode()
     return files
 
 
-def count_blobs(repo, files):
-    """{path: (kind, count)} for {path: sha}, read through one cat-file --batch."""
+def read_blobs(repo, files):
+    """Yield (path, bytes) for {path: sha} in path order, read through one cat-file --batch."""
     if not files:
-        return {}
+        return
     paths = sorted(files)
     raw = git(repo, "cat-file", "--batch", data="".join(files[p] + "\n" for p in paths).encode())
-    out, pos = {}, 0
+    pos = 0
     for path in paths:
         nl = raw.index(b"\n", pos)
         header = raw[pos:nl].split()
         if len(header) != 3 or header[1] != b"blob":
             raise ScanError(f"unreadable blob for {path}: {raw[pos:nl].decode(errors='replace')}")
         size = int(header[2])
-        kind = kind_of(path)
-        out[path] = (kind, count_blob(kind, raw[nl + 1 : nl + 1 + size]))
+        yield path, raw[nl + 1 : nl + 1 + size]
         pos = nl + 1 + size + 1
+
+
+def count_blobs(repo, files):
+    """{path: (kind, count)} for {path: sha}."""
+    out = {}
+    for path, data in read_blobs(repo, files):
+        kind = kind_of(path)
+        out[path] = (kind, count_blob(kind, data))
     return out
 
 

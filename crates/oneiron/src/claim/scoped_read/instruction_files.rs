@@ -31,7 +31,9 @@ impl ScopedRead<'_> {
         let content = self.store_read();
         crate::codebase::code_instruction_handles_in(&content, txn, units, |id| {
             Ok(self.is_ref_readable_with_policy_in(txn, &policy, id)?
-                && crate::context_pack::disclosure_admits_target(&content, txn, disclosure, id)?)
+                && crate::context_pack::disclosure_admits_target(
+                    self.vault, &content, txn, disclosure, id,
+                )?)
         })
     }
 }

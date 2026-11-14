@@ -80,12 +80,16 @@ pub(in crate::sync) use self::egress::{
 pub use self::egress::{
     history_free_window_required, replay_pending_mirrors, require_history_free_window,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::forward::arm_index_built_hook;
 #[cfg(test)]
 pub(crate) use self::forward::forward_recovery;
 pub use self::forward::forward_rematerialize;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::forward::replay_window_in_edge_order_for_test;
-pub(crate) use self::forward::{FORWARD_PASS_VERSION, ForwardRun, forward_rematerialize_mirror};
+pub(crate) use self::forward::{
+    FORWARD_PASS_VERSION, ForwardRun, forward_rematerialize_detached, forward_rematerialize_mirror,
+};
 pub(crate) use self::history_free::export_sealed_mirror_snapshot;
 pub use self::history_free::{
     WindowExport, export_promotion_snapshot, export_window_replacement,
@@ -512,6 +516,35 @@ pub(crate) fn prune_subsumed_window_updates_in_txn(
         )?;
     }
     Ok(())
+}
+
+/// Imports `bytes` from a peer into `doc`, a registered window's document that
+/// other threads reach, with its Observer callbacks, under the live-window
+/// turn ([`Materializer::enter_live_window`]): it waits for an indexed pass
+/// over a live window to end, and a pass waits for it. Every peer import into
+/// a live window goes through here (L7-45). Hold nothing else across it: the
+/// caller's discard, persist or open runs after it returns.
+pub(crate) fn import_into_live_window(
+    materializer: &Materializer,
+    doc: &LoroDoc,
+    bytes: &[u8],
+) -> std::result::Result<loro::ImportStatus, loro::LoroError> {
+    let _turn = materializer.enter_live_window();
+    doc.import(bytes)
+}
+
+/// Runs `land` under the live-window turn of `materializer`, the one every
+/// window of its manager shares: [`import_into_live_window`] for a peer's
+/// update that lands outside the engine and keeps its own origin (a home
+/// socket's own-device push: the durable `u:w:` append of the bytes, then
+/// `doc.import_with(update, origin)` with its Observer callbacks). The append
+/// belongs inside: a pending `u:w:` row is merged into the document by any
+/// holder's `LoadedWindow::persist_state`, which takes no turn. It waits for
+/// an indexed pass over a live window to end, and a pass waits for it
+/// (L7-45). Hold no materializer or window registry lock when calling it.
+pub fn with_live_window_turn<T>(materializer: &Materializer, land: impl FnOnce() -> T) -> T {
+    let _turn = materializer.enter_live_window();
+    land()
 }
 
 /// Import-merges the persisted sync_state record for `key` — the
