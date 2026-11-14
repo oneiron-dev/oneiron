@@ -13,9 +13,10 @@
 //!   next drain starts from.
 //! * **One file.** `files.get` answers one file's metadata.
 //!
-//! Every call reads shared drives too, and each asks for the one fixed set
-//! of metadata fields below: name, type, folders, owners, dates and link.
-//! No call downloads or exports a file.
+//! Every call reads shared drives too. `changes.list` and `files.get` ask
+//! for the one fixed set of metadata fields below: name, type, folders,
+//! owners, dates and link; `changes.getStartPageToken` answers only the
+//! token and asks for no fields. No call downloads or exports a file.
 
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
