@@ -31,7 +31,8 @@ use crate::consent::bundle_projection::GateConsentBundleAction;
 mod authority;
 use authority::ClaimSettler;
 mod conflict_head;
-use conflict_head::{ConflictHead, ConflictHeadIndex, conflict_head_in_txn};
+pub(in crate::memory) use conflict_head::ConflictHeadIndex;
+use conflict_head::{ConflictHead, conflict_head_in_txn};
 mod restored_member;
 
 /// Key-derivation context of the review handle.
@@ -211,27 +212,8 @@ pub struct ClaimSettlement {
     pub warnings: Vec<SettleWarning>,
 }
 
-/// Why a committed settlement warns (FIX 7600).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SettleWarningCode {
-    /// The approved claim's VAD consolidation failed after the commit: the
-    /// settlement stands, and the claim's VAD is pending.
-    VadPending,
-}
-
-/// A warning a committed settlement carries: a stable code, the claim it is
-/// about and one human line (FIX 7600). The settlement it rides on is
-/// durable; the warning names work still owed after it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SettleWarning {
-    /// Why it warns.
-    pub code: SettleWarningCode,
-    /// The claim it is about (32 hex).
-    pub claim_ref: String,
-    /// One human line.
-    pub detail: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::claims::settle::{SettleWarning, SettleWarningCode};
 
 /// What a review reads of one claim, in one snapshot.
 struct ReviewedProposal {
@@ -259,6 +241,30 @@ impl ReviewedProposal {
         vault: &crate::Vault,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
+    ) -> MemoryResult<Self> {
+        Self::read_with_head_in_txn(vault, txn, id, |body| {
+            conflict_head_in_txn(vault, txn, id, body)
+        })
+    }
+
+    /// `read_in_txn`, with the head read from `heads`: one read of each
+    /// subject's claims for many reviews in one txn (FIX 23686).
+    fn read_indexed_in_txn(
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        heads: &mut ConflictHeadIndex,
+    ) -> MemoryResult<Self> {
+        Self::read_with_head_in_txn(vault, txn, id, |body| heads.head(vault, txn, id, body))
+    }
+
+    /// The review of `id`, with `conflict_head` naming the head an approval
+    /// of its body would close.
+    fn read_with_head_in_txn(
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        conflict_head: impl FnOnce(&ClaimBody) -> crate::Result<Option<ConflictHead>>,
     ) -> MemoryResult<Self> {
         let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
             .ok_or_else(|| MemoryError::not_found("no claim has that ref"))?;
@@ -298,7 +304,7 @@ impl ReviewedProposal {
         let prior = if body.approval == ClaimApprovalStatus::Proposed
             && !vault.has_deferred_claim_in_txn(txn, id)?
         {
-            conflict_head_in_txn(vault, txn, id, &body)?
+            conflict_head(&body)?
         } else {
             None
         };
