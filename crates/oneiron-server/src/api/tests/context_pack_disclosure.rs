@@ -215,19 +215,25 @@ async fn core_context_pack_owner_absent_happy_path_clamps_to_scope() {
         body["disclosure"]["notice"].is_null(),
         "notice is Some iff supervised"
     );
-    assert!(
-        body["disclosure"]["clamped_out"].as_u64().unwrap_or(0) > 0,
-        "candidate sweep counted removals: clamped_out {} disclosure {} results {}",
-        body["disclosure"]["clamped_out"],
-        body["disclosure"],
-        body["results"]
-    );
     let result_ids: Vec<&str> = body["results"]
         .as_array()
         .expect("results")
         .iter()
         .filter_map(|entity| entity["id"].as_str())
         .collect();
+    // The runner cuts a failure line at 400 characters: what decides this
+    // row (the count, and whether the other-world claim was read) goes first.
+    assert!(
+        body["disclosure"]["clamped_out"].as_u64().unwrap_or(0) > 0,
+        "candidate sweep counted removals: clamped_out {}; diary in results {}; \
+         party {}; base claim {}; {} results; disclosure {}",
+        body["disclosure"]["clamped_out"],
+        result_ids.contains(&diary.to_hex().as_str()),
+        result_ids.contains(&party.to_hex().as_str()),
+        result_ids.contains(&base_claim.to_hex().as_str()),
+        result_ids.len(),
+        body["disclosure"]
+    );
     assert!(result_ids.contains(&party.to_hex().as_str()));
     assert!(result_ids.contains(&base_claim.to_hex().as_str()));
     assert!(
