@@ -388,6 +388,7 @@ pub(super) fn fold_authority_log_once(
         &entry_ancestors,
         context,
         &mut issues,
+        |hash| retirements.fences_signer_of(hash, &by_hash),
     );
     let retired_keys = retirements.keys();
     let mut vault_ids = BTreeSet::new();

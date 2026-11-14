@@ -26,12 +26,19 @@
 //!   public key: anyone may enrol a public key. Those are the rows the anchor
 //!   fold took, and a removal whose own proof took it through an anchor's
 //!   chain; a root the fold refused makes no row the anchor's.
+//! - A `RevokeDevice` retires its one key the same way
+//!   (REVOKED-OWNER-ROOT-SIBLING-ENROL). The revoked key signs nothing that
+//!   stands outside the revocation and its own ancestry, so a row it signed
+//!   on a branch the revoker never saw (a withheld enrolment, say) counts on
+//!   no branch. Its fence yields and conflicts under the rules above. It
+//!   installs nothing, so it never leaves the roster without a settled root.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 
-/// The closed fences: those of the handoffs that settled or conflict.
+/// The closed fences: those of the handoffs and revocations that settled or
+/// conflict.
 #[derive(Debug, Default)]
 pub(super) struct Retirements {
     fences: Vec<Fence>,
@@ -41,42 +48,71 @@ pub(super) struct Retirements {
 
 #[derive(Debug)]
 struct Fence {
-    handoff: AuthorityEntryHash,
+    /// The handoff or revocation that closes this fence.
+    row: AuthorityEntryHash,
+    kind: FenceKind,
     vault_id: Option<AuthorityVaultId>,
     keys: BTreeSet<AuthorityKey>,
-    /// The handoff and its own ancestry.
+    /// The row and its own ancestry.
     line: BTreeSet<AuthorityEntryHash>,
-    /// The handoff is one of a conflict: its fence closed, but it installed
-    /// no successor.
+    /// The row is one of a conflict: its fence closed, but it installed
+    /// nothing.
     conflict: bool,
 }
 
+/// What closes a fence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FenceKind {
+    /// A `ReRoot`: it hands the vault to a successor.
+    Handoff,
+    /// A `RevokeDevice`: it installs nothing.
+    Revocation,
+}
+
 impl Fence {
-    /// What `handoff` fences: every key in its parents' rosters, live or
-    /// revoked, other than the key it hands the vault to.
+    /// Whether `op` closes a fence.
+    fn closes(op: &AuthorityOp) -> bool {
+        matches!(
+            op,
+            AuthorityOp::ReRoot { .. } | AuthorityOp::RevokeDevice { .. }
+        )
+    }
+
+    /// What `row` fences. A handoff fences every key in its parents'
+    /// rosters, live or revoked, other than the key it hands the vault to; a
+    /// revocation fences the key it revokes.
     fn of(
-        handoff: &AuthorityEntryHash,
+        row: &AuthorityEntryHash,
         states: &BTreeMap<AuthorityEntryHash, FoldState>,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     ) -> Self {
-        let entry = &entries[handoff];
-        let successor = match &entry.op {
-            AuthorityOp::ReRoot { new_device } => Some(&new_device.key),
-            _ => None,
+        let entry = &entries[row];
+        let (kind, keys) = match &entry.op {
+            AuthorityOp::RevokeDevice { revoked_key } => {
+                (FenceKind::Revocation, BTreeSet::from([revoked_key.clone()]))
+            }
+            op => {
+                let successor = match op {
+                    AuthorityOp::ReRoot { new_device } => Some(&new_device.key),
+                    _ => None,
+                };
+                let keys = entry
+                    .parent_hashes
+                    .iter()
+                    .filter_map(|parent| states.get(parent))
+                    .flat_map(|state| state.roster.keys())
+                    .filter(|key| Some(*key) != successor)
+                    .cloned()
+                    .collect();
+                (FenceKind::Handoff, keys)
+            }
         };
-        let keys = entry
-            .parent_hashes
-            .iter()
-            .filter_map(|parent| states.get(parent))
-            .flat_map(|state| state.roster.keys())
-            .filter(|key| Some(*key) != successor)
-            .cloned()
-            .collect();
-        let mut line = ancestors.get(handoff).cloned().unwrap_or_default();
-        line.insert(*handoff);
+        let mut line = ancestors.get(row).cloned().unwrap_or_default();
+        line.insert(*row);
         Self {
-            handoff: *handoff,
+            row: *row,
+            kind,
             vault_id: entry.vault_id,
             keys,
             line,
@@ -85,7 +121,7 @@ impl Fence {
     }
 
     /// Whether `hash` is signed, as primary or co-signer, by a key this
-    /// handoff fences, in its vault and outside its line. A genesis is never
+    /// fence holds, in its vault and outside its line. A genesis is never
     /// fenced: a second one is a root conflict, which the fold reports.
     fn signed_outside(
         &self,
@@ -130,18 +166,40 @@ impl Retirements {
 
     /// The handoffs whose fences are closed, settled or in conflict.
     pub(super) fn handoffs(&self) -> BTreeSet<AuthorityEntryHash> {
-        self.fences.iter().map(|fence| fence.handoff).collect()
+        self.fences
+            .iter()
+            .filter(|fence| fence.kind == FenceKind::Handoff)
+            .map(|fence| fence.row)
+            .collect()
     }
 
     /// Whether a conflict retired a root and installed no successor, so the
-    /// roster has no settled root.
+    /// roster has no settled root. A revocation installs nothing, so only a
+    /// handoff's conflict counts.
     pub(super) fn unsettled(&self) -> bool {
-        self.fences.iter().any(|fence| fence.conflict)
+        self.fences
+            .iter()
+            .any(|fence| fence.kind == FenceKind::Handoff && fence.conflict)
+    }
+
+    /// Whether `hash` is itself signed, as primary or co-signer, by a key a
+    /// closed fence holds, outside that fence's line: a row the fence refuses
+    /// for its own signer (`RetiredSigner`). The world refold folds a row
+    /// again with the refused rows beneath it crossed, never such a row
+    /// itself (REVIEW-7987).
+    pub(super) fn fences_signer_of(
+        &self,
+        hash: &AuthorityEntryHash,
+        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    ) -> bool {
+        self.fences
+            .iter()
+            .any(|fence| fence.signed_outside(hash, entries, &self.anchored))
     }
 
     /// Whether a restriction `hash` stands on a retired key: it, or an entry
     /// in its ancestry, is signed by a key a closed fence holds, outside that
-    /// handoff's line. Such an entry proves nothing. The rows its own proof
+    /// fence's line. Such an entry proves nothing. The rows its own proof
     /// folded through an owner anchor's branch, `routed`, rest on no roster
     /// key (Sol code-R2 S2-F2); a row it took through the roster is the
     /// roster's, whatever root its branch names (Sol code-R3 S3-F1).
@@ -165,8 +223,9 @@ impl Retirements {
 /// handoff is refused at once and fences nothing. `contend` names the rows
 /// that lose to a concurrent restriction (a confirmation collision) among the
 /// rows it is shown, with why. Fences close first, so a
-/// fenced key's row never wins one; a handoff whose own rows then lose one is
-/// pruned, and the fold settles again without it until nothing more is.
+/// fenced key's row never wins one; a handoff or revocation whose own rows
+/// then lose one is pruned, and the fold settles again without it until
+/// nothing more is.
 pub(super) fn settle_handoffs(
     states: &mut BTreeMap<AuthorityEntryHash, FoldState>,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
@@ -197,10 +256,10 @@ pub(super) fn settle_handoffs(
             .filter(|fence| losers.keys().any(|loser| fence.line.contains(loser)))
             .map(|fence| {
                 let issue = losers
-                    .get(&fence.handoff)
+                    .get(&fence.row)
                     .cloned()
-                    .unwrap_or(AuthorityFoldIssue::InvalidAncestry(fence.handoff));
-                (fence.handoff, issue)
+                    .unwrap_or(AuthorityFoldIssue::InvalidAncestry(fence.row));
+                (fence.row, issue)
             })
             .collect();
         if lost.is_empty() {
@@ -238,9 +297,14 @@ fn with_descendants(
         .collect()
 }
 
-/// Decides which handoffs among the rows `refused` leaves settle, conflict or
-/// yield, adds to `refused` every row a closed fence fences and every handoff
-/// that does not settle, and returns the closed fences.
+/// Decides which handoffs and revocations among the rows `refused` leaves
+/// settle, conflict or yield, adds to `refused` every row a closed fence
+/// fences and every handoff that does not settle, and returns the closed
+/// fences. Only a handoff is refused for not settling. A revocation in a
+/// closed conflict is fenced by another member, so it goes with the row that
+/// fence refuses, itself or one in its ancestry. A revocation that yields
+/// keeps its fence open, and its row stands unless a closed fence refuses it
+/// the same way: it revokes its key on its own branch, as any revocation does.
 fn close_fences(
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
@@ -255,13 +319,11 @@ fn close_fences(
         .collect();
     let fences: Vec<Fence> = states
         .keys()
-        .filter(|hash| {
-            !gone.contains(*hash) && matches!(entries[*hash].op, AuthorityOp::ReRoot { .. })
-        })
-        .map(|handoff| Fence::of(handoff, states, entries, ancestors))
+        .filter(|hash| !gone.contains(*hash) && Fence::closes(&entries[*hash].op))
+        .map(|row| Fence::of(row, states, entries, ancestors))
         .collect();
     let count = fences.len();
-    // fences_directly[i][j]: handoff i's fence fences handoff j or a row in
+    // fences_directly[i][j]: row i's fence fences row j or a row in
     // its ancestry; reach[i] is everything i fences, directly or through
     // others.
     let fences_directly: Vec<Vec<bool>> = fences
@@ -269,7 +331,7 @@ fn close_fences(
         .map(|fence| {
             fences
                 .iter()
-                .map(|other| fence.excludes(&other.handoff, entries, ancestors, &anchored))
+                .map(|other| fence.excludes(&other.row, entries, ancestors, &anchored))
                 .collect()
         })
         .collect();
@@ -287,9 +349,9 @@ fn close_fences(
             seen
         })
         .collect();
-    // A conflict: handoffs that fence one another round a cycle. It is
-    // decided once every handoff that fences it from outside is: it yields
-    // to a closed fence, and otherwise closes its own.
+    // A conflict: rows that fence one another round a cycle. It is decided
+    // once every row that fences it from outside is: it yields to a closed
+    // fence, and otherwise closes its own.
     let members: Vec<Vec<usize>> = (0..count)
         .map(|i| {
             (0..count)
@@ -319,8 +381,11 @@ fn close_fences(
         }
     }
     let unsettled: Vec<AuthorityEntryHash> = (0..count)
-        .filter(|&i| members[i].len() > 1 || closed[i] != Some(true))
-        .map(|i| fences[i].handoff)
+        .filter(|&i| {
+            fences[i].kind == FenceKind::Handoff
+                && (members[i].len() > 1 || closed[i] != Some(true))
+        })
+        .map(|i| fences[i].row)
         .collect();
     let retirements = Retirements {
         fences: fences

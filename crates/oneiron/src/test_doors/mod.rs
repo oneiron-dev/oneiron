@@ -49,6 +49,7 @@ pub mod house_link;
 pub mod hydration_decode_guard;
 pub mod identity_recheck;
 pub mod inquiry;
+pub mod install_key_revocation;
 pub mod label_writers;
 pub mod learning_claim_value;
 pub mod learning_setting_sourced;
