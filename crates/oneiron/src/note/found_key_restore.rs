@@ -18,11 +18,14 @@ use crate::registry::ENTITY_TYPE_NOTE;
 use crate::{Vault, WriteActor};
 
 /// Puts `value` back where the mask left `text_form`, a found key's handle
-/// as text, in the NOTE `record`'s live body (`field` "markdown") or title
-/// ("title"), as an edit stamped by `actor`, the person whose ruling it is.
-/// The ruling already stands, so the write door reads the value as no hit
-/// there. Returns `false` when `record` is no NOTE or `field` none of its
-/// texts: the caller's index restore stands for it.
+/// as text, in the NOTE `record`'s live body and title, for a key found in
+/// either (`field` "markdown" or "title"), as an edit stamped by `actor`,
+/// the person whose ruling it is. One value takes one handle in both texts:
+/// a write admits body and title with one plan, and a later write marks a
+/// value custody holds with its handle (REVIEW-7876 F1). The ruling already
+/// stands, so the write door reads the value as no hit there. Returns
+/// `false` when `record` is no NOTE or `field` none of its texts: the
+/// caller's index restore stands for it.
 pub(crate) fn restore_found_key_text_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -37,26 +40,24 @@ pub(crate) fn restore_found_key_text_in_txn(
         .as_deref()
         .and_then(EntityMetadataHeader::parse)
         .is_some_and(|header| header.entity_type == ENTITY_TYPE_NOTE);
-    if !note {
+    if !note || !matches!(field, "markdown" | "title") {
         return Ok(false);
     }
     let doc = load(vault, txn, record)?;
-    let held = match field {
-        "markdown" => Some(doc.view()?.markdown),
-        "title" => doc.title()?,
-        _ => return Ok(false),
-    };
-    let Some(held) = held.filter(|text| text.contains(text_form)) else {
+    let body = Some(doc.view()?.markdown).filter(|text| text.contains(text_form));
+    let title = doc.title()?.filter(|text| text.contains(text_form));
+    if body.is_none() && title.is_none() {
         return Ok(true);
-    };
-    let restored = held.replace(text_form, as_text(value)?);
+    }
+    let value = as_text(value)?;
     // The commit names the ruling person's stamp token (FIX 10930).
     let writer = WriteActor::new(actor, EdgeActorClass::Human);
     let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, writer)?;
-    if field == "title" {
-        doc.set_title(&restored, stamp)?;
-    } else {
-        doc.restore_body(&restored, stamp)?;
+    if let Some(body) = body {
+        doc.restore_body(&body.replace(text_form, value), stamp)?;
+    }
+    if let Some(title) = title {
+        doc.set_title(&title.replace(text_form, value), stamp)?;
     }
     record_authorship(
         &doc,
