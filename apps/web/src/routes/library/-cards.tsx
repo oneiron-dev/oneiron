@@ -17,12 +17,13 @@ const STORES: Array<{ id: string; name: string; region: string; lastOrder: strin
 const HIDDEN_IN = 9
 const TOTAL = 14
 
-/* The stores card: a table with a pick column; the count follows the picks. */
-export function TableCard({ bare, onLog }: { bare?: boolean; onLog?: (line: string) => void }) {
+/* The stores card: a table with a pick column; the count follows the picks.
+   Pending, it is still arriving: the live mark, and an action that waits. */
+export function TableCard({ bare, pending, onLog }: { bare?: boolean; pending?: boolean; onLog?: (line: string) => void }) {
   const [picked, setPicked] = React.useState<Record<string, boolean>>(() => Object.fromEntries(STORES.map((s) => [s.id, s.in])))
   const count = HIDDEN_IN + Object.values(picked).filter(Boolean).length
   return (
-    <ComposedCard title="Stores in the pilot" note={TABLE_NOTE} bare={bare} onOpen={() => onLog?.('stores card: opened beside the room')}>
+    <ComposedCard title="Stores in the pilot" note={TABLE_NOTE} bare={bare} pending={pending} onOpen={() => onLog?.('stores card: opened beside the room')}>
       <ComposedCard.Table
         aria-label="stores in the pilot"
         onToggle={(row, on) => {
@@ -50,6 +51,7 @@ export function TableCard({ bare, onLog }: { bare?: boolean; onLog?: (line: stri
         more="show 10 more"
         onMore={() => onLog?.('stores card: show 10 more')}
         action="use this list"
+        actionDisabled={pending}
         onAction={() => onLog?.(`stores card: used the list of ${count}`)}
       />
     </ComposedCard>
@@ -103,7 +105,7 @@ export function ChartCard({
         forecastLabel="the fit"
         compareLabel="the same week last year"
         unit="¥ million a week"
-        formatValue={(v) => v.toFixed(1)}
+        decimals={1}
         ariaLabel={`Weekly sales, weeks 40 to 52: sold through week 45, then the fit with weeks 44 to 46 as ${reading} weeks; rings mark the same week last year.`}
       />
       <ComposedCard.Picks
@@ -139,5 +141,22 @@ export function TasksFlow({ onOpen }: { onOpen?: (id: string) => void }) {
         draft the supplier outlook
       </TaskFlow.Task>
     </TaskFlow>
+  )
+}
+
+/* The stores card while it arrives; `the card arrives` makes it whole, and
+   nothing else on the card moves. */
+export function ArrivingCard() {
+  const [pending, setPending] = React.useState(true)
+  return (
+    <div className="lib-stack lib-column" data-specimen="card-arriving">
+      <TableCard pending={pending} />
+      <span className="lib-readout" data-specimen="card-arriving-state">
+        {pending ? 'still arriving' : 'whole'}
+        <button type="button" className="lib-pick lib-field-pick" data-specimen="card-arriving-toggle" onClick={() => setPending((p) => !p)}>
+          {pending ? 'the card arrives' : 'arriving again'}
+        </button>
+      </span>
+    </div>
   )
 }

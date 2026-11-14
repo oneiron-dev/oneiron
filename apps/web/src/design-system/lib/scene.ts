@@ -1,5 +1,5 @@
 import { loadImage } from './field-art'
-import { themeSeedFromPixels, toneMapFromPixels, type ThemeSeed, type ToneMap } from './theme'
+import { scenePictures, themeSeedFromPixels, toneMapFromPixels, type ScenePictures, type Theme, type ThemeSeed, type ToneMap } from './theme'
 
 /* Reading a scene's picture in the browser: its seed, its tone map, and
    the tone map as a grey picture ready to be drawn cover-fit. Each picture
@@ -57,4 +57,17 @@ export function readScene(url: string): Promise<SceneReading> {
     readings.set(url, pending)
   }
   return pending
+}
+
+/* The scene's pictures this page may draw (see scenePictures); null on the
+   server, for a flat theme, and for a picture from another host. */
+export function pagePictures(theme: Theme): ScenePictures | null {
+  return scenePictures(theme, typeof location === 'undefined' ? null : location.href)
+}
+
+/* The picture for a scheme, when the page may draw it. */
+export function pagePicture(theme: Theme, scheme: 'dark' | 'light' | null): string | null {
+  if (!scheme) return null
+  const pictures = pagePictures(theme)
+  return pictures ? (scheme === 'dark' ? pictures.night : pictures.day) : null
 }

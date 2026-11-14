@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { BrandMark } from '../marks/BrandMark'
 import { cx } from '../lib/react-utils'
+import { pagePicture } from '../lib/scene'
 import { useResolvedScheme } from '../lib/scheme'
 import { useRootTheme } from './root-theme'
 
@@ -22,7 +23,7 @@ export interface SceneSheetProps extends React.ComponentPropsWithRef<'section'> 
 export function SceneSheet({ width = 410, brand = false, brandAlign = 'center', className, style, children, ...props }: SceneSheetProps) {
   const { theme } = useRootTheme()
   const scheme = useResolvedScheme()
-  const picture = theme.kind === 'scene' && scheme ? (scheme === 'dark' ? theme.night : theme.day) : null
+  const picture = pagePicture(theme, scheme)
   return (
     <div
       className="sl-scene-sheet-stage"

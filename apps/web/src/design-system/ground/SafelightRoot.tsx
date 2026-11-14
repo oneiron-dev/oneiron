@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { cx } from '../lib/react-utils'
-import { readScene } from '../lib/scene'
+import { pagePictures, readScene } from '../lib/scene'
 import {
   DEFAULT_THEME,
   SCENE_STAND_IN_COLOUR,
@@ -24,10 +24,12 @@ interface SceneSeeds {
 }
 
 /* A scene's two seeds, read from its pictures in the browser; null on the
-   server, while the pictures load, and for a flat theme. */
+   server, while the pictures load, for a flat theme, and for a scene with
+   a picture from another host (it keeps the stand-in). */
 function useSceneSeeds(theme: Theme): SceneSeeds | null {
-  const day = theme.kind === 'scene' ? theme.day : null
-  const night = theme.kind === 'scene' ? theme.night : null
+  const pictures = pagePictures(theme)
+  const day = pictures?.day ?? null
+  const night = pictures?.night ?? null
   const [seeds, setSeeds] = React.useState<SceneSeeds | null>(null)
   React.useEffect(() => {
     if (!day || !night) return

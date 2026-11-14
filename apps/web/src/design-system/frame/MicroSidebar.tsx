@@ -7,7 +7,7 @@ import { Figure } from '../primitives/Figure'
 import { Icon } from '../primitives/Icon'
 import { soundPress } from '../lib/press'
 import { cx, mergeRefs, mergeSlotProps, useIsomorphicLayoutEffect } from '../lib/react-utils'
-import { AppFrameContext } from './app-frame-context'
+import { useMicroSidebarPeek } from './app-frame-context'
 import { useReorder } from './use-reorder'
 
 /* A press held this long on a touch screen opens a pinned item's menu. */
@@ -100,6 +100,9 @@ export interface MicroSidebarItemProps extends Omit<React.ComponentPropsWithRef<
      under a symbol is at most eight letters (`activity`, `eiri`), so it
      never truncates. */
   label: string
+  /* The tooltip's second, quiet line: a fact the name lacks (`your
+     companion`, `switch vault`). Shown with the tooltip, not with words. */
+  caption?: string
   /* The place on screen now: one tone step. */
   current?: boolean
   /* A badge figure at the symbol's corner. */
@@ -119,6 +122,7 @@ function MicroSidebarItem({
   id,
   icon,
   label,
+  caption,
   current = false,
   count,
   needsYou = false,
@@ -133,11 +137,11 @@ function MicroSidebarItem({
 }: MicroSidebarItemProps) {
   const micro = useMicroSidebar('MicroSidebar.Item')
   const pinned = React.useContext(PinnedContext)
-  const frame = React.useContext(AppFrameContext)
+  const peek = useMicroSidebarPeek(id)
   const controlRef = React.useRef<HTMLElement | null>(null)
   const openMenu = React.useRef<(() => void) | null>(null)
   const press = React.useRef<{ timer: ReturnType<typeof setTimeout>; x: number; y: number } | null>(null)
-  const peeking = !!frame && !!id && frame.peekId === id
+  const peeking = peek.peeking
 
   React.useEffect(() => () => clearTimeout(press.current?.timer), [])
 
@@ -170,7 +174,7 @@ function MicroSidebarItem({
     draggable: false,
     onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => {
       onKeyDown?.(event as React.KeyboardEvent<HTMLButtonElement>)
-      if (!event.defaultPrevented && frame && id) frame.itemKeyDown(id, event)
+      peek.onControlKeyDown(event)
     },
     onContextMenu: (event: React.MouseEvent<HTMLElement>) => {
       onContextMenu?.(event as React.MouseEvent<HTMLButtonElement>)
@@ -193,7 +197,7 @@ function MicroSidebarItem({
   }
   if (micro.labels === 'none') {
     control = (
-      <Tooltip label={label} side="right" disabled={peeking}>
+      <Tooltip label={label} caption={caption} side="right" disabled={peeking}>
         {control}
       </Tooltip>
     )
@@ -210,13 +214,13 @@ function MicroSidebarItem({
       className="sl-micro-item"
       data-micro-sidebar-id={id}
       data-reorder-label={label}
-      onPointerEnter={frame && id ? (event) => frame.itemPointerEnter(id, event) : undefined}
+      onPointerEnter={peek.itemProps.onPointerEnter}
       onPointerLeave={(event) => {
         clearPress()
-        if (frame && id) frame.itemPointerLeave(id, event)
+        peek.itemProps.onPointerLeave?.(event)
       }}
       onPointerDown={(event) => {
-        if (frame && id) frame.itemPointerDown(id, event)
+        peek.itemProps.onPointerDown?.(event)
         if (onUnpin && event.pointerType === 'touch') {
           clearPress()
           press.current = {

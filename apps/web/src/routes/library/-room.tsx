@@ -137,7 +137,7 @@ function RoomView({ view, marked, onLog }: { view: string; marked: boolean; onLo
 }
 
 /* One room on a stage of a set width: its head line, then the view its
-   tab selects. */
+   tab selects, drawn in one panel that takes the selected value. */
 function RoomDemo({ pins, width, defaultView = ROOM_VIEWS.talk, specimen, caption }: { pins: RoomPins; width: number; defaultView?: string; specimen: string; caption: string }) {
   const [view, setView] = React.useState(defaultView)
   const [log, setLog] = React.useState('')
@@ -188,9 +188,15 @@ function RoomDemo({ pins, width, defaultView = ROOM_VIEWS.talk, specimen, captio
                 {PINNED_MESSAGE}
               </Tabs.Pin>
             </RoomHead>
-            <div className="lib-room-view">
-              <RoomView view={shown} marked={marked} onLog={setLog} />
-            </div>
+            {pins === 'none' ? (
+              <div className="lib-room-view">
+                <RoomView view={shown} marked={marked} onLog={setLog} />
+              </div>
+            ) : (
+              <Tabs.Panel value={shown} className="lib-room-view">
+                <RoomView view={shown} marked={marked} onLog={setLog} />
+              </Tabs.Panel>
+            )}
           </Tabs>
         </SafelightRoot>
       </div>

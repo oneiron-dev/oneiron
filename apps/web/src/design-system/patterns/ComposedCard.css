@@ -23,10 +23,24 @@
 
 /* The title line: the title, then the information mark at the right. */
 .sl-composed-card-head {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
   min-height: 32px;
+}
+
+/* A card still arriving: the live mark stands at the centre of the
+   information mark's 30 px box, and the mark keeps its place hidden. */
+.sl-composed-card[data-pending] .sl-composed-card-head > .sl-info-mark {
+  visibility: hidden;
+}
+
+.sl-composed-card-live {
+  position: absolute;
+  top: 50%;
+  right: 11px;
+  margin-top: -4px;
 }
 
 .sl-composed-card-title {
@@ -184,6 +198,19 @@
 
 .sl-composed-chip:active {
   transform: scale(0.96);
+}
+
+.sl-composed-chip:disabled {
+  color: var(--sl-ink-2);
+  cursor: default;
+}
+
+.sl-composed-chip:disabled:hover {
+  background: var(--sl-chip);
+}
+
+.sl-composed-chip:disabled:active {
+  transform: none;
 }
 
 .sl-composed-picks {
