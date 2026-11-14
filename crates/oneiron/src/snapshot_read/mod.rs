@@ -23,6 +23,7 @@ mod source_version;
 mod strength_observations;
 pub(crate) mod tables;
 
+pub(crate) use conflicts_page::conflicts_page_bound;
 pub use conflicts_page::{
     ConflictAlternative, ConflictMember, ConflictsPage, ConflictsPageRequest, ObservedConflict,
     conflicts_page,
@@ -60,7 +61,7 @@ pub use strength_observations::{
 };
 pub(crate) use strength_observations::{
     classify_observation_sources_in_txn, observation_reader_scope_for_actor_in_txn,
-    strength_observations_page_bound,
+    observed_claim_reads_in_txn, strength_observations_page_bound,
 };
 // The integration tests' doors name a cited source's version as a caller's
 // read serves it (untangle 6.7a).

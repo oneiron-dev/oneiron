@@ -204,6 +204,8 @@ impl DreamerWakeDriver<'_> {
                     // (untangle 6.9c, RULING S69C-DESIGN item 8).
                     && admitted.status.payload.attempt_type
                         != crate::dreamer_runner::maintenance::CONSOLIDATION_STRENGTH_FACET
+                    && admitted.status.payload.attempt_type
+                        != crate::dreamer_runner::maintenance::CONFLICT_SETTLE_FACET
                 {
                     crate::dreamer_runner::maintenance::execute(
                         admitted,
