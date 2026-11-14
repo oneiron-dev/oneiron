@@ -184,12 +184,22 @@ pub struct EmbeddingSpaceProbePutRequest {
 pub struct EmbeddingSpaceProbeDeleteRequest {
     /// The probe's id, 32 hex.
     pub id: String,
+    /// Another asker's approved check-in for deleting this probe, 32 hex:
+    /// the Owner applies it on their own proof, and the delete's writer
+    /// spends it (ROLES-CHECKIN 2k5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
-/// `vault.embedding_spaces.probes.delete`'s answer: whether a probe went.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+/// `vault.embedding_spaces.probes.delete`'s answer: whether a probe went,
+/// and the check-in decision the delete ran on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EmbeddingSpaceProbeDeleted {
     pub ok: bool,
+    /// The Owner's own proof, naming the asker's approved check-in it applied
+    /// (ROLES-CHECKIN 2k5; P25-SHAPE Q1 = A).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 /// An engine refusal of a space change, a bad request as the route answers
@@ -415,15 +425,39 @@ pub fn put_embedding_space_probe_as(
     })
 }
 
-/// `vault.embedding_spaces.probes.delete`.
+/// `vault.embedding_spaces.probes.delete`: the Owner's delete on their own
+/// proof, applying with `check_in_ref` another asker's approved check-in for
+/// deleting this probe (2k5; P25-SHAPE Q1 = A). The answer records the
+/// decision.
+///
+/// # Errors
+///
+/// `BAD_REQUEST` for a malformed id or `check_in_ref`; the Owner's proof no
+/// longer holds; a check-in that is not an approved ask for this delete;
+/// storage errors.
 pub fn delete_embedding_space_probe_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: EmbeddingSpaceProbeDeleteRequest,
 ) -> MemoryResult<EmbeddingSpaceProbeDeleted> {
     let id = probe_id(&input.id)?;
+    let applied = input
+        .check_in_ref
+        .as_deref()
+        .map(|hex| {
+            EntityId::from_hex(hex)
+                .map(|check_in| crate::check_in::AppliedCheckIn {
+                    id: check_in,
+                    verb: "vault.embedding_spaces.probes.delete",
+                    effect_digest: crate::check_in::embedding_space_probe_delete_effect_digest(&id),
+                })
+                .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))
+        })
+        .transpose()?;
+    let (ok, decision) = vault.delete_space_probe(owner, &id, applied.as_ref())?;
     Ok(EmbeddingSpaceProbeDeleted {
-        ok: vault.delete_space_probe(owner, &id)?,
+        ok,
+        check_in: Some(decision),
     })
 }
 

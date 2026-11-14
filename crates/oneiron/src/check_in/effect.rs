@@ -566,3 +566,16 @@ pub fn record_delete_effect_digest(
     update_short_text(&mut hasher, reason.as_str());
     *hasher.finalize().as_bytes()
 }
+
+/// The digest of deleting stored embedding space probe `probe`: the effect
+/// an asker's `vault.check_in.open` names for
+/// `vault.embedding_spaces.probes.delete`, and the one the Owner's delete
+/// spends (2k5; P25-SHAPE Q1 = A). BLAKE3, key derived from `oneiron
+/// check_in embedding space probe delete v1`, over the probe's 16 id bytes.
+#[must_use]
+pub fn embedding_space_probe_delete_effect_digest(probe: &[u8; 16]) -> [u8; 32] {
+    let mut hasher =
+        blake3::Hasher::new_derive_key("oneiron check_in embedding space probe delete v1");
+    hasher.update(probe);
+    *hasher.finalize().as_bytes()
+}
