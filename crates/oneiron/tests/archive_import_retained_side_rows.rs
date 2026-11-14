@@ -21,6 +21,12 @@
 //! * `an_actor_erase_drops_the_retained_copies_that_name_the_actor`: erasing
 //!   an actor drops the retained CALL_RECEIPT copy naming that actor and keeps the
 //!   backup copy.
+//! * `a_short_binary_credential_withholds_its_retained_row`: a retained
+//!   BACKUP_POLICY value that is one short MessagePack binary holding a
+//!   GitHub token, or a byte array or extension holding it, is withheld; the
+//!   same shapes holding plain bytes are not (REVIEW-7706 round 1). The
+//!   archive tree writes a payload of 64 bytes or fewer inline as hex, which
+//!   the document pass cannot read.
 //!
 //! Count model: minting the standing grant also appends its gate receipt, a
 //! plain claim-free GATE_DECISION_LEDGER row the secret scan keeps (ids and
@@ -654,4 +660,52 @@ fn an_actor_erase_drops_the_retained_copies_that_name_the_actor() {
         after.iter().any(|(table, _, _)| table == "BACKUP_POLICY"),
         "the erase keeps the backup copy: {after:?}"
     );
+}
+
+/// `value` as one MessagePack value's bytes.
+fn msgpack_bytes(value: &rmpv::Value) -> Vec<u8> {
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, value).expect("encode the value");
+    out
+}
+
+#[test]
+fn a_short_binary_credential_withholds_its_retained_row() {
+    use oneiron::test_doors::archive_side_catalogue::retained_row_withholds_credential;
+    // A GitHub token shape: ghp_ and 36 letters and digits, 40 bytes in all,
+    // under the archive tree's 64-byte inline limit.
+    let token = format!("ghp_{}", "aB3dE5fG7hJ9kL1mN2pQ4rS6tU8vW0xY2zA4");
+    assert_eq!(token.len(), 40, "the token shape is 40 bytes");
+    let plain = b"plain retained bytes with no credential in".to_vec();
+    let shapes = |bytes: &[u8]| {
+        [
+            ("binary", rmpv::Value::Binary(bytes.to_vec())),
+            (
+                "byte array",
+                rmpv::Value::Array(bytes.iter().map(|byte| rmpv::Value::from(*byte)).collect()),
+            ),
+            ("extension", rmpv::Value::Ext(7, bytes.to_vec())),
+            (
+                "binary in a map",
+                rmpv::Value::Map(vec![(
+                    rmpv::Value::from("note"),
+                    rmpv::Value::Binary(bytes.to_vec()),
+                )]),
+            ),
+        ]
+    };
+    for (shape, value) in shapes(token.as_bytes()) {
+        assert!(
+            retained_row_withholds_credential("BACKUP_POLICY", &[], &msgpack_bytes(&value))
+                .expect("the envelope encodes"),
+            "a retained row whose {shape} payload holds a token is withheld"
+        );
+    }
+    for (shape, value) in shapes(&plain) {
+        assert!(
+            !retained_row_withholds_credential("BACKUP_POLICY", &[], &msgpack_bytes(&value))
+                .expect("the envelope encodes"),
+            "a retained row whose {shape} payload holds plain bytes travels"
+        );
+    }
 }

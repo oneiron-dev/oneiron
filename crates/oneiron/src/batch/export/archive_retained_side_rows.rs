@@ -231,7 +231,7 @@ fn key_withholds_credential(key: &[u8]) -> bool {
 }
 
 /// Whether one decoded MessagePack value carries a credential: the value as the archive tree
-/// reads it, with every attached file's bytes read as bytes.
+/// reads it, and every binary, extension or byte-array payload read as bytes.
 fn tree_withholds_credential(value: &[u8], version_bytes: usize) -> bool {
     let Some(body) = value.get(version_bytes..) else {
         return opaque_withholds_credential(value);
@@ -250,10 +250,25 @@ fn tree_withholds_credential(value: &[u8], version_bytes: usize) -> bool {
     let Ok(json) = serde_json::to_value(&tree) else {
         return opaque_withholds_credential(value);
     };
-    if json_withholds_credential(&json) {
-        return true;
+    json_withholds_credential(&json) || payload_withholds_credential(&decoded)
+}
+
+/// Whether a binary, extension or byte-array payload anywhere in `value` reads as a credential.
+/// The archive tree writes such a payload as hex, inline when it is short, which the document
+/// pass cannot read (REVIEW-7706), so each is scanned here as bytes, the attached ones too.
+fn payload_withholds_credential(value: &rmpv::Value) -> bool {
+    use rmpv::Value as Mp;
+    match value {
+        Mp::Binary(bytes) | Mp::Ext(_, bytes) => opaque_withholds_credential(bytes),
+        Mp::Array(items) => match super::archive_side_tables::byte_values(items) {
+            Some(bytes) => opaque_withholds_credential(&bytes),
+            None => items.iter().any(payload_withholds_credential),
+        },
+        Mp::Map(entries) => entries.iter().any(|(key, value)| {
+            payload_withholds_credential(key) || payload_withholds_credential(value)
+        }),
+        _ => false,
     }
-    files.iter().any(|bytes| opaque_withholds_credential(bytes))
 }
 
 /// Whether one JSON value reads as a credential under the document pass.

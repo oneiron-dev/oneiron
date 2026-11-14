@@ -1,11 +1,47 @@
 //! Doors for `tests/archive_side_catalogue_coverage.rs`: the whole-vault
-//! archive's coverage of the canonical side-table catalogue (SIDE-1).
+//! archive's coverage of the canonical side-table catalogue (SIDE-1); and for
+//! `tests/archive_import_retained_side_rows.rs`: the export's credential
+//! judgement of one retained row.
 
+use crate::batch::export::archive_retained_side_rows::{
+    retained_side_row_key, retained_side_row_withholds_credential,
+};
 use crate::batch::export::archive_side_dispositions::ArchiveSideDisposition;
 use crate::batch::export::archive_side_dispositions::{
     OTHER_ARCHIVE_SECTION_TABLES, SIDE_TABLE_DISPOSITIONS,
 };
-use crate::side_table::StorageTier;
+use crate::batch::export::{ArchiveRetainedSideRow, ArchiveSideFamily, SideRowBytes};
+use crate::error::{Error, Result};
+use crate::side_table::{Named, SideCodec, StorageTier};
+
+/// Whether the export holds out of every archive, as a credential, the
+/// retained row of `source_table` whose stored key suffix is `source_key`
+/// and whose stored value is `source_value`: the judgement the export and
+/// the owner's restore make of each retained envelope.
+///
+/// # Errors
+///
+/// The envelope does not encode.
+pub fn retained_row_withholds_credential(
+    source_table: &str,
+    source_key: &[u8],
+    source_value: &[u8],
+) -> Result<bool> {
+    let row = ArchiveRetainedSideRow {
+        source_table: source_table.to_owned(),
+        source_key: source_key.to_vec(),
+        source_value: source_value.to_vec(),
+    };
+    let value = <Named as SideCodec<ArchiveRetainedSideRow>>::encode(&row)
+        .map_err(|_| Error::InvalidConfig("retained envelope does not encode".to_owned()))?;
+    Ok(retained_side_row_withholds_credential(&SideRowBytes {
+        family: ArchiveSideFamily::RetainedSideRow,
+        key: retained_side_row_key(&row).to_vec(),
+        value,
+        owner: None,
+        carriers: Vec::new(),
+    }))
+}
 
 /// Every canonical side-table declaration with the archive classes covering
 /// it: `family` (an `ArchiveSideFamily` carries it), `other_section`
