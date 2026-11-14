@@ -69,6 +69,8 @@ fn logged_row(receipt: &RunReceipt) -> Value {
             "unit": unit_name(&facts.unit),
             "allocation_reserved_units": facts.allocation_reserved_units,
             "rules_enforced": facts.rules_enforced,
+            // The world the call named, as an id (DEC-0005 fix 12).
+            "world": facts.world.map(|world| world.to_hex()),
         }),
         RunEvent::Denied {
             subject,
