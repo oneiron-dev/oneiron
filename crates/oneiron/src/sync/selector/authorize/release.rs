@@ -319,7 +319,9 @@ fn ask_companion_verdict(
 /// Arm (3) for MESSAGE: a provider's signature on a text, reasoning or tool
 /// call part. A MESSAGE with no such signature takes the typed rule; one
 /// with a signature must be a canonical witness body and is judged with
-/// exactly those part signatures masked.
+/// exactly those part signatures masked. The witness door checks a
+/// signature's shape, not its provider, so its value is the caller's: one
+/// the raw release check reads a credential in keeps the whole row home.
 fn signed_message_verdict(prefix: &[u8], body: &[u8]) -> Option<bool> {
     let mut masked = read_tree(body)?;
     let Some(Value::Array(parts)) = member_mut(&mut masked, &["parts"]) else {
@@ -336,6 +338,9 @@ fn signed_message_verdict(prefix: &[u8], body: &[u8]) -> Option<bool> {
         if let Some(signature) = member_mut(part, &["signature"])
             && !signature.is_nil()
         {
+            if !signature_slot_clean(signature) {
+                return Some(false);
+            }
             *signature = Value::Nil;
             signed = true;
         }
@@ -347,4 +352,16 @@ fn signed_message_verdict(prefix: &[u8], body: &[u8]) -> Option<bool> {
         return Some(false);
     }
     Some(judged_unchanged(ENTITY_TYPE_MESSAGE, prefix, &masked))
+}
+
+/// Whether a caller-supplied signature slot holds no credential the raw
+/// release check reads, as text or as bytes. A bearer token is content,
+/// never a proof slot. Any other shape is no signature and reads as unclean.
+fn signature_slot_clean(signature: &Value) -> bool {
+    let carried = match signature {
+        Value::String(text) => text.as_bytes(),
+        Value::Binary(bytes) => bytes.as_slice(),
+        _ => return false,
+    };
+    crate::batch::secret_scan::scan_undecoded_body(carried).is_none()
 }
