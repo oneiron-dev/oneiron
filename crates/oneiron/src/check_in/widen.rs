@@ -23,8 +23,9 @@
 //!   judges agents), a person with no membership grant (a Delegate grant is
 //!   none), and any person but the Owner on a vault that is not shared.
 //!
-//! Only a member's widen of another's item waits, so a `check_in_ref` on any
-//! other widen is refused before the door writes.
+//! Only a Steward's and a Member's widen of another's item waits, so a
+//! `check_in_ref` on any other widen, a Deputy's and an Admin's included, is
+//! refused before the door writes.
 
 use super::act_class::ActClass;
 use super::effect::{
@@ -38,6 +39,10 @@ use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+
+/// The refusal of a `check_in_ref` on a widen that waits on no check-in.
+const NO_WAIT_REF: &str = "check_in_ref names a Steward's or a Member's waiting widen of another's \
+                           item; this widen waits on none";
 
 /// One widen a door runs for its caller, as check-in judges it.
 pub(crate) struct WidenAct<'a> {
@@ -104,19 +109,22 @@ pub(crate) fn person_widen_check_in_in_txn(
                 effect_digest: widen.effect_digest,
             };
             let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-            return Ok(
-                match person_door_check_in_in_txn(vault, txn, &act, check_in_ref, now)? {
-                    DoorCheckIn::Go(decision) => WidenCheckIn::Go(Some(decision)),
-                    DoorCheckIn::Wait(id) => WidenCheckIn::Wait(id),
-                },
-            );
+            return match person_door_check_in_in_txn(vault, txn, &act, check_in_ref, now)? {
+                // A Deputy's or an Admin's widen goes on their role and spends
+                // nothing: the role judge leaves its `check_in_ref` unread, and
+                // it wrote nothing.
+                DoorCheckIn::Go(decision)
+                    if check_in_ref.is_some() && decision.check_in.is_none() =>
+                {
+                    Err(refuse(NO_WAIT_REF))
+                }
+                DoorCheckIn::Go(decision) => Ok(WidenCheckIn::Go(Some(decision))),
+                DoorCheckIn::Wait(id) => Ok(WidenCheckIn::Wait(id)),
+            };
         }
     };
     if check_in_ref.is_some() {
-        return Err(refuse(
-            "check_in_ref names a member's waiting widen of another's item; this widen waits on \
-             none",
-        ));
+        return Err(refuse(NO_WAIT_REF));
     }
     Ok(WidenCheckIn::Go(decision))
 }

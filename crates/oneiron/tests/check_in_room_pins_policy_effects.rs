@@ -9,7 +9,8 @@
 //!   changes nothing.
 //! - A member who runs a room another created is judged under their
 //!   membership role. A Deputy's opening goes on their own judgment (`sure`)
-//!   and an Admin's at once (`never_ask`). A Steward's and a Member's wait:
+//!   and an Admin's at once (`never_ask`); a `check_in_ref` on either is
+//!   refused and changes nothing. A Steward's and a Member's wait:
 //!   the set commits the pending check-in alone, changes nothing and answers
 //!   `CHECK_IN_PENDING` naming it; a repeat names the same one. Before the
 //!   Owner approves it, the call that names it changes nothing. Once
@@ -325,6 +326,21 @@ fn a_deputys_and_an_admins_opening_go_at_once_and_record_why() {
     ];
     for (holder, name, mode, basis) in cases {
         org.narrow(org.owners_room);
+        assert!(
+            org.set(
+                holder,
+                org.owners_room,
+                RoomPinPolicy::Members,
+                Some(&EntityId::now().to_hex()),
+            )
+            .is_err(),
+            "the {name}'s opening waits on no check-in, so a check_in_ref on it is refused"
+        );
+        assert_eq!(
+            org.policy(org.owners_room),
+            RoomPinPolicy::Managers,
+            "the refused opening changes nothing"
+        );
         let reply = org
             .set(holder, org.owners_room, RoomPinPolicy::Members, None)
             .unwrap_or_else(|error| panic!("the {name} opens the pins at once: {error:?}"));
