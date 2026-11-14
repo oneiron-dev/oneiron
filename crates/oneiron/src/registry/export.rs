@@ -8,22 +8,8 @@ use oneiron_contracts::registry::{
     TypeByteZone, zone_of,
 };
 
-/// Engine registry snapshot: storage ABI plus live kind/family tables and
-/// zone ranges folded from `zone_of`.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct RegistrySnapshot {
-    pub storage_abi_version: u16,
-    pub kinds: &'static [EntityTypeRegistryEntry],
-    pub families: &'static [TypeByteFamilyEntry],
-    pub zones: Vec<ZoneRow>,
-}
-
-/// One zone plus its byte ranges, folded from `zone_of` over `0..=255`.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ZoneRow {
-    pub zone: TypeByteZone,
-    pub ranges: Vec<(u8, u8)>,
-}
+#[doc(hidden)]
+pub use oneiron_records::registry::export::{RegistrySnapshot, ZoneRow};
 
 /// Builds the current registry snapshot. No vault required.
 #[must_use]

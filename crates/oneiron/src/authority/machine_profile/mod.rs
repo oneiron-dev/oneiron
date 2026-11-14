@@ -30,42 +30,10 @@ use crate::entity_id::EntityId;
 use super::machine_standing::Revision;
 use super::*;
 
-/// Who admitted a chain of a machine's revisions.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
-)]
-pub enum MachineAdmitter {
-    /// The vault's roster, under the owner-held rule for an owned mark.
-    Roster,
-    /// One valid owner root's anchor key (Ed25519).
-    Anchor([u8; 32]),
-}
-
-/// Whose authority signed a revision.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
-)]
-pub enum SignerClass {
-    /// A key the owner holds.
-    OwnerHeld,
-    /// A cloud root, or a key in the host's custody on a hosted vault: it
-    /// registers a bootstrap node and carries it under a successor root, and
-    /// never demotes, removes or answers for the owner (FIX 7920).
-    Custodial,
-    /// A linked machine's install key carrying the owner's act (mesh PR1b):
-    /// the act answers for the owner, never the key, and the label says
-    /// nothing of who holds the key. A revision it signed stands only while
-    /// its act does.
-    Carrier,
-}
-
-/// The root this install pins: only its anchor's chain is trusted here, and
-/// only while the fold holds the root as valid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct PinnedRoot {
-    pub id: RecoveryRootId,
-    pub anchor_key: [u8; 32],
-}
+#[doc(hidden)]
+pub use oneiron_records::authority::machine_profile::{
+    MachineAdmitter, PinnedRoot, SignerClass, TrustedMachine,
+};
 
 /// The winning revision of one admitter's chain for one machine.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -129,14 +97,6 @@ pub struct FoldedMachine {
     /// For each key a chain here names, the trust scopes in which another
     /// machine claims it: `Roster` for an accepted roster revision.
     pub(super) shared: BTreeMap<[u8; 32], BTreeSet<MachineAdmitter>>,
-}
-
-/// The identity a trusted chain gives a machine: the keys that may sign as
-/// it and be wrapped to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TrustedMachine<'a> {
-    pub chain: MachineAdmitter,
-    pub profile: &'a MachineProfile,
 }
 
 /// One admitter's revisions of one machine.

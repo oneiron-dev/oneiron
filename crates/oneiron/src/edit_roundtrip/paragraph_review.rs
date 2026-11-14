@@ -18,35 +18,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
-/// One answered paragraph, bound to its native comment and the exact source
-/// version. Settlement keeps it with the consume-once receipt. Its hashes
-/// are hex on a JSON wire (FIX 9342).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ParagraphJudgment {
-    /// The paragraph's stable block id: the comment's target.
-    pub block: String,
-    /// The actual native story, omitted for the main body.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope: Option<DocxStoryScope>,
-    /// Hash of the paragraph text the call read, which the comment quotes.
-    #[serde(with = "oneiron_docedit::hex_digest")]
-    pub text_hash: [u8; 32],
-    /// The shared ladder's decision and receipt.
-    pub decision: TypedDecision,
-    /// The immutable primitive selected by the question version for this run.
-    pub answer_contract: AnswerContract,
-    pub comment: String,
-    pub author: String,
-    /// Runtime display words pinned so settle can recheck comment semantics.
-    pub labels: SlideReviewLabels,
-    #[serde(with = "oneiron_docedit::hex_digest")]
-    pub frontier: [u8; 32],
-    pub judged_version: Option<u64>,
-    /// The document's live body when it was asked: an edit to it never
-    /// exported withdraws the paragraphs it changed (FIX 2115).
-    #[serde(default)]
-    pub judged_live: Option<crate::office_body::LivePin>,
-}
+#[doc(hidden)]
+pub use oneiron_records::edit_roundtrip::paragraph_review::ParagraphJudgment;
 
 /// One typed ask over paragraphs, by their stable block ids.
 #[derive(Clone, Copy)]

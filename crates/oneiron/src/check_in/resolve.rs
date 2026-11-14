@@ -81,32 +81,8 @@ pub enum GoReason {
     OwnProof,
 }
 
-/// Why an act waits for a proof from the ladder.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WaitReason {
-    /// The mode is `AlwaysAsk`.
-    AlwaysAsk,
-    /// The unsure test was unsure.
-    Unsure,
-    /// The unsure test failed.
-    UnsureTestFailed,
-    /// `AskWhenUnsure`, but the model may not decide this act.
-    ModelNotAllowed,
-}
-
-impl WaitReason {
-    /// The receipt token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::AlwaysAsk => "always_ask",
-            Self::Unsure => "unsure",
-            Self::UnsureTestFailed => "unsure_test_failed",
-            Self::ModelNotAllowed => "model_not_allowed",
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::check_in::resolve::WaitReason;
 
 /// The answer to one check-in.
 #[derive(Clone, Debug, Eq, PartialEq)]

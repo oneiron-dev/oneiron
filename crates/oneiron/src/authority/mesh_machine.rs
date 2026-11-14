@@ -36,23 +36,9 @@ const MAX_LOOKUP_MACHINES: usize = 1024;
 #[doc(hidden)]
 pub use oneiron_verb_wire::authority::mesh_machine::MeshMachineAddress;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MeshMachineAddressEnvelope {
-    pub domain: String,
-    pub version: u8,
-    pub address: MeshMachineAddress,
-}
-impl MeshMachineAddressEnvelope {
-    pub const DOMAIN: &'static str = DOMAIN;
-    pub fn new(address: MeshMachineAddress) -> Self {
-        Self {
-            domain: DOMAIN.into(),
-            version: 1,
-            address,
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::authority::mesh_machine::MeshMachineAddressEnvelope;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MeshAuthorityClaims {

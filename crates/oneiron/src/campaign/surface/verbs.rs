@@ -147,24 +147,8 @@ impl CampaignSurfaceVerb {
     }
 }
 
-/// One surface invocation: a verb name and its JSON body.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SurfaceCall {
-    /// Verb name; must be one of [`CAMPAIGN_SELF_VERBS`] or
-    /// [`CAMPAIGN_PROGRAM_VERBS`].
-    pub verb: String,
-    /// Verb-specific request body.
-    pub body: Value,
-}
-
-/// One surface result, echoing the verb that produced it.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SurfaceReply {
-    /// Canonical verb name.
-    pub verb: String,
-    /// Verb-specific response body.
-    pub body: Value,
-}
+#[doc(hidden)]
+pub use oneiron_records::campaign::surface::verbs::{SurfaceCall, SurfaceReply};
 
 /// Executes one surface call against the caller's bound facade.
 ///

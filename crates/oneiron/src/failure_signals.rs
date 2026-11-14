@@ -50,51 +50,10 @@ use crate::vault::LiveEntityRow;
 use oneiron_model::llm::{LlmRole, ModelId};
 use witness::{WitnessEntry, WitnessKind};
 
-/// Graduating `Other` requires a new taxonomy variant and version; never
-/// reinterpret a previously exported class.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(tag = "taxonomy_version", content = "failure_class")]
-pub enum FailureTaxonomy {
-    #[serde(rename = "v1")]
-    V1(FailureClassV1),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FailureClassV1 {
-    RefusalOverreach,
-    TaskFailure,
-    UserFrustration,
-    MemoryMiss,
-    MemoryIntrusion,
-    PersonaBreak,
-    LatencyAbandon,
-    SilentDegradation,
-    Other,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentKind {
-    System,
-    Custom,
-    /// The observation names no affected agent (a detector's diagnostic).
-    /// Exported in clear as `unattributed`; it never carries an agent ref.
-    Unattributed,
-}
-
-/// The closed, content-free surface vocabulary. A new surface needs a reviewed
-/// enum addition, not a caller-supplied name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentSurface {
-    Chat,
-    Voice,
-    Code,
-    Task,
-    Background,
-    Other,
-}
+#[doc(hidden)]
+pub use oneiron_records::failure_signals::{
+    AgentKind, AgentSurface, FailureClassV1, FailureTaxonomy,
+};
 
 /// Raw metadata is accepted only at the recording door and is never stored in
 /// the aggregate or returned by export. These values may be user-authored.

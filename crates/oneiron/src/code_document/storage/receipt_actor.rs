@@ -12,59 +12,8 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::receipt::ERASED_CALL_IDENTITY;
 
-/// Who made one operation: its actor, or no one once that actor was erased
-/// (FIX 3520). It reads and writes as the actor's hex id, or as
-/// [`ERASED_CALL_IDENTITY`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ReceiptActor {
-    Actor(EntityId),
-    Erased,
-}
-
-impl ReceiptActor {
-    /// The actor, while it is not erased.
-    pub(crate) const fn id(self) -> Option<EntityId> {
-        match self {
-            Self::Actor(id) => Some(id),
-            Self::Erased => None,
-        }
-    }
-
-    /// Makes this no one when it is `actor`; whether it was.
-    pub(crate) fn forget(&mut self, actor: EntityId) -> bool {
-        let named = *self == Self::Actor(actor);
-        if named {
-            *self = Self::Erased;
-        }
-        named
-    }
-}
-
-impl Serialize for ReceiptActor {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
-        match self {
-            Self::Actor(id) => serializer.serialize_str(&id.to_hex()),
-            Self::Erased => serializer.serialize_str(ERASED_CALL_IDENTITY),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for ReceiptActor {
-    fn deserialize<D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> std::result::Result<Self, D::Error> {
-        let value = String::deserialize(deserializer)?;
-        if value == ERASED_CALL_IDENTITY {
-            return Ok(Self::Erased);
-        }
-        EntityId::from_hex(&value)
-            .map(Self::Actor)
-            .map_err(serde::de::Error::custom)
-    }
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::code_document::storage::receipt_actor::ReceiptActor;
 
 /// Whether `id`'s entity is no actor, so its erase has no one to take out of
 /// the receipts.

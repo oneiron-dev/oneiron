@@ -38,13 +38,8 @@ pub(crate) use team_outcome::{
     name_deliverable_critics_in_txn, record_deliverable_outcomes_in_txn,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReviewArtifactKind {
-    Document,
-    Design,
-    ClaimWrite,
-}
+#[doc(hidden)]
+pub use oneiron_records::critic::review::ReviewArtifactKind;
 
 /// One lens's review of the target. None contains sibling output.
 #[derive(Debug, Clone)]

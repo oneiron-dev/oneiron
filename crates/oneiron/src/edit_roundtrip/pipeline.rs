@@ -17,15 +17,8 @@ use crate::error::{ArtifactError, Error, Result};
 use oneiron_docedit::retained_opc::Limits;
 use serde::{Deserialize, Serialize};
 
-/// Whether a recalc stage ran, and why not when it did not.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RecalcStatus {
-    NotNeeded,
-    Performed,
-    /// Edited bytes could not be reparsed before recalc; the gate will reject.
-    Skipped,
-}
+#[doc(hidden)]
+pub use oneiron_records::edit_roundtrip::pipeline::RecalcStatus;
 
 /// The retained-output proposal: the new bytes plus everything a settlement
 /// (ARTL-4) or viewer (ARTL-5) needs, committing nothing.

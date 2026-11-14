@@ -13,15 +13,6 @@ pub use oneiron_verb_wire::memory::merge_queue_doors::checker_types::{
     MergeQueueInitializeRequest, QueueCheckPhase,
 };
 
-impl From<QueueCheckPhase> for CheckPhase {
-    fn from(phase: QueueCheckPhase) -> Self {
-        match phase {
-            QueueCheckPhase::Fast => Self::Fast,
-            QueueCheckPhase::Slow => Self::Slow,
-        }
-    }
-}
-
 /// What a checker work row asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

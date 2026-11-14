@@ -23,15 +23,8 @@ const ROUTES: SideTable<String, ReportRoute, Named> =
 #[doc(hidden)]
 pub use oneiron_verb_wire::feedback::report::routing::{ReportDisclosureChoice, ReportRoute};
 
-/// Fixed-shape content-free evidence. No caller-authored reference or prose crosses here.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReportSignature {
-    pub issue_ref: String,
-    pub subject_hash: [u8; 32],
-    pub category: IssueCategory,
-    pub kind: ReportKind,
-}
+#[doc(hidden)]
+pub use oneiron_records::feedback::report::routing::ReportSignature;
 
 /// The transport consumes this only after resolving the stored maker route.
 /// `disclosed` is absent unless the owner's disclosure of this report's text

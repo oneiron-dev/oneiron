@@ -16,7 +16,17 @@ use super::verdict::PolicyClassifyDecision;
 /// free prose, so they share one label and are told apart by `row_ref` — which
 /// is also the vocabulary the owner plane's policy document answers in.
 const OWNER_POLICY_CATEGORY: &str = "owner_policy";
-const HOSTED_LEGAL_CATEGORY_PREFIX: &str = "hosted_legal/";
+#[doc(hidden)]
+pub(super) use oneiron_records::policy_model::planes::parse_hosted_category_label;
+#[doc(hidden)]
+use oneiron_records::policy_model::planes::{
+    HOSTED_LEGAL_CATEGORY_PREFIX, hash_field, hash_len, hash_len_bytes, strictest,
+};
+#[doc(hidden)]
+pub use oneiron_records::policy_model::planes::{
+    HostedLegalAction, HostedLegalBasis, HostedLegalBasisKind, HostedLegalPolicy, HostedLegalRow,
+    HostedLegalRowBound, PolicyPlane, PolicyRubricRow,
+};
 
 /// Longest policy document the engine accepts, in bytes.
 ///
@@ -36,268 +46,6 @@ pub const POLICY_DOCUMENT_MAX_LEN: usize = 65_536;
 ///
 /// [`POLICY_PATTERN_ID_MAX_LEN`]: super::pattern::POLICY_PATTERN_ID_MAX_LEN
 pub const POLICY_HOSTED_CATEGORY_MAX_LEN: usize = 64;
-
-/// Where a rule came from. These are the only two sources of authority in the
-/// engine — there is no third, engine-authored plane underneath them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PolicyPlane {
-    /// The vault owner's own rows, from the vault's policy manifest.
-    OwnerPolicy,
-    /// A hosted relay service's versioned legal policy.
-    HostedLegal,
-}
-
-impl PolicyPlane {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::OwnerPolicy => "owner_policy",
-            Self::HostedLegal => "hosted_legal",
-        }
-    }
-}
-
-/// One row as it is shown to the classifier.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PolicyRubricRow {
-    pub row_ref: String,
-    pub plane: PolicyPlane,
-    pub category: String,
-    pub action: PolicyClassifyDecision,
-    pub text: String,
-    pub why: Option<String>,
-}
-
-/// What a hosted legal row does when it fires. There is no `RouteToHelp` arm:
-/// a hosted service enforcing its own legal duty withholds or annotates, and
-/// help routing is a product decision that belongs to the vault owner's plane.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum HostedLegalAction {
-    Warn,
-    Block,
-}
-
-impl HostedLegalAction {
-    #[must_use]
-    pub const fn decision(self) -> PolicyClassifyDecision {
-        match self {
-            Self::Warn => PolicyClassifyDecision::Warn,
-            Self::Block => PolicyClassifyDecision::Block,
-        }
-    }
-
-    /// Ordering only, for picking the row that governs a categoryless answer.
-    const fn severity(self) -> u8 {
-        match self {
-            Self::Warn => 0,
-            Self::Block => 1,
-        }
-    }
-}
-
-/// The kind of external bound the host says a row implements. This is not a
-/// category vocabulary, and the engine does not decide which bound applies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HostedLegalBasisKind {
-    Law,
-    ProviderTerms,
-    Capacity,
-}
-
-impl HostedLegalBasisKind {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Law => "law",
-            Self::ProviderTerms => "provider_terms",
-            Self::Capacity => "capacity",
-        }
-    }
-}
-
-/// The host's actual reference for one row: a jurisdiction, provider or
-/// resource, and its law, term or capacity reference. A reference may be a
-/// human-readable citation or resource identifier; it need not be a URL.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct HostedLegalBasis {
-    pub kind: HostedLegalBasisKind,
-    pub subject: String,
-    pub reference: String,
-}
-
-/// A configured row and its external bound. On an outage this identifies a
-/// check that could not finish, not a row the classifier found to apply.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HostedLegalRowBound {
-    pub row_ref: String,
-    pub basis: HostedLegalBasis,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HostedLegalRow {
-    pub row_ref: String,
-    /// The host's own word for the concern this row covers.
-    ///
-    /// The engine ships NO category vocabulary. A hosted service's legal
-    /// duties are whatever its jurisdiction and its counsel say they are, and
-    /// a closed enum here would mean an engine release every time a host
-    /// needed a concern the engine's authors had not thought of. Registration
-    /// checks the label's SHAPE only — non-blank, within
-    /// [`POLICY_HOSTED_CATEGORY_MAX_LEN`], ascii alphanumeric with `_`, `-` or
-    /// `.` — because the label rides into a gate reason code as written.
-    ///
-    /// Several rows MAY share a label: two distinct legal concerns of one
-    /// class are two rows, and telling them apart is what `row_ref` is for.
-    /// When a model answer names a label carrying more than one row, the
-    /// strictest of them governs, with registration order breaking ties.
-    pub category: String,
-    pub action: HostedLegalAction,
-    pub text: String,
-    /// Supplied by the host, never inferred from the row text or its category.
-    pub basis: HostedLegalBasis,
-}
-
-impl HostedLegalRow {
-    #[must_use]
-    pub fn bound(&self) -> HostedLegalRowBound {
-        HostedLegalRowBound {
-            row_ref: self.row_ref.clone(),
-            basis: self.basis.clone(),
-        }
-    }
-}
-
-/// A hosted relay service's legal policy: the document it enforces, the rows a
-/// verdict is routed through, the patterns it wants watched, and the published
-/// version all of that is attributed to.
-///
-/// This is never read from the vault's own policy manifest — a vault cannot
-/// name the jurisdiction it is relayed under, and a caller cannot invent one
-/// per request. It reaches the relay bound to an attested service identity,
-/// registered in the [`EdgeServiceRegistry`] alongside that identity.
-///
-/// # The document is the policy
-///
-/// `policy_document` is the substrate owner's own text, and it is sent to the
-/// safeguard model AS THE SYSTEM MESSAGE, verbatim. The engine authors none of
-/// it. The structure these models respond to is INSTRUCTIONS / DEFINITIONS /
-/// VIOLATES / SAFE / EXAMPLES, with the output instruction stated at the top
-/// AND repeated at the bottom, and the whole thing sized at roughly 400–600
-/// tokens; that is guidance for whoever writes it, not something the engine
-/// checks or supplies.
-///
-/// # What `policy_hash` covers
-///
-/// The registry DERIVES `policy_hash` at registration and replaces whatever the
-/// caller set. It is a SHA-256 over, in order: the jurisdiction, the version,
-/// the declared output contract, the policy document, every row
-/// (`row_ref`, category, action, text, basis kind, subject and reference) and
-/// every pattern rule (`id`, pattern,
-/// category, role). It therefore covers the ENFORCED TEXT — a receipt that
-/// attests this hash attests that this exact policy document was in force, and
-/// changing one byte of the document produces a hash no earlier receipt can
-/// match.
-///
-/// [`EdgeServiceRegistry`]: crate::policy_model::EdgeServiceRegistry
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HostedLegalPolicy {
-    pub jurisdiction: String,
-    pub version: String,
-    /// Derived by the registry. See the type doc for the exact coverage.
-    pub policy_hash: String,
-    pub docs_url: String,
-    pub rows: Vec<HostedLegalRow>,
-    /// The substrate owner's policy text, sent verbatim as the system message.
-    pub policy_document: String,
-    /// Which answer shape the document instructed the model to produce.
-    /// Registration refuses a policy that does not declare one: the engine
-    /// cannot read an answer whose shape nobody named.
-    pub output_contract: Option<PolicyOutputContract>,
-    /// Patterns the substrate owner wants watched. Empty by default — the
-    /// engine ships none.
-    pub pattern_rules: Vec<PolicyPatternRule>,
-}
-
-impl HostedLegalPolicy {
-    /// The hash the registry will bind to this policy. Exposed so a caller can
-    /// precompute or compare one without registering.
-    #[must_use]
-    pub fn derive_policy_hash(&self) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(b"oneiron.policy_model.hosted_legal.policy.v3");
-        hash_field(&mut hasher, "jurisdiction", &self.jurisdiction);
-        hash_field(&mut hasher, "version", &self.version);
-        hash_field(
-            &mut hasher,
-            "output_contract",
-            self.output_contract
-                .map_or("none", PolicyOutputContract::as_str),
-        );
-        hash_field(&mut hasher, "policy_document", &self.policy_document);
-        hash_len(&mut hasher, "rows", self.rows.len());
-        for row in &self.rows {
-            hash_field(&mut hasher, "row_ref", &row.row_ref);
-            hash_field(&mut hasher, "row_category", &row.category);
-            hash_field(&mut hasher, "row_action", row.action.decision().as_str());
-            hash_field(&mut hasher, "row_text", &row.text);
-            hash_field(&mut hasher, "row_basis_kind", row.basis.kind.as_str());
-            hash_field(&mut hasher, "row_basis_subject", &row.basis.subject);
-            hash_field(&mut hasher, "row_basis_reference", &row.basis.reference);
-        }
-        hash_len(&mut hasher, "pattern_rules", self.pattern_rules.len());
-        for rule in &self.pattern_rules {
-            hash_field(&mut hasher, "rule_id", &rule.id);
-            hash_field(&mut hasher, "rule_pattern", &rule.pattern);
-            hash_field(&mut hasher, "rule_category", &rule.category);
-            hash_field(&mut hasher, "rule_role", rule.role.as_str());
-        }
-        bytes_to_hex_lower(&hasher.finalize())
-    }
-
-    /// Whether `label` is a category this policy publishes — the check a
-    /// pattern rule and a model answer are both held to.
-    pub(super) fn publishes_category(&self, label: &str) -> bool {
-        self.row_for_category(label).is_some()
-    }
-
-    /// The row a category label routes to, or `None` when the label is not a
-    /// hosted-legal category at all or the policy carries no row of it.
-    ///
-    /// Several rows may carry one label — two distinct legal concerns of the
-    /// same class — so this resolves to the STRICTEST of them, with
-    /// registration order breaking ties. Taking the first would let a later,
-    /// stricter row be silently shadowed and never fire, which is the whole
-    /// reason the plane used to refuse a duplicate category outright. The rule
-    /// is the same one [`Self::strictest_row`] and the owner plane already
-    /// apply when several rows could govern.
-    pub(super) fn row_for_category(&self, label: &str) -> Option<&HostedLegalRow> {
-        let category = parse_hosted_category_label(label)?;
-        strictest(self.rows.iter().filter(|row| row.category == category))
-    }
-
-    /// The row that governs a categoryless answer: the strictest row the
-    /// policy registered, with registration order breaking ties. A
-    /// [`PolicyOutputContract::Binary`] violation has no label to route on, so
-    /// this is what it resolves to — and a policy with no rows cannot resolve
-    /// one at all, which the caller treats as an unreadable answer.
-    pub(super) fn strictest_row(&self) -> Option<&HostedLegalRow> {
-        strictest(self.rows.iter())
-    }
-}
-
-/// The strictest row of `rows`, with the order they were registered in
-/// breaking ties.
-fn strictest<'a>(rows: impl Iterator<Item = &'a HostedLegalRow>) -> Option<&'a HostedLegalRow> {
-    rows.reduce(|governing, row| {
-        if row.action.severity() > governing.action.severity() {
-            row
-        } else {
-            governing
-        }
-    })
-}
 
 /// The owner plane's rubric. Empty when the owner has not opted in — the
 /// caller is expected to check [`PolicyManifestResolution::owner_policy_enabled`]
@@ -355,15 +103,6 @@ pub(super) fn hosted_category_label(category: &str) -> String {
     format!("{HOSTED_LEGAL_CATEGORY_PREFIX}{category}")
 }
 
-/// The host's own label back out of its plane-qualified spelling, or `None`
-/// when the string names no hosted category at all. The label itself is not
-/// checked against a vocabulary here — the engine has none; whether the
-/// POLICY publishes a row of it is
-/// [`HostedLegalPolicy::publishes_category`]'s question.
-pub(super) fn parse_hosted_category_label(label: &str) -> Option<&str> {
-    label.strip_prefix(HOSTED_LEGAL_CATEGORY_PREFIX)
-}
-
 const fn owner_row_decision(action: OwnerRowAction) -> PolicyClassifyDecision {
     match action {
         OwnerRowAction::Warn => PolicyClassifyDecision::Warn,
@@ -371,31 +110,4 @@ const fn owner_row_decision(action: OwnerRowAction) -> PolicyClassifyDecision {
         OwnerRowAction::Block => PolicyClassifyDecision::Block,
         OwnerRowAction::RouteToHelp => PolicyClassifyDecision::RouteToHelp,
     }
-}
-
-/// Every length in the digest is encoded as a FIXED eight bytes.
-///
-/// `usize::to_be_bytes` is four bytes on a 32-bit target and eight on a 64-bit
-/// one, so hashing it directly makes the policy hash architecture-dependent —
-/// and the hash is what a receipt attests, so a 32-bit relay and a 64-bit
-/// vault would never agree that they had seen the same policy and the
-/// attestation would fail closed forever. `gate::hash_len` already casts for
-/// the same reason.
-fn hash_len_bytes(len: usize) -> [u8; 8] {
-    (len as u64).to_be_bytes()
-}
-
-fn hash_field(hasher: &mut Sha256, label: &str, value: &str) {
-    hasher.update(label.as_bytes());
-    hasher.update([0]);
-    hasher.update(hash_len_bytes(value.len()));
-    hasher.update(value.as_bytes());
-    hasher.update([0xff]);
-}
-
-fn hash_len(hasher: &mut Sha256, label: &str, len: usize) {
-    hasher.update(label.as_bytes());
-    hasher.update([0]);
-    hasher.update(hash_len_bytes(len));
-    hasher.update([0xff]);
 }

@@ -74,8 +74,13 @@ const TOPOLOGY_AUDIT_SCHEMA_VERSION: u16 = 1;
 /// The domain an audit's id derives under.
 const AUDIT_ID_DOMAIN: &[u8] = b"oneiron/identity-topology/post-hoc-audit/v1";
 
-/// The domain a selection's digest derives under.
-const SELECTION_DIGEST_DOMAIN: &[u8] = b"oneiron/identity-topology/post-hoc-audit-selection/v1";
+#[doc(hidden)]
+use oneiron_records::identity_topology::post_hoc_review::SELECTION_DIGEST_DOMAIN;
+#[doc(hidden)]
+pub use oneiron_records::identity_topology::post_hoc_review::{
+    TopologyAuditCorrection, TopologyAuditDecider, TopologyAuditEvidence, TopologyAuditIntent,
+    TopologyAuditOutcome, TopologyAuditResult, TopologyAuditScope, TopologyAuditSelection,
+};
 
 /// One durable candidate per eligible decision. Key: the audit id.
 const INTENTS: SideTable<[u8; 32], TopologyAuditIntent, Named> =
@@ -86,186 +91,6 @@ const SELECTIONS: SideTable<[u8; 32], TopologyAuditSelection, Named> =
 /// The one result of each reviewed candidate, append-only. Key: the audit id.
 const RESULTS: SideTable<[u8; 32], TopologyAuditResult, Named> =
     SideTable::new(&side_table::COACH_TOPOLOGY_AUDIT_RESULT);
-
-/// The ramp-shaped scope of the reviewed decision: its op kind, the registry
-/// class of its primary target, and the opaque handle of its deciding actor
-/// (the proposer-scope handle; unattributed when no actor was bound).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TopologyAuditScope {
-    pub op_kind: String,
-    pub target_class: String,
-    pub actor: String,
-}
-
-/// Who decided the reviewed decision, as its seal names it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TopologyAuditDecider {
-    /// The owner, by proof or by an answer the engine sealed for him.
-    Owner,
-    /// An agent within its Grant.
-    Agent,
-    /// The engine's own inference under a named cause.
-    Engine,
-}
-
-/// One eligible decision's durable review candidate, written in the
-/// decision's own writer. Ids and digests only, never claim or evidence text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TopologyAuditIntent {
-    pub schema_version: u16,
-    /// `H(domain, event, core_digest)`: the idempotency key, no authority.
-    pub audit_id: [u8; 32],
-    /// The reviewed decision's type-76 record.
-    pub event: EntityId,
-    /// The core digest its seal binds.
-    pub core_digest: [u8; 32],
-    /// Its signed admission disposition.
-    pub disposition: EntityId,
-    pub scope: TopologyAuditScope,
-    pub decided_by: TopologyAuditDecider,
-    /// Every record the decision names, each once (`decision_records`):
-    /// its participants, the claims and edge endpoints its reassignment map
-    /// routes, a facet's forks, then its evidence refs. The review reads every
-    /// one, and an erase of any of them drops the candidate.
-    pub subjects: Vec<EntityId>,
-    /// The agent-dispatch attempt whose run made the decision, when its
-    /// writer was bound to one.
-    pub origin_attempt: Option<[u8; 16]>,
-    pub created_at: u64,
-}
-
-/// What an answer is (L08-A 20:15): a recipe's declared model judgment, its
-/// scorer in the decision receipt and its prompt in the recipe revision, or
-/// an outcome the engine settled with no judgment (its own reads, a refused
-/// question, a moved revision). Neither is an owner decision, a human
-/// acceptance or a verified success or failure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TopologyAuditEvidence {
-    ModelJudgment,
-    EngineSettled,
-}
-
-impl TopologyAuditEvidence {
-    /// The stable name a receipt carries.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::ModelJudgment => "model_judgment",
-            Self::EngineSettled => "engine_settled",
-        }
-    }
-}
-
-/// The first selection of one candidate, kept before any review: the pinned
-/// recipe and revision that selected, the prior decisions of its scope the
-/// selection weighed, and whether it selected.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TopologyAuditSelection {
-    pub audit_id: [u8; 32],
-    pub recipe: EntityId,
-    pub recipe_revision: [u8; 32],
-    /// The scope's prior decisions that drew a concern or were undone.
-    pub policy_evidence: Vec<EntityId>,
-    pub selected: bool,
-    pub evidence: TopologyAuditEvidence,
-    /// An engine code: `selected`, `not_selected`, `selection_abstained`,
-    /// `selection_refused:<code>`, or the code of a decision that moved
-    /// before its selection (`event_undone`, `event_superseded`,
-    /// `event_missing`, `core_changed`, `decision_incomplete`).
-    pub reason: String,
-    /// The ladder's decision receipt, as JSON; none for an engine skip.
-    pub decision_receipt: Option<String>,
-    /// The Coach attempt that selected.
-    pub selection_attempt: [u8; 16],
-    pub selected_at: u64,
-}
-
-impl TopologyAuditSelection {
-    /// The digest a result binds: the selection's stored encoding.
-    fn digest(&self) -> Result<[u8; 32]> {
-        let bytes = <Named as SideCodec<Self>>::encode(self)
-            .map_err(|_| Error::InvariantViolation("a topology audit selection did not encode"))?;
-        Ok(*blake3::Hasher::new()
-            .update(SELECTION_DIGEST_DOMAIN)
-            .update(&bytes)
-            .finalize()
-            .as_bytes())
-    }
-}
-
-/// What one review found.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TopologyAuditOutcome {
-    /// The recipe found the evidence supports the decision. Model opinion,
-    /// never ground truth and never an owner's approval.
-    Pass,
-    /// The recipe found the evidence does not support it.
-    Concern,
-    /// No judgment: the recipe abstained, refused the case, or the decision
-    /// could not be read as declared.
-    Unknown,
-    /// The decision was undone or superseded before its review.
-    Obsolete,
-}
-
-impl TopologyAuditOutcome {
-    /// The stable name a receipt carries.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Pass => "pass",
-            Self::Concern => "concern",
-            Self::Unknown => "unknown",
-            Self::Obsolete => "obsolete",
-        }
-    }
-}
-
-/// What a concern did to the reviewed decision.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub enum TopologyAuditCorrection {
-    /// The Coach's undo landed: its counter-event.
-    Undone { event: EntityId },
-    /// The undo door refused it, or the decision was the owner's own: an
-    /// engine code.
-    Refused { reason: String },
-}
-
-/// The one result of one reviewed candidate, append-only: the leased Coach
-/// job writes it, with its correction, in one writer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TopologyAuditResult {
-    pub audit_id: [u8; 32],
-    /// [`TopologyAuditSelection::digest`] of the selection it reviewed.
-    pub selection_digest: [u8; 32],
-    /// The Coach attempt that reviewed.
-    pub review_attempt: [u8; 16],
-    /// The reviewing actor; none for a result no recipe judged.
-    pub reviewer: Option<EntityId>,
-    /// The ladder's decision receipt, as JSON.
-    pub decision_receipt: Option<String>,
-    /// The core digest the review read.
-    pub reviewed_core: [u8; 32],
-    /// The seal revision of the decision the review read: the `seen` a
-    /// correction's undo is checked against.
-    pub reviewed_revision: [u8; 32],
-    /// The records the review read.
-    pub evidence_refs: Vec<EntityId>,
-    pub outcome: TopologyAuditOutcome,
-    pub evidence: TopologyAuditEvidence,
-    /// An engine code, never model text.
-    pub reason: String,
-    pub correction: Option<TopologyAuditCorrection>,
-    pub completed_at: u64,
-}
 
 /// One eligible decision as its writer holds it.
 pub(super) struct AuditDeclaration<'a> {

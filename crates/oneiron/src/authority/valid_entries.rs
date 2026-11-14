@@ -13,11 +13,8 @@ use super::AuthorityEntryHash;
 #[derive(Clone, Default)]
 pub struct ValidEntries(im::OrdSet<AuthorityEntryHash>);
 
-/// A set of entry hashes that [`ValidEntries::difference`] takes away.
-pub trait EntryHashSet {
-    /// Whether `hash` is in the set.
-    fn holds(&self, hash: &AuthorityEntryHash) -> bool;
-}
+#[doc(hidden)]
+pub use oneiron_records::authority::valid_entries::EntryHashSet;
 
 impl EntryHashSet for ValidEntries {
     fn holds(&self, hash: &AuthorityEntryHash) -> bool {

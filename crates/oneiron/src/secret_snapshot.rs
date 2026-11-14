@@ -188,32 +188,10 @@ fn relative_declaration_matches(path: &str, declared: &str) -> bool {
 #[doc(hidden)]
 pub use oneiron_verb_wire::secret_snapshot::SnapshotSecretLiftProposal;
 
-/// The durable, value-free outcome of snapshot custody filtering.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SnapshotCustodyReport {
-    pub excluded_secret_paths: Vec<String>,
-    pub quarantined_paths: Vec<String>,
-    pub proposals: Vec<SnapshotSecretLiftProposal>,
-}
-
-/// The side table's declared codec is `Raw`, not `Named`: the put/get/delete call sites in
-/// `codebase/store.rs` have always written this report through `rmp_serde::to_vec_named` and read
-/// it back through a plain (non-strict) `rmp_serde::from_slice`, so this impl keeps exactly that
-/// pair rather than switching to the door's strict whole-row `Named` decode.
-impl RawValue for SnapshotCustodyReport {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_report(self)?)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        rmp_serde::from_slice(bytes).map_err(|_| {
-            Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-                "decode custody report",
-            ))
-            .into()
-        })
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::secret_snapshot::SnapshotCustodyReport;
+#[doc(hidden)]
+pub(crate) use oneiron_records::secret_snapshot::encode_report;
 
 impl Vault {
     /// Filters declared files, quarantines unreadable or detected files, and
@@ -257,14 +235,6 @@ impl Vault {
         }
         Ok((files, report))
     }
-}
-
-pub(crate) fn encode_report(report: &SnapshotCustodyReport) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(report).map_err(|_| {
-        Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-            "encode custody report",
-        ))
-    })
 }
 
 pub(crate) fn suggested_secret_name(path: &str) -> String {

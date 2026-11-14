@@ -30,23 +30,8 @@ const PROVISIONAL: SideTable<EntityId, ProvisionalEntity, Named> =
 const PROVISIONAL_HINT: SideTable<([u8; 1], [u8; 32], EntityId), (), Raw> =
     SideTable::new(&side_table::TAGGING_PROVISIONAL_HINT);
 
-/// A cold entity a save minted, waiting for the Dreamer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProvisionalEntity {
-    pub kind: u8,
-    /// The text of a span that keys to it, in [`Self::origin`].
-    pub name: String,
-    /// The turn that span is in. When that turn no longer names the entity,
-    /// another turn that does takes its place; when none does, the entity
-    /// is retired.
-    pub origin: EntityId,
-    /// The facet of the turn it was minted from: a derivation is born under
-    /// its source's facet (ARCH-0022).
-    pub facet: Option<EntityId>,
-    /// Store-clock seconds of the mint.
-    pub minted_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::tagging::provisional::ProvisionalEntity;
 
 impl Vault {
     /// Holds `id` as a provisional entity named `name`, from the turn

@@ -248,16 +248,9 @@ fn quarantine_current_in_txn(
     Ok(true)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct ManifestContribution {
-    pub id: String,
-    pub trusted: bool,
-    /// An untrusted contribution: a proposal that enters no effective policy,
-    /// narrowing included, until a policy holder authors its values through
-    /// the manifest put (FIX 8780).
-    pub restrict_only: bool,
-    pub quarantined: bool,
-}
+#[doc(hidden)]
+pub use oneiron_records::gate::manifest_authenticity::ManifestContribution;
+
 impl Vault {
     /// Surface untrusted contributions as proposals a holder may act on,
     /// without giving them any effect (FIX 8780).

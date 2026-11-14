@@ -33,7 +33,8 @@ pub(super) const MAX_TOURNAMENT_ARTIFACT_ID_BYTES: usize = 128;
 
 pub(super) const MAX_TOURNAMENT_STRATEGY_BYTES: usize = 128;
 
-pub(super) const MAX_TOURNAMENT_JUDGE_TEXT_BYTES: usize = 8192;
+#[doc(hidden)]
+pub(super) use oneiron_records::dreamer_tournament::types::MAX_TOURNAMENT_JUDGE_TEXT_BYTES;
 
 pub(super) const MAX_TOURNAMENT_EVIDENCE_REF_BYTES: usize = 256;
 

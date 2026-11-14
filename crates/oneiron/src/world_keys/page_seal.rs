@@ -72,7 +72,9 @@ pub use self::sealed_swap::{SealedSwap, finish_restore_archive_mirror};
 pub const PAGE_SEAL_WARNING: &str =
     "the maximum tier seals every vault page and is slower: point reads about 20x, scans about 12x";
 
-const MIRROR_VERSION: u32 = 2;
+#[doc(hidden)]
+use oneiron_records::world_keys::page_seal::MIRROR_VERSION;
+
 /// The most incarnations a mirror names: the live vault's and the one a
 /// restore over it publishes in its place.
 pub(crate) const MIRROR_CANDIDATES: usize = 2;

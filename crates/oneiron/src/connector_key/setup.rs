@@ -508,9 +508,8 @@ pub(crate) struct GrantAccess {
     pub(crate) successor: Option<Zeroizing<Vec<u8>>>,
 }
 
-/// Why a Google path refuses a stored Microsoft grant.
-const MICROSOFT_GRANT_REFUSED: &str =
-    "the stored grant is a Microsoft grant; it is never sent to Google";
+#[doc(hidden)]
+use oneiron_records::connector_key::setup::{MICROSOFT_GRANT_REFUSED, frame, invalid, present};
 
 /// The tenant a stored grant names, and nothing else of it.
 #[derive(Deserialize)]
@@ -601,14 +600,6 @@ impl ProviderConnectionChecks {
         self.send_microsoft365_me(&method, url, value)
             .map(|reply| reply.status)
     }
-}
-
-/// A stored field's value, trimmed, when it holds one.
-fn present(field: &Option<String>) -> Option<&str> {
-    field
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
 }
 
 impl PackConnectionVerifier for ProviderConnectionChecks {
@@ -945,19 +936,10 @@ fn check_allowed(connection: &PackSetupConnection, allowed: &[String]) -> Result
     Ok(())
 }
 
-fn frame(hasher: &mut blake3::Hasher, part: &[u8]) {
-    hasher.update(&(part.len() as u64).to_be_bytes());
-    hasher.update(part);
-}
-
 fn bounded(text: &str) -> String {
     let mut cut = text.len().min(MAX_CHECK_TEXT_BYTES);
     while !text.is_char_boundary(cut) {
         cut -= 1;
     }
     text[..cut].to_owned()
-}
-
-fn invalid(reason: &'static str) -> Error {
-    Error::InvalidConfig(format!("pack setup: {reason}"))
 }

@@ -52,21 +52,10 @@ const MAX_RENDERER_BYTES: usize = 256;
 
 pub use crate::blob_artifact::deck_context::{DeckEditContext, DeckRender, DeckRenderSide};
 
-/// One line of the semantic diff for a deck transaction.
-pub(super) fn render_report(report: &str) -> String {
-    match serde_json::from_str::<DeckTransactionReport>(report) {
-        Ok(report) => {
-            let verbs: Vec<_> = report.steps.iter().map(|step| step.verb.as_str()).collect();
-            format!(
-                "deck transaction {}: {} ({} part(s) changed)",
-                report.handoff.to_hex(),
-                verbs.join(", "),
-                report.parts.len()
-            )
-        }
-        Err(_) => "deck transaction (unreadable report)".to_owned(),
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::edit_roundtrip::deck::DeckSettleEvidence;
+#[doc(hidden)]
+pub(super) use oneiron_records::edit_roundtrip::deck::render_report;
 
 fn invalid(message: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidEditManifest(message))
@@ -216,16 +205,6 @@ fn validate_context(context: &DeckEditContext) -> Result<()> {
         return Err(invalid("deck review renders are invalid"));
     }
     Ok(())
-}
-
-/// The settled deck transaction, kept with the consume-once ledger row: the
-/// handoff hash it settled, its canonical report (part diff, effects, marks,
-/// fit) and its context (made_by, thread, review renders).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DeckSettleEvidence {
-    pub handoff: [u8; 32],
-    pub report: String,
-    pub context: DeckEditContext,
 }
 
 /// What a replay at the settle door proved, and the managed marks after it.

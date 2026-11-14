@@ -21,11 +21,8 @@ use crate::disclosure::AttendeeIdentityChoice;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-/// Display label for a supplied voice roster that could not be resolved. The
-/// entry exists so an unresolvable roster narrows disclosure instead of
-/// silently leaving the caller in owner-alone mode.
-const VOICE_ROSTER_UNRESOLVED_LABEL: &str = "unresolved voice roster";
-const LIVE_ROOM_SPEAKER_LABEL: &str = "live room speaker";
+#[doc(hidden)]
+use oneiron_records::interlocutor::{LIVE_ROOM_SPEAKER_LABEL, VOICE_ROSTER_UNRESOLVED_LABEL};
 
 /// Who a conversation participant is, as the disclosure clamp sees them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -52,22 +52,8 @@ const BYOA_STAGED_INPUT_MEDIA_TYPE: &str = "application/vnd.oneiron.byoa-staged-
 /// The directory a job is staged in, relative to the checkout's root.
 const BYOA_STAGED_INPUT_DIR: &str = ".oneiron/staged";
 
-/// One run's staged job: the artifact version that holds it whole, its length
-/// and digest, and the file it is staged as. The artifact id and the file
-/// name are both derived from the digest, so a pin cannot point a run at
-/// another artifact's bytes or at another path.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StagedInputPin {
-    /// The artifact version holding the job, as `blob-artifact:<id>@<version>`.
-    pub artifact: String,
-    /// The job's length in bytes.
-    pub len: u64,
-    /// BLAKE3 of the job.
-    pub blake3: [u8; 32],
-    /// The file the job is staged as, relative to the checkout's root:
-    /// `.oneiron/staged/<blake3 hex>.json`.
-    pub name: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::dispatch_byoa::staged_input::StagedInputPin;
 
 /// The host's port that writes a run's job into its checkout before the run.
 /// The host resolves the live checkout into its real worktree, as its

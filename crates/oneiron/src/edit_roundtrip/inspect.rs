@@ -5,33 +5,8 @@ use super::{EditWarning, MutationMode, OfficeFormat, WarningCode};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 
-/// One sheet in workbook order (1-based `index`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SheetSummary {
-    pub name: String,
-    pub index: u32,
-}
-
-/// A best-effort cross-sheet formula dependency edge.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CrossSheetDep {
-    pub from_sheet: String,
-    pub to_sheet: String,
-}
-
-/// The inspect-first structure summary produced before any edit.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StructureSummary {
-    pub format: OfficeFormat,
-    pub sheets: Vec<SheetSummary>,
-    pub defined_names: Vec<String>,
-    pub has_pivots: bool,
-    pub has_charts: bool,
-    pub has_macros: bool,
-    pub cross_sheet_dependencies: Vec<CrossSheetDep>,
-    /// Parts classified unknown/unsupported — the passthrough set.
-    pub unknown_parts: Vec<String>,
-}
+#[doc(hidden)]
+pub use oneiron_records::edit_roundtrip::inspect::{CrossSheetDep, SheetSummary, StructureSummary};
 
 /// Runs the mandatory inspect-first stage over an already-parsed package.
 #[must_use]

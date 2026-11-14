@@ -48,12 +48,8 @@ pub struct AgentPackExport {
     pub notices: Vec<WorldRecipientNotice>,
 }
 
-/// One file of the folder, its bytes base64.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentPackExportFile {
-    pub path: String,
-    pub content_base64: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::share_travel::agent_pack_export::AgentPackExportFile;
 
 /// What one read of the pack gathered in its one snapshot.
 struct PackParts {

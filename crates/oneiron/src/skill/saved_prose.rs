@@ -23,9 +23,9 @@ use super::record::SkillRecord;
 
 /// The verb row a saved skill's unlinked links are receipted under.
 const SKILL_SAVE_ROW: &str = "self.skills.save";
-/// The extension of a source file whose text is prose; any other file is a
-/// script or data and cites nothing.
-const PROSE_EXTENSION: &str = "md";
+#[doc(hidden)]
+use oneiron_records::skill::saved_prose::PROSE_EXTENSION;
+
 /// The slots of [`SkillProse`] the prose read takes.
 const PROSE_POINTERS: &[&str] = &["/desc", "/files/*/text"];
 

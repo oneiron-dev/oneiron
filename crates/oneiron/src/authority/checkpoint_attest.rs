@@ -30,19 +30,17 @@ use crate::side_table::{self, Named, SideTable};
 
 mod policy_match;
 
-/// The crypto epoch a certified checkpoint key signs at: a binding names it,
-/// and a hash-based record below it is refused.
-/// The binding statement domain stays v1 across the tier field (FIX 2754):
-/// pre-tier rows fail strict decode in both directions, so no domain bump
-/// carries them either way.
-pub const CHECKPOINT_KEY_EPOCH: u64 = 1;
-const KEY_BINDING_DOMAIN: &[u8] = b"oneiron/authority/checkpoint-key-binding/v1";
-const ATTESTATION_DOMAIN: &[u8] = b"oneiron/authority/checkpoint-attestation/v2";
-const BINDING_DIGEST_CONTEXT: &str = "oneiron/authority/checkpoint-key-binding/digest/v1";
-const PIN_DIGEST_CONTEXT: &str = "oneiron/authority/checkpoint-pin/v1";
-/// An SLH-DSA-SHA2-256s public key.
-const SLHDSA_PUBLIC_KEY_LEN: usize = 64;
+#[doc(hidden)]
+pub use oneiron_records::authority::checkpoint_attest::CHECKPOINT_KEY_EPOCH;
+#[doc(hidden)]
+pub(super) use oneiron_records::authority::checkpoint_attest::attest_refused;
+#[doc(hidden)]
+use oneiron_records::authority::checkpoint_attest::{
+    BINDING_DIGEST_CONTEXT, KEY_BINDING_DOMAIN, PIN_DIGEST_CONTEXT, SLHDSA_PUBLIC_KEY_LEN,
+    encode_err,
+};
 
+const ATTESTATION_DOMAIN: &[u8] = b"oneiron/authority/checkpoint-attestation/v2";
 /// One root's attestation of one image. Key: image id + [`root_row_key`].
 pub(super) const ATTESTATIONS: SideTable<([u8; 32], Vec<u8>), StoredAttestation, Named> =
     SideTable::new(&side_table::AUTHORITY_CHECKPOINT_ATTESTATION);
@@ -52,14 +50,6 @@ pub(super) const ATTESTED_HEAD: SideTable<(), AttestedHead, Named> =
 /// Each eligible root's certified checkpoint key. Key: [`root_row_key`].
 pub(super) const KEY_BINDINGS: SideTable<Vec<u8>, AuthorityCheckpointKeyBinding, Named> =
     SideTable::new(&side_table::AUTHORITY_CHECKPOINT_KEY_BINDING);
-
-pub(super) fn attest_refused(reason: &'static str) -> Error {
-    Error::Record(RecordError::InvalidAuthorityLogBody(reason))
-}
-
-fn encode_err() -> Error {
-    Error::CorruptedIndex("authority checkpoint attestation")
-}
 
 /// Reads one checkpoint side-table row, treating a row this build cannot
 /// decode (pre-tier bindings and attestations) as absent so the caller

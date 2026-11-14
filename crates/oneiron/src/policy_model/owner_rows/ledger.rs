@@ -29,27 +29,10 @@ pub struct PolicyRowReceipt {
     pub at: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PolicyChangedEvent {
-    pub kind: String,
-    pub receipt_id: String,
-    pub author: String,
-    pub scope: Option<PolicyRowScope>,
-    /// Notification-rule events name a rule target instead of pretending to
-    /// name one world or project row.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target: Option<PolicyNotificationTarget>,
-    pub at: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PolicyProposalStatus {
-    Pending,
-    Approved { receipt_id: String, holder: String },
-    Declined { holder: String },
-}
+#[doc(hidden)]
+pub use oneiron_records::policy_model::owner_rows::ledger::{
+    PolicyChangedEvent, PolicyProposalStatus,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

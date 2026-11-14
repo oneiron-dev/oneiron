@@ -34,8 +34,8 @@ use crate::sync::asset_body::references::AssetBodyRef;
 const FACTS: SideTable<(EntityId, [u8; 32]), CarrierScrubFacts, Named> =
     SideTable::new(&side_table::ASSET_CARRIER_SCRUB_FACTS);
 
-/// The derive-key context of a copied-id fingerprint.
-const COPIED_ID_CONTEXT: &str = "oneiron.asset-carrier.scrub-hex.v1";
+#[doc(hidden)]
+use oneiron_records::sweep::carrier_facts::{COPIED_ID_CONTEXT, copied_id_fingerprint};
 
 /// What the scrub reads in one carrier's bytes.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,24 +117,6 @@ impl CarrierScrubFacts {
         let removed = holder_erased || birth_erased || archive_erased;
         (removed, removed && holder_erased && self.owns_id)
     }
-}
-
-/// The fingerprint of a 32-byte window when every byte is ASCII hex, read
-/// lowercase, as the scrub's copied-id scan reads it.
-fn copied_id_fingerprint(window: &[u8]) -> Option<[u8; 16]> {
-    if window.len() != 32 || !window.iter().all(u8::is_ascii_hexdigit) {
-        return None;
-    }
-    let mut lower = [0u8; 32];
-    for (dst, src) in lower.iter_mut().zip(window) {
-        *dst = src.to_ascii_lowercase();
-    }
-    let hash = blake3::Hasher::new_derive_key(COPIED_ID_CONTEXT)
-        .update(&lower)
-        .finalize();
-    let mut fingerprint = [0u8; 16];
-    fingerprint.copy_from_slice(&hash.as_bytes()[..16]);
-    Some(fingerprint)
 }
 
 /// The fingerprints of the erased ids' hex, as [`CarrierScrubFacts::verdict`]

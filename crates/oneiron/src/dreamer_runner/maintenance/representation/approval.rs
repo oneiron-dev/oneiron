@@ -70,45 +70,9 @@ struct ApprovalRecord {
     revision: [u8; 32],
     owner: ApprovalOwner,
 }
-/// The owner an arm or a plan's envelope names: an actor, or no one once
-/// that actor was erased (FIX 3520, 4512), and then the arm stands on no
-/// receipt and the plan reviews nothing. It reads and writes as the actor's
-/// hex id, or as [`ERASED_CALL_IDENTITY`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ApprovalOwner {
-    Actor(EntityId),
-    Erased,
-}
-impl ApprovalOwner {
-    /// Whether this is `actor`.
-    pub(super) fn is(self, actor: EntityId) -> bool {
-        self == Self::Actor(actor)
-    }
-}
-impl Serialize for ApprovalOwner {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
-        match self {
-            Self::Actor(id) => serializer.serialize_str(&id.to_hex()),
-            Self::Erased => serializer.serialize_str(ERASED_CALL_IDENTITY),
-        }
-    }
-}
-impl<'de> Deserialize<'de> for ApprovalOwner {
-    fn deserialize<D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> std::result::Result<Self, D::Error> {
-        let value = String::deserialize(deserializer)?;
-        if value == ERASED_CALL_IDENTITY {
-            return Ok(Self::Erased);
-        }
-        EntityId::from_hex(&value)
-            .map(Self::Actor)
-            .map_err(serde::de::Error::custom)
-    }
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::dreamer_runner::maintenance::representation::approval::ApprovalOwner;
+
 /// The owner's receipt an arm stands on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

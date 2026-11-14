@@ -14,24 +14,8 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::ports::{IndexMetaKey, RetrievalIndexInventory};
 use crate::{EntityId, Error, ModelId, ModelLocality, Result, Vault};
 
-/// One settled default CLAIM vector and the complete source image it embeds.
-/// A transport receipt, not a read grant or canonical claim history.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HomeClaimVector {
-    pub entity_id: EntityId,
-    pub source: Vec<u8>,
-    /// Source identities retained for the socket's final destination judgment.
-    pub release_rows: Vec<EntityId>,
-    pub model_id: String,
-    pub transform: Option<String>,
-    pub route: String,
-    /// 1 is OwnerServer; 2 is ThirdParty. OnDevice never travels.
-    pub locality: u8,
-    pub provenance: EmbeddingProvenance,
-    /// The exact persisted EMB-3 f16 row.
-    pub row: Vec<u8>,
-}
+#[doc(hidden)]
+pub use oneiron_records::embed::home_vectors::HomeClaimVector;
 
 pub(crate) struct ReceivedHomeClaimVector {
     pub(crate) peer: PeerMachine,

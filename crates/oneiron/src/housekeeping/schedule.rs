@@ -21,10 +21,8 @@ use crate::side_table::{self, Named, SideTable};
 const SCHEDULE: SideTable<String, SweepState, Named> =
     SideTable::new(&side_table::HOUSEKEEPING_SCHEDULE);
 
-/// The first retry after a failure. It doubles with each failure in a row, up
-/// to the sweep's cadence and never past an hour.
-const RETRY_AFTER_SECS: u64 = 60;
-const RETRY_CAP_SECS: u64 = 60 * 60;
+#[doc(hidden)]
+use oneiron_records::housekeeping::schedule::{RETRY_AFTER_SECS, RETRY_CAP_SECS, retry_after};
 
 /// While an erasure obligation waits, the erasure sweep runs at least this
 /// often, whatever its idle cadence.
@@ -144,14 +142,6 @@ impl SweepState {
     pub(super) const fn owners(&self) -> bool {
         self.owners
     }
-}
-
-fn retry_after(failures: u32, every: u64) -> u64 {
-    let doublings = failures.saturating_sub(1).min(16);
-    RETRY_AFTER_SECS
-        .saturating_mul(1 << doublings)
-        .min(every)
-        .min(RETRY_CAP_SECS)
 }
 
 /// Every engine sweep's row. A row that does not decode reads as absent: the

@@ -75,93 +75,14 @@ use std::collections::BTreeMap;
 
 pub(crate) use crate::store::conversation_body::ROOM_THREAD_AUDIENCE_KEY;
 
-/// The domain of an erased person's stand-in in a root's audience edits
-/// (FIX 5640).
-const AUDIENCE_PERSON_ERASED_DOMAIN: &str = "oneiron.rooms.thread-audience.person-erased.v1";
-
-/// What a stand-in reads and writes as, before its digest's hex.
-const ERASED_PERSON_PREFIX: &str = "erased:";
-
-/// Whom an audience edit adds or removes (FIX 5640): a live id, or no one,
-/// the stand-in the edit's root keeps for a person once they were erased.
-/// It reads and writes as the id's hex, or as `erased:` and the digest's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum AudiencePerson {
-    Live(EntityId),
-    Erased([u8; 16]),
-}
-
-impl AudiencePerson {
-    /// The stand-in the root `root` keeps for `person` once they were
-    /// erased: one per root and person, so an add and a remove of them still
-    /// meet, and two people never share one.
-    pub(crate) fn erased(root: EntityId, person: EntityId) -> Self {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(AUDIENCE_PERSON_ERASED_DOMAIN.as_bytes());
-        hasher.update(&[0]);
-        hasher.update(root.as_bytes());
-        hasher.update(person.as_bytes());
-        let mut digest = [0; 16];
-        digest.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-        Self::Erased(digest)
-    }
-
-    /// The person, while not erased.
-    pub(crate) const fn live(&self) -> Option<EntityId> {
-        match self {
-            Self::Live(id) => Some(*id),
-            Self::Erased(_) => None,
-        }
-    }
-
-    /// This, or the stand-in the root `root` keeps for it once erased.
-    pub(super) fn stand_in(self, root: EntityId) -> Self {
-        self.live().map_or(self, |live| Self::erased(root, live))
-    }
-}
-
-impl Serialize for AudiencePerson {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
-        match self {
-            Self::Live(id) => serializer.serialize_str(&id.to_hex()),
-            Self::Erased(digest) => serializer.serialize_str(&format!(
-                "{ERASED_PERSON_PREFIX}{}",
-                crate::entity_id::bytes_to_hex_lower(digest)
-            )),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for AudiencePerson {
-    fn deserialize<D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> std::result::Result<Self, D::Error> {
-        let value = String::deserialize(deserializer)?;
-        let Some(hex) = value.strip_prefix(ERASED_PERSON_PREFIX) else {
-            return EntityId::from_hex(&value)
-                .map(Self::Live)
-                .map_err(serde::de::Error::custom);
-        };
-        let invalid = || <D::Error as serde::de::Error>::custom("invalid erased person");
-        // One spelling: thirty-two lowercase hex digits.
-        if hex.len() != 32
-            || !hex
-                .bytes()
-                .all(|digit| matches!(digit, b'0'..=b'9' | b'a'..=b'f'))
-        {
-            return Err(invalid());
-        }
-        let mut digest = [0; 16];
-        for (at, byte) in digest.iter_mut().enumerate() {
-            let pair = hex.get(at * 2..at * 2 + 2).ok_or_else(invalid)?;
-            *byte = u8::from_str_radix(pair, 16).map_err(|_| invalid())?;
-        }
-        Ok(Self::Erased(digest))
-    }
-}
+#[doc(hidden)]
+use oneiron_records::workspace_roster::rooms::audience_events::{
+    AUDIENCE_PERSON_ERASED_DOMAIN, ERASED_PERSON_PREFIX,
+};
+#[doc(hidden)]
+pub(crate) use oneiron_records::workspace_roster::rooms::audience_events::{
+    AudiencePerson, JoinSettlement,
+};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::workspace_roster::rooms::audience_events::ThreadAudienceHistory;
@@ -454,15 +375,6 @@ pub(crate) struct FoldedAudience {
     requests: Vec<JoinRequest>,
     /// Every audience edit TURN of the root, in TURN id order.
     turns: Vec<EntityId>,
-}
-
-/// How a request to join settled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum JoinSettlement {
-    /// An add, a walk-in or an opened history of its person.
-    Approved,
-    /// A denial of it.
-    Denied,
 }
 
 /// One request to join a private thread, as the fold reads it.

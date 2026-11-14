@@ -32,10 +32,8 @@ pub(crate) struct LeaveNoticeDelegationRows {
     delegations: Vec<Vec<u8>>,
 }
 
-/// A delegation's actor content: there is none, as a delegation names no
-/// actor.
-#[derive(Serialize, Deserialize)]
-pub(crate) enum NoActorContent {}
+#[doc(hidden)]
+pub(crate) use oneiron_records::authority::leave_notice_continuity::home_rows::NoActorContent;
 
 impl ActorContent for NoActorContent {
     #[allow(

@@ -48,32 +48,8 @@ pub struct FeedbackTriageWork {
     pub planned_at: u64,
 }
 
-/// The skill arm a generation runs and the window it was cut for.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FeedbackTriagePin {
-    /// The SKILL entity the owner bound.
-    pub skill: EntityId,
-    /// The entity that loaded when the generation was planned: the bound
-    /// skill, or the open proposal of it an exploration trial routed to.
-    pub entity: EntityId,
-    /// The version that loaded; every child loads exactly it.
-    pub version: String,
-    /// The model whose window the generation was cut for.
-    pub model: String,
-    /// That window less the output it reserves, in tokens.
-    pub input_tokens: u64,
-}
-
-/// A byte range of the item text, on character boundaries.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FeedbackTriageSpan {
-    /// Its first byte.
-    pub start: u64,
-    /// One past its last byte.
-    pub end: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::feedback::triage::work::{FeedbackTriagePin, FeedbackTriageSpan};
 
 /// One part or synthesis node of a generation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

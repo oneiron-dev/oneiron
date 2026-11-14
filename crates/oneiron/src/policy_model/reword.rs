@@ -12,16 +12,8 @@ use super::{
     PolicyModelConfig, PolicyVerdictCategory,
 };
 
-/// The owner-authored constraint disclosed to the author and the reader. The
-/// author generates a new candidate in their own voice and submits it through
-/// the same classify/enforce door. No retry bypasses the current policy.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PolicyRewordRequest {
-    pub row_ref: String,
-    pub constraint: String,
-    pub why: Option<String>,
-    pub rejected_binding: PolicyContentBinding,
-}
+#[doc(hidden)]
+pub use oneiron_records::policy_model::reword::PolicyRewordRequest;
 
 pub(super) fn validate_reword_notice(config: &PolicyModelConfig) -> Result<()> {
     if !config.owner_reword_notice.as_deref().is_some_and(|notice| {

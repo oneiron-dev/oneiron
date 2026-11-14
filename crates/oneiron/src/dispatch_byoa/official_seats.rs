@@ -71,24 +71,12 @@ const MAX_ACCOUNT_REF_LEN: usize = 128;
 const MAX_MACHINE_REF_LEN: usize = 128;
 const MAX_LOGIN_STORE_REF_LEN: usize = 512;
 
-/// The vendor whose plan a seat spends.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum OfficialSeatVendor {
-    Claude,
-    ChatGpt,
-    Grok,
-}
-
-impl OfficialSeatVendor {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Claude => "claude",
-            Self::ChatGpt => "chatgpt",
-            Self::Grok => "grok",
-        }
-    }
-}
+#[doc(hidden)]
+use oneiron_records::dispatch_byoa::official_seats::seat_machine_digest;
+#[doc(hidden)]
+pub use oneiron_records::dispatch_byoa::official_seats::{
+    DrySeatFallback, OfficialSeatVendor, SeatPlacementApproval, SeatPlanWindow,
+};
 
 /// How a seat reaches the vendor. Encoded as its label so a durable payload
 /// stays readable if variant order changes.
@@ -189,18 +177,6 @@ impl TryFrom<String> for OfficialSeatRoute {
     }
 }
 
-/// Vendor approvals that widen placement. Both default to NOT granted: the
-/// hosted shapes stay refused until the vendor actually approves them.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SeatPlacementApproval {
-    /// Anthropic previously approved offering a Claude.ai login via the SDK.
-    #[serde(default)]
-    pub anthropic_agent_sdk: bool,
-    /// OpenAI approved hosted ChatGPT-plan use (OC2; apply near Cloud launch).
-    #[serde(default)]
-    pub openai_hosted_plan: bool,
-}
-
 /// Whether `route` may run under `posture`. This is the P4 placement table:
 /// each vendor's terms set where its login runs, never ours alone. Where a
 /// login may run hosted is [`hosted_seat_bound`]'s, the same rule the
@@ -246,58 +222,6 @@ pub fn check_seat_placement(
             Some(bound) => Err(ByoaError::CloudLoginRefused { bound }),
             None => Ok(()),
         },
-    }
-}
-
-/// What a dry seat does. The owner picks this BEFORE dispatch; the default
-/// parks and spends nothing. Only `SpendOverdraft` spends money, only up to
-/// the owner's cap, and only because the owner wrote that cap down.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum DrySeatFallback {
-    /// Park with a typed wait naming the plan-window reset. The default.
-    #[default]
-    ParkUntilReset,
-    /// Keep working on the local model until the window resets.
-    ContinueOnLocal,
-    /// Spend past the dry seat, capped: the ratified LLMB overdraft rung.
-    SpendOverdraft { cap_units: u64 },
-}
-
-impl DrySeatFallback {
-    #[must_use]
-    pub const fn spends_money(self) -> bool {
-        matches!(self, Self::SpendOverdraft { cap_units } if cap_units > 0)
-    }
-
-    /// The LLMB depletion-ladder policy this fallback is, so a dry seat
-    /// settles through the one budget ladder every other meter uses.
-    #[must_use]
-    pub const fn budget_policy(self) -> BudgetExhaustionPolicy {
-        match self {
-            Self::ParkUntilReset => BudgetExhaustionPolicy::Suspend,
-            Self::ContinueOnLocal => BudgetExhaustionPolicy::ContinueOnLocal,
-            Self::SpendOverdraft { cap_units } => {
-                BudgetExhaustionPolicy::Overdraft { cap: cap_units }
-            }
-        }
-    }
-}
-
-/// A subscription seat's plan window, in the seat's own unit: plan percent
-/// used and when the window resets (host clock seconds). Units of different
-/// kinds never mix, so this is percent of THIS seat's window only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SeatPlanWindow {
-    pub percent_used: u8,
-    pub resets_at: u64,
-}
-
-impl SeatPlanWindow {
-    /// Dry = the window is spent and has not reset yet.
-    #[must_use]
-    pub const fn is_dry(self, now: u64) -> bool {
-        self.percent_used >= 100 && now < self.resets_at
     }
 }
 
@@ -420,13 +344,6 @@ impl OfficialSeatStamp {
                 .any(|machine| seat_machine_digest(machine) == digest),
         }
     }
-}
-
-/// The digest a seat's `machine_ref` label is stamped as: of the label
-/// trimmed and lowercased, so a machine id written in either case names the
-/// same machine.
-fn seat_machine_digest(label: &str) -> [u8; 32] {
-    *blake3::hash(label.trim().to_lowercase().as_bytes()).as_bytes()
 }
 
 fn check_ref(value: &str, max_len: usize) -> bool {

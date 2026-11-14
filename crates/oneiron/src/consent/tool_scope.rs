@@ -15,36 +15,10 @@ pub struct ScopedMcpGrantRef<'a> {
     pub tool_data_classes: &'a [ToolGrantDataClass],
 }
 
-/// One outbound tool call as the automated consent check sees it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ScopedMcpCall<'a> {
-    pub server: &'a str,
-    pub tool: &'a str,
-    pub payload_data_class: DataClass,
-    pub resolved_endpoint: &'a str,
-}
-
-/// Owned call axes threaded through the Gate before any transport is chosen.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ScopedMcpCallContext {
-    pub server: String,
-    pub tool: String,
-    pub payload_data_class: DataClass,
-    pub resolved_endpoint: String,
-}
-
-impl ScopedMcpCallContext {
-    #[must_use]
-    pub fn as_call(&self) -> ScopedMcpCall<'_> {
-        ScopedMcpCall {
-            server: &self.server,
-            tool: &self.tool,
-            payload_data_class: self.payload_data_class,
-            resolved_endpoint: &self.resolved_endpoint,
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::consent::tool_scope::{
+    ScopedMcpCall, ScopedMcpCallContext, ToolGrantDataClass,
+};
 
 /// Why one call cannot auto-fire under its standing authority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -187,32 +161,4 @@ fn canonical_scoped_server(server: &str) -> Option<String> {
 
 fn is_canonical_non_empty(value: &str) -> bool {
     !value.trim().is_empty() && value == value.trim()
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolGrantDataClass {
-    Arguments,
-    XMcpHeader,
-}
-impl ToolGrantDataClass {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Arguments => "arguments",
-            Self::XMcpHeader => "x_mcp_header",
-        }
-    }
-    pub(crate) fn valid_grant_set(classes: &[Self]) -> bool {
-        matches!(
-            classes,
-            [Self::Arguments] | [Self::XMcpHeader] | [Self::Arguments, Self::XMcpHeader]
-        )
-    }
-    pub(crate) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "arguments" => Some(Self::Arguments),
-            "x_mcp_header" => Some(Self::XMcpHeader),
-            _ => None,
-        }
-    }
 }

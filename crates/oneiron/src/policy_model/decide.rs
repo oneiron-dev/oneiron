@@ -43,13 +43,10 @@ use super::verdict::{
     PolicySkipReason, PolicyVerdictCategory,
 };
 
-/// The default time the safeguard read has, from its call's start to its
-/// answer, its notes included, when the host's
-/// [`PolicyModelConfig::safeguard_read_budget`] names none (FIX 1203).
-/// Generous: a reasoning safeguard model thinks before it answers, and a reply
-/// after it is no answer. One call's clock spends it once, across its retries
-/// ([`PolicyCallClock`]).
-pub(super) const SAFEGUARD_READ_BUDGET: Duration = Duration::from_secs(600);
+#[doc(hidden)]
+pub(super) use oneiron_records::policy_model::decide::SAFEGUARD_READ_BUDGET;
+#[doc(hidden)]
+use oneiron_records::policy_model::decide::decided_confidence;
 
 /// The option a category question offers for content the policy allows.
 pub(super) const CLEAN: &str = "clean";
@@ -293,20 +290,6 @@ impl PolicyDecisions {
             plane_id,
         )
         .with_audit(audit))
-    }
-}
-
-/// The confidence a decided probability carries, in its hedge bucket.
-fn decided_confidence(probability: f64) -> PolicyConfidence {
-    PolicyConfidence {
-        calibrated: probability as f32,
-        hedge_bucket: if probability >= f64::from(PolicyConfidence::HIGH.calibrated) {
-            PolicyHedgeBucket::High
-        } else if probability >= f64::from(PolicyConfidence::MEDIUM.calibrated) {
-            PolicyHedgeBucket::Medium
-        } else {
-            PolicyHedgeBucket::Low
-        },
     }
 }
 

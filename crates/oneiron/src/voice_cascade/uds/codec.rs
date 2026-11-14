@@ -15,51 +15,8 @@ use crate::voice_cascade::spilled_audio::{AudioSpool, SpilledFrame};
 const FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
-#[derive(Deserialize)]
-#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
-pub(super) enum Request {
-    Open {
-        utterance_id: String,
-    },
-    Partial {
-        handle: String,
-        revision: u64,
-        text: String,
-    },
-    Final {
-        handle: String,
-        revision: u64,
-        text: String,
-    },
-    Close {
-        handle: String,
-    },
-}
-
-#[derive(Serialize)]
-#[serde(tag = "op", rename_all = "snake_case")]
-pub(super) enum Response {
-    Opened {
-        handle: String,
-    },
-    Partial {
-        decision: &'static str,
-        context: Option<RetrievalContext>,
-    },
-    Final {
-        context: RetrievalContext,
-    },
-    Closed,
-    Error {
-        code: &'static str,
-    },
-}
-
-impl Response {
-    pub(super) fn error(code: &'static str) -> Self {
-        Self::Error { code }
-    }
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::voice_cascade::uds::codec::{Request, Response};
 
 pub(super) enum Frame {
     Data(Vec<u8>),

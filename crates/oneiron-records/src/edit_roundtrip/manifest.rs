@@ -1,0 +1,130 @@
+//! Moved from `crates/oneiron/src/edit_roundtrip/manifest.rs` (lib split R1: record types below the lib).
+//! `oneiron` re-exports each item at its old path.
+
+use crate::edit_roundtrip::ops::AnchorEffect;
+use crate::edit_roundtrip::ops::EditOp;
+use oneiron_base::error::ArtifactError;
+use oneiron_base::error::Error;
+use oneiron_base::error::Result;
+use oneiron_store::blob_artifact::office_address::OfficeFormat;
+use serde::Deserialize;
+use serde::Serialize;
+use std::collections::BTreeSet;
+
+/// Serialization version for [`EditManifest`]. Bump on any incompatible change
+/// to the op vocabulary or manifest shape.
+pub const EDIT_MANIFEST_SCHEMA_VERSION: u32 = 2;
+
+/// Whether the pipeline ran in full-edit or minimal-mutation mode. Heavy
+/// pivot/chart/macro workbooks force [`MutationMode::Minimal`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MutationMode {
+    Full,
+    Minimal,
+}
+
+/// Stable warning codes surfaced on the manifest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WarningCode {
+    HeavyPivotMinimalMutation,
+    ChartsPresentMinimalMutation,
+    MacrosPresentMinimalMutation,
+    SessionReported,
+    /// The current worksheet repair does not cover this XML or structural edit.
+    WorksheetPreservationIncomplete,
+    /// Laid-out deck text changed, or a text frame was resized, with no
+    /// rendered fit proof.
+    FitUnverified,
+}
+
+/// A pipeline warning: a stable code plus human detail.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditWarning {
+    pub code: WarningCode,
+    pub detail: String,
+}
+
+impl EditWarning {
+    #[must_use]
+    pub fn new(code: WarningCode, detail: impl Into<String>) -> Self {
+        Self {
+            code,
+            detail: detail.into(),
+        }
+    }
+}
+
+/// The canonical cell-level edit manifest (D7: the manifest is the diff and the
+/// re-anchoring input). Self-contained and versioned for durable storage.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EditManifest {
+    pub schema_version: u32,
+    pub format: OfficeFormat,
+    /// The ops actually applied by the session — no phantom ops, no missing
+    /// ops (the session reports exactly what it did).
+    pub ops: Vec<EditOp>,
+    /// The OPC parts that legitimately changed, observed by diffing the input
+    /// and output packages (authoritative, not derived from the ops).
+    pub touched_parts: BTreeSet<String>,
+    pub mutation_mode: MutationMode,
+    pub warnings: Vec<EditWarning>,
+    /// Optional caller-held cap. Settlement replays under this cap AND the
+    /// currently resolved vault policy; it can never raise the vault budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pptx_holder_limits: Option<Box<super::pptx::PptxOperationalLimits>>,
+    /// Typed slide judgments bound to exported modern comments, when present.
+    #[serde(default)]
+    pub slide_judgments: Vec<super::slides_review::SlideJudgment>,
+    /// Typed paragraph judgments bound to native Word comments, when present.
+    #[serde(default)]
+    pub paragraph_judgments: Vec<super::paragraph_review::ParagraphJudgment>,
+    /// The question those paragraph judgments answer, which a changed
+    /// paragraph is asked again (ARCH-0075 §4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paragraph_question: Option<oneiron_store::model_decision::DecisionQuestion>,
+    /// The question those slide judgments answer, which a changed slide is
+    /// asked again (ARCH-0075 §4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slide_question: Option<oneiron_store::model_decision::DecisionQuestion>,
+}
+
+impl EditManifest {
+    /// The anchor-remapping effects, in op order, for ARTL-2 replay.
+    #[must_use]
+    pub fn anchor_effects(&self) -> Vec<AnchorEffect> {
+        self.ops.iter().filter_map(EditOp::anchor_effect).collect()
+    }
+
+    /// One diff line per op (D7 semantic diff; the viewer never re-parses two
+    /// binaries).
+    #[must_use]
+    pub fn render_diff(&self) -> Vec<String> {
+        self.ops.iter().map(EditOp::render).collect()
+    }
+
+    /// Field-name-tagged MessagePack encoding for durable storage (ARTL-4).
+    pub fn to_msgpack(&self) -> Result<Vec<u8>> {
+        rmp_serde::to_vec_named(self).map_err(|_| {
+            Error::Artifact(ArtifactError::InvalidEditManifest(
+                "edit manifest failed to encode",
+            ))
+        })
+    }
+
+    /// Decodes a manifest from [`EditManifest::to_msgpack`] bytes.
+    pub fn from_msgpack(bytes: &[u8]) -> Result<Self> {
+        let manifest: Self = rmp_serde::from_slice(bytes).map_err(|_| {
+            Error::Artifact(ArtifactError::InvalidEditManifest(
+                "edit manifest failed to decode",
+            ))
+        })?;
+        if manifest.schema_version != EDIT_MANIFEST_SCHEMA_VERSION {
+            return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                "edit manifest schema version is unsupported",
+            )));
+        }
+        Ok(manifest)
+    }
+}

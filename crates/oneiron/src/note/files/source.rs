@@ -65,47 +65,20 @@ pub const DEFAULT_FILES_EXCLUDE: &[&str] = &[
     "id_ed25519*",
 ];
 
-/// What a Files source's notes derive their ids from, before the source's
-/// id: never a host path, which a UTF-8 canonical folder always is.
-const FILES_NAMESPACE: &str = "oneiron-files/";
+#[doc(hidden)]
+use oneiron_records::note::files::source::FILES_NAMESPACE;
+#[doc(hidden)]
+pub(in crate::note) use oneiron_records::note::files::source::namespace;
+#[doc(hidden)]
+pub use oneiron_records::note::files::source::{FilesPlacement, FilesWorld};
 
 /// How many counters a Files world's id derivation tries for one outside
 /// the foreign-world range: each is one in sixteen, so the first nearly
 /// always is.
 const FILES_WORLD_COUNTER_BOUND: u64 = 64;
 
-/// This install's Files world: the WORLD every Files source of this install
-/// lands in, and the machine it stays on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FilesWorld {
-    pub world: EntityId,
-    /// The install whose files the world holds: its one reader by default.
-    pub machine: EntityId,
-}
-
-/// Where a Files source's files live (FIX 6942): the source's identity, the
-/// world its notes are born in, the install it reads on, and what it never
-/// reads.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FilesPlacement {
-    /// The source's id: derived from its install, its world and its folder,
-    /// so attaching the folder again finds the notes it landed.
-    pub source: EntityId,
-    pub world: EntityId,
-    pub machine: EntityId,
-    /// Patterns over each entry's name and its `/`-separated path under the
-    /// folder (`*` within a name, `**` across folders, `?` one character):
-    /// what the host never opens.
-    pub exclude: Vec<String>,
-}
-
 #[doc(hidden)]
 pub use oneiron_verb_wire::note::files::source::FileHandle;
-
-/// The namespace a Files source's notes derive their ids from.
-pub(in crate::note) fn namespace(source: EntityId) -> String {
-    format!("{FILES_NAMESPACE}{}", source.to_hex())
-}
 
 /// The Files world of the install `machine`: the first id derived from it
 /// outside the foreign-world range.

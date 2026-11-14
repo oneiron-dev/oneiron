@@ -6,17 +6,9 @@ use crate::{EntityId, Result, Vault};
 use oneiron_container::SessionManifest;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct EgressReceipt {
-    pub run_id: EntityId,
-    pub operation: String,
-    pub url: String,
-    pub content_hash: [u8; 32],
-    pub content_bytes: u64,
-    pub decision: PolicyClassifyDecision,
-    pub category: PolicyVerdictCategory,
-    pub policy_receipt: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_records::code_sandbox::egress::receipt::EgressReceipt;
+
 /// `body`'s whitespace as JSON `\uXXXX` escapes (every whitespace char is
 /// in the BMP), so the text decodes to the same value.
 fn escape_whitespace(body: &str) -> String {

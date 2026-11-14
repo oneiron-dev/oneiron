@@ -22,24 +22,9 @@ fn hold_key(reference: &str) -> String {
         .unwrap_or(reference)
         .to_owned()
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HeldPolicyItem {
-    pub queue_ref: String,
-    pub row_ref: String,
-    /// Authenticated principal reference assigned by the policy, not a display label.
-    pub human: String,
-    pub content_hash: [u8; 32],
-    pub policy_frontier: [u8; 32],
-    pub held_at: u64,
-    pub receipt_ref: String,
-    pub resolution: Option<PolicyHoldResolution>,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PolicyHoldResolution {
-    Cleared,
-    Declined,
-}
+#[doc(hidden)]
+pub use oneiron_records::policy_model::hold_queue::{HeldPolicyItem, PolicyHoldResolution};
+
 fn queue_ref(request: &PolicyClassifyRequest, verdict: &PolicyClassifyVerdict) -> Option<String> {
     let PolicyVerdictCategory::OwnerPolicy { row_ref } = &verdict.category else {
         return None;

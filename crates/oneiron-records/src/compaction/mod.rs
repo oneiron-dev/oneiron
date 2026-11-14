@@ -1,0 +1,25 @@
+pub use crate::compaction::self_writer::CompactionCall;
+pub use oneiron_store::compaction::gate::CompactionCheck;
+pub use oneiron_store::compaction::gate::CompactionGateFailure;
+pub use oneiron_store::compaction::gate::CompactionGatePolicy;
+pub use oneiron_store::compaction::gate::CompactionOff;
+pub use oneiron_store::compaction::gate::CompactionRefusal;
+pub use oneiron_store::compaction::gate::CompactionSuppression;
+pub(crate) use oneiron_store::compaction::gate::compaction_pin_input_tokens;
+pub use oneiron_store::compaction::gate::compaction_reply_schema;
+pub use oneiron_verb_wire::compaction::driver::CompactionWindowMessage;
+pub use oneiron_verb_wire::compaction::fold_kinds::FoldKind;
+pub use oneiron_verb_wire::compaction::fold_kinds::FoldedOutput;
+pub use oneiron_verb_wire::compaction::fold_kinds::FoldedSpeech;
+pub use oneiron_verb_wire::compaction::folds::FoldCompactInput;
+pub use oneiron_verb_wire::compaction::folds::FoldDescription;
+pub use oneiron_verb_wire::compaction::folds::FoldList;
+pub use oneiron_verb_wire::compaction::folds::FoldMarkInput;
+pub use oneiron_verb_wire::compaction::folds::FoldPending;
+pub use oneiron_verb_wire::compaction::folds::FoldReply;
+pub use oneiron_verb_wire::compaction::folds::FoldSpan;
+pub use oneiron_verb_wire::compaction::folds::FoldUnfold;
+pub use oneiron_verb_wire::compaction::folds::FoldUnfoldInput;
+pub use oneiron_verb_wire::compaction::folds::FoldsInput;
+
+pub mod self_writer;

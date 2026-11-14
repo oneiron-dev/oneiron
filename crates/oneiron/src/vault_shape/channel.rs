@@ -66,15 +66,8 @@ impl From<ShapeSelfHeld> for SelfHeldShape {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub enum ShapeMailScope {
-    #[serde(rename = "mail.read")]
-    MailRead,
-    #[serde(rename = "mail.metadata")]
-    MailMetadata,
-    #[serde(rename = "mail.send")]
-    MailSend,
-}
+#[doc(hidden)]
+pub use oneiron_records::vault_shape::channel::{ShapeChannelFulfillment, ShapeMailScope};
 
 impl From<ShapeMailScope> for DelegatedGrantScope {
     fn from(scope: ShapeMailScope) -> Self {
@@ -141,14 +134,6 @@ impl ShapeChannelBinding {
             Self::Vault { vault_id } => Ok(ChannelIdentityBinding::vault(*vault_id)),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ShapeChannelFulfillment {
-    Api,
-    Manual,
-    Review,
 }
 
 impl From<ShapeChannelFulfillment> for ChannelIdentityFulfillment {

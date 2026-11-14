@@ -81,13 +81,8 @@ impl Carrier {
     }
 }
 
-const fn slot(scope: DreamerConsolidationScope) -> usize {
-    match scope {
-        DreamerConsolidationScope::Micro => 0,
-        DreamerConsolidationScope::Meso => 1,
-        DreamerConsolidationScope::Macro => 2,
-    }
-}
+#[doc(hidden)]
+use oneiron_records::dreamer_consolidation::redirty::slot;
 
 /// Re-dirties `turn` in the caller's write transaction: its carrier takes the
 /// writer clock's second and a fresh id from the store's id source, pending

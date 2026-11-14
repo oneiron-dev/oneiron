@@ -23,17 +23,8 @@ const ADMIN_WALK_IN: SideTable<(), bool, Named> =
 const ADMIN_DELETE: SideTable<(), bool, Named> =
     SideTable::new(&side_table::ROOM_THREADS_ADMIN_DELETE);
 
-/// The owner's two switches over Admins and private room threads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomThreadAdminSettings {
-    /// Whether an Admin may walk into a private thread, from now on
-    /// (`rooms.private_threads.admin_walk_in`).
-    pub admin_walk_in: bool,
-    /// Whether an Admin may delete a private thread
-    /// (`rooms.private_threads.admin_delete`).
-    pub admin_delete: bool,
-}
+#[doc(hidden)]
+pub use oneiron_records::settings::room_threads::RoomThreadAdminSettings;
 
 /// The two switches in `txn`, each absent read ON: the one reader every
 /// gate over Admins and private threads reads in its own write.

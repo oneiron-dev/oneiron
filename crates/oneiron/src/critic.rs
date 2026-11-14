@@ -29,7 +29,11 @@ use crate::learning::{LearningCell, LearningPredicate};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::write_envelope::WriteActor;
 
-pub const CRITIQUE_ARTIFACT_SCHEMA_VERSION: u64 = 1;
+#[doc(hidden)]
+pub use oneiron_records::critic::{CRITIQUE_ARTIFACT_SCHEMA_VERSION, CritiqueTriageScores};
+#[doc(hidden)]
+use oneiron_records::critic::{ERASED_CRITIC_REF_PREFIX, MAX_SUGGESTED_EDIT_BYTES};
+
 pub use crate::store::critic_lens::CRITIC_LENS_CATALOG_SCHEMA_VERSION;
 
 /// Private run-tree-scoped critique artifact for one branch attempt, written independently by
@@ -83,12 +87,7 @@ const MAX_RUN_ID_BYTES: usize = 128;
 const MAX_CANDIDATE_REF_BYTES: usize = 256;
 const MAX_PROVENANCE_REF_BYTES: usize = 256;
 const MAX_EVIDENCE_REF_BYTES: usize = 256;
-const MAX_SUGGESTED_EDIT_BYTES: usize = 8192;
 const DEFAULT_UCB_EXPLORATION: f64 = 0.35;
-/// How an erased critic's ref begins (FIX 4477; a call): the erased spelling
-/// and a colon, then an opaque id of its own that hashes no actor.
-const ERASED_CRITIC_REF_PREFIX: &str = "erased:";
-
 pub use crate::store::critic_lens::{CriticLens, LensCatalog, OF366_SEED_LENS_CATALOG_JSON};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -268,13 +267,6 @@ impl CritiqueArtifact {
 /// id `opaque`, one per erased critic per record, so no two critics share it.
 pub(crate) fn erased_critic_ref(opaque: EntityId) -> String {
     format!("{ERASED_CRITIC_REF_PREFIX}{}", opaque.to_hex())
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-pub struct CritiqueTriageScores {
-    pub accept: f64,
-    pub revise: f64,
-    pub discard: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

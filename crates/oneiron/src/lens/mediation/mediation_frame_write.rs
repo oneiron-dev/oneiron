@@ -521,12 +521,10 @@ pub enum LensApprovedActionArg {
     BackingRef(LensHostBackingRef),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LensGateWriteChokepoint {
-    EvaluateGate,
-    CheckClaimPolicyForWrite,
-}
+#[doc(hidden)]
+pub use oneiron_records::lens::mediation::mediation_frame_write::{
+    LensGateWriteChokepoint, LensHostImport,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LensHostMediatedWrite {
@@ -543,31 +541,6 @@ impl LensHostMediatedWrite {
     #[must_use]
     pub fn chokepoint(&self) -> LensGateWriteChokepoint {
         self.chokepoint
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LensHostImport {
-    ScopedRead,
-    ResolveBackingRef,
-    EmitAtom,
-    VaultWrite,
-    BatchWrite,
-    EvaluateGate,
-    CheckClaimPolicyForWrite,
-}
-
-impl LensHostImport {
-    #[must_use]
-    pub fn is_write(self) -> bool {
-        matches!(
-            self,
-            Self::VaultWrite
-                | Self::BatchWrite
-                | Self::EvaluateGate
-                | Self::CheckClaimPolicyForWrite
-        )
     }
 }
 

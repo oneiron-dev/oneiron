@@ -99,8 +99,12 @@ use crate::outbound::linkedin_policy::LINKEDIN_SEAT_VERB_CATALOG;
 /// Durable attempt kind used by the scheduled LinkedIn inbox poller.
 pub const LINKEDIN_INBOX_SYNC_ATTEMPT_KIND: &str = "linkedin_inbox_sync";
 
-/// Default initial lookback for timestamped LinkedIn messages.
-pub const DEFAULT_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS: u64 = 7 * 24 * 60 * 60;
+#[doc(hidden)]
+pub use oneiron_records::linkedin_connector::DEFAULT_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS;
+#[doc(hidden)]
+use oneiron_records::linkedin_connector::{
+    MAX_LINKEDIN_ADDRESS_BYTES, MAX_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS,
+};
 
 const LINKEDIN_MCP_GET_INBOX_TOOL: &str = "get_inbox";
 const LINKEDIN_MCP_GET_CONVERSATION_TOOL: &str = "get_conversation";
@@ -112,7 +116,6 @@ const LINKEDIN_INBOX_SYNC_CLAIMED_VALUE: &[u8] = b"claimed";
 /// hex16 message key can begin with it.
 const LINKEDIN_INBOX_SYNC_CURSOR_KEY_PREFIX: &str = "cursor:";
 
-const MAX_LINKEDIN_ADDRESS_BYTES: usize = 512;
 use crate::outbound::linkedin_policy::MAX_LINKEDIN_SESSION_REF_BYTES;
 const MAX_LINKEDIN_THREAD_ID_BYTES: usize = 256;
 const MAX_LINKEDIN_MESSAGE_ID_BYTES: usize = 512;
@@ -123,7 +126,6 @@ const MAX_LINKEDIN_RECIPIENT_KEY_BYTES: usize = 512;
 const MAX_LINKEDIN_MESSAGE_TEXT_BYTES: usize = 16 * 1024;
 const MAX_LINKEDIN_INTENT_REF_BYTES: usize = 512;
 const MAX_LINKEDIN_ERROR_CODE_BYTES: usize = 96;
-const MAX_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS: u64 = 366 * 24 * 60 * 60;
 /// The threads one inbox poll reads; the rest wait in the seat's cursor for
 /// the next poll (FIX 8790).
 const MAX_LINKEDIN_INBOX_THREADS_PER_POLL: usize = 250;

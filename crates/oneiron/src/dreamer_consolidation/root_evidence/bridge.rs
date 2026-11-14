@@ -24,14 +24,11 @@ use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
 use crate::{Result, Vault};
 pub(super) use recovery::GrantedClose;
 
-/// The bridge attempt type. Queued on the existing Micro kind
-/// (`DreamerConsolidationScope::Micro.attempt_kind()`), so wake preparation
-/// skips its non-partition input by decode failure and the partition window
-/// excludes it by attempt type; the inner executor arm runs it.
-pub(in crate::dreamer_consolidation) const ATTEMPT: &str = "dreamer.consolidation.root_bridge";
+#[doc(hidden)]
+use oneiron_records::dreamer_consolidation::root_evidence::bridge::{DEDUPE_DOMAIN};
+#[doc(hidden)]
+pub(in crate::dreamer_consolidation) use oneiron_records::dreamer_consolidation::root_evidence::bridge::{ATTEMPT};
 
-/// Domain of the per-payload dedupe-children digest (dedupe key segment).
-const DEDUPE_DOMAIN: &[u8] = b"oneiron:root-bridge-dedupe:v1";
 /// Domain of `RootBinding` identity.
 const BINDING_IDENTITY_DOMAIN: &[u8] = b"oneiron:root-bridge-binding:v1";
 

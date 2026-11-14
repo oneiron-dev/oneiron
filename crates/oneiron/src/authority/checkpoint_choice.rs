@@ -25,9 +25,8 @@ use super::*;
 /// The vault's checkpoint policy choices in one fold state.
 pub(super) type CheckpointChoiceState = OwnerChoiceState<CheckpointRootChoice>;
 
-/// One choice as a surface shows it: its roots and quorum, `None` for a
-/// clear.
-pub type CheckpointPolicyHead = OwnerChoiceHead<CheckpointRootChoice>;
+#[doc(hidden)]
+pub use oneiron_records::authority::checkpoint_choice::CheckpointPolicyHead;
 
 /// The vault's folded checkpoint policy choices, as this install counts
 /// them.

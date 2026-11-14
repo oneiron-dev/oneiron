@@ -501,35 +501,8 @@ impl People {
     }
 }
 
-/// The `people` block one vault contributes to the cached prefix, and the
-/// persons it made resident.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct PeoplePrefix {
-    pub vault: String,
-    pub rows: Vec<String>,
-    pub more: usize,
-    pub resident: BTreeSet<EntityId>,
-}
-
-impl PeoplePrefix {
-    #[must_use]
-    pub fn render(&self) -> String {
-        let mut out = format!("<people vault={}>", self.vault);
-        for row in &self.rows {
-            out.push('\n');
-            out.push_str(row);
-        }
-        // The overflow points at the verb that pages the rest (ARCH-0067).
-        if self.more > 0 {
-            out.push_str(&format!(
-                "\nmore: +{} \u{b7} vault.people.list({}, page)",
-                self.more, self.vault
-            ));
-        }
-        out.push_str("\n</people>");
-        out
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::context_board::people::PeoplePrefix;
 
 /// How the live board names a person to one reader: the bare handle when the
 /// reader's cached roster holds it, the handle with its name inline when not,

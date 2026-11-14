@@ -23,22 +23,8 @@ const LOG: SideTable<(EntityId, EntityId), InquiryLogEntry, Named> =
 const BY_TIME: SideTable<(u64, EntityId, EntityId), (), Raw> =
     SideTable::new(&side_table::INQUIRY_LOG_BY_TIME);
 
-/// Who settled an inquiry in the member's vault (canon's ladder for an
-/// inquiry: standing rows, the companion, the member).
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum InquiryDecider {
-    /// One of the member's saved decisions for this asker.
-    StandingRow { row_ref: String },
-    /// The member's companion, from the opened scope.
-    Companion,
-    /// The member. `None` once the member's erase scrubbed it; the decision
-    /// stands.
-    Member { principal: Option<EntityId> },
-    /// Nobody answered: the inquiry expired, or the check-in it waited on
-    /// ended without an answer (held, or removed with its asker's erase).
-    LetGo,
-}
+#[doc(hidden)]
+pub use oneiron_records::inquiry::log::InquiryDecider;
 
 /// One row of "Asked about you".
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

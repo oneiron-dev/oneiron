@@ -16,30 +16,8 @@ use crate::side_table::HexId;
 use crate::{EdgeActorClass, EntityId};
 use serde::{Deserialize, Serialize};
 
-/// Idempotent command carried by the canonical document frame. There is no
-/// actor field: the receiving host obtains that from its authenticated session.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NoteOperation {
-    #[serde(with = "super::id_codec")]
-    pub request_id: EntityId,
-    pub change: NoteChange,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum NoteChange {
-    Edit {
-        base: Vec<u8>,
-        edits: Vec<NoteScalarEdit>,
-    },
-    Cite {
-        pin: NotePin,
-    },
-    SetTitle {
-        title: String,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_records::note::operations::{NoteChange, NoteOperation};
 
 /// Durable provenance authored only by the admission door. Commit messages
 /// remain diagnostic text; neither grants nor actor classes are read from them.
@@ -94,21 +72,6 @@ pub struct NoteOperationReceipt {
     pub request_id: EntityId,
     pub command_hash: [u8; 32],
     pub outcome: NoteScalarEditOutcome,
-}
-
-/// No length refuses an operation (rule 5, FIX 10345). A peer's bytes are
-/// bounded by the frame that carried them, and a JSON decode allocates no
-/// more than they hold.
-impl NoteOperation {
-    pub fn encode(&self) -> crate::Result<Vec<u8>> {
-        serde_json::to_vec(self).map_err(|_| invalid("NOTE operation encode"))
-    }
-    pub fn decode(bytes: &[u8]) -> crate::Result<Self> {
-        serde_json::from_slice(bytes).map_err(|_| invalid("invalid NOTE operation"))
-    }
-    pub(super) fn hash(&self) -> crate::Result<[u8; 32]> {
-        Ok(*blake3::hash(&self.encode()?).as_bytes())
-    }
 }
 
 pub(super) fn authorship(doc: &loro::LoroDoc) -> crate::Result<Vec<NoteAuthorship>> {

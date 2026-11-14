@@ -159,20 +159,14 @@ impl AuthorityFold {
     }
 }
 
-/// How a machine stands toward a world, judged on the world's read: whether
-/// it holds the world, contends for it, or may re-pick an orphan. Holder
-/// execution and diagnostics only: who edits a world is the owner's
-/// authenticated say-so, carried by any live linked machine (mesh contract
-/// §3), never this standing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorldEditStanding {
-    /// The world is readable on the machine.
-    Holds,
-    /// The machine is one of a conflict's contenders.
-    Contends,
-    /// No machine the world's read names is still the owner's.
-    RepicksOrphan,
-}
+#[doc(hidden)]
+pub use oneiron_records::authority::world_privacy::WorldEditStanding;
+#[doc(hidden)]
+use oneiron_records::authority::world_privacy::readable;
+#[doc(hidden)]
+pub(crate) use oneiron_records::authority::world_privacy::side_world;
+#[doc(hidden)]
+pub(super) use oneiron_records::authority::world_privacy::{edit_standing, orphaned_from};
 
 impl AuthorityFold {
     /// How `machine` stands toward `world` now, or `None` when it neither
@@ -257,64 +251,6 @@ pub(super) fn mine_by_roster(
 ) -> bool {
     fold.machine(id)
         .is_some_and(|folded| folded.roster_view().trusted_under(&admitter).is_some())
-}
-
-/// `read` is the roster rule's. `is_mine` judges the machine, `named_mine`
-/// the machines the read names.
-pub(super) fn edit_standing(
-    read: &EffectiveRead,
-    machine: EntityId,
-    is_mine: impl Fn(EntityId) -> bool,
-    named_mine: impl Fn(EntityId) -> bool,
-) -> Option<WorldEditStanding> {
-    if !is_mine(machine) {
-        return None;
-    }
-    if readable(read, Destination::Machine(machine), &is_mine) {
-        return Some(WorldEditStanding::Holds);
-    }
-    match read {
-        EffectiveRead::Conflicted { contenders } if contenders.contains(&machine) => {
-            Some(WorldEditStanding::Contends)
-        }
-        _ if !orphaned_from(read, named_mine).is_empty() => Some(WorldEditStanding::RepicksOrphan),
-        _ => None,
-    }
-}
-
-/// The machines `read` names when none of them is still the owner's; empty
-/// when the world is not orphaned.
-pub(super) fn orphaned_from(
-    read: &EffectiveRead,
-    is_mine: impl Fn(EntityId) -> bool,
-) -> BTreeSet<EntityId> {
-    let named = match read {
-        EffectiveRead::OneMachine(machine) => BTreeSet::from([*machine]),
-        EffectiveRead::Conflicted { contenders } => contenders.clone(),
-        EffectiveRead::Everywhere | EffectiveRead::MyMachines => return BTreeSet::new(),
-    };
-    if named.iter().any(|machine| is_mine(*machine)) {
-        BTreeSet::new()
-    } else {
-        named
-    }
-}
-
-fn readable(
-    read: &EffectiveRead,
-    destination: Destination,
-    is_mine: impl Fn(EntityId) -> bool,
-) -> bool {
-    let machine = match destination {
-        Destination::Machine(machine) if is_mine(machine) => Some(machine),
-        _ => None,
-    };
-    match read {
-        EffectiveRead::Everywhere => true,
-        EffectiveRead::MyMachines => machine.is_some(),
-        EffectiveRead::OneMachine(only) => machine == Some(*only),
-        EffectiveRead::Conflicted { .. } => false,
-    }
 }
 
 /// The settings lattice one edit, or a meet of edits, stands for. Each part
@@ -497,24 +433,6 @@ pub(super) fn policy_revision(state: &FoldState, world: EntityId) -> PolicyRevis
             .into_iter()
             .flat_map(|frontier| frontier.live.keys().copied()),
     )
-}
-
-/// The world a per-world side entry belongs to; `None` for a main-log entry.
-/// Only a world's key records ride a side branch, recipient-filtered, with
-/// the joins a carrier stages over the branch's leaves (FIX 11868). Its
-/// settings edits are main-log metadata every linked machine folds (the
-/// Engine call "OwnerAct world metadata to every linked machine"), so the
-/// main-log heads, sequence scopes, refold, retired-signer walk, import order
-/// and every transport filter that read this see them as main-log rows.
-pub(crate) fn side_world(op: &AuthorityOp) -> Option<EntityId> {
-    match op {
-        AuthorityOp::WorldKeyWraps(record) => Some(record.key.world),
-        AuthorityOp::FrontierJoin(FrontierJoin {
-            scope: FrontierJoinScope::World(world),
-            ..
-        }) => Some(*world),
-        _ => None,
-    }
 }
 
 /// Entries that break the side branches: any entry naming a side entry of a

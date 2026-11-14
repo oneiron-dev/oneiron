@@ -25,43 +25,13 @@ pub const PERSONA_CHANGE_PREDICATE: &str = "persona.change";
 use crate::serialize::person_identity::BASELINE_KEY;
 const SCENARIO_KEY: &str = "persona_scenario";
 
-/// Reproducible derivation inputs. This is provenance, never authorization.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PersonaMadeBy {
-    #[serde(
-        serialize_with = "serialize_inputs",
-        deserialize_with = "deserialize_inputs"
-    )]
-    pub inputs: Vec<EntityId>,
-    pub process: String,
-    pub at: u64,
-    /// The exact revision of each input this was derived from, as its writer
-    /// read it ([`ScopedRead::persona_input_bases`]). An input with no entry
-    /// records no basis; a change written before bases existed carries none,
-    /// and its wire form is unchanged.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub bases: Vec<PersonaInputBasis>,
-}
-
-/// One derivation input at the exact revision its writer read: the input's
-/// live revision in the entity revision ledger, which retains it when the
-/// input is replaced, so a reader can still read it with
-/// `PointRead::id(input).at(ReadMode::Pinned(revision))`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PersonaInputBasis {
-    #[serde(
-        serialize_with = "serialize_input",
-        deserialize_with = "deserialize_input"
-    )]
-    pub input: EntityId,
-    #[serde(
-        serialize_with = "serialize_revision",
-        deserialize_with = "deserialize_revision"
-    )]
-    pub revision: RevisionRef,
-}
+#[doc(hidden)]
+pub use oneiron_records::companion::persona::{PersonaInputBasis, PersonaMadeBy};
+#[doc(hidden)]
+use oneiron_records::companion::persona::{
+    deserialize_input, deserialize_inputs, deserialize_revision, serialize_input, serialize_inputs,
+    serialize_revision,
+};
 
 /// A replayed change whose recorded basis for one input is not the basis this
 /// replay applied it over. Advisory only: the change still applied.
@@ -76,52 +46,6 @@ pub struct PersonaReplayConflict {
     /// this reader reads no revision of it now, or `input` is a change of this
     /// PERSON that the replay did not apply before this one.
     pub current: Option<RevisionRef>,
-}
-
-fn serialize_inputs<S: serde::Serializer>(
-    inputs: &[EntityId],
-    serializer: S,
-) -> std::result::Result<S::Ok, S::Error> {
-    inputs
-        .iter()
-        .copied()
-        .map(ScopeId)
-        .collect::<Vec<_>>()
-        .serialize(serializer)
-}
-
-fn deserialize_inputs<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> std::result::Result<Vec<EntityId>, D::Error> {
-    Vec::<ScopeId>::deserialize(deserializer).map(|ids| ids.into_iter().map(|id| id.0).collect())
-}
-
-fn serialize_input<S: serde::Serializer>(
-    input: &EntityId,
-    serializer: S,
-) -> std::result::Result<S::Ok, S::Error> {
-    ScopeId(*input).serialize(serializer)
-}
-
-fn deserialize_input<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> std::result::Result<EntityId, D::Error> {
-    ScopeId::deserialize(deserializer).map(|id| id.0)
-}
-
-fn serialize_revision<S: serde::Serializer>(
-    revision: &RevisionRef,
-    serializer: S,
-) -> std::result::Result<S::Ok, S::Error> {
-    serializer.serialize_str(&revision.to_hex())
-}
-
-fn deserialize_revision<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> std::result::Result<RevisionRef, D::Error> {
-    let text = String::deserialize(deserializer)?;
-    RevisionRef::from_hex(&text)
-        .map_err(|_| serde::de::Error::custom("persona input basis is not a revision reference"))
 }
 
 /// An object merge patch. Null removes a field; objects merge recursively.

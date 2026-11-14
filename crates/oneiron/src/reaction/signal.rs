@@ -22,7 +22,10 @@ use serde::{Deserialize, Serialize};
 /// Largest page one call returns. A larger ask is served in pages of this
 /// size, each with the cursor of the next.
 pub const MAX_REACTION_SIGNAL_PAGE: usize = 1000;
-const CURSOR_BYTES: usize = 25;
+#[doc(hidden)]
+use oneiron_records::reaction::signal::CURSOR_BYTES;
+#[doc(hidden)]
+pub use oneiron_records::reaction::signal::ReactionSignal;
 
 /// An explicit signal-read deadline expired; no partial feed was returned.
 #[derive(Debug, thiserror::Error)]
@@ -40,38 +43,6 @@ pub fn check_reaction_signal_deadline(deadline: &RetrievalDeadline) -> Result<()
         .into());
     }
     Ok(())
-}
-
-/// A put or a removal of a reaction to one of the reader's messages.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReactionSignal {
-    pub reaction: EntityId,
-    pub message: EntityId,
-    pub by: EntityId,
-    pub glyph: String,
-    pub occurred_at: u64,
-    pub recorded_at: u64,
-    pub revoked: bool,
-}
-
-impl ReactionSignal {
-    /// `reaction.put` or `reaction.revoked`.
-    #[must_use]
-    pub const fn event(&self) -> &'static str {
-        if self.revoked {
-            "reaction.revoked"
-        } else {
-            "reaction.put"
-        }
-    }
-
-    fn key(&self) -> [u8; CURSOR_BYTES] {
-        let mut key = [0u8; CURSOR_BYTES];
-        key[..8].copy_from_slice(&self.recorded_at.to_be_bytes());
-        key[8..24].copy_from_slice(self.reaction.as_bytes());
-        key[24] = u8::from(self.revoked);
-        key
-    }
 }
 
 /// One bounded page. `next` is the exclusive cursor of its last signal; it

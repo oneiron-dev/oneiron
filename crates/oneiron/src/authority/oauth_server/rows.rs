@@ -107,12 +107,8 @@ impl IssuedCode {
     }
 }
 
-/// Which kind of token a token row is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) enum TokenKind {
-    Access,
-    Refresh,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::authority::oauth_server::rows::{FamilyOpening, TokenKind};
 
 /// One access or refresh token. Not `Debug`: an access token's row holds its slip.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -155,36 +151,6 @@ impl TokenFamily {
     /// end failed stays until a pass ends it and takes its grant back.
     pub(super) fn drop_due_at(&self, now: u64) -> bool {
         now >= self.expires_at && !self.opening.end_due_at(now)
-    }
-}
-
-/// Whether a token family's first access slip stood (FIX 22193, 22226). Only a family whose first
-/// slip stood handed a token out, so only its grant outlives the family; the sign-in of one whose
-/// first slip never stood is ended, its grant taken back.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) enum FamilyOpening {
-    /// A code's exchange at `opened_at` opened the family, and its first access slip has not
-    /// stood: no token of it was handed out.
-    Pending { opened_at: u64 },
-    /// Its first access slip landed and its first pair was handed out. Only a revoke or a lapse
-    /// ends the family; its grant stays until the owner revokes it.
-    Stood,
-    /// Its first access slip did not stand and its sign-in was ended: the family is revoked, and
-    /// its grant was taken back unless another family that is not revoked names it.
-    Ended,
-}
-
-impl FamilyOpening {
-    /// Whether the expiry sweep ends the family's sign-in at `now` (FIX 22226): its first access
-    /// slip has not stood and the first access token, minted with the exchange, has lapsed, so
-    /// no token request still minting that slip is cut short. A slip that lands after the end
-    /// finds the family revoked and stands for nothing; one that landed first marked it
-    /// [`Self::Stood`], and the end, judged again in its writer, leaves it.
-    pub(super) fn end_due_at(self, now: u64) -> bool {
-        matches!(
-            self,
-            Self::Pending { opened_at } if now >= opened_at.saturating_add(OAUTH_ACCESS_TTL_SECS)
-        )
     }
 }
 

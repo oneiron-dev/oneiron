@@ -10,38 +10,8 @@ use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestionInput, ProviderPin,
 };
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CriticPrediction {
-    pub what: String,
-    /// Absolute Unix seconds; absence of a fact by this time is not a negative label.
-    pub by_when: u64,
-    pub how_checked: OutcomeBinding,
-}
-
-impl CriticPrediction {
-    pub(in crate::critic) fn validate(&self, predicted_at: u64) -> Result<()> {
-        self.how_checked.validate()?;
-        if self.what.trim().is_empty()
-            || self.what.len() > MAX_SUGGESTED_EDIT_BYTES
-            || self.by_when <= predicted_at
-            || self.by_when - predicted_at != self.how_checked.horizon
-        {
-            return Err(invalid_critic_config(
-                "prediction requires what, a future horizon and an outcome binding",
-            ));
-        }
-        Ok(())
-    }
-}
-
-/// Retained beside the private review, not a vault claim.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ReviewDissent {
-    pub artifact_id: String,
-    pub note: Option<EntityId>,
-    pub question: Option<EntityId>,
-    pub settled_fact: Option<EntityId>,
-}
+#[doc(hidden)]
+pub use oneiron_records::critic::review::dissent::{CriticPrediction, ReviewDissent};
 
 /// Retain a prediction when triage or an anchored outcome overruled its critique.
 /// A critique without a prediction stays in its run-tree branch. A caller

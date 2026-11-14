@@ -44,15 +44,8 @@ pub const FIELD_TRAVELLED: &str = "travelled";
 // travel choice carries one (FIX 2998); every `share_travel::` path is unchanged.
 pub use oneiron_authority::share_travel::{BornWith, BornWithField, TravelChoice, TravelKind};
 
-/// The born-with text one federation grant's windows carry to another vault,
-/// with when the owner set it: the effective choice the grant travel door
-/// reads (`Vault::federation_grant_travel`, FIX 2998).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GrantTravel {
-    pub travel: TravelChoice,
-    pub set_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::share_travel::GrantTravel;
 
 /// A receipt's `travelled` value: the field names in order, comma-joined.
 #[must_use]

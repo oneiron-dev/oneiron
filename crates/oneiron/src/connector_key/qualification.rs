@@ -16,73 +16,17 @@ pub use receipt::{
 pub(crate) use runner::qualify_connector_with_schemas;
 pub use runner::{qualify_connector, validate_headers};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProbeTool {
-    pub name: String,
-    pub input_schema: Value,
-    pub trigger: Option<String>,
-    pub result_types: BTreeSet<String>,
-    pub writes: bool,
-}
+#[doc(hidden)]
+pub use oneiron_records::connector_key::qualification::{
+    ProbeCitation, ProbeDisposition, ProbeReply, ProbeTool, ProbeTraceEvent, ProbeTraceKind,
+    ProbeWrite, QualificationReport,
+};
+
 #[doc(hidden)]
 pub use oneiron_verb_wire::connector_key::qualification::{
     ConnectorQualificationKit, ProbeRequest, QualificationCase, QualificationInjection,
     QualificationInjectionSurface, QualificationLimits, QualificationPlan,
 };
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProbeCitation {
-    pub source_ref: String,
-    pub start: usize,
-    pub end: usize,
-    pub quote: Vec<u8>,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProbeWrite {
-    pub reference: String,
-    pub predicate: String,
-    pub citations: Vec<ProbeCitation>,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ProbeDisposition {
-    Answer,
-    NoRecord,
-    Refused,
-    Timeout,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ProbeTraceKind {
-    Start,
-    Retrieval,
-    FetchedContent,
-    ToolResult,
-    Write,
-    ForeignAsk,
-    Quarantine,
-    End,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProbeTraceEvent {
-    pub sequence: u64,
-    pub request_id: String,
-    pub kind: ProbeTraceKind,
-    pub reference: Option<String>,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProbeReply {
-    /// Captured by the transport adapter; not a field copied from tool output.
-    pub request_body: Value,
-    pub request_headers: BTreeMap<String, String>,
-    pub disposition: ProbeDisposition,
-    pub result_type: String,
-    pub result: Value,
-    pub writes: Vec<ProbeWrite>,
-    pub answer_claim_refs: Vec<String>,
-    pub retrieval_refs: Vec<String>,
-    pub trace: Vec<ProbeTraceEvent>,
-    pub tokens: u64,
-    pub budget_units: u64,
-}
 
 /// A discovery request captured by its transport, with credentials excluded.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,14 +102,5 @@ pub enum QualificationFailure {
     #[error("qualification plan omits required probes")]
     IncompletePlan,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QualificationReport {
-    pub tools: Vec<ProbeTool>,
-    pub exercised_result_types: BTreeSet<String>,
-    pub calls: usize,
-    /// Digest of the plan, observed tools, captured calls and resulting effect state.
-    pub report_hash: String,
-}
-
 #[cfg(test)]
 pub(crate) mod tests;

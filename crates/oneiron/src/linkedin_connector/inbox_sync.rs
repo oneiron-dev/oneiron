@@ -138,24 +138,8 @@ pub struct LinkedInConversationMessageEvent {
     pub event_input: InboundSurfaceEventInput,
 }
 
-/// Stable provenance marker persisted beside each seen LinkedIn message row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LinkedInInboxSyncProvenanceRow {
-    pub schema_version: u64,
-    pub source: String,
-    pub tier: String,
-    pub channel: String,
-    pub receiving_address_or_handle: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_ref: Option<String>,
-    pub thread_id: String,
-    pub message_id: String,
-    pub surface_event_id: String,
-    pub payload_ref: Option<String>,
-    pub received_at: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub occurred_at: Option<u64>,
-}
+#[doc(hidden)]
+pub use oneiron_records::linkedin_connector::inbox_sync::LinkedInInboxSyncProvenanceRow;
 
 /// Result of one LinkedIn inbox sync execution.
 #[derive(Debug, Clone, PartialEq, Eq)]

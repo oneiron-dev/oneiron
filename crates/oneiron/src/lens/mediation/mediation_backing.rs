@@ -179,29 +179,10 @@ impl LensHostBackingRef {
     }
 }
 
-/// Client-authored atom selection. It names *what was pointed at* and nothing else:
-/// no entity id, body text, screenshot, write token, authority, or query string is
-/// expressible here. The engine looks the node up in the exact render it emitted and
-/// takes the target from its own backing table.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LensAtomSelectionRequest {
-    pub card_id: LensRenderId,
-    pub atom_id: LensAtomId,
-    pub handle: LensHandleName,
-}
-
-/// A client names only scalar offsets into the host-bound entity document.
-/// Neither a document id nor a cursor/version may be supplied by the client.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LensSpanSelectionRequest {
-    pub card_id: LensRenderId,
-    pub atom_id: LensAtomId,
-    pub handle: LensHandleName,
-    pub start: usize,
-    pub end: usize,
-}
+#[doc(hidden)]
+pub use oneiron_records::lens::mediation::mediation_backing::{
+    LensAtomSelectionRequest, LensSpanSelectionRequest,
+};
 
 /// A half-open Unicode-scalar span and its engine-minted Loro cursor pair.
 /// Cursor bytes and the causal frontier identify the source, not the selected text;

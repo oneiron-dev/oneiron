@@ -25,15 +25,6 @@ pub use oneiron_verb_wire::learning_setting_doors::{
     LearningSettingsRequest,
 };
 
-impl From<LearningSettingMode> for SettingMode {
-    fn from(mode: LearningSettingMode) -> Self {
-        match mode {
-            LearningSettingMode::Seed => Self::Seed,
-            LearningSettingMode::Pin => Self::Pin,
-        }
-    }
-}
-
 impl From<SettingMode> for LearningSettingMode {
     fn from(mode: SettingMode) -> Self {
         match mode {

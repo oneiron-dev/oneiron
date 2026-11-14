@@ -105,18 +105,8 @@ pub struct WeaveLensRender {
     pub rendered_at: u64,
 }
 
-/// Why a period has no render, saved on its digest row in the render's
-/// place: the step's answer did not meet the period, and neither did the
-/// answer to its repair turns. The period's data still serves.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WeaveLensRefusal {
-    pub reason: String,
-    pub skill_ref: String,
-    pub skill_version: String,
-    pub model: String,
-    pub refused_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::claim::scoped_read::weave_lens::WeaveLensRefusal;
 
 /// How many repair turns a refused plan gets: the refused answer and why go
 /// back to the model, which answers again.

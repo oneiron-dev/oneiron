@@ -6,11 +6,8 @@
 use super::{COUNTS, Tier1FailureCount, count_key, count_value, decode_count};
 use crate::{Result, Vault};
 
-/// One count a batch carries: the aggregate row it was read from (BLAKE3 of
-/// its dimensions' JSON) and the quantity the batch froze. Settlement takes
-/// exactly that quantity, so a count recorded into the same row since stays
-/// for the next batch.
-pub(super) type CountShare = ([u8; 32], u64);
+#[doc(hidden)]
+pub(super) use oneiron_records::failure_signals::count_delivery::CountShare;
 
 impl Vault {
     /// Export this vault's current content-free tier-1 aggregate: every

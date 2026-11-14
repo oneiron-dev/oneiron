@@ -16,14 +16,14 @@ use crate::error::Result;
 use crate::{EntityId, Vault};
 use oneiron_model::llm::{LlmUsage, ModelId, ReasoningEffort};
 
-/// Skill-authored complexity, not a heuristic derived from fork count or size.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReviewComplexity {
-    Easy,
-    Middling,
-    VeryComplex,
-}
+#[doc(hidden)]
+use oneiron_records::entity_doc::review_explainer::one_line;
+#[doc(hidden)]
+pub use oneiron_records::entity_doc::review_explainer::{
+    ReviewComplexity, ReviewDiagram, ReviewDiagramEdge, ReviewDiagramNode,
+    ReviewExplainerCallReceipt, ReviewExplainerEscalation, ReviewExplainerReceipt,
+    ReviewForkExplanation,
+};
 
 /// One retained fork and its opening-base and proposed text, read in one snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -39,40 +39,6 @@ pub struct ReviewForkInput {
 pub struct ReviewBundleInput {
     pub proposal: String,
     pub forks: Vec<ReviewForkInput>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReviewForkExplanation {
-    pub fork: String,
-    pub line: String,
-    pub complexity: ReviewComplexity,
-    pub removed_public_names: Vec<String>,
-}
-
-/// Renderer-neutral generated UI data. No markup, executable code or fixed layout.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReviewDiagram {
-    pub nodes: Vec<ReviewDiagramNode>,
-    pub edges: Vec<ReviewDiagramEdge>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReviewDiagramNode {
-    pub id: String,
-    pub label: String,
-    /// Every node names the reviewed forks that support it.
-    pub forks: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReviewDiagramEdge {
-    pub from: String,
-    pub to: String,
-    pub label: String,
 }
 
 /// The model's text is mandatory; a diagram is supplementary.
@@ -145,42 +111,6 @@ impl ReviewExplainerOutput {
         }
         Ok(())
     }
-}
-
-fn one_line(text: &str) -> bool {
-    !text.trim().is_empty() && !text.contains(['\n', '\r'])
-}
-
-/// A call's exact route, effort and budget charge, without retaining generated text.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ReviewExplainerCallReceipt {
-    pub model: ModelId,
-    pub effort: ReasoningEffort,
-    pub lease: String,
-    pub usage: LlmUsage,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReviewExplainerEscalation {
-    NotNeeded,
-    Completed,
-    RouteUnavailable,
-    BudgetLimited,
-}
-
-/// A derived receipt naming every fork read and the exact input and skill revision.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ReviewExplainerReceipt {
-    pub proposal: String,
-    pub forks: Vec<String>,
-    pub input_hash: String,
-    pub skill: EntityId,
-    pub skill_version: String,
-    pub skill_content_hash: String,
-    pub calls: Vec<ReviewExplainerCallReceipt>,
-    pub escalation: ReviewExplainerEscalation,
-    pub at: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

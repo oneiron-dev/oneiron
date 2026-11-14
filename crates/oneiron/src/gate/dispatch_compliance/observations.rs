@@ -6,9 +6,8 @@ use crate::error::Result;
 use crate::write_envelope::claim_body::ClaimBody;
 use crate::write_envelope::cohort_claims::codec::decode_comm_jurisdiction_value;
 
-/// One ACTIVE `comm.jurisdiction` observation as the gate ranks it: when it
-/// was observed, its normalized token, and its confidence in thousandths.
-pub(crate) type JurisdictionObservation = (u64, String, Option<u16>);
+#[doc(hidden)]
+pub(crate) use oneiron_records::gate::dispatch_compliance::observations::JurisdictionObservation;
 
 /// Ranks one `comm.jurisdiction` body. A value that does not decode is an
 /// error, which fails the gate closed.

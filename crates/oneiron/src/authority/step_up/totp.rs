@@ -21,47 +21,8 @@ use oneiron_crypto::totp::{TOTP_DIGITS, TOTP_PERIOD_SECS};
 const BASE32: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 const REFUSED: &str = "step_up_totp_refused: the code did not verify or its step was already spent";
 
-/// A fresh provisioning secret, returned only to the enrolling person.
-/// It has no Debug or Clone; its seed text is wiped on drop. Do not log it.
-#[derive(Serialize)]
-pub struct TotpEnrollment {
-    pub enrollment_id: String,
-    /// RFC 4648 base32, without padding; for an otpauth provisioning URI.
-    pub secret: String,
-    pub algorithm: &'static str,
-    pub digits: usize,
-    pub period_secs: u64,
-    /// On the authority clock, like a passkey enrollment challenge.
-    pub expires_at: u64,
-}
-
-impl Drop for TotpEnrollment {
-    fn drop(&mut self) {
-        self.secret.zeroize();
-    }
-}
-
-/// The first code confirms enrollment; subsequent codes step up a slip.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TotpCode {
-    pub enrollment_id: String,
-    pub code: String,
-}
-
-impl Drop for TotpCode {
-    fn drop(&mut self) {
-        self.code.zeroize();
-    }
-}
-
-/// An enrolled authenticator's public metadata. Never its seed or seal.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct EnrolledTotp {
-    pub enrollment_id: String,
-    pub enrolled_at: u64,
-    pub last_used_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::authority::step_up::totp::{EnrolledTotp, TotpCode, TotpEnrollment};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::authority::step_up::totp::{StepUpTotpReset, StepUpTotpResetRequest};

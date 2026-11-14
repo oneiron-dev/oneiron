@@ -1,0 +1,27 @@
+pub use crate::vault_shape::channel::ShapeChannelFulfillment;
+pub use crate::vault_shape::channel::ShapeMailScope;
+pub use oneiron_verb_wire::vault_shape::SHAPE_NAME_MAX_BYTES;
+pub use oneiron_verb_wire::vault_shape::apply::ShapeItemState;
+pub use oneiron_verb_wire::vault_shape::approval::ShapeApprovalDependencies;
+pub use oneiron_verb_wire::vault_shape::card::ShapeCard;
+pub use oneiron_verb_wire::vault_shape::grant::ShapeGrantBound;
+pub use oneiron_verb_wire::vault_shape::member::ShapePreset;
+pub use oneiron_verb_wire::vault_shape::plan::ShapeChange;
+pub use oneiron_verb_wire::vault_shape::plan::ShapeItemClass;
+pub use oneiron_verb_wire::vault_shape::reach::REACH_LINE_MAX_CHANGES;
+pub use oneiron_verb_wire::vault_shape::reach::REACH_LINE_NO_CHANGE;
+pub use oneiron_verb_wire::vault_shape::reach::REACH_LINE_NONE;
+pub use oneiron_verb_wire::vault_shape::reach::ShapePlanReach;
+pub use oneiron_verb_wire::vault_shape::reach::ShapeReach;
+pub use oneiron_verb_wire::vault_shape::reach::ShapeReachFact;
+pub use oneiron_verb_wire::vault_shape::reach::ShapeReachVerdict;
+pub use oneiron_verb_wire::vault_shape::run::ShapeApplyRun;
+pub use oneiron_verb_wire::vault_shape::shared_setup::ShapeLearningOutcome;
+pub use oneiron_verb_wire::vault_shape::shared_setup::ShapeLearningSetting;
+pub use oneiron_verb_wire::vault_shape::skill::ShapeSkillSource;
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde::Serialize;
+use std::collections::BTreeSet;
+
+pub mod channel;

@@ -33,18 +33,8 @@ use crate::registry::ENTITY_TYPE_NOTE;
 use crate::store::note_body::encode_note_body;
 use crate::temporal::TimeRange;
 
-/// What the vault's current owner reads of an imported NOTE
-/// ([`Vault::read_imported_note`]).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ImportedNoteRead {
-    /// The NOTE's kind, as its body stores it.
-    pub kind: String,
-    /// The author the source vault recorded, as a hex id: provenance, never
-    /// a local actor.
-    pub source_author: String,
-    /// Its current markdown.
-    pub markdown: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::note::archive_import::ImportedNoteRead;
 
 /// One archived NOTE the archive put may stage: its core, the row it
 /// stores, and its markdown, the text its document is born from (FIX 7783).

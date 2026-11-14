@@ -15,26 +15,8 @@ pub const REACTIONS_FIELD: &str = "reactions";
 const NAMED_REACTORS: usize = 2;
 const PERSON_NAME_KEYS: [&str; 2] = ["display_name", "name"];
 
-/// One glyph's live reactions, contributors in first-put order.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct ReactionPill {
-    pub glyph: String,
-    pub count: usize,
-    pub by: Vec<EntityId>,
-    pub mine: bool,
-}
-
-/// One claim of a (message, person, glyph) chain.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct ReactionHistoryEntry {
-    pub id: EntityId,
-    pub glyph: String,
-    pub by: EntityId,
-    pub occurred_at: u64,
-    pub recorded_at: u64,
-    pub removed_at: Option<u64>,
-    pub external_id: Option<ReactionExternalId>,
-}
+#[doc(hidden)]
+pub use oneiron_records::reaction::read::{ReactionHistoryEntry, ReactionPill};
 
 /// Groups the live reactions on `record` whose reactor was in the room
 /// audience at the reaction's own time and which `admit` lets through.
