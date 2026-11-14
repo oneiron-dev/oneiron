@@ -15,24 +15,8 @@ use std::collections::HashSet;
 
 pub const PROJECT_PROPOSAL_MINT_ACTION_ID: &str = "mint_project";
 
-/// The agent supplies content and picks; the engine does not infer a project from text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectGoalDraft {
-    pub goal: String,
-    pub why: String,
-    pub axes: Vec<String>,
-}
-
-/// Agent-drafted roster, budget and skill choices; refs are resolved at the write gate.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectProposalPicks {
-    pub leader_agent_def_ref: String,
-    pub board_human_refs: Vec<String>,
-    pub budget_share_bps: u16,
-    pub starting_skill_refs: Vec<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::genui::project_proposal::{ProjectGoalDraft, ProjectProposalPicks};
 
 /// A proposal is not authority. Only the host-held card and an authenticated owner
 /// may produce an intent; the project writer must still enforce its own gate.

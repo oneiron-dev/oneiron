@@ -215,24 +215,8 @@ pub struct TaskPost {
     pub watch: bool,
 }
 
-/// Accept one TASK addressed to the caller.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAccept {
-    pub task_ref: EntityId,
-    pub intent_key: String,
-}
-
-/// Redo one TASK (FIX 3153): post a new TASK from its current brief and its
-/// assignee, spec, label and parent. The TASK named is never written.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TaskRedo {
-    /// The TASK whose content the new one copies.
-    pub task_ref: EntityId,
-    /// The caller's idempotency key: one actor, TASK and key name one redo.
-    pub intent_key: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::task_verb::highway_types::{TaskAccept, TaskRedo};
 
 /// Report against a TASK, fenced by the attempt handle Accept returned.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

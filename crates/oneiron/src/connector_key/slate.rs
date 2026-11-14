@@ -81,41 +81,15 @@ impl SlateDataClass {
     }
 }
 
-/// The owner and holder edges' key for the elicitation row, beside tool
-/// names. MCP tool names are `[A-Za-z0-9_.-]`, so no tool can take it, and
-/// a slate refuses a tool that tries.
-pub const ELICITATION_ROW_KEY: &str = "@elicitation";
+#[doc(hidden)]
+pub use oneiron_verb_wire::connector_key::slate::{
+    ELICITATION_ROW_KEY, SlateCapability, SlatePackSource,
+};
+
 /// The elicitation row's class. The row lets a foreign server ask; it is
 /// not a payload verdict: each answer takes its own payload-aware check
 /// under the calling actor's scoped grant.
 pub(super) const ELICITATION_ROW_DATA_CLASS: SlateDataClass = SlateDataClass::Personal;
-
-/// A slate row's typed identity: one declared tool, or the one MCP client
-/// capability ARCH-0072 gives a permission row. Elicitation is never a
-/// callable tool; sampling, roots and logging are not rows (DEC-0006).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum SlateCapability<'a> {
-    Tool(&'a str),
-    Elicitation,
-}
-impl<'a> SlateCapability<'a> {
-    /// An edge row key: [`ELICITATION_ROW_KEY`] is the elicitation row, any
-    /// other key names a tool.
-    pub fn parse(key: &'a str) -> Self {
-        if key == ELICITATION_ROW_KEY {
-            Self::Elicitation
-        } else {
-            Self::Tool(key)
-        }
-    }
-    /// The key the owner and holder edges name this row by.
-    pub fn key(self) -> &'a str {
-        match self {
-            Self::Tool(name) => name,
-            Self::Elicitation => ELICITATION_ROW_KEY,
-        }
-    }
-}
 
 /// The slate's one elicitation declaration (ARCH-0072: "one typed row per
 /// declared capability, including elicitation"). Elicitation is an MCP
@@ -140,14 +114,6 @@ impl SlateElicitationManifest {
             .collect();
         (declared || !legacy_ask_tools.is_empty()).then_some(Self { legacy_ask_tools })
     }
-}
-
-/// Immutable pack identity included in the slate's manifest hash.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SlatePackSource {
-    pub source_ref: String,
-    pub content_hash: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

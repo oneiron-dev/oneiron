@@ -163,15 +163,8 @@ impl<'de> Deserialize<'de> for AudiencePerson {
     }
 }
 
-/// What an add shares with the person it adds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ThreadAudienceHistory {
-    /// The whole thread, its earlier turns included.
-    Full,
-    /// The turns from the add on; the earlier ones stay withheld.
-    FromNow,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::rooms::audience_events::ThreadAudienceHistory;
 
 /// Whether an edit adds its person, removes them, walks them in or opens
 /// the thread's full history to them, or asks to join for them or denies
