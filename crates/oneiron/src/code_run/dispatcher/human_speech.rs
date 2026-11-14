@@ -3,7 +3,7 @@
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
     SelfAskCall, SelfDispatchOutcome, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
-    SelfSpeechCall, SelfSpeechResult,
+    SelfSayResultCall, SelfSpeechCall, SelfSpeechResult,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -146,6 +146,46 @@ impl HostSelfDispatcher<'_> {
             effect,
             order: call.order,
             is_visible: kind.is_visible(),
+            emitted: true,
+        }))
+    }
+
+    /// A plain `say(result)` (L8-25): the run's `self.speak` whose words are
+    /// one of its results, witnessed as the typed-result bubble a large
+    /// trailing answer takes (FIX 365) at this call's bridge position, so it
+    /// keeps the derived identity, the convergence and the refusals of
+    /// [`Self::dispatch_speech`]. The host bound the result before the
+    /// hooks ran; a call it never bound, or one outside a durable run, has
+    /// no result to say and fails closed.
+    pub(super) fn dispatch_say_result(
+        &self,
+        call: SelfSayResultCall,
+        run_id: Option<EntityId>,
+    ) -> Result<SelfDispatchOutcome> {
+        let (Some(run_id), Some(said)) = (run_id, call.bound.as_ref()) else {
+            return Err(Error::InvariantViolation(
+                "say(result) reached its witness with no result the run's host bound",
+            ));
+        };
+        let assertions = self.take_run_assertions();
+        let result = self.storage.witness_executor_result_sourced(
+            &self.run_ref,
+            run_id,
+            &said.attachment,
+            said.served_rows.as_deref(),
+            call.occurred_at,
+            call.order,
+            self.actor,
+            assertions.clone(),
+        );
+        if result.is_err() {
+            self.restore_run_assertions(assertions);
+        }
+        let _receipt = result?;
+        Ok(SelfDispatchOutcome::Speech(SelfSpeechResult {
+            effect: SelfEffect::Speak,
+            order: call.order,
+            is_visible: true,
             emitted: true,
         }))
     }

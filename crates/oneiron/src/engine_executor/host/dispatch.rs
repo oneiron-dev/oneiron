@@ -716,6 +716,10 @@ impl RecordingJsHost<'_, '_> {
                 let summary = (**summary).clone();
                 self.summarize(seq, summary)
             }
+            (SelfCall::SayResult(say), _) => {
+                let say = say.clone();
+                self.say_result(seq, say)
+            }
             _ => {
                 let site = ExecutorCallSite {
                     run_id: self.run_id,

@@ -318,6 +318,7 @@ pub(crate) use self::storage::executor_speech_message_id;
 #[cfg(test)]
 pub(crate) use self::storage::require_facet_placement_in;
 pub(crate) use self::types::FoldWordRef;
+pub(crate) use self::types::SaidResult;
 pub use self::types::{
     FoldAnswer, SelfAgentDefinitionPutCall, SelfAgentDefinitionPutResult, SelfAgentSpawnCall,
     SelfAgentSpawnResult, SelfAskCall, SelfCall, SelfContextCall, SelfContextResult,
@@ -325,9 +326,10 @@ pub use self::types::{
     SelfEffect, SelfFailedResult, SelfFixtureEffectCall, SelfLeaderCall, SelfMemoryEdgeWriteResult,
     SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
-    SelfSandboxProposalDiskFloor, SelfSkillCall, SelfSkillCallResult, SelfSpawnAsk, SelfSpeechCall,
-    SelfSpeechResult, SelfStoredReply, SelfStoredReplyKind, SelfTaskRefusalResult,
-    SelfTaskRefuseCall, SelfTeamResult, SelfWakePolicyWriteCall, peer_result_wait,
+    SelfSandboxProposalDiskFloor, SelfSayResultCall, SelfSkillCall, SelfSkillCallResult,
+    SelfSpawnAsk, SelfSpeechCall, SelfSpeechResult, SelfStoredReply, SelfStoredReplyKind,
+    SelfTaskRefusalResult, SelfTaskRefuseCall, SelfTeamResult, SelfWakePolicyWriteCall,
+    peer_result_wait,
 };
 pub use run_verbs::{
     AgentSpawnInput, JS_SAFE_INTEGER, LeaderAdviceInput, LeaderPatternInput, LeaderSplitInput,

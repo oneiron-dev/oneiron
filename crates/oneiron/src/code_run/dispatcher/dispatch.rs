@@ -95,6 +95,7 @@ impl HostSelfDispatcher<'_> {
                 self.dispatch_speech(SelfEffect::ThinkAloud, call, run_id)
             }
             SelfCall::Express(call) => self.dispatch_speech(SelfEffect::Express, call, run_id),
+            SelfCall::SayResult(call) => self.dispatch_say_result(call, run_id),
             SelfCall::ReportBlocked(call) => self.dispatch_report_blocked(call, run_id),
             SelfCall::InferenceDefaultsRead => self.dispatch_inference_defaults(None),
             SelfCall::InferenceDefaultsReplace(json) => {
