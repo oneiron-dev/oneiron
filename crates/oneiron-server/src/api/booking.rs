@@ -38,12 +38,16 @@ use axum::routing::{get, post};
 use oneiron::booking::agent_api::{
     BOOKING_AGENT_INSTRUCTIONS_MIME, BookingAvailabilityInput, BookingBookInput, BookingBookResult,
     BookingCancelInput, BookingConfirmInput, BookingConstraintInput, BookingHoldInput,
-    BookingOperationRequest, BookingOperationResponse, BookingRescheduleInput, SelectedSlot,
+    BookingOperationRequest, BookingOperationResponse, BookingRescheduleInput,
+    BookingWaitlistClaimInput, BookingWaitlistInput, BookingWaitlistLeaveInput,
+    BookingWaitlistResult, SelectedSlot,
 };
+use oneiron::booking::lifecycle::waitlist_entry_event_type;
 use oneiron::booking::{
     BookingError, BookingVerbReceipt, BookingVerbRequest, CancelSpec, ConfirmSpec,
     ConstraintObject, HoldLeaseSpec, HoldSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken,
-    RescheduleSpec, SlotOracle, SolveRequest, SolveResult, token_page_ref,
+    RescheduleSpec, SlotOracle, SolveRequest, SolveResult, WaitlistAction, WaitlistClaim,
+    WaitlistJoin, WaitlistReceipt, WaitlistSpec, token_page_ref,
 };
 use oneiron::{EntityId, Vault};
 
@@ -203,6 +207,7 @@ pub(crate) fn booking_routes() -> Router<Arc<SyncServer>> {
             post(booking_reschedule),
         )
         .route("/api/booking/{page_token}/cancel", post(booking_cancel))
+        .route("/api/booking/{page_token}/waitlist", post(booking_waitlist))
 }
 
 // -------------------------------------------------------------------------
@@ -420,6 +425,46 @@ pub(crate) async fn booking_cancel(
     .map(Json)
 }
 
+/// Joins, leaves or claims a waitlist on a window that offers no slot.
+#[utoipa::path(
+    post,
+    path = "/api/booking/{page_token}/waitlist",
+    params(
+        ("page_token" = String, Path, description = "Opaque booking page token.")
+    ),
+    request_body(content = Object, content_type = "application/json"),
+    responses(
+        (
+            status = 200,
+            description = "A join's opaque entry token and line position, or the window's slots when it offers any (no entry is written); a leave's acknowledgement; or a claim's distinct opaque reschedule and cancel tokens, or the nearest alternatives when the offered slot was taken.",
+            body = Object,
+            content_type = "application/json"
+        ),
+        (status = 400, description = "Malformed request or malformed token.", body = ApiError, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid bearer credentials.", body = ApiError, content_type = "application/json"),
+        (status = 404, description = "No booking page resolves from this token.", body = ApiError, content_type = "application/json"),
+        (status = 409, description = "Booking admission declined the request, or the lifecycle refused it.", body = ApiError, content_type = "application/json")
+    )
+)]
+pub(crate) async fn booking_waitlist(
+    parts: Parts,
+    State(server): State<Arc<SyncServer>>,
+    client: ClientAddress,
+    Path(page_token): Path<String>,
+    payload: Result<Json<BookingWaitlistInput>, JsonRejection>,
+) -> Result<Json<BookingOperationResponse>, ApiError> {
+    let transport = http_transport_context(&parts, &server, client)?;
+    let input = json_payload(payload)?;
+    execute_booking_operation(
+        &server,
+        &page_token,
+        BookingOperationRequest::Waitlist(input),
+        &transport,
+    )
+    .await
+    .map(Json)
+}
+
 // -------------------------------------------------------------------------
 // The shared executor
 // -------------------------------------------------------------------------
@@ -454,10 +499,26 @@ fn check_action_token_page(
     let token = match request {
         BookingOperationRequest::Reschedule(input) => &input.reschedule_token,
         BookingOperationRequest::Cancel(input) => &input.cancel_token,
-        // Availability and hold name no booking at all, and confirm's authority
-        // is a hold token the lifecycle already binds to this page's own
-        // session key. Neither binding is widened or restated here.
-        BookingOperationRequest::Availability(_) | BookingOperationRequest::Book(_) => {
+        // An entry token names one entry in one page's line. Bound here as an
+        // action token is, before admission charges this page for it, and
+        // refused as the writer refuses a token that names no entry.
+        BookingOperationRequest::Waitlist(
+            BookingWaitlistInput::Leave(BookingWaitlistLeaveInput { entry_token, .. })
+            | BookingWaitlistInput::Claim(BookingWaitlistClaimInput { entry_token, .. }),
+        ) => {
+            let named = waitlist_entry_event_type(
+                vault,
+                page_ref,
+                &OpaqueLifecycleToken(entry_token.clone()),
+            )?;
+            return named.map(|_| ()).ok_or_else(unknown_waitlist_token);
+        }
+        // Availability, hold and join name no booking at all, and confirm's
+        // authority is a hold token the lifecycle already binds to this
+        // page's own session key. Neither binding is widened or restated here.
+        BookingOperationRequest::Availability(_)
+        | BookingOperationRequest::Book(_)
+        | BookingOperationRequest::Waitlist(BookingWaitlistInput::Join(_)) => {
             return Ok(());
         }
     };
@@ -482,6 +543,14 @@ fn unknown_action_token() -> ApiError {
     // with, so the two answers cannot drift apart into a distinguishable pair.
     const UNRESOLVED: &str = "token does not resolve to a booking";
     booking_error(BookingError::InvalidConstraint(UNRESOLVED.to_owned()))
+}
+
+/// The refusal an entry token that names no entry on THIS page receives:
+/// byte for byte the sentence the waitlist writer refuses it with, so a
+/// token minted for another page answers as one never minted.
+fn unknown_waitlist_token() -> ApiError {
+    const NO_ENTRY: &str = "no waitlist entry on this page matches this token";
+    booking_error(BookingError::InvalidConstraint(NO_ENTRY.to_owned()))
 }
 
 /// Stage one: ask the oracle whether the slot is offerable at all, then
@@ -691,6 +760,96 @@ async fn execute_cancel(
             cancelled.reads,
         )),
         other => Err(unexpected_receipt("cancel", &other)),
+    }
+}
+
+/// One waitlist stage on the home-node writer. A join keys its one entry by
+/// the visitor's session; a leave or claim presents only the entry token,
+/// which [`check_action_token_page`] already bound to this page, so a claim's
+/// booker contact is recorded only for a token that names an entry or a
+/// booking here, as a confirm's is only for a live hold. Beside the answer,
+/// the rows the writer read: a booked claim's, kept on its receipt (FIX
+/// 5483), and otherwise its solves', which no receipt keeps.
+async fn execute_waitlist(
+    server: &Arc<SyncServer>,
+    page_ref: EntityId,
+    input: BookingWaitlistInput,
+    now: u64,
+    public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
+) -> Result<(BookingOperationResponse, Vec<EntityId>), ApiError> {
+    let (action, idempotency_key) = match input {
+        BookingWaitlistInput::Join(join) => (
+            WaitlistAction::Join(WaitlistJoin {
+                event_type: join.event_type,
+                window: join.window,
+                session_key: session_key(page_ref, &join.session_ref),
+                visitor_tz: join.visitor_tz,
+            }),
+            join.idempotency_key,
+        ),
+        BookingWaitlistInput::Leave(leave) => (
+            WaitlistAction::Leave {
+                token: OpaqueLifecycleToken(leave.entry_token),
+            },
+            leave.idempotency_key,
+        ),
+        BookingWaitlistInput::Claim(claim) => {
+            let booker_contact = resolve_booker_contact(
+                server,
+                &claim.booker_email,
+                now,
+                public_authority.as_ref(),
+            )?;
+            (
+                WaitlistAction::Claim(WaitlistClaim {
+                    token: OpaqueLifecycleToken(claim.entry_token),
+                    booker_contact,
+                    intake: claim.intake,
+                }),
+                claim.idempotency_key,
+            )
+        }
+    };
+    let (receipt, unkept) = run_booking_verb(
+        server,
+        BookingVerbRequest::Waitlist(WaitlistSpec {
+            page_ref,
+            action,
+            idempotency_key: Some(idempotency_key),
+        }),
+        None,
+        now,
+        public_authority,
+    )
+    .await?;
+    let waitlist = BookingOperationResponse::Waitlist;
+    match receipt {
+        BookingVerbReceipt::Waitlisted(WaitlistReceipt::Joined { token, position }) => Ok((
+            waitlist(BookingWaitlistResult::Joined {
+                entry_token: token.0,
+                position,
+            }),
+            unkept,
+        )),
+        BookingVerbReceipt::Waitlisted(WaitlistReceipt::Open { alternatives }) => Ok((
+            waitlist(BookingWaitlistResult::Open { alternatives }),
+            unkept,
+        )),
+        BookingVerbReceipt::Waitlisted(WaitlistReceipt::Left) => {
+            Ok((waitlist(BookingWaitlistResult::Left), unkept))
+        }
+        BookingVerbReceipt::Waitlisted(WaitlistReceipt::Claimed(confirmed)) => Ok((
+            waitlist(BookingWaitlistResult::Claimed {
+                reschedule_token: confirmed.reschedule_token.0,
+                cancel_token: confirmed.cancel_token.0,
+            }),
+            confirmed.reads,
+        )),
+        BookingVerbReceipt::SlotTaken { alternatives } => Ok((
+            waitlist(BookingWaitlistResult::SlotTaken { alternatives }),
+            unkept,
+        )),
+        other => Err(unexpected_receipt("waitlist", &other)),
     }
 }
 

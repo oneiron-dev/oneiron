@@ -1,7 +1,8 @@
 use oneiron::TimeRange;
 use oneiron::booking::EventTypeKey;
 use oneiron::booking::agent_api::{
-    BookingBookInput, BookingIntakeAnswer, BookingOperationRequest, SelectedSlot,
+    BookingBookInput, BookingIntakeAnswer, BookingOperationRequest, BookingWaitlistInput,
+    SelectedSlot,
 };
 
 use super::constants::{
@@ -52,6 +53,22 @@ pub(super) fn validate_operation_shape(
         BookingOperationRequest::Cancel(input) => {
             validate_idempotency_key(&input.idempotency_key)?;
             validate_token(&input.cancel_token, "cancel_token")
+        }
+        BookingOperationRequest::Waitlist(BookingWaitlistInput::Join(input)) => {
+            validate_event_type(&input.event_type)?;
+            validate_session_ref(&input.session_ref)?;
+            validate_idempotency_key(&input.idempotency_key)?;
+            validate_window(input.window)
+        }
+        BookingOperationRequest::Waitlist(BookingWaitlistInput::Leave(input)) => {
+            validate_idempotency_key(&input.idempotency_key)?;
+            validate_token(&input.entry_token, "entry_token")
+        }
+        BookingOperationRequest::Waitlist(BookingWaitlistInput::Claim(input)) => {
+            validate_idempotency_key(&input.idempotency_key)?;
+            validate_token(&input.entry_token, "entry_token")?;
+            validate_booker_email(&input.booker_email, anonymous)?;
+            validate_intake(&input.intake, anonymous)
         }
     }
 }
@@ -158,14 +175,14 @@ fn validate_booker_email(email: &str, anonymous: bool) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// An anonymous visitor's confirm carries at most [`MAX_INTAKE_ANSWERS`]
-/// answers: pre-auth work stays sheddable. An authenticated caller's intake
-/// is served whatever its count (FIX 9633).
+/// An anonymous visitor's confirm or claim carries at most
+/// [`MAX_INTAKE_ANSWERS`] answers: pre-auth work stays sheddable. An
+/// authenticated caller's intake is served whatever its count (FIX 9633).
 pub(super) fn validate_anonymous_intake_count(
     request: &BookingOperationRequest,
 ) -> Result<(), ApiError> {
-    if let BookingOperationRequest::Book(BookingBookInput::Confirm(input)) = request
-        && input.intake.len() > MAX_INTAKE_ANSWERS
+    if let Some((_, intake)) = booker_answers(request)
+        && intake.len() > MAX_INTAKE_ANSWERS
     {
         return Err(ApiError::bad_request(
             format!("intake carries at most {MAX_INTAKE_ANSWERS} answers"),
@@ -199,27 +216,34 @@ fn validate_intake(intake: &[BookingIntakeAnswer], anonymous: bool) -> Result<()
     Ok(())
 }
 
-/// An authenticated caller's confirm, measured against its `[limits]` rows
-/// once the shape is valid (ABC rows 69, 70, 72): past a row it asks whether
-/// everything is okay, and the confirm is served whole.
-pub(super) fn measure_authenticated(vault: &oneiron::Vault, request: &BookingOperationRequest) {
-    use oneiron::limit_ask::EngineLimit;
+/// The booker email and intake of a request that books: a confirm, or a
+/// waitlist claim.
+fn booker_answers(request: &BookingOperationRequest) -> Option<(&str, &[BookingIntakeAnswer])> {
     match request {
         BookingOperationRequest::Book(BookingBookInput::Confirm(input)) => {
-            let _ = vault.measure_limit(
-                EngineLimit::BookingEmailBytes,
-                input.booker_email.len() as u64,
-            );
-            let _ =
-                vault.measure_limit(EngineLimit::BookingIntakeAnswers, input.intake.len() as u64);
-            let largest = input
-                .intake
-                .iter()
-                .map(|answer| answer.value.len())
-                .max()
-                .unwrap_or(0);
-            let _ = vault.measure_limit(EngineLimit::BookingIntakeValueBytes, largest as u64);
+            Some((input.booker_email.as_str(), input.intake.as_slice()))
         }
-        _ => {}
+        BookingOperationRequest::Waitlist(BookingWaitlistInput::Claim(input)) => {
+            Some((input.booker_email.as_str(), input.intake.as_slice()))
+        }
+        _ => None,
     }
+}
+
+/// An authenticated caller's confirm or claim, measured against its
+/// `[limits]` rows once the shape is valid (ABC rows 69, 70, 72): past a row
+/// it asks whether everything is okay, and the request is served whole.
+pub(super) fn measure_authenticated(vault: &oneiron::Vault, request: &BookingOperationRequest) {
+    use oneiron::limit_ask::EngineLimit;
+    let Some((booker_email, intake)) = booker_answers(request) else {
+        return;
+    };
+    let _ = vault.measure_limit(EngineLimit::BookingEmailBytes, booker_email.len() as u64);
+    let _ = vault.measure_limit(EngineLimit::BookingIntakeAnswers, intake.len() as u64);
+    let largest = intake
+        .iter()
+        .map(|answer| answer.value.len())
+        .max()
+        .unwrap_or(0);
+    let _ = vault.measure_limit(EngineLimit::BookingIntakeValueBytes, largest as u64);
 }

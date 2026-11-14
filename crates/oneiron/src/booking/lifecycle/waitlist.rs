@@ -217,6 +217,33 @@ pub(super) fn waitlist_settle_scope(
     )
 }
 
+/// The event type of the entry an entry token names on `page_ref`, or of the
+/// booking a claim with that token already made on it, from committed state.
+/// The transports read it before admission: a leave or claim is bound to the
+/// page whose route carried it, and its admission is scoped by event type.
+/// `None` when the token names neither on this page; its writer then gives
+/// the typed refusal.
+///
+/// # Errors
+///
+/// [`BookingError::SlotOracle`] when committed state cannot be read.
+pub fn waitlist_entry_event_type(
+    vault: &Vault,
+    page_ref: EntityId,
+    token: &OpaqueLifecycleToken,
+) -> Result<Option<EventTypeKey>, BookingError> {
+    let rtxn = read_txn(vault)?;
+    let receipt_key = confirm_receipt_key(&token_digest(&claim_hold_token(token)));
+    if let Some(receipt) = read_receipt(vault, &rtxn, &receipt_key)? {
+        let facts = read_booking_facts(vault, &rtxn, &receipt.event_ref)?;
+        return Ok((facts.page_ref == page_ref).then_some(facts.event_type));
+    }
+    Ok(
+        find_entry(vault, &rtxn, &page_ref, &entry_token_digest(token))?
+            .map(|(_, entry)| entry.event_type),
+    )
+}
+
 /// A slot a committed transition gave up: its page, event type and interval.
 pub(super) type FreedSlot = (EntityId, EventTypeKey, TimeRange);
 

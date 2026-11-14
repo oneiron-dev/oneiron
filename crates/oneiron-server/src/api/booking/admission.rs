@@ -1,11 +1,13 @@
 use oneiron::booking::agent_api::{
     BookingBookInput, BookingBookResult, BookingIntakeAnswer, BookingOperationRequest,
-    BookingOperationResponse, SelectedSlot,
+    BookingOperationResponse, BookingWaitlistInput, BookingWaitlistResult, SelectedSlot,
 };
 use oneiron::booking::anti_abuse::{
     BookingRequestFacts, EmailValidationEvidence, booking_email_hash, booking_session_hash,
 };
-use oneiron::booking::lifecycle::{confirm_event_type, confirm_hold_taken_at, token_event_type};
+use oneiron::booking::lifecycle::{
+    confirm_event_type, confirm_hold_taken_at, token_event_type, waitlist_entry_event_type,
+};
 use oneiron::booking::{
     ActiveHoldSource, BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_SOURCE_PAGE_PREDICATE,
     BOOKING_STATUS_PREDICATE, BookingBookerContactValue, BookingError, BookingSourcePageValue,
@@ -101,15 +103,53 @@ pub(super) fn admission_facts(
             None,
             None,
         ),
+        BookingOperationRequest::Waitlist(BookingWaitlistInput::Join(input)) => (
+            Some(input.event_type.clone()),
+            Some(input.session_ref.as_str()),
+            None,
+            None,
+            None,
+        ),
+        // A leave or claim names its entry by token, the way an amendment
+        // names its booking; the entry knows its event type. A claim carries
+        // no session: the entry token, not the browser, proves the waiter.
+        BookingOperationRequest::Waitlist(BookingWaitlistInput::Leave(input)) => (
+            waitlist_entry_event_type(
+                &server.vault,
+                page_ref,
+                &OpaqueLifecycleToken(input.entry_token.clone()),
+            )?,
+            None,
+            None,
+            None,
+            None,
+        ),
+        BookingOperationRequest::Waitlist(BookingWaitlistInput::Claim(input)) => (
+            waitlist_entry_event_type(
+                &server.vault,
+                page_ref,
+                &OpaqueLifecycleToken(input.entry_token.clone()),
+            )?,
+            None,
+            Some(input.booker_email.as_str()),
+            None,
+            Some(input.intake.as_slice()),
+        ),
     };
 
     let session_hash = session_ref.map(booking_session_hash);
     let email_hash = booker_email.map(booking_email_hash);
+    // A join holds no slot and waits in its own line, one entry per session,
+    // so the hold squatter cap counts nothing for it.
+    let joins = matches!(
+        request,
+        BookingOperationRequest::Waitlist(BookingWaitlistInput::Join(_))
+    );
     let live_session_holds = match session_ref {
-        Some(reference) => {
+        Some(reference) if !joins => {
             active_holds_for_session(server, page_ref, &session_key(page_ref, reference), now)?
         }
-        None => 0,
+        _ => 0,
     };
     // The per-email cap on active bookings sheds anonymous visitors; an
     // owner-grade caller books for the owner and is not held to it (rule 5).
@@ -245,6 +285,20 @@ fn benign_response(request: &BookingOperationRequest) -> BookingOperationRespons
         BookingOperationRequest::Cancel(input) => BookingOperationResponse::Cancel {
             cancel_token: input.cancel_token.clone(),
         },
+        // A claim is silenced as a confirm is, with no alternative named. A
+        // join or leave is admitted hold-class or as an amendment, whose
+        // controls never silence, so their empty answers close the union.
+        BookingOperationRequest::Waitlist(input) => {
+            BookingOperationResponse::Waitlist(match input {
+                BookingWaitlistInput::Join(_) => BookingWaitlistResult::Open {
+                    alternatives: Vec::new(),
+                },
+                BookingWaitlistInput::Leave(_) => BookingWaitlistResult::Left,
+                BookingWaitlistInput::Claim(_) => BookingWaitlistResult::SlotTaken {
+                    alternatives: Vec::new(),
+                },
+            })
+        }
     }
 }
 

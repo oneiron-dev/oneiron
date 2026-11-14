@@ -9,13 +9,13 @@
 //! not, a call of a registered booking tool (one of the generated booking
 //! verbs among `BOOKING_PAYER_DOORS`, classified by the tool this endpoint
 //! registered under that name, never by an argument) is still his, as a
-//! booking caller and nothing more: the five booking verbs alone, no STREAM
+//! booking caller and nothing more: the six booking verbs alone, no STREAM
 //! subscription, core read and write only, no owner grade, no registration,
 //! slip or Grant minted for him. The booking door judges whom he pays as and
 //! answers through the public booking authority. His handshake takes the
 //! same caller (FIX 5934, Engine ruling 10-20 08:4x), so a client that
 //! initializes first reaches those tools: `initialize`,
-//! `notifications/initialized`, `tools/list` (listing those five tools
+//! `notifications/initialized`, `tools/list` (listing those six tools
 //! alone) and `oneiron/wakes` (whose instance can reach no subscription).
 //! Every other method and tool of his is refused as before, and a request
 //! that carries a credential stays that credential's caller.
@@ -242,7 +242,7 @@ fn booking_tool(mode: McpSurfaceMode, params: Option<&Value>) -> Option<&'static
 }
 
 /// A stale owner sign-in's booking call: the person, as a human, bound to
-/// the five booking verbs, with no STREAM subscription and no registration
+/// the six booking verbs, with no STREAM subscription and no registration
 /// behind him. `auth` is his booking caller
 /// ([`CoreAuth::for_attested_booking_holder`]), placed where this request
 /// puts him: never owner grade, so no owner door, owner read key or

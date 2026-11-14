@@ -40,7 +40,7 @@ pub use self::actors::{
 pub use self::args::{McpActorClass, McpActorMetadata, McpConsentMetadata, McpToolScope};
 pub(crate) use self::booking_inputs::{
     booking_availability_input_schema, booking_book_input_schema, booking_cancel_input_schema,
-    booking_reschedule_input_schema,
+    booking_reschedule_input_schema, booking_waitlist_input_schema,
 };
 pub use self::codec::McpToolArguments;
 pub(crate) use self::codec::mcp_raw_call_arguments;

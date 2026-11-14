@@ -210,6 +210,10 @@ pub(crate) fn merge_booking_components(spec: &mut Value) {
             crate::mcp::booking_cancel_input_schema(),
         ),
         (
+            "BookingWaitlistInput",
+            crate::mcp::booking_waitlist_input_schema(),
+        ),
+        (
             "BookingOperationResponse",
             booking_operation_response_schema(),
         ),
@@ -242,6 +246,10 @@ pub(crate) fn merge_booking_components(spec: &mut Value) {
         (
             oneiron::booking::agent_api::BookingAgentOperation::Cancel,
             "BookingCancelInput",
+        ),
+        (
+            oneiron::booking::agent_api::BookingAgentOperation::Waitlist,
+            "BookingWaitlistInput",
         ),
     ] {
         let path = format!(

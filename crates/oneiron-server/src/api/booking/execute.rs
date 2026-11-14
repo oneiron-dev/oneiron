@@ -17,7 +17,10 @@ use crate::api::booking_anti_abuse::enforce_book_restorable;
 /// 2. call ONE-1817 admission exactly once, in the class this operation
 ///    belongs to — listing, hold, confirmation, or amendment. Cancel and
 ///    reschedule are amendments: they present an action token rather than a
-///    form, so the book-time form controls never see them;
+///    form, so the book-time form controls never see them. A waitlist join
+///    is hold-class (it books nothing and fills no form), a leave is an
+///    amendment (it presents its entry token), and a claim books as a
+///    confirmation does;
 /// 3. normalize free text through ONE-1816 and replace it with a canonical
 ///    `ConstraintObject`;
 /// 4. call the merged oracle — for availability as the answer, for a hold as
@@ -125,17 +128,26 @@ async fn execute(
     // again (`turn::Turn`), so the clock and the facts are read each time.
     let mut turn = turn::Turn::new(server, &transport);
     let caller = transport.caller();
-    // A confirm's email domain is looked up once per request, not per turn.
+    // A confirm's or claim's email domain is looked up once per request, not
+    // per turn.
+    let booker_email = match &request {
+        BookingOperationRequest::Book(BookingBookInput::Confirm(input)) => {
+            Some(input.booker_email.as_str())
+        }
+        BookingOperationRequest::Waitlist(BookingWaitlistInput::Claim(input)) => {
+            Some(input.booker_email.as_str())
+        }
+        _ => None,
+    };
     let mut email_domain = None;
     let (now, disposition) = loop {
         let now = now_secs()?;
         let mut facts = admission_facts(server, page_ref, &request, &transport, now)?;
-        if let BookingOperationRequest::Book(BookingBookInput::Confirm(input)) = &request {
+        if let Some(booker_email) = booker_email {
             let evidence = match email_domain {
                 Some(evidence) => evidence,
                 None => *email_domain.insert(
-                    email_evidence::email_domain_evidence(server, &facts, &input.booker_email)
-                        .await?,
+                    email_evidence::email_domain_evidence(server, &facts, booker_email).await?,
                 ),
             };
             evidence.apply(&mut facts);
@@ -158,8 +170,21 @@ async fn execute(
                 enforce_book_restorable(State(Arc::clone(server)), facts, Some(restore), caller)
                     .await?
             }
-            BookingOperationRequest::Reschedule(_) | BookingOperationRequest::Cancel(_) => {
+            BookingOperationRequest::Reschedule(_)
+            | BookingOperationRequest::Cancel(_)
+            | BookingOperationRequest::Waitlist(BookingWaitlistInput::Leave(_)) => {
                 enforce_amend(State(Arc::clone(server)), facts, caller).await?
+            }
+            BookingOperationRequest::Waitlist(BookingWaitlistInput::Join(_)) => {
+                enforce_hold(State(Arc::clone(server)), facts, caller).await?
+            }
+            // A claim books through the confirm writer, so it passes the
+            // confirm's controls. Its offer is held under a session derived
+            // from the entry token, which this boundary cannot restate, so a
+            // quarantined claim is kept for the owner's review without a
+            // restorable submission.
+            BookingOperationRequest::Waitlist(BookingWaitlistInput::Claim(_)) => {
+                enforce_book_restorable(State(Arc::clone(server)), facts, None, caller).await?
             }
         };
         if let Some(disposition) = turn.after(disposition).await? {
@@ -245,6 +270,14 @@ async fn execute(
         BookingOperationRequest::Cancel(input) => {
             let (response, reads) =
                 execute_cancel(server, page_ref, input, now, public_authority).await?;
+            Ok((response, with_reads(listed, reads)))
+        }
+        BookingOperationRequest::Waitlist(mut input) => {
+            if let BookingWaitlistInput::Claim(claim) = &mut input {
+                admission::strip_form_honeypot(&transport, &mut claim.intake);
+            }
+            let (response, reads) =
+                execute_waitlist(server, page_ref, input, now, public_authority).await?;
             Ok((response, with_reads(listed, reads)))
         }
     }

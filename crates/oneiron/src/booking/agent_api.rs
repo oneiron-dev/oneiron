@@ -1,7 +1,7 @@
 //! ONE-1819 [BK-08] the agent-readable booking wire.
 //!
 //! Provider-neutral, versioned data: the instructions document a booking page
-//! embeds for machine consumers, and the four structured operation
+//! embeds for machine consumers, and the five structured operation
 //! request/response families the shared server executor speaks.
 //!
 //! Two properties are structural rather than reviewed:
@@ -76,7 +76,8 @@ mod time_range_serde {
 #[doc(hidden)]
 pub use oneiron_verb_wire::booking::agent_api::{
     BookingAgentOperation, BookingBookResult, BookingCancelInput, BookingConfirmInput,
-    BookingIntakeAnswer, BookingOperationResponse, BookingRescheduleInput, SelectedSlot,
+    BookingIntakeAnswer, BookingOperationResponse, BookingRescheduleInput,
+    BookingWaitlistClaimInput, BookingWaitlistLeaveInput, BookingWaitlistResult, SelectedSlot,
 };
 
 /// One advertised operation endpoint. `path` is relative and same-origin: a
@@ -108,7 +109,7 @@ pub struct BookingAgentInstructionsBlock {
 
 impl BookingAgentInstructionsBlock {
     /// Fails closed on an unsupported version, a blank page token, an
-    /// operation list that is not the canonical four in canonical order, or a
+    /// operation list that is not the canonical five in canonical order, or a
     /// path that is not relative and same-origin.
     ///
     /// # Errors
@@ -160,7 +161,7 @@ impl BookingAgentInstructionsDefect {
             Self::UnsupportedVersion => "booking agent instructions version is unsupported",
             Self::BlankPageToken => "booking agent instructions page token must not be blank",
             Self::NonCanonicalOperations => {
-                "booking agent instructions must list availability, book, reschedule, cancel in that order"
+                "booking agent instructions must list availability, book, reschedule, cancel, waitlist in that order"
             }
             Self::BlankMethod => "booking agent instructions method must not be blank",
             Self::NonRelativePath => {
@@ -245,6 +246,49 @@ impl BookingBookInput {
     }
 }
 
+/// Wait for a slot of one event type in a window that offers none
+/// (ARCH-0062 §7, census L3-13).
+///
+/// A visitor waits on a window, never on a named booked slot: the public
+/// surface never climbs above SLOTS, so the join answers alike whether a
+/// booking, a private event or the hours close the window. One live entry
+/// per session, page and event type: a second join from the same session
+/// replaces the first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingWaitlistJoinInput {
+    pub event_type: EventTypeKey,
+    #[serde(with = "time_range_serde")]
+    #[schemars(with = "TimeRangeWire")]
+    pub window: TimeRange,
+    pub visitor_tz: String,
+    pub session_ref: String,
+    /// Replay hygiene only.
+    pub idempotency_key: String,
+}
+
+/// The three stages of the one waitlist operation, as book has a hold and a
+/// confirm stage.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "stage", content = "input", rename_all = "snake_case")]
+pub enum BookingWaitlistInput {
+    Join(BookingWaitlistJoinInput),
+    Leave(BookingWaitlistLeaveInput),
+    Claim(BookingWaitlistClaimInput),
+}
+
+impl BookingWaitlistInput {
+    /// The wire discriminator for this arm.
+    #[must_use]
+    pub const fn stage(&self) -> &'static str {
+        match self {
+            Self::Join(_) => "join",
+            Self::Leave(_) => "leave",
+            Self::Claim(_) => "claim",
+        }
+    }
+}
+
 /// The closed request union the shared executor accepts. HTTP routes and the
 /// MCP tool both build this, so neither transport can grow an operation the
 /// other does not have.
@@ -255,6 +299,7 @@ pub enum BookingOperationRequest {
     Book(BookingBookInput),
     Reschedule(BookingRescheduleInput),
     Cancel(BookingCancelInput),
+    Waitlist(BookingWaitlistInput),
 }
 
 impl BookingOperationRequest {
@@ -266,6 +311,7 @@ impl BookingOperationRequest {
             Self::Book(_) => BookingAgentOperation::Book,
             Self::Reschedule(_) => BookingAgentOperation::Reschedule,
             Self::Cancel(_) => BookingAgentOperation::Cancel,
+            Self::Waitlist(_) => BookingAgentOperation::Waitlist,
         }
     }
 }

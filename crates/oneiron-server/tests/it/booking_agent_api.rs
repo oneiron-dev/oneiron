@@ -407,6 +407,7 @@ async fn booking_agent_instructions_v1_is_canonical() {
             BookingAgentOperation::Book,
             BookingAgentOperation::Reschedule,
             BookingAgentOperation::Cancel,
+            BookingAgentOperation::Waitlist,
         ],
         "operations are canonicalized in exactly this order"
     );

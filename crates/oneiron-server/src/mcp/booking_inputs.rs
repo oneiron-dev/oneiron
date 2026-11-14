@@ -145,16 +145,7 @@ fn booking_confirm_input_schema() -> Value {
         json!({
             "hold_token": booking_action_token_schema(),
             "booker_email": nonblank_string_schema(),
-            "intake": {
-                "type": "array",
-                "items": closed_object_schema(
-                    &["field_key", "value"],
-                    json!({
-                        "field_key": nonblank_string_schema(),
-                        "value": { "type": "string" },
-                    }),
-                ),
-            },
+            "intake": booking_intake_schema(),
             "session_ref": nonblank_string_schema(),
             "idempotency_key": nonblank_string_schema(),
         }),
@@ -207,4 +198,71 @@ pub(crate) fn booking_cancel_input_schema() -> Value {
             "idempotency_key": nonblank_string_schema(),
         }),
     )
+}
+
+fn booking_intake_schema() -> Value {
+    json!({
+        "type": "array",
+        "items": closed_object_schema(
+            &["field_key", "value"],
+            json!({
+                "field_key": nonblank_string_schema(),
+                "value": { "type": "string" },
+            }),
+        ),
+    })
+}
+
+/// The three waitlist stages. A join names no slot (it waits on a window);
+/// a leave or claim names its entry by the token the join answered, and a
+/// claim carries no session.
+pub(crate) fn booking_waitlist_input_schema() -> Value {
+    json!({
+        "oneOf": [
+            closed_object_schema(
+                &["stage", "input"],
+                json!({
+                    "stage": { "const": "join" },
+                    "input": closed_object_schema(
+                        &["event_type", "window", "visitor_tz", "session_ref", "idempotency_key"],
+                        json!({
+                            "event_type": nonblank_string_schema(),
+                            "window": booking_utc_window_schema(),
+                            "visitor_tz": nonblank_string_schema(),
+                            "session_ref": nonblank_string_schema(),
+                            "idempotency_key": nonblank_string_schema(),
+                        }),
+                    ),
+                }),
+            ),
+            closed_object_schema(
+                &["stage", "input"],
+                json!({
+                    "stage": { "const": "leave" },
+                    "input": closed_object_schema(
+                        &["entry_token", "idempotency_key"],
+                        json!({
+                            "entry_token": booking_action_token_schema(),
+                            "idempotency_key": nonblank_string_schema(),
+                        }),
+                    ),
+                }),
+            ),
+            closed_object_schema(
+                &["stage", "input"],
+                json!({
+                    "stage": { "const": "claim" },
+                    "input": closed_object_schema(
+                        &["entry_token", "booker_email", "intake", "idempotency_key"],
+                        json!({
+                            "entry_token": booking_action_token_schema(),
+                            "booker_email": nonblank_string_schema(),
+                            "intake": booking_intake_schema(),
+                            "idempotency_key": nonblank_string_schema(),
+                        }),
+                    ),
+                }),
+            ),
+        ],
+    })
 }

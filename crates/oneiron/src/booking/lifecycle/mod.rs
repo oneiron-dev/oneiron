@@ -106,6 +106,7 @@ pub use self::types::{
     WAITLIST_OFFER_TTL_SECS, WaitlistAction, WaitlistClaim, WaitlistJoin, WaitlistReceipt,
     WaitlistSpec,
 };
+pub use self::waitlist::waitlist_entry_event_type;
 
 pub(crate) use self::confirmation_state::{
     bind_booking_invite_identity_in, booking_invite_identity, booking_invite_identity_in_txn,

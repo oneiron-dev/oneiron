@@ -7,7 +7,7 @@ use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
     BookingAvailabilityRequest, BookingBookRequest, BookingCancelRequest,
     BookingConstraintTurnRequest, BookingConstraintTurnResponse, BookingPageTokenRequest,
-    BookingPageTokenResponse, BookingRescheduleRequest,
+    BookingPageTokenResponse, BookingRescheduleRequest, BookingWaitlistRequest,
 };
 
 use super::FacadeApiError;
@@ -168,6 +168,24 @@ pub(crate) async fn vault_booking_reschedule(
         auth,
         page_token,
         BookingOperationRequest::Reschedule(input),
+    )
+    .await
+}
+
+/// `vault.booking.waitlist`: join a full window's line, leave it, or claim
+/// the slot an offer holds, through the same executor and admission as the
+/// public waitlist verb, as the caller and never as the owner.
+pub(crate) async fn vault_booking_waitlist(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    request: BookingWaitlistRequest,
+) -> MaybeListed<BookingOperationResponse> {
+    let BookingWaitlistRequest::Waitlist { page_token, input } = request;
+    booking_operation(
+        server,
+        auth,
+        page_token,
+        BookingOperationRequest::Waitlist(input),
     )
     .await
 }

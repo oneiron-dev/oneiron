@@ -28,6 +28,16 @@ pub enum BookingBookRequest {
     },
 }
 
+/// The three-stage waitlist flow (join, leave, claim) on a full window.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BookingWaitlistRequest {
+    Waitlist {
+        page_token: String,
+        input: crate::booking::agent_api::BookingWaitlistInput,
+    },
+}
+
 /// Offers, an email continuation, or a deflect; never booking authority.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "outcome", rename_all = "snake_case")]

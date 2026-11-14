@@ -250,6 +250,7 @@ fn public_booking_request_verb(request: &BookingOperationRequest) -> Option<Book
         BookingOperationRequest::Book(BookingBookInput::Confirm(_)) => Some(BookingVerb::Confirm),
         BookingOperationRequest::Reschedule(_) => Some(BookingVerb::Reschedule),
         BookingOperationRequest::Cancel(_) => Some(BookingVerb::Cancel),
+        BookingOperationRequest::Waitlist(_) => Some(BookingVerb::Waitlist),
     }
 }
 
