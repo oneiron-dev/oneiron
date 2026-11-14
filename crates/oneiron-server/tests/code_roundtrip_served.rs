@@ -27,7 +27,10 @@
 //! only through its own lease door (`vault.code.checkout.bind`'s
 //! `remote_url`). An edit on one device is seen on the other, a stale lease
 //! cannot publish after an authority cutover, offline work on a fenced lease
-//! is not lost, and a restart keeps proposals, review state and head.
+//! is not lost, a restart keeps proposals, review state and head, and the
+//! owner's push on a lease whose TASK he cancelled is refused. The owner
+//! pushes on his own lease under its fence alone, with no run Grant
+//! (L4-06-OWNER-LEASE-PUSH).
 //! Proposals are read at the origin's door (RA2: the PROPOSAL side table is
 //! origin-local), as refs are; no replica copy exists. Named remainder: two
 //! enrolled machines' device sync still needs the E2E `startDevicePeer`
@@ -2182,6 +2185,74 @@ async fn fenced_lease_keeps_work() -> TestResult {
         "C3 A land",
     )
     .await?;
+    Ok(())
+}
+
+/// L4-06 PR 3 T5 (ruling L4-06-OWNER-LEASE-PUSH): the owner's push on a
+/// lease of his own that lapsed is refused. The owner cancels the TASK his
+/// device's lease was claimed for, and the lease's fence holds for him as
+/// it does for a run: nothing lands and nothing is published.
+#[test]
+fn an_owner_push_on_a_lapsed_lease_of_his_own_is_refused() -> TestResult {
+    on_engine_stack(owner_lapsed_lease_refused)
+}
+
+async fn owner_lapsed_lease_refused() -> TestResult {
+    let baseline = imported_baseline().await?;
+    let fx = &baseline.fx;
+    let a = device(&baseline, "device-a", &fx.device_a).await?;
+    write_file(&a.dir.join("SKILL.md"), SKILL_V2, false)?;
+    fx.git_ok("C1 A add", &a.dir, None, &["add", "-A"]).await?;
+    let a_commit = fx
+        .commit("C1 A commit", &a.dir, "owen", "device A greets back")
+        .await?;
+
+    // C2: the owner cancels the TASK A's lease was claimed for.
+    let cancelled = fx
+        .vault
+        .memory(fx.owner_actor, EdgeActorClass::Human)
+        .cancel(oneiron::task_verb::TaskCancelTarget::Task(
+            EntityId::from_hex(&a.task).map_err(|_| "C2 cancel: A's TASK id is no hex")?,
+        ))
+        .map_err(|error| format!("C2 cancel: {error:?}"))?;
+    assert!(
+        cancelled.effected,
+        "C2 the owner's cancel of his own TASK takes effect: {cancelled:?}"
+    );
+
+    // C3: A's push through that lease is refused; nothing lands.
+    let refused = fx
+        .git(
+            &a.dir,
+            Some(&a.cred),
+            &["push", "-q", a.url.as_str(), "HEAD:refs/heads/main"],
+        )
+        .await?;
+    let stderr = String::from_utf8_lossy(&refused.stderr).into_owned();
+    assert!(
+        !refused.status.success(),
+        "C3 a push on a lease whose TASK is cancelled is refused: {stderr}"
+    );
+    assert!(
+        stderr.contains("checkout lease is not live") || stderr.contains("403"),
+        "C3 the refusal is the door's: {stderr}"
+    );
+    assert!(
+        fx.published("C3 no admission", &a_commit).await?.is_none(),
+        "C3 the refused push publishes nothing"
+    );
+    let origin = fx
+        .git_ok(
+            "C3 origin",
+            &a.dir,
+            Some(&a.cred),
+            &["ls-remote", a.url.as_str(), REF],
+        )
+        .await?;
+    assert!(
+        origin.starts_with(&baseline.source_commit),
+        "C3 the origin ref is unchanged: {origin}"
+    );
     Ok(())
 }
 
