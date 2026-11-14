@@ -218,7 +218,8 @@ pub(super) struct RestoreDestination {
 #[derive(Debug)]
 pub(super) enum RestoreDestinationRefusal {
     /// The isolation a real tenant needs is not proven: each facility the
-    /// probe did not find.
+    /// probe did not find. Its reason is tenant isolation, and it names the
+    /// self-host route (RULING L9-61-ISOLATION = A).
     Unproven(Vec<&'static str>),
     /// A name the restore makes is taken already, or could not be read.
     NotFresh,
@@ -382,5 +383,27 @@ mod tests {
     fn ordinary_directory_fails_closed() {
         let dir = tempfile::tempdir().unwrap();
         assert!(!probe(dir.path(), "test").admits());
+    }
+    /// A cold restore into a destination that proves no isolation is refused
+    /// for tenant isolation, a kept reason that no size lifts, and the
+    /// refusal names the self-host route (census L9-61; RULING
+    /// L9-61-ISOLATION = A).
+    #[test]
+    fn an_unproven_restore_destination_names_tenant_isolation_and_the_self_host_route() {
+        let dir = tempfile::tempdir().unwrap();
+        let refused = RestoreDestination::probe(&dir.path().join("vault"), "test")
+            .err()
+            .expect("an ordinary directory proves no isolation");
+        assert!(
+            matches!(refused, RestoreDestinationRefusal::Unproven(_)),
+            "{refused:?}"
+        );
+        let what = refused.what();
+        assert!(what.contains("tenant isolation"), "{what}");
+        assert!(
+            what.contains("a self-hosted vault restores without them"),
+            "{what}"
+        );
+        assert!(!what.contains("capacity"), "{what}");
     }
 }

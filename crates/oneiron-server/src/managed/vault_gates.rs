@@ -501,6 +501,39 @@ mod isolation_gate_tests {
             }
         }
     }
+    /// The real-tenant tripwire names its reason, tenant isolation, a kept
+    /// reason that no size lifts, and the self-host route (census L9-61;
+    /// RULING L9-61-ISOLATION = A).
+    #[test]
+    fn a_real_tenant_refusal_names_tenant_isolation_and_the_self_host_route() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("vault");
+        std::fs::create_dir(&path).unwrap();
+        let refused = open_probed_vault(
+            &path,
+            oneiron::VaultConfig::device(),
+            "real-vault",
+            &Credentials {
+                dek: [7; DEK_LEN],
+                token: [8; 32],
+            },
+            evidence_on(&path, false, false),
+            DerivationOwner([9; 32]),
+        )
+        .err()
+        .expect("an unisolated real tenant is refused");
+        assert!(
+            matches!(refused, ManagedError::ManagedRealTenantRefused { .. }),
+            "{refused:?}"
+        );
+        let message = refused.to_string();
+        assert!(message.contains("tenant isolation"), "{message}");
+        assert!(
+            message.contains("A self-hosted vault, which shares its host with no other tenant, opens without them."),
+            "{message}"
+        );
+        assert!(!message.contains("capacity"), "{message}");
+    }
     #[test]
     fn a_directory_swapped_after_the_probe_does_not_open() {
         let root = tempfile::tempdir().unwrap();
