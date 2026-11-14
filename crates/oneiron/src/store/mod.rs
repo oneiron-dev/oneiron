@@ -378,6 +378,8 @@ mod retrieval_telemetry;
 pub mod retrieval_values;
 pub use oneiron_store::revision_ref;
 #[cfg(unix)]
+mod directory_exchange;
+#[cfg(unix)]
 mod root_directory;
 mod send_receipt_audit;
 mod served_vaults;
@@ -525,6 +527,9 @@ pub use pending_gate_consent::*;
 pub use retrieval_telemetry::*;
 #[cfg(all(unix, test))]
 pub(crate) use root_directory::arm_after_root_entry_removed;
+
+#[cfg(unix)]
+pub use directory_exchange::{HeldEntry, exchange_held};
 #[cfg(unix)]
 pub use root_directory::{
     SharedPath, refuse_shared_path, refuse_shared_vault_root, remove_held_directory, shared_path,

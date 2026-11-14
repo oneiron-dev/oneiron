@@ -28,7 +28,11 @@ use heed::types::Bytes;
 use heed::{Env, RoTxn, RwTxn};
 
 use crate::error::{Error, Result, StoreError};
+use crate::overlay_db::OverlayDb;
 use crate::side_table::{self, Raw, SideKey, SideTable};
+#[cfg(unix)]
+use crate::store::HeldEntry;
+use crate::store::handle::MarkCheck;
 use crate::store::key_custody::{
     self, CustodyBinding, CustodyKind, CustodyPlan, ForkedCustodyDir, LocalCustody, Requirement,
     RetirementIntent, decode_native_path, encode_native_path, retirements_in_rows,
@@ -88,6 +92,27 @@ pub(in crate::store) fn archived_by(mark: Option<&[u8]>, own_root: &Path) -> Res
             Ok(decode_native_path(home).ok_or_else(archive_mark_corrupt)? != own_root)
         }
         Some(_) => Err(archive_mark_corrupt()),
+    }
+}
+
+impl MarkCheck {
+    /// Whether the archive mark `txn` reads refuses this handle's writer. A
+    /// live-only mark also requires the opened directory to remain at its
+    /// root: a handle in another process can keep the vault moved aside by
+    /// a restore even while its mark still names the old path.
+    pub(in crate::store) fn refuses_writer(&self, txn: &RoTxn<'_>) -> Result<bool> {
+        let mark = ARCHIVED.get(&self.vault_meta, txn, &())?;
+        let mark = mark.as_deref();
+        if archived_by(mark, &self.own_root)? {
+            return Ok(true);
+        }
+        #[cfg(unix)]
+        if mark.is_some()
+            && let Some(opened) = &self.opened
+        {
+            return Ok(!names(&self.own_root, opened)?);
+        }
+        Ok(false)
     }
 }
 
@@ -360,14 +385,6 @@ impl Store {
             return Ok(true);
         }
         names(self.env.path(), &opened_directory(self)?)
-    }
-}
-
-/// Syncs the directory holding `path`, so a rename of `path` is on disk.
-fn sync_parent(path: &Path) -> std::io::Result<()> {
-    match path.parent() {
-        Some(parent) => std::fs::File::open(parent)?.sync_all(),
-        None => Ok(()),
     }
 }
 
@@ -668,15 +685,30 @@ impl Store {
         ARCHIVED.put(self, wtxn, &(), &live_only_at(home)?)
     }
 
+    /// Marks the first replacement builder and leaves its postcommit writes
+    /// enabled. The grouped write door can drain carried debts after the
+    /// image commits, before this staging handle is dropped and reopened.
+    pub(crate) fn mark_replacement_live_only_at_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        home: &Path,
+    ) -> Result<()> {
+        self.mark_live_only_at_in_txn(wtxn, home)?;
+        self.env.disarm_mark_check();
+        Ok(())
+    }
+
     /// Lifts the seal its open put on this handle of a replacement the
     /// restore marked live only at `home` is still building. The handle
     /// writes its rows; the custody it shares with the vault at `home` stays
-    /// out of its reach, as it opened archived.
+    /// out of its reach, as it opened archived. Its write-time mark check
+    /// is disarmed: the builder opened at staging, not at the marked home.
     pub(crate) fn unseal_replacement(&self, home: &Path) -> Result<()> {
         let mark = ARCHIVED.get(self, &self.env.read_txn()?, &())?;
         if mark != Some(live_only_at(home)?) || !self.core.key_custody.archived_at_open() {
             return Err(Error::InvariantViolation("a replacement's archive mark"));
         }
+        self.env.disarm_mark_check();
         self.env.unseal();
         Ok(())
     }
@@ -685,8 +717,10 @@ impl Store {
     /// this vault's path when it was made, takes that place through `swap`,
     /// which exchanges the two directories, and this vault is archived.
     ///
-    /// The two paths must name the two directories the handles opened, by
-    /// their bound root descriptors, or nothing is marked and nothing moves.
+    /// Both paths and the entries inside their held parents must name the
+    /// directories the handles opened, or nothing is marked and nothing
+    /// moves. `swap` receives this vault's entry first, then its replacement's,
+    /// and exchanges them inside those held parents (ARCH-0038, restore path).
     /// Before the swap this vault gets the same mark, committed under the
     /// writer, and this handle is sealed before any other writer begins. So
     /// whichever of the two sits at the path is the one live vault on the
@@ -700,11 +734,12 @@ impl Store {
     ///
     /// `fence` reads this vault under the writer, before the mark: a refusal
     /// there changes nothing, and no write lands between it and the seal.
+    #[cfg(unix)]
     pub(crate) fn swap_out(
         &self,
         replacement: &Store,
         fence: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
-        swap: impl FnOnce() -> std::io::Result<()>,
+        swap: impl FnOnce(&HeldEntry, &HeldEntry) -> std::io::Result<()>,
     ) -> Result<()> {
         let mark = live_only_at(self.env.path())?;
         if ARCHIVED.get(replacement, &replacement.env.read_txn()?, &())? != Some(mark.clone()) {
@@ -716,8 +751,12 @@ impl Store {
         // mark: a directory moved under either name refuses, nothing changed.
         let live_dir = opened_directory(self)?;
         let replacement_dir = opened_directory(replacement)?;
-        let in_place =
-            names(self.env.path(), &live_dir)? && names(replacement.env.path(), &replacement_dir)?;
+        let live_entry = HeldEntry::open(self.env.path())?;
+        let replacement_entry = HeldEntry::open(replacement.env.path())?;
+        let in_place = names(self.env.path(), &live_dir)?
+            && names(replacement.env.path(), &replacement_dir)?
+            && live_entry.identity()?.as_ref() == Some(&live_dir)
+            && replacement_entry.identity()?.as_ref() == Some(&replacement_dir);
         if !in_place {
             return Err(Error::InvalidConfig(
                 "a vault directory no longer sits at its path".into(),
@@ -731,9 +770,15 @@ impl Store {
         // A failed swap is no proof that nothing moved, and a name checked
         // now could move before a lift commits: the mark stays, and whichever
         // of the two sits at the path is still the one live vault.
-        swap()?;
+        // No other process's writer may straddle the exchange. An earlier
+        // writer commits while this vault is still at its path; a later one
+        // reads the mark and the moved directory and refuses. This writer
+        // changes no rows and aborts before a mark rewrite opens its own.
+        let swap_writer = self.env.past_seal_write_txn()?;
+        swap(&live_entry, &replacement_entry)?;
         let exchanged =
             names(self.env.path(), &replacement_dir)? && names(replacement.env.path(), &live_dir)?;
+        drop(swap_writer);
         if !exchanged {
             return Err(Error::InvalidConfig(
                 "the swap did not exchange the two vault directories".into(),
@@ -742,9 +787,9 @@ impl Store {
         // Neither mark stops depending on where its vault sits before the
         // exchange is on disk: a crash that undid it would leave the two
         // where the marks no longer say which is live.
-        if let Err(error) = [self.env.path(), replacement.env.path()]
-            .into_iter()
-            .try_for_each(sync_parent)
+        if let Err(error) = live_entry
+            .sync_parent()
+            .and_then(|()| replacement_entry.sync_parent())
         {
             tracing::warn!(%error, "a swap not yet on disk leaves both vaults live only at its path");
             return Ok(());
@@ -765,6 +810,7 @@ impl Store {
     }
 
     /// Rewrites this vault's archive mark, or lifts it, past the seal.
+    #[cfg(unix)]
     fn put_archive_mark(&self, mark: Option<&[u8]>) -> Result<()> {
         let mut wtxn = self.env.past_seal_write_txn()?;
         match mark {
@@ -778,6 +824,18 @@ impl Store {
 
     /// Seals this handle when its vault is archived; every open ends here.
     pub(crate) fn seal_if_archived(&self) -> Result<()> {
+        self.env.arm_mark_check(MarkCheck {
+            vault_meta: OverlayDb::canonical(self.raw.vault_meta),
+            own_root: self.env.path().to_path_buf(),
+            #[cfg(unix)]
+            opened: self
+                .owner
+                .env
+                ._bound_root_dir
+                .as_ref()
+                .map(|_| opened_directory(self))
+                .transpose()?,
+        });
         if self.archived_in_txn(&self.env.read_txn()?)? {
             self.env.seal();
         }
@@ -831,3 +889,8 @@ pub(crate) fn arm_after_restore_destination_made(callback: impl FnOnce() + 'stat
 pub(crate) fn arm_before_live_custody_read(callback: impl FnOnce() + 'static) {
     BEFORE_LIVE_CUSTODY_READ.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests_held_swap;
+#[cfg(all(test, unix))]
+mod tests_live_mark;

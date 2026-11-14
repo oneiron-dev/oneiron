@@ -548,6 +548,7 @@ fn a_restored_image_never_carries_the_machine_to_another_install() {
 /// The vault a restore replaced, activated as a side vault of its
 /// replacement, is a second live vault: it joins as a new machine, and only
 /// the replacement answers as the machine both were (wp-keys I8).
+#[cfg(unix)]
 #[test]
 fn an_activated_archive_joins_as_a_new_machine() {
     let (_dir, vault, request) = enrolled_machine(host());
@@ -567,12 +568,7 @@ fn an_activated_archive_joins_as_a_new_machine() {
     .unwrap();
     // As `oneiron restore` exchanges the two directories.
     vault
-        .swap_in_replacement(&replacement, || {
-            let between = home.with_extension("exchange");
-            std::fs::rename(&home, &between)?;
-            std::fs::rename(&staged, &home)?;
-            std::fs::rename(&between, &staged)
-        })
+        .swap_in_replacement(&replacement, crate::store::exchange_held)
         .unwrap();
     drop((vault, replacement));
     let replacement = Vault::open(&home, VaultConfig::default()).unwrap();
