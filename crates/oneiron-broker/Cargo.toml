@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "Credential broker: sends one admitted model request with a key the daemon hands it, and strips that key from the reply"
 repository.workspace = true
-homepage.workspace = true
 
 [lib]
 doctest = false

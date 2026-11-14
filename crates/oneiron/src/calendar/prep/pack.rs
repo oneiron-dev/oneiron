@@ -2,8 +2,6 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use serde::{Deserialize, Serialize};
-
 use super::wake::{PrepEvent, PrepPolicy, prep_is_eligible};
 use crate::calendar::claims::is_calendar_claim_predicate;
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};
@@ -70,23 +68,10 @@ const PREP_SECTION_ORDER: [PrepSectionKind; 3] = [
     PrepSectionKind::DossierDelta,
 ];
 
-/// The three ranked sections of a prep pack.
-///
-/// Declaration order IS the precedence rule, and `Ord` is derived from it: prior
-/// commitments first, recent threads with those people second, dossier or
-/// company delta third.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum PrepSectionKind {
-    /// Commitments involving the meeting or its attendees.
-    PriorCommitment,
-    /// Recent threads with the people in the meeting.
-    AttendeeThread,
-    /// Dossier or company delta about those people and their orgs.
-    DossierDelta,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::calendar::prep::pack::{
+    PrepItem, PrepPack, PrepSection, PrepSectionKind,
+};
 
 /// Which section one stored non-CLAIM entity type belongs to, or `None` when
 /// it carries no prep meaning. A CLAIM row ranks by what it says, in
@@ -100,44 +85,6 @@ const fn prep_section_kind_for(entity_type: u8) -> Option<PrepSectionKind> {
         | ENTITY_TYPE_NOTE => Some(PrepSectionKind::DossierDelta),
         _ => None,
     }
-}
-
-/// One row of prep evidence, with the vault rows that back it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct PrepItem {
-    /// Which section this row ranks into.
-    pub kind: PrepSectionKind,
-    /// The row's own text, as stored. Truncated only by the word ceiling.
-    pub text: String,
-    /// Hex ids of the vault rows this text came from. Never empty.
-    pub source_refs: Vec<String>,
-    /// When the vault learned the backing row, unix seconds UTC.
-    pub observed_at: u64,
-}
-
-/// One ranked section of a pack. Empty sections are dropped, never rendered.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct PrepSection {
-    /// Which section this is.
-    pub kind: PrepSectionKind,
-    /// Rows, most recently learned first inside the section.
-    pub items: Vec<PrepItem>,
-}
-
-/// One meeting's assembled prep pack.
-///
-/// Structured data only: no prose, no persona, no localized text. It is a value
-/// returned to the caller and never an entity, a claim, or a cache row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct PrepPack {
-    /// Hex id of the EVENT this pack is about.
-    pub event_ref: String,
-    /// The fire instant the pack was assembled at, unix seconds UTC.
-    pub built_at: u64,
-    /// Ranked sections, never empty when a pack exists at all.
-    pub sections: Vec<PrepSection>,
-    /// Words kept after the ceiling. Never above [`PrepPolicy::max_words`].
-    pub word_count: usize,
 }
 
 /// One assembly request: the EVENT, the instant it is being assembled at, and

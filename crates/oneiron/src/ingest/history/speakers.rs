@@ -17,14 +17,21 @@
 //! Premise: the import door is the owner's own-history door
 //! (`AuthenticatedOwner`, ARCH-0027), so an import's no-`said_by` user side is
 //! the owner. Any present user-side `said_by` (`delegating_agent`, `unknown`,
-//! or any future value) is other people. Read-only.
+//! or any future value) is other people. The assistant an own-history export
+//! recorded lands as a counterparty (FIX 15412) yet is still that history's
+//! own assistant side: a counterparty MESSAGE whose source role is
+//! `assistant`, with no `said_by`, of the history source the conversation was
+//! imported from. A counterparty of any other source or source role is other
+//! people. Read-only.
 
+use super::HistorySource;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::dreamer_consolidation::decode_turn_body;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::gate::WITNESS_AUTHOR_COUNTERPARTY;
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -37,10 +44,11 @@ pub(crate) enum ImportedConversationSpeakers {
     /// helper's case.
     NotImported,
     /// Imported, and every speaker is owner-side: live TURNs in
-    /// `{user, assistant}` with the room's live MESSAGEs all lacking `said_by`.
-    /// Premise: the import door is the owner's own-history door
-    /// (`AuthenticatedOwner`, ARCH-0027), so an import's no-`said_by` user side
-    /// is the owner.
+    /// `{user, assistant}`, or `counterparty` in an own-history import, with
+    /// the room's live MESSAGEs all lacking `said_by` and every counterparty
+    /// MESSAGE that history's own assistant side. Premise: the import door is
+    /// the owner's own-history door (`AuthenticatedOwner`, ARCH-0027), so an
+    /// import's no-`said_by` user side is the owner.
     OwnerSide,
     /// Imported but holds other people: any live `said_by`, any live
     /// non-imported or unexpected-speaker TURN, or any undecodable live body
@@ -53,11 +61,13 @@ pub(crate) enum ImportedConversationSpeakers {
 ///
 /// Premise: the import door is the owner's own-history door
 /// (`AuthenticatedOwner`, ARCH-0027), so an import's no-`said_by` user side is
-/// the owner. A live TURN outside `{user, assistant}`, a live non-imported
-/// TURN, and any present `said_by` on a live MESSAGE `BelongsTo` the room are
-/// `Others`; deleted turns do not hide a recorded speaker, and deleted message
-/// shells are skipped (no words). An undecodable live body fails closed; only
-/// a fully owner-side import is `OwnerSide`.
+/// the owner. A live TURN outside `{user, assistant}` (a `counterparty` TURN
+/// outside an own-history import), a live non-imported TURN, any present
+/// `said_by` on a live MESSAGE `BelongsTo` the room, and a counterparty
+/// MESSAGE that is not the history's own assistant side are `Others`; deleted
+/// turns do not hide a recorded speaker, and deleted message shells are
+/// skipped (no words). An undecodable live body fails closed; only a fully
+/// owner-side import is `OwnerSide`.
 ///
 /// # Errors
 ///
@@ -75,9 +85,12 @@ pub(crate) fn imported_speakers_in(
     if !facts.imported {
         return Ok(ImportedConversationSpeakers::NotImported);
     }
-    if facts.import_source.is_none() {
+    let Some(source) = facts.import_source else {
         return Ok(ImportedConversationSpeakers::Others);
-    }
+    };
+    // An owner history import, whose recorded assistant may speak as a
+    // counterparty.
+    let own_history = HistorySource::parse(&source).is_some();
     // All ChildOf TURN targets, live or not (childof_turns_in is live-only):
     // a shelled or absent turn gives no verdict itself; its live MESSAGEs
     // still decide said_by below.
@@ -102,6 +115,7 @@ pub(crate) fn imported_speakers_in(
         }
         match facts.speaker.as_deref() {
             Some("user" | "assistant") => {}
+            Some("counterparty") if own_history => {}
             _ => return Ok(ImportedConversationSpeakers::Others),
         }
     }
@@ -122,7 +136,7 @@ pub(crate) fn imported_speakers_in(
         else {
             continue;
         };
-        if message_has_said_by(&body) {
+        if !message_owner_side(&body, own_history.then_some(source.as_str())) {
             return Ok(ImportedConversationSpeakers::Others);
         }
     }
@@ -143,26 +157,32 @@ fn body_in(vault: &Vault, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Optio
         .map(|body| body.to_vec()))
 }
 
-/// Whether a MESSAGE body carries a user-side `said_by` (any present value).
-/// An undecodable body fails closed (`true`); a readable body without the key
-/// is `false`. The walk is the `message_import_source` shape
-/// (`metadata` -> `import` -> `said_by`).
-fn message_has_said_by(body: &[u8]) -> bool {
+/// Whether a MESSAGE body is owner-side: it carries no user-side `said_by`
+/// (any present value is other people), and a counterparty one is the
+/// recorded assistant of `history`, the owner history source the conversation
+/// was imported from (`None` outside one): source role `assistant` under that
+/// same source. An undecodable body fails closed (`false`). The walk is the
+/// `message_import_source` shape (`metadata` -> `import` -> `said_by`).
+fn message_owner_side(body: &[u8], history: Option<&str>) -> bool {
     let Ok(message) = rmpv::decode::read_value(&mut &body[..]) else {
+        return false;
+    };
+    let import = field(&message, "metadata").and_then(|metadata| field(metadata, "import"));
+    if let Some(rmpv::Value::Map(entries)) = import
+        && entries
+            .iter()
+            .any(|(key, _)| key.as_str() == Some("said_by"))
+    {
+        return false;
+    }
+    if field(&message, "author").and_then(rmpv::Value::as_str) != Some(WITNESS_AUTHOR_COUNTERPARTY)
+    {
         return true;
-    };
-    let Some(metadata) = field(&message, "metadata") else {
-        return false;
-    };
-    let Some(import) = field(metadata, "import") else {
-        return false;
-    };
-    let rmpv::Value::Map(entries) = import else {
-        return false;
-    };
-    entries
-        .iter()
-        .any(|(key, _)| key.as_str() == Some("said_by"))
+    }
+    let import_text = |name: &str| import.and_then(|entries| field(entries, name)?.as_str());
+    history.is_some()
+        && import_text("source") == history
+        && import_text("role") == Some("assistant")
 }
 
 /// The value a msgpack map stores under `name`.

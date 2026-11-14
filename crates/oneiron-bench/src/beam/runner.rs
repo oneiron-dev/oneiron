@@ -42,6 +42,10 @@ pub(super) const BEAM_HELP: &str = "usage: oneiron-bench beam <subcommand>\n\
                            smoke    run the built-in BEAM 128K deterministic context-pack smoke fixture\n\
                                     aligned with ONEIRON-ARCH-0042\n\
                            measure <plan.json>  measured shared-answerer, backbone and cheap-chat arms\n\
+                           measure --picks-for <definition hex> --expected-version <version>\n\
+                                   [--regime fixed_answer_cap|fixed_total_tokens] <report.json>\n\
+                                   print the vault.agents.optional_memory.set argument from a\n\
+                                   saved measure report's reader picks (no model calls)\n\
                            judge <run.json>      production three-vote model scorer\n\
                            score-nuggets <run.json> dual-column replay and commit proof folder\n\
                            infra <measurement.json> cost-framing-only vector-DB rows\n\

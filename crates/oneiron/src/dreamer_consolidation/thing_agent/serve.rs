@@ -318,6 +318,7 @@ impl ConsolidationExecutor<'_> {
                 step: pass.step,
                 guard: self.guard,
                 call: self.role(DREAMER_EXTRACTION_ROLE),
+                prompt: &self.decisions.extraction_prompt,
                 slices: vec![SliceCall {
                     transcript: &slice.transcript,
                     labels: &slice.labels,

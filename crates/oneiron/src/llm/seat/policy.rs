@@ -7,16 +7,12 @@ use super::{DescriptionSource, ModelId, ModelWireFormat, ReasoningEffort, invali
 use crate::error::Result;
 use crate::llm::routing::DescriptionPolicy;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SeatPrecedence {
-    /// Each authored level (global, purpose, vault, then the holder or judge)
-    /// may only narrow its nearest authored parent.
-    NarrowOnly,
-    /// The most specific authored level wins and a holder may choose another
-    /// allowed rung; every level stays under the vault ceiling.
-    SeatOverride,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::llm::seat::policy::SeatPrecedence;
+#[doc(hidden)]
+pub(super) use oneiron_verb_wire::llm::seat::policy::effort_rank;
+#[doc(hidden)]
+use oneiron_verb_wire::llm::seat::policy::valid_evidence_order;
 
 /// A v2 manifest row. Model-specific ladders may also come from the existing
 /// description-policy row when that policy is configured for the model.
@@ -38,16 +34,6 @@ pub struct SeatPolicy {
     pub evidence_order: Vec<DescriptionSource>,
     pub facet_max_bytes: usize,
     pub line_max_bytes: usize,
-}
-
-pub(super) fn effort_rank(effort: ReasoningEffort) -> u8 {
-    match effort {
-        ReasoningEffort::None => 0,
-        ReasoningEffort::Low => 1,
-        ReasoningEffort::Medium => 2,
-        ReasoningEffort::High => 3,
-        ReasoningEffort::XHigh => 4,
-    }
 }
 
 impl SeatPolicy {
@@ -176,17 +162,4 @@ impl SeatPolicy {
         }
         Ok(selected)
     }
-}
-
-/// Source identities are substrate (listed here as a set); their ranking is
-/// policy. A valid order names each source exactly once so no line is dropped.
-fn valid_evidence_order(order: &[DescriptionSource]) -> bool {
-    [
-        DescriptionSource::Benchmarks,
-        DescriptionSource::Measured,
-        DescriptionSource::Owner,
-        DescriptionSource::Vendor,
-    ]
-    .iter()
-    .all(|source| order.iter().filter(|item| *item == source).count() == 1)
 }
