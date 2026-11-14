@@ -62,7 +62,10 @@ pub(crate) use asker::{AskVerdict, judge_ask_in_txn};
 // The chain 2e's host builds; until then only `test_doors::check_in` does.
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use chain::{AgentHolderVerdict, NoAgentVerdict, VerifiedChain};
-pub use effect::{CheckInDecision, record_erase_effect_digest, vault_delete_effect_digest};
+pub use effect::{
+    CheckInDecision, owner_add_effect_digest, owner_remove_effect_digest,
+    ownership_transfer_effect_digest, record_erase_effect_digest, vault_delete_effect_digest,
+};
 pub(crate) use effect::{
     DoorAct, DoorCheckIn, owner_own_proof_decision, person_door_check_in_in_txn,
     spend_applied_check_in_in_txn,
