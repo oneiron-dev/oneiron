@@ -68,6 +68,7 @@ pub mod note_bm25f_repair;
 pub mod off_record_shell;
 pub mod outbound_grant_index;
 pub mod own_device_message_replay;
+pub mod pack_encode_work;
 pub mod pad_offer_invalidation;
 pub mod park_typed_wait;
 pub mod provenance_body_checkpoint;
