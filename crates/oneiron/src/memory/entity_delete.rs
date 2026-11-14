@@ -28,7 +28,7 @@ use crate::{Vault, check_in};
 const DELETE_VERB: &str = "vault.delete";
 
 /// What a delete by role does once its check-in is judged (2k5).
-enum RoleDeleteCheckIn {
+pub(super) enum RoleDeleteCheckIn {
     /// The delete runs under the authority the judge read; its receipt
     /// records the decision, none for an agent's.
     Go {
@@ -179,16 +179,21 @@ impl Memory<'_> {
             crate::federation::require_delete_authority_in_txn(self.vault, txn, caller, &target)?
                 .map_err(|refusal| role_delete_refusal(refusal, &owner_refusal))
         };
-        let (judged, decision) =
-            match self.role_delete_check_in(&target, reason, &authority, check_in_ref)? {
-                RoleDeleteCheckIn::Go {
-                    authority: judged,
-                    decision,
-                } => (judged, decision),
-                RoleDeleteCheckIn::Waits(check_in) => {
-                    return Err(Error::CheckInPending(check_in.to_hex()).into());
-                }
-            };
+        let (judged, decision) = match self.role_delete_check_in(
+            &target,
+            reason,
+            DELETE_VERB,
+            &authority,
+            check_in_ref,
+        )? {
+            RoleDeleteCheckIn::Go {
+                authority: judged,
+                decision,
+            } => (judged, decision),
+            RoleDeleteCheckIn::Waits(check_in) => {
+                return Err(Error::CheckInPending(check_in.to_hex()).into());
+            }
+        };
         let (mut receipt, _) =
             self.safe_delete_admitted(id, reason, AdmittedDeleteDoor::Record, &authority, |txn| {
                 if authority(txn)? == judged {
@@ -201,23 +206,25 @@ impl Memory<'_> {
         Ok(receipt)
     }
 
-    /// The check-in `self.actor`'s delete of `target` by role runs on, judged in
-    /// a writer of its own before the delete's rail (2k5; P25-SHAPE Q1 =
-    /// A): `authority` read there, then the Owner on their own proof, an
-    /// agent unjudged (PR 3's act gate), and a person under their
-    /// membership role ([`check_in::person_door_check_in_in_txn`]), which
-    /// opens or finds the pending check-in when the delete waits and spends
-    /// `check_in_ref` when it names an approved one.
+    /// The check-in `self.actor`'s delete of `target` by role through the
+    /// saved verb `verb` runs on, judged in a writer of its own before the
+    /// delete's rail (2k5; P25-SHAPE Q1 = A): `authority` read there, then
+    /// the Owner on their own proof, an agent unjudged (PR 3's act gate),
+    /// and a person under their membership role
+    /// ([`check_in::person_door_check_in_in_txn`]), which opens or finds the
+    /// pending check-in when the delete waits and spends `check_in_ref` when
+    /// it names an approved one.
     ///
     /// # Errors
     ///
     /// `authority`'s refusal; `BAD_REQUEST` for a `check_in_ref` an Owner's
     /// or an agent's delete names; a person with no membership grant; as
     /// [`check_in::person_door_check_in_in_txn`].
-    fn role_delete_check_in(
+    pub(super) fn role_delete_check_in(
         &self,
         target: &DeleteTarget,
         reason: DeleteReason,
+        verb: &str,
         authority: &dyn Fn(&heed::RoTxn<'_>) -> MemoryResult<DeleteAuthority>,
         check_in_ref: Option<&EntityId>,
     ) -> MemoryResult<RoleDeleteCheckIn> {
@@ -240,6 +247,7 @@ impl Memory<'_> {
                         self.actor,
                         target,
                         reason,
+                        verb,
                         check_in_ref,
                     )? {
                         DoorCheckIn::Go(decision) => Some(decision),
@@ -565,7 +573,7 @@ impl Memory<'_> {
 
 /// The refusal of a delete whose role or Grant changed between the read
 /// that admitted it and a write of its rail.
-fn authority_changed(door: AdmittedDeleteDoor) -> MemoryError {
+pub(super) fn authority_changed(door: AdmittedDeleteDoor) -> MemoryError {
     match door {
         AdmittedDeleteDoor::Archive => MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
@@ -583,20 +591,20 @@ fn authority_changed(door: AdmittedDeleteDoor) -> MemoryError {
 }
 
 /// The refusal of a `check_in_ref` an Owner's or an agent's delete names:
-/// neither waits on a check-in at this door (2k5).
-fn spends_no_check_in() -> MemoryError {
+/// neither waits on a check-in at a delete door (2k5).
+pub(super) fn spends_no_check_in() -> MemoryError {
     MemoryError::bad_request(
         "check_in_ref names a person's waiting delete; an Owner's or an agent's delete waits on \
          none",
     )
 }
 
-/// `person`'s delete of `target` for `reason`, judged under their
-/// membership role in `txn`, the judge's writer (2k5; P25-SHAPE Q1 = A):
-/// the digest of the exact delete, the grant their pending check-in climbs
-/// from, and `check_in_ref` when they name an approved one. A Steward's
-/// delete of its own NOTE or TASK goes at once as `own_item`, as a Member's
-/// does (Engine ruling STEWARD-DELETE-WAIT = B).
+/// `person`'s delete of `target` for `reason` through the saved verb
+/// `verb`, judged under their membership role in `txn`, the judge's writer
+/// (2k5; P25-SHAPE Q1 = A): the digest of the exact delete, the grant their
+/// pending check-in climbs from, and `check_in_ref` when they name an
+/// approved one. A Steward's delete of its own NOTE or TASK goes at once as
+/// `own_item`, as a Member's does (Engine ruling STEWARD-DELETE-WAIT = B).
 ///
 /// # Errors
 ///
@@ -608,6 +616,7 @@ fn person_delete_check_in_in_txn(
     person: EntityId,
     target: &DeleteTarget,
     reason: DeleteReason,
+    verb: &str,
     check_in_ref: Option<&EntityId>,
 ) -> crate::Result<DoorCheckIn> {
     let not_member =
@@ -633,7 +642,7 @@ fn person_delete_check_in_in_txn(
         person,
         role,
         grant,
-        verb: DELETE_VERB,
+        verb,
         act: ActClass::Delete,
         scope: CheckInScope::default(),
         effect_digest: check_in::record_delete_effect_digest(&target.id(), reason),
