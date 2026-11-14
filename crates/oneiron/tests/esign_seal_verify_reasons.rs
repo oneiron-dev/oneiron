@@ -323,3 +323,147 @@ fn failed_verification_keeps_same_summary_and_ordered_verify_reasons_without_can
     }
     Ok(())
 }
+
+/// The seal's receipt (ARCH-0075 seal follow-up, census L4-14): a sealed
+/// version's made_by names the original upload's version claim as its
+/// input and the audit chain the seal certified as its params, and the
+/// sealed artifact's row is born with that envelope. Before, a sealed
+/// output (version 1 of a new artifact) took the writer's default: no
+/// input, the empty digest, and no row birth.
+#[test]
+fn a_sealed_version_names_its_original_upload_and_the_certified_audit_chain() -> Result<()> {
+    use oneiron::write_envelope::provenance::made_by::{MadeByInput, MadeByInputRole};
+    use sha2::{Digest, Sha256};
+
+    struct PassingSealer;
+
+    impl PassingSealer {
+        fn verdict() -> EsignVerdict {
+            EsignVerdict {
+                verdict: SealVerdict::Passed,
+                reasons: Vec::new(),
+                achieved: Some(SealProfile::BaselineB),
+                self_verify_ok: true,
+                report_json: Vec::new(),
+                active_content: SealActiveContentFacts::default(),
+            }
+        }
+    }
+
+    impl EsignSealer for PassingSealer {
+        fn seal(
+            &self,
+            _request: &EsignSealRequest,
+            _producer: &mut dyn EsignSealProducer,
+        ) -> std::result::Result<EsignSealed, EsignSealError> {
+            let bytes = original_pdf().to_vec();
+            let evidence_sha256: [u8; 32] = Sha256::digest(&bytes).into();
+            Ok(EsignSealed {
+                bytes,
+                evidence_sha256,
+                requested: SealProfile::BaselineB,
+                achieved: SealProfile::BaselineB,
+                degraded: Vec::new(),
+                self_verify: Self::verdict(),
+            })
+        }
+
+        fn verify(&self, _pdf: &[u8]) -> std::result::Result<EsignVerdict, EsignSealerError> {
+            Ok(Self::verdict())
+        }
+
+        fn prepare_esign_pdf(
+            &self,
+            _original: &[u8],
+            _request: &render::PdfPreparation<'_>,
+            _chain: [u8; 32],
+            _trail: &[String],
+        ) -> std::result::Result<Option<render::PreparedEsignPdf>, EsignSealerError> {
+            Ok(None)
+        }
+    }
+
+    let (_dir, vault, id, mut doc) = setup()?;
+    doc.fields.clear();
+    event(
+        &vault,
+        id,
+        EsignEvent::Drafted {
+            document: doc.clone(),
+        },
+        3,
+    )?;
+    event(&vault, id, EsignEvent::Sent, 4)?;
+    let first = doc.recipients[0].id.clone();
+    event(
+        &vault,
+        id,
+        EsignEvent::Viewed {
+            recipient: first.clone(),
+        },
+        5,
+    )?;
+    event(
+        &vault,
+        id,
+        EsignEvent::Declined {
+            recipient: first,
+            reason: "declined".into(),
+        },
+        6,
+    )?;
+    assert!(vault.esign_document(id)?.ready_to_seal());
+    assert_eq!(vault.sweep_esign_seals(&[id], 906)?, 1);
+    let runs = vault.run_esign_seals(
+        &PassingSealer,
+        SealProfile::BaselineB,
+        "https://example.test/sign",
+        "test-seal-worker",
+        1,
+    )?;
+    assert_eq!(runs.len(), 1);
+    match &runs[0] {
+        EsignSealRun::Sealed { document } => assert_eq!(*document, Some(id)),
+        EsignSealRun::Failed { reason, .. } => panic!("the seal must land: {reason}"),
+    }
+    let sealed = vault
+        .sealed_esign_document(id)?
+        .expect("the sealed manifest is written");
+    assert_eq!(sealed.items.len(), 1);
+    let item = &sealed.items[0];
+    assert_eq!(item.original_artifact, doc.items[0].artifact_ref);
+    let original = vault
+        .blob_artifact_version_metadata(
+            &EntityId::from_hex(&item.original_artifact)?,
+            item.original_version,
+        )?
+        .expect("the original upload's version");
+    let sealed_artifact = EntityId::from_hex(&item.sealed_artifact)?;
+    let version = vault
+        .blob_artifact_version_metadata(&sealed_artifact, item.sealed_version)?
+        .expect("the sealed version");
+    assert_eq!(
+        version.made_by.inputs,
+        vec![MadeByInput {
+            row: original.claim_id,
+            role: MadeByInputRole::Input,
+        }],
+        "the sealed version names the original upload's version claim"
+    );
+    let audit_chain_hex: String = sealed
+        .audit_chain_sha256
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    assert_eq!(
+        version.made_by.process.params_hash, audit_chain_hex,
+        "its params are the audit chain the seal certified"
+    );
+    assert_eq!(version.made_by.process.identity, "seal_job");
+    assert_eq!(version.made_by.trigger, None);
+    let birth = vault
+        .row_birth(&sealed_artifact)?
+        .expect("the sealed artifact's row is born from its original");
+    assert_eq!(birth.made_by, version.made_by);
+    Ok(())
+}

@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "Embedded retrieval engine for memory-first applications"
 repository.workspace = true
-homepage.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
@@ -38,6 +37,9 @@ oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
 oneiron-wake-contract = { version = "0.1.0", path = "../oneiron-wake-contract" }
 # Consent state (core split slice 2).
 oneiron-consent-state = { version = "0.1.0", path = "../oneiron-consent-state" }
+# The serde data types (lib split, stage A): the public verbs' wire types, and the stored records above them.
+oneiron-verb-wire = { version = "0.1.0", path = "../oneiron-verb-wire" }
+oneiron-records = { version = "0.1.0", path = "../oneiron-records" }
 # The OF-570 envelope: world keys (P6b), and the recovery kit's passphrase
 # stretch (P6a).
 oneiron-crypto = { version = "0.1.0", path = "../oneiron-crypto" }
@@ -84,9 +86,15 @@ rmpv = { workspace = true, features = ["with-serde"] }
 xxhash-rust = { workspace = true }
 serde = { workspace = true }
 schemars = "=0.8.22"
-serde_json = { workspace = true, features = ["raw_value"] }
+# `float_roundtrip`: a write's receipt keeps its input's JSON text, and a
+# resumed step reads it back and compares it with the live input, so a float
+# must read back exactly (census L1-06). The server turned it on for the served
+# binary only; the crate asks for it itself.
+serde_json = { workspace = true, features = ["raw_value", "float_roundtrip"] }
 jsonschema = { version = "0.33", default-features = false }
 serde_path_to_error = "0.1"
+# RESEARCH-0651 contract item 1: RetrievalParams::digest is sha256 over RFC 8785 JSON.
+serde_json_canonicalizer.workspace = true
 postcard = { workspace = true, optional = true }
 # `zeroize`: the recovery kit wipes the hasher that saw a kit secret.
 blake3 = { workspace = true, features = ["zeroize"] }
@@ -259,6 +267,8 @@ sync = [
     "oneiron-base/sync",
     "oneiron-store/sync",
     "oneiron-wake-contract/sync",
+    "oneiron-verb-wire/sync",
+    "oneiron-records/sync",
     "tokio/net",
     "tokio/time",
     "tokio/rt",
@@ -271,7 +281,12 @@ sync = [
 # mirror-failure hook for ONE-1140's root-snapshot/`ls:`-mirror atomicity
 # test in `oneiron-server`). No production effect; enabled only by
 # downstream crates' dev-dependencies.
-test-hooks = ["oneiron-model/test-hooks", "oneiron-store/test-hooks"]
+test-hooks = [
+    "oneiron-model/test-hooks",
+    "oneiron-store/test-hooks",
+    "oneiron-verb-wire/test-hooks",
+    "oneiron-records/test-hooks",
+]
 # Compiles in `Vault::open_unseeded_for_test` — the only way to open a vault
 # without seeding the default policy manifest (the effect-spine oracle needs
 # it). Enable explicitly for rolling-tier test builds. Even under
@@ -285,6 +300,8 @@ test-support = [
     "oneiron-docedit/test-support",
     "oneiron-model/test-support",
     "oneiron-keystore/test-keystore",
+    "oneiron-verb-wire/test-support",
+    "oneiron-records/test-support",
 ]
 
 [dev-dependencies]
@@ -328,6 +345,12 @@ required-features = ["test-support"]
 name = "it_sync"
 path = "tests/it_sync/main.rs"
 required-features = ["sync", "test-support"] # sync_harness uses MemoryKeystore (test-support forwards oneiron-keystore/test-keystore)
+
+# Arms a slow phonetic stage and the deadline's still clock (test hooks).
+[[test]]
+name = "phonetic_stage_deadline"
+path = "tests/phonetic_stage_deadline.rs"
+required-features = ["test-hooks"]
 
 [[bench]]
 name = "sync_memory"

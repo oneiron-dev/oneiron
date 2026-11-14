@@ -175,6 +175,25 @@ pub(super) fn get(
     LEDGER.get(dbs, txn, &key(source, native_id))
 }
 
+/// The CONVERSATION, the TURN and the latest MESSAGE the import of the
+/// message `native_id` of `source` landed, for the integration tests' door.
+#[cfg(oneiron_test_support)]
+pub(crate) fn landed_rows_in(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    source: HistorySource,
+    native_id: &str,
+) -> Result<Option<(EntityId, EntityId, EntityId)>> {
+    let Some(row) = get(dbs, txn, source, native_id)? else {
+        return Ok(None);
+    };
+    let conversation = EntityId::derive(
+        derived_domains::HISTORY_CONVERSATION,
+        &[source.source_id().as_bytes(), row.conversation.as_bytes()],
+    )?;
+    Ok(Some((conversation, row.turn, row.message)))
+}
+
 /// The row of `message`: under its native id, or else under the alias an
 /// earlier import may have landed it by.
 pub(super) fn find(
