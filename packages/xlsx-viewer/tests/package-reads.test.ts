@@ -78,6 +78,29 @@ describe("xlsx preview: every door reads the package through one guarded read", 
     TEST_LIMIT_MS,
   );
 
+  it("previews a sheet stored as xl/worksheets/sheet.xml, which SheetJS also probes; a third take is refused", () => {
+    // SheetJS takes xl/worksheets/sheet.xml once to see that it is there (a
+    // Numbers export names its sheet so), then parses it as S1.
+    const probed = (listed: number) =>
+      sheetsPackage([], {
+        listed,
+        sheetName: () => "S1",
+        sheetTarget: () => "worksheets/sheet.xml",
+        parts: [{ name: "xl/worksheets/sheet.xml", body: text(worksheet(`<row r="1"><c r="A1"><v>42</v></c></row>`)) }],
+      });
+    expect(cell(readSheet(probed(1), "S1"), 0, 0)?.v).toBe(42);
+    expect(readWorkbookOutline(probed(1)).sheetOrder).toHaveLength(1);
+    // Two listed sheets named S1 on that one part: the probe, then two parses.
+    let caught: unknown;
+    try {
+      readSheet(probed(2), "S1");
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(WorkbookBudgetError);
+    expect((caught as WorkbookBudgetError).line).toBe("structure");
+  });
+
   it("refuses a comments part two relationships name; sheet names that differ in case still preview", () => {
     let caught: unknown;
     try {
