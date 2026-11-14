@@ -31,7 +31,11 @@
 //!   stands outside the revocation and its own ancestry, so a row it signed
 //!   on a branch the revoker never saw (a withheld enrolment, say) counts on
 //!   no branch. Its fence yields and conflicts under the rules above. It
-//!   installs nothing, so it never leaves the roster without a settled root.
+//!   installs nothing, so revocations can leave the roster with no live root
+//!   key: a cycle of them closes every fence in it, and two roots that each
+//!   revoke themselves on sibling branches both stand. No roster row settles
+//!   that state; FIX [OWNER-ANCHOR-NO-ROOT-RECOVERY] gives the owner anchor
+//!   the way out.
 
 use std::collections::{BTreeMap, BTreeSet};
 
