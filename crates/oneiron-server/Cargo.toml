@@ -313,6 +313,14 @@ name = "found_key_member_verb"
 path = "tests/found_key_member_verb.rs"
 required-features = ["oneiron/test-support"]
 
+# The found-key list verb, on a managed member's person action, a writer's
+# own slip and the owner's proof (L6-03-WRITER-FOUND-KEY-LIST), on a
+# `MemoryKeystore` too.
+[[test]]
+name = "found_key_list_verb"
+path = "tests/found_key_list_verb.rs"
+required-features = ["oneiron/test-support"]
+
 # DEL-2's core HTTP delete door roots its server on a `MemoryKeystore` too.
 [[test]]
 name = "delete_authority_served_door"
