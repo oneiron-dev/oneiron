@@ -26,8 +26,10 @@ use oneiron_server::runtime::runner_fence::HostRunnerFence;
 use oneiron_server::runtime::seat_login::{OfficialCliSeatExecutor, SEAT_RUNNER_BACKEND};
 
 /// A stand-in for the official CLI: for each path it is given, it says
-/// whether it could read it, then whether it could make a temp file.
+/// whether it could read it, then whether it could make a temp file. Given
+/// `sleep` first, it outlives any short deadline instead.
 const STAND_IN: &str = r#"#!/bin/sh
+if [ "$1" = "sleep" ]; then exec sleep 60; fi
 for path in "$@"; do
   if cat "$path" >/dev/null 2>&1; then echo "read $path"; else echo "refused $path"; fi
 done
@@ -94,12 +96,13 @@ fn probes(layout: &Layout) -> Vec<String> {
     ]
 }
 
-/// One seat run of the stand-in over `argv`, and what it printed.
-fn run_seat(
+/// The seat executor in `layout`'s checkout under `runner_fence`, and the
+/// spec and checkout of one run of the stand-in over `argv`.
+fn seat(
     layout: &Layout,
     runner_fence: Option<Arc<HostRunnerFence>>,
     argv: Vec<String>,
-) -> (ByoaExhaust, String) {
+) -> (OfficialCliSeatExecutor, CliSandboxSpec, CheckoutLeaseAct) {
     stand_in_on_path();
     let checkout_id = CheckoutId::from_bytes(*EntityId::now().as_bytes()).expect("checkout id");
     let spec = CliSandboxSpec {
@@ -126,7 +129,7 @@ fn run_seat(
         updated_at: 1,
         bound_attempt: None,
     };
-    let mut executor = OfficialCliSeatExecutor {
+    let executor = OfficialCliSeatExecutor {
         workdir: layout.checkout.clone(),
         secret_destinations: None,
         floor: None,
@@ -135,6 +138,16 @@ fn run_seat(
         model_env: None,
         runner_fence,
     };
+    (executor, spec, checkout)
+}
+
+/// One seat run of the stand-in over `argv`, and what it printed.
+fn run_seat(
+    layout: &Layout,
+    runner_fence: Option<Arc<HostRunnerFence>>,
+    argv: Vec<String>,
+) -> (ByoaExhaust, String) {
+    let (mut executor, spec, checkout) = seat(layout, runner_fence, argv);
     let exhaust = executor
         .run(
             &spec,
@@ -232,6 +245,44 @@ fn a_seat_cli_on_a_host_without_the_fence_runs_with_an_unproven_manifest() {
 }
 
 #[test]
+fn a_seat_cli_on_a_host_whose_proof_failed_runs_without_the_rule() {
+    let layout = layout();
+    // The proof finds neither tree, so it proves nothing: a host whose
+    // proof failed (as where seccomp denies `landlock_restrict_self`).
+    let custody = layout
+        .custody_probe
+        .parent()
+        .expect("custody dir")
+        .to_path_buf();
+    let vault_aside = layout.vault.with_file_name("vault-aside");
+    let custody_aside = custody.with_file_name("custody-aside");
+    fs::rename(&layout.vault, &vault_aside).expect("vault aside");
+    fs::rename(&custody, &custody_aside).expect("custody aside");
+    let fence = HostRunnerFence::for_vault(&layout.vault).expect("runner fence");
+    fs::rename(&vault_aside, &layout.vault).expect("vault back");
+    fs::rename(&custody_aside, &custody).expect("custody back");
+    let outcome = fence.outcome().clone();
+    eprintln!(
+        "runner_fence_seat: failed proof under mechanism {:?}",
+        outcome.mechanism
+    );
+    if outcome.mechanism == RunnerFenceMechanism::Unavailable {
+        return;
+    }
+    assert!(!outcome.proven, "the proof found no tree: {outcome:?}");
+    let (exhaust, printed) = run_seat(&layout, Some(Arc::new(fence)), probes(&layout));
+    assert!(
+        printed.contains(&format!("read {}", layout.vault_probe.display())),
+        "an unproven host runs the CLI without the rule: {printed}"
+    );
+    let manifest = exhaust
+        .session_manifest
+        .expect("an unfenced seat run still carries its session manifest");
+    assert!(manifest.fence_unproven);
+    assert!(manifest.fence_proof.is_none(), "no ruleset hash is claimed");
+}
+
+#[test]
 fn a_seat_cli_whose_checkout_is_a_worktree_of_a_repository_in_the_vault_runs_unproven() {
     let layout = layout();
     let fence = HostRunnerFence::for_vault(&layout.vault).expect("runner fence");
@@ -270,4 +321,65 @@ fn a_seat_cli_whose_checkout_is_a_worktree_of_a_repository_in_the_vault_runs_unp
         .expect("an unfenced seat run still carries its session manifest");
     assert!(manifest.fence_unproven, "the run went on without the rule");
     assert!(manifest.fence_proof.is_none(), "no ruleset hash is claimed");
+}
+
+// A seat run that fails after its start keeps its runner's receipt (review
+// of #7959): the module needs the head's executor, so a run of the file at
+// an earlier commit leaves it out.
+mod failed_run {
+    use std::io::Read as _;
+
+    use oneiron_server::runtime::seat_login::failed_seat_run_exhaust;
+
+    use super::*;
+
+    #[test]
+    fn a_seat_cli_past_its_deadline_keeps_its_session_manifest() {
+        let layout = layout();
+        let fence = HostRunnerFence::proved(
+            RunnerFence::unavailable([layout.vault.clone()]).expect("runner fence"),
+        );
+        let (mut executor, spec, checkout) =
+            seat(&layout, Some(Arc::new(fence)), vec!["sleep".to_owned()]);
+        let (manifest, ran) =
+            executor.run_with_manifest(&spec, &checkout, ExecutionBudget::new(1, 128, 8));
+        let error = ran.expect_err("the CLI outlives its deadline");
+        assert!(
+            matches!(error, ByoaError::SpoolDeadline),
+            "the run ends at its deadline: {error:?}"
+        );
+        let manifest = manifest.expect("a started seat CLI has its session manifest");
+        assert_eq!(manifest.backend, SEAT_RUNNER_BACKEND);
+        assert!(manifest.fence_unproven);
+        let exhaust = failed_seat_run_exhaust(&error, Some(manifest.clone()));
+        assert!(
+            !exhaust.is_empty(),
+            "the capture door keeps the failed run's exhaust"
+        );
+        assert_eq!(exhaust.session_manifest, Some(manifest));
+        let mut stderr = String::new();
+        exhaust
+            .stderr
+            .reader()
+            .read_to_string(&mut stderr)
+            .expect("stderr");
+        assert!(
+            stderr.contains(&error.to_string()),
+            "the failure is the exhaust's standard error: {stderr}"
+        );
+    }
+
+    #[test]
+    fn a_seat_cli_that_never_started_has_no_session_manifest() {
+        let layout = layout();
+        let fence = HostRunnerFence::proved(
+            RunnerFence::unavailable([layout.vault.clone()]).expect("runner fence"),
+        );
+        let (mut executor, mut spec, checkout) = seat(&layout, Some(Arc::new(fence)), Vec::new());
+        spec.program = "not-a-seat-cli".to_owned();
+        let (manifest, ran) =
+            executor.run_with_manifest(&spec, &checkout, ExecutionBudget::new(30, 128, 8));
+        assert!(ran.is_err(), "only the official CLIs run");
+        assert!(manifest.is_none(), "no runner started, so no receipt");
+    }
 }

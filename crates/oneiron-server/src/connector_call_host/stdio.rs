@@ -36,7 +36,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{self, BufRead, Write as _};
 use std::path::Path;
-use std::process::{Child, ChildStdin, ChildStdout, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -152,6 +152,34 @@ pub struct StdioChild {
     door: Option<UpstreamTicket>,
 }
 
+/// Sets the connector's arguments, its environment (the inherited names,
+/// `scratch` as `TMPDIR`, the connector's own, then its upstream door's)
+/// and piped streams on its child's `command`.
+fn prepare_child(
+    command: &mut Command,
+    args: &[String],
+    start: &StdioStart<'_>,
+    scratch: Option<&tempfile::TempDir>,
+) {
+    command.args(args).env_clear();
+    for name in STDIO_INHERITED_ENV {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    if let Some(scratch) = scratch {
+        command.env("TMPDIR", scratch.path());
+    }
+    command.envs(&start.connector.env);
+    if let Some(upstream_env) = start.upstream_env {
+        upstream_env.apply(command);
+    }
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+}
+
 impl StdioChild {
     /// Starts the connector's child and initializes its session.
     ///
@@ -166,37 +194,38 @@ impl StdioChild {
             .split_first()
             .ok_or("the connector names no command")?;
         let workdir = start.connector.cwd.as_deref();
-        let (mut command, outcome, scratch) = match start.fence {
+        let not_started = |_| "the connector's command did not start";
+        let (mut process, outcome, scratch) = match start.fence {
             Some(fence) => {
-                let runner = fence.command(program, workdir);
-                (runner.command, Some(runner.outcome), runner.scratch)
+                let mut runner = fence.command(program, workdir);
+                prepare_child(&mut runner.command, args, start, runner.scratch.as_ref());
+                // A fenced spawn that fails (the rule refused at the spawn on
+                // a host that proved it) starts again without the rule,
+                // unproven: canon `#fence-unproven`, the engine never refuses
+                // the run.
+                let fenced = runner.command.spawn();
+                let process = match fenced {
+                    Err(error) if runner.outcome.proven => {
+                        tracing::warn!(
+                            error = %error,
+                            "runner fence: a fenced connector did not start; it starts unproven"
+                        );
+                        runner = fence.unfenced_command(program, workdir);
+                        prepare_child(&mut runner.command, args, start, runner.scratch.as_ref());
+                        runner.command.spawn()
+                    }
+                    spawned => spawned,
+                }
+                .map_err(not_started)?;
+                (process, Some(runner.outcome), runner.scratch)
             }
             None => {
                 let mut command = oneiron_spawn::command(program);
                 command.current_dir(workdir.unwrap_or(Path::new("/")));
-                (command, None, None)
+                prepare_child(&mut command, args, start, None);
+                (command.spawn().map_err(not_started)?, None, None)
             }
         };
-        command.args(args).env_clear();
-        for name in STDIO_INHERITED_ENV {
-            if let Some(value) = std::env::var_os(name) {
-                command.env(name, value);
-            }
-        }
-        if let Some(scratch) = &scratch {
-            command.env("TMPDIR", scratch.path());
-        }
-        command.envs(&start.connector.env);
-        if let Some(upstream_env) = start.upstream_env {
-            upstream_env.apply(&mut command);
-        }
-        command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut process = command
-            .spawn()
-            .map_err(|_| "the connector's command did not start")?;
         let stdout = process.stdout.take();
         let stderr = process.stderr.take();
         let stdin = process.stdin.take();
