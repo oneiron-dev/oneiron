@@ -251,6 +251,26 @@ impl RevealAuthority {
     }
 }
 
+#[cfg(oneiron_test_support)]
+impl RevealAuthority {
+    /// The authority a settled reveal of `secret` would hold, for the
+    /// payment-credential test door (`test_doors::payment_credential`), which
+    /// reads the reveal door without an agent's whole reveal flow.
+    pub(crate) fn for_test_door(
+        secret: EntityId,
+        handle: String,
+        class: CustodyClass,
+        effector: String,
+    ) -> Self {
+        Self {
+            secret,
+            handle,
+            class,
+            effector,
+        }
+    }
+}
+
 /// The value a granted reveal delivers, read under `authority` in the
 /// transaction that stamps its lease; the record must still be active. A
 /// binding's read grant admits every other value read

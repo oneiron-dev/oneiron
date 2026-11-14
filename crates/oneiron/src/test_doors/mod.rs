@@ -64,6 +64,7 @@ pub mod off_record_shell;
 pub mod outbound_grant_index;
 pub mod pad_offer_invalidation;
 pub mod park_typed_wait;
+pub mod payment_credential;
 pub mod provenance_body_checkpoint;
 pub mod repo_base_manifest;
 pub mod repo_secret_marks;

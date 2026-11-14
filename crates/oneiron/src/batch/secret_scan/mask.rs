@@ -126,6 +126,31 @@ pub(crate) fn mask_origin_in_txn(
     MASK_ORIGIN.get(store, txn, id)
 }
 
+/// Records that a scan of kind `reason` lifted the custody record `custody`
+/// out of `record`'s body, for the payment-credential test door
+/// (`test_doors::payment_credential`, L8-60).
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_mask_origin_for_test_door(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    custody: &EntityId,
+    record: &EntityId,
+    reason: &str,
+    masked_at: u64,
+) -> Result<()> {
+    MASK_ORIGIN.put(
+        store,
+        wtxn,
+        custody,
+        &MaskOrigin {
+            record: *record,
+            reason: reason.to_owned(),
+            place: "body".to_owned(),
+            masked_at,
+        },
+    )
+}
+
 /// Rebinds one custody record's mask origin from `old` to `new` (FIX 12779):
 /// the same custody-keyed row, only `record` changes, `reason`/`place`/
 /// `masked_at` verbatim. Skips cleanly when the row is missing or names

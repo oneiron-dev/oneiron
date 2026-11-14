@@ -41,6 +41,8 @@ pub(crate) use self::mask::carrier::{
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mask::mark_text_value_in_txn;
 pub(super) use self::mask::mask_batch_ops;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mask::put_mask_origin_for_test_door;
 pub(crate) use self::mask::retained_repo::read::{
     RepoKnownCheck, project_marked_retained_repo_blob, retained_repo_known_places,
 };
