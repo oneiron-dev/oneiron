@@ -2963,6 +2963,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/carried_spend.rs",
+     "purpose": "What a failed try of a workflow step spent, kept for the retry that follows it (ARCH-0053 #paid-leg-built…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ClaimCompanionTask",
       "ClaimCompanionTaskOutcome",
@@ -8594,7 +8605,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "Secret detection and custody filtering at batch and release boundaries",
      "surface": {
-      "crate-vis": 50,
+      "crate-vis": 51,
       "re-export": 2
      }
     },
@@ -8827,7 +8838,7 @@
      "path": "src/batch/secret_scan/mask.rs",
      "purpose": "Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -71484,7 +71495,7 @@
      "path": "src/secret_custody/handle_labels.rs",
      "purpose": "An owner's display label on a secret handle (L04 s43 FIX 12541, engine part)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 6,
       "fn": 3,
       "re-export": 1,
       "struct": 1
@@ -71624,8 +71635,8 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 27,
-      "re-export": 18
+      "crate-vis": 28,
+      "re-export": 19
      }
     },
     {
@@ -71653,6 +71664,21 @@
      "path": "src/secret_custody/owner_door/tests.rs",
      "purpose": "ARCH-0069 S2 at register time: a name the repo manifest declares carries the manifest's entry on its custody…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PaymentCredentialRelease",
+      "SecretPaymentMarkSet"
+     ],
+     "path": "src/secret_custody/payment_credential.rs",
+     "purpose": "Payment credentials on a host whose runner fence is unproven (L8-60; CROSS-ARCH-0019 `#fence-unproven`…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 4,
+      "struct": 2
+     }
     },
     {
      "bucket": "m",
@@ -71690,14 +71716,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/reveal.rs",
      "purpose": "A secret's value by its handle (OF-560; ARCH-0069 #reveal-check and #handle-verbs, DEC-0006 #model-connection)",
      "surface": {
       "const": 7,
-      "crate-vis": 25,
+      "crate-vis": 26,
       "fn": 1,
       "re-export": 3
      }
@@ -80786,7 +80812,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 165,
+      "crate-vis": 166,
       "mod": 69,
       "re-export": 88
      }
@@ -81809,6 +81835,16 @@
      "notable": [],
      "path": "src/store/secret_name_index.rs",
      "purpose": "Core half of `store::secret_name_index`: its store-layer items live in `oneiron_store::secret_name_index`…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/secret_payment_marks.rs",
+     "purpose": "The owner's payment marks on custody records (L8-60): one row per record he answered for, saying whether it…",
      "surface": {
       "crate-vis": 3
      }
@@ -91174,7 +91210,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 107,
+      "mod": 108,
       "re-export": 1
      }
     },
@@ -91278,6 +91314,16 @@
      "purpose": "Doors for `tests/park_typed_wait.rs` (6.5d-1): the head state of a trap chain, and a soft child spend…",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/payment_credential.rs",
+     "purpose": "Doors for `tests/payment_credential_withhold.rs` (L8-60): a credential bound to one effector, the scan kind…",
+     "surface": {
+      "fn": 5
      }
     },
     {
@@ -102034,6 +102080,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/payment_credential_withhold.rs",
+     "purpose": "L8-60 (RULING L8-60-PAYMENT-MARKER = A, 14 Nov; CROSS-ARCH-0019 `#fence-unproven`, the owner's pick A on…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/peer_redaction_own_attribution.rs",
      "purpose": "A peer's redaction records the refusal before it erases this vault's own attribution (ARCH-0055:162…",
      "surface": {}
@@ -103500,7 +103554,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 84,
+     "files": 85,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104676,7 +104730,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 85,
+     "files": 86,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104844,7 +104898,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 394,
+     "files": 395,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104928,7 +104982,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 110,
+     "files": 111,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105103,10 +105157,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 275,
+   "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7574,
-   "test_files": 1295
+   "source_files": 7578,
+   "test_files": 1296
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -114356,6 +114410,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/bin/deck-create-cases.rs",
+     "purpose": "`deck-create-cases`: the engine half of the `deck-create-v1` oracle runner",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/bin/deck-gate-cases.rs",
      "purpose": "`deck-gate-cases`: the engine half of the OF-510 deck gate runner",
      "surface": {}
@@ -115136,7 +115198,31 @@
       "crate-vis": 1,
       "enum": 3,
       "fn": 2,
+      "mod": 1,
       "struct": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CaseCandidate",
+      "CaseNames",
+      "CaseSet",
+      "CaseSpec",
+      "FitUnit",
+      "LoadedCaseSet",
+      "OfficeSpec",
+      "RunWritten",
+      "UnitKind"
+     ],
+     "path": "src/emit/oracle_cases.rs",
+     "purpose": "The `deck-create-v1` oracle case set: six new decks the emitter writes, the run that pins them, and the rows…",
+     "surface": {
+      "const": 3,
+      "enum": 1,
+      "fn": 5,
+      "struct": 8
      }
     },
     {
@@ -116800,6 +116886,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/deck_create_oracle_receipt.rs",
+     "purpose": "L4-20 (ARCH-0077 slides lane): the `deck-create-v1` Office receipts committed under…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -116868,7 +116962,7 @@
      "purpose": "Narrow value and text edits in place (ARCH-0077, \"Edit in place with passthrough\"): `set_text`…"
     },
     "emit": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -116996,8 +117090,8 @@
    },
    "over_bar": 8,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 179,
-   "test_files": 14
+   "source_files": 181,
+   "test_files": 15
   },
   "oneiron-dreamer": {
    "files": [
@@ -126883,7 +126977,7 @@
      "path": "src/ai_host/step.rs",
      "purpose": "One saved-workflow step on a model seat",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -133926,6 +134020,16 @@
      "purpose": "`/v1/owner/secrets/lift*`: the owner's side of the historical lift sweep's proposals (OF-067)",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/secret_payment_mark_routes.rs",
+     "purpose": "`/v1/owner/secrets/payment-mark`: the owner says whether one credential is a payment credential (L8-60…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -148115,7 +148219,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 784,
+     "files": 785,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -148670,7 +148774,7 @@
    },
    "over_bar": 62,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1882,
+   "source_files": 1883,
    "test_files": 255
   },
   "oneiron-skill-attribution": {
