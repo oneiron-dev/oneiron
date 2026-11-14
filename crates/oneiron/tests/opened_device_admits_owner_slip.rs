@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
-use oneiron::authority::{MachineRole, PairingPrincipal, PeerMachine};
+use oneiron::authority::{MachineOwnership, MachineRole, PairingPrincipal, PeerMachine};
 use oneiron::federation::Scope;
 use oneiron::sync::residence::{
     OwnDeviceGrantState, admit_own_device_grants, own_device_grant_refs, own_device_grant_states,
@@ -46,9 +46,11 @@ fn home() -> Home {
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     let issuer = oneiron::test_support::provision_engine_machines(&vault);
     // The owner's pairing link is an owner act this install's live machine
-    // profile carries, as a serving start or `init` enrols it (FIX 4648).
+    // profile carries (FIX 4648). The owner has answered the home as his
+    // own: an install he has not answered proves no machine connection
+    // (`MachineRole::answered`), so no device could judge the home proven.
     vault
-        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .ensure_serving_install_profile(&issuer, MachineRole::Owned(MachineOwnership::Yours))
         .expect("this install's live machine profile");
     let (owner, owner_proof) = embedded_owner(&vault).expect("authenticated embedded owner");
     let holder = owner.to_hex();
