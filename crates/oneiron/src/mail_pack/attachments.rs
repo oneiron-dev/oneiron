@@ -296,6 +296,20 @@ fn collect_owed_erases(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
+/// Whether an attachment of `source` a reader opened waits to be fetched.
+pub(super) fn attachments_waiting_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: EntityId,
+) -> Result<bool> {
+    for row in ATTACHMENTS.iter_from(&vault.store, txn, source.as_bytes())? {
+        if row?.1.state == MailAttachmentState::Waiting {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Fetches up to `limit` of `source`'s waiting attachments through `wire`,
 /// each into its artifact bound to its thread's audience at birth, written
 /// as `actor`. Answers how many were stored; a fetch its source's quota
