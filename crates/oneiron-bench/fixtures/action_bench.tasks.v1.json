@@ -1,0 +1,462 @@
+{
+  "version": 1,
+  "histories": [
+    {
+      "id": "owen",
+      "frozen_at": 1780010000,
+      "turns": [
+        {
+          "at": 1780000000,
+          "author": "user",
+          "text": "My dentist is Dr. Okafor at Harbor Dental, I go every six months."
+        },
+        {
+          "at": 1780000100,
+          "author": "companion",
+          "text": "Noted: your dentist is Dr. Okafor."
+        },
+        {
+          "at": 1780000200,
+          "author": "user",
+          "text": "When I say the usual at the cafe, I mean an oat flat white."
+        },
+        {
+          "at": 1780000300,
+          "author": "user",
+          "text": "Every Friday the weekly report goes to Yuki as a PDF, with Mara on cc."
+        },
+        {
+          "at": 1780005000,
+          "author": "user",
+          "text": "Correction about my dentist: Dr. Okafor retired, I now see Dr. Lindqvist."
+        }
+      ],
+      "claims": [
+        {
+          "at": 1780000000,
+          "predicate": "profile.dentist",
+          "value": "dentist: Dr. Okafor at Harbor Dental"
+        },
+        {
+          "at": 1780000200,
+          "predicate": "profile.usual_order",
+          "value": "the usual at the cafe: oat flat white"
+        },
+        {
+          "at": 1780000300,
+          "predicate": "profile.weekly_report",
+          "value": "weekly report: to Yuki as a PDF, Mara on cc"
+        },
+        {
+          "at": 1780005000,
+          "predicate": "profile.dentist",
+          "value": "dentist: Dr. Lindqvist at Harbor Dental"
+        }
+      ]
+    },
+    {
+      "id": "yuki",
+      "frozen_at": 1780010000,
+      "turns": [
+        {
+          "at": 1780000000,
+          "author": "user",
+          "text": "The parcel locker code for my building is 4417."
+        },
+        {
+          "at": 1780000200,
+          "author": "user",
+          "text": "By close of business I always mean 17:30 Tokyo time."
+        },
+        {
+          "at": 1780000300,
+          "author": "user",
+          "text": "Each month I pay the studio rent from the joint account with reference STUDIO-RENT."
+        },
+        {
+          "at": 1780000400,
+          "author": "companion",
+          "text": "Got it, studio rent from the joint account."
+        },
+        {
+          "at": 1780005000,
+          "author": "user",
+          "text": "Correction: after the repair the parcel locker code changed to 9052."
+        }
+      ],
+      "claims": [
+        {
+          "at": 1780000000,
+          "predicate": "profile.parcel_locker",
+          "value": "parcel locker code: 4417"
+        },
+        {
+          "at": 1780000200,
+          "predicate": "profile.close_of_business",
+          "value": "close of business: 17:30 Tokyo time"
+        },
+        {
+          "at": 1780000300,
+          "predicate": "profile.studio_rent",
+          "value": "studio rent: paid from the joint account, reference STUDIO-RENT"
+        },
+        {
+          "at": 1780005000,
+          "predicate": "profile.parcel_locker",
+          "value": "parcel locker code: 9052"
+        }
+      ]
+    },
+    {
+      "id": "mara",
+      "frozen_at": 1780010000,
+      "turns": [
+        {
+          "at": 1780000000,
+          "author": "user",
+          "text": "My flight to Lisbon departs from Terminal 1."
+        },
+        {
+          "at": 1780000200,
+          "author": "user",
+          "text": "In my notes the board means the garden club committee."
+        },
+        {
+          "at": 1780000300,
+          "author": "user",
+          "text": "Every Sunday I order groceries from Greenleaf for delivery between 9-11."
+        },
+        {
+          "at": 1780005000,
+          "author": "user",
+          "text": "Correction: the airline moved my Lisbon flight to Terminal 3."
+        },
+        {
+          "at": 1780020000,
+          "author": "user",
+          "text": "From next week my Sunday groceries come from FreshCo."
+        }
+      ],
+      "claims": [
+        {
+          "at": 1780000000,
+          "predicate": "profile.lisbon_flight",
+          "value": "Lisbon flight: departs from Terminal 1"
+        },
+        {
+          "at": 1780000200,
+          "predicate": "profile.the_board",
+          "value": "the board: the garden club committee"
+        },
+        {
+          "at": 1780000300,
+          "predicate": "profile.sunday_groceries",
+          "value": "Sunday groceries: from Greenleaf, delivery 9-11"
+        },
+        {
+          "at": 1780005000,
+          "predicate": "profile.lisbon_flight",
+          "value": "Lisbon flight: departs from Terminal 3"
+        }
+      ]
+    }
+  ],
+  "follow_ups": [
+    {
+      "id": "owen-dentist",
+      "history": "owen",
+      "kind": "corrected_source",
+      "prompt": "Book my six-month dentist check-up.",
+      "tools": [
+        {
+          "name": "book_appointment",
+          "description": "Books one check-up with one provider.",
+          "fields": {
+            "provider": [
+              "Okafor",
+              "Brandt",
+              "Lindqvist"
+            ]
+          }
+        }
+      ],
+      "gold_memory": [
+        "dentist: Dr. Lindqvist at Harbor Dental"
+      ],
+      "rubric": {
+        "action": "book_appointment",
+        "expect": {
+          "provider": "Lindqvist"
+        },
+        "stale": {
+          "provider": [
+            "Okafor"
+          ]
+        }
+      }
+    },
+    {
+      "id": "owen-usual",
+      "history": "owen",
+      "kind": "stable_definition",
+      "prompt": "Order me the usual at the cafe.",
+      "tools": [
+        {
+          "name": "order_drink",
+          "description": "Orders one drink at the cafe.",
+          "fields": {
+            "drink": [
+              "espresso",
+              "chai latte",
+              "oat flat white"
+            ]
+          }
+        }
+      ],
+      "gold_memory": [
+        "the usual at the cafe: oat flat white"
+      ],
+      "rubric": {
+        "action": "order_drink",
+        "expect": {
+          "drink": "oat flat white"
+        }
+      }
+    },
+    {
+      "id": "owen-report",
+      "history": "owen",
+      "kind": "repeated_workflow",
+      "prompt": "It is Friday: send the weekly report.",
+      "tools": [
+        {
+          "name": "send_report",
+          "description": "Sends one report.",
+          "fields": {
+            "recipient": [
+              "Ines",
+              "Tomas",
+              "Yuki"
+            ],
+            "format": [
+              "DOCX",
+              "slides",
+              "PDF"
+            ],
+            "cc": [
+              "nobody",
+              "Mara"
+            ]
+          }
+        }
+      ],
+      "gold_memory": [
+        "weekly report: to Yuki as a PDF, Mara on cc"
+      ],
+      "rubric": {
+        "action": "send_report",
+        "expect": {
+          "recipient": "Yuki",
+          "format": "PDF"
+        },
+        "keep": {
+          "cc": "Mara"
+        }
+      }
+    },
+    {
+      "id": "yuki-locker",
+      "history": "yuki",
+      "kind": "corrected_source",
+      "prompt": "Tell the courier the parcel locker code.",
+      "tools": [
+        {
+          "name": "send_instructions",
+          "description": "Sends drop-off instructions to a courier.",
+          "fields": {
+            "locker_code": [
+              "4417",
+              "1234",
+              "9052"
+            ]
+          }
+        }
+      ],
+      "gold_memory": [
+        "parcel locker code: 9052"
+      ],
+      "rubric": {
+        "action": "send_instructions",
+        "expect": {
+          "locker_code": "9052"
+        },
+        "stale": {
+          "locker_code": [
+            "4417"
+          ]
+        }
+      }
+    },
+    {
+      "id": "yuki-close",
+      "history": "yuki",
+      "kind": "stable_definition",
+      "prompt": "Set a reminder for close of business tomorrow.",
+      "tools": [
+        {
+          "name": "set_reminder",
+          "description": "Sets one reminder.",
+          "fields": {
+            "time": [
+              "18:00",
+              "17:00",
+              "17:30"
+            ]
+          }
+        }
+      ],
+      "gold_memory": [
+        "close of business: 17:30 Tokyo time"
+      ],
+      "rubric": {
+        "action": "set_reminder",
+        "expect": {
+          "time": "17:30"
+        }
+      }
+    },
+    {
+      "id": "yuki-rent",
+      "history": "yuki",
+      "kind": "repeated_workflow",
+      "prompt": "Pay this month's studio rent.",
+      "tools": [
+        {
+          "name": "make_payment",
+          "description": "Makes one payment.",
+          "fields": {
+            "account": [
+              "personal",
+              "savings",
+              "joint"
+            ],
+            "reference": [
+              "MONTHLY",
+              "STUDIO-RENT",
+              "LEASE-07"
+            ]
+          }
+        }
+      ],
+      "gold_memory": [
+        "studio rent: paid from the joint account, reference STUDIO-RENT"
+      ],
+      "rubric": {
+        "action": "make_payment",
+        "expect": {
+          "account": "joint"
+        },
+        "keep": {
+          "reference": "STUDIO-RENT"
+        }
+      }
+    },
+    {
+      "id": "mara-taxi",
+      "history": "mara",
+      "kind": "corrected_source",
+      "prompt": "Book a taxi to the airport for my Lisbon flight.",
+      "tools": [
+        {
+          "name": "book_taxi",
+          "description": "Books one taxi to the airport.",
+          "fields": {
+            "terminal": [
+              "Terminal 1",
+              "Terminal 2",
+              "Terminal 3"
+            ]
+          }
+        }
+      ],
+      "gold_memory": [
+        "Lisbon flight: departs from Terminal 3"
+      ],
+      "rubric": {
+        "action": "book_taxi",
+        "expect": {
+          "terminal": "Terminal 3"
+        },
+        "stale": {
+          "terminal": [
+            "Terminal 1"
+          ]
+        }
+      }
+    },
+    {
+      "id": "mara-board",
+      "history": "mara",
+      "kind": "stable_definition",
+      "prompt": "Email the board about Saturday's meeting.",
+      "tools": [
+        {
+          "name": "send_email",
+          "description": "Sends one email to one group.",
+          "fields": {
+            "to": [
+              "company board",
+              "family",
+              "garden club committee"
+            ]
+          }
+        }
+      ],
+      "gold_memory": [
+        "the board: the garden club committee"
+      ],
+      "rubric": {
+        "action": "send_email",
+        "expect": {
+          "to": "garden club committee"
+        }
+      }
+    },
+    {
+      "id": "mara-groceries",
+      "history": "mara",
+      "kind": "repeated_workflow",
+      "prompt": "Place my Sunday groceries order.",
+      "tools": [
+        {
+          "name": "order_groceries",
+          "description": "Places one groceries order.",
+          "fields": {
+            "store": [
+              "QuickMart",
+              "FreshCo",
+              "Greenleaf"
+            ],
+            "window": [
+              "7-9",
+              "18-20",
+              "9-11"
+            ]
+          }
+        }
+      ],
+      "gold_memory": [
+        "Sunday groceries: from Greenleaf, delivery 9-11"
+      ],
+      "rubric": {
+        "action": "order_groceries",
+        "expect": {
+          "store": "Greenleaf"
+        },
+        "keep": {
+          "window": "9-11"
+        }
+      }
+    }
+  ]
+}
