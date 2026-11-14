@@ -22,25 +22,10 @@ use serde::{Deserialize, Serialize};
 const TAPS: SideTable<[u8; 32], ([u8; 32], ProjectMintReceipt), Named> =
     SideTable::new(&side_table::PROJECT_MINT_TAP);
 
-/// The goal is data for the leader, not instructions in its prompt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectGoalRecord {
-    pub project_id: String,
-    pub goal: String,
-    pub why: String,
-    pub axes: Vec<String>,
-}
-
-/// The share is expressed against the root project's budget, never a grant
-/// to spend more than the parent has.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectBudgetShare {
-    pub project_id: String,
-    pub parent_id: String,
-    pub share_bps: u16,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::project::mint::{
+    ProjectBudgetShare, ProjectGoalRecord,
+};
 
 /// A durable tap result; `grant_decision_id` identifies the Gate receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

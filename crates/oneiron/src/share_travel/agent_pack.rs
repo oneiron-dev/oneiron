@@ -77,15 +77,11 @@ macro_rules! mirror {
     };
 }
 
-/// The run scope, with a world named rather than referenced. The destination
-/// binds a local world by that name or refuses.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub enum AgentPackScope {
-    All,
-    Base,
-    World { name: String },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::share_travel::agent_pack::{
+    AgentPackBudgetSplit, AgentPackKnowledge, AgentPackMcp, AgentPackOutputDecay, AgentPackScope,
+    AgentPackWakeCadence,
+};
 
 /// The agent's own approval ceiling: a self-limit, never a grant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -96,14 +92,6 @@ pub enum AgentPackCeiling {
 }
 
 mirror!(AgentPackCeiling <=> AgentCeiling { Auto, Proposed });
-
-/// A code-mode MCP the agent asks for, by key.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackMcp {
-    pub key: String,
-    pub min_version: Option<String>,
-}
 
 impl From<&McpRef> for AgentPackMcp {
     fn from(value: &McpRef) -> Self {
@@ -132,15 +120,6 @@ pub enum AgentPackCompaction {
 
 mirror!(AgentPackCompaction <=> CompactionOwnership { Engine, Byoa });
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackBudgetSplit {
-    pub claims: f32,
-    pub turns: f32,
-    pub summaries: f32,
-    pub other: f32,
-}
-
 impl From<ContextBudgetSplit> for AgentPackBudgetSplit {
     fn from(value: ContextBudgetSplit) -> Self {
         Self {
@@ -156,13 +135,6 @@ impl From<AgentPackBudgetSplit> for ContextBudgetSplit {
     fn from(value: AgentPackBudgetSplit) -> Self {
         Self::new(value.claims, value.turns, value.summaries, value.other)
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackOutputDecay {
-    pub overview_after_turns: u64,
-    pub stub_after_turns: u64,
 }
 
 impl From<OutputDecayPolicy> for AgentPackOutputDecay {
@@ -315,14 +287,6 @@ pub enum AgentPackDreaming {
 }
 
 mirror!(AgentPackDreaming <=> DreamingMode { Own, Inherit, Off });
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub enum AgentPackWakeCadence {
-    Companion { every_turns: Option<u64> },
-    Leader { every_turns: Option<u64> },
-    Worker,
-}
 
 impl From<AgentWakeCadence> for AgentPackWakeCadence {
     fn from(value: AgentWakeCadence) -> Self {
@@ -689,15 +653,6 @@ impl AgentPackSkill {
         }
         Ok(())
     }
-}
-
-/// One selected piece of knowledge about the agent, as text. The destination
-/// mints it as a local claim with this agent as the subject.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackKnowledge {
-    pub predicate: String,
-    pub text: String,
 }
 
 /// `policy.md`.
