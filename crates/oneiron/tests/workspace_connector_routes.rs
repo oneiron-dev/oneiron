@@ -49,11 +49,12 @@ fn sheets_keeps_its_four_tools_on_the_core() -> TestResult {
     assert_eq!(
         declared,
         vec![
+            "spreadsheets.batchUpdate",
             "spreadsheets.get",
             "values.batchGet",
-            "values.batchUpdate",
-            "spreadsheets.batchUpdate"
-        ]
+            "values.batchUpdate"
+        ],
+        "the resolved manifest declares the same four tools, sorted by name"
     );
     assert!(
         module("google.sheetz").is_none() && module("Google.Sheets").is_none(),
