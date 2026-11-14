@@ -40,7 +40,6 @@ use oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
-use oneiron::test_doors::owner_enrol::bind_owner_key;
 use oneiron::test_support::bind_host_owner;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
@@ -199,11 +198,9 @@ impl Shared {
         }
     }
 
-    /// The co-Owner's own key, enrolled and bound to them.
+    /// The co-Owner's own key, enrolled, which binds them.
     fn bound_co_owner_key(&self) -> [u8; 32] {
         let key = self.enrol_owner_key(self.co_owner, 7);
-        bind_owner_key(&self.vault, &self.issuer, key, self.co_owner)
-            .expect("the co-Owner's key bound to them");
         assert!(self.key_is_live(key), "the enrolled key is live");
         assert!(
             self.passes_owner_verbs(self.co_owner),
