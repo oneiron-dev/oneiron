@@ -5,10 +5,21 @@
 //! registry with no such slip serializes as before. A converted, revoked,
 //! dead or ineligible slip mints nothing, and a repeat never mints twice.
 //!
+//! The conversion widens an agent's grant (ROLES-CHECKIN 2k7; Engine RULING
+//! P25-SHAPE Q1 = A): the owner's own conversion records his own proof once
+//! in the answer, and he applies another asker's approved check-in for one
+//! slip's conversion, spent in the writer that mints. On 2k7a's head the
+//! two tests for it do not build: the request has no `check_in_ref`, and
+//! the answer no `check_in`.
+//!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test agent_grantless_registry`.
 #![cfg(oneiron_test_support)]
+
+#[allow(dead_code)]
+#[path = "check_in/owner_apply_fixture.rs"]
+mod owner_apply_fixture;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -17,6 +28,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     ActSurface, CapabilitySlip, HostSlipIssuer, MachineRole, PairingPrincipal, VerifiedSlip,
 };
+use oneiron::check_in::{ActClass, agent_grant_from_slip_effect_digest};
 use oneiron::claim::{ScopedReadActorKey, base_world_id, default_project_id};
 use oneiron::consent::{
     AuthenticatedOwner, ConsentRegistry, ConsentRegistryQuery, ConsentRegistryRow,
@@ -34,6 +46,7 @@ use oneiron::verbs::{
 };
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
+use owner_apply_fixture::{approved, owner_decision, spent};
 use serde_json::json;
 
 const OCCURRED_AT: u64 = 1_769_947_200;
@@ -267,6 +280,7 @@ fn convert(fixture: &Fixture, slip_ref: &str) -> AgentGrantFromSlipOutcome {
         ActSurface::ThisInstall,
         AgentGrantFromSlipRequest {
             slip_ref: slip_ref.to_owned(),
+            check_in_ref: None,
         },
     )
     .expect("the owner's conversion answers")
@@ -274,7 +288,7 @@ fn convert(fixture: &Fixture, slip_ref: &str) -> AgentGrantFromSlipOutcome {
 
 fn minted_grants(outcome: &AgentGrantFromSlipOutcome) -> &[AgentGrantMinted] {
     match outcome {
-        AgentGrantFromSlipOutcome::Minted { grants } => grants,
+        AgentGrantFromSlipOutcome::Minted { grants, .. } => grants,
         AgentGrantFromSlipOutcome::Unchanged { reason } => {
             panic!("actor=owner; expected the conversion to mint; seen unchanged reason={reason:?}")
         }
@@ -538,7 +552,10 @@ fn conversion_answers_unchanged_and_never_mints_twice() {
             &fixture.vault,
             &fixture.owner_proof,
             ActSurface::ThisInstall,
-            AgentGrantFromSlipRequest { slip_ref },
+            AgentGrantFromSlipRequest {
+                slip_ref,
+                check_in_ref: None,
+            },
         );
         assert!(
             refused.is_err(),
@@ -588,5 +605,106 @@ fn conversion_mints_one_grant_per_distinct_scope_of_the_holder() {
     assert!(
         left.is_empty(),
         "actor=owner; expected both of owen's rows to leave the list; seen {left:?}"
+    );
+}
+
+/// ROLES-CHECKIN 2k7: the owner's own conversion goes on his own proof, and
+/// the answer records that decision once, not on each Grant.
+#[test]
+fn the_owners_conversion_records_his_own_proof_once() {
+    let fixture = fixture();
+    let owen = fixture
+        .vault
+        .ensure_agent_principal("owen")
+        .expect("named agent principal");
+    let slip = host_paired_agent_slip(&fixture, owen, read_slip_scope(), 0x71);
+
+    let AgentGrantFromSlipOutcome::Minted { grants, check_in } =
+        convert(&fixture, &slip_ref(&slip))
+    else {
+        panic!("actor=owner; expected the conversion to mint");
+    };
+    assert_eq!(grants.len(), 1, "seen grants={grants:?}");
+    assert!(
+        grants.iter().all(|minted| minted.check_in.is_none()),
+        "actor=owner; expected the decision named once, on the answer; seen {grants:?}"
+    );
+    assert_eq!(
+        check_in,
+        Some(owner_decision(ActClass::GrantWiden, None, None)),
+        "actor=owner; expected the conversion to record his own proof"
+    );
+}
+
+/// ROLES-CHECKIN 2k7: the owner applies another asker's approved check-in
+/// for converting owen's slip. Applied to yuki's slip it mints nothing and
+/// stays unspent; applied to owen's, the writer that mints spends it, and
+/// the answer names it and its asker.
+#[test]
+fn the_owner_applies_an_approved_ask_to_convert_that_slip_only() {
+    let fixture = fixture();
+    let [owen, yuki] = ["owen", "yuki"].map(|name| {
+        fixture
+            .vault
+            .ensure_agent_principal(name)
+            .expect("named agent principal")
+    });
+    let owen_slip = host_paired_agent_slip(&fixture, owen, read_slip_scope(), 0x71);
+    let yuki_slip = host_paired_agent_slip(&fixture, yuki, read_slip_scope(), 0x72);
+    let (check_in, asker) = approved(
+        &fixture.vault,
+        fixture.owner,
+        &fixture.owner_proof,
+        FROM_SLIP_COMMAND,
+        ActClass::GrantWiden,
+        &agent_grant_from_slip_effect_digest(&owen_slip.claims().slip_id),
+    );
+    let apply = |slip: &VerifiedSlip| {
+        mint_agent_grants_from_slip_as(
+            &fixture.vault,
+            &fixture.owner_proof,
+            ActSurface::ThisInstall,
+            AgentGrantFromSlipRequest {
+                slip_ref: slip_ref(slip),
+                check_in_ref: Some(check_in.to_hex()),
+            },
+        )
+    };
+
+    let refused = apply(&yuki_slip);
+    assert!(
+        refused.is_err(),
+        "actor=owner; expected the approval for owen's slip to refuse yuki's; seen {refused:?}"
+    );
+    let rows = grants_naming(&fixture.vault, yuki);
+    assert!(
+        rows.is_empty(),
+        "actor=owner; expected no Grant for yuki; seen {rows:?}"
+    );
+    assert!(
+        !spent(&fixture.vault, &check_in),
+        "a refused conversion leaves the check-in unspent"
+    );
+
+    let AgentGrantFromSlipOutcome::Minted {
+        grants,
+        check_in: decision,
+    } = apply(&owen_slip).expect("the owner applies the approved ask")
+    else {
+        panic!("actor=owner; expected owen's conversion to mint");
+    };
+    assert_eq!(grants.len(), 1, "seen grants={grants:?}");
+    assert!(
+        spent(&fixture.vault, &check_in),
+        "the conversion spent the check-in"
+    );
+    assert_eq!(
+        decision,
+        Some(owner_decision(
+            ActClass::GrantWiden,
+            Some(check_in),
+            Some(asker)
+        )),
+        "actor=owner; expected the answer to name the check-in and its asker"
     );
 }
