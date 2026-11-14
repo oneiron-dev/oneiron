@@ -9,7 +9,10 @@
 //!   ended and an inquiry answers unavailable; a repeat ends nothing;
 //! - one action queues an erase ask per ended pact; the company files it,
 //!   it covers the copy, and nothing is erased; a repeat queues no second
-//!   ask; the company's own action asks the member's vault the same way.
+//!   ask; the company's own action asks the member's vault the same way;
+//! - the leave action's nonce holds only its whole-pact ask: a hand-picked
+//!   ask under it is refused, and the action then queues its own ask;
+//! - two leave actions at once queue one ask and both answer it.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test inquiry_leaving_holdings`.
 
@@ -398,6 +401,20 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// The leave action's nonce over `pact` ended at `terminal_epoch`, derived
+/// as the engine derives it (deletion/coop_delivery/leave.rs).
+fn leave_ask_nonce(pact: &[u8; 32], terminal_epoch: u64) -> [u8; 16] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron leave erase request nonce v1");
+    hasher.update(pact);
+    hasher.update(&terminal_epoch.to_le_bytes());
+    let mut nonce = [0u8; 16];
+    nonce.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+    nonce
+}
+
+/// How many leave actions run at once in the concurrency test.
+const AT_ONCE: usize = 8;
+
 #[test]
 fn the_company_lists_the_copied_answer_by_the_members_attribution() {
     let fx = leaving();
@@ -625,4 +642,141 @@ fn one_action_queues_an_erase_request_the_company_files_and_does_not_apply() {
         .expect("the company's one action");
     assert_eq!(company_asked.len(), 1);
     assert_eq!(company_asked[0].connection_id, hex(&pact));
+}
+
+#[test]
+fn a_hand_picked_ask_cannot_take_the_leave_actions_nonce() {
+    let fx = leaving();
+    fx.land_copy();
+    fx.leave();
+    let pact = fx.pact();
+    let now = fx.member.vault.now_recorded_at();
+    let fold = fx.member.vault.authority_fold().expect("authority fold");
+    let ended = fold.federation_pacts.get(&pact).expect("the ended pact");
+    let terminal_epoch = ended.terminal_epoch.unwrap_or(ended.pact_epoch);
+    let nonce = leave_ask_nonce(&pact, terminal_epoch);
+
+    // The owner signs an ask about one world by hand, under the nonce the
+    // leave action derives for this pact.
+    let hand_picked = fx
+        .member
+        .issuer
+        .sign_cooperative_deletion_request(
+            &fx.member.vault,
+            &pact,
+            vec![EntityId::now()],
+            terminal_epoch,
+            nonce,
+        )
+        .expect("the owner signs a hand-picked ask");
+    assert_eq!(hand_picked.len(), 1, "one page");
+    let refused = fx
+        .member
+        .vault
+        .queue_cooperative_deletion_request_as(
+            &fx.member.proof,
+            &hand_picked[0],
+            &courtesy_route(COMPANY_HOST),
+            now,
+        )
+        .expect_err("the leave action's nonce takes no other ask");
+    assert!(
+        refused.to_string().contains("leave action"),
+        "refused as the leave action's nonce: {refused}"
+    );
+    assert!(
+        fx.member
+            .vault
+            .cooperative_deletion_notices()
+            .expect("sent asks")
+            .is_empty(),
+        "nothing queued"
+    );
+
+    let asked = fx
+        .member
+        .vault
+        .send_leave_erase_requests(
+            &fx.member.proof,
+            &fx.member.issuer,
+            &fx.company.vault_id,
+            &courtesy_route(COMPANY_HOST),
+            now,
+        )
+        .expect("the member's one action");
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].request_id, hex(&nonce));
+    let delivery = fx
+        .member
+        .vault
+        .claim_cooperative_deletion_delivery("leave-test", now, Some(&fx.member.issuer))
+        .expect("claim")
+        .expect("the queued ask is due");
+    assert_eq!(
+        fx.company
+            .vault
+            .receive_cooperative_deletion_request(&delivery.bytes, now)
+            .expect("the company receives the ask"),
+        CooperativeDeletionIngress::Filed
+    );
+    let filed = fx
+        .company
+        .vault
+        .incoming_cooperative_deletions()
+        .expect("the company's filed asks");
+    assert_eq!(filed.len(), 1);
+    assert!(
+        filed[0].worlds.is_empty(),
+        "the action's ask is about all the pact delivered"
+    );
+    assert_eq!(filed[0].epoch_cutoff, terminal_epoch);
+}
+
+#[test]
+fn two_leave_actions_at_once_queue_one_ask() {
+    let fx = leaving();
+    fx.land_copy();
+    fx.leave();
+    let now = fx.member.vault.now_recorded_at();
+    let route = courtesy_route(COMPANY_HOST);
+    let (vault, proof, issuer, company) = (
+        &fx.member.vault,
+        &fx.member.proof,
+        &fx.member.issuer,
+        &fx.company.vault_id,
+    );
+    let start = std::sync::Barrier::new(AT_ONCE);
+    let answers: Vec<_> = std::thread::scope(|scope| {
+        let calls: Vec<_> = (0..AT_ONCE)
+            .map(|_| {
+                scope.spawn(|| {
+                    start.wait();
+                    vault.send_leave_erase_requests(proof, issuer, company, &route, now)
+                })
+            })
+            .collect();
+        calls
+            .into_iter()
+            .map(|call| call.join().expect("the call ran"))
+            .collect()
+    });
+    let mut ids: Vec<String> = answers
+        .into_iter()
+        .map(|answer| {
+            let notices = answer.expect("each call answers the one ask");
+            assert_eq!(notices.len(), 1, "one ask for the one ended pact");
+            notices[0].request_id.clone()
+        })
+        .collect();
+    ids.dedup();
+    assert_eq!(ids.len(), 1, "every call answers the same ask: {ids:?}");
+    assert_eq!(
+        fx.member
+            .vault
+            .cooperative_deletion_notices()
+            .expect("sent asks")
+            .len(),
+        1,
+        "one ask queued"
+    );
 }
