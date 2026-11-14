@@ -17,6 +17,12 @@ use crate::authority::AuthorityVaultId;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
 
+/// The member host's route an inquiry is sent to (INQUIRE-1 PR 5; Engine
+/// ruling INQUIRE-SHAPE Q2 = A): the company host POSTs the inquiry's wire
+/// bytes there under the edge's guest slip, with its own signature on each
+/// call, and the reply is the answer's wire bytes.
+pub const INQUIRY_PEER_PATH: &str = "/v1/federation/inquiry";
+
 /// Carries one inquiry to a member host and brings back its answer. The
 /// host's adapter attaches the slip and proves on each call that this host
 /// holds the key the slip is bound to; a test carries the inquiry in
