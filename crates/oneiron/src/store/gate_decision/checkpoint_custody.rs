@@ -831,3 +831,8 @@ pub(crate) fn arm_after_restore_destination_made(callback: impl FnOnce() + 'stat
 pub(crate) fn arm_before_live_custody_read(callback: impl FnOnce() + 'static) {
     BEFORE_LIVE_CUSTODY_READ.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests_held_swap;
+#[cfg(all(test, unix))]
+mod tests_live_mark;
