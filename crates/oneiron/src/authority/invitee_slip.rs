@@ -189,7 +189,7 @@ impl Vault {
     /// verified earlier and checked again (FIX 5952): `false` once its grant,
     /// invitation, delegation, contact naming or seat claim no longer stands,
     /// an error only when that cannot be judged.
-    pub(super) fn slip_refs_stand_in_txn(
+    pub(crate) fn slip_refs_stand_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         claims: &SlipClaims,

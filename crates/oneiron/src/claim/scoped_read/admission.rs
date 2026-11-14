@@ -283,6 +283,14 @@ impl<'a> ScopedRead<'a> {
         if now < claims.issued_at || now >= claims.expires_at {
             return Ok(false);
         }
+        // A grant-bound slip reads only while its grant stands in this
+        // snapshot, judged at each use as a fresh verification judges it
+        // (FIX OWN-DEVICE-GRANT-NOT-RECHECKED): withdrawing an own-device
+        // grant appends no slip revoke, so the fold alone still calls the
+        // slip live, and a key held past its verification would read on.
+        if claims.grant_ref.is_some() && !self.vault.slip_refs_stand_in_txn(txn, claims, now)? {
+            return Ok(false);
+        }
         if let Some(share) = &claims.share_ref {
             let share = EntityId::from_hex(share)?;
             let holder = EntityId::from_hex(&claims.holder_ref)?;
