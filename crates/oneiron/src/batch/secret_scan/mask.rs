@@ -179,6 +179,14 @@ pub(crate) fn seal_whole_part_in_txn(
         ))
 }
 
+/// The spans of `bytes` the door's text rules place, at their offsets in it.
+pub(super) fn rule_spans(bytes: &[u8]) -> Vec<Range<usize>> {
+    file_spans(bytes)
+        .into_iter()
+        .map(|(span, _)| span)
+        .collect()
+}
+
 /// Test door (`test_doors::lifted_text`): marks each place the stored `text`
 /// holds `value` as a lifted key under the text's hash, as
 /// [`carrier::mark_carrier_text_in_txn`] marks a key the door's rules place,

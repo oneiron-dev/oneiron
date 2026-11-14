@@ -271,6 +271,7 @@ impl Vault {
         // FIX 14976: no private drafter serves a locked vault; its plaintext
         // goes before the key does.
         self.drafter_serving_locking();
+        self.store.ruled_screen.clear();
         *self
             .world_keys
             .vault_key

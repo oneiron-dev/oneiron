@@ -75,6 +75,13 @@ crate::side_table::side_tables! {
     SECRET_FOUND_KEY: VaultMeta b"secret_found_key:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical]
         => crate::secret_custody::erase_found_key_actor_in_txn;
+    /// The ruled screen of one record (L6-03-RULED-SCREEN-LOCAL): the keyed digest of each value
+    /// the owner, or the person who wrote it, ruled no secret or kept as text there, under the
+    /// vault's screen key. Written by the ruling on its install, and on every other install from
+    /// the revoke the ruling carries. Holds no value and names no person. Key: id16 (the record,
+    /// or the file's ASSET).
+    SECRET_RULED_SCREEN: VaultMeta b"secret_ruled_screen:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// One reveal of a secret's value by its handle: the agent's ask, the owner's answer and the
     /// lease that delivered it, or the owner's own read with its reason (OF-560). Holds no value.
     /// Key: id16 (reveal id).

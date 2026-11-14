@@ -37,6 +37,7 @@ pub mod dreamer_stage_line;
 pub mod esign_commitments;
 pub mod fanout_admission;
 pub mod feeds;
+pub mod found_key_forget;
 pub mod free_time_cycle_writer;
 #[cfg(feature = "sync")]
 pub mod free_time_handoff;

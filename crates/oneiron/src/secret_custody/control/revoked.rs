@@ -15,21 +15,53 @@ use super::input::drop_inputs_for_in_txn;
 use super::pending_revoke::{can_carry_in_txn, defer_revoke_in_txn};
 use super::{CustodyKeptHere, SecretCustodyWork, enacted};
 use crate::authority::{
-    ActBy, ActSurface, CustodyChange, CustodyPermitSet, OwnerAct, OwnerWorkBody,
+    ActBy, ActSurface, CustodyChange, CustodyPermitSet, CustodyRevokeScreen, OwnerAct,
+    OwnerWorkBody,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result, SecretError};
+use crate::secret_custody::{hold_ruled_screen_in_txn, holds_ruled_screen_in_txn};
 use crate::secret_rotation::{RevokeCause, holds_erasable_value_in_txn, revoke_custody_in_txn};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 
+/// Who a carried custody revoke is by, where it was decided, and the screen
+/// a found-key ruling's revoke carries.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CustodyRevokeAct {
+    /// The live vault owner the door checked, or, `by` [`ActBy::Person`],
+    /// the live person who wrote the key and ruled it no secret, whose own
+    /// act it stays (Engine RULING L6-03-WRITER-CARRY).
+    pub(crate) actor: EntityId,
+    pub(crate) by: ActBy,
+    /// Where the request reached this install: audit only.
+    pub(crate) surface: ActSurface,
+    /// The ruling's value-free screen, for every machine that folds the
+    /// revoke to keep the ruled value as written in its record
+    /// (L6-03-RULED-SCREEN-LOCAL); `None` for every other revoke.
+    pub(crate) screen: Option<CustodyRevokeScreen>,
+}
+
+impl CustodyRevokeAct {
+    /// The owner `actor`'s own revoke, decided on `surface`, with no screen.
+    pub(crate) const fn owner(actor: EntityId, surface: ActSurface) -> Self {
+        Self {
+            actor,
+            by: ActBy::Owner,
+            surface,
+            screen: None,
+        }
+    }
+}
+
 impl Vault {
     /// Records the owner's revoke of the record `secret_ref` names for his
     /// other machines, in the revoke door's write transaction, after the
-    /// record and its leases were revoked here, for `actor`, the live vault
-    /// owner the door checked in it, or, `by` [`ActBy::Person`], the live
-    /// person who wrote the key and ruled it no secret, whose own act it
-    /// stays (Engine RULING L6-03-WRITER-CARRY): a custody revoke request
+    /// record and its leases were revoked here, as `act` names it: by its
+    /// actor, the live vault owner the door checked in it, or, `by`
+    /// [`ActBy::Person`], the live person who wrote the key and ruled it no
+    /// secret, whose own act it stays (Engine RULING L6-03-WRITER-CARRY),
+    /// with a ruling's screen when it has one: a custody revoke request
     /// naming this install, its carrier, as executor (CALLS
     /// CUSTODY_EXECUTOR), its enacted result, then the revoked transition
     /// bound to the request. Its `seen` is the secret's custody revision here
@@ -46,9 +78,7 @@ impl Vault {
     pub(crate) fn carry_custody_revoke_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        actor: EntityId,
-        by: ActBy,
-        surface: ActSurface,
+        act: CustodyRevokeAct,
         secret_ref: &str,
         at: u64,
     ) -> Result<SecretCustodyWork> {
@@ -58,32 +88,22 @@ impl Vault {
         if !custody_portable(&record) {
             return Ok(SecretCustodyWork::kept(CustodyKeptHere::DeviceLocal));
         }
-        match self.carry_revoke_for_in_txn(txn, actor, by, surface, id, &record, at)? {
+        match self.carry_revoke_for_in_txn(txn, act, id, &record, at)? {
             Some(work) => Ok(work),
-            None => defer_revoke_in_txn(
-                self,
-                txn,
-                id,
-                actor,
-                by,
-                surface,
-                record.rotation_generation,
-                at,
-            ),
+            None => defer_revoke_in_txn(self, txn, id, act, record.rotation_generation, at),
         }
     }
 
-    /// Carries `actor`'s revoke of portable record `id`, held here as
-    /// `record`, its value out, as the act `by` names (the owner's, or the
-    /// writer's own [`ActBy::Person`]): the request, its enacted result and
-    /// the revoked transition signed at `at`, in `txn`. `None`, with nothing
-    /// written, when this install cannot carry an act now.
+    /// Carries `act`'s revoke of portable record `id`, held here as
+    /// `record`, its value out, as the act its `by` names (the owner's, or
+    /// the writer's own [`ActBy::Person`]), with its screen: the request,
+    /// its enacted result and the revoked transition signed at `at`, in
+    /// `txn`. `None`, with nothing written, when this install cannot carry
+    /// an act now.
     pub(super) fn carry_revoke_for_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        actor: EntityId,
-        by: ActBy,
-        surface: ActSurface,
+        act: CustodyRevokeAct,
         id: EntityId,
         record: &SecretCustodyRecord,
         at: u64,
@@ -101,17 +121,18 @@ impl Vault {
             recipients: CustodyPermitSet::default(),
             pieces: None,
             authority: crate::authority::CustodyRequestAuthority::Install,
+            screen: act.screen,
         };
-        let act = OwnerAct {
-            owner: actor,
-            by,
-            surface,
+        let owner_act = OwnerAct {
+            owner: act.actor,
+            by: act.by,
+            surface: act.surface,
             act: work.kind().act(),
             target: id,
             seen,
             answer: None,
         };
-        let receipt = self.record_owner_work_with_act_in_txn(txn, act, work)?;
+        let receipt = self.record_owner_work_with_act_in_txn(txn, owner_act, work)?;
         let (Some(request), Some(executor)) = (receipt.request_entry(), receipt.executor) else {
             return Ok(Some(SecretCustodyWork::recorded(receipt)));
         };
@@ -136,8 +157,13 @@ impl Vault {
     /// an authority catch-up and on the served tick; the fold is its only
     /// input, so nothing is queued and a restart loses nothing. Returns how
     /// many ids it settled.
+    ///
+    /// Each screen an admitted revoke carries stands in its record's ruled
+    /// screen here too, whether or not this vault holds the record or the
+    /// custody id (L6-03-RULED-SCREEN-LOCAL): the owner's ruling, or the
+    /// writer's, holds on every machine the revoke reaches.
     pub(crate) fn settle_revoked_custody(&self) -> Result<usize> {
-        let due = {
+        let (due, screens) = {
             let txn = self.store.env.read_txn()?;
             let fold = self.authority_view_readonly_in_txn(&txn)?;
             let mut due = Vec::new();
@@ -148,12 +174,21 @@ impl Vault {
                     due.push(id);
                 }
             }
-            due
+            let mut screens = Vec::new();
+            for screen in fold.custody_revoke_screens() {
+                if !holds_ruled_screen_in_txn(&self.store, &txn, &screen)? {
+                    screens.push(screen);
+                }
+            }
+            (due, screens)
         };
-        if due.is_empty() {
+        if due.is_empty() && screens.is_empty() {
             return Ok(0);
         }
         self.with_write_txn(|txn| {
+            for screen in &screens {
+                hold_ruled_screen_in_txn(&self.store, txn, screen)?;
+            }
             let at = self.instant_in_txn(txn)?.secs();
             let mut settled = 0;
             for id in &due {
@@ -215,9 +250,7 @@ impl EraseOwnerAct<'_> {
         };
         let custody = vault.carry_custody_revoke_in_txn(
             txn,
-            actor,
-            ActBy::Owner,
-            self.surface,
+            CustodyRevokeAct::owner(actor, self.surface),
             secret_ref,
             at,
         )?;

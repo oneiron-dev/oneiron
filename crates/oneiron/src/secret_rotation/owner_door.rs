@@ -212,9 +212,7 @@ impl Vault {
             self.revoke_secret_in_txn(&mut wtxn, secret_ref, super::RevokeCause::Revoked, at)?;
         let custody = self.carry_custody_revoke_in_txn(
             &mut wtxn,
-            actor,
-            crate::authority::ActBy::Owner,
-            surface,
+            crate::secret_custody::CustodyRevokeAct::owner(actor, surface),
             secret_ref,
             at,
         )?;

@@ -177,6 +177,26 @@ impl AuthorityFold {
     pub(crate) fn custody_revoked_ids(&self) -> impl Iterator<Item = EntityId> + '_ {
         self.owner_work.revoked.iter().copied()
     }
+
+    /// The screen each admitted revoke a found-key ruling carried names
+    /// (L6-03-RULED-SCREEN-LOCAL): the record the ruled value sits in and
+    /// its keyed digest, for every machine to keep that value as written
+    /// there. Every admitted request is read, not only the secret's live
+    /// heads: a later revoke of the same secret supersedes an earlier one as
+    /// head, yet each ruling it carried stands.
+    pub(crate) fn custody_revoke_screens(&self) -> impl Iterator<Item = CustodyRevokeScreen> + '_ {
+        self.owner_work
+            .requests
+            .values()
+            .filter_map(|folded| match folded.request.work {
+                OwnerWorkBody::Custody {
+                    change: CustodyChange::Revoke,
+                    screen,
+                    ..
+                } => screen,
+                _ => None,
+            })
+    }
 }
 
 /// Whether a custody request has effect on `work`, the state at its parents:

@@ -220,10 +220,11 @@ pub use oneiron_authority::authority::{
     verify_authority_signature,
 };
 // The custody work body's own types (WILL L04 row 04), its permits in
-// pieces (FIX 11866) and its shared permit set (FIX 12281).
+// pieces (FIX 11866), its shared permit set (FIX 12281) and a found-key
+// ruling's screen (L6-03-RULED-SCREEN-LOCAL).
 pub use oneiron_authority::authority::{
     CustodyChange, CustodyPermitPiece, CustodyPermitPieces, CustodyPermitSet,
-    CustodyRecipientPermit, CustodyRecipientPermits, CustodyRequestAuthority,
+    CustodyRecipientPermit, CustodyRecipientPermits, CustodyRequestAuthority, CustodyRevokeScreen,
 };
 // The settings edit a holder's key work follows (FIX 4704).
 pub use oneiron_authority::authority::WorldPrivacyWorkBasis;

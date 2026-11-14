@@ -20,6 +20,7 @@ use crate::deletion::SafeDeleteReason;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
+use crate::secret_custody::CustodyRevokeAct;
 use crate::secret_custody::doors::{
     read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
 };
@@ -249,6 +250,7 @@ impl Vault {
             }
         };
         self.load_signing_for_revoke()?;
+        let screen_key = self.ruled_screen_key()?;
         let (settled, carried) = self.with_write_txn_grouped(|txn| {
             let (by, mut found) = Answerer::of_key_in_txn(self, owner, txn, handle)?;
             let actor = by.person();
@@ -278,6 +280,15 @@ impl Vault {
             if rec.status == SecretCustodyStatus::Revoked && value.is_empty() {
                 return Err(Error::Gate(GateError::InvalidConsentBound(erased)));
             }
+            // The ruling holds on all of the owner's machines
+            // (L6-03-RULED-SCREEN-LOCAL): its value-free screen stands here
+            // before the record is written again, and its revoke carries it.
+            let screen = screen_key
+                .as_deref()
+                .map(|key| super::ruled_screen::ruled_screen(key, found.record, &value));
+            if let Some(screen) = &screen {
+                super::hold_ruled_screen_in_txn(&self.store, txn, screen)?;
+            }
             let revoked = self.revoke_secret_in_txn(txn, &rec.name, cause, at)?;
             let decision =
                 append_ruling_in_txn(self, txn, actor, &found, &place, reason, revoked.receipt_id)?;
@@ -303,9 +314,14 @@ impl Vault {
             // install: audit only. Its revoke reaches the owner's other
             // machines as the act of the person who ruled: the owner's own,
             // or the writer's own, never relabelled as the owner's
-            // (L6-03-WRITER-CARRY).
-            let carried =
-                self.carry_custody_revoke_in_txn(txn, actor, by.act_by(), surface, &rec.name, at)?;
+            // (L6-03-WRITER-CARRY), with the ruling's screen.
+            let act = CustodyRevokeAct {
+                actor,
+                by: by.act_by(),
+                surface,
+                screen,
+            };
+            let carried = self.carry_custody_revoke_in_txn(txn, act, &rec.name, at)?;
             Ok((settled, carried))
         })?;
         self.mirror_custody_change(&carried);

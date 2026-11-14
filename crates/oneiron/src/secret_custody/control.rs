@@ -58,7 +58,7 @@ use self::input::{
 pub use self::manifest::CustodyManifestCheck;
 pub(crate) use self::pending_revoke::erase_pending_revoke_actor_in_txn;
 pub(crate) use self::revoked::{
-    EraseOwnerAct, custody_revoked_in_txn, drop_revoked_copies_for_store_in_txn,
+    CustodyRevokeAct, EraseOwnerAct, custody_revoked_in_txn, drop_revoked_copies_for_store_in_txn,
     drop_revoked_copies_in_txn, refuse_revoked_use_in_txn, settle_revoked_in_txn,
 };
 use super::carrier_custody::CUSTODY_CARRIER_LEAF_WIRE;
@@ -499,6 +499,7 @@ impl Vault {
             recipients: permits,
             pieces: None,
             authority: CustodyRequestAuthority::Install,
+            screen: None,
         };
         let receipt =
             self.record_owner_work_for_in_txn(txn, actor, surface, change.id, seen, work)?;
