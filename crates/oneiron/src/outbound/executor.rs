@@ -402,8 +402,8 @@ impl Vault {
                 }
                 None => {}
             }
-            match result.outcome {
-                OutboundDispatchOutcome::DeliveredToChannel => {
+            match SendSettlement::of(&result) {
+                SendSettlement::Went { deferred: false } => {
                     #[cfg(test)]
                     run_before_delivered_receipt_hook();
                     if reconcile_connector_task(
@@ -420,7 +420,7 @@ impl Vault {
                 }
                 // The provider accepted the send as a remote task (FIX 7960):
                 // the TASK completes, and the send is never repeated.
-                OutboundDispatchOutcome::Deferred => {
+                SendSettlement::Went { deferred: true } => {
                     reconcile_connector_task(
                         self,
                         &attempt,
@@ -434,35 +434,25 @@ impl Vault {
                 // FIX 7962: the ambient send the interrupt degraded to went,
                 // so the TASK's send is carried out; the interrupt is not
                 // re-armed.
-                OutboundDispatchOutcome::Degraded if ambient_alternative_went(&result) => {
+                SendSettlement::Held { degraded: true } if ambient_alternative_went(&result) => {
                     complete_degraded_connector_task(self, &attempt, &task, result.receipt, now)?;
                     executed = executed.saturating_add(1);
                 }
-                OutboundDispatchOutcome::Held | OutboundDispatchOutcome::Degraded => {
+                SendSettlement::Held { .. } => {
                     settle_held_connector_task(
                         self, &queue, &attempt, task_ref, &task, result, now,
                     )?;
                 }
-                OutboundDispatchOutcome::Suppressed | OutboundDispatchOutcome::LetGo => {
-                    if result.receipt.fields.get("suppression").map(String::as_str)
-                        == Some("dedupe")
-                    {
-                        // The common door already recorded the semantic dedupe.
-                        // Settle this TASK and queue without another send receipt.
-                        settle_suppressed_send(self, &attempt, task_ref, now)?;
-                        continue;
-                    }
+                // The common door already recorded the semantic dedupe.
+                // Settle this TASK and queue without another send receipt.
+                SendSettlement::Deduplicated => {
+                    settle_suppressed_send(self, &attempt, task_ref, now)?;
+                }
+                SendSettlement::Refused { stop } => {
                     // A refusal only stops this attempt. Whether an earlier
                     // attempt of the same logical send may have delivered is
                     // the ledger's to say, not the refusal's.
                     let reason = result.outcome.as_str();
-                    let stop = if result.gate_reason_codes.iter().any(|code| {
-                        code == crate::gate::GateReasonCode::DenyConnectorKeySuspended.as_str()
-                    }) {
-                        IntentEscalationReason::ConnectorRevoked
-                    } else {
-                        IntentEscalationReason::BindingInvalid
-                    };
                     if !reconcile_connector_task(
                         self,
                         &attempt,
@@ -485,7 +475,7 @@ impl Vault {
                         )?;
                     }
                 }
-                OutboundDispatchOutcome::Failed | OutboundDispatchOutcome::Ambiguous => {
+                SendSettlement::Failed { .. } => {
                     settle_failed_connector_task(
                         self,
                         &queue,
@@ -606,6 +596,57 @@ fn send_executor_stood_down(result: &OutboundDispatchResult) -> bool {
         .fields
         .get(SEND_EXECUTOR_FENCE_FIELD)
         .is_some_and(|value| value == SEND_EXECUTOR_STOOD_DOWN)
+}
+
+/// How a connector send settles by its dispatch result, read the same for
+/// the interrupt's own send and for its ambient alternative (FIX 22396). It
+/// matches every [`OutboundDispatchOutcome`] and each route matches every
+/// settlement, with no catch-all in either, so an outcome added later fails
+/// to compile until both routes say how it settles. Each route keeps its own
+/// settlement writes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SendSettlement {
+    /// Delivered to the channel, or accepted as a remote task (FIX 7960).
+    Went { deferred: bool },
+    /// Held, or degraded to an ambient alternative.
+    Held { degraded: bool },
+    /// Suppressed or let go as a semantic dedupe the common door already
+    /// recorded.
+    Deduplicated,
+    /// Suppressed or let go by a refusal: the send stops for `stop`.
+    Refused { stop: IntentEscalationReason },
+    /// Failed, or ambiguous; `stopped` when the intent's resolution says the
+    /// ledger stopped it.
+    Failed { stopped: bool },
+}
+
+impl SendSettlement {
+    fn of(result: &OutboundDispatchResult) -> Self {
+        match result.outcome {
+            OutboundDispatchOutcome::DeliveredToChannel => Self::Went { deferred: false },
+            OutboundDispatchOutcome::Deferred => Self::Went { deferred: true },
+            OutboundDispatchOutcome::Held => Self::Held { degraded: false },
+            OutboundDispatchOutcome::Degraded => Self::Held { degraded: true },
+            OutboundDispatchOutcome::Suppressed | OutboundDispatchOutcome::LetGo => {
+                if result.receipt.fields.get("suppression").map(String::as_str) == Some("dedupe") {
+                    Self::Deduplicated
+                } else if result.gate_reason_codes.iter().any(|code| {
+                    code == crate::gate::GateReasonCode::DenyConnectorKeySuspended.as_str()
+                }) {
+                    Self::Refused {
+                        stop: IntentEscalationReason::ConnectorRevoked,
+                    }
+                } else {
+                    Self::Refused {
+                        stop: IntentEscalationReason::BindingInvalid,
+                    }
+                }
+            }
+            OutboundDispatchOutcome::Failed | OutboundDispatchOutcome::Ambiguous => Self::Failed {
+                stopped: matches!(result.resolution, Some(IntentResolution::Stopped { .. })),
+            },
+        }
+    }
 }
 
 /// What a send's provider lookup found, as its dispatch receipt names it

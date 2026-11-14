@@ -14,8 +14,8 @@ use super::affect::{AffectRetrievalPolicy, affect_access_factor, stored_claim_va
 use super::filters::claim_status_gate_allows;
 use super::support::resolve_sigma_secs;
 use super::types::{
-    COSINE_GHOST_VECTOR_THRESHOLD, ClaimStatusGateCache, EntityMetadataCache, SECONDS_PER_DAY_F64,
-    ScoredEntity, TemporalSearchConfig, retrieval_recency_half_life_days_for_type,
+    ClaimStatusGateCache, EntityMetadataCache, SECONDS_PER_DAY_F64, ScoredEntity,
+    TemporalSearchConfig, retrieval_recency_half_life_days_for_type,
 };
 
 /// Whether this blend call is the one that applies read-side decay.
@@ -57,6 +57,8 @@ pub(super) struct RetrievalBlendConfig<'a> {
     /// Arousal stretch and sensitivity floor over the read-side factor;
     /// read only by the Apply blend.
     pub(super) affect: AffectRetrievalPolicy,
+    /// The call's [`RetrievalParams::cosine_ghost_vector_threshold`](super::RetrievalParams::cosine_ghost_vector_threshold).
+    pub(super) cosine_ghost_vector_threshold: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -117,7 +119,12 @@ pub(super) fn blended_retrieval_scores(
         channel_indexes.phonetic.as_slice(),
     );
     let cosine_ghosts = if config.gravity {
-        cosine_ghost_set(ranked_lists, channel_indexes.vector, channel_indexes.text)
+        cosine_ghost_set(
+            ranked_lists,
+            channel_indexes.vector,
+            channel_indexes.text,
+            config.cosine_ghost_vector_threshold,
+        )
     } else {
         HashSet::new()
     };
@@ -315,6 +322,7 @@ pub(super) fn cosine_ghost_set(
     ranked_lists: &[Vec<ScoredEntity>],
     vector_channel_index: Option<usize>,
     text_channel_index: Option<usize>,
+    threshold: f32,
 ) -> HashSet<EntityId> {
     let (Some(vector_channel_index), Some(text_channel_index)) =
         (vector_channel_index, text_channel_index)
@@ -331,9 +339,7 @@ pub(super) fn cosine_ghost_set(
     let text_ids: HashSet<EntityId> = text_results.iter().map(|scored| scored.id).collect();
     vector_results
         .iter()
-        .filter(|scored| {
-            scored.score > COSINE_GHOST_VECTOR_THRESHOLD && !text_ids.contains(&scored.id)
-        })
+        .filter(|scored| scored.score > threshold && !text_ids.contains(&scored.id))
         .map(|scored| scored.id)
         .collect()
 }
