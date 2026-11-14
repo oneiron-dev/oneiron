@@ -1170,7 +1170,7 @@
      "path": "src/agent_dispatch/dispatch.rs",
      "purpose": "Core dispatch admission: dispatchability, depth bound, enqueue, dedupe",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 20,
       "fn": 7,
       "struct": 1
      }
@@ -1301,7 +1301,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "mod": 2,
       "re-export": 31
      }
@@ -7192,7 +7192,7 @@
      "path": "src/autoreason_campaign/research.rs",
      "purpose": "The autoresearch loop's record over the existing run tree (OF-351)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 3,
       "re-export": 8,
@@ -7223,7 +7223,7 @@
      "path": "src/autoreason_campaign/research/budget.rs",
      "purpose": "The campaign's spend on the RSI line: reserve-then-spend, fail-closed",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 9,
       "fn": 6,
       "re-export": 1,
       "struct": 2
@@ -7253,20 +7253,20 @@
      "path": "src/autoreason_campaign/research/continuation.rs",
      "purpose": "The host continuation of a campaign bound with an execution spec (FIX 886, OF-351)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 4,
-      "fn": 3,
+      "fn": 5,
       "struct": 2
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/autoreason_campaign/research/continuation/pass.rs",
      "purpose": "One research continuation pass over its persisted tasks",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -7296,7 +7296,7 @@
      "path": "src/autoreason_campaign/research/promotion.rs",
      "purpose": "Promotion under the campaign's goal: an untouched held-out decision, one sealed confirmation on OF-578's…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 6,
       "fn": 5,
       "re-export": 1,
       "struct": 3
@@ -10466,7 +10466,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 20,
+      "fn": 21,
       "re-export": 1,
       "struct": 20
      }
@@ -37732,7 +37732,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 5,
-      "fn": 10,
+      "fn": 11,
       "struct": 2
      }
     },
@@ -37744,8 +37744,8 @@
      "purpose": "The proposal landing (ARCH-0078): machine work waits beside the live artifact, never on it, until a person…",
      "surface": {
       "const": 1,
-      "crate-vis": 14,
-      "fn": 10,
+      "crate-vis": 15,
+      "fn": 11,
       "re-export": 3
      }
     },
@@ -49124,7 +49124,7 @@
      "path": "src/llm/budget/mod.rs",
      "purpose": "Vault-local durable RSI budget ledger and resident share ledger (FIX 7767)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "mod": 1,
       "re-export": 2
      }
@@ -49151,7 +49151,7 @@
      "path": "src/llm/budget/rsi.rs",
      "purpose": "Vault-local durable reserve/settle/refund ledger for research-loop spend",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 6,
       "fn": 15,
       "re-export": 1
      }
@@ -50335,7 +50335,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "mod": 12,
       "re-export": 32
      }
@@ -91082,7 +91082,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 92,
+      "mod": 93,
       "re-export": 1
      }
     },
@@ -91218,6 +91218,16 @@
      "surface": {
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/research_continuation.rs",
+     "purpose": "Doors for `tests/verb_vault_research_advance.rs` (LEARNING-09): seed one research continuation at a chosen…",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -94646,7 +94656,7 @@
       "crate-vis": 1,
       "enum": 5,
       "fn": 17,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 21
      }
     },
@@ -94680,6 +94690,23 @@
       "enum": 1,
       "fn": 3,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ImageEditAnswer",
+      "ImageEditOp",
+      "ImageEditRequest",
+      "ImageExportFormat",
+      "ImageResizeFilter"
+     ],
+     "path": "src/verbs/host/image_edit.rs",
+     "purpose": "`vault.artifacts.image.edit`'s input and answer (L4-15; the Engine's ruling of 13 Nov 09:34, IO-SHAPE A)…",
+     "surface": {
+      "enum": 3,
+      "struct": 2
      }
     },
     {
@@ -94975,7 +95002,7 @@
       "enum": 1,
       "fn": 9,
       "mod": 1,
-      "re-export": 126,
+      "re-export": 127,
       "struct": 34
      }
     },
@@ -95364,12 +95391,31 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ResearchAdvanceView",
+      "ResearchAdvanceWire",
+      "ResearchContinuationView",
+      "ResearchRunningView",
+      "ResearchTaskView"
+     ],
+     "path": "src/verbs/research_advance.rs",
+     "purpose": "`vault.research.advance` (LEARNING-09; ruling LEARN-ROOT-09 = B): the owner, or an agent whose live owner…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ResearchRootReceipt",
       "ResearchRootWire"
      ],
      "path": "src/verbs/research_root.rs",
      "purpose": "`vault.research.create_root` (CAMPAIGN-ROOT): the owner, or an agent whose live owner Grant names it and…",
      "surface": {
+      "crate-vis": 1,
       "fn": 2,
       "struct": 2
      }
@@ -103515,6 +103561,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_vault_research_advance.rs",
+     "purpose": "`vault.research.advance` (LEARNING-09; ruling LEARN-ROOT-09 = B, ADVANCE-EXPOSURE = A) through the generated…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -103692,7 +103746,7 @@
     "autoreason_campaign": {
      "files": 25,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
@@ -105104,7 +105158,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 95,
+     "files": 96,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105216,7 +105270,7 @@
      "purpose": "Core's view of the verb table (untangle slice 5.0a, S5-2 = A, S50A-3 = A): the per-verb behaviour core's…"
     },
     "verbs": {
-     "files": 139,
+     "files": 141,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105279,10 +105333,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 273,
+   "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7536,
-   "test_files": 1261
+   "source_files": 7539,
+   "test_files": 1262
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -118319,9 +118373,9 @@
       "ImageOrgan"
      ],
      "path": "src/organ.rs",
-     "purpose": "The image organ: six verbs over the `image` body, schema 1",
+     "purpose": "The image organ: seven verbs over the `image` body, schema 1",
      "surface": {
-      "const": 6,
+      "const": 7,
       "struct": 1
      }
     },
@@ -118365,6 +118419,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/image_edit_landing.rs",
+     "purpose": "An image artifact's edit through the image organ's host adapter (`oneiron_organ_host::image`, L4-15): the…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
      "path": "tests/image_ops.rs",
      "purpose": "The image organ's first slice, checked against analytic pixels (ART-1 plan, \"Fixture and oracle gate\"): crop…",
      "surface": {}
@@ -118397,7 +118459,7 @@
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file",
-     "purpose": "The image organ: six verbs over the `image` body, schema 1"
+     "purpose": "The image organ: seven verbs over the `image` body, schema 1"
     },
     "render": {
      "files": 1,
@@ -118410,7 +118472,7 @@
    "over_bar": 1,
    "purpose": "The image organ (ART-1, the first slice): still PNG, JPEG and WebP images as a native `image` kind, behind…",
    "source_files": 8,
-   "test_files": 4
+   "test_files": 5
   },
   "oneiron-image-comfyui": {
    "files": [
@@ -122060,6 +122122,25 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ImageEdit",
+      "ImageEditRefusal",
+      "ImageEdited",
+      "ImageOp",
+      "ResizeFilter"
+     ],
+     "path": "src/image.rs",
+     "purpose": "The image organ's host adapter (ARCH-0078 `#image-built`, L4-15): an edit of an image artifact, crops and…",
+     "surface": {
+      "const": 11,
+      "enum": 3,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -122082,7 +122163,7 @@
      "purpose": "An organ's results onto the artifact family's one landing (ARCH-0078 \"A proposal landing\"): each export file…",
      "surface": {
       "crate-vis": 1,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -122092,7 +122173,7 @@
      "path": "src/lib.rs",
      "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
      "surface": {
-      "mod": 2,
+      "mod": 3,
       "re-export": 19
      }
     },
@@ -122531,6 +122612,7 @@
      "path": "src/wait.rs",
      "purpose": "Organ calls that wait for a node, held in the vault (OF-575, owner ruling MESH: \"one node is too weak, means…",
      "surface": {
+      "crate-vis": 2,
       "enum": 2,
       "fn": 2,
       "struct": 2
@@ -122634,6 +122716,13 @@
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "The organ host: install, call, unload, revoke"
+    },
+    "image": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The image organ's host adapter (ARCH-0078 `#image-built`, L4-15): an edit of an image artifact, crops and…"
     },
     "isolation": {
      "files": 1,
@@ -122750,7 +122839,7 @@
    },
    "over_bar": 2,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 50,
+   "source_files": 51,
    "test_files": 6
   },
   "oneiron-organ-protocol": {
@@ -130128,7 +130217,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 194
+      "crate-vis": 195
      }
     },
     {
@@ -130319,6 +130408,16 @@
      "purpose": "Typed identity-topology host doors under the caller's own owner proof",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/image_edit_doors.rs",
+     "purpose": "`vault.artifacts.image.edit` (L4-15; the Engine's rulings of 13 Nov 09:34 and 09:53): crops and resizes of…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -132788,7 +132887,7 @@
      "path": "src/api/openapi/endpoints_merge.rs",
      "purpose": "OpenAPI endpoint wiring and component merges",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 17
      }
     },
     {
@@ -132818,7 +132917,7 @@
      "path": "src/api/openapi/mod.rs",
      "purpose": "OpenAPI document assembly for the HTTP API",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -139317,7 +139416,7 @@
      "path": "src/handler/mesh.rs",
      "purpose": "The paired-machine mesh listener (OF-535)",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 29
      }
     },
     {
@@ -145655,13 +145754,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/organs.rs",
      "purpose": "The organs on the server's one host ([`SyncServer::organs`]): every organ an Active pack carries a build of…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -146360,7 +146459,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 16
+      "mod": 17
      }
     },
     {
@@ -146369,6 +146468,16 @@
      "notable": [],
      "path": "src/test_doors/native_board.rs",
      "purpose": "Doors for `tests/room_pins_native.rs` (ROOM-SCOPED-PINS P2c): what a pumped run's native board and self…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/openapi_document.rs",
+     "purpose": "Door for `tests/openapi_document_reuse.rs` and `tests/openapi_document_precompute.rs`: how many times this…",
      "surface": {
       "fn": 2
      }
@@ -147388,6 +147497,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/image_organ_route.rs",
+     "purpose": "`vault.artifacts.image.edit` through the real facade router (L4-15; the Engine's rulings of 13 Nov 09:34 and…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -147779,6 +147896,22 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/openapi_document_precompute.rs",
+     "purpose": "`serve` assembles the OpenAPI document on a thread of its own at start, so the first `GET /api/openapi.json`…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/openapi_document_reuse.rs",
+     "purpose": "`GET /api/openapi.json` serves the document its process assembled once: a second request reuses it and…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/openapi_off_record_rooms.rs",
      "purpose": "The participants' off-record room routes (`/v1/core/off-record`) are in the served OpenAPI document, with…",
      "surface": {}
@@ -147965,7 +148098,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 778,
+     "files": 779,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -148448,7 +148581,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 17,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -148513,8 +148646,8 @@
    },
    "over_bar": 62,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1869,
-   "test_files": 243
+   "source_files": 1871,
+   "test_files": 246
   },
   "oneiron-skill-attribution": {
    "files": [
