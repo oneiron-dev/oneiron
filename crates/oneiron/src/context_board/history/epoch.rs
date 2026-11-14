@@ -86,7 +86,7 @@ impl Vault {
             return Err(BoardHistoryError::Compacted(folded));
         };
         if let Some(disclosure) = disclosure
-            && !disclosure.admits(&self.store, &txn, &epoch.summary, ENTITY_TYPE_SUMMARY, None)?
+            && !disclosure.admits_in(self, &txn, &epoch.summary, ENTITY_TYPE_SUMMARY, None)?
         {
             return Err(BoardHistoryError::Compacted(folded));
         }

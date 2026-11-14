@@ -128,7 +128,7 @@ impl ScopedRead<'_> {
         } else {
             None
         };
-        disclosure.admits(&self.vault.store, rtxn, id, row.entity_type, claim.as_ref())
+        disclosure.admits_in(self.vault, rtxn, id, row.entity_type, claim.as_ref())
     }
 
     /// Attaches each hydrated MESSAGE or TURN result's grouped reaction lines
