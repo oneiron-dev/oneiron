@@ -13,10 +13,11 @@
 //! Every child the text depends on is read as the same actor under the
 //! relationship gate (private rows and relationship rows without a live grant
 //! are withheld) in the caller's snapshot, and pinned at its exact logical
-//! version, `AuthoredBy` targets, document frontier and stream finality. Later
-//! doors re-collect and compare against that pin; they never reinterpret
-//! frozen offsets against new text. An incomplete or unreadable child set
-//! refuses; a partial transcript is never assembled. A range cited over the
+//! version, `AuthoredBy` targets and the source speaker they name (FIX 15412),
+//! document frontier and stream finality. Later doors re-collect and compare
+//! against that pin; they never reinterpret frozen offsets against new text.
+//! An incomplete or unreadable child set refuses; a partial transcript is
+//! never assembled. A range cited over the
 //! text is persisted as the MESSAGE-local slices it covers ([`MessageSpan`]),
 //! so the citation names its words after the turn's other rows move.
 
@@ -29,7 +30,10 @@ use super::watermark::decode_turn_body;
 use crate::claim::{PointRead, ScopedRead, ScopedReadActorKey, ScopedReadResult};
 use crate::dreamer_runner::{DreamerTurnRole, dreamer_turn_role};
 use crate::edge::{EdgeActorClass, EdgeKind};
-use crate::gate::{WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER};
+use crate::gate::{
+    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_COUNTERPARTY, WITNESS_AUTHOR_SYSTEM,
+    WITNESS_AUTHOR_USER,
+};
 use crate::memory::StreamFinality;
 use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
@@ -37,6 +41,7 @@ use crate::write_envelope::WriteActor;
 use crate::{EntityId, Error, Result, Vault};
 use oneiron_model::llm::{Scope, ScopeResource};
 
+mod attribution;
 pub(super) mod compaction_span;
 pub(super) mod projection;
 
@@ -51,17 +56,29 @@ struct MessagePin {
     version: ScopeResource,
     /// Content hash of the logical body `version` names.
     revision: [u8; 32],
-    /// Exact `AuthoredBy` targets: one for a non-system row, none for system.
+    /// Exact `AuthoredBy` targets: one for a native user or companion row,
+    /// none for a system or counterparty one; for an imported row none, or
+    /// the PERSON its source names.
     authors: Vec<EntityId>,
+    /// The live canonical PERSON an imported row's source names as its
+    /// speaker, read from `authors`; none for a native row (FIX 15412).
+    speaker: Option<EntityId>,
+    /// The source attribution its slices pin: an imported row's raw
+    /// `AuthoredBy` target and `speaker`, as one hash; none for a native row
+    /// and for an import that names no one (FIX 15412).
+    attribution: Option<[u8; 32]>,
     frontier: Option<Vec<u8>>,
     /// Latest stream receipt `(finality, generation)`; `None` when atomic.
     stream: Option<(StreamFinality, EntityId)>,
 }
 
 /// One MESSAGE-local slice behind a range of a witnessed TURN's text: the
-/// child, the byte span within that child's own content, and the exact
-/// revision (plus the document frontier when the child has a document) it
-/// was read at.
+/// child, the byte span within that child's own content, the exact revision
+/// (plus the document frontier when the child has a document) it was read
+/// at, and, when the child carries a source attribution, the one it was
+/// read with: an imported child's raw `AuthoredBy` target and the source
+/// speaker it named, as one hash (FIX 15412). None means the child names no
+/// source speaker: a native child, or an import that names no one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MessageSpan {
     pub(crate) message: EntityId,
@@ -69,10 +86,13 @@ pub(crate) struct MessageSpan {
     pub(crate) end: usize,
     pub(crate) revision: [u8; 32],
     pub(crate) frontier: Option<Vec<u8>>,
+    pub(crate) attribution: Option<[u8; 32]>,
 }
 
 impl MessageSpan {
-    /// Folds every field into an identity hash.
+    /// Folds every field into an identity hash. A slice with no source
+    /// attribution folds exactly the bytes it folded before slices carried
+    /// one.
     pub(crate) fn hash_into(&self, hasher: &mut blake3::Hasher) {
         hasher.update(self.message.as_bytes());
         hasher.update(&(self.start as u64).to_be_bytes());
@@ -84,6 +104,10 @@ impl MessageSpan {
             hasher.update(frontier);
         } else {
             hasher.update(&[0]);
+        }
+        if let Some(attribution) = &self.attribution {
+            hasher.update(b"source_attribution");
+            hasher.update(attribution);
         }
     }
 }
@@ -123,6 +147,10 @@ impl TurnText {
                 part(author.as_bytes());
             }
             part(&[]);
+            if let Some(speaker) = &pin.speaker {
+                part(b"source_speaker");
+                part(speaker.as_bytes());
+            }
             part(pin.frontier.as_deref().unwrap_or_default());
             if let Some((finality, generation)) = &pin.stream {
                 part(
@@ -179,6 +207,23 @@ impl TurnText {
         self.messages.iter().flatten().map(|pin| pin.id)
     }
 
+    /// The one PERSON the source names as the speaker of every MESSAGE this
+    /// text projects, read apart from its role (FIX 15412). None for inline
+    /// text, a native turn, or one whose projected MESSAGEs name no one or
+    /// different people.
+    pub(crate) fn source_speaker(&self) -> Option<EntityId> {
+        let pins = self.messages.as_ref()?;
+        let mut speakers = self.layout.iter().map(|(id, _, _)| {
+            pins.iter()
+                .find(|pin| pin.id == *id)
+                .and_then(|pin| pin.speaker)
+        });
+        let first = speakers.next()??;
+        speakers
+            .all(|speaker| speaker == Some(first))
+            .then_some(first)
+    }
+
     /// The MESSAGE-local slices a byte range of this text covers (the whole
     /// text when `range` is `None`), each at the revision it was read at.
     /// Inline TURN text has none. A range covering no MESSAGE byte (only the
@@ -204,6 +249,7 @@ impl TurnText {
                 end: to - offset,
                 revision: pin.revision,
                 frontier: pin.frontier.clone(),
+                attribution: pin.attribution,
             });
         }
         if range.is_some() && spans.is_empty() {
@@ -452,6 +498,7 @@ fn collect_with(
     ) {
         DreamerTurnRole::User => WITNESS_AUTHOR_USER,
         DreamerTurnRole::Assistant => WITNESS_AUTHOR_COMPANION,
+        DreamerTurnRole::Counterparty => WITNESS_AUTHOR_COUNTERPARTY,
         // Branch admission refuses every other role; no child is its text.
         _ => {
             return Ok(TurnText {
@@ -514,18 +561,24 @@ fn collect_with(
         let out = |kind| peers(vault, txn, &id, EdgeDirection::Out, kind, None);
         let mut authors = out(EdgeKind::AuthoredBy)?;
         authors.sort_unstable();
-        // An imported row names its source's speaker in metadata and has no
-        // `AuthoredBy` edge: the importer did not write it.
-        let bylines = usize::from(message.author != WITNESS_AUTHOR_SYSTEM && !facts.imported);
         if entity_type != ENTITY_TYPE_MESSAGE
             || out(EdgeKind::PartOf)? != [*turn]
             || out(EdgeKind::BelongsTo)? != [*conversation]
-            || authors.len() != bylines
         {
             return Err(invalid_consolidation(
                 "witnessed turn message binding changed",
             ));
         }
+        // The importer did not write an imported row: its one edge, if any,
+        // names the PERSON its source says spoke (FIX 15412).
+        let speaker = attribution::admitted_speaker_in(
+            vault,
+            txn,
+            &message.author,
+            facts.imported,
+            &authors,
+        )?;
+        let attribution = attribution::attribution_hash(facts.imported, &authors, speaker);
         #[cfg(feature = "sync")]
         let frontier = crate::entity_doc::source_frontier_in_txn(&vault.store, txn, &id)?;
         #[cfg(not(feature = "sync"))]
@@ -540,14 +593,15 @@ fn collect_with(
             version: document_version(id, &body),
             revision: super::swarm_evidence_content_hash(&body),
             authors,
+            speaker,
+            attribution,
             frontier,
             stream,
         });
-        // The user side of an imported subagent or sidechain thread is the
-        // agent that delegated it, not the owner, and words whose speaker the
-        // source did not say may be an agent's: they never reach extraction,
-        // so they cannot become what the owner said.
-        if !(facts.imported && message.not_the_owners) {
+        // Imported words another speaker said are read only under their own
+        // label ([`MessageText::withheld_import_words`], shared with the
+        // retained-citation rebind): never what the owner said.
+        if !message.withheld_import_words(facts.imported) {
             children.push((id, message, words));
         }
     }
@@ -703,9 +757,43 @@ struct MessageText {
     content: String,
     is_visible: bool,
     order: u64,
-    /// An imported row that names a speaker other than the owner, or says
-    /// the speaker is unknown.
-    not_the_owners: bool,
+    /// What the row's import provenance says of its speaker.
+    import: ImportSpeaker,
+}
+
+/// What a MESSAGE's import provenance (`metadata.import`) says of who spoke.
+#[derive(Default)]
+struct ImportSpeaker {
+    /// `import.said_by`: who the source says spoke, named because it was not
+    /// the owner (`ingest::history`) or because the source names its sender
+    /// (`ingest::connector_conversation`).
+    said_by: Option<String>,
+    /// `import.source` is an owner history import's
+    /// ([`HistorySource`](crate::ingest::history::HistorySource)).
+    history: bool,
+}
+
+impl MessageText {
+    /// Whether an imported row's words stay out of extraction: the ONE test
+    /// the fresh projection and the retained-citation rebind share (FIX
+    /// 15412). A row whose provenance names no `said_by` speaks as its own
+    /// bucket: the owner's prompt, a counterparty or an external assistant.
+    /// A counterparty row whose source names its sender (a connector's
+    /// provider user) is that outside speaker's words, Imported evidence read
+    /// under its counterparty label. Two kinds stay out, so they never become
+    /// what the owner said: a history prompt the source says the owner did
+    /// not speak (the agent that delegated a subagent's task, or a speaker
+    /// it did not say, which may be an agent), and a user or companion row
+    /// that names another speaker. A native row is never withheld here.
+    fn withheld_import_words(&self, imported: bool) -> bool {
+        use crate::ingest::history::{DELEGATING_AGENT, UNKNOWN_SPEAKER};
+        let Some(said_by) = self.import.said_by.as_deref() else {
+            return false;
+        };
+        imported
+            && (self.author != WITNESS_AUTHOR_COUNTERPARTY
+                || (self.import.history && matches!(said_by, DELEGATING_AGENT | UNKNOWN_SPEAKER)))
+    }
 }
 
 /// Strict reader of the four fields the projection uses. The logical body of
@@ -720,7 +808,7 @@ fn decode_message(body: &[u8]) -> Option<MessageText> {
         return None;
     }
     let (mut author, mut content, mut is_visible, mut order) = (None, None, None, None);
-    let mut not_the_owners = false;
+    let mut import = ImportSpeaker::default();
     for (key, value) in entries {
         let fresh = match key.as_str() {
             Some("author") => author.replace(value.as_str()?.to_owned()).is_none(),
@@ -728,7 +816,7 @@ fn decode_message(body: &[u8]) -> Option<MessageText> {
             Some("is_visible") => is_visible.replace(value.as_bool()?).is_none(),
             Some("order") => order.replace(value.as_u64()?).is_none(),
             Some("metadata") => {
-                not_the_owners = said_by_another(&value);
+                import = import_speaker(&value);
                 true
             }
             _ => true,
@@ -742,14 +830,13 @@ fn decode_message(body: &[u8]) -> Option<MessageText> {
         content: content?,
         is_visible: is_visible?,
         order: order?,
-        not_the_owners,
+        import,
     })
 }
 
-/// Whether an imported MESSAGE's `import.said_by` names anyone but the owner
-/// (`ingest::history`): the agent that delegated a subagent's task, or a
-/// speaker the source did not say. The owner's words carry none.
-fn said_by_another(metadata: &rmpv::Value) -> bool {
+/// An imported MESSAGE's `import.said_by` (when a string) and whether its
+/// `import.source` is an owner history import's.
+fn import_speaker(metadata: &rmpv::Value) -> ImportSpeaker {
     let field = |value: &rmpv::Value, name: &str| match value {
         rmpv::Value::Map(entries) => entries
             .iter()
@@ -757,9 +844,18 @@ fn said_by_another(metadata: &rmpv::Value) -> bool {
             .map(|(_, value)| value.clone()),
         _ => None,
     };
-    field(metadata, "import")
-        .and_then(|import| field(&import, "said_by"))
-        .is_some_and(|said_by| said_by.is_str())
+    let Some(import) = field(metadata, "import") else {
+        return ImportSpeaker::default();
+    };
+    let text =
+        |name: &str| field(&import, name).and_then(|value| value.as_str().map(str::to_owned));
+    ImportSpeaker {
+        said_by: text("said_by"),
+        history: text("source")
+            .as_deref()
+            .and_then(crate::ingest::history::HistorySource::parse)
+            .is_some(),
+    }
 }
 
 fn peers(

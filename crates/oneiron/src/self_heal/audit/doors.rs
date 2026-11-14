@@ -10,41 +10,13 @@ use crate::learning::honesty::{SealAssessment, seal_assessment};
 use crate::{EntityId, Error, Result, Vault};
 
 use super::{
-    AttemptConfession, SEALS, SealCheckKind, SealCheckOutcome, SealCheckRequest,
-    SealedAttemptReceipt, audit_rate_in_txn, draw_audit,
+    AttemptConfession, SEALS, SealCheckRequest, SealedAttemptReceipt, audit_rate_in_txn, draw_audit,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SealAttemptRequest {
-    pub attempt: AttemptId,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SealPendingRequest {
-    #[serde(default)]
-    pub attempt: Option<AttemptId>,
-}
-
-/// Completion names a persisted request, never a caller-selected audit rate.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SealCompleteRequest {
-    pub attempt: AttemptId,
-    pub kind: SealCheckKind,
-    pub outcome: SealCheckOutcome,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SealRunRequest {}
-
-/// A normal Coach job; its existing leased runner performs the checks.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SealRunReceipt {
-    pub job: AttemptId,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::self_heal::audit::doors::{
+    SealAttemptRequest, SealCompleteRequest, SealPendingRequest, SealRunReceipt, SealRunRequest,
+};
 
 /// Findings move task quality; the confession reward remains separate.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
