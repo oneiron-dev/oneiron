@@ -271,6 +271,13 @@ async fn serve_with_handles(
     {
         sync_server = sync_server.with_organ_dir(super::owner_storage::organ_dir(&managed));
     }
+    // Bound before any worker starts, so every admitted call is attributed,
+    // to the payer of the tenancy the supervisor started this vault under
+    // (census L8-12, RULING HOSTED-BILLING-OWNER = A).
+    crate::managed::usage_meter::bind_tenancy_usage_metering(
+        &sync_server,
+        managed.vault_binding()?.tenancy(),
+    );
     // Model seats, the Dreamer and the decision ladder from `[models]`, as
     // plain serve attaches them: a vault that dials a home, by the owner's
     // `[device_sync]` or its enrolment, is a device of that home and never

@@ -7,8 +7,6 @@ use oneiron_vault_contract::tenancy::VaultTenancy;
 use crate::server::SyncServer;
 
 /// Binds `server`'s usage meter as a managed start under `tenancy` binds it.
-/// On this base a managed start binds none: `managed/state_serve/coordinator.rs`
-/// builds its server with no meter.
 pub fn bind_managed_usage_metering(server: &SyncServer, tenancy: VaultTenancy) {
-    let _ = (server, tenancy);
+    crate::managed::usage_meter::bind_tenancy_usage_metering(server, tenancy);
 }

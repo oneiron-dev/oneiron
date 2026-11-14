@@ -424,9 +424,11 @@ pub(crate) async fn build_server(
 /// recalls and embed fills are then recorded, and the nightly training-offer
 /// pass has a workload to read (FIX 11011, FIX 22868). Any other posture
 /// stays unmetered here: the cloud names a hosted vault's billing owner, and
-/// serve never invents one. A failed bind (a vault whose authority log has no
-/// genesis yet: no auth secret on a fresh vault) leaves this start unmetered,
-/// as every reader of the meter allows; the next start binds it again.
+/// serve never invents one; a managed start binds that one
+/// (`managed::usage_meter`, census L8-12). A failed bind (a vault whose
+/// authority log has no genesis yet: no auth secret on a fresh vault) leaves
+/// this start unmetered, as every reader of the meter allows; the next start
+/// binds it again.
 fn bind_vault_owner_usage_metering(server: &SyncServer) {
     if server.vault().privacy_posture() != oneiron::HostingPrivacyPosture::SelfHostLocal {
         return;
