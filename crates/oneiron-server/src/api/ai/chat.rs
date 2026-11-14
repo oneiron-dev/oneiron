@@ -64,6 +64,7 @@ use crate::ai_host::payer_funding::room_launch_funding;
 use crate::ai_host::{AiHandle, TurnGuard};
 use crate::api::credential_memory;
 use crate::api::facade::{self, DoorClaim, DoorInvocationClaim};
+use crate::api::openai_proxy::CallerClock;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::models::{RoleCall, RoleRefusal, Seat};
 use crate::server::SyncServer;
@@ -148,6 +149,18 @@ pub(super) struct ChatTurnRequest {
     /// with the whole message once it is saved.
     #[serde(default)]
     stream: bool,
+    /// The caller's own deadline (census L9-23; ARCH-0036 "the caller's own
+    /// deadline on role, raw and chat calls"): milliseconds from when the
+    /// door took the turn up, the memory proxy's field (FIX 8189) on its one
+    /// clock ([`CallerClock`], RULING CALLER-DEADLINE-WIRE = B), never
+    /// renewed. The answer's model call waits for a resting offer only
+    /// within what is left, so a turn whose every usable offer rests past it
+    /// answers `rate_limited` at once with the earliest reset, and a reply
+    /// still going when it runs out answers `timeout`. Omitted, the call
+    /// keeps the vault's wait row. Absent from the invocation body when
+    /// omitted, so a turn's invocation names what it always named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    deadline_ms: Option<u64>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -199,6 +212,16 @@ enum ChatLine {
     Error {
         code: &'static str,
         message: String,
+    },
+    /// The last line of a turn its model call ended with that call's own
+    /// code (census L9-23): `rate_limited` or `timeout`, with the typed
+    /// `llm` error beside it, which says when a rate-limited offer is back,
+    /// as the raw door's last line does. An `error` line on the wire.
+    #[serde(rename = "error")]
+    ModelError {
+        code: &'static str,
+        message: String,
+        llm: oneiron::LlmError,
     },
 }
 
@@ -683,6 +706,12 @@ pub(crate) struct Answer {
     /// them (FIX 3416): a fresh collector per reply, Continue's and Retry's
     /// too, never an earlier reply's.
     pub(crate) assertions: ReplyAssertionCollector,
+    /// The caller's own deadline (census L9-23): the answer's model call
+    /// waits for a resting offer only within what is left of it, and a reply
+    /// still going when it runs out answers `timeout`. The default clock
+    /// names none: the call keeps the vault's wait row, as a turn action's
+    /// does.
+    pub(crate) clock: CallerClock,
 }
 
 /// Where a reply is written.
@@ -716,6 +745,10 @@ pub(crate) enum AnswerRefused {
     WaitedOut(String),
     Engine(String),
     NotAdmitted(String),
+    /// The model call refused as it opened, with a code of its own: every
+    /// offer it may use rests past its bound, or its caller's deadline ran
+    /// out (census L9-23).
+    Model(model_call::ModelFailure),
 }
 
 /// A reply being generated.
@@ -741,6 +774,9 @@ pub(crate) struct AnswerOutcome {
     /// Whether a reused prefix's captured rung gave way to the call a turn
     /// action would always have sent (`today`), which answered instead.
     pub(crate) fell_back: bool,
+    /// The model call's own failure, when it ended the reply with a code of
+    /// its own (census L9-23): the turn answers with that code.
+    pub(crate) model_failure: Option<model_call::ModelFailure>,
 }
 
 /// What a saved reply's craft receipt names (OF-490).
@@ -860,4 +896,10 @@ struct Producer {
     /// The reply's host-side records, stamped on its terminal.
     assertions: ReplyAssertionCollector,
     model_call: model_call::Capture,
+    /// The caller's clock: a reply still going when it runs out is cut
+    /// there (census L9-23).
+    clock: CallerClock,
+    /// Where the producer leaves the model call's own failure, for the
+    /// turn's answer.
+    model_failure: Arc<Mutex<Option<model_call::ModelFailure>>>,
 }

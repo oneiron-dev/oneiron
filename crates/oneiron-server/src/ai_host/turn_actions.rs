@@ -518,6 +518,9 @@ async fn act(
             // Continue and Retry gather evidence of their own, never the
             // earlier reply's (FIX 3416).
             assertions: ReplyAssertionCollector::default(),
+            // A turn action names no deadline: its call keeps the vault's
+            // wait row.
+            clock: Default::default(),
         },
         sources,
         today_sources,
@@ -526,6 +529,7 @@ async fn act(
         AnswerRefused::WaitedOut(reason)
         | AnswerRefused::Engine(reason)
         | AnswerRefused::NotAdmitted(reason) => reason,
+        AnswerRefused::Model(failure) => failure.reason(),
     })?;
     let answering = after_turn(Arc::clone(vault), generating, answering);
     // FIX 7145: the answer's context records, kept once it is handed on.

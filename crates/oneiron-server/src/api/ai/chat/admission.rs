@@ -3,15 +3,15 @@
 //! Chat types and shared helpers stay in the parent; start_turn keeps its original chat-only scope.
 
 use super::{
-    Answer, AnswerOpen, AnswerRefused, Arc, ChatTurnRequest, CoreAuth, CoreScope, EntityId,
-    HOST_TURN_GENERATE, HistoryRole, IntoResponse, Json, JsonRejection, LlmMessage, LlmMessageRole,
-    MessageWriteMode, Refused, ReplyAssertionCollector, RoleRefusal, Started, StatusCode,
-    StreamCadence, StreamSyncVisibility, SyncServer, TurnCredential, Value, VerbCall, WITNESS_ROW,
-    WakeTurnSubject, WitnessAuthor, WriteActor, after_turn, assistant, begin_sourced_answer,
-    compaction, credential_memory, hook_ask, hook_stopped, invocation, keepalive_every,
-    mark_history_end, principal, recall, refused, resolve_entity_ref, room_launch_funding,
-    segments, sitting, sources, text_message, turn_generate_pre, verb_hook_boundary,
-    witness_through_row, witness_turn,
+    Answer, AnswerOpen, AnswerRefused, Arc, CallerClock, ChatTurnRequest, CoreAuth, CoreScope,
+    EntityId, HOST_TURN_GENERATE, HistoryRole, IntoResponse, Json, JsonRejection, LlmMessage,
+    LlmMessageRole, MessageWriteMode, Refused, ReplyAssertionCollector, RoleRefusal, Started,
+    StatusCode, StreamCadence, StreamSyncVisibility, SyncServer, TurnCredential, Value, VerbCall,
+    WITNESS_ROW, WakeTurnSubject, WitnessAuthor, WriteActor, after_turn, assistant,
+    begin_sourced_answer, compaction, credential_memory, hook_ask, hook_stopped, invocation,
+    keepalive_every, mark_history_end, principal, recall, refused, resolve_entity_ref,
+    room_launch_funding, segments, sitting, sources, text_message, turn_generate_pre,
+    verb_hook_boundary, witness_through_row, witness_turn,
 };
 use crate::api::ai::room_place::{reply_place, stamp_reply};
 
@@ -24,6 +24,9 @@ pub(in crate::api::ai::chat) async fn start_turn(
     payload: Result<Json<ChatTurnRequest>, JsonRejection>,
     mark: oneiron::conversation::OutputMark,
 ) -> Result<Started, Refused> {
+    // The turn's `deadline_ms` counts from here, before anything is read
+    // (census L9-23).
+    let arrived = tokio::time::Instant::now();
     // A turn reads the agent and the conversation, and writes both turns.
     for scope in [CoreScope::Read, CoreScope::Write] {
         auth.require(scope)
@@ -627,6 +630,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
             today: None,
             craft,
             assertions: ReplyAssertionCollector::default(),
+            clock: CallerClock::starting(arrived, request.deadline_ms),
         },
         sources.rows(),
     )
@@ -638,6 +642,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
         AnswerRefused::NotAdmitted(reason) => {
             refused(StatusCode::PAYMENT_REQUIRED, "turn_not_admitted", reason)
         }
+        AnswerRefused::Model(failure) => Box::new(failure.refusal()),
     })?;
     let answering = after_turn(hooks_vault, generating, answering);
     // FIX 6921: the answer's context records, kept once it is handed on.
