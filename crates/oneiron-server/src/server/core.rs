@@ -196,6 +196,10 @@ pub struct SyncServer {
     /// How this process's browser stands (FIX 7670), which each browser
     /// guest start moves and `Ping` and the owner's status read.
     pub(crate) browser_readiness: crate::config::browser::BrowserReadinessCell,
+    /// How this process stands now (L8-11): ready until the event-loop
+    /// watchdog serve starts moves it; `/api/health`, `Ping` and the intake
+    /// gate read it.
+    pub(crate) process_readiness: Arc<crate::process_readiness::ProcessReadiness>,
     /// The `[desktop]` guest each code run starts for its own desktop verbs.
     /// `None` answers every desktop call `browser_unbound`.
     pub(crate) desktop_guest: Option<oneiron_browser::DesktopGuest>,
@@ -356,7 +360,8 @@ const _: fn(&SyncServer) = |server| {
         meeting_imports, model_streams, export_transfers, pairing_backoff, mcp_registry,
         mcp_code_host, mcp_code_run_continuations, reader_runner, live_runs, secret_destinations,
         seat_helpers, model_budgets, cloud_registration, connector_elicitations, browser_guest,
-        browser_readiness, desktop_guest, artifact_backend, desktop_seats, browser_seats,
+        browser_readiness, process_readiness, desktop_guest, artifact_backend, desktop_seats,
+        browser_seats,
         web_fetcher, memories_cursors, self_brief_sessions, deep_retrieval, model_slots,
         trained_embedders, model_setup, model_setup_runtime, gpu_pool, llm, decision_read,
         decision_reads, decisions, hook_runtime,
@@ -476,6 +481,22 @@ impl SyncServer {
     /// each browser guest start, and read as it stands.
     pub(crate) fn browser_readiness(&self) -> &crate::config::browser::BrowserReadinessCell {
         &self.browser_readiness
+    }
+
+    /// This process's readiness, as its event-loop watchdog last moved it.
+    pub(crate) fn process_readiness(&self) -> &Arc<crate::process_readiness::ProcessReadiness> {
+        &self.process_readiness
+    }
+
+    /// Starts this process's event-loop watchdog (L8-11) on `settings`: a
+    /// probe task on the calling Tokio runtime, which must be the one that
+    /// serves the app, and a hang check on a thread of its own. It runs until
+    /// the returned guard drops.
+    pub fn start_process_watchdog(
+        &self,
+        settings: crate::process_readiness::ProcessHealthSettings,
+    ) -> crate::process_readiness::ProcessWatchdog {
+        crate::process_readiness::ProcessWatchdog::start(&self.process_readiness, settings)
     }
 
     /// Installs the host-owned published backend execution profile.

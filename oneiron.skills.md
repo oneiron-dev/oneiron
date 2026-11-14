@@ -1680,6 +1680,7 @@ Codes the server's HTTP error type defines:
 - `OWNER_BINDING_REQUIRED`
 - `COURTESY_DELETE_UNAUTHENTICATED`
 - `CONTROL_SCOPE_DENIED`
+- `PROCESS_NOT_READY` (503): this vault process's event loop is hung (`draining`) or recovering from a hang (`recovering`); it takes no new work, and work it admitted runs to its end. Retry after the `Retry-After` wait (`details.retryAfterSecs`).
 - `4001`
 - `4002`
 - `4003`

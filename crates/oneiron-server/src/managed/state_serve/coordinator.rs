@@ -775,6 +775,10 @@ async fn serve_with_handles(
     // `quiescent: true` is a claim about a gate that nothing reaches. Each
     // socket upgraded on it or the mesh sees the shutdown, and is waited
     // for with the calls it admitted before any worker stops (FIX 4757).
+    // The event-loop watchdog (L8-11): a hung or recovering vault takes no
+    // new work, and `Ping` tells the supervisor. It runs until serve returns.
+    let _process_watchdog = sync_server
+        .start_process_watchdog(crate::process_readiness::ProcessHealthSettings::managed());
     let (app, upgrades) = crate::embedded::upgrade_lifetime(
         build_managed_app(Arc::clone(&sync_server), Arc::clone(&state)).layer(cors),
         shutdown.0.subscribe(),

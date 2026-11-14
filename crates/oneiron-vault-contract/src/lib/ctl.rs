@@ -34,6 +34,12 @@ mod deletion;
 
 pub use self::deletion::PingDeletion;
 
+/// How a managed vault's process stands now, as every `Ping` reports it
+/// (L8-11).
+mod process_readiness;
+
+pub use self::process_readiness::{ProcessReadinessReport, ProcessState};
+
 /// Wire spelling is pinned to the engine's `slim::ShedCause`; the contract
 /// crate must not depend on `oneiron`, so the duplication is deliberate.
 /// The vault-side adapter maps with a total function, never a parse.
@@ -551,6 +557,11 @@ pub enum CtlResponse {
     /// names; one that is not 32 lowercase hex reads as `None`. Each rides v3
     /// with a build floor: a vault built before it sends none, which reads as
     /// unknown, never as revision 1, and so does a value that is not a u32.
+    /// `process` is how the vault's process stands now
+    /// ([`ProcessReadinessReport`], L8-11): its event-loop watchdog's state
+    /// and last lag, beside `readiness`, which never moves. Build floor: a
+    /// vault built before it sends none, and a block that does not read is
+    /// `None` too, never a failed `Ping`.
     Ping {
         ok: bool,
         vault: String,
@@ -618,6 +629,13 @@ pub enum CtlResponse {
             deserialize_with = "deletion::observed"
         )]
         deletion: Option<PingDeletion>,
+        /// Absent: an engine built before the process watchdog (L8-11).
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "process_readiness::observed"
+        )]
+        process: Option<ProcessReadinessReport>,
     },
     Ok {
         ok: bool,

@@ -91,6 +91,7 @@ mod oauth_relay;
 mod oneironer;
 mod owner;
 mod pipe_proof;
+pub mod process_readiness;
 pub mod projection;
 mod protocol;
 pub mod replay_judge;
@@ -197,6 +198,13 @@ pub fn build_app_for_position(
         .merge(web_client::routes(web_client::EndpointDescriptor::engine(
             position, mode,
         )))
+        // A process whose watchdog sheds intake takes no new work while its
+        // event loop is hung or recovering (L8-11); ahead of auth, as it reads
+        // no vault.
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(server.process_readiness()),
+            process_readiness::refuse_new_work_while_not_ready,
+        ))
         // Outermost, so a hatch server's off-device caller reaches no route.
         .layer(axum::middleware::from_fn_with_state(
             server,

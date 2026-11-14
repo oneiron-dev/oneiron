@@ -376,6 +376,7 @@ impl SyncServer {
             connector_elicitations: Arc::default(),
             browser_guest: None,
             browser_readiness: Default::default(),
+            process_readiness: Default::default(),
             desktop_guest: None,
             artifact_backend: None,
             desktop_seats: Arc::default(),

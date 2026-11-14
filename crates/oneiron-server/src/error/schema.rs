@@ -137,6 +137,14 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
             required.push("retryAfterSecs");
             properties.insert("retryAfterSecs".to_owned(), json!({ "type": "integer" }));
         }
+        ErrorCode::ProcessNotReady => {
+            required.extend(["readiness", "retryAfterSecs"]);
+            properties.insert(
+                "readiness".to_owned(),
+                json!({ "type": "string", "enum": ["draining", "recovering"] }),
+            );
+            properties.insert("retryAfterSecs".to_owned(), json!({ "type": "integer" }));
+        }
         ErrorCode::MirrorNotReady => {
             optional_string(&mut properties, "mirror");
         }

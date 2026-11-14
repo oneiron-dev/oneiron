@@ -100,10 +100,10 @@ pub use self::ctl::{
     BrowserReadiness, BrowserTier, BrowserUnavailableReason, CtlBound, CtlBoundKind, CtlBoundPhase,
     CtlBoundResource, CtlRefusal, CtlRefusalKind, CtlRequest, CtlResponse, CtlResumeOn,
     FacilityNotice, FacilityReason, GUEST_RUNTIME_FACT_ARG, GuestRuntimeFact, LegalHoldsNotProven,
-    LegalHoldsWire, ManagedFacility, ManagedReadiness, PingDeletion, REAP_PAUSE_REFUSAL,
-    ShedBlockerWire, ShedCause, ShedStatus, TRAINING_PURGE_RECEIPT_PENDING,
-    TRAINING_PURGE_REJECTED, TRAINING_PURGE_UNSENT, TrainingPurgeState, TrainingPurgeStateWire,
-    VmOutboxCompanionState,
+    LegalHoldsWire, ManagedFacility, ManagedReadiness, PingDeletion, ProcessReadinessReport,
+    ProcessState, REAP_PAUSE_REFUSAL, ShedBlockerWire, ShedCause, ShedStatus,
+    TRAINING_PURGE_RECEIPT_PENDING, TRAINING_PURGE_REJECTED, TRAINING_PURGE_UNSENT,
+    TrainingPurgeState, TrainingPurgeStateWire, VmOutboxCompanionState,
 };
 pub use self::http_headers::{BINDING_HEADER, MCP_CREDENTIAL_HEADER};
 pub use self::ledger::{LedgerAck, LedgerUpdate, ManagedTrainingSetting};

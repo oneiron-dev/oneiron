@@ -376,7 +376,8 @@ pub(crate) fn vault_artifact_app(server: Arc<SyncServer>) -> Router {
                     "dreamer_reason": "no_model_configured",
                     "compaction": "off",
                     "compaction_reason": "no_model_configured"
-                }
+                },
+                "process_readiness": "ready"
             })
         )
     )
@@ -391,6 +392,7 @@ async fn health(State(server): State<Arc<SyncServer>>) -> impl IntoResponse {
         rate_limit: rate_limit_status(&server.config),
         runtime: runtime_health_status_for_config(&server.config),
         ai: server.ai.status().health(),
+        process_readiness: server.process_readiness().state(),
         artifact_port: server.artifact_port(),
     })
 }
@@ -421,6 +423,13 @@ struct HealthResponse {
     runtime: RuntimeHealthStatus,
     /// Background AI state, redacted: states and reasons, never model names.
     ai: crate::ai_host::AiHealth,
+    /// How this process stands now (L8-11): `ready`; `degraded`, its event
+    /// loop lags; `draining`, its event loop is hung; or `recovering`, the
+    /// hang ended and a stabilization window runs. A managed vault takes no
+    /// new work while draining or recovering (`PROCESS_NOT_READY`); this
+    /// route always answers. States only, never figures.
+    #[schema(value_type = String, example = "ready")]
+    process_readiness: oneiron_vault_contract::ProcessState,
     /// The port on this host whose origin serves `/a/` with nothing else
     /// beside it. Open artifacts there: on the API's origin a code bundle is
     /// sandboxed, and its module scripts and fonts do not load. Absent where
