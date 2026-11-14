@@ -20,6 +20,9 @@
 //!   with basis `own_item`.
 //! - A Steward holds no content write here, so it shares nothing, as on
 //!   main: refused at the write check before the judge, with no check-in.
+//! - A Member's share with a person the thread already names widens
+//!   nothing: it answers at once, unjudged and unchanged, as on main, and a
+//!   `check_in_ref` on it is refused as a bad request.
 //!
 //! The vault is rooted, and its human binding is the owner's, so each other
 //! person shares while the fixture binds the host key to them, then the key
@@ -400,4 +403,34 @@ fn an_owners_share_naming_a_check_in_is_refused_and_shares_nothing() {
         Some(decision("owner", None, "own_proof", None)),
         "the Owner's share records their own proof"
     );
+}
+
+#[test]
+fn a_members_share_with_a_person_the_thread_names_is_not_judged() {
+    let org = Org::new();
+    let (row, _source, _thread) =
+        thread_bound_row(&org.vault, org.owner, org.vault.now_recorded_at())
+            .expect("an Owner's thread");
+    let record = row.to_hex();
+    let newcomer = EntityId::now();
+    person(&org.vault, newcomer);
+    for target in [org.member, newcomer] {
+        org.share(org.owner, &record, &target.to_hex(), None)
+            .expect("the Owner shares");
+    }
+
+    let receipt = org
+        .share(org.member, &record, &newcomer.to_hex(), None)
+        .expect("a share that widens nothing answers at once");
+    assert!(receipt.shared, "the newcomer still reads");
+    assert!(!receipt.changed, "the repeat changed nothing");
+    assert_eq!(
+        receipt.check_in, None,
+        "a share that widens nothing is not judged"
+    );
+    let named = EntityId::now().to_hex();
+    let refused = org
+        .share(org.member, &record, &newcomer.to_hex(), Some(&named))
+        .expect_err("a share that widens nothing names no check-in");
+    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST, "{refused:?}");
 }
