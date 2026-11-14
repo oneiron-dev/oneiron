@@ -11,6 +11,8 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
+use ed25519_dalek::Signer;
+use oneiron::authority::{HostSlipIssuer, SlipCaveat, VerifiedSlip};
 use oneiron::blob_artifact::esign::{
     DocumentKind, EsignAuditActor, EsignCapability, EsignCreateRequest, EsignDocument, EsignItem,
     EsignQrCapability, EsignQrOutcome, EsignQrSigner, EsignRecipient, EsignSealError,
@@ -109,6 +111,8 @@ struct Sealed {
     vault: Vault,
     clock: Arc<ManualClock>,
     owner: AuthenticatedOwner,
+    /// The host issuer the vault is rooted under.
+    issuer: HostSlipIssuer,
     id: EntityId,
     /// The approver's signing capability.
     signing: EsignCapability,
@@ -265,6 +269,7 @@ fn sealed_with(draft: Draft) -> TestResult<Sealed> {
         vault,
         clock,
         owner,
+        issuer,
         id,
         signing,
         printed,
@@ -566,5 +571,112 @@ fn only_the_owner_drafts_a_document_with_its_qr_pdf_download_on() -> TestResult 
     let (_, token) = printed_capability(&default_off.printed)?;
     assert!(!default_off.vault.esign_qr_page(&token)?.pdf_download);
     assert!(default_off.vault.esign_qr_sealed_pdf(&token, 0).is_err());
+    Ok(())
+}
+
+/// A fresh slip id from two UUIDv7 stamps.
+fn slip_id() -> [u8; 32] {
+    let mut id = [0_u8; 32];
+    id[..16].copy_from_slice(EntityId::now().as_bytes());
+    id[16..].copy_from_slice(EntityId::now().as_bytes());
+    id
+}
+
+/// A fresh one-version PDF on `sealed`'s vault, as `person` uploaded it: a
+/// new draft pins its version 1, which the seal moved past on `sealed.id`.
+fn fresh_artifact(sealed: &Sealed, person: EntityId) -> TestResult<EntityId> {
+    let at = TimeRange {
+        start: sealed.now,
+        end: sealed.now,
+    };
+    let id = EntityId::now();
+    sealed.vault.put_blob_artifact(
+        &id,
+        &oneiron::blob_artifact::BlobArtifactBody::new("agreement.pdf", "application/pdf"),
+        at,
+        sealed.now,
+    )?;
+    sealed.vault.append_blob_artifact_version(
+        &id,
+        original_pdf(),
+        &oneiron::blob_artifact::BlobVersionProvenance::UserUpload,
+        oneiron::write_envelope::WriteActor::new(person, EdgeActorClass::Human),
+        at,
+        sealed.now,
+    )?;
+    Ok(id)
+}
+
+/// `vault.esign.create` with the QR PDF download on, as `person` presenting
+/// `proof`, for a new document on `artifact`.
+fn draft_with_qr_pdf_download(
+    sealed: &Sealed,
+    person: EntityId,
+    proof: &VerifiedSlip,
+    document: EntityId,
+    artifact: EntityId,
+) -> oneiron_contracts::memory::MemoryResult<()> {
+    sealed
+        .vault
+        .memory(person, EdgeActorClass::Human)
+        .with_read_proof(proof)
+        .esign_create(&EsignCreateRequest {
+            document_ref: document.to_hex(),
+            draft: agreement(artifact, sealed.now),
+            qr_pdf_download: true,
+        })
+        .map(|_| ())
+}
+
+/// An owner credential handed to another key (`attenuate_to`) keeps the
+/// owner's holder and class, so the new holder is bound as the owner; it
+/// still turns on no QR PDF download (REVIEW-7856 P1), and nothing is
+/// drafted. The owner's own credential, presented the same way, turns it on.
+#[test]
+fn an_owner_credential_handed_to_another_key_turns_on_no_qr_pdf_download() -> TestResult {
+    let sealed = sealed()?;
+    let vault = &sealed.vault;
+    let person = vault.ensure_embedded_owner_actor()?;
+    let mut claims = vault.ensure_host_root_slip(&sealed.issuer)?.claims;
+    claims.slip_id = slip_id();
+    claims.holder_ref = person.to_hex();
+    claims.actor_class = Some("human".to_owned());
+    let slip = vault.mint_capability_slip(&sealed.issuer, claims)?;
+
+    let next =
+        ed25519_dalek::SigningKey::from_bytes(blake3::hash(b"esign qr handed holder").as_bytes());
+    let mut handed = slip.clone();
+    sealed.issuer.attenuate_to(
+        &mut handed,
+        SlipCaveat::default(),
+        next.verifying_key().to_bytes(),
+    )?;
+    let challenge = b"esign qr handed credential";
+    let binding = next.sign(&handed.binding_transcript(challenge)?).to_bytes();
+    let handed =
+        vault.verify_capability_slip(&sealed.issuer.public_key(), &handed, challenge, &binding)?;
+    assert!(handed.is_transferred(), "control: the slip was handed on");
+    let artifact = fresh_artifact(&sealed, person)?;
+    let other = EntityId::now();
+    let refused = draft_with_qr_pdf_download(&sealed, person, &handed, other, artifact).expect_err(
+        "FAILBEFORE REVIEW-7856-P1: a handed owner credential turns on no QR PDF download",
+    );
+    assert!(
+        refused.to_string().contains("only the vault owner"),
+        "the refusal names the owner: {refused}"
+    );
+    assert!(vault.esign_audit(other)?.is_empty(), "nothing was drafted");
+
+    let challenge = b"esign qr own credential";
+    let binding = sealed.issuer.binding_proof(&slip, challenge)?;
+    let own =
+        vault.verify_capability_slip(&sealed.issuer.public_key(), &slip, challenge, &binding)?;
+    assert!(!own.is_transferred(), "control: the owner holds this one");
+    let mine = EntityId::now();
+    draft_with_qr_pdf_download(&sealed, person, &own, mine, artifact)?;
+    assert!(
+        !vault.esign_audit(mine)?.is_empty(),
+        "control: the owner's own credential drafts with the QR PDF download on"
+    );
     Ok(())
 }
