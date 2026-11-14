@@ -1,4 +1,5 @@
 //! Owner-authenticated raw inference. Host injection is explicit and absent by default.
+use super::openai_proxy::CallerClock;
 use crate::models::{CallDeadline, ModelCallBinding, OfferLadder, RawInference};
 
 pub(super) mod decision_read;
@@ -22,7 +23,7 @@ use oneiron::llm::run_admission::{RunAdmission, RunDenied};
 use oneiron::{LlmError, LlmRequest, LlmResponse, LlmStreamEvent};
 use serde::Deserialize;
 use std::sync::Arc;
-use std::time::Duration;
+use tokio::time::Instant;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
@@ -381,22 +382,32 @@ pub(crate) fn record_raw_response(
 struct RawCall {
     #[serde(flatten)]
     request: LlmRequest,
-    /// The memory proxy's field (FIX 8189): milliseconds from when the door
-    /// takes the call, one clock for the whole call, never renewed. Its
-    /// sends, its waits for a resting offer and its fallbacks all end by
-    /// then, and a call it cuts answers `timeout`. Omitted, the caller's
-    /// own connection is the call's deadline (FIX 8213).
+    /// The memory proxy's field (FIX 8189), on its one clock
+    /// ([`CallerClock`], RULING CALLER-DEADLINE-WIRE = B): milliseconds from
+    /// when the call arrived, never renewed. It replaces the wait row as the
+    /// call's budget: waits for a resting offer run only within what is
+    /// left, so a call whose every usable offer rests past it answers
+    /// `rate_limited` at once with the earliest reset, and only a send the
+    /// clock cuts answers `timeout` (504, or a stream's last line). Omitted,
+    /// the caller's own connection is the call's deadline (FIX 8213; RULING
+    /// RAW-NO-DEADLINE-WAIT = A).
     #[serde(default)]
     deadline_ms: Option<u64>,
 }
 
 impl RawCall {
-    /// The request, and the deadline its call runs on from now.
-    fn into_call(self) -> (LlmRequest, CallDeadline) {
-        let deadline = self.deadline_ms.map_or(CallDeadline::Open, |ms| {
-            CallDeadline::caller_in(Duration::from_millis(ms))
-        });
-        (self.request, deadline)
+    /// The request, the caller's clock from `arrived`, and the deadline its
+    /// ladder walk waits within: what is left of the clock, or open with
+    /// none named. A clock already out is the call's `timeout`.
+    fn into_call(
+        self,
+        arrived: Instant,
+    ) -> (LlmRequest, CallerClock, Result<CallDeadline, LlmError>) {
+        let clock = CallerClock::starting(arrived, self.deadline_ms);
+        let waits = clock
+            .left()
+            .map(|left| left.map_or(CallDeadline::Open, CallDeadline::waits_within));
+        (self.request, clock, waits)
     }
 }
 
@@ -406,7 +417,7 @@ async fn generate(
     headers: axum::http::HeaderMap,
     Json(call): Json<RawCall>,
 ) -> Response {
-    let (mut request, deadline) = call.into_call();
+    let (mut request, clock, waits) = call.into_call(Instant::now());
     let (ladder, run) = match admit(&server, &auth, &mut request) {
         Ok(v) => v,
         Err(e) => return *e,
@@ -420,12 +431,17 @@ async fn generate(
     // as initiator (attribution only), so its evidence row carries an
     // actor its erase can find. Owner-grade callers bind none, as before.
     let run = run.initiated_by(principal);
-    // The caller's `deadline_ms`, or its own connection (FIX 8213), is the
-    // raw call's deadline.
+    // The caller's `deadline_ms` on its clock, or its own connection (FIX
+    // 8213), is the raw call's deadline.
+    let waits = match waits {
+        Ok(waits) => waits,
+        Err(e) => return failure(e),
+    };
+    let may_send = clock.may_send();
     // generate_recorded_by takes the request by value; the record keeps its own copy.
     let record_request = request.clone();
-    match ladder
-        .generate_recorded_by(&run, request, None, &|| true, deadline)
+    match clock
+        .cut(ladder.generate_recorded_by(&run, request, None, &may_send, waits))
         .await
     {
         Ok((response, binding)) => {
@@ -465,7 +481,7 @@ async fn stream(
     headers: axum::http::HeaderMap,
     Json(call): Json<RawCall>,
 ) -> Response {
-    let (mut request, deadline) = call.into_call();
+    let (mut request, clock, waits) = call.into_call(Instant::now());
     let (ladder, run) = match admit(&server, &auth, &mut request) {
         Ok(v) => v,
         Err(e) => return *e,
@@ -480,17 +496,29 @@ async fn stream(
     // The first rung is admitted here, so a refused call answers before the
     // stream starts. Each rung settles itself; a stream the client leaves
     // ends its call, and a started rung keeps its reservation as spend. The
-    // caller's `deadline_ms` ends it too: its last line is then `timeout`.
+    // caller's `deadline_ms` ends it as the client leaving does, and its
+    // last line is then `timeout`.
+    let waits = match waits {
+        Ok(waits) => waits,
+        Err(e) => return failure(e),
+    };
     // stream_recorded_by takes the request by value; the record keeps its own copy.
     let record_request = request.clone();
-    let (mut source, mut binding) = match ladder.stream_recorded_by(&run, request, None, deadline) {
+    let (mut source, mut binding) = match ladder.stream_recorded_by(&run, request, None, waits) {
         Ok(opened) => opened,
         Err(e) => return failure(e),
     };
     let (send, receive) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(8);
     tokio::spawn(async move {
         loop {
-            let item = tokio::select! { _ = send.closed() => return, item = source.next() => item };
+            let item = tokio::select! {
+                _ = send.closed() => return,
+                () = clock.run_out() => {
+                    send_error(&send, oneiron::RetryableLlmError::Timeout.into()).await;
+                    return;
+                }
+                item = source.next() => item,
+            };
             let Some(item) = item else {
                 return;
             };

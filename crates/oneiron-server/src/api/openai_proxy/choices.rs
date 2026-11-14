@@ -47,9 +47,12 @@ pub(super) fn choice_count(n: Option<u32>) -> Result<u32, Response> {
 }
 
 /// The caller's clock: the instant its `deadline_ms` runs out, counted from
-/// when the call arrived; none when it named none.
+/// when the call arrived; none when it named none. The proxy's choices and
+/// the raw `/v1/llm` doors run on it (census L9-23, RULING
+/// CALLER-DEADLINE-WIRE = B): the caller's deadline replaces the wait row as
+/// the call's budget.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct CallerClock {
+pub(in crate::api) struct CallerClock {
     deadline: Option<Instant>,
 }
 
@@ -58,7 +61,7 @@ impl CallerClock {
     /// deadline past what the clock can count is as good as none being near:
     /// the call waits until `u32::MAX` seconds (about 136 years) after it
     /// arrived.
-    pub(super) fn starting(arrived: Instant, deadline_ms: Option<u64>) -> Self {
+    pub(in crate::api) fn starting(arrived: Instant, deadline_ms: Option<u64>) -> Self {
         let deadline = deadline_ms.map(|ms| {
             arrived
                 .checked_add(Duration::from_millis(ms))
@@ -85,37 +88,75 @@ impl CallerClock {
         })
     }
 
-    /// One choice's model call. With no deadline it is `generate`. With one,
-    /// it waits for a resting offer only as long as the clock has left, sends
-    /// no rung once the clock has run out, and is cut there if it is still
-    /// out: a call the clock ended before any rung went out is a `timeout`,
-    /// and one whose offers rested to the end says when they are back.
+    /// What is left of the caller's deadline: `None` when it named none, a
+    /// `timeout` once it has run out. A call waits for a resting offer only
+    /// within it, so one whose every usable offer rests past it answers
+    /// `rate_limited` at once with the earliest reset (ARCH-0036
+    /// #offers-quota-built).
+    pub(in crate::api) fn left(self) -> Result<Option<Duration>, LlmError> {
+        let Some(deadline) = self.deadline else {
+            return Ok(None);
+        };
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(RetryableLlmError::Timeout.into());
+        }
+        Ok(Some(left))
+    }
+
+    /// Whether a rung may still go out: until the caller's deadline, and
+    /// always when it named none.
+    pub(in crate::api) fn may_send(self) -> impl Fn() -> bool + Send + Sync {
+        move || !self.ran_out()
+    }
+
+    /// `call`, cut at the caller's deadline: a call still out then is a
+    /// `timeout`, as is one the clock kept from sending any rung (the
+    /// ladder's invalid request once [`Self::may_send`] said no before the
+    /// first). With no deadline, `call` as it is.
+    pub(in crate::api) async fn cut<T>(
+        self,
+        call: impl Future<Output = Result<T, LlmError>>,
+    ) -> Result<T, LlmError> {
+        let Some(deadline) = self.deadline else {
+            return call.await;
+        };
+        match tokio::time::timeout_at(deadline, call).await {
+            Ok(Err(LlmError::Fatal(FatalLlmError::InvalidRequest))) if self.ran_out() => {
+                Err(RetryableLlmError::Timeout.into())
+            }
+            Ok(answered) => answered,
+            Err(_) => Err(RetryableLlmError::Timeout.into()),
+        }
+    }
+
+    /// Resolves once the caller's deadline has passed: where a started
+    /// stream ends with `timeout`. Never when it named none.
+    pub(in crate::api) async fn run_out(self) {
+        match self.deadline {
+            Some(deadline) => tokio::time::sleep_until(deadline).await,
+            None => std::future::pending().await,
+        }
+    }
+
+    /// One choice's model call. With no deadline it is `generate`, on the
+    /// vault's wait row. With one, it waits for a resting offer only as long
+    /// as the clock has left, sends no rung once the clock has run out, and
+    /// is cut there if it is still out: a call the clock ended before any
+    /// rung went out is a `timeout`, and one whose offers rested to the end
+    /// says when they are back.
     async fn generate(
         self,
         ladder: &OfferLadder,
         run: &RunAdmission,
         request: LlmRequest,
     ) -> Result<LlmResponse, LlmError> {
-        let Some(deadline) = self.deadline else {
+        let Some(left) = self.left()? else {
             return ladder.generate(run, request, None).await;
         };
-        let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return Err(RetryableLlmError::Timeout.into());
-        }
-        let may_send = move || Instant::now() < deadline;
-        let answered = tokio::time::timeout_at(
-            deadline,
-            ladder.generate_within(run, request, None, &may_send, left),
-        )
-        .await;
-        match answered {
-            Ok(Err(LlmError::Fatal(FatalLlmError::InvalidRequest))) if !may_send() => {
-                Err(RetryableLlmError::Timeout.into())
-            }
-            Ok(answered) => answered,
-            Err(_) => Err(RetryableLlmError::Timeout.into()),
-        }
+        let may_send = self.may_send();
+        self.cut(ladder.generate_within(run, request, None, &may_send, left))
+            .await
     }
 }
 

@@ -39,7 +39,7 @@ use oneiron::{
     LlmMessageRole, LlmRequest, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
 };
 
-pub(super) use self::choices::TIMEOUT_CODE;
+pub(super) use self::choices::{CallerClock, TIMEOUT_CODE};
 use self::exchange::Exchange;
 pub(super) use self::receipt::PROXY_CALL_VERB;
 use self::receipt::{ProxyCaller, ProxyRequest};
