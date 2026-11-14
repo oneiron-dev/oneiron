@@ -15,6 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
+use oneiron::ingest::archive_precheck::DEFAULT_ARCHIVE_MAX_ENTRIES;
 use oneiron::ingest::history::HistorySource;
 use serde::Deserialize;
 
@@ -44,11 +45,6 @@ pub struct ImportConfig {
     /// default) is no cap: a local vault never stops.
     pub storage_cap_bytes: Option<u64>,
 }
-
-/// The entry cap an import archive meets when `[import] archive_max_entries`
-/// is unset: the `zip` reader's tables for it stay under about 80 MB, and a
-/// ChatGPT export with its images or a 2 GB Takeout part stays well under it.
-const DEFAULT_ARCHIVE_MAX_ENTRIES: u64 = 262_144;
 
 impl ImportConfig {
     /// The most entries an import archive may declare.

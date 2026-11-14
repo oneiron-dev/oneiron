@@ -58,6 +58,13 @@ const SOCKET: u32 = 0o140_000;
 /// or sticky.
 const PERMISSION_BITS: u32 = 0o777;
 
+/// The entry cap an import archive meets when its caller names none: the
+/// `zip` reader's tables for it stay under about 80 MB, and a ChatGPT export
+/// with its images or a 2 GB Takeout part stays well under it. The owner
+/// raises it: the history import's `[import] archive_max_entries` row, the
+/// Takeout import's `archive_max_entries` input.
+pub const DEFAULT_ARCHIVE_MAX_ENTRIES: u64 = 262_144;
+
 /// What the pass bounds before it reads the entry list.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ArchiveBounds {
@@ -82,7 +89,7 @@ pub struct CheckedEntry {
 }
 
 /// An entry the pass skipped, and why. Nothing of it is read.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SkippedEntry {
     /// Its name as the archive gives it, at most 512 bytes.
     pub name: String,
@@ -90,7 +97,7 @@ pub struct SkippedEntry {
 }
 
 /// Why the pass skipped an entry.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SkipReason {
     /// Its path is absolute, or climbs above the archive's root.
