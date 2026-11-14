@@ -85,23 +85,32 @@ impl Handles {
     /// (`own`: its source id, and the field), its own id or identity key
     /// stands as its short id alone, but in its name: its name, set beside
     /// its own words, could finish a phrase they begin that no read of it
-    /// saw. One pass reads the text once, so no render is read again.
+    /// saw. Another entity's name could finish one too (ARCH-0069
+    /// #readers-followups-open, an alias that names a second entity), so a
+    /// render that set a name in is read once more as it stands. Where that
+    /// read finds a secret, the text keeps every alias as its short id and
+    /// spends no first mention.
     fn text(&mut self, text: &str, own: Option<([u8; 16], &str)>) -> String {
         let mut aliases = self.aliases.iter().collect::<Vec<_>>();
         aliases.sort_by_key(|(alias, _)| std::cmp::Reverse(alias.len()));
-        let seen = &mut self.seen;
+        let seen = &self.seen;
         let own = own
             .filter(|(_, field)| !matches!(*field, "name" | "display_name"))
             .map(|(row, _)| row);
-        substitute(text, &aliases, |(id, name, entity)| {
-            if own == Some(*entity) {
+        let mut named: Vec<String> = Vec::new();
+        let rendered = substitute(text, &aliases, |(id, name, entity)| {
+            if own == Some(*entity) || name.is_empty() || seen.contains(id) || named.contains(id) {
                 id.clone()
-            } else if seen.insert(id.clone()) && !name.is_empty() {
-                format!("{name} ({id})")
             } else {
-                id.clone()
+                named.push(id.clone());
+                format!("{name} ({id})")
             }
-        })
+        });
+        if !named.is_empty() && crate::batch::secret_scan::scan_joined_text(&rendered).is_some() {
+            return substitute(text, &aliases, |(id, _, _)| id.clone());
+        }
+        self.seen.extend(named);
+        rendered
     }
     /// Text outside every row: no alias in it is any entity's own.
     pub(super) fn value(&mut self, value: &mut Value) {

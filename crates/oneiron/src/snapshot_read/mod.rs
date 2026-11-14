@@ -29,7 +29,7 @@ pub use evidence_spans::{
 };
 pub use policy_preflight::{
     POLICY_PREFLIGHT_MAX_REFS, PolicyPreflight, PolicyPreflightAct, PolicyPreflightRef,
-    PolicyPreflightRequest, policy_preflight, validate_policy_preflight,
+    PolicyPreflightRequest, PolicyPreflightVerdict, policy_preflight, validate_policy_preflight,
 };
 pub use run_reader::{
     checkpoint_as_reader, checkpoint_embedded, reply_evidence_as_reader, reply_evidence_embedded,

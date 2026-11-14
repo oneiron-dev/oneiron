@@ -129,7 +129,7 @@ fn occurred(at: u64) -> TimeRange {
 
 /// Lets fixture extraction run on this server: the extraction purpose's
 /// locality is the own server.
-fn allow_own_server_extraction(vault: &Vault) -> Result<()> {
+pub(super) fn allow_own_server_extraction(vault: &Vault) -> Result<()> {
     let mut policy = vault.purpose_default_table()?;
     policy.extraction_max_locality = ModelLocality::OwnServer;
     policy
@@ -267,7 +267,7 @@ pub fn consolidate_unbound_turn_pair(
 /// Witnesses `words`, spoken by a fresh PERSON, as one visible user MESSAGE
 /// carrying `metadata` into a fresh TURN of `conversation` at `occurred_at`;
 /// `(turn, message)`.
-fn witness_user_turn(
+pub(super) fn witness_user_turn(
     vault: &Vault,
     conversation: EntityId,
     words: &str,

@@ -1,0 +1,17 @@
+{
+  "name": "vault.plans.reject",
+  "description": "The owner rejects a plan-doc at the revision they read: the verdict holds while its text stays at that revision, an edit returns it to review, and one gate decision records the answer.",
+  "input": "crate::note::PlanDocVerdictRequest",
+  "output": "crate::note::PlanDocSettlementView",
+  "call": "crate::note::reject_plan_doc_as(memory.vault(), &memory.embedded_owner(\"vault.plans.reject\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner",
+  "act_class": "reversible_work"
+}

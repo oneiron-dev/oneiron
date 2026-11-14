@@ -1,11 +1,12 @@
 //! Durable, revocable connector-event subscriptions and atomic wake decisions.
 //! Subscriptions are gated claims; wakes reuse the Dreamer queue and key budgets.
 use super::txn::{
-    append_connector_key_op_record, read_connector_key_in_txn, suspend_connector_key_in_txn,
+    SuspendAdmission, SuspendCause, append_connector_key_op_record, read_connector_key_in_txn,
+    suspend_connector_key_in_txn,
 };
 use super::{
     BudgetBlock, ConnectorKeyStatus, EffectorBudgetChargeOutcome, EffectorBudgetOnExhaust,
-    budget_block_pooled, budget_exhausted_reason, charge_effector_budgets,
+    budget_block_pooled, charge_effector_budgets,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
@@ -647,15 +648,17 @@ impl Vault {
                 on_exhaust,
                 ..
             } => {
-                if on_exhaust == EffectorBudgetOnExhaust::Suspend {
-                    key = suspend_connector_key_in_txn(
+                if on_exhaust == EffectorBudgetOnExhaust::Suspend
+                    && let SuspendAdmission::Suspended(written) = suspend_connector_key_in_txn(
                         &self.store,
                         txn,
                         &row.connector_key,
                         &key,
-                        budget_exhausted_reason(&location),
+                        SuspendCause::BudgetExhausted(&location),
                         now,
-                    )?;
+                    )?
+                {
+                    key = written;
                     let floor = crate::gate::resolve_policy_manifest(&self.store, &*txn)?
                         .read_frontier_hash()?;
                     append_connector_key_op_record(

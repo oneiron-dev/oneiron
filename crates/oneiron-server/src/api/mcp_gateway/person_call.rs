@@ -121,7 +121,12 @@ pub(crate) fn person_socket_admits(surface: &str, body: &str) -> bool {
     }
     matches!(
         method,
-        "initialize" | "notifications/initialized" | "tools/list" | "oneiron/wakes" | "ping"
+        "server/discover"
+            | "initialize"
+            | "notifications/initialized"
+            | "tools/list"
+            | "oneiron/wakes"
+            | "ping"
     ) || method.starts_with("notifications/")
 }
 

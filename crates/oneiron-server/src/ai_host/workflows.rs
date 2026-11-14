@@ -277,7 +277,7 @@ fn pump_once(
                 });
             }
             let mut claimed: Option<(AttemptId, u32)> = None;
-            let mut retryable = false;
+            let mut retry = None;
             let mut held = None;
             let mut parked = false;
             let mut hook_wait = false;
@@ -426,7 +426,7 @@ fn pump_once(
                             Err(error)
                         }
                         Err(fault) => {
-                            retryable = fault.retryable;
+                            retry = fault.retry;
                             Err(fault.error)
                         }
                     }
@@ -445,11 +445,13 @@ fn pump_once(
                 }
             });
             // FIX 11532: the solo leaf's team receipt, after its own settle;
-            // a receipt failure logs and the workflow goes on.
+            // a receipt failure logs and the workflow goes on. No retry
+            // follows a completed leaf, so the spend it carried goes too.
             if let Some((leaf, _)) = claimed
                 && progress.is_ok()
                 && leaf_completed(vault, leaf)
             {
+                super::step::drop_carried_spend(vault, leaf);
                 if let Err(error) = oneiron::team::record_solo_receipt(vault, leaf, now_secs()) {
                     tracing::warn!(kind = ?error.kind(), ?leaf, "a workflow leaf's solo receipt was not recorded");
                 }
@@ -493,7 +495,7 @@ fn pump_once(
                         Some((leaf, lease_count)) => vec![FailedStep {
                             leaf,
                             lease_count,
-                            retryable,
+                            retry,
                         }],
                         None => held_leases(vault, LEASE_OWNER).unwrap_or_else(|list| {
                             tracing::error!(%list, "held workflow leases could not be listed");
@@ -507,7 +509,7 @@ fn pump_once(
                         match settle(vault, *root, step, LEASE_OWNER, backoff, now_secs()) {
                             Ok(FailureLadderOutcome::Retried { .. }) => {}
                             Ok(_) => {
-                                runner.forget(step.leaf);
+                                runner.forget(vault, step.leaf);
                                 // FIX 11532: the solo leaf's team receipt, after its
                                 // own end; a receipt failure logs and the stop stands.
                                 if let Err(error) =

@@ -163,6 +163,8 @@ pub(crate) fn remove_birth_custody_in_txn(
             return Ok(());
         }
         if header.entity_type == ENTITY_TYPE_AGENT_DEF {
+            // The owner's creation stamp leaves with the definition.
+            super::creating_owner::remove_creating_owner_in_txn(store, txn, id)?;
             return super::birth_dependencies::retire_birth_sources_for_entity_in_txn(
                 write, txn, id,
             );

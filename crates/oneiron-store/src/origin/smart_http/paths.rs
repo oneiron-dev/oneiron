@@ -30,9 +30,15 @@ pub const ORIGIN_REPO_DIR_SUFFIX: &str = ".git";
 /// reads the pushed bytes. An environment variable travels that whole chain,
 /// and a replacement lookup anywhere in it would show the scan bytes other than
 /// the ones the push makes durable.
-pub const SERVE_BASE_ENV_KEYS: [&str; 5] = [
+///
+/// `GIT_NO_LAZY_FETCH` travels the same chain for the same reason (ARCH-0068
+/// #push-cert-open): in a served repository that is a partial clone, a read of
+/// an object it lacks anywhere in that chain would otherwise fetch it from the
+/// promisor remote, a network fetch and an object write that no push made.
+pub const SERVE_BASE_ENV_KEYS: [&str; 6] = [
     "GIT_DIR",
     "GIT_HTTP_EXPORT_ALL",
+    "GIT_NO_LAZY_FETCH",
     "GIT_NO_REPLACE_OBJECTS",
     "GIT_PROJECT_ROOT",
     "PATH",
@@ -118,6 +124,16 @@ pub const DOOR_WORK_HEARTBEAT_POLLS: u32 = 2000;
 /// backend is killed: the door window's family. A transfer that keeps moving,
 /// however slowly, is never cut.
 pub const SERVE_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// How long a push's command section, its ref updates up to the first flush,
+/// may take to arrive whole from its first read: the door window's family.
+/// The section is read under the repository's coordinator, and a byte resets
+/// only the idle limit, so a section that trickled in would otherwise hold
+/// every other push to the repository for as long as it kept coming. Past it
+/// the push is refused as an idle stall and the coordinator is let go. A read
+/// already waiting when it passes ends at the idle limit, so the section holds
+/// the coordinator for at most this plus one idle limit.
+pub const SERVE_COMMAND_SECTION_TIMEOUT: Duration = DOOR_WINDOW_TIMEOUT;
 
 /// The name git gives a receive-pack's object quarantine, under the objects
 /// directory, ahead of its random suffix (`tmp-objdir.c`).

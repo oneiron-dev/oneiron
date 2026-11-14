@@ -392,7 +392,7 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         owner.revalidate_in_txn(self, txn)?;
-        self.write_policy_manifest_in_txn(txn, id, data, now)
+        self.write_policy_change_in_txn(txn, id, data, now)
     }
 
     /// [`Self::write_owner_policy_manifest_in_txn`] for a door whose own check,
@@ -409,7 +409,30 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         holder.revalidate_person_in_txn(self, txn)?;
-        self.write_policy_manifest_in_txn(txn, id, data, now)
+        self.write_policy_change_in_txn(txn, id, data, now)
+    }
+
+    /// [`Self::write_policy_manifest_in_txn`] for the owner's or a holder's
+    /// write, which changes policy: in the same write it requeues, once, the
+    /// executor-error parks that wait on a policy this write changes (FIX
+    /// 23347). A section is read from the manifest's own prior body at `id`,
+    /// so a change another manifest shadows still requeues once, and a try it
+    /// did not clear parks again on its next run.
+    fn write_policy_change_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        data: Vec<u8>,
+        now: u64,
+    ) -> Result<()> {
+        let prior = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
+            .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..).map(<[u8]>::to_vec));
+        let cleared = cleared_policy_waits(prior.as_deref(), &data);
+        self.write_policy_manifest_in_txn(txn, id, data, now)?;
+        if !cleared.is_empty() {
+            crate::dreamer_runner::policy_wait::requeue_policy_waits_in_txn(self, txn, &cleared)?;
+        }
+        Ok(())
     }
 
     fn write_policy_manifest_in_txn(
@@ -735,4 +758,55 @@ pub(crate) fn update_manifest_origin(
         TRUSTED_ORIGIN.delete(store, txn, &HexId(*id))?;
     }
     Ok(())
+}
+
+/// The sections the gate reads for an Auto answer to a family's write: an
+/// Auto-grant wait is cleared by a change of any of them.
+const AUTO_GRANT_SECTIONS: [&str; 5] = [
+    super::constants::POLICY_ACTOR_CEILINGS_KEY,
+    super::constants::POLICY_DELEGATED_GRANTS_KEY,
+    super::constants::POLICY_RULES_KEY,
+    super::constants::POLICY_DEFAULTS_KEY,
+    super::constants::POLICY_SOURCE_TRUST_KEY,
+];
+
+/// The policy waits a write of the manifest body `next` over `prior` (none
+/// for a new manifest) clears: the source-trust waits when its `source_trust`
+/// section changed, the Auto-grant waits when any of [`AUTO_GRANT_SECTIONS`]
+/// changed. A body that is not a map reads as holding no section.
+fn cleared_policy_waits(
+    prior: Option<&[u8]>,
+    next: &[u8],
+) -> Vec<crate::dreamer_runner::policy_wait::PolicyWaitKind> {
+    use crate::dreamer_runner::policy_wait::PolicyWaitKind;
+    let prior = prior.and_then(manifest_sections).unwrap_or_default();
+    let next = manifest_sections(next).unwrap_or_default();
+    let changed = |key: &str| manifest_section(&prior, key) != manifest_section(&next, key);
+    let mut cleared = Vec::new();
+    if changed(super::constants::POLICY_SOURCE_TRUST_KEY) {
+        cleared.push(PolicyWaitKind::SourceTrust);
+    }
+    if AUTO_GRANT_SECTIONS.into_iter().any(changed) {
+        cleared.push(PolicyWaitKind::AutoGrant);
+    }
+    cleared
+}
+
+/// A manifest body's top-level entries, when it decodes as a map.
+fn manifest_sections(body: &[u8]) -> Option<Vec<(rmpv::Value, rmpv::Value)>> {
+    match rmpv::decode::read_value(&mut std::io::Cursor::new(body)).ok()? {
+        rmpv::Value::Map(entries) => Some(entries),
+        _ => None,
+    }
+}
+
+/// The value of the top-level section `key`, when the manifest has one.
+fn manifest_section<'a>(
+    entries: &'a [(rmpv::Value, rmpv::Value)],
+    key: &str,
+) -> Option<&'a rmpv::Value> {
+    entries
+        .iter()
+        .find(|(name, _)| name.as_str() == Some(key))
+        .map(|(_, value)| value)
 }

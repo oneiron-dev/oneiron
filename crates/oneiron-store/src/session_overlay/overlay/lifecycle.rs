@@ -115,6 +115,9 @@ impl SessionOverlay {
     // Budget failures belong exclusively to preflight, before the base commit.
     // This apply helper deliberately has no budget input or budget-error branch.
     pub fn new(budget_bytes: usize) -> Arc<Self> {
+        // A room's bytes live here from now on: no core file holds them
+        // (ARCH-0052 threat-model note).
+        super::super::dump_suppression::suppress_process_dumps();
         Arc::new(Self {
             state: ArcSwap::from_pointee(OverlayState::empty()),
             lifecycle: Mutex::new(Lifecycle {

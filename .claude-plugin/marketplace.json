@@ -1,0 +1,13 @@
+{
+  "name": "oneiron",
+  "owner": {
+    "name": "Oneiron"
+  },
+  "plugins": [
+    {
+      "name": "oneiron",
+      "source": "./plugins/claude-code",
+      "description": "Your Oneiron vault as Claude Code's memory: a recall when a session starts, the session's log handed to the vault, and the vault's tools over MCP."
+    }
+  ]
+}

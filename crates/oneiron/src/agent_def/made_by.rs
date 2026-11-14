@@ -43,6 +43,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
+use crate::run_tree::takes_boundary_pause;
 use crate::skill_hub::pack_catalog::{HookAuthor, PackHookBinding};
 use crate::store::EngineScan;
 use crate::store::scan_count::ScanCount;
@@ -54,134 +55,11 @@ pub struct AgentMadeByRequest {
     pub agent_def_ref: EntityId,
 }
 
-/// Everything one agent made, transitively, and what each is doing now.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct AgentMadeBy {
-    /// The agent the lists answer for.
-    pub agent_def_ref: EntityId,
-    /// How many entries the five lists hold together.
-    pub count: usize,
-    /// The definitions it saved, and those they saved, each with what it is
-    /// doing now.
-    pub agents: Vec<MadeAgent>,
-    /// The live branches its runs spawned or its TASKs realize, the
-    /// subtrees under them included.
-    pub branches: Vec<MadeBranch>,
-    /// Its TASKs that still wait for their due tick.
-    pub watchers: Vec<MadeWatcher>,
-    /// The hook bindings whose outcomes run as it.
-    pub hooks: Vec<MadeHook>,
-    /// Its scheduled sends that have not gone out.
-    pub sends: Vec<MadeSend>,
-    /// The offer to pause what waits among them; absent when nothing does.
-    pub pause_offer: Option<AgentTreePauseOffer>,
-}
-
-/// "Also pause these" (ARCH-0053 #author-off-no-cascade): one owner act with
-/// one receipt and an undo.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct AgentTreePauseOffer {
-    /// The verb that pauses them: `vault.agents.pause_tree`.
-    pub verb: String,
-    /// How many entries it would pause now: the saved agents that stand,
-    /// the queued and scheduled branches, runs and sends, the watchers not
-    /// held and the hooks switched on. A running branch is not paused.
-    pub pausable: usize,
-}
-
-impl AgentMadeBy {
-    /// The rows this answer names: the agent, each saved definition, each
-    /// watcher's TASK and each hook binding, once each, in id order.
-    #[must_use]
-    pub fn listed_rows(&self) -> Vec<EntityId> {
-        let mut rows: Vec<EntityId> = std::iter::once(self.agent_def_ref)
-            .chain(self.agents.iter().map(|agent| agent.agent_def_ref))
-            .chain(self.watchers.iter().map(|watcher| watcher.task_ref))
-            .chain(self.hooks.iter().map(|hook| hook.binding_ref))
-            .chain(self.sends.iter().map(|send| send.task_ref))
-            .collect();
-        rows.sort_unstable();
-        rows.dedup();
-        rows
-    }
-}
-
-/// A definition an agent saved.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct MadeAgent {
-    pub agent_def_ref: EntityId,
-    /// The agent that saved it.
-    pub made_by: EntityId,
-    /// Its definition's agent id.
-    pub agent_id: String,
-    /// Whether its agent runs under it now: active, approved and switched on.
-    pub stands: bool,
-    /// Its own live runs.
-    pub runs: Vec<AgentRunNow>,
-    /// The agent Grants it holds that stand now.
-    pub held_grants: usize,
-}
-
-/// One live run of a saved agent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct AgentRunNow {
-    /// The attempt id, as `vault.runs.pause` names a branch.
-    pub branch: String,
-    pub state: AttemptState,
-    /// When a scheduled run becomes ready, Unix seconds.
-    pub scheduled_at: Option<u64>,
-}
-
-/// A live branch under an agent's runs or TASKs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct MadeBranch {
-    /// The attempt id, as `vault.runs.pause` names a branch.
-    pub branch: String,
-    /// The agent whose run or TASK it is under.
-    pub made_by: EntityId,
-    /// The agent it runs as, when it is an agent's run.
-    pub agent_def_ref: Option<EntityId>,
-    pub state: AttemptState,
-    /// When a scheduled branch becomes ready, Unix seconds.
-    pub scheduled_at: Option<u64>,
-}
-
-/// A TASK an agent owns that still waits for its due tick.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct MadeWatcher {
-    pub task_ref: EntityId,
-    /// The agent that owns it.
-    pub made_by: EntityId,
-    /// When it ticks, Unix seconds.
-    pub due_at: u64,
-    /// Whether a tree pause holds its tick.
-    pub held: bool,
-}
-
-/// A scheduled send an agent made that has not gone out.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct MadeSend {
-    /// The send's attempt id, as `vault.runs.pause` names a branch.
-    pub branch: String,
-    /// Its connector TASK.
-    pub task_ref: EntityId,
-    /// The agent that scheduled it.
-    pub made_by: EntityId,
-    pub state: AttemptState,
-    /// When a scheduled send becomes ready, Unix seconds.
-    pub scheduled_at: Option<u64>,
-}
-
-/// A pack hook binding whose outcomes run as an agent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct MadeHook {
-    pub binding_ref: EntityId,
-    /// The agent its outcomes run as.
-    pub made_by: EntityId,
-    pub pack: String,
-    pub hook: String,
-    pub enabled: bool,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::agent_def::made_by::{
+    AgentMadeBy, AgentRunNow, AgentTreePauseOffer, MadeAgent, MadeBranch, MadeHook, MadeSend,
+    MadeWatcher,
+};
 
 /// Whether the owner's edit from `prior` to `updated` switches the agent off
 /// or narrows it, the edits that answer with what it made: it stood and no
@@ -225,21 +103,32 @@ pub(super) fn branch_id(branch: &str) -> Result<AttemptId> {
     AttemptId::from_bytes(EntityId::from_hex(branch)?.as_bytes())
 }
 
-/// How many entries of `made` the tree pause would pause now.
-fn pausable(made: &AgentMadeBy) -> usize {
-    let waits = |state: AttemptState| state.is_ready_indexed();
+/// How many entries of `made` the tree pause would pause now; `boundary`
+/// names the running branches it pauses at their next step boundary.
+fn pausable(made: &AgentMadeBy, boundary: &BTreeSet<String>) -> usize {
+    let waits =
+        |state: AttemptState, branch: &str| state.is_ready_indexed() || boundary.contains(branch);
     made.agents
         .iter()
         .map(|agent| {
-            usize::from(agent.stands) + agent.runs.iter().filter(|run| waits(run.state)).count()
+            usize::from(agent.stands)
+                + agent
+                    .runs
+                    .iter()
+                    .filter(|run| waits(run.state, &run.branch))
+                    .count()
         })
         .sum::<usize>()
         + made
             .branches
             .iter()
-            .filter(|branch| waits(branch.state))
+            .filter(|branch| waits(branch.state, &branch.branch))
             .count()
-        + made.sends.iter().filter(|send| waits(send.state)).count()
+        + made
+            .sends
+            .iter()
+            .filter(|send| send.state.is_ready_indexed())
+            .count()
         + made.watchers.iter().filter(|watcher| !watcher.held).count()
         + made.hooks.iter().filter(|hook| hook.enabled).count()
 }
@@ -297,6 +186,8 @@ impl Vault {
             pause_offer: None,
         };
         let mut listed_branches = BTreeSet::new();
+        // The running branches a tree pause pauses at their next step.
+        let mut boundary = BTreeSet::new();
         let mut seen = BTreeSet::from([*agent]);
         let mut makers = VecDeque::from([*agent]);
         while let Some(maker) = makers.pop_front() {
@@ -310,10 +201,15 @@ impl Vault {
                     .into_iter()
                     .flatten()
                     .filter(|record| record.state.is_pending())
-                    .map(|record| AgentRunNow {
-                        branch: branch_hex(record.id),
-                        state: record.state,
-                        scheduled_at: record.scheduled_at,
+                    .map(|record| {
+                        if takes_boundary_pause(record) {
+                            boundary.insert(branch_hex(record.id));
+                        }
+                        AgentRunNow {
+                            branch: branch_hex(record.id),
+                            state: record.state,
+                            scheduled_at: record.scheduled_at,
+                        }
                     })
                     .collect();
                 let held_grants = grants
@@ -376,6 +272,9 @@ impl Vault {
                 {
                     continue;
                 }
+                if takes_boundary_pause(&record) {
+                    boundary.insert(branch_hex(record.id));
+                }
                 made.branches.push(MadeBranch {
                     branch: branch_hex(record.id),
                     made_by: maker,
@@ -399,7 +298,7 @@ impl Vault {
             + made.watchers.len()
             + made.hooks.len()
             + made.sends.len();
-        let pausable = pausable(&made);
+        let pausable = pausable(&made, &boundary);
         made.pause_offer = (pausable > 0).then(|| AgentTreePauseOffer {
             verb: PAUSE_TREE_VERB.to_owned(),
             pausable,

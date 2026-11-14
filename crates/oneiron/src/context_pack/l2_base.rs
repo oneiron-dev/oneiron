@@ -182,6 +182,7 @@ fn admitted_l2_evidence(
         if let Some(clamp) = clamp
             && !super::retained_copies::clamp_admits(
                 clamp,
+                vault,
                 &pipeline.store_read(),
                 txn,
                 &id,

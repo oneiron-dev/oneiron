@@ -255,7 +255,10 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
             // tombstones map between this commit and the persist below
             // (mirrors `Vault::write_crdt_tombstone`; lock order
             // materializer → LMDB txn matches every other holder, and the
-            // registry lock is NOT held here).
+            // registry lock is NOT held here). The live-window turn spans the
+            // merge and the indexed commit below (L7-45): no peer import lands
+            // between this tombstone index's build and the commit.
+            let _turn = manager.materializer().enter_live_window();
             merge_persisted_state_into_doc(vault, &window.doc, window_key)?;
             let _guard = manager.materializer().lock();
             let vv_before = window.doc.oplog_vv();
@@ -270,6 +273,13 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
             for (key, value) in &markers {
                 apply_tombstone_to_indexed_window_doc(&window.doc, &tombstones, &key.id, value)?;
             }
+            // The policies no binding reaches now go in this commit, the
+            // window pinned history-free first (fix list row 17211).
+            crate::sync::source_audiences::prune_unreached_policies(
+                vault,
+                &window.doc,
+                Some(window_key),
+            )?;
             // BRIDGE_ORIGIN: Observer B must skip this commit — LMDB
             // already holds the delete truth (`dt:` + the origin purge
             // txn); Observer A still persists/broadcasts as usual.
@@ -306,6 +316,7 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
             for (key, value) in &markers {
                 apply_tombstone_to_indexed_window_doc(&doc, &tombstones, &key.id, value)?;
             }
+            crate::sync::source_audiences::prune_unreached_policies(vault, &doc, Some(window_key))?;
             doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
             let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
             (

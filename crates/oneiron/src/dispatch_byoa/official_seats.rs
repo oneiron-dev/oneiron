@@ -483,6 +483,26 @@ pub fn official_seat_id(spec: &OfficialSeatSpec) -> ByoaResult<crate::dreamer_ru
     )?)
 }
 
+/// Domain an SIWC offer's model-seat id is derived under.
+const SIWC_OFFER_SEAT_DOMAIN: &[u8] = b"oneiron:siwc-offer-seat:v1";
+
+/// The model-seat id of a configured Sign in with ChatGPT offer: its
+/// credential file's path, the login store it reads
+/// (SEAT-PARK-MODEL-STEP-PATH). One file is one login. A path label only,
+/// never the credential; under its own domain, so it is never an official
+/// seat's id.
+///
+/// # Errors
+/// Refuses when the digest helper exhausts its salt space (never in practice).
+pub fn siwc_offer_seat_id(
+    credential_file: &std::path::Path,
+) -> ByoaResult<crate::dreamer_runner::ModelSeatId> {
+    Ok(entity_id_from_hash_material(
+        SIWC_OFFER_SEAT_DOMAIN,
+        &[credential_file.as_os_str().as_encoded_bytes()],
+    )?)
+}
+
 /// A request to dispatch one official seat. The connector is built by an
 /// [`OfficialSeatAdapter`] first; dispatch re-validates everything.
 #[derive(Debug, Clone, PartialEq, Eq)]

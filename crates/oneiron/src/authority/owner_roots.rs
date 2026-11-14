@@ -130,7 +130,7 @@ pub(super) fn owner_root_records_in_txn(
     let mut records = BTreeMap::new();
     let mut stored = BTreeSet::new();
     for (_, body) in authority_log_rows_in_txn(store, txn)? {
-        let entry = decode_authority_log_entry_body(&body)?;
+        let entry = decode_stored_authority_log_body(&body)?;
         let hash = authority_entry_hash(&entry)?;
         let AuthorityOp::OwnerRoot(record) = entry.op else {
             continue;
