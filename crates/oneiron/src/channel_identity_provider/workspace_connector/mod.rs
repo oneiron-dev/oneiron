@@ -1,7 +1,7 @@
 //! The built-in workspace connectors (FIX 4862; MAIL-GOOGLE = A, rows 1 and
-//! 3; L3-17): typed code-mode modules over the user's own files in Google,
-//! each a catalog name `connector.call` routes: `google.sheets`,
-//! `google.docs` and `google.slides`.
+//! 3; L3-17): typed code-mode modules over the user's own files in Google
+//! and Microsoft 365, each a catalog name `connector.call` routes:
+//! `google.sheets`, `google.docs`, `google.slides` and `microsoft.excel`.
 //! Code mode spells a call
 //! `connector["google.sheets"]["values.batchGet"](args)`; the guest's proxy
 //! sends it as the same `connector.call`.
@@ -28,12 +28,13 @@
 //!   off-record session is refused, as a secret grant is: the token's use
 //!   keeps Gate records.
 //! * **Ships as a pack.** An API runs only while its connection's engine
-//!   pack (`oneiron.google`, [`GOOGLE_CONNECTION`]) is installed Active and
+//!   pack ([`GOOGLE_CONNECTION`], [`MICROSOFT365_CONNECTION`]) is installed Active and
 //!   the connection's check is Verified, and each tool only while the owner
 //!   allows the permission its grant names. One sign-in serves every API of
 //!   the connection; each API is its own optional permission.
 //! * **The token stays in custody.** The grant is read at the custody door
-//!   for the connection's effector and refreshed inside it; its access token
+//!   for the connection's effector and, when the connection's exchange can,
+//!   refreshed inside it; its access token
 //!   goes to the host's credential broker with each request, and the broker
 //!   adds it to the request and strips it from the reply. No token is
 //!   returned, logged or written.
@@ -42,6 +43,7 @@
 //! `google_connection_not_checked`.
 
 pub mod docs;
+pub mod excel;
 mod invocation;
 mod receipt;
 mod requests;
@@ -104,6 +106,21 @@ pub struct WorkspaceConnection {
     /// The first word of the connection's own reason codes: `google` in
     /// `google_connection_not_checked`.
     pub family: &'static str,
+    /// How a send turns the stored grant into the access token it presents.
+    pub token: WorkspaceTokenExchange,
+}
+
+/// How a send turns a connection's stored grant into its access token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceTokenExchange {
+    /// A grant carrying a refresh token and its OAuth client is exchanged
+    /// at Google's token endpoint on each send; any other grant is read as
+    /// [`Self::StoredAccessToken`].
+    GoogleRefresh,
+    /// The stored access token as it is: bare text, or a JSON grant's
+    /// `access_token`. Nothing is exchanged; once it expires, the owner
+    /// stores a new one.
+    StoredAccessToken,
 }
 
 impl WorkspaceConnection {
@@ -122,6 +139,21 @@ pub static GOOGLE_CONNECTION: WorkspaceConnection = WorkspaceConnection {
     connection: "google",
     effector: "connector:google",
     family: "google",
+    token: WorkspaceTokenExchange::GoogleRefresh,
+};
+
+/// The Microsoft 365 connection (L3-17-EXCEL = A): one Microsoft sign-in,
+/// bound to the effector the Microsoft 365 mail wire reads
+/// (`connector:microsoft365`), so a mailbox source may name the same stored
+/// grant; Excel is its optional permission. Its grant is presented as stored:
+/// no Microsoft refresh exchange exists yet.
+pub static MICROSOFT365_CONNECTION: WorkspaceConnection = WorkspaceConnection {
+    pack: "oneiron.microsoft365",
+    builtin: "microsoft365",
+    connection: "microsoft365",
+    effector: crate::mail_pack::MICROSOFT365_CONNECTOR_EFFECTOR,
+    family: "microsoft365",
+    token: WorkspaceTokenExchange::StoredAccessToken,
 };
 
 /// One tool of a module.
@@ -226,7 +258,12 @@ pub trait WorkspaceApi: Sync {
 }
 
 /// Every built-in workspace module, in catalog order.
-static MODULES: [&dyn WorkspaceApi; 3] = [&docs::DocsApi, &sheets::SheetsApi, &slides::SlidesApi];
+static MODULES: [&dyn WorkspaceApi; 4] = [
+    &docs::DocsApi,
+    &sheets::SheetsApi,
+    &slides::SlidesApi,
+    &excel::ExcelApi,
+];
 
 /// The built-in module whose catalog name is exactly `name`.
 #[must_use]
@@ -235,6 +272,21 @@ pub fn module(name: &str) -> Option<&'static dyn WorkspaceApi> {
         .iter()
         .copied()
         .find(|module| module.catalog_name() == name)
+}
+
+/// The access token `module`'s connection presents for the stored grant
+/// `value`, on `client`: the token step a send runs inside the custody door.
+///
+/// # Errors
+///
+/// The grant gives no usable access token, or an exchange it tried failed.
+#[cfg(oneiron_test_support)]
+pub(crate) fn connection_access_token(
+    module: &dyn WorkspaceApi,
+    client: &reqwest::blocking::Client,
+    value: &[u8],
+) -> Result<zeroize::Zeroizing<String>> {
+    token::access_token(client, module.connection().token, value)
 }
 
 /// The tool of `module` named `name`.

@@ -65,6 +65,9 @@ pub const NATIVE_MAIL_JMAP_CHECK: &str = "native_mail.jmap";
 /// Google pack (FIX 4862; L3-17): the account it belongs to and the scopes
 /// it holds.
 pub const GOOGLE_TOKEN_CHECK: &str = "google.token";
+/// The Microsoft 365 connection's check (L3-17-EXCEL-CONNECTION = B): the
+/// Graph profile of the account the stored grant belongs to.
+pub const MICROSOFT365_ME_CHECK: &str = "microsoft365.me";
 const LINKEDIN_ME_URL: &str = "https://www.linkedin.com/voyager/api/me";
 /// Google's OAuth token endpoint: where a stored Gmail refresh token is
 /// exchanged for the access token its check presents.
@@ -149,13 +152,14 @@ pub struct ProviderConnectionChecks {
 
 impl ProviderConnectionChecks {
     /// Every check name this verifier answers.
-    pub const CHECKS: [&'static str; 6] = [
+    pub const CHECKS: [&'static str; 7] = [
         SLACK_AUTH_TEST_CHECK,
         LINE_BOT_INFO_CHECK,
         GMAIL_PROFILE_CHECK,
         LINKEDIN_SESSION_CHECK,
         TELEGRAM_GET_ME_CHECK,
         GOOGLE_TOKEN_CHECK,
+        MICROSOFT365_ME_CHECK,
     ];
 
     /// A bounded HTTPS client: no proxy, no redirects, short timeouts.
@@ -266,6 +270,28 @@ impl ProviderConnectionChecks {
             )
         })?;
         self.send(GMAIL_PROFILE_CHECK, method, url, access_token.as_bytes())
+    }
+
+    /// The Microsoft Graph profile read with the stored grant's access token
+    /// as it is: bare text, or a JSON grant's `access_token`. A Microsoft
+    /// grant is never exchanged, here or at Google's token endpoint.
+    fn send_microsoft365_me(
+        &self,
+        method: &reqwest::Method,
+        url: &str,
+        value: &[u8],
+    ) -> Result<CheckReply> {
+        let text = std::str::from_utf8(value)
+            .map_err(|_| invalid("the stored credential is not text"))?
+            .trim();
+        if !text.starts_with('{') {
+            return self.send(MICROSOFT365_ME_CHECK, method, url, value);
+        }
+        let grant: StoredAccessGrant = serde_json::from_str(text)
+            .map_err(|_| invalid("the stored Microsoft grant is not JSON"))?;
+        let access_token = present(&grant.access_token)
+            .ok_or_else(|| invalid("the stored Microsoft grant holds no access token"))?;
+        self.send(MICROSOFT365_ME_CHECK, method, url, access_token.as_bytes())
     }
 
     /// Google's token information for the stored Google grant (FIX 4862):
@@ -441,6 +467,20 @@ impl Drop for StoredGoogleGrant {
     }
 }
 
+/// A stored grant whose access token is presented as it is, read inside the
+/// credential door and wiped on drop. Its other fields are skipped unread.
+#[derive(Deserialize)]
+struct StoredAccessGrant {
+    #[serde(default)]
+    access_token: Option<String>,
+}
+
+impl Drop for StoredAccessGrant {
+    fn drop(&mut self) {
+        self.access_token.zeroize();
+    }
+}
+
 /// Google's token reply: the fresh access token, wiped on drop, and the
 /// space-separated scopes it holds.
 #[derive(Deserialize)]
@@ -484,6 +524,7 @@ impl PackConnectionVerifier for ProviderConnectionChecks {
                 reply = Some(match check.check {
                     GMAIL_PROFILE_CHECK => self.send_gmail_profile(&method, url, value)?,
                     GOOGLE_TOKEN_CHECK => self.send_google_token(url, value)?,
+                    MICROSOFT365_ME_CHECK => self.send_microsoft365_me(&method, url, value)?,
                     _ => self.send(check.check, &method, url, value)?,
                 });
                 Ok(())
@@ -514,6 +555,7 @@ fn provider_call(check: &str) -> std::result::Result<(reqwest::Method, &'static 
         LINKEDIN_SESSION_CHECK => (reqwest::Method::GET, LINKEDIN_ME_URL),
         TELEGRAM_GET_ME_CHECK => (reqwest::Method::GET, "https://api.telegram.org"),
         GOOGLE_TOKEN_CHECK => (reqwest::Method::POST, GOOGLE_TOKENINFO_URL),
+        MICROSOFT365_ME_CHECK => (reqwest::Method::GET, "https://graph.microsoft.com/v1.0/me"),
         BROWSER_SESSION_CHECK => {
             return Err(
                 "this host runs no browser guest; a served host with a [browser] guest checks it"
@@ -606,6 +648,12 @@ fn evidence_of(
             .or_else(|| field("sub"))
             .unwrap_or_default()
             .to_owned(),
+        // Graph names a work account by its sign-in name, its mail address
+        // when it has one.
+        MICROSOFT365_ME_CHECK => field("userPrincipalName")
+            .or_else(|| field("mail"))
+            .unwrap_or_default()
+            .to_owned(),
         _ => field("emailAddress").unwrap_or_default().to_owned(),
     };
     // The provider's stable id a served host binds inbound events to:
@@ -623,6 +671,7 @@ fn evidence_of(
             .get("miniProfile")
             .and_then(|profile| reply_field(profile, "publicIdentifier")),
         GOOGLE_TOKEN_CHECK => field("sub"),
+        MICROSOFT365_ME_CHECK => field("id"),
         _ => field("emailAddress"),
     }
     .map(str::to_owned);

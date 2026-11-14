@@ -116,7 +116,7 @@ impl WorkspaceRun<'_> {
                 let Some(prepared) = effect.take() else {
                     return Ok(());
                 };
-                let access_token = match token::access_token(&client, value) {
+                let access_token = match token::access_token(&client, connection.token, value) {
                     Ok(access_token) => access_token,
                     Err(error) => {
                         token_unusable = true;
