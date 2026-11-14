@@ -188,19 +188,72 @@ async fn chat_turn(server: &Arc<SyncServer>, conversation: &str, turn: usize) {
     );
 }
 
-/// The first line of each request's system message, for a failure's report.
+/// Each request's message roles and the first line of its first message,
+/// for a failure's report.
 fn seen_report(fake: &FakeLlm) -> Vec<String> {
     fake.seen()
         .iter()
         .map(|seen| {
-            let system = seen.body["messages"]
+            let messages = seen.body["messages"]
                 .as_array()
-                .and_then(|messages| messages.first())
-                .map(message_text)
+                .cloned()
                 .unwrap_or_default();
-            system.lines().next().unwrap_or_default().to_owned()
+            let roles: Vec<&str> = messages
+                .iter()
+                .map(|message| message["role"].as_str().unwrap_or("?"))
+                .collect();
+            let first = messages.first().map(message_text).unwrap_or_default();
+            format!("{roles:?} {}", first.lines().next().unwrap_or_default())
         })
         .collect()
+}
+
+/// The chat log the turns' own reader, the owner, reads now, as a self
+/// turn reads it before its user turn, and the transcript under it, for a
+/// failure's report.
+fn log_report(server: &SyncServer, owner: oneiron::EntityId, conversation: &str) -> String {
+    let Ok(id) = oneiron::EntityId::from_hex(conversation) else {
+        return format!("conversation ref {conversation} names no id");
+    };
+    let reader = server.vault().memory(owner, oneiron::EdgeActorClass::Human);
+    let history_lines = server.ai.chat_settings().history_turns;
+    let log = match oneiron::compaction::read_chat_log(&reader, id, 1, history_lines) {
+        Ok(log) => format!(
+            "log lines={} pinned={} turns pinned={} last turn session={:?} uncompacted_tokens={}",
+            log.lines.len(),
+            log.pinned,
+            log.sources.len(),
+            log.session,
+            log.uncompacted_tokens,
+        ),
+        Err(error) => format!("log refused: {error:?}"),
+    };
+    let transcript = match reader.conversation_transcript(&id, None, 50) {
+        Ok(page) => page
+            .value
+            .turns
+            .iter()
+            .map(|turn| {
+                let messages: Vec<String> = turn
+                    .messages
+                    .iter()
+                    .map(|message| {
+                        format!(
+                            "{} {} chars incomplete={} generating={}",
+                            message.role,
+                            message.text.len(),
+                            message.incomplete,
+                            message.generating,
+                        )
+                    })
+                    .collect();
+                format!("[{}]", messages.join(", "))
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+        Err(error) => format!("transcript refused: {error:?}"),
+    };
+    format!("{log}; transcript: {transcript}")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -262,8 +315,13 @@ async fn retained_turns_row_chat_compacts_on_the_cheap_writer_as_the_agent() {
     }
     assert!(
         compacted,
-        "no compaction call after {turn} turns; requests: {:?}",
-        seen_report(&fake)
+        "no compaction call after {turn} turns; requests: {:?}; owner's read: {}; sitting open: {:?}",
+        seen_report(&fake),
+        log_report(&server, owner, &conversation),
+        server
+            .vault()
+            .open_session(sitting)
+            .map(|open| open.is_some()),
     );
     let call = fake
         .seen()
