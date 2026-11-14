@@ -26,6 +26,7 @@ pub mod coach;
 pub mod code_mode_capture;
 pub mod code_reply_healer;
 pub mod code_run_answer;
+pub mod code_run_result_body;
 pub mod code_run_write_identity;
 pub mod code_view_fork;
 pub mod comm_late_stop;
