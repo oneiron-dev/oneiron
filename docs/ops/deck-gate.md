@@ -291,8 +291,10 @@ fits its frame: text, tables and charts return FitUnverified. The
 `deck-create-v1` case set (`scripts/office/deck-create-v1.json`: six briefs
 the emitter writes against the committed template) closes the evidence gap:
 PowerPoint itself measures, per text unit, whether its laid-out text fits the
-frame. Charts stay inconclusive (the AppleScript dictionary exposes no chart
-text layout). The receipts are committed, and a test keeps them bound to what
+frame. Charts and tables stay inconclusive: PowerPoint for Mac's AppleScript
+dictionary exposes no chart text layout and gives no table rows. A text unit's
+width is its widest line's glyph extent, without the trailing blank that
+PowerPoint hangs past the margin. The receipts are committed, and a test keeps them bound to what
 the emitter writes today. It does not change what `emit` returns.
 
 The run has the same two halves as the gate above. Throughout, `$sha` is the
@@ -328,7 +330,10 @@ candidates are the emitter's own output, so the one pass opens everything.
 
 Copy `office-results/` (without `font-inventory.json`: it lists the running
 account's own font files) to `scripts/office/results/deck-create-v1/` in a
-commit, then run the test that checks it:
+commit, then run the test that checks it. The results name no person or host:
+`run.json` gives the seat as `mac-mini`, and the pass rewrites each
+`reference.pptx` author field (PowerPoint's save-back writes the Office user's
+name there) to `Oneiron oracle` before hashing it.
 
 ```sh
 cargo test --locked -p oneiron-docedit --all-features --test deck_create_oracle_receipt
