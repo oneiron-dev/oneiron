@@ -25,6 +25,10 @@ use super::IndexedProvider;
 use crate::embedder::QueryEmbedder;
 
 const DIMS: usize = 4;
+/// The recording embedder's model, which the vault also names: the idle pass
+/// writes the vectors of released rows, and a vector write needs the vault's
+/// model identity.
+const MODEL_ID: &str = "test/recording@v1";
 const KEPT_TEXT: &str = "the lantern key is under the mat";
 const OPEN_TEXT: &str = "the ferry leaves at noon";
 
@@ -49,7 +53,7 @@ impl RecordingEmbedder {
 
 impl Embedder for RecordingEmbedder {
     fn model_id(&self) -> &str {
-        "test/recording@v1"
+        MODEL_ID
     }
 
     fn dimensions(&self) -> usize {
@@ -97,7 +101,7 @@ struct Fixture {
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let mut config = VaultConfig::device();
-    config.embedding_model = None;
+    config.embedding_model = Some(MODEL_ID.to_owned());
     config.dimensions = DIMS;
     let vault = Vault::open(dir.path(), config).expect("open vault");
     vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
