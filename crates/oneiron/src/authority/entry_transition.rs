@@ -152,6 +152,7 @@ pub(super) fn fold_entry_state(
             refused_export_acts: BTreeSet::new(),
             agent_carried_acts: BTreeMap::new(),
             home_candidacy: super::home_candidacy::HomeCandidacyState::default(),
+            full_copy_mark: super::full_copy_mark::FullCopyMarkState::default(),
             owner_work: super::owner_work::OwnerWorkState::default(),
             world_keys: BTreeMap::new(),
             refused_world_keys: BTreeSet::new(),
@@ -455,6 +456,21 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
+    // A machine's full-copy mark, signed by its own install key the same
+    // way, with no owner act: it states what the machine holds (L7-47).
+    if let AuthorityOp::FullCopyMark(mark) = &entry.op {
+        if let Err(issue) = super::full_copy_mark::apply_full_copy_mark(
+            &mut state,
+            entry,
+            mark,
+            hash,
+            (context.pin, context.machine_standing),
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
     // The owner's enrollment of a device's own owner signing key: an owner
     // root signs it and his act's carrier cosigns it (FIX 4920), so its own
     // judge reads the roster before the generic participant rule.
@@ -689,6 +705,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::HomeCandidacy(_)
+        | AuthorityOp::FullCopyMark(_)
         | AuthorityOp::AgentGrantAct(_)
         | AuthorityOp::PolicySettingSet(_)
         | AuthorityOp::ExportAct(_)
