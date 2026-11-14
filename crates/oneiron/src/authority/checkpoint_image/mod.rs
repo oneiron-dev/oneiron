@@ -86,7 +86,9 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// them, so such a view reads them under the same cap (FIX 23218).
 /// 33: an owner's agent Grant mint an image carries may bind its repo bounds to one owner
 /// working view (row 6 WORKING-VIEW-EDIT).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 33;
+/// 34: a revocation retires its key on every branch, as a handoff retires its predecessors
+/// (REVOKED-OWNER-ROOT-SIBLING-ENROL).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 34;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.

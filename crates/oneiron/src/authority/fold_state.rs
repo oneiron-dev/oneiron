@@ -19,8 +19,8 @@ pub enum AuthorityFoldIssue {
     InvalidEntry(AuthorityEntryHash),
     /// Entry references a missing or invalid parent.
     InvalidAncestry(AuthorityEntryHash),
-    /// Entry is signed by a key a handoff retired, outside that handoff's
-    /// own ancestry.
+    /// Entry is signed by a key a handoff or a revocation retired, outside
+    /// that row's own ancestry.
     RetiredSigner(AuthorityEntryHash),
     /// A handoff that conflicts with another (a fork, a cycle) or yields to
     /// one whose fence stands: it installs no successor.
@@ -115,8 +115,9 @@ pub struct AuthorityFold {
     pub valid_entries: ValidEntries,
     /// Fold-derived active/revoked roster.
     pub roster: BTreeMap<AuthorityKey, FoldedDevice>,
-    /// Keys a handoff (`ReRoot`) retired. They stay revoked on every branch:
-    /// no entry they sign stands outside the handoff's own ancestry.
+    /// Keys a handoff (`ReRoot`) or a revocation (`RevokeDevice`) retired.
+    /// They stay revoked on every branch: no entry they sign stands outside
+    /// that row's own ancestry.
     pub retired_keys: BTreeSet<AuthorityKey>,
     /// Every key in the host's custody, as the fold's custody walk judged it
     /// on the merged history: read through [`AuthorityFold::in_host_custody`]
