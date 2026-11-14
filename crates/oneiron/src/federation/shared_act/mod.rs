@@ -159,6 +159,17 @@ pub struct RemoveOwnerPlan {
     /// alone (FIX 1300). Removal alone exports nothing.
     pub export_first: bool,
 }
+/// The removal an Owner proposes ([`Vault::propose_remove_owner_with_check_in`]):
+/// `target` keeps `target_keeps` or leaves when it is `None`; removing the
+/// last Owner names a `successor`; `export_first` is the removal flow's
+/// "export first?" ([`RemoveOwnerPlan::export_first`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OwnerRemoval {
+    pub target: EntityId,
+    pub successor: Option<EntityId>,
+    pub target_keeps: Option<Role>,
+    pub export_first: bool,
+}
 
 /// What one executed act or membership change did.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -741,10 +752,12 @@ impl Vault {
         self.propose_remove_owner_with_check_in(
             starter,
             vault_id,
-            target,
-            successor,
-            target_keeps,
-            export_first,
+            OwnerRemoval {
+                target,
+                successor,
+                target_keeps,
+                export_first,
+            },
             None,
         )
     }
@@ -760,17 +773,19 @@ impl Vault {
     /// # Errors
     /// As [`Self::propose_remove_owner`]; a `check_in_ref` that names no
     /// approved, unspent check-in for this removal.
-    #[allow(clippy::too_many_arguments)]
     pub fn propose_remove_owner_with_check_in(
         &self,
         starter: &AuthenticatedOwner,
         vault_id: u64,
-        target: EntityId,
-        successor: Option<EntityId>,
-        target_keeps: Option<Role>,
-        export_first: bool,
+        removal: OwnerRemoval,
         check_in_ref: Option<EntityId>,
     ) -> Result<PendingAuthorityAct> {
+        let OwnerRemoval {
+            target,
+            successor,
+            target_keeps,
+            export_first,
+        } = removal;
         {
             let txn = self.store.env.read_txn()?;
             starter.revalidate_person_in_txn(self, &txn)?;

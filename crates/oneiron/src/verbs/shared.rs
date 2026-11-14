@@ -11,9 +11,9 @@ use crate::authority::{AuthorityHandoffAlarm, HostSlipIssuer};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::federation::{
-    FederationGrantRole as Role, MemberAskChange, PendingAuthorityAct, RemovalExportDelivery,
-    SharedActExecution, SharedActExecutionReceipt, SharedActKind, SharedActOutcome,
-    SharedMemberAsk, SharedVaultDeletion,
+    FederationGrantRole as Role, MemberAskChange, OwnerRemoval, PendingAuthorityAct,
+    RemovalExportDelivery, SharedActExecution, SharedActExecutionReceipt, SharedActKind,
+    SharedActOutcome, SharedMemberAsk, SharedVaultDeletion,
 };
 use crate::memory::{MemoryError, MemoryResult, ProducerRows};
 use crate::{EntityId, Vault};
@@ -381,10 +381,12 @@ pub fn propose_shared_remove_owner(
     Ok(vault.propose_remove_owner_with_check_in(
         starter,
         input.vault_id,
-        target,
-        successor,
-        input.target_keeps,
-        input.export_first,
+        OwnerRemoval {
+            target,
+            successor,
+            target_keeps: input.target_keeps,
+            export_first: input.export_first,
+        },
         check_in,
     )?)
 }

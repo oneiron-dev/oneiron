@@ -35,7 +35,7 @@ use oneiron::check_in::{
     ownership_transfer_effect_digest,
 };
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::federation::{FederationGrantRole as Role, Scope, ScopeAxis};
+use oneiron::federation::{FederationGrantRole as Role, OwnerRemoval, Scope, ScopeAxis};
 use oneiron::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
@@ -348,10 +348,12 @@ fn the_owner_applies_a_deputys_approved_owner_add_and_removal() {
     let crossed = fx.vault.propose_remove_owner_with_check_in(
         &fx.owner_proof,
         SHARED,
-        fx.owner,
-        Some(successor),
-        None,
-        true,
+        OwnerRemoval {
+            target: fx.owner,
+            successor: Some(successor),
+            target_keeps: None,
+            export_first: true,
+        },
         Some(id_of(&add)),
     );
     assert!(
@@ -374,10 +376,12 @@ fn the_owner_applies_a_deputys_approved_owner_add_and_removal() {
         .propose_remove_owner_with_check_in(
             &fx.owner_proof,
             SHARED,
-            fx.owner,
-            Some(successor),
-            None,
-            true,
+            OwnerRemoval {
+                target: fx.owner,
+                successor: Some(successor),
+                target_keeps: None,
+                export_first: true,
+            },
             Some(id_of(&removal)),
         )
         .expect("the owner applies the approved removal");
