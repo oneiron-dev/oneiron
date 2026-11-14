@@ -10,7 +10,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::process::Stdio;
+use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -33,6 +33,7 @@ use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor, DreamerParkCause,
     HostingPrivacyPosture, WakeAttemptContext,
 };
+use oneiron_container::{RunnerFenceOutcome, SessionManifest};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -132,33 +133,100 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
         budget: ExecutionBudget,
         _authorize: &mut dyn FnMut(&str, u64) -> ByoaResult<ByoaEgressLease>,
     ) -> ByoaResult<ByoaExhaust> {
+        self.run_with_manifest(spec, checkout, budget).1
+    }
+}
+
+impl OfficialCliSeatExecutor {
+    /// Runs the CLI as [`ByoaCliExecutor::run`] does, and returns apart
+    /// from the run's end the session manifest of the runner it started, so
+    /// a run that fails after its start (its deadline, its claim's end, a
+    /// spool refusal) keeps its receipt (canon `#runner-fence`): `None`
+    /// where no runner started, or the executor has no fence.
+    pub fn run_with_manifest(
+        &mut self,
+        spec: &CliSandboxSpec,
+        checkout: &CheckoutLeaseAct,
+        budget: ExecutionBudget,
+    ) -> (Option<SessionManifest>, ByoaResult<ByoaExhaust>) {
         if checkout.checkout_id != spec.checkout_id {
-            return Err(ByoaError::Backend(
-                "official seat checkout does not match the connector".to_owned(),
-            ));
+            return (
+                None,
+                Err(ByoaError::Backend(
+                    "official seat checkout does not match the connector".to_owned(),
+                )),
+            );
         }
         if !matches!(spec.program.as_str(), "claude" | "codex" | "opencode") {
-            return Err(ByoaError::Backend(
-                "official seat executor runs only the official claude/codex/opencode binaries"
-                    .to_owned(),
-            ));
+            return (
+                None,
+                Err(ByoaError::Backend(
+                    "official seat executor runs only the official claude/codex/opencode binaries"
+                        .to_owned(),
+                )),
+            );
         }
         if !spec.credential_handles.is_empty() {
             // A login seat's credential stays inside the official CLI. A
             // connector asking this executor to inject custody material is
             // refused rather than silently half-served.
-            return Err(ByoaError::Backend(
-                "official seat executor does not inject credential handles".to_owned(),
-            ));
+            return (
+                None,
+                Err(ByoaError::Backend(
+                    "official seat executor does not inject credential handles".to_owned(),
+                )),
+            );
         }
         // `_scratch` is the fenced CLI's TMPDIR: it stays until the run ends.
-        let (mut command, fence_outcome, _scratch) = match &self.runner_fence {
-            Some(fence) => {
-                let runner = fence.command(&spec.program, Some(&self.workdir));
-                (runner.command, Some(runner.outcome), runner.scratch)
-            }
-            None => (oneiron_spawn::command(&spec.program), None, None),
+        let (child, fence_outcome, _scratch) = match self.spawn_cli(spec) {
+            Ok(started) => started,
+            Err(error) => return (None, Err(error)),
         };
+        let session_manifest = fence_outcome.map(|outcome| {
+            runner_session_manifest(&outcome, SEAT_RUNNER_BACKEND, &spec.program, &spec.argv)
+        });
+        let ran = self.finish_cli(child, budget, session_manifest.clone());
+        (session_manifest, ran)
+    }
+
+    /// The CLI's process for `spec`, under the runner fence where the
+    /// executor has one, with the outcome its session manifest states and
+    /// its private temp directory. A fenced spawn that fails (the rule
+    /// refused at the spawn on a host that proved it) starts again without
+    /// the rule, unproven: canon `#fence-unproven`, the engine never refuses
+    /// the run.
+    fn spawn_cli(
+        &self,
+        spec: &CliSandboxSpec,
+    ) -> ByoaResult<(Child, Option<RunnerFenceOutcome>, Option<tempfile::TempDir>)> {
+        let spawn_failed = |_| ByoaError::Backend("official seat spawn failed".to_owned());
+        let Some(fence) = &self.runner_fence else {
+            let mut command = oneiron_spawn::command(&spec.program);
+            self.prepare_cli(&mut command, spec);
+            return Ok((command.spawn().map_err(spawn_failed)?, None, None));
+        };
+        let mut runner = fence.command(&spec.program, Some(&self.workdir));
+        self.prepare_cli(&mut runner.command, spec);
+        let fenced = runner.command.spawn();
+        let child = match fenced {
+            Err(error) if runner.outcome.proven => {
+                tracing::warn!(
+                    error = %error,
+                    "runner fence: a fenced seat CLI did not start; it starts again unproven"
+                );
+                runner = fence.unfenced_command(&spec.program, Some(&self.workdir));
+                self.prepare_cli(&mut runner.command, spec);
+                runner.command.spawn()
+            }
+            spawned => spawned,
+        }
+        .map_err(spawn_failed)?;
+        Ok((child, Some(runner.outcome), runner.scratch))
+    }
+
+    /// Sets `spec`'s arguments, the checkout directory, the standard
+    /// streams and the run's environment on the CLI's `command`.
+    fn prepare_cli(&self, command: &mut Command, spec: &CliSandboxSpec) {
         command
             .args(&spec.argv)
             .current_dir(&self.workdir)
@@ -166,20 +234,27 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         if let Some(destinations) = &self.secret_destinations {
-            destinations.apply_env(&mut command);
+            destinations.apply_env(command);
         }
         if let Some(helper_env) = &self.helper_env {
-            helper_env.apply(&mut command);
+            helper_env.apply(command);
         }
         for name in SEAT_ENV_REMOVED {
             command.env_remove(name);
         }
         if let Some(model_env) = &self.model_env {
-            model_env.apply(&mut command);
+            model_env.apply(command);
         }
-        let mut child = command
-            .spawn()
-            .map_err(|_| ByoaError::Backend("official seat spawn failed".to_owned()))?;
+    }
+
+    /// Waits for the started CLI within `budget`, drains its output, and
+    /// returns its exhaust with `session_manifest`.
+    fn finish_cli(
+        &self,
+        mut child: Child,
+        budget: ExecutionBudget,
+        session_manifest: Option<SessionManifest>,
+    ) -> ByoaResult<ByoaExhaust> {
         // One deadline bounds the run, its drains and the wait for them.
         let deadline = Instant::now() + Duration::from_secs(budget.wall_clock_secs.max(1));
         let mut stdout = child
@@ -231,9 +306,7 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
         let mut exhaust = ByoaExhaust {
             stdout: stdout.stream(deadline)?,
             stderr: stderr.stream(deadline)?,
-            session_manifest: fence_outcome.map(|outcome| {
-                runner_session_manifest(&outcome, SEAT_RUNNER_BACKEND, &spec.program, &spec.argv)
-            }),
+            session_manifest,
             ..ByoaExhaust::default()
         };
         if !status.success() && exhaust.stderr.is_empty() {
@@ -242,6 +315,24 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
                 .into();
         }
         Ok(exhaust)
+    }
+}
+
+/// The exhaust a seat run that failed with `error` is captured with: the
+/// failure as its standard error, so the capture door keeps it, and the
+/// session manifest of the runner it started, so the run's fence receipt
+/// stays (canon `#runner-fence`).
+#[must_use]
+pub fn failed_seat_run_exhaust(
+    error: &ByoaError,
+    session_manifest: Option<SessionManifest>,
+) -> ByoaExhaust {
+    ByoaExhaust {
+        stderr: format!("official seat run failed: {error}")
+            .into_bytes()
+            .into(),
+        session_manifest,
+        ..ByoaExhaust::default()
     }
 }
 
