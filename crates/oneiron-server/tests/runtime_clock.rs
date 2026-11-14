@@ -5,12 +5,15 @@
 #![allow(clippy::unwrap_used)]
 
 use std::fs::File;
+use std::net::SocketAddr;
 use std::path::Path;
 use std::process::{Child, Command};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use axum::Extension;
 use axum::body::{Body, to_bytes};
+use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode};
 use ed25519_dalek::SigningKey;
 use oneiron::authority::{CapabilitySlip, holder_proof};
@@ -108,7 +111,9 @@ async fn a_keyed_response_expires_a_day_later_on_the_vaults_clock() {
         )
         .unwrap(),
     );
-    let app = build_app(server);
+    // A hatch server answers only callers on this device.
+    let loopback = ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0)));
+    let app = build_app(server).layer(Extension(loopback));
     let body = json!({
         "principal_ref": owner,
         "scope": {

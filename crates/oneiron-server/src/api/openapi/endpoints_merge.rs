@@ -3,11 +3,11 @@
 use super::*;
 use crate::error::ApiError;
 use crate::server::SyncServer;
+use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::header::CONTENT_TYPE;
 use axum::http::request::Parts;
 use axum::response::IntoResponse;
-use axum::response::Json;
 use oneiron::blob_artifact::DeckProposeRejection;
 use oneiron::edit_settle::PendingProposalView;
 use oneiron::task_verb::sdk::{
@@ -17,7 +17,7 @@ use oneiron::task_verb::sdk::{
 use oneiron_contracts::code_run::vault_read::request_schema;
 use serde_json::Value;
 use serde_json::json;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use utoipa::OpenApi;
 
 pub(crate) const SKILL_PACK_NAME: &str = "oneiron-http-memory-api";
@@ -63,9 +63,48 @@ pub(crate) const SKILL_PACK_RESOLUTION: &str = "Resolve endpoint against the sam
 pub(crate) async fn openapi_json(
     parts: Parts,
     State(server): State<Arc<SyncServer>>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<impl IntoResponse, ApiError> {
     crate::api::scoped_auth::check_request_auth(&parts, &server)?;
-    Ok(Json(openapi_document()))
+    Ok((
+        [(CONTENT_TYPE, "application/json")],
+        openapi_document_json(),
+    ))
+}
+
+/// The served document's JSON bytes, assembled once per process.
+///
+/// [`openapi_document`] reads nothing but the build, so every request in a
+/// process serves the same bytes. Assembling them took 2.05 s per request in
+/// the E2E (dev) build (FIX [SLOW-FACADE-CALLS-COORDINATION-08]).
+static OPENAPI_DOCUMENT_JSON: OnceLock<Bytes> = OnceLock::new();
+
+/// The served document's JSON bytes: the first caller in the process
+/// assembles them, and a caller that comes while they are being assembled
+/// waits for those bytes instead of assembling its own.
+pub(crate) fn openapi_document_json() -> Bytes {
+    OPENAPI_DOCUMENT_JSON
+        .get_or_init(|| {
+            Bytes::from(
+                serde_json::to_vec(&openapi_document()).expect("serialize generated OpenAPI"),
+            )
+        })
+        .clone()
+}
+
+/// Assembles the served document on a thread of its own, so the first
+/// `GET /api/openapi.json` after a start finds it built. `serve` calls this
+/// once at start and lets the thread run on; the handle is for a caller that
+/// waits for it.
+///
+/// # Errors
+///
+/// The OS refused the thread; the first request then assembles the document.
+pub(crate) fn spawn_openapi_document_precompute() -> std::io::Result<std::thread::JoinHandle<()>> {
+    std::thread::Builder::new()
+        .name("openapi-document".to_owned())
+        .spawn(|| {
+            openapi_document_json();
+        })
 }
 
 /// Returns the static agentskills.io-compatible Oneiron skill pack.
@@ -105,7 +144,20 @@ pub(crate) async fn skills_pack(
     ))
 }
 
+/// How many times this process has run [`openapi_document`]; the
+/// `openapi_document` test door reads it.
+#[cfg(oneiron_test_support)]
+static OPENAPI_DOCUMENT_ASSEMBLIES: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn openapi_document_assemblies() -> usize {
+    OPENAPI_DOCUMENT_ASSEMBLIES.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 pub(crate) fn openapi_document() -> Value {
+    #[cfg(oneiron_test_support)]
+    OPENAPI_DOCUMENT_ASSEMBLIES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let mut spec = serde_json::to_value(ApiDoc::openapi()).expect("serialize generated OpenAPI");
     merge_error_components(&mut spec);
     merge_booking_components(&mut spec);
@@ -118,6 +170,7 @@ pub(crate) fn openapi_document() -> Value {
     super::off_record_room_paths::merge_off_record_room_paths(&mut spec);
     super::signing_paths::merge_signing_paths(&mut spec);
     super::signing_paths::merge_editor_paths(&mut spec);
+    super::qr_page_paths::merge_qr_page_paths(&mut spec);
     super::voice_bank_paths::merge_voice_bank_paths(&mut spec);
     super::pairing_paths::merge_pairing_paths(&mut spec);
     merge_typed_rest_bodies(&mut spec);

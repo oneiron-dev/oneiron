@@ -574,19 +574,35 @@ fn fold_party_opt_out_heads_in_txn(
 /// re-derives the row. A contact whose identity resolves to no class is UNKNOWN,
 /// and unknown matches EVERY head: the same CA-01 uncertainty rule
 /// [`counterparty_contact_matches_channel_class`] states, resolved restrictively.
+///
+/// The heads are the party's when an active party answers the record's key,
+/// read through its shells. A key no active party answers — its PERSON merged
+/// into a different key — folds the heads on every PERSON still carrying the
+/// key, whatever its lifecycle: the set the send gate reads for it, so the
+/// STOP that key said before its merge, which still holds its sends, still
+/// shows on its contacts (F06 R4-F1).
 pub(crate) fn fold_party_opt_out_heads_for_store_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     record: &mut CounterpartyContactRecord,
 ) -> Result<()> {
-    let Some(party_ref) = vault
+    let heads = match vault
         .store
         .record_hooks
         .resolve_party_ref_in_txn(vault, rtxn, &record.counterparty)
         .map_err(comm_fold_error)?
-    else {
+    {
+        Some(party_ref) => crate::comm::standing_opt_out_heads_in_txn(vault, rtxn, party_ref),
+        None => crate::comm::standing_opt_out_heads_for_party_key_in_txn(
+            vault,
+            rtxn,
+            &record.counterparty,
+        ),
+    }
+    .map_err(comm_fold_error)?;
+    if heads.is_empty() {
         return Ok(());
-    };
+    }
     // Resolved ONCE: the class comes from the record's sending identity, which
     // no head in this loop can move.
     let contact_class = counterparty_contact_channel_class(&vault.store, rtxn, record)?;
@@ -602,9 +618,7 @@ pub(crate) fn fold_party_opt_out_heads_for_store_in_txn(
     // of claim iteration order rather than out of when the party spoke.
     let mut newest = record.opt_out.map(|opt_out| opt_out.recorded_at);
     let mut winner = None;
-    for head in crate::comm::standing_opt_out_heads_in_txn(vault, rtxn, party_ref)
-        .map_err(comm_fold_error)?
-    {
+    for head in heads {
         if let Some(contact_class) = contact_class.as_deref()
             && !head.matches_channel(contact_class)
         {

@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "The agent runtime above the oneiron core crate: the code sandbox backends (Wasmtime/QuickJS runtime, Firecracker microVM, OCI fenced container)"
 repository.workspace = true
-homepage.workspace = true
 
 [lib]
 doctest = false

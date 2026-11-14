@@ -99,6 +99,31 @@ pub(crate) async fn vault_agents_plan_mode_set(
     .await
 }
 
+/// Optional memory (L9-32-PICK-WRITER): the owner sets the optional recall
+/// an agent takes as a reader; the setter revalidates the proof in its own
+/// writer.
+pub(crate) async fn vault_agents_optional_memory_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::agent_def::AgentOptionalMemorySetRequest,
+) -> MaybeListed<oneiron::agent_def::AgentOptionalMemoryState> {
+    const VERB: &str = "vault.agents.optional_memory.set";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| {
+            oneiron::agent_def::set_agent_optional_memory_from_request_as(
+                server.vault(),
+                &owner,
+                input,
+            )
+        },
+        |state| Some(vec![state.agent_def_ref]),
+    )
+    .await
+}
+
 pub(crate) async fn vault_agents_get(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

@@ -71,19 +71,8 @@ pub struct GithubIssueRevision {
     pub kind: GithubIssueKind,
 }
 
-/// Where a GitHub source's walk resumes.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GithubSweepContinuation {
-    /// The walk: one more each time a walk reaches the last page.
-    pub generation: u64,
-    /// The next page, as the last page's `Link: rel="next"` named it;
-    /// `None` when the walk starts at the first page.
-    pub next: Option<String>,
-    /// The ETag the last page carried: HTTP evidence of the listing, never
-    /// an item's revision.
-    pub etag: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::feedback::triage::github::GithubSweepContinuation;
 
 /// One page of a GitHub source's listing, as the host read it.
 #[derive(Clone, Debug, PartialEq, Eq)]

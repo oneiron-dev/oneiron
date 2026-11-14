@@ -139,6 +139,19 @@ pub(crate) fn stage_system_machine_transition(
     )
 }
 
+/// The validity end a lifecycle close of a MACHINE-born claim signs: `at`,
+/// kept inside the claim's validity window as it stands. The claim's history
+/// refuses a close that moves its end later, or before its start
+/// ([`TransitionFoldError::Rollback`], read as `InvalidMachineClaimProof`),
+/// so a claim closed after its window ended keeps that end. The close's
+/// event, edge and receipt still record the actual time (FIX
+/// LAPSE-PROJECTED-INSTANCE-MACHINE-PROOF: a projected commitment instance's
+/// window is its due instant, and every close after it was refused).
+pub(crate) fn machine_close_end(current: &crate::ClaimBody, at: u64) -> u64 {
+    let end = current.valid_to.map_or(at, |old| old.min(at));
+    current.valid_from.map_or(end, |start| start.max(end))
+}
+
 /// Close a MACHINE-born claim through its signed history; any other claim is
 /// returned unchanged. `actor` is the typed door's authenticated writer, and
 /// `None` attributes the close to the vault's embedded owner. The body's

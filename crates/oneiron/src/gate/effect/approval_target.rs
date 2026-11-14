@@ -34,13 +34,22 @@
 //!
 //! FIX 10422 adds one classified send of a run's browser, whose press is
 //! composed from its facts (`crate::consent::browser_approve_once_digest`).
+//!
+//! FIX 22398: the family owns both halves of a press. Its composer,
+//! [`ApprovalTarget::approve_once_digest`], is the Gate's own composer over
+//! the effect, so the press it names is the key the Gate's spend lookup
+//! recomposes from the effect it holds; every family's public digest helper
+//! calls it. Its spend match, [`ApprovalTarget::kept_press_retry_proof`], is
+//! the one check a press kept for a send's retry passes.
 
 use crate::calendar::CalendarInvitePayload;
-use crate::consent::approval_proof::PinnedApprovalFamily;
+use crate::consent::EffectDigest;
+use crate::consent::approval_proof::{AdmittedApproval, PinnedApproval, PinnedApprovalFamily};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::gate::ExternalEffectGateInput;
 use crate::linear_sync::{LinearEffectRequest, MirroredTaskFields};
 use crate::outbound::OutboundRecipient;
+use crate::receipt::intent_id::IntentId;
 
 /// The BLAKE3 domain of the target pin.
 const APPROVE_ONCE_TARGET_DOMAIN: &[u8] = b"oneiron.external_effect.approve_once.target.v1";
@@ -472,12 +481,42 @@ impl ApprovalTarget {
         }
     }
 
-    /// The approve-once digest a held `effect` names, 64 lower-hex: the
-    /// Gate's own composer over that very input. `None` for an effect whose
-    /// family pins no target.
-    pub(crate) fn held_digest(effect: &ExternalEffectGateInput) -> Option<String> {
+    /// The approve-once digest an owner's press on `effect` names: the
+    /// Gate's own composer over that very input, so it is the key the Gate's
+    /// spend lookup recomposes from the effect it holds (FIX 22398). Every
+    /// family's public digest helper composes through it. `None` for an
+    /// effect whose family pins no target.
+    pub(crate) fn approve_once_digest(effect: &ExternalEffectGateInput) -> Option<EffectDigest> {
         effect.provenance.approval_target.as_ref()?;
-        super::external_effect_approval_digest(effect).map(|digest| digest.to_hex())
+        super::external_effect_approval_digest(effect)
+    }
+
+    /// [`Self::approve_once_digest`] as a held `effect` names it, 64
+    /// lower-hex.
+    pub(crate) fn held_digest(effect: &ExternalEffectGateInput) -> Option<String> {
+        Self::approve_once_digest(effect).map(|digest| digest.to_hex())
+    }
+
+    /// The retry proof `kept`, a press kept beside intent `intent_id`'s
+    /// ledger row, gives `effect`: that press, only while it is filed under
+    /// the family `effect`'s target pins, was spent on this intent, and names
+    /// the digest [`Self::approve_once_digest`] composes for `effect` now
+    /// (FIX 22398). A press kept for another send, family or intent proves
+    /// nothing.
+    pub(crate) fn kept_press_retry_proof(
+        effect: &ExternalEffectGateInput,
+        intent_id: IntentId,
+        kept: PinnedApproval,
+    ) -> Option<AdmittedApproval> {
+        let family = effect
+            .provenance
+            .approval_target
+            .as_ref()?
+            .pinned_family()?;
+        (kept.family == family
+            && kept.proof.intent_id() == intent_id
+            && Self::approve_once_digest(effect) == Some(kept.proof.effect_digest()))
+        .then_some(kept.proof)
     }
 
     /// `operation_kind` named by this one send, the shape native mail's

@@ -5,11 +5,11 @@ use serde::{Deserialize, Serialize};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::store::{
-    RetrievalBlendSignal, RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry,
-    RetrievalBlendWeights, RetrievalEndOutcome, RetrievalOutcome, RetrievalOutcomeRecord,
-    RetrievalPolicyCandidate, RetrievalPolicyEvaluation, RetrievalPolicyPin,
-    RetrievalPolicyVerdict, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
-    RetrievalState, RetrievalTrace, RetrievalTurn, RetrievalWeightRow,
+    RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry, RetrievalBlendWeights,
+    RetrievalEndOutcome, RetrievalOutcome, RetrievalOutcomeRecord, RetrievalPolicyCandidate,
+    RetrievalPolicyEvaluation, RetrievalPolicyPin, RetrievalPolicyVerdict, RetrievalRunId,
+    RetrievalRunRecord, RetrievalScoreBreakdown, RetrievalState, RetrievalTrace, RetrievalTurn,
+    RetrievalWeightRow,
 };
 
 /// Default number of newest runs in an unbounded-by-caller diagnostic read.
@@ -18,29 +18,16 @@ pub const RETRIEVAL_RUNS_DEFAULT: usize = 100;
 
 pub use crate::retrieval_depth::RecallTelemetry;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RetrievalRunsRequest {
-    #[serde(default)]
-    pub limit: Option<usize>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::retrieval::{
+    ReadShapePinRequest, RetrievalPolicyDisposition, RetrievalPolicyPinRequest,
+    RetrievalRoutingPin, RetrievalRunsRequest, RetrievalTraceRequest, RetrievalTurnRequest,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RetrievalRunRequest {
     pub run_id: RetrievalRunId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RetrievalTurnRequest {
-    pub turn_id: [u8; 16],
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RetrievalTraceRequest {
-    pub fork_hash: [u8; 32],
 }
 
 /// Explicit serving-run handles, never inferred from overlapping memories.
@@ -355,37 +342,6 @@ pub struct RetrievalPolicyAdmitRequest {
     pub config: RetrievalPolicyTrainRequest,
 }
 
-/// Pins one blend weight at `value`, or clears its pin when `value` is
-/// absent; or, with `read_shape` in place of `signal`, pins or clears the
-/// read shape one model's runs work through. A request names exactly one.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RetrievalPolicyPinRequest {
-    #[serde(default)]
-    pub signal: Option<RetrievalBlendSignal>,
-    #[serde(default)]
-    pub value: Option<f32>,
-    #[serde(default)]
-    pub read_shape: Option<ReadShapePinRequest>,
-}
-
-/// Pins `model`'s runs to `shape`, or clears the model's pin when `shape` is
-/// absent. A pin beats every learned pick for that model.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ReadShapePinRequest {
-    pub model: crate::llm::ModelId,
-    #[serde(default)]
-    pub shape: Option<crate::store::ReadShape>,
-}
-
-/// One model-manifest route the owner's manifest currently pins.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RetrievalRoutingPin {
-    pub slot: crate::llm::manifest::ModelSlot,
-    pub locality: crate::llm::ModelLocality,
-}
-
 /// One model's read-shape arms (ARCH-0051 #decision-r9-bench): the owner's
 /// pin, and each shape's labelled attempts and posterior mean reward (`None`
 /// while the shape has no labelled attempt).
@@ -416,14 +372,6 @@ pub struct RetrievalPolicyView {
     pub read_shapes: Vec<ReadShapeModelRow>,
     pub routing_manifest_digest: Option<String>,
     pub routing: Vec<RetrievalRoutingPin>,
-}
-
-/// Whether a declared update was served or left as an offer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RetrievalPolicyDisposition {
-    Applied,
-    Offered,
 }
 
 /// The outcome of one declared policy update: the trained candidate, whether

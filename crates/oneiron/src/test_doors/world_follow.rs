@@ -33,3 +33,16 @@ pub fn begin_connection_sync(client: &mut SyncClient) {
 pub fn follow_set_changed(client: &SyncClient) -> bool {
     client.follow_set_changed()
 }
+
+/// Whether `client` may exchange window `key` in full on its connection now:
+/// the gate each full-window frame meets, in and out.
+///
+/// # Errors
+///
+/// The client's: an unreadable promotion marker.
+pub fn full_window_exchange_allowed(
+    client: &SyncClient,
+    key: &WindowKey,
+) -> Result<bool, TransportError> {
+    client.full_window_exchange_allowed(key.as_str())
+}

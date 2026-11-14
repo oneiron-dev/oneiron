@@ -23,17 +23,8 @@ const LABEL: SideTable<Vec<u8>, ReviewedFinding, Named> =
 const MINTED: SideTable<Vec<u8>, MintedRegistration, Named> =
     SideTable::new(&side_table::SELF_HEAL_MINTED);
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ReviewedFinding {
-    pub family: String,
-    #[serde(with = "super::receipt_serde::id")]
-    #[schemars(with = "String")]
-    pub event_id: EntityId,
-    #[serde(with = "super::receipt_serde::id")]
-    #[schemars(with = "String")]
-    pub reviewer: EntityId,
-    pub positive: bool,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::self_heal::distillation::ReviewedFinding;
 
 /// Minted model policy carries its exact reviewed examples. It has no T1 authority.
 #[derive(Clone, Debug)]

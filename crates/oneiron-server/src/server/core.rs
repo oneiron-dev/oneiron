@@ -396,6 +396,30 @@ fn live_rows(
     })));
 }
 
+/// Seeds the vault's release fact for payment credentials at serve start
+/// (L8-60; CROSS-ARCH-0019 `#fence-unproven`): this host's runner fence is
+/// proven where the organ host can fence a filesystem (Landlock ABI 3 on
+/// Linux, Seatbelt on macOS), and `--release-payment-credentials-unfenced`
+/// is the self-hoster's lift. While the fence is unproven and nothing is
+/// lifted, both value doors withhold a credential the owner marks as a
+/// payment credential; every other credential stays at its rung.
+fn payment_credential_release(vault: &oneiron::Vault, withholding_lifted: bool) {
+    #[cfg(unix)]
+    let runner_fence_proven = oneiron_organ_host::filesystem_confined();
+    #[cfg(not(unix))]
+    let runner_fence_proven = false;
+    let release = oneiron::secret_custody::PaymentCredentialRelease {
+        runner_fence_proven,
+        withholding_lifted,
+    };
+    if release.withholds() {
+        tracing::warn!(
+            "this host proves no runner fence (Landlock ABI 3 on Linux, Seatbelt on macOS): credentials the owner marks as payment credentials are withheld; a self-hoster may lift this with --release-payment-credentials-unfenced"
+        );
+    }
+    vault.set_payment_credential_release(release);
+}
+
 impl SyncServer {
     /// The most bytes one WebSocket message this server reads may reassemble
     /// to (ABC transport row T25): its request floor,

@@ -1,0 +1,141 @@
+{
+  "binding": {
+    "case": "quarter-chart",
+    "case_manifest_sha256": "bed43798aebb9b067607d0d0a8eac4e6e21ab926c0190d0f50dc61341df46f5c",
+    "case_set": "deck-create-v1",
+    "source": "474effa8c4e5b91093911eb6489117e0faa20ea7"
+  },
+  "detail": "PDFKit rasterized 1 page(s)",
+  "dialog_dismissals": [],
+  "environment": {
+    "font_account": "owner-console",
+    "font_inventory_sha256": "e14cb7e38f1cbf13de0f2894ce865836b36b960dad36a9d36188148cbcf69637",
+    "font_role": "owner",
+    "harness": "one-2531-v1",
+    "locale": "",
+    "macos": "27.0",
+    "macos_build": "26A428",
+    "observer": "system-events",
+    "pdfkit": "27.0",
+    "powerpoint": "16.113.2",
+    "raster_scale": 2
+  },
+  "fit": [
+    {
+      "block": "q-title",
+      "bound_emu": [
+        2077403,
+        304800
+      ],
+      "detail": "",
+      "frame_emu": [
+        457200,
+        273050,
+        3008313,
+        1162050
+      ],
+      "inner_emu": [
+        2825433,
+        1070610
+      ],
+      "kind": "text",
+      "name": "Title 1",
+      "planned_emu": [
+        457200,
+        273050,
+        3008313,
+        1162050
+      ],
+      "shape_id": 2,
+      "shape_index": 1,
+      "slide": 1,
+      "verdict": "fits"
+    },
+    {
+      "block": "q-revenue",
+      "bound_emu": null,
+      "detail": "PowerPoint's AppleScript dictionary exposes no chart text layout",
+      "frame_emu": [
+        3575050,
+        273050,
+        5111750,
+        5853113
+      ],
+      "inner_emu": null,
+      "kind": "chart",
+      "name": "Chart 3",
+      "planned_emu": [
+        3575050,
+        273050,
+        5111750,
+        5853113
+      ],
+      "shape_id": 3,
+      "shape_index": 2,
+      "slide": 1,
+      "verdict": "inconclusive"
+    },
+    {
+      "block": "q-claim",
+      "bound_emu": [
+        2340864,
+        426720
+      ],
+      "detail": "",
+      "frame_emu": [
+        457200,
+        1435100,
+        3008313,
+        4691063
+      ],
+      "inner_emu": [
+        2825433,
+        4599623
+      ],
+      "kind": "text",
+      "name": "Text Placeholder 3",
+      "planned_emu": [
+        457200,
+        1435100,
+        3008313,
+        4691063
+      ],
+      "shape_id": 4,
+      "shape_index": 3,
+      "slide": 1,
+      "verdict": "fits"
+    }
+  ],
+  "fit_script_sha256": "409cea1e7911046e94d195ee62d136e0e1bfd5bddbb64c3cbd27c400daa80aa1",
+  "input": {
+    "bytes": 103732,
+    "sha256": "39818facae423f6519d58436dee3a4ea6a9841a8508a532f0a66676b5d6471e8"
+  },
+  "outputs": {
+    "page-0001.png": {
+      "bytes": 57947,
+      "sha256": "1b3dc62f5bdcde30edef05d94df90aa8a4cdbe1d528b0fcacbe1cc590b53c001"
+    },
+    "reference.pptx": {
+      "bytes": 34151,
+      "sha256": "2bd15a21638316415f2cf4ef71749c876b547002dee419c3d25a08628216fa6a"
+    },
+    "render.pdf": {
+      "bytes": 36496,
+      "sha256": "cf01a1fcc5fba6067b43a10cf0b424cb67216ac5a9ba97efa14235f595061978"
+    }
+  },
+  "pages": 1,
+  "raster_detail": "pages=1",
+  "saveback_normalized": {
+    "fields": [
+      "dc:creator",
+      "cp:lastModifiedBy"
+    ],
+    "part": "docProps/core.xml",
+    "value": "Oneiron oracle",
+    "written_sha256": "05f8ca597f8321b432bfeee6d509a7b1b1f5672ac3558167900c011f04978452"
+  },
+  "staged_input_sha256": "39818facae423f6519d58436dee3a4ea6a9841a8508a532f0a66676b5d6471e8",
+  "status": "clean"
+}

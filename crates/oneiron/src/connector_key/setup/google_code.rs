@@ -5,7 +5,10 @@ use std::io::Read as _;
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, Zeroizing};
 
-use super::{GOOGLE_TOKEN_URL, MAX_CHECK_REPLY_BYTES, ProviderConnectionChecks, invalid};
+use super::{
+    AuthorizationCodeGrant, GOOGLE_TOKEN_URL, MAX_CHECK_REPLY_BYTES, ProviderConnectionChecks,
+    invalid,
+};
 use crate::Result;
 
 /// A host's completed Google sign-in, borrowed only for its token exchange.
@@ -20,22 +23,6 @@ pub struct GoogleAuthorizationCode<'a> {
     pub code_verifier: Option<&'a str>,
 }
 
-/// A Gmail grant ready for ordinary credential custody, never an API reply.
-pub struct GoogleAuthorizationGrant {
-    bytes: Zeroizing<Vec<u8>>,
-    refreshable: bool,
-}
-
-impl GoogleAuthorizationGrant {
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.bytes
-    }
-
-    pub fn has_refresh_token(&self) -> bool {
-        self.refreshable
-    }
-}
-
 impl ProviderConnectionChecks {
     /// Exchanges a confidential Google web client's code at the fixed token
     /// endpoint. Call only inside the credential doors that admitted its values.
@@ -43,7 +30,7 @@ impl ProviderConnectionChecks {
     pub fn exchange_google_authorization_code(
         &self,
         code: GoogleAuthorizationCode<'_>,
-    ) -> Result<GoogleAuthorizationGrant> {
+    ) -> Result<AuthorizationCodeGrant> {
         let mut form = vec![
             ("grant_type", "authorization_code"),
             ("client_id", code.client_id),
@@ -91,7 +78,7 @@ impl ProviderConnectionChecks {
         };
         let bytes = serde_json::to_vec(&grant)
             .map_err(|_| invalid("the Google grant could not be encoded"))?;
-        Ok(GoogleAuthorizationGrant {
+        Ok(AuthorizationCodeGrant {
             bytes: Zeroizing::new(bytes),
             refreshable: refresh_token.is_some(),
         })

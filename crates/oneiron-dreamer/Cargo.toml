@@ -1,0 +1,27 @@
+[package]
+name = "oneiron-dreamer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The Dreamer's maintenance jobs, run over a client bound to one admitted attempt"
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+# No doc-comment code fences in this crate; skip the doctest compile pass.
+doctest = false
+
+[dependencies]
+# Untangle 6.9 (S69-RUN = A): a job reaches the vault only through the
+# client its host binds to one admitted attempt, never a `&Vault`. These
+# three are the crate's whole normal dependency set:
+# scripts/ci/check_dreamer_crate_deps.sh fails CI on any other.
+oneiron-remote = { version = "0.1.0", path = "../oneiron-remote" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

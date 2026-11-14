@@ -7,10 +7,10 @@ use serde::{Deserialize, Serialize};
 
 use super::cohort::{EXPOSURE_PREFIX, cohort_in_txn, exposure_in_txn, retired_families_in_txn};
 use super::{
-    CASE_PREFIX, DerivationKind, EvalCase, EvalCaseDraft, EvalCohort, EvalCutAudit, EvalExposure,
-    EvalExposureCounts, EvalExposureKind, EvalLabelAsk, EvalRelease, EvalSeat, FAMILY_PREFIX,
-    FamilyPurpose, SourceFamily, SufficiencyCard, SufficiencyInput, assign_family_in_txn,
-    record_case_in_txn, rows_in_txn, sufficiency_card,
+    CASE_PREFIX, EvalCase, EvalCaseDraft, EvalCohort, EvalCutAudit, EvalExposure,
+    EvalExposureCounts, EvalLabelAsk, EvalRelease, EvalSeat, FAMILY_PREFIX, FamilyPurpose,
+    SourceFamily, SufficiencyCard, SufficiencyInput, assign_family_in_txn, record_case_in_txn,
+    rows_in_txn, sufficiency_card,
 };
 use crate::attempt_queue::{AttemptId, AttemptState};
 use crate::claim::maintenance_kind::COACH_EVAL_AUTHORING_FACET;
@@ -24,15 +24,11 @@ use crate::{EntityId, Error, Result, Vault};
 mod label_ask;
 pub use label_ask::{EvalLabelAskRequest, ask_label, training_offer_decision};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EvalAuthorNowRequest {}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EvalAuthoringRef {
-    pub attempt: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::eval_set::doors::{
+    EvalAuthorNowRequest, EvalAuthoringRef, EvalCaseLineage, EvalCohortOpenRequest, EvalCohortRef,
+    EvalExposureLedger, EvalLabelPickRequest,
+};
 
 /// Completion is the host queue's state. A completed pass may author nothing:
 /// no available skill, model or valid plan is never a fabricated report.
@@ -64,20 +60,6 @@ pub struct EvalFamilyAssignRequest {
     pub purpose: FamilyPurpose,
 }
 
-/// The derivation ledger's ids, kinds and dates, without its label values.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EvalCaseLineage {
-    pub case: EntityId,
-    pub kind: DerivationKind,
-    pub receipts: Vec<String>,
-    pub parents: Vec<EntityId>,
-    pub stratum: Option<String>,
-    pub draw_probability: Option<f64>,
-    pub source_at: u64,
-    pub recorded_at: u64,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvalFamilyView {
@@ -103,30 +85,6 @@ pub struct EvalCohortView {
     pub audit: Option<EvalCutAudit>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EvalCohortRef {
-    pub cohort: EntityId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EvalCohortOpenRequest {
-    pub cohort: EntityId,
-    pub kind: EvalExposureKind,
-    pub consumer: String,
-    #[serde(default)]
-    pub candidate_pin: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EvalExposureLedger {
-    pub cohort: EntityId,
-    pub counts: EvalExposureCounts,
-    pub servings: Vec<EvalExposure>,
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvalBlockedLabelsRequest {
@@ -134,14 +92,6 @@ pub struct EvalBlockedLabelsRequest {
     pub seat: Option<EvalSeat>,
     #[serde(default)]
     pub decision: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EvalLabelPickRequest {
-    pub decision: String,
-    pub case: EntityId,
-    pub choose_b: bool,
 }
 
 /// Queue the production recipe, coalescing with the nightly pass. The caller

@@ -241,6 +241,10 @@ pub(crate) fn publish_pending_tombstones(vault: &Vault, window_key: &WindowKey) 
         return Ok(0);
     }
     let replayed = if let Some((window, materializer, _manager)) = vault.live_window(window_key) {
+        // The live-window turn first (L7-45): the replay builds a tombstone
+        // index over the shared doc, so no peer import lands in it from the
+        // merge to the commit. Both drop before the scrub of other windows.
+        let _turn = materializer.enter_live_window();
         // Merged outside the materializer lock: an import into an observed
         // doc fires Observer B, which takes the lock itself. The commit runs
         // under it, and Observer A persists and routes the delta as usual.
@@ -336,6 +340,9 @@ fn replay_tombstone_markers(
     for (key, value) in markers {
         apply_tombstone_to_indexed_window_doc(doc, &tombstones, &key.id, value)?;
     }
+    // The policies no binding reaches now go in this replay's commit, the
+    // window pinned history-free first (fix list row 17211).
+    crate::sync::source_audiences::prune_unreached_policies(vault, doc, Some(window_key))?;
     // Bridge origin: local LMDB already reflects the delete (the marker was
     // written in the purge/scrub txn itself), so Observer B must not re-run
     // the hard purge against a soft shell.

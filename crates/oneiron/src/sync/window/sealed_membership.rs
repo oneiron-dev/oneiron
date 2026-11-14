@@ -177,6 +177,10 @@ pub(super) fn drop_departed_carriers(
             }
         }
         dropped |= crate::sync::ingest::forget_stale_peer_origins(doc, departed)?;
+        // The policies no binding reaches now go in this commit, the window
+        // pinned history-free first (fix list row 17211).
+        dropped |=
+            crate::sync::source_audiences::prune_unreached_policies(vault, doc, Some(window_key))?;
     }
     if dropped {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));

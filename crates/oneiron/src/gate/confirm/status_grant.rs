@@ -127,8 +127,7 @@ fn stage_status_transition(
         ),
         PreauthorizedClaimStatusGrant::FoldDecline => {
             // The fold never moves a validity end outside the claim's own.
-            let end = current.valid_to.map_or(now, |old| old.min(now));
-            let end = current.valid_from.map_or(end, |start| start.max(end));
+            let end = crate::claim::transition::machine_close_end(current, now);
             stage_owner_machine_transition(
                 vault,
                 wtxn,
