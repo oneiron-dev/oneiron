@@ -140,6 +140,25 @@ pub fn health_check_summary(check: &OwnRateCheck) -> serde_json::Value {
     })
 }
 
+/// The crossing a health check binds its answer to, the value of its
+/// `wire.health.crossing` unit claim: an own-rate summary
+/// ([`health_check_summary`]) without its actor, any other summary as it is.
+/// The claim is canonical and outlives the check, and an actor's erase
+/// (FIX 3520) does not reach it, so it never names the actor, whether it is
+/// bound before that erase or by a pass that asks after it: the burst it
+/// keeps is no one's. The check and the ask, which the erase takes, name the
+/// actor.
+#[must_use]
+pub fn health_bound_crossing(summary: &serde_json::Value) -> serde_json::Value {
+    let mut bound = summary.clone();
+    if let Some(fields) = bound.as_object_mut()
+        && fields.get("kind").and_then(serde_json::Value::as_str) == Some(OwnRateCheck::KIND)
+    {
+        fields.remove("actor");
+    }
+    bound
+}
+
 /// Whether `state` holds the summary of one of `actor`'s own-rate crossings
 /// ([`health_check_summary`]) at any depth.
 fn names_crossing_of(state: &serde_json::Value, actor: &str) -> bool {
@@ -163,7 +182,8 @@ fn names_crossing_of(state: &serde_json::Value, actor: &str) -> bool {
 /// asked over, which names the actor and its burst: the ask drops that state
 /// and, while open, leaves the owner's queue. An ask a pass raises after this
 /// erase took its check is the host's to withdraw, when the pass finds the
-/// check gone.
+/// check gone. The unit claim an ask binds holds no actor
+/// ([`health_bound_crossing`]), so there is none to take.
 ///
 /// # Errors
 ///

@@ -373,12 +373,15 @@ pub(crate) fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) 
         &RetrievalDeadline::hard(Instant::now(), ASK_BUDGET),
     )?;
     let now = oneiron_vault_contract::now_ts();
+    // The unit claim outlives the check, so an own-rate crossing is bound
+    // without its actor (FIX 3520).
+    let crossing = oneiron::own_rate::health_bound_crossing(&check.crossing);
     let bound = vault.bind_health_answer(&HealthAnswer {
         principal: owner,
         question: &question,
         dial,
         decision: &decision,
-        crossing: &check.crossing,
+        crossing: &crossing,
         binding: &binding(),
         now,
     })?;

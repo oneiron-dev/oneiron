@@ -7,7 +7,8 @@
 //! the same kind counts on the open check. The actor's erase takes its check,
 //! and the ask the check raised drops the burst it was asked over and leaves
 //! the owner's queue, also when the erase lands between a pass's read of the
-//! check and its ask (FIX 3520). The owner's answer settling a check is main's poll path, which
+//! check and its ask (FIX 3520). The crossing unit claim an ask binds, which
+//! the erase does not reach, never names the actor. The owner's answer settling a check is main's poll path, which
 //! this slice does not change; its test is ignored until FIX
 //! [WIRE-HEALTH-OWNER-ANSWER-FLOOR] lands: the poll's outcome write is an
 //! Approved claim with no owner proof, which keeps the criticality floor on a
@@ -152,6 +153,16 @@ fn assert_no_ask_state_names(vault: &Vault, actor: EntityId) -> TestResult {
         );
     }
     Ok(())
+}
+
+/// The crossing unit an asked check's answer is bound to.
+fn asked_unit(check: &HealthCheck) -> TestResult<EntityId> {
+    match &check.state {
+        CheckState::Asked { unit, .. } => {
+            Ok(EntityId::from_hex(unit).map_err(|_| "an asked check names its unit")?)
+        }
+        other => Err(format!("the check waits in an ask queue, not {other:?}").into()),
+    }
 }
 
 /// The question an asked check waits on.
@@ -332,9 +343,10 @@ async fn owner_answer_settles_an_own_rate_check() -> TestResult {
 
 /// An actor's erase takes its own-rate health check (FIX 3520): the check's
 /// subject names the actor. The ask the check raised drops the burst it was
-/// asked over and leaves the owner's queue. Another actor's check and ask
-/// stay, and the next pass does not bring the erased check back. The red pin
-/// has no own-rate source, so it keeps no check to take.
+/// asked over and leaves the owner's queue. The crossing unit claim the ask
+/// bound stays and names no actor. Another actor's check and ask stay, and
+/// the next pass does not bring the erased check back. The red pin has no
+/// own-rate source, so it keeps no check to take.
 #[test]
 fn an_actor_erase_takes_its_own_rate_check() -> TestResult {
     on_engine_stack(actor_erase_takes_its_own_rate_check)
@@ -358,8 +370,9 @@ async fn actor_erase_takes_its_own_rate_check() -> TestResult {
     sweep_once(&served.server)?;
     let erased = own_rate_subject(OwnRateKind::AutoWrite, actor);
     let kept = own_rate_subject(OwnRateKind::AutoWrite, other);
-    let erased_question =
-        asked_question(&check_for(vault, &erased)?.ok_or("the actor's crossing is kept")?)?;
+    let erased_check = check_for(vault, &erased)?.ok_or("the actor's crossing is kept")?;
+    let erased_question = asked_question(&erased_check)?;
+    let erased_unit = asked_unit(&erased_check)?;
     let kept_question =
         asked_question(&check_for(vault, &kept)?.ok_or("the other actor's crossing is kept")?)?;
 
@@ -384,6 +397,13 @@ async fn actor_erase_takes_its_own_rate_check() -> TestResult {
         "the ask drops the burst it was asked over"
     );
     assert_no_ask_state_names(vault, actor)?;
+    let unit = vault
+        .get_claim(&erased_unit)?
+        .ok_or("the crossing unit claim stays")?;
+    assert!(
+        !format!("{unit:?}").contains(&actor.to_hex()),
+        "the crossing unit claim names no actor: {unit:?}"
+    );
     let other_asks = asks_on(vault, &kept_question)?;
     assert_eq!(other_asks.len(), 1);
     assert!(
