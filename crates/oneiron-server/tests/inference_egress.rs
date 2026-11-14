@@ -149,6 +149,7 @@ async fn owner_edits_nonlocal_default_only_with_host_egress_and_call_rechecks() 
             scores: Default::default(),
             fetched_at: Default::default(),
             tokens_per_o200k: None,
+            answer_tokens_per_o200k: None,
             stale_since: None,
             source_rows: None,
         })
