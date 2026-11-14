@@ -10,6 +10,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
 use crate::pipeline::WorldScope;
+use crate::registry::ENTITY_TYPE_ASSET;
 use crate::store::retrieval_values::RetrievalWithTelemetry;
 
 use super::super::edge_walk::{EdgeWalkOptions, EdgeWalkResult, load_entity_edges, walk_edges};
@@ -30,6 +31,9 @@ use super::super::validation::{
     disclosure_admits_candidate, disclosure_admits_target, validate_hydrated_pack_entities,
     validate_pack_disclosure, validate_pack_edge_references, validate_pack_entity_reference,
     validate_scored_candidates,
+};
+use super::super::working_set::{
+    PackWorkingSetStats, WorkingSetGates, admit_working_set, lead_with_working_set,
 };
 use super::super::world_partition::{
     annotate_stale_federated_worlds, partition_pack_claims, partitions_by_world,
@@ -187,6 +191,9 @@ impl<'a> ContextPackBuilder<'a> {
         let l2_pipeline = l2_base.as_ref().map(|_| pipeline.clone());
         let neighbor_pipeline =
             (self.edge_hop > 0 && selected_edge_budget > 0).then(|| pipeline.clone());
+        // The working set passes the type and world selection a neighbor
+        // passes, resolved from this run's pipeline.
+        let working_set_pipeline = (!self.working_set.is_empty()).then(|| pipeline.clone());
         let mut pipeline = pipeline.context_pack_budget(retrieval_budget);
         // The world share and the disclosure clamp hold while the rows are
         // selected, so neither leaves the pack short of rows it could carry.
@@ -372,12 +379,11 @@ impl<'a> ContextPackBuilder<'a> {
                 )?;
             }
 
-            let seed_ids: Vec<EntityId> = results.iter().map(|entity| entity.id).collect();
-            let result_ids: HashSet<EntityId> = seed_ids.iter().copied().collect();
             // ONE-1411: edge expansion is the SECOND door onto the same
             // content. The scopes that dropped stale federated claims from the
             // candidate set must not readmit one as a neighbor; the explicit
             // scopes that keep them pass `None` and get the marker instead.
+            // The working set is held to the same exclusion.
             let stale_neighbor_exclusion = (!stale_worlds.is_empty()
                 && matches!(self.world_scope, WorldScope::All | WorldScope::Base))
             .then_some(&stale_worlds);
@@ -390,6 +396,97 @@ impl<'a> ContextPackBuilder<'a> {
             } else {
                 None
             };
+
+            // CROSS-ARCH-0011 "workingSet": the rows the caller carried across
+            // a compaction lead the pack, admitted one ref at a time outside
+            // ranking. A row the ranked fill also found moves to the front as
+            // the fill hydrated it, so it is served once; any other row is
+            // hydrated here, an ASSET as a handle without its body ("assets
+            // cross as stubs").
+            let mut working_set_order = Vec::new();
+            let mut working_set_overlap = 0_usize;
+            if let Some(working_set_pipeline) = working_set_pipeline.as_ref() {
+                let (type_filter, named_types) =
+                    working_set_pipeline.neighbor_type_policy(&rtxn)?;
+                let world_scope = working_set_pipeline.neighbor_world_scope(&rtxn)?;
+                let admitted = admit_working_set(
+                    &WorkingSetGates {
+                        vault: self.vault,
+                        read: &self.read,
+                        reader: self.l2_summary_reader,
+                        clamp,
+                        world_scope: &world_scope,
+                        type_filter: &type_filter,
+                        named_types,
+                        stale_worlds: stale_neighbor_exclusion,
+                        device_local: device_local.as_ref(),
+                        quarantine: &quarantine_index,
+                    },
+                    &rtxn,
+                    &self.working_set,
+                )?;
+                let working_set_options = HydrateOptions {
+                    read_mode: self.read_mode,
+                    words_pinned: false,
+                    policy: &policy,
+                    criticality: self.criticality,
+                    hydrate_fields: self.hydrate,
+                    include_edges: hydrate_result_edges,
+                    include_vectors: self.include_vectors,
+                    edge_cache: None,
+                    claim_bodies: Some(&claim_bodies),
+                    clamp,
+                    deadline: pack_deadline,
+                };
+                let mut seeded = Vec::with_capacity(admitted.len());
+                let mut hydrated_here = Vec::new();
+                for row in admitted {
+                    if let Some(ranked) = results.iter().position(|entity| entity.id == row.id) {
+                        working_set_overlap += 1;
+                        seeded.push(results.remove(ranked));
+                        continue;
+                    }
+                    let mut options = working_set_options;
+                    options.hydrate_fields &= row.entity_type != ENTITY_TYPE_ASSET;
+                    let hydrated = match hydrate_entity(
+                        self.vault,
+                        &self.read,
+                        &rtxn,
+                        row.id,
+                        0.0,
+                        options,
+                        &mut claims_suppressed,
+                    ) {
+                        Ok(entity) => entity,
+                        Err(Error::IndexOverflow(
+                            "context pack hydration" | "context pack edge scan",
+                        )) if pack_deadline.is_some_and(|deadline| deadline.answer_due()) => {
+                            deadline_exceeded = true;
+                            break;
+                        }
+                        Err(error) => return Err(error),
+                    };
+                    if let Some(entity) = hydrated {
+                        hydrated_here.push(entity.id);
+                        seeded.push(entity);
+                    }
+                }
+                for id in &hydrated_here {
+                    validate_pack_entity_reference(
+                        &self.read,
+                        &rtxn,
+                        id,
+                        &mut claim_bodies,
+                        &quarantine_index,
+                    )?;
+                }
+                working_set_order = seeded.iter().map(|entity| entity.id).collect();
+                seeded.append(&mut results);
+                results = seeded;
+            }
+
+            let seed_ids: Vec<EntityId> = results.iter().map(|entity| entity.id).collect();
+            let result_ids: HashSet<EntityId> = seed_ids.iter().copied().collect();
             let edge_walk = if let Some(neighbor_pipeline) = neighbor_pipeline.as_ref() {
                 let (neighbor_filter, named_types) =
                     neighbor_pipeline.neighbor_type_policy(&rtxn)?;
@@ -584,6 +681,13 @@ impl<'a> ContextPackBuilder<'a> {
                 &claim_bodies,
                 &self.source_ranking,
             )?;
+            // Source ranking re-sorts by score; the working set leads again,
+            // in its own order, within each world section.
+            let working_set_served: Vec<EntityId> = working_set_order
+                .into_iter()
+                .filter(|id| results.iter().any(|entity| entity.id == *id))
+                .collect();
+            lead_with_working_set(&mut results, &working_set_served);
             resolve_edge_short_ids(&mut results, &mut neighbors);
 
             let memory_is_empty = results.is_empty() && neighbors.is_empty() && l2_base.is_none();
@@ -617,6 +721,16 @@ impl<'a> ContextPackBuilder<'a> {
                 deadline_exceeded: deadline_exceeded
                     || pack_deadline.is_some_and(|deadline| deadline.answer_due())
                     || pack_deadline.is_some_and(|deadline| deadline.was_cut_short()),
+                working_set: PackWorkingSetStats {
+                    asked: self.working_set.len(),
+                    dropped: self
+                        .working_set
+                        .len()
+                        .saturating_sub(working_set_served.len()),
+                    served: working_set_served,
+                    over_cap: 0,
+                    overlap: working_set_overlap,
+                },
             };
             critical.report(&mut stats);
             // A retrieval RET-01 withheld says so, though the L2 base rides

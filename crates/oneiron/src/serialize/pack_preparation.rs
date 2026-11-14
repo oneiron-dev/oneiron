@@ -80,6 +80,13 @@ fn prepare_pack_with_l2(
             value_depth_limit,
             &mut stats,
         ));
+        cap_working_set_rows(
+            &mut merged,
+            config.budget,
+            tokenizer,
+            value_depth_limit,
+            &mut stats,
+        );
         merged.extend(prepare_entities(
             &pack.neighbors,
             PreparedEntitySource::Neighbor,
@@ -116,7 +123,7 @@ fn prepare_pack_with_l2(
             stats,
         }
     } else {
-        let results_source = group_entities(prepare_entities(
+        let mut result_rows = prepare_entities(
             &pack.results,
             PreparedEntitySource::Result,
             skip_evidence,
@@ -125,7 +132,15 @@ fn prepare_pack_with_l2(
             tokenizer,
             value_depth_limit,
             &mut stats,
-        ));
+        );
+        cap_working_set_rows(
+            &mut result_rows,
+            config.budget,
+            tokenizer,
+            value_depth_limit,
+            &mut stats,
+        );
+        let results_source = group_entities(result_rows);
         let neighbors_source = group_entities(prepare_entities(
             &pack.neighbors,
             PreparedEntitySource::Neighbor,
@@ -192,6 +207,76 @@ fn prepare_pack_with_l2(
         return prepare_pack_with_l2(pack, config, json_mode, false, true, tokenizer);
     }
     prepared
+}
+
+/// Ranks the working-set rows among a pack's prepared result rows and holds
+/// them to half of a nonzero `token_budget` (CROSS-ARCH-0011: the seeds are
+/// "capped at half the snippet budget"). The rows are walked in working-set
+/// order: the first whose tokens pass the half, and every later one, are
+/// dropped, leave `served`, and count as `over_cap` and as token-budget drops.
+/// The ranked fill then budgets the rest as before. A budget of `0` keeps its
+/// "no limit" meaning.
+fn cap_working_set_rows(
+    rows: &mut Vec<PreparedEntity>,
+    token_budget: usize,
+    tokenizer: PackTokenizer,
+    value_depth_limit: ValueDepthLimit,
+    stats: &mut PackStats,
+) {
+    if stats.working_set.served.is_empty() {
+        return;
+    }
+    for row in rows.iter_mut() {
+        row.working_set_rank = stats
+            .working_set
+            .served
+            .iter()
+            .position(|id| *id.as_bytes() == row.source_id);
+    }
+    if token_budget == 0 {
+        return;
+    }
+    let mut ranked: Vec<(usize, usize)> = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(index, row)| row.working_set_rank.map(|rank| (rank, index)))
+        .collect();
+    ranked.sort_unstable();
+    let half = token_budget / 2;
+    let mut used = 0_usize;
+    let mut first_cut = None;
+    for (rank, index) in ranked {
+        used = used.saturating_add(
+            super::token_budget::estimate_entity_tokens_with_depth_limit(
+                &rows[index],
+                tokenizer,
+                value_depth_limit,
+            ),
+        );
+        if used > half {
+            first_cut = Some(rank);
+            break;
+        }
+    }
+    let Some(first_cut) = first_cut else {
+        return;
+    };
+    let mut cut = Vec::new();
+    rows.retain(|row| match row.working_set_rank {
+        Some(rank) if rank >= first_cut => {
+            cut.push(row.source_id);
+            false
+        }
+        _ => true,
+    });
+    stats
+        .working_set
+        .served
+        .retain(|id| !cut.contains(id.as_bytes()));
+    stats.working_set.over_cap = stats.working_set.over_cap.saturating_add(cut.len());
+    stats.items_dropped.reason =
+        crate::serialize::pack_accounting::PackItemAccountingReason::TokenBudget;
+    stats.items_dropped.count = stats.items_dropped.count.saturating_add(cut.len());
 }
 
 fn budget_split_sections_with_depth_limit(
@@ -336,6 +421,7 @@ fn prepare_entities(
                 id: format_short_id(entity),
                 fields,
                 world_section: world_section_label(entity.fields.as_ref()).map(str::to_owned),
+                working_set_rank: None,
             };
             if prepared.critical {
                 stats.critical_count += 1;
@@ -403,6 +489,7 @@ pub(crate) fn project_entity_json_row(
         critical_over_budget: false,
         critical_count: 0,
         deadline_exceeded: false,
+        working_set: Default::default(),
     };
     let mut rows = prepare_entities(
         std::slice::from_ref(entity),

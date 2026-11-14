@@ -66,6 +66,9 @@ pub struct PackStats {
     pub critical_count: usize,
     /// Assembly stopped optional work at the answer deadline (retrieval stages or L2/edge/hydration).
     pub deadline_exceeded: bool,
+    /// What the pack did with the working set its caller seeded
+    /// ([`super::ContextPackBuilder::working_set`]); all zero when unseeded.
+    pub working_set: super::PackWorkingSetStats,
 }
 
 pub(crate) use crate::serialize::pack_accounting::{PackCriticalAccounting, PackWorldShare};

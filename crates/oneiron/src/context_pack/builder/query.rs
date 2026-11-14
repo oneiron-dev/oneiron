@@ -75,6 +75,9 @@ pub struct ContextPackBuilder<'a> {
     pub(super) destination: crate::settings::ReadDestination,
     /// See [`Self::skip_optional_recall`].
     pub(super) skip_optional_recall: bool,
+    /// The rows the caller carried across a compaction, deduplicated, in
+    /// order ([`Self::working_set`]); empty for an unseeded pack.
+    pub(super) working_set: Vec<EntityId>,
 }
 
 impl<'a> ContextPackBuilder<'a> {
@@ -210,6 +213,7 @@ impl<'a> ContextPackBuilder<'a> {
             l2_summary_reader: None,
             destination: crate::settings::ReadDestination::on_device(),
             skip_optional_recall: false,
+            working_set: Vec::new(),
         }
     }
 
@@ -637,6 +641,25 @@ impl<'a> ContextPackBuilder<'a> {
     pub fn token_budget(mut self, budget: usize) -> Self {
         self.token_budget = Some(budget);
         self
+    }
+
+    /// Seeds the pack with the rows a host carried across a compaction (the
+    /// working set, CROSS-ARCH-0011 amendment "workingSet"): they lead the
+    /// pack, in this order, before the ranked fill, and the fill does not
+    /// repeat them. Each ref is admitted on its own, through the gates a
+    /// ranked row passes; a ref that fails one is dropped and the rest still
+    /// seed. A superseded CLAIM resolves forward to its live successor. A
+    /// serialized pack spends at most half its token budget on them. An empty
+    /// list leaves the pack as it was.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::Error::InvalidConfig`] when the list names more than
+    /// [`super::super::MAX_WORKING_SET_REFS`] distinct refs; a longer list
+    /// is refused, never cut short.
+    pub fn working_set(mut self, refs: &[EntityId]) -> crate::Result<Self> {
+        self.working_set = super::super::working_set::dedupe_working_set(refs)?;
+        Ok(self)
     }
 
     /// Selects the pack tokenizer for every serialization budget gate

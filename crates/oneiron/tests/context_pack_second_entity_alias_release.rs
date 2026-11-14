@@ -81,6 +81,7 @@ fn empty_stats() -> PackStats {
         critical_over_budget: false,
         critical_count: 0,
         deadline_exceeded: false,
+        working_set: Default::default(),
     }
 }
 

@@ -63,6 +63,11 @@ pub(super) struct PreparedEntity {
     /// read from its hydrated fields before any field cut. Rows sort by its
     /// section first, so a partitioned pack keeps the base section first.
     pub(super) world_section: Option<String>,
+    /// The row's place in the pack's working set
+    /// (`PackWorkingSetStats::served`), `None` for a ranked or neighbor row.
+    /// Within a record kind, working-set rows sort after critical rows and
+    /// before the ranked fill.
+    pub(super) working_set_rank: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
