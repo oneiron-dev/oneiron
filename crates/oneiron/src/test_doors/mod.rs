@@ -64,6 +64,8 @@ pub mod off_record_shell;
 pub mod outbound_grant_index;
 pub mod pad_offer_invalidation;
 pub mod park_typed_wait;
+#[cfg(feature = "sync")]
+pub mod peer_author_redaction;
 pub mod provenance_body_checkpoint;
 pub mod re_root_stale_sweep;
 pub mod repo_base_manifest;
