@@ -82,7 +82,7 @@ pub(crate) use ruling_integrity::{
     witness_grant_rulings_in_txn,
 };
 mod own_device;
-mod pending_act;
+pub(crate) mod pending_act;
 mod shared_act;
 mod shared_creation;
 pub(crate) use own_device::is_own_device_grant;
@@ -288,6 +288,6 @@ pub use oneiron_authority::federation::{
     ScopeId, Sensitivity, SensitivityCeiling, WalletRef, WorkingViewEditBounds,
 };
 
-mod org_admin;
+pub(crate) mod org_admin;
 pub(crate) mod tables;
 pub use org_admin::{OrgAdminError, OrgAdminPolicy, OrgAdminPower};

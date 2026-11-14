@@ -20,10 +20,18 @@ use super::{
     with_act_table,
 };
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
+use crate::registry::ENTITY_TYPE_PERSON;
 use crate::side_table::{self, HexId, Named, SideTable};
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 
 /// One proposed change. Key: hex32 (change id).
@@ -450,4 +458,67 @@ impl Vault {
         }
         Ok(changes)
     }
+}
+
+/// Lands archived shared-act policy changes in input order, one outcome per row.
+///
+/// A row installs only when its id matches its key, its vault is this vault's
+/// live shared creation, and its proposer is a live PERSON. Approvals and
+/// awaiting travel as-is (re-derived on read); no inbox ask or manifest write
+/// is replayed.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcomes.
+pub(crate) fn land_archived_shared_act_policy_change_rows_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    rows: &[ArchiveRetainedSideRow],
+) -> Result<Vec<ArchivedSideRowOutcome>> {
+    let mut outcomes = Vec::with_capacity(rows.len());
+    for row in rows {
+        let outcome = match decode_archived_row(&CHANGES, row) {
+            Err(reason) => ArchivedSideRowOutcome::HeldBack(reason),
+            Ok((key, value)) => match holdback_in_txn(vault, txn, &key.0, &value)? {
+                Some(reason) => ArchivedSideRowOutcome::HeldBack(reason),
+                None => install_archived_row(&CHANGES, vault, txn, permit, &key, row)?,
+            },
+        };
+        outcomes.push(outcome);
+    }
+    Ok(outcomes)
+}
+
+/// The holdback reason for one decoded change, or `None` when it may land.
+fn holdback_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &EntityId,
+    value: &SharedActPolicyChange,
+) -> Result<Option<RetainedSideHeldBackReason>> {
+    use RetainedSideHeldBackReason::{
+        InvalidValue, MissingLiveEntity, NonPortableReference, WrongEntityKind,
+    };
+
+    if !matches!(EntityId::from_hex(&value.id), Ok(id) if id == *key) {
+        return Ok(Some(InvalidValue));
+    }
+    let creation = vault.shared_vault_creation_in_txn(txn)?;
+    let own_live = creation
+        .as_ref()
+        .is_some_and(|row| row.vault_id == value.vault_id)
+        && vault.shared_vault_deletion_in_txn(txn)?.is_none();
+    if !own_live {
+        return Ok(Some(NonPortableReference));
+    }
+    let proposer = match EntityId::from_hex(&value.proposer) {
+        Ok(id) => id,
+        Err(_) => return Ok(Some(InvalidValue)),
+    };
+    match live_entity_row_in_txn(&vault.store, txn, &proposer)? {
+        LiveEntityRow::Live { entity_type, .. } if entity_type == ENTITY_TYPE_PERSON => {}
+        LiveEntityRow::Live { .. } => return Ok(Some(WrongEntityKind)),
+        LiveEntityRow::Absent | LiveEntityRow::DeletedShell => return Ok(Some(MissingLiveEntity)),
+    }
+    Ok(None)
 }

@@ -7,6 +7,10 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{ArchiveRetainedSideRow, OwnerArchiveRestorePermit};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
@@ -350,4 +354,29 @@ impl Memory<'_> {
         })?;
         Ok(MailComplianceSearchReply { log_sequence, hits })
     }
+}
+
+/// Lands the archived mail-compliance setting: decode then install, nothing else.
+///
+/// `set_by` is audit-only and travels as-is even when dangling. The LOG
+/// co-write is not carried (its sequence restarts); no log entry or receipt
+/// is written here.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcomes.
+pub(crate) fn land_archived_mail_compliance_rows_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    rows: &[ArchiveRetainedSideRow],
+) -> Result<Vec<ArchivedSideRowOutcome>> {
+    let mut outcomes = Vec::with_capacity(rows.len());
+    for row in rows {
+        let outcome = match decode_archived_row(&SETTING, row) {
+            Err(reason) => ArchivedSideRowOutcome::HeldBack(reason),
+            Ok((key, _)) => install_archived_row(&SETTING, vault, txn, permit, &key, row)?,
+        };
+        outcomes.push(outcome);
+    }
+    Ok(outcomes)
 }

@@ -1012,7 +1012,7 @@ fn reconcile(record: &mut PendingAuthorityAct, holders: &[LiveActHolder], now: u
 
 mod matured;
 mod owner_change_wait;
-mod policy_change;
+pub(crate) mod policy_change;
 pub use matured::PendingActMatured;
 pub use policy_change::{
     NOTIFICATION_PRODUCER_POLICY_CHANGE, SharedActPoliciesView, SharedActPolicyChange,
