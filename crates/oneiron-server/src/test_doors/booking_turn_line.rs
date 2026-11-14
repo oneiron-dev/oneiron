@@ -66,3 +66,49 @@ pub async fn authenticated_hold(
         },
     }
 }
+
+/// How many page sessions have a line on `server`. A line nobody holds or
+/// waits in is forgotten, so this is 0 once every hold was answered or
+/// dropped.
+pub fn lines_held(server: &SyncServer) -> usize {
+    server.booking_turn_lines.held()
+}
+
+/// What [`waiter_dropped_after_the_head_leaves`] saw.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DroppedWaiter {
+    /// The second hold was still waiting in line after its first poll.
+    pub waited: bool,
+    /// The lines `server` holds once both holds are gone.
+    pub lines_held: usize,
+}
+
+/// Plays one order by hand, as no scheduler would promise it: a hold takes
+/// the head of `session`'s line; a second joins and is polled once, so it
+/// waits behind the first; the first is answered, and its head passes to the
+/// waiter; the waiter's request is dropped before it is polled again (its
+/// client went away). Both are gone at the end. `Err` is the head's
+/// refusal, with its message.
+pub async fn waiter_dropped_after_the_head_leaves(
+    server: &SyncServer,
+    session: [u8; 32],
+) -> Result<DroppedWaiter, String> {
+    let window = SessionKey(session);
+    let mut head = BookingTurn::new(server, true);
+    head.line_up(window)
+        .await
+        .map_err(|error| error.message().to_owned())?;
+    let mut waiter = BookingTurn::new(server, true);
+    let waited = {
+        let mut waiting = std::pin::pin!(waiter.line_up(window));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        let waited = waiting.as_mut().poll(&mut context).is_pending();
+        drop(head);
+        waited
+    };
+    drop(waiter);
+    Ok(DroppedWaiter {
+        waited,
+        lines_held: lines_held(server),
+    })
+}

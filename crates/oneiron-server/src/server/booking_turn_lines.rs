@@ -21,73 +21,90 @@ use tokio::time::Instant;
 /// Every booking window some authenticated request is in line for.
 #[derive(Default)]
 pub(crate) struct BookingTurnLines {
-    /// One line per window: a semaphore of one permit, which tokio hands out
-    /// in the order it was asked for.
-    lines: Mutex<HashMap<SessionKey, Arc<Semaphore>>>,
+    lines: Mutex<HashMap<SessionKey, Line>>,
+}
+
+/// One window's line: a semaphore of one permit, which tokio hands out in
+/// the order it was asked for, and how many requests are in the line,
+/// waiting or at its head.
+struct Line {
+    turn: Arc<Semaphore>,
+    members: usize,
+}
+
+/// A request's membership of its window's line, from the moment it joins
+/// until it is dropped, by whichever way its request ends: answered, past
+/// its deadline, or cancelled while it waited (a client gone before the
+/// line reached it). The last member out forgets the line.
+struct LineMembership<'a> {
+    lines: &'a BookingTurnLines,
+    window: SessionKey,
 }
 
 /// A request's place at the head of its window's line. It is held while the
 /// request runs admission, waits for the window and writes what it was
 /// admitted for; dropping it lets the next request in the line go on.
 pub(crate) struct LinePlace<'a> {
-    lines: &'a BookingTurnLines,
-    window: SessionKey,
-    head: Option<OwnedSemaphorePermit>,
+    // Fields drop in this order: the head passes to the next request in the
+    // line before this request's membership leaves it.
+    _head: OwnedSemaphorePermit,
+    _membership: LineMembership<'a>,
 }
 
 impl BookingTurnLines {
     /// Joins `window`'s line and waits there, until `deadline`, for every
     /// request ahead to be answered. `None` when the deadline came first: the
-    /// request has left the line, holding nothing.
+    /// request has left the line, holding nothing. A request dropped while
+    /// it waits leaves the line too.
     pub(crate) async fn join(
         &self,
         window: SessionKey,
         deadline: Instant,
     ) -> Option<LinePlace<'_>> {
-        let line = {
+        let (membership, turn) = {
             let mut lines = self.lines.lock().unwrap_or_else(PoisonError::into_inner);
-            Arc::clone(
-                lines
-                    .entry(window)
-                    .or_insert_with(|| Arc::new(Semaphore::new(1))),
+            let line = lines.entry(window).or_insert_with(|| Line {
+                turn: Arc::new(Semaphore::new(1)),
+                members: 0,
+            });
+            line.members = line.members.saturating_add(1);
+            (
+                LineMembership {
+                    lines: self,
+                    window,
+                },
+                Arc::clone(&line.turn),
             )
         };
-        // The wait owns its handle on the line, and drops it when it ends.
-        let waited = tokio::time::timeout_at(deadline, line.acquire_owned()).await;
-        match waited {
+        match tokio::time::timeout_at(deadline, turn.acquire_owned()).await {
             Ok(Ok(head)) => Some(LinePlace {
-                lines: self,
-                window,
-                head: Some(head),
+                _head: head,
+                _membership: membership,
             }),
             // The deadline came first, or the line closed (it never does):
-            // the waiter's handle on the line went with its wait.
-            Ok(Err(_)) | Err(_) => {
-                self.forget_if_empty(window);
-                None
-            }
+            // the membership leaves the line as it drops here.
+            Ok(Err(_)) | Err(_) => None,
         }
     }
 
-    /// Forgets `window`'s line once nobody holds or waits on it: the map's
-    /// own handle is then the only one. A request joining takes its handle
-    /// under the same lock, so a line it joins is never forgotten under it.
-    fn forget_if_empty(&self, window: SessionKey) {
-        let mut lines = self.lines.lock().unwrap_or_else(PoisonError::into_inner);
-        if lines
-            .get(&window)
-            .is_some_and(|line| Arc::strong_count(line) == 1)
-        {
-            lines.remove(&window);
-        }
+    /// How many windows have a line: the test door's view of what is held.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn held(&self) -> usize {
+        self.lines
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
     }
 }
 
-impl Drop for LinePlace<'_> {
+impl Drop for LineMembership<'_> {
     fn drop(&mut self) {
-        // The next request in the line takes the head before the line is
-        // checked for anyone left in it.
-        drop(self.head.take());
-        self.lines.forget_if_empty(self.window);
+        let mut lines = self.lines.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(line) = lines.get_mut(&self.window) {
+            line.members = line.members.saturating_sub(1);
+            if line.members == 0 {
+                lines.remove(&self.window);
+            }
+        }
     }
 }
