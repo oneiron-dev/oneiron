@@ -1,12 +1,15 @@
 //! Door for `tests/room_facet_set.rs` (L7-39 PR 2, the room facet set, and
 //! PR 3, its owner verb): the owner's door that sets a project's room facet
-//! set, the request the verb's host door runs it from, and the field a
-//! writer signs it in.
+//! set, the request the verb's host door runs it from, the field a writer
+//! signs it in, and the owner-signed birth a rooted vault requires of a new
+//! project.
 
+use crate::authority::HostSlipIssuer;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::workspace_roster::{OwnerProjectSigner, ProjectProofVersion, ProjectRecord};
-use crate::{EntityId, Vault};
+use crate::write_envelope::WriteActor;
+use crate::{EdgeActorClass, EntityId, Vault};
 use std::collections::BTreeSet;
 
 /// `vault.projects.room_facets.set` as its host door runs it: `request` is
@@ -47,4 +50,30 @@ pub fn with_room_facets(
 ) -> ProjectProofVersion {
     record.room_facets = facets;
     record.signing_version()
+}
+
+/// The owner's birth of project `id` from `record` in a vault rooted under
+/// `issuer`, as a rooted vault requires of a new project: the depth birth is
+/// signed with the host key that `test_support::bind_host_owner` binds to
+/// `owner`, and the first state with the owner's project signer (the shape
+/// of the server tests' `create_owned_project`).
+pub fn create_owner_project(
+    vault: &Vault,
+    issuer: &HostSlipIssuer,
+    owner_proof: &AuthenticatedOwner,
+    signer: &OwnerProjectSigner<'_>,
+    owner: EntityId,
+    id: EntityId,
+    record: &ProjectRecord,
+) -> Result<()> {
+    vault.create_project_with_owner(
+        id,
+        record,
+        &WriteActor::new(owner, EdgeActorClass::Human),
+        1,
+        issuer.public_key(),
+        |message| Ok(issuer.sign_claim_handoff(message).to_vec()),
+        owner_proof,
+        signer,
+    )
 }

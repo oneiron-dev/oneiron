@@ -27,7 +27,7 @@ use oneiron::registry::ENTITY_TYPE_FACET;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::room_facet_limit::room_facet_axis;
 use oneiron::test_doors::room_facet_set::{
-    set_room_facets, set_room_facets_by_request, with_room_facets,
+    create_owner_project, set_room_facets, set_room_facets_by_request, with_room_facets,
 };
 use oneiron::workspace_roster::{
     OwnerProjectSigner, ProjectProofVersion, ProjectRecord, ProjectRosterWriteRequest,
@@ -82,9 +82,18 @@ impl Fixture {
 }
 
 fn open() -> TestResult<Fixture> {
+    Ok(open_with(|_, _| Ok(()))?.0)
+}
+
+/// As [`open`], running `before_root` on the vault and its owner before the
+/// host roots it: the one time an unsigned owner row may still be put.
+fn open_with<T>(
+    before_root: impl FnOnce(&Vault, EntityId) -> TestResult<T>,
+) -> TestResult<(Fixture, T)> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
     let owner = vault.ensure_embedded_owner_actor()?;
+    let before = before_root(&vault, owner)?;
     let issuer = oneiron::test_support::provision_engine_machines(&vault);
     oneiron::test_support::bind_host_owner(&vault, &issuer, owner)?;
     let owner_proof =
@@ -94,19 +103,26 @@ fn open() -> TestResult<Fixture> {
         &vault.owner_project_signer(&issuer)?,
         vault.root_project()?,
     )?;
-    Ok(Fixture {
-        vault,
-        owner,
-        issuer,
-        owner_proof,
-        _dir: dir,
-    })
+    Ok((
+        Fixture {
+            vault,
+            owner,
+            issuer,
+            owner_proof,
+            _dir: dir,
+        },
+        before,
+    ))
 }
 
 /// A FACET row.
 fn facet(fixture: &Fixture) -> TestResult<EntityId> {
+    facet_in(&fixture.vault)
+}
+
+fn facet_in(vault: &Vault) -> TestResult<EntityId> {
     let id = EntityId::now();
-    fixture.vault.put_entity(
+    vault.put_entity(
         &id,
         ENTITY_TYPE_FACET,
         TimeRange { start: 1, end: 1 },
@@ -124,16 +140,15 @@ fn axis<const N: usize>(ids: [EntityId; N]) -> ScopeAxis<ScopeId> {
     ScopeAxis::Some(ids.into_iter().map(ScopeId).collect())
 }
 
-/// An owner-door project under `parent` (the root when `None`), led by the
-/// owner, sliced to `facet`, `depth_remaining` levels deep. Unsigned until
-/// `sign`; then the owner's first signature makes it a settled v3 head.
-/// Returns the project and its home room.
+/// An owner-born project under `parent` (the root when `None`), led by the
+/// owner, sliced to `facet`, `depth_remaining` levels deep: the owner-signed
+/// birth a rooted vault requires, whose first state the owner's signature
+/// makes a settled v3 head. Returns the project and its home room.
 fn project(
     fixture: &Fixture,
     parent: Option<EntityId>,
     facet: EntityId,
     depth_remaining: u64,
-    sign: bool,
 ) -> TestResult<(EntityId, EntityId)> {
     let vault = &fixture.vault;
     let root = vault.root_project()?;
@@ -141,10 +156,15 @@ fn project(
     let mut record = ProjectRecord::new(id, Some(parent.unwrap_or(root)), root, fixture.owner)?;
     record.slice.facet = Some(facet);
     record.depth_remaining = depth_remaining;
-    vault.put_project(id, &record, 2)?;
-    if sign {
-        vault.sign_owner_project(&fixture.owner_proof, &fixture.signer()?, id)?;
-    }
+    create_owner_project(
+        vault,
+        &fixture.issuer,
+        &fixture.owner_proof,
+        &fixture.signer()?,
+        fixture.owner,
+        id,
+        &record,
+    )?;
     Ok((id, EntityId::from_hex(&record.home_room)?))
 }
 
@@ -187,7 +207,7 @@ fn sign_as_host(
 fn a_signed_set_opens_the_home_room_to_its_facets() -> TestResult {
     let fixture = open()?;
     let (work, health) = (facet(&fixture)?, facet(&fixture)?);
-    let (id, home) = project(&fixture, None, work, 1, true)?;
+    let (id, home) = project(&fixture, None, work, 1)?;
     assert_eq!(
         fixture.reads(home)?,
         axis([work]),
@@ -212,7 +232,7 @@ fn a_signed_set_opens_the_home_room_to_its_facets() -> TestResult {
 fn a_set_holds_its_projects_own_facet() -> TestResult {
     let fixture = open()?;
     let (work, health) = (facet(&fixture)?, facet(&fixture)?);
-    let (id, home) = project(&fixture, None, work, 1, true)?;
+    let (id, home) = project(&fixture, None, work, 1)?;
     assert!(
         fixture.set(id, Some(facets([health]))).is_err(),
         "a set without the project's own facet is refused"
@@ -225,7 +245,7 @@ fn a_set_holds_its_projects_own_facet() -> TestResult {
 fn the_projects_facet_stays_put_under_a_set() -> TestResult {
     let fixture = open()?;
     let (work, health) = (facet(&fixture)?, facet(&fixture)?);
-    let (id, home) = project(&fixture, None, work, 1, true)?;
+    let (id, home) = project(&fixture, None, work, 1)?;
     fixture.set(id, Some(facets([work, health])))?;
 
     // The host signs a state that moves the slice facet inside the set.
@@ -250,23 +270,41 @@ fn the_projects_facet_stays_put_under_a_set() -> TestResult {
 
 #[test]
 fn a_set_comes_after_the_projects_first_signed_state() -> TestResult {
-    let fixture = open()?;
-    let (work, health) = (facet(&fixture)?, facet(&fixture)?);
-    let root = fixture.vault.root_project()?;
+    // Only a vault the host has not yet rooted takes an unsigned owner row
+    // (a rooted one requires an owner-signed birth), so both unsigned rows
+    // are put before the root.
+    let (fixture, (work, health, unsigned, home)) = open_with(|vault, owner| {
+        let (work, health) = (facet_in(vault)?, facet_in(vault)?);
+        let root = vault.root_project()?;
+        let unsigned_row = |with_set: bool| -> TestResult<(EntityId, ProjectRecord)> {
+            let id = EntityId::now();
+            let mut record = ProjectRecord::new(id, Some(root), root, owner)?;
+            record.slice.facet = Some(work);
+            record.depth_remaining = 1;
+            if with_set {
+                with_room_facets(&mut record, Some(facets([work, health])));
+            }
+            Ok((id, record))
+        };
 
-    // An owner-door row carries no proof, so it carries no set.
-    let id = EntityId::now();
-    let mut record = ProjectRecord::new(id, Some(root), root, fixture.owner)?;
-    record.slice.facet = Some(work);
-    record.depth_remaining = 1;
-    with_room_facets(&mut record, Some(facets([work, health])));
-    assert!(
-        fixture.vault.put_project(id, &record, 2).is_err(),
-        "an unsigned row with a room facet set is refused"
-    );
+        // An owner-door row carries no proof, so it carries no set.
+        let (id, record) = unsigned_row(true)?;
+        assert!(
+            vault.put_project(id, &record, 2).is_err(),
+            "an unsigned row with a room facet set is refused"
+        );
+
+        let (unsigned, record) = unsigned_row(false)?;
+        vault.put_project(unsigned, &record, 2)?;
+        Ok((
+            work,
+            health,
+            unsigned,
+            EntityId::from_hex(&record.home_room)?,
+        ))
+    })?;
 
     // An unsigned project takes the owner's first signature before a set.
-    let (unsigned, home) = project(&fixture, None, work, 1, false)?;
     assert!(
         fixture.set(unsigned, Some(facets([work, health]))).is_err(),
         "a project with no signed head takes no set"
@@ -279,8 +317,8 @@ fn a_set_comes_after_the_projects_first_signed_state() -> TestResult {
 fn a_childs_set_stays_inside_its_parents_room() -> TestResult {
     let fixture = open()?;
     let (work, health, travel) = (facet(&fixture)?, facet(&fixture)?, facet(&fixture)?);
-    let (parent, _) = project(&fixture, None, work, 1, true)?;
-    let (child, home) = project(&fixture, Some(parent), work, 0, true)?;
+    let (parent, _) = project(&fixture, None, work, 1)?;
+    let (child, home) = project(&fixture, Some(parent), work, 0)?;
     assert!(
         fixture.set(child, Some(facets([work, health]))).is_err(),
         "a child's set reads no facet its parent's room does not"
@@ -299,8 +337,8 @@ fn a_childs_set_stays_inside_its_parents_room() -> TestResult {
 fn a_parents_set_keeps_its_childrens_sets_inside_it() -> TestResult {
     let fixture = open()?;
     let (work, health) = (facet(&fixture)?, facet(&fixture)?);
-    let (parent, parent_home) = project(&fixture, None, work, 1, true)?;
-    let (child, home) = project(&fixture, Some(parent), work, 0, true)?;
+    let (parent, parent_home) = project(&fixture, None, work, 1)?;
+    let (child, home) = project(&fixture, Some(parent), work, 0)?;
     fixture.set(parent, Some(facets([work, health])))?;
     fixture.set(child, Some(facets([work, health])))?;
     assert!(
@@ -321,7 +359,7 @@ fn a_parents_set_keeps_its_childrens_sets_inside_it() -> TestResult {
 fn a_set_outside_the_writers_slip_facets_is_refused() -> TestResult {
     let fixture = open()?;
     let (work, health) = (facet(&fixture)?, facet(&fixture)?);
-    let (id, home) = project(&fixture, None, work, 1, true)?;
+    let (id, home) = project(&fixture, None, work, 1)?;
     let mut body = fixture.vault.project(id)?.ok_or("the project reads")?;
     sign_as_host(
         &fixture,
@@ -342,7 +380,7 @@ fn a_set_outside_the_writers_slip_facets_is_refused() -> TestResult {
 fn the_owners_verb_sets_and_drops_a_set() -> TestResult {
     let fixture = open()?;
     let (work, health) = (facet(&fixture)?, facet(&fixture)?);
-    let (id, home) = project(&fixture, None, work, 1, true)?;
+    let (id, home) = project(&fixture, None, work, 1)?;
     let set = fixture.set_by_request(json!({
         "project": id,
         "room_facets": [work, health],
@@ -385,7 +423,7 @@ fn the_owners_verb_sets_and_drops_a_set() -> TestResult {
 fn the_embedded_handle_sends_the_owners_verb_to_the_host() -> TestResult {
     let fixture = open()?;
     let (work, health) = (facet(&fixture)?, facet(&fixture)?);
-    let (id, home) = project(&fixture, None, work, 1, true)?;
+    let (id, home) = project(&fixture, None, work, 1)?;
     let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
     let refused = oneiron::task_verb::sdk::invoke(
         &memory,
@@ -408,7 +446,7 @@ fn the_embedded_handle_sends_the_owners_verb_to_the_host() -> TestResult {
 fn a_roster_write_request_carries_a_writers_signed_set() -> TestResult {
     let fixture = open()?;
     let (work, health) = (facet(&fixture)?, facet(&fixture)?);
-    let (id, _) = project(&fixture, None, work, 1, true)?;
+    let (id, _) = project(&fixture, None, work, 1)?;
     let mut body = fixture.vault.project(id)?.ok_or("the project reads")?;
     sign_as_host(&fixture, id, &mut body, Some(facets([work, health])), None)?;
     let request: ProjectRosterWriteRequest = serde_json::from_value(json!({
