@@ -1122,3 +1122,201 @@ fn member_peer_window_withholds_note_with_credential_proposal() -> Result<()> {
     assert_unchanged(vault, &[&control_stored, &credential_stored])?;
     Ok(())
 }
+
+fn witness_prompt_message(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    conversation: EntityId,
+    text: &str,
+) -> Result<EntityId> {
+    let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let receipt = vault
+        .memory(actor, EdgeActorClass::Human)
+        .witness(&oneiron::WitnessTurn {
+            conversation_ref: conversation.to_hex(),
+            turn_ref: None,
+            thread_audience: None,
+            messages: vec![oneiron::WitnessMessage {
+                id: None,
+                author: oneiron::WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: text.to_owned(),
+                parts: None,
+                metadata: None,
+                is_visible: true,
+                order: 0,
+                quote: None,
+            }],
+            occurred_at: LEARNED_AT,
+            assertions: oneiron::memory::WitnessAssertions::default(),
+        })
+        .expect("the public witness door accepts a plain text prompt");
+    let id = EntityId::from_hex(&receipt.messages[0].id)?;
+    // Born-with reads entity_text, so the witnessed content needs its document.
+    vault.migrate_entity_text(
+        &id,
+        &oneiron::entity_doc::TextField::MapField("content".to_owned()),
+        WriteActor::new(actor, EdgeActorClass::Human),
+        &oneiron::entity_doc::DocAuthorization::Owner(owner),
+    )?;
+    assert_eq!(vault.entity_text(&id)?, text, "scan-Off keeps prompt text");
+    Ok(id)
+}
+
+#[test]
+fn member_peer_window_keeps_credential_born_with_prompt_home() -> Result<()> {
+    use oneiron::authority::{ActSurface, MachineRole};
+    use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
+    use oneiron::provenance::made_by::{
+        MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
+    };
+    use oneiron::share_travel::{BornWith, BornWithField, TravelChoice};
+
+    let fixture = member_fixture()?;
+    let vault = &fixture.vault;
+    let owner = scan_off(vault)?;
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault.provision_engine_machine_identities(&fixture.issuer)?;
+    vault.ensure_serving_install_profile(&fixture.issuer, MachineRole::Unanswered)?;
+    let mut choice = TravelChoice::default();
+    choice.born_with.insert(BornWithField::Prompt);
+    let travel = vault.set_federation_grant_travel_as(
+        &owner,
+        ActSurface::ThisInstall,
+        &fixture.selector.grant_id,
+        Some(choice.clone()),
+        None,
+        vault.now_recorded_at(),
+    )?;
+    assert_eq!(travel.map(|bound| bound.travel), Some(choice.clone()));
+    assert_eq!(
+        vault
+            .federation_grant_travel(&fixture.selector.grant_id)?
+            .expect("the grant has a signed travel choice")
+            .travel,
+        choice
+    );
+
+    let credential = format!("ghp_{}", "a".repeat(36));
+    let control_text = "Count the weekly review items.";
+    let credential_text = format!("Rotate the token {credential} before Tuesday.");
+    let conversation = EntityId::now();
+    let control_prompt = witness_prompt_message(vault, &owner, conversation, control_text)?;
+    let credential_prompt = witness_prompt_message(vault, &owner, conversation, &credential_text)?;
+    let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let actor = WriteActor::new(owner_id, EdgeActorClass::Human);
+    let mut artifacts = Vec::new();
+    for (name, prompt) in [("owen", control_prompt), ("yuki", credential_prompt)] {
+        let id = EntityId::now();
+        vault.put_blob_artifact(
+            &id,
+            &BlobArtifactBody::new(name, "text/plain"),
+            TimeRange {
+                start: LEARNED_AT,
+                end: LEARNED_AT,
+            },
+            LEARNED_AT,
+        )?;
+        let made_by = MadeBy {
+            inputs: vec![MadeByInput {
+                row: prompt,
+                role: MadeByInputRole::Prompt,
+            }],
+            process: MadeByProcess {
+                actor: owner_id,
+                class: MadeByClass::Stated,
+                identity: "prompt-artifact".to_owned(),
+                version: "1".to_owned(),
+                params_hash: "weekly-review".to_owned(),
+            },
+            at: LEARNED_AT,
+            trigger: None,
+        };
+        // The first version stamps the supplied envelope as the artifact's row birth.
+        vault.append_blob_artifact_version_made_by(
+            &id,
+            None,
+            b"Weekly review reference.\n",
+            &BlobVersionProvenance::UserUpload,
+            &made_by,
+            actor,
+            TimeRange {
+                start: LEARNED_AT,
+                end: LEARNED_AT,
+            },
+            LEARNED_AT,
+        )?;
+        assert_eq!(
+            vault
+                .row_birth(&id)?
+                .expect("the artifact has a row birth")
+                .made_by,
+            made_by
+        );
+        artifacts.push(read_stored_row(vault, id)?);
+    }
+    let control_row = &artifacts[0];
+    let credential_row = &artifacts[1];
+    let stored = vault.born_with_text(&credential_row.id, None)?;
+    assert_eq!(
+        stored.get(&BornWithField::Prompt).map(String::as_str),
+        Some(credential_text.as_str()),
+        "the public born-with read reaches the credential prompt before export"
+    );
+
+    let key = WindowKey::new(WINDOW);
+    let window = fixture.manager.open_window(&key)?;
+    for id in [
+        control_prompt,
+        credential_prompt,
+        control_row.id,
+        credential_row.id,
+    ] {
+        assert!(
+            map_get_bytes(&window.doc.get_map("entities"), &id.to_hex()).is_some(),
+            "the shared window contains the prompt and selected row: {}",
+            id.to_hex()
+        );
+    }
+    let member = filtered_window_doc_for_peer(
+        vault,
+        &window.doc,
+        &key,
+        FederationGrantScope::vault(SHARED),
+        &fixture.selector,
+        PeerMachine::Unknown,
+    )?;
+    assert_exact(&member, control_row);
+    assert_exact(&member, credential_row);
+    // CONTROL: the same grant and birth path carry the clean Prompt field.
+    let carried = member.get_map("row_born_with");
+    let control_bytes = map_get_bytes(&carried, &control_row.id.to_hex())
+        .expect("the clean row carries born-with text");
+    let control: BornWith = rmp_serde::from_slice(&control_bytes).expect("canonical born-with map");
+    assert_eq!(
+        control.get(&BornWithField::Prompt).map(String::as_str),
+        Some(control_text)
+    );
+
+    if let Some(bytes) = map_get_bytes(&carried, &credential_row.id.to_hex()) {
+        let text: BornWith = rmp_serde::from_slice(&bytes).expect("canonical born-with map");
+        assert!(
+            !text.contains_key(&BornWithField::Prompt),
+            "only the credential-bearing Prompt field must stay home"
+        );
+    }
+    carried.for_each(|_, value| {
+        let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value else {
+            panic!("born-with values must be binary encoded maps");
+        };
+        assert!(
+            !bytes
+                .windows(credential.len())
+                .any(|part| part == credential.as_bytes()),
+            "no row_born_with value may carry the credential bytes"
+        );
+    });
+    assert_unchanged(vault, &[control_row, credential_row])?;
+    assert_eq!(vault.entity_text(&credential_prompt)?, credential_text);
+    Ok(())
+}
