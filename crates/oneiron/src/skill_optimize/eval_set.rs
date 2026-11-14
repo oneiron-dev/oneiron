@@ -113,7 +113,12 @@ const LABEL: &str = "eval set row";
 const MAX_REF_BYTES: usize = 256;
 /// An eval label value holds an owner-pick option verbatim (FIX 10143).
 const MAX_LABEL_VALUE_BYTES: usize = 512;
-const MAX_NAME_BYTES: usize = 64;
+#[doc(hidden)]
+use oneiron_verb_wire::skill_optimize::eval_set::MAX_NAME_BYTES;
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::eval_set::{
+    DerivationKind, EvalLabel, EvalLabelKind, FamilyPurpose,
+};
 
 /// A model function the vault keeps a test set for: "The seats are the
 /// companion, a decision seat, the extraction tagger, the embedder and the
@@ -156,18 +161,6 @@ impl EvalSeat {
     }
 }
 
-/// What a source family is for, fixed when it is assigned.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum FamilyPurpose {
-    /// Search, candidate authoring and rubric fitting read these rows.
-    Development,
-    /// Judge audits read these rows; nothing is ever fitted on them.
-    JudgeAudit,
-    /// Sealed confirmation: only a date-cut cohort serves them, counted.
-    SealedConfirmation,
-}
-
 /// The records that share a source, and what their rows are for. A family is
 /// never re-purposed; retirement is read from its cohort
 /// ([`Vault::eval_family_feeds_training`]).
@@ -182,57 +175,6 @@ pub struct SourceFamily {
     /// a root.
     pub roots: BTreeSet<String>,
     pub assigned_at: u64,
-}
-
-/// How a case came from its sources.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DerivationKind {
-    /// A past task picked from receipts as it ran.
-    Receipt,
-    /// A linked failure, its outside repair and the observed outcome.
-    Repair,
-    Paraphrase,
-    Summary,
-    Translation,
-    Synthetic,
-    /// A generated rubric over its parent rows.
-    Rubric,
-}
-
-/// Where a case's label came from. Outcomes and the owner's picks anchor; a
-/// judge's verdict never does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum EvalLabelKind {
-    WorldOutcome,
-    OwnerPick,
-    AdjudicatedAudit,
-    JudgeVerdict,
-}
-
-impl EvalLabelKind {
-    #[must_use]
-    pub const fn anchors(self) -> bool {
-        !matches!(self, Self::JudgeVerdict)
-    }
-}
-
-/// One dated, weighted label on a case. `reference` names the outcome fact,
-/// ask or audit it came from.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EvalLabel {
-    pub kind: EvalLabelKind,
-    pub value: String,
-    pub reference: String,
-    pub weight: f64,
-    pub at: u64,
-    /// The rows the label's value was read from, as fixed code found them
-    /// when it was recorded (FIX 5761); `None`, unknown, when its producer
-    /// named none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_rows: Option<Vec<EntityId>>,
 }
 
 /// What the eval-authoring skill proposes to record. The family is not part

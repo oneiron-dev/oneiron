@@ -38,6 +38,7 @@ struct WindowVvReply {
 /// holds takes the own-device lane as it lands in `window` (FIX 12111).
 fn import_promotion_snapshot_with(
     vault: &crate::Vault,
+    materializer: &crate::sync::bridge::Materializer,
     (window, doc): (&WindowKey, &loro::LoroDoc),
     snapshot: &[u8],
     own_device: Option<&OwnDeviceImport>,
@@ -48,7 +49,11 @@ fn import_promotion_snapshot_with(
             own_device,
             (window, doc),
             snapshot,
-            || crate::sync::ingest::with_promotion(vault, || doc.import(snapshot)),
+            || {
+                crate::sync::ingest::with_promotion(vault, || {
+                    crate::sync::window::import_into_live_window(materializer, doc, snapshot)
+                })
+            },
         )
         .is_ok()
 }
@@ -166,6 +171,7 @@ impl SyncClient {
         let own_device = self.own_device_import(rpc.home);
         if !import_promotion_snapshot_with(
             &self.vault,
+            self.manager.materializer(),
             (window, &loaded.doc),
             &snapshot,
             own_device.as_ref(),
@@ -181,39 +187,7 @@ impl SyncClient {
         // durable. Cached thin bodies in this window can no longer shadow it.
         self.vault
             .with_write_txn_grouped(|txn| {
-                let stale: Vec<_> = self
-                    .vault
-                    .store
-                    .sync_state
-                    .prefix_iter(txn, "ro:e:")?
-                    .map(|row| row.map(|(key, value)| (key.to_string(), value.to_vec())))
-                    .collect::<std::result::Result<_, _>>()?;
-                for (key, value) in stale {
-                    if value == window.as_str().as_bytes() {
-                        let id = key.strip_prefix("ro:e:").ok_or(crate::Error::InvalidKey)?;
-                        self.vault.store.sync_state.delete(txn, &key)?;
-                        self.vault
-                            .store
-                            .sync_state
-                            .delete(txn, &format!("ri:b:{id}"))?;
-                        self.vault
-                            .store
-                            .sync_state
-                            .delete(txn, &format!("ri:d:{id}"))?;
-                        self.vault
-                            .store
-                            .sync_state
-                            .delete(txn, &format!("ri:s:{id}"))?;
-                        self.vault
-                            .store
-                            .sync_state
-                            .delete(txn, &format!("ri:c:{id}"))?;
-                        self.vault
-                            .store
-                            .sync_state
-                            .delete(txn, &format!("rt:e:{id}"))?;
-                    }
-                }
+                drop_thin_rows_in(&self.vault, txn, window)?;
                 self.vault
                     .store
                     .sync_state
@@ -330,6 +304,7 @@ impl SyncClient {
         if snapshot.len() > crate::sync::residence::MAX_PROMOTION_SNAPSHOT_BYTES
             || !import_promotion_snapshot_with(
                 &self.vault,
+                self.manager.materializer(),
                 (window, &loaded.doc),
                 &snapshot,
                 own_device.as_ref(),
@@ -444,4 +419,33 @@ impl SyncClient {
                 .unwrap_or_default(),
         )
     }
+}
+
+/// Deletes the thin read cache rows of every item `window` holds (`ro:e:`
+/// with its `ri:*` and `rt:e:` rows), once the window's canonical document is
+/// here: a promotion, or a followed window's first full exchange
+/// (FOLLOWED-WINDOW-STALE-THIN-CACHE). A cached thin body no longer shadows
+/// the canonical row, and a local put at the item is no longer refused as a
+/// thin read.
+pub(in crate::sync::client) fn drop_thin_rows_in(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    window: &WindowKey,
+) -> crate::Result<()> {
+    let stale: Vec<_> = vault
+        .store
+        .sync_state
+        .prefix_iter(txn, "ro:e:")?
+        .map(|row| row.map(|(key, value)| (key.to_string(), value.to_vec())))
+        .collect::<std::result::Result<_, _>>()?;
+    for (key, value) in stale {
+        if value == window.as_str().as_bytes() {
+            let id = key.strip_prefix("ro:e:").ok_or(crate::Error::InvalidKey)?;
+            vault.store.sync_state.delete(txn, &key)?;
+            for row in ["ri:b:", "ri:d:", "ri:s:", "ri:c:", "rt:e:"] {
+                vault.store.sync_state.delete(txn, &format!("{row}{id}"))?;
+            }
+        }
+    }
+    Ok(())
 }

@@ -24,12 +24,6 @@ const EVERY_PROJECT_SELECTOR: &str = "reveal_scope:every_project";
 const TASK_SCOPE_DOMAIN: &[u8] = b"oneiron.secret_reveal.task_scope.v1";
 const RUN_SCOPE_DOMAIN: &[u8] = b"oneiron.secret_reveal.run_scope.v1";
 
-impl RevealGrantScope {
-    /// Every scope, the narrowest first: the order a reveal's cover is tried
-    /// and the owner's choices are listed.
-    pub(crate) const ALL: [Self; 4] = [Self::Run, Self::Task, Self::Project, Self::EveryProject];
-}
-
 /// What a reveal's reach is read from, as its host bound it: the project,
 /// the task its run works and the leased try that asked.
 #[derive(Debug, Clone, Copy)]

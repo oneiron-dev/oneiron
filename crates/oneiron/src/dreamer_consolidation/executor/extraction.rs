@@ -28,20 +28,22 @@ impl ConsolidationExecutor<'_> {
     /// into the request's identity, so its memo is read only against them.
     pub(in crate::dreamer_consolidation) fn extraction_request(
         call: &RoleCall<'_>,
+        prompt: &ExtractionPrompt,
         transcript: &str,
         labels: &CallLabelMap,
         scope: &oneiron_model::llm::Scope,
         namespace: &MintNamespace,
     ) -> Result<LlmRequest> {
-        let mut request = Self::request_over(call, None, transcript.to_owned(), scope)?;
+        let mut request = Self::request_over(call, prompt, None, transcript.to_owned(), scope)?;
         labels.bind_request(&mut request, Some(&namespace.identity()));
         Ok(request)
     }
 
-    /// The extraction request over `source`, `source_rule` before it: a
-    /// NOTE review's rule is `note_classification`'s (OF-073).
+    /// The extraction request over `source` in `prompt`'s words, `source_rule`
+    /// before it: a NOTE review's rule is `note_classification`'s (OF-073).
     pub(in crate::dreamer_consolidation) fn request_over(
         call: &RoleCall<'_>,
+        prompt: &ExtractionPrompt,
         source_rule: Option<String>,
         source: String,
         scope: &oneiron_model::llm::Scope,
@@ -51,8 +53,6 @@ impl ConsolidationExecutor<'_> {
         })?;
         let keyless = call.inference.selected_keyless();
         let paid = call.inference.selected_paid();
-        let prompt: ExtractionPrompt = serde_json::from_str(include_str!("extraction_prompt.json"))
-            .map_err(|_| invalid_consolidation("shipped extraction prompt is not readable"))?;
         let text = |role, text: String| LlmMessage {
             role,
             content: vec![ContentPart::Text {
@@ -60,10 +60,10 @@ impl ConsolidationExecutor<'_> {
                 signature: None,
             }],
         };
-        let mut messages = vec![text(LlmMessageRole::System, prompt.system)];
-        for example in prompt.examples {
-            messages.push(text(LlmMessageRole::User, example.user));
-            messages.push(text(LlmMessageRole::Assistant, example.assistant));
+        let mut messages = vec![text(LlmMessageRole::System, prompt.system.clone())];
+        for example in &prompt.examples {
+            messages.push(text(LlmMessageRole::User, example.user.clone()));
+            messages.push(text(LlmMessageRole::Assistant, example.assistant.clone()));
         }
         if let Some(rule) = source_rule {
             messages.push(text(LlmMessageRole::System, rule));
@@ -405,20 +405,62 @@ fn resolve_proposal(
     ))
 }
 
-/// The shipped extraction prompt, as data: the system text and the worked
-/// examples sent as user and assistant turns before the transcript.
-#[derive(serde::Deserialize)]
+/// The extraction prompt, as data: the system text and the worked examples
+/// sent as user and assistant turns before the transcript. Every extraction
+/// and NOTE review asks in these words. The engine ships one
+/// ([`Self::shipped`]); a host asks in its own ([`Self::from_json`]), since
+/// prompts belong to the host layer (ARCH-0026 #dreamer-seat-open, ARCH-0053
+/// OF-334). Only the words change: the reply contract, its check and the
+/// decode stay the engine's.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ExtractionPrompt {
+pub struct ExtractionPrompt {
     system: String,
     examples: Vec<WorkedExample>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WorkedExample {
     user: String,
     assistant: String,
+}
+
+impl ExtractionPrompt {
+    /// The shipped prompt (`extraction_prompt.json`), word for word what the
+    /// engine asks with when the host words none.
+    ///
+    /// # Errors
+    /// The shipped file does not read.
+    pub fn shipped() -> Result<Self> {
+        Self::from_json(include_str!("extraction_prompt.json"))
+            .map_err(|_| invalid_consolidation("shipped extraction prompt is not readable"))
+    }
+
+    /// A prompt written in the shipped file's shape: `{"system": "...",
+    /// "examples": [{"user": "...", "assistant": "..."}]}`. The examples may
+    /// be empty.
+    ///
+    /// # Errors
+    /// [`crate::Error::InvalidConfig`]: `text` is not that shape, names
+    /// another key, or leaves the system text or a turn of an example blank.
+    pub fn from_json(text: &str) -> Result<Self> {
+        let prompt: Self = serde_json::from_str(text)
+            .map_err(|error| crate::Error::InvalidConfig(format!("extraction prompt: {error}")))?;
+        if prompt.system.trim().is_empty() {
+            return Err(crate::Error::InvalidConfig(
+                "extraction prompt: the system text is blank".into(),
+            ));
+        }
+        if let Some(index) = prompt.examples.iter().position(|example| {
+            example.user.trim().is_empty() || example.assistant.trim().is_empty()
+        }) {
+            return Err(crate::Error::InvalidConfig(format!(
+                "extraction prompt: example {index} has a blank turn"
+            )));
+        }
+        Ok(prompt)
+    }
 }
 
 /// The question key a stored head was filed under, as its scope map holds it.

@@ -476,8 +476,10 @@ pub(super) fn validate_workflows(snapshot: &CanonicalSnapshot) -> Result<()> {
 impl CanonicalSnapshot {
     /// This artifact as this vault recovers it (FIX 3878, 4227): each actor
     /// this vault erased reads as no one in its NOTE workflows and its room
-    /// side rows, as the erase took it out of this vault's own rows. Every
-    /// check, write and equivalence test of a recovery reads this form.
+    /// side rows, as the erase took it out of this vault's own rows, and an
+    /// AUTHORITY_LOG row its source's own fold never applied, which the door
+    /// here would hold, is left out (H72). Every check, write and equivalence
+    /// test of a recovery reads this form.
     pub(crate) fn with_actors_erased_here(&self, vault: &Vault) -> Result<Self> {
         let mut snapshot = self.clone();
         let txn = vault.store.env.read_txn()?;
@@ -490,6 +492,7 @@ impl CanonicalSnapshot {
         // Engine A: this vault's current policies stand in for the
         // artifact's, and none names an actor it erased.
         snapshot.settle_source_audiences_here(vault, &txn)?;
+        crate::sync::bridge::omit_authority_rows_never_applied_in(vault, &txn, &mut snapshot)?;
         Ok(snapshot)
     }
 }

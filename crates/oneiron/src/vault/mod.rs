@@ -144,6 +144,13 @@ pub struct Vault {
     /// beside the open config by [`Vault::tagging_marker_config`]. In memory
     /// only: a reopened vault arms from its config again.
     tagging_arm: std::sync::OnceLock<crate::config::tagging::TaggingMarkerConfig>,
+    /// This host's release fact for payment credentials: whether its runner
+    /// fence is proven and whether its self-hoster lifted the withholding
+    /// ([`Vault::set_payment_credential_release`], L8-60). In memory only:
+    /// until the host seeds it, the value doors withhold a payment
+    /// credential.
+    pub(crate) payment_credential_release:
+        std::sync::RwLock<crate::secret_custody::PaymentCredentialRelease>,
     /// Where vector evidence starts now: the configured floors until the host
     /// sets others ([`Vault::set_vector_evidence`]), and any it set for one
     /// kind of item in one embedding space ([`Vault::set_vector_evidence_for`]).

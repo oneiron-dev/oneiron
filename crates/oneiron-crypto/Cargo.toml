@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "Versioned crypto contract: sealed envelopes, suite ids, signature records, fail-closed parser"
 repository.workspace = true
-homepage.workspace = true
 publish = false
 
 [lib]

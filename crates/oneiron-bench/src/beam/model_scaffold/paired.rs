@@ -6,10 +6,10 @@
 use super::{AnswererArm, Effort, ModelRow, model_params_hash};
 use crate::beam::{BeamResult, model::ArmKind};
 use oneiron::ModelId;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(in crate::beam) enum Regime {
     /// Every arm shares the reader's pinned output cap; spend may differ.

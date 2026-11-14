@@ -144,6 +144,16 @@ pub(crate) fn send_stop_reason_in_txn(
 /// that answers it, arrives with the peer's state, and a copy minted here
 /// first could stand against a clear the peer's human already made. An older
 /// head standing here is no answer: its clear may be in flight (R1-F1).
+///
+/// Any move of the slot after the STOP settles it here, a clear requested
+/// before the STOP included. Nothing here says whether the peer minted the
+/// STOP's own opt-out or folded the STOP into a head that already stood
+/// there. When the peer minted one, it arrives with the peer's state and
+/// holds sends as a standing head. A peer that folded the STOP in never
+/// mints one, and waiting for it would hold sends here for good, with no
+/// head a clear could find (COMM-STOP-LATE-ARRIVAL review round 2). The
+/// replica that projects a STOP judges a clear's close by its request
+/// (`stop_answering_boundary_in_txn`).
 pub(super) fn peer_stop_projection_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -174,4 +184,158 @@ pub(super) fn peer_stop_projection_in_txn(
     let answered_later = latest_claim_transition_boundary(&history)
         .is_some_and(|boundary| event.occurred_at < boundary);
     Ok(answered_later.then_some(false))
+}
+
+/// Test door (`test_doors::comm_late_stop`): rewrites the STOP recorded on
+/// `party`'s `channel_class` at `occurred_at` as a peer's copy whose peer has
+/// already projected it, keeping the hold its first sighting here armed.
+/// Answers the event id.
+#[cfg(oneiron_test_support)]
+pub(crate) fn mark_recorded_stop_peer_projected(
+    vault: &Vault,
+    party: &str,
+    channel_class: &str,
+    occurred_at: u64,
+) -> CommResult<EntityId> {
+    let party_ref = super::parties::resolve_party(vault, party)?.ok_or(CommError::InvalidRecord)?;
+    let channel = crate::counterparty_contact::normalize_channel_class(channel_class);
+    vault.try_with_write_txn_grouped(|wtxn| {
+        let (event_id, mut record) = super::records::comm_records_in_txn(vault, &*wtxn)?
+            .into_iter()
+            .find(|(_, record)| {
+                matches!(record, CommRecord::Event {
+                    kind: CommEventKind::InboundStop,
+                    party_ref: event_party,
+                    channel_class: Some(event_channel),
+                    occurred_at: event_at,
+                    projected: false,
+                    ..
+                } if *event_party == party_ref
+                    && crate::counterparty_contact::normalize_channel_class(event_channel) == channel
+                    && *event_at == occurred_at)
+            })
+            .ok_or(CommError::InvalidRecord)?;
+        if let CommRecord::Event { projected, .. } = &mut record {
+            *projected = true;
+        }
+        super::records::put_comm_record_in_txn(vault, wtxn, event_id, &record)?;
+        Ok(event_id)
+    })
+}
+
+/// Test door: whether the STOP `event_id` still holds sends here as one this
+/// replica has not settled.
+#[cfg(oneiron_test_support)]
+pub(crate) fn recorded_stop_holds(vault: &Vault, event_id: &EntityId) -> CommResult<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(holds_pending_stop_in_txn(&vault.store, &rtxn, event_id)?)
+}
+
+/// The outcome the test door gives an approved clear's receipt it keeps from
+/// this replica's reads, as sync leaves a receipt that is still in flight.
+#[cfg(oneiron_test_support)]
+const WITHHELD_CLEAR_RECEIPT_OUTCOME: &str = "test_withheld_comm_opt_out_clear_approved";
+
+/// Test door: rewrites the outcome `from` of each receipt on `party`'s
+/// `channel_class` slot to `to`. Answers how many it rewrote.
+#[cfg(oneiron_test_support)]
+fn rewrite_clear_receipt_outcomes(
+    vault: &Vault,
+    party: &str,
+    channel_class: &str,
+    from: &str,
+    to: &str,
+) -> CommResult<usize> {
+    let party_ref = super::parties::resolve_party(vault, party)?.ok_or(CommError::InvalidRecord)?;
+    let channel = crate::counterparty_contact::normalize_channel_class(channel_class);
+    vault.try_with_write_txn_grouped(|wtxn| {
+        let mut rewritten = 0_usize;
+        for (receipt_id, mut record) in super::records::comm_records_in_txn(vault, &*wtxn)? {
+            let CommRecord::Receipt {
+                party_ref: receipt_party,
+                channel_class: receipt_channel,
+                outcome,
+                ..
+            } = &mut record
+            else {
+                continue;
+            };
+            if *receipt_party != party_ref
+                || crate::counterparty_contact::normalize_channel_class(receipt_channel) != channel
+                || outcome.as_str() != from
+            {
+                continue;
+            }
+            to.clone_into(outcome);
+            super::records::put_comm_record_in_txn(vault, wtxn, receipt_id, &record)?;
+            rewritten += 1;
+        }
+        Ok(rewritten)
+    })
+}
+
+/// Test door: keeps each approved clear's receipt on `party`'s
+/// `channel_class` slot from this replica's reads, as a receipt sync has not
+/// imported yet. Answers how many it withheld.
+#[cfg(oneiron_test_support)]
+pub(crate) fn withhold_clear_receipts(
+    vault: &Vault,
+    party: &str,
+    channel_class: &str,
+) -> CommResult<usize> {
+    rewrite_clear_receipt_outcomes(
+        vault,
+        party,
+        channel_class,
+        super::consent::OPT_OUT_CLEAR_APPROVED,
+        WITHHELD_CLEAR_RECEIPT_OUTCOME,
+    )
+}
+
+/// Test door: delivers the receipts `withhold_clear_receipts` withheld.
+/// Answers how many it delivered.
+#[cfg(oneiron_test_support)]
+pub(crate) fn deliver_withheld_clear_receipts(
+    vault: &Vault,
+    party: &str,
+    channel_class: &str,
+) -> CommResult<usize> {
+    rewrite_clear_receipt_outcomes(
+        vault,
+        party,
+        channel_class,
+        WITHHELD_CLEAR_RECEIPT_OUTCOME,
+        super::consent::OPT_OUT_CLEAR_APPROVED,
+    )
+}
+
+/// Test door: retracts each standing opt-out head on `party`'s
+/// `channel_class` slot through the generic claim door, as an owner's
+/// `vault.claims.retract` does: no clear request and no receipt. Answers how
+/// many it retracted.
+#[cfg(oneiron_test_support)]
+pub(crate) fn retract_standing_opt_outs(
+    vault: &Vault,
+    party: &str,
+    channel_class: &str,
+    at: u64,
+) -> CommResult<usize> {
+    let party_ref = super::parties::resolve_party(vault, party)?.ok_or(CommError::InvalidRecord)?;
+    let channel = crate::counterparty_contact::normalize_channel_class(channel_class);
+    let standing = {
+        let rtxn = vault.store.env.read_txn()?;
+        matching_claims_in_txn(
+            vault,
+            &rtxn,
+            party_ref,
+            PREDICATE_COMM_OPT_OUT,
+            Some(channel.as_str()),
+            None,
+            true,
+        )?
+    };
+    for (claim_id, _) in &standing {
+        vault.retract_claim(claim_id, at)?;
+    }
+    Ok(standing.len())
 }

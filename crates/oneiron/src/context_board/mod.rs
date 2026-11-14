@@ -16,7 +16,8 @@ pub use explain::{GateExplanation, MemoryExplanation};
 pub use fanout::{fanout_action_rows, fanout_action_rows_for};
 mod people;
 pub use people::{
-    PEOPLE_PREFIX_BUDGET_TOK, People, PeoplePrefix, PeopleView, PersonKind, PersonRow,
+    ActorAttribution, ActorAttributionKind, PEOPLE_PREFIX_BUDGET_TOK, People, PeoplePrefix,
+    PeopleView, PersonKind, PersonRow,
 };
 pub(crate) use people::{
     PreparedAgentPerson, agent_person_id, ensure_agent_person_in_txn,
@@ -99,14 +100,17 @@ pub(crate) use scratchpad::{
 };
 pub(crate) use scratchpad::{sealed_pad_reask_text, sealed_pad_review_text};
 
+pub(crate) use stream::stage_child_done_in_txn;
 pub(crate) use stream::task_body_for_announcement;
 pub(crate) use stream::task_for_announcement;
 pub use stream::{
     AppliedStreamState, BoardEvent, BoardRenderMode, BoardSnapshot, BoardStreamFrame,
-    BoardStreamRegistry, CarrierCoalesceBuffer, CoalesceOutcome, CommittedTaskBoardState,
-    DeliveryClass, DeliveryPolicy, DeltaRow, FrameApplyOutcome, FrameEnqueueOutcome, FrameKind,
-    PendingDiaryReview, PendingRoomWake, RoomWakeRead, RouteObservation, StreamConnectionId,
-    StreamConnectionState, SubscriptionError, SubscriptionReceipt, SubscriptionScope, WakeEnvelope,
+    BoardStreamRegistry, CHILD_DONE_KEY_PREFIX, CarrierCoalesceBuffer, ChildDone, ChildEnd,
+    CoalesceOutcome, CommittedTaskBoardState, DeliveryClass, DeliveryPolicy, DeltaRow,
+    FrameApplyOutcome, FrameEnqueueOutcome, FrameKind, PendingDiaryReview, PendingRoomWake,
+    PendingTaskWake, RoomWakeRead, RouteObservation, StagedTaskWake, StreamConnectionId,
+    StreamConnectionState, SubscriptionError, SubscriptionReceipt, SubscriptionScope, TaskWakeKind,
+    TaskWakeRead, WakeEnvelope, child_release_hold, child_release_rows, child_spawner,
 };
 mod layout;
 mod layout_store;

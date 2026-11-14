@@ -13,7 +13,7 @@ use super::{
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result};
 use crate::settings::ReadDestination;
-use crate::share_travel::{CopyTravelChoice, effective_copy_refs};
+use crate::share_travel::effective_copy_refs;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
@@ -32,45 +32,10 @@ struct AcceptedCopy {
     source_stamp: String,
 }
 
-/// Replaces only one accepted row's text. Its sources and attribution stay intact.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PersonaSnapshotTextEdit {
-    pub row_id: String,
-    pub text: String,
-}
-
-/// Consent to issue exactly the previewed version, with explicit row exclusions.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PersonaSnapshotCopyRequest {
-    pub subject: EntityId,
-    pub stamp: String,
-    #[serde(default)]
-    pub strike: BTreeSet<String>,
-    #[serde(default)]
-    pub unstrike: BTreeSet<String>,
-    /// Whether the copy carries its vault refs; absent is today's copy.
-    #[serde(default)]
-    pub travel: Option<CopyTravelChoice>,
-}
-
-/// An accepted copy's stamp fences its edits. Each edit issues a new immutable
-/// export; an already handed copy and the neutral source claims remain unchanged.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PersonaSnapshotCopyEditRequest {
-    pub export_id: EntityId,
-    pub stamp: String,
-    pub edits: Vec<PersonaSnapshotTextEdit>,
-    #[serde(default)]
-    pub strike: BTreeSet<String>,
-    #[serde(default)]
-    pub unstrike: BTreeSet<String>,
-    /// Whether the new copy carries its vault refs; absent is today's copy.
-    #[serde(default)]
-    pub travel: Option<CopyTravelChoice>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::persona_snapshot::copy::{
+    PersonaSnapshotCopyEditRequest, PersonaSnapshotCopyRequest, PersonaSnapshotTextEdit,
+};
 
 fn require_stamp(expected: &str, actual: &str) -> Result<()> {
     if expected != actual {
