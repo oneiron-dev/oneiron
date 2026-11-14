@@ -319,6 +319,7 @@ pub mod seat_model_description;
 pub(crate) mod secret_handle_labels;
 pub(crate) mod secret_handle_purpose;
 pub(crate) mod secret_name_index;
+pub(crate) mod secret_payment_marks;
 pub(crate) mod side_table_erase_scan;
 pub mod site_skill_exposure;
 pub mod skill_attribution_evidence;

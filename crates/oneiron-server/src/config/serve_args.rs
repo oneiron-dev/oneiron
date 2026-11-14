@@ -433,6 +433,18 @@ pub struct ServeArgs {
     #[arg(long = "trusted-organ-build", value_parser = blake3_hex)]
     pub trusted_organ_builds: Vec<String>,
 
+    /// Release payment credentials on this host although its runner fence
+    /// is unproven (L8-60; CROSS-ARCH-0019 `#fence-unproven`). By default
+    /// the engine withholds a credential the owner marks as a payment
+    /// credential wherever the organ host proves no filesystem fence
+    /// (Landlock ABI 3 on Linux, Seatbelt on macOS); every other credential
+    /// stays at its rung. A self-hoster owns his host and its risk, and this
+    /// flag is his to lift the default. Plain serve only, argv only: no
+    /// config file, settings file or environment sets it, and managed mode
+    /// refuses it.
+    #[arg(long = "release-payment-credentials-unfenced")]
+    pub release_payment_credentials_unfenced: bool,
+
     /// Managed mode: where the paired-machine mesh listener binds
     /// (`ip:port`), in place of `ONEIRON_MESH_BIND`, which managed mode never
     /// reads. Without it the mesh is off.

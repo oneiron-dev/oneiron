@@ -20,6 +20,8 @@ const NO_TUNING_LAYER_REASON: &str = "managed mode reads the owner's settings fr
 
 const NO_TENANT_LAYER_REASON: &str = "the supervisor binds the vault's tenant identity, privacy posture and key custody; contract v1 has no managed override for them";
 
+const NO_PAYMENT_RELEASE_REASON: &str = "the payment-credential withholding on an unproven runner fence is a self-host rule; a managed node's isolation is the supervisor's, and its operator lifts nothing";
+
 const NO_ARTIFACT_DOMAINS_REASON: &str = "a managed vault's artifact origin answers on its internal authority alone (<vault-name>.artifact.invalid); the edge checks public names and forwards to it";
 
 /// What managed mode does with one `ServeArgs` field.
@@ -328,6 +330,14 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         "trusted-organ-build",
         |args| !args.trusted_organ_builds.is_empty(),
         ArgvUse::Read,
+    ),
+    // The payment-credential withholding is a self-host rule
+    // (CROSS-ARCH-0019 `#fence-unproven`): a managed node's isolation is
+    // the supervisor's, and its operator lifts nothing (L8-60).
+    (
+        "release-payment-credentials-unfenced",
+        |args| args.release_payment_credentials_unfenced,
+        ArgvUse::Refused(NO_PAYMENT_RELEASE_REASON),
     ),
     ("mesh-bind", |args| args.mesh_bind.is_some(), ArgvUse::Read),
     (

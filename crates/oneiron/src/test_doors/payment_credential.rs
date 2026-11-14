@@ -9,8 +9,9 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::secret_custody::{
-    CustodyClass, CustodyTier, RevealAuthority, SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding,
-    SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus, reveal_value_in_txn,
+    CustodyClass, CustodyTier, PaymentCredentialRelease, RevealAuthority,
+    SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding, SecretCustodyFloor, SecretCustodyRecord,
+    SecretCustodyStatus, reveal_value_in_txn,
 };
 use crate::vault::Vault;
 
@@ -70,15 +71,17 @@ pub fn mark_payment_credential(
     secret: &EntityId,
     payment: Option<bool>,
 ) -> Result<()> {
-    // Main has no payment mark (L8-60 RED scaffold): nothing is stored.
-    let _ = (vault, owner, secret, payment);
-    Ok(())
+    vault
+        .set_secret_payment_mark(owner, secret, payment)
+        .map(|_| ())
 }
 
 /// Seeds this host's release fact, as the server does at serve start.
 pub fn seed_release(vault: &Vault, runner_fence_proven: bool, withholding_lifted: bool) {
-    // Main has no release fact (L8-60 RED scaffold): nothing is seeded.
-    let _ = (vault, runner_fence_proven, withholding_lifted);
+    vault.set_payment_credential_release(PaymentCredentialRelease {
+        runner_fence_proven,
+        withholding_lifted,
+    });
 }
 
 /// The length of the value the reveal door delivers from the credential
@@ -93,6 +96,6 @@ pub fn reveal_value_len(vault: &Vault, secret: &EntityId, effector: &str) -> Res
     let authority =
         RevealAuthority::for_test_door(*secret, secret.to_hex(), meta.class, effector.to_owned());
     let rtxn = vault.store.env.read_txn()?;
-    let value = reveal_value_in_txn(&vault.store, &rtxn, &authority)?;
+    let value = reveal_value_in_txn(vault, &rtxn, &authority)?;
     Ok(value.len())
 }
