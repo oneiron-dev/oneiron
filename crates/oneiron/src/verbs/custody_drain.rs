@@ -10,12 +10,22 @@
 //! the member MACs its ack with, for the member's own adapter on its own
 //! authenticated channel. `Debug` never prints it, and it is wiped when the
 //! reply drops.
+//!
+//! Each door takes `check_in_ref` and answers the check-in decision it ran
+//! on (2k3; P25-SHAPE Q1 = A): the Owner on their own proof, and with
+//! `check_in_ref` an asker's approved check-in for that door's effect,
+//! which the Owner applies. The custody journal is no vault writer, so the
+//! check-in is spent in a writer of its own before the door acts.
 
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
+use crate::check_in::{
+    ActClass, AppliedCheckIn, CheckInDecision, custody_drain_effect_digest,
+    custody_reenrol_effect_digest, owner_act_decision_in_own_writer,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::store::custody_protocol::{
@@ -33,6 +43,11 @@ const RESIDENCE_PREFIX: &str = "residence:";
 pub struct CustodyMemberRef {
     /// The member's id, `<kind>:<name>`, as the set names it.
     pub target_id: String,
+    /// An asker's approved check-in for this drain, 32 hex
+    /// (`custody_drain_effect_digest`): the Owner applies it on their own
+    /// proof, and the answer names its asker.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
 
 /// A begun drain: what the member's ack must name, and the token it MACs
@@ -50,6 +65,11 @@ pub struct CustodyDrainTicketView {
     pub operation_id: String,
     /// The drain's generation token, 64 hex: for the member's own adapter.
     pub token: String,
+    /// The check-in decision the begin ran on (2k3): the Owner on their own
+    /// proof, and the approved check-in of another asker it applied, with
+    /// its requester.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 impl Drop for CustodyDrainTicketView {
@@ -65,6 +85,7 @@ impl std::fmt::Debug for CustodyDrainTicketView {
             .field("set_revision", &self.set_revision)
             .field("position", &self.position)
             .field("operation_id", &self.operation_id)
+            .field("check_in", &self.check_in)
             .finish_non_exhaustive()
     }
 }
@@ -76,6 +97,11 @@ impl std::fmt::Debug for CustodyDrainTicketView {
 pub struct CustodyDrainCommitRequest {
     #[schemars(with = "serde_json::Value")]
     pub ack: DrainAck,
+    /// An asker's approved check-in for this drain of the ack's member, 32
+    /// hex (`custody_drain_effect_digest`): the Owner applies it on their
+    /// own proof, and the answer names its asker.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
 
 /// `vault.custody.members.reenrol`'s input: the member the owner drained,
@@ -93,13 +119,22 @@ pub struct CustodyMemberReenrolRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<String>")]
     pub scope: Option<TargetScope>,
+    /// An asker's approved check-in for this re-enrolment, 32 hex
+    /// (`custody_reenrol_effect_digest`): the Owner applies it on their own
+    /// proof, and the answer names its asker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
-/// The required set's revision after the owner's change.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The required set's revision after the owner's change, and the check-in
+/// decision the change ran on (2k3): the Owner on their own proof, and the
+/// approved check-in of another asker it applied, with its requester.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CustodySetRevision {
     pub revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 fn target_id(id: &str) -> MemoryResult<TargetId> {
@@ -108,23 +143,57 @@ fn target_id(id: &str) -> MemoryResult<TargetId> {
     })
 }
 
+/// The check-in decision door `verb` runs on: the Owner on their own proof,
+/// and with `check_in_ref` an asker's approved check-in for `verb` over
+/// `effect_digest`, spent in a writer of its own before the door acts.
+fn key_recovery_decision(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    verb: &'static str,
+    check_in_ref: Option<&str>,
+    effect_digest: [u8; 32],
+) -> MemoryResult<CheckInDecision> {
+    let applied = super::shared::check_in_ref(check_in_ref)?.map(|id| AppliedCheckIn {
+        id,
+        verb,
+        effect_digest,
+    });
+    Ok(owner_act_decision_in_own_writer(
+        vault,
+        owner,
+        ActClass::KeyRecovery,
+        applied.as_ref(),
+    )?)
+}
+
 /// `vault.custody.members.drain.begin`: fences the member at once and
 /// returns the ticket its ack must name.
 ///
 /// # Errors
-/// Every refusal of [`Vault::begin_custody_member_drain_as`].
+/// Every refusal of [`Vault::begin_custody_member_drain_as`]; a
+/// `check_in_ref` that is no check-in id, or names no approved, unspent
+/// check-in for this door's effect.
 pub fn custody_member_drain_begin_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: CustodyMemberRef,
 ) -> MemoryResult<CustodyDrainTicketView> {
-    let ticket = vault.begin_custody_member_drain_as(owner, &target_id(&input.target_id)?)?;
+    let target = target_id(&input.target_id)?;
+    let check_in = key_recovery_decision(
+        vault,
+        owner,
+        "vault.custody.members.drain.begin",
+        input.check_in_ref.as_deref(),
+        custody_drain_effect_digest(target.as_str()),
+    )?;
+    let ticket = vault.begin_custody_member_drain_as(owner, &target)?;
     Ok(CustodyDrainTicketView {
         target_id: ticket.target_id.as_str().to_owned(),
         set_revision: ticket.set_revision,
         position: AckPosition::of(&ticket.position),
         operation_id: hex(&ticket.operation_id),
         token: hex(ticket.token.expose()),
+        check_in: Some(check_in),
     })
 }
 
@@ -132,28 +201,53 @@ pub fn custody_member_drain_begin_as(
 /// the next revision once its ack names exactly its begun drain.
 ///
 /// # Errors
-/// Every refusal of [`Vault::commit_custody_member_drain_as`].
+/// Every refusal of [`Vault::commit_custody_member_drain_as`]; a
+/// `check_in_ref` that is no check-in id, or names no approved, unspent
+/// check-in for this door's effect.
 pub fn custody_member_drain_commit_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: CustodyDrainCommitRequest,
 ) -> MemoryResult<CustodySetRevision> {
+    let check_in = key_recovery_decision(
+        vault,
+        owner,
+        "vault.custody.members.drain.commit",
+        input.check_in_ref.as_deref(),
+        custody_drain_effect_digest(&input.ack.target_id),
+    )?;
     let revision = vault.commit_custody_member_drain_as(owner, &input.ack)?;
-    Ok(CustodySetRevision { revision })
+    Ok(CustodySetRevision {
+        revision,
+        check_in: Some(check_in),
+    })
 }
 
 /// `vault.custody.members.drain.folder`: drains a folder member here, this
 /// install being its adapter.
 ///
 /// # Errors
-/// Every refusal of [`Vault::drain_custody_folder_member_as`].
+/// Every refusal of [`Vault::drain_custody_folder_member_as`]; a
+/// `check_in_ref` that is no check-in id, or names no approved, unspent
+/// check-in for this door's effect.
 pub fn custody_folder_member_drain_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: CustodyMemberRef,
 ) -> MemoryResult<CustodySetRevision> {
-    let revision = vault.drain_custody_folder_member_as(owner, &target_id(&input.target_id)?)?;
-    Ok(CustodySetRevision { revision })
+    let target = target_id(&input.target_id)?;
+    let check_in = key_recovery_decision(
+        vault,
+        owner,
+        "vault.custody.members.drain.folder",
+        input.check_in_ref.as_deref(),
+        custody_drain_effect_digest(target.as_str()),
+    )?;
+    let revision = vault.drain_custody_folder_member_as(owner, &target)?;
+    Ok(CustodySetRevision {
+        revision,
+        check_in: Some(check_in),
+    })
 }
 
 /// `vault.custody.members.reenrol`: adds a member the owner drained back
@@ -161,15 +255,26 @@ pub fn custody_folder_member_drain_as(
 ///
 /// # Errors
 /// An input that names no member, or both an id and a folder; every refusal
-/// of [`Vault::reenrol_custody_member_as`].
+/// of [`Vault::reenrol_custody_member_as`]; a `check_in_ref` that is no
+/// check-in id, or names no approved, unspent check-in for this re-enrolment.
 pub fn custody_member_reenrol_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: CustodyMemberReenrolRequest,
 ) -> MemoryResult<CustodySetRevision> {
     let spec = reenrolled_spec(&input)?;
+    let check_in = key_recovery_decision(
+        vault,
+        owner,
+        "vault.custody.members.reenrol",
+        input.check_in_ref.as_deref(),
+        custody_reenrol_effect_digest(&spec),
+    )?;
     let revision = vault.reenrol_custody_member_as(owner, &spec)?;
-    Ok(CustodySetRevision { revision })
+    Ok(CustodySetRevision {
+        revision,
+        check_in: Some(check_in),
+    })
 }
 
 /// The member `input` names.

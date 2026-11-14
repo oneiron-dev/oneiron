@@ -42,6 +42,7 @@ use crate::Vault;
 use crate::authority::{RootChange, StepUpFactor};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::store::custody_protocol::{TargetScope, TargetSpec};
 
 /// One act a door runs for a person, as check-in judges it.
 pub(crate) struct DoorAct<'a> {
@@ -439,4 +440,69 @@ pub fn step_up_reset_effect_digest(person: &EntityId, factor: StepUpFactor) -> [
         StepUpFactor::Totp => 1,
     }]);
     *hasher.finalize().as_bytes()
+}
+
+/// The decision an Owner's own act on a catastrophe row runs on when its
+/// effect lands outside the vault's writer (a custody journal; 2k3,
+/// P25-SHAPE Q1 = A): the Owner on their own proof, and with `applied` the
+/// asker's approved check-in, spent in a writer of its own on the Owner's
+/// live proof before the act runs, as the NOTE history purge spends it
+/// (2k2). A refusal after it leaves the approval spent.
+///
+/// # Errors
+///
+/// The Owner's proof no longer holds; as [`spend_applied_check_in_in_txn`].
+pub(crate) fn owner_act_decision_in_own_writer(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    act: ActClass,
+    applied: Option<&AppliedCheckIn<'_>>,
+) -> Result<CheckInDecision> {
+    match applied {
+        Some(applied) => vault.with_write_txn_grouped(|txn| {
+            owner.revalidate_in_txn(vault, txn)?;
+            owner_act_decision_in_txn(vault, txn, act, Some(applied))
+        }),
+        None => Ok(owner_own_proof_decision(act)),
+    }
+}
+
+/// The digest of draining custody member `target_id` out of the required
+/// set: the effect an asker's `vault.check_in.open` names for
+/// `vault.custody.members.drain.begin`, `.drain.commit` (the ack's member)
+/// and `.drain.folder`, and the one that door spends (2k3; P25-SHAPE Q1 =
+/// A). BLAKE3, key derived from `oneiron check_in custody drain v1`, over
+/// the id's length as one byte and its bytes.
+#[must_use]
+pub fn custody_drain_effect_digest(target_id: &str) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in custody drain v1");
+    update_short_text(&mut hasher, target_id);
+    *hasher.finalize().as_bytes()
+}
+
+/// The digest of re-enrolling `spec`, a drained custody member: the effect
+/// an asker's `vault.check_in.open` names for
+/// `vault.custody.members.reenrol`, and the one the re-enrolment spends
+/// (2k3; P25-SHAPE Q1 = A). BLAKE3, key derived from `oneiron check_in
+/// custody reenrol v1`, over the member's id and its kind's name, each as
+/// its length in one byte and its bytes, and one byte, 0 when it holds heads
+/// and the log, 1 for the log alone.
+#[must_use]
+pub fn custody_reenrol_effect_digest(spec: &TargetSpec) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in custody reenrol v1");
+    update_short_text(&mut hasher, spec.id().as_str());
+    update_short_text(&mut hasher, spec.kind().name());
+    hasher.update(&[match spec.scope {
+        TargetScope::HeadAndLog => 0,
+        TargetScope::LogOnly => 1,
+    }]);
+    *hasher.finalize().as_bytes()
+}
+
+/// `text`'s length as one byte (at most 255; custody ids are at most 128)
+/// and its bytes.
+fn update_short_text(hasher: &mut blake3::Hasher, text: &str) {
+    hasher
+        .update(&[u8::try_from(text.len()).unwrap_or(u8::MAX)])
+        .update(text.as_bytes());
 }
