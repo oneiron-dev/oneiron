@@ -10,8 +10,8 @@ use crate::edit_roundtrip::CellValue;
 use crate::llm::decision::questions::{question_unit_correlation, standing_ask_route};
 use crate::llm::decision::{
     AskTo, DecisionAnswer, DecisionAudio, DecisionBandPolicy, DecisionDial, DecisionImage,
-    DecisionLadder, DecisionProvider, DecisionQuestion, DecisionRung, EvidenceVersion,
-    LocatedDecision, MAX_DECISION_STATE_BYTES, Reversibility, TypedDecision,
+    DecisionLadder, DecisionQuestion, DecisionRung, EvidenceVersion, LocatedDecision,
+    MAX_DECISION_STATE_BYTES, Reversibility, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{Error, Result};
@@ -302,18 +302,8 @@ impl ArtifactAsk<'_> {
     }
 }
 
-/// A unit the ask left unanswered, with its receipt; none when the unit had
-/// no input to read or its state was past the call's bound.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-pub struct UnitAbstention {
-    /// The unit, as the caller named it.
-    pub unit: Value,
-    pub decision: Option<TypedDecision>,
-    /// The live body the ask read the unit on, when it read one: its decision
-    /// names the head version as evidence (FIX 12018).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub judged_live: Option<crate::office_body::LivePin>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::edit_roundtrip::artifact_question::UnitAbstention;
 
 pub use crate::blob_artifact::unit_refusal::UnitRefusal;
 

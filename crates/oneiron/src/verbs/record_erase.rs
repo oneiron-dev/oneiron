@@ -17,29 +17,8 @@ use crate::memory::{
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, entity_id::bytes_to_hex_lower};
 
-/// `vault.records.erase_preview`'s input: the record to erase.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RecordEraseRequest {
-    pub record: EntityId,
-}
-
-/// `vault.records.erase_confirm`'s input: the record, the digest of the
-/// preview the caller confirms, and whether every other record holding the
-/// same bytes goes too.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RecordEraseConfirmRequest {
-    pub record: EntityId,
-    pub preview_digest: String,
-    #[serde(default)]
-    pub also_same_bytes: bool,
-    /// An asker's approved check-in for this erase, 32 hex
-    /// (`record_erase_effect_digest`): the Owner applies it on their own
-    /// proof, and the outcome names its asker.
-    #[serde(default)]
-    pub check_in_ref: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::record_erase::{RecordEraseConfirmRequest, RecordEraseRequest};
 
 /// One live brief grant the erase revokes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
