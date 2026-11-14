@@ -117,14 +117,14 @@ not (
   | (package(oneiron) & test(=conversation_dag::tests::replay::ready_parent_budget_continues_after_reopen_without_other_traffic))
   | (package(oneiron-testkit) & binary(=canary) & test(=a_dreamer_pass_sends_the_model_no_agents_diary_and_leaks_no_canary))
 )
-& not (none())
+& not ((package(oneiron-testkit) & binary(=model_seq) & test(=an_approved_proposal_leaves_one_standing_head_in_every_seeded_sequence)))
 """
 
 [profile.nightly]
 retries = 0
 fail-fast = false
 slow-timeout = { period = "30s", terminate-after = 4 }
-default-filter = "not (none())"
+default-filter = "not ((package(oneiron-testkit) & binary(=model_seq) & test(=an_approved_proposal_leaves_one_standing_head_in_every_seeded_sequence)))"
 
 [profile.nightly.junit]
 path = "junit.xml"
@@ -148,7 +148,7 @@ slow-timeout = { period = "60s", terminate-after = 30 }
 retries = 0
 fail-fast = false
 slow-timeout = { period = "30s", terminate-after = 4 }
-default-filter = "none()"
+default-filter = "(package(oneiron-testkit) & binary(=model_seq) & test(=an_approved_proposal_leaves_one_standing_head_in_every_seeded_sequence))"
 
 [profile.quarantine.junit]
 path = "junit.xml"
