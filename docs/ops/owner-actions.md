@@ -2038,7 +2038,8 @@ A passkey's PRF input is `BLAKE3-derive_key("oneiron/vault-key-passkey-prf-input
 credential name)`: the vault and the name fix it, so the same authenticator gives the same output
 on any host. A running server takes the same steps at `/v1/owner/vault-key` (`GET` for the wraps,
 `GET /prf-input?credential=NAME`, `POST /passkeys`, `POST /password`, `POST /device`,
-`POST /remove`, `POST /retire-escrow`, `POST /unlock`, `GET /signer`). Each command here that opens
+`POST /remove`, `POST /retire-escrow`, `POST /unlock`, `GET /signer`, `GET` and
+`PUT /recovery-preset`). Each command here that opens
 the key also takes `--unlock` with its `--unlock-*` inputs ([owner-custody.md](owner-custody.md)).
 
 An escrow wrap seals to a hybrid key grown from a 32-byte seed; the recovery box keeps the seed.
@@ -2093,6 +2094,79 @@ the key it holds to the fresh recipient in one pass, with no vault and no key le
 It prints the new capsule's report, labelled `<role>.<16 hex of the recipient key's BLAKE3>` as a
 managed node names its own, for the registry to keep. The registry then deletes the released
 recipient's capsules.
+
+### Recovery preset: "Nobody but me"
+
+The recovery preset is your choice of which ways restore the vault. `standard` is the default: each
+of the wraps above may be added. `nobody-but-me` is for strict kit-only vaults and relay mode: there
+the printed recovery sheet alone restores the vault (CROSS-ARCH-0019 #vault-20-unlock).
+
+```sh
+oneiron vault-key recovery-preset                                   # the preset in force
+oneiron vault-key recovery-preset --set nobody-but-me --sheet-out /Volumes/KEY/sheet.txt
+oneiron vault-key recovery-preset --set standard
+```
+
+Entering `nobody-but-me` needs the key held and a key you hold (`owner_held_local` custody; a
+host-managed or supervisor-delivered key is refused). It first writes the sheet's code to the new
+owner-only `--sheet-out` file, once, and syncs it (56 letters and digits in groups of 4: print it
+and keep it offline). Only then, in one write, does it add the sheet's wrap, remove the password and
+every passkey wrap, and retire every escrow recipient but the world kit's, each with its receipt. If
+the file cannot be written, the vault does not change. While the preset holds, adding a password,
+passkey or escrow wrap is refused, a registry's capsule opens nothing on the vault or on a backup
+written under the preset, and no delivered key is admitted. This device's wrap stays, and so do the
+recovery kits, which need two pieces. Setting the preset already in force changes nothing;
+`--set standard` changes no wrap, and the ordinary commands add any after. A running server takes
+the same steps at `GET` and `PUT /v1/owner/vault-key/recovery-preset` with
+`{"preset": "nobody_but_me"}`; the answer carries the sheet's code once, so the server enters the
+preset only while its own device wrap stays (add it with `POST /device` first): if the answer is
+lost, that wrap reopens the key, and `standard` then `nobody_but_me` again issues a new sheet. On a
+maximum-tier vault, `mirror_pending: true` says the change stands but the page-seal mirror was not
+rewritten; the next sealed open repairs it.
+
+On a new host, the sheet restores the vault:
+
+```sh
+oneiron restore BACKUP --unlock sheet --secret-file /Volumes/KEY/sheet.txt --trust signer.json
+```
+
+#### The switch "any 2 pieces"
+
+Under "Nobody but me", one switch requires any two pieces: the passkey, the sheet, a trusted person
+or an old device. It turns on with the data-key kit those pieces come from, three homes as any kit
+has, issued in the same write:
+
+```sh
+oneiron recovery-kit issue-vault-key --any-two-pieces --out /Volumes/KEY/kit \
+  --home paper --home passkey --home trusted-person \
+  --passkey-credential phone --passkey-prf-file prf.bin
+```
+
+The `paper` piece's code is the new sheet; `trusted-person` and `other-machine:<id>` (an old device)
+are a piece each. A `passkey` home hands out no file: its piece is sealed under the passkey's PRF
+output, at the PRF input `vault-key status` prints for that name, into the vault key's
+`kit_point:<kit>:<name>` wrap, so a new device with the synced passkey has it. The same home works
+in any kit issued with `issue-vault-key`, and never in a world kit: a passkey restores the vault
+key only. The pieces' files are written and synced first; if one cannot be written, the files made
+are removed and the vault does not change. Only then does the write remove the sheet's wrap, the
+password and every passkey wrap, and retire every escrow recipient but the world kit's. From then on
+one piece opens nothing and two do, or one and the kit passphrase; no password, passkey or escrow
+wrap may be added. On a new host:
+
+```sh
+oneiron restore BACKUP --unlock kit --vault-id HEX --piece /Volumes/KEY/kit/piece-1.txt \
+  --credential phone --kit-passkey-prf-file prf.bin --trust signer.json
+```
+
+With a kit issued with a `passphrase` home, the passkey and the kit passphrase restore with no piece
+file: leave out `--piece` and give the passphrase with `--secret-file` (or on stdin).
+
+`vault-key recovery-preset --set nobody-but-me` turns the switch off: it prints a fresh sheet, and
+the kit stays usable. The old sheet opens nothing written after either change.
+
+A sheet, passkey or capsule handed out before the change still opens the backups written before it:
+the data key does not rotate. A backup names the preset it was written under, so a capsule, or a key
+an escrow recipient opened from an earlier backup, opens nothing written after the change.
 
 ### Maximum tier
 
