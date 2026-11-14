@@ -122,7 +122,7 @@ fn task_erased_in_txn(store: &Store, txn: &heed::RoTxn<'_>, task: &EntityId) -> 
 /// # Errors
 /// [`ERR_STAGED_INPUT_COLLISION`] when the id holds anything else; a store
 /// failure.
-fn persist_staged_input_in_txn(
+pub(in crate::dispatch_byoa) fn persist_staged_input_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     job: &StagedJob<'_>,

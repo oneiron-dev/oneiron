@@ -111,6 +111,7 @@ pub mod run_cancel;
 pub mod run_control;
 pub mod run_doors;
 pub(crate) mod run_rows;
+mod runner_continue;
 mod runner_done;
 mod scheduling;
 pub(crate) mod settlement_anchor;

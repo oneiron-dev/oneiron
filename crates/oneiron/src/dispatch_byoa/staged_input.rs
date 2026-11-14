@@ -40,6 +40,7 @@ use super::exhaust::{
 };
 
 pub(crate) use self::dispatch::StagedJob;
+pub(in crate::dispatch_byoa) use self::dispatch::persist_staged_input_in_txn;
 pub(crate) use self::erase::erase_staged_input_in_txn;
 
 /// Domain separator for a staged job's artifact id, derived from the job's

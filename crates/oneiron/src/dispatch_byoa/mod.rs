@@ -71,6 +71,11 @@ mod seat_quota;
 pub use seat_quota::{
     RunnerSeatQuota, runner_capture_seat_quota_id, runner_seat_quotas, seat_quota_id,
 };
+mod continue_work;
+pub use continue_work::{
+    ContinueOutsideWorkCheckRequest, ContinueOutsideWorkCheckView, ContinueOutsideWorkRequest,
+    ContinueOutsideWorkView, RunnerContinueCaller,
+};
 mod owner_doors;
 pub use owner_doors::{
     RunnerSeatCreditTopUpRequest, RunnerSeatQuotasRequest, RunnerSeatQuotasView,
