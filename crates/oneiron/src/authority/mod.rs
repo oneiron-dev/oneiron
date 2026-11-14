@@ -87,6 +87,7 @@ mod fold_schedule;
 mod fold_state;
 mod forwarded_caller;
 mod frontier_join;
+mod full_copy_mark;
 mod grant_travel;
 mod grant_travel_door;
 mod guest_revoke;
@@ -306,6 +307,7 @@ pub use forwarded_caller::{
     ForwardedCallerProof, ForwardedRequest, ForwardingDevice, ForwardingMachineProof,
     VerifiedForwardedCaller, forwarded_request_transcript,
 };
+pub(crate) use full_copy_mark::append_install_signed_in_txn;
 pub use handoff_equivocation::{
     AuthorityHandoffAlarm, AuthorityHandoffAlarmAck, AuthorityHandoffEquivocation,
 };

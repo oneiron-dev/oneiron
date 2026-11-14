@@ -746,6 +746,27 @@ impl SyncConnection {
             )));
         }
 
+        // L7-47: the first full round under sync all writes this machine's
+        // full-copy mark. A home session only, never a peer's (a peer serves
+        // state-only copies, never a full copy), and never on a federation
+        // lane. A mark that does not land never fails the session.
+        if client.peer_session.is_none()
+            && client.config.federation_peer.is_none()
+            && client.config.residence_mode == crate::sync::SyncResidenceMode::All
+        {
+            let vault = Arc::clone(self.manager.vault());
+            match tokio::task::spawn_blocking(move || vault.declare_full_copy(true)).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => tracing::warn!(
+                    kind = ?error.kind(),
+                    "the full-copy mark was not written"
+                ),
+                Err(error) => {
+                    tracing::warn!("the full-copy mark write did not finish: {error}");
+                }
+            }
+        }
+
         Ok(ws_stream)
     }
 }

@@ -99,10 +99,10 @@ pub(super) fn apply_op(
         | AuthorityOp::RebindActor { .. }
         | AuthorityOp::RevokeActor { .. } => {}
         // `fold_entry_state`'s machine-profile, anchor, world-privacy,
-        // grant-travel, owner-choice, home-candidacy, agent-grant-act,
-        // policy-setting, export-act, owner-work (a custody permit piece
-        // among them), membership-execution and world-key arms return before
-        // reaching here.
+        // grant-travel, owner-choice, home-candidacy, full-copy-mark,
+        // agent-grant-act, policy-setting, export-act, owner-work (a custody
+        // permit piece among them), membership-execution and world-key arms
+        // return before reaching here.
         AuthorityOp::MachineProfile(_)
         | AuthorityOp::OwnerRoot(_)
         | AuthorityOp::WorldPrivacy(_)
@@ -114,6 +114,7 @@ pub(super) fn apply_op(
         | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::HomeCandidacy(_)
+        | AuthorityOp::FullCopyMark(_)
         | AuthorityOp::AgentGrantAct(_)
         | AuthorityOp::PolicySettingSet(_)
         | AuthorityOp::ExportAct(_)

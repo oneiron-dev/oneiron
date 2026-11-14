@@ -219,6 +219,10 @@ pub struct AuthorityFold {
     /// Each machine's newest MACRO home candidacy, as the log carries it
     /// (FIX 4898); an election judges each on this fold.
     pub(crate) home_candidacy: BTreeMap<EntityId, super::home_candidacy::DeclaredHomeCandidacy>,
+    /// Each machine's newest full-copy mark, as the log carries it (L7-47);
+    /// the peer order judges each on this fold.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) full_copy_mark: BTreeMap<EntityId, super::full_copy_mark::DeclaredFullCopyMark>,
     /// Every owner work request and its one result, as this install counts
     /// them.
     pub(super) owner_work: super::owner_work::FoldedOwnerWork,
@@ -474,6 +478,13 @@ pub(super) struct FoldState {
     /// Each machine's home candidacies, the newest replacing the older
     /// (FIX 4898).
     pub(super) home_candidacy: super::home_candidacy::HomeCandidacyState,
+    /// Each machine's full-copy marks, the newest replacing the older
+    /// (L7-47). An image carries them only when some mark folded.
+    #[serde(
+        default,
+        skip_serializing_if = "super::full_copy_mark::FullCopyMarkState::is_empty"
+    )]
+    pub(super) full_copy_mark: super::full_copy_mark::FullCopyMarkState,
     /// Every owner work request and result, merged by union.
     pub(super) owner_work: super::owner_work::OwnerWorkState,
     /// Each world key's counted records, merged by union.
@@ -752,6 +763,7 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
         &mut merged.home_candidacy,
         &right.home_candidacy,
     );
+    super::full_copy_mark::merge_full_copy_marks(&mut merged.full_copy_mark, &right.full_copy_mark);
     super::owner_work::merge_owner_work(&mut merged.owner_work, &right.owner_work);
     super::world_key_fold::merge_world_keys(&mut merged.world_keys, &right.world_keys);
     merged

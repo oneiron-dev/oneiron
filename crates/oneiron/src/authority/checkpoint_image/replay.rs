@@ -290,6 +290,7 @@ fold_state_fields!(
     refused_export_acts,
     agent_carried_acts,
     home_candidacy,
+    full_copy_mark,
     owner_work,
     world_keys,
     refused_world_keys,
