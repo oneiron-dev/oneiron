@@ -339,6 +339,16 @@ pub struct TaskCreateRequest {
     /// The typed brief a post carries (OF-220).
     #[serde(default)]
     pub brief: Option<crate::task_verb::QueueTaskBrief>,
+    /// The one-line request the engine composes the post's brief from, in
+    /// place of `brief`, with `intent_key` (L8-07). A local model drafts it
+    /// and the post parks as a proposal, whatever the caller's ceiling.
+    #[serde(default)]
+    pub one_liner: Option<String>,
+    /// The rows, by short-id ref or 32-hex id, the composer reads as the
+    /// one-liner's context, each under the caller's own read. Only with
+    /// `one_liner`.
+    #[serde(default)]
+    pub lens_refs: Vec<String>,
     /// The TASK's absolute expiry.
     #[serde(default)]
     pub ttl: Option<crate::task_verb::TaskTtl>,
@@ -362,7 +372,9 @@ pub struct TaskCreateRequest {
 
 /// The create spec one `tasks.create` request names, owned by the
 /// surface's actor. A request naming an intent key and a brief is a post
-/// (OF-220); one naming only one of them is refused.
+/// (OF-220), and one naming an intent key and a one-liner is a post whose
+/// brief the engine composes (L8-07); any other mix of the three is
+/// refused, as are lens refs without a one-liner.
 pub fn task_create_spec(
     memory: &Memory<'_>,
     input: TaskCreateRequest,
@@ -383,9 +395,28 @@ pub fn task_create_spec(
     spec.due_at = input.due_at;
     spec.watch = input.watch;
     spec.parent_ref = parent_ref;
-    match (input.intent_key, input.brief) {
-        (Some(intent_key), Some(brief)) => Ok(spec.with_brief(intent_key, brief)),
-        (None, None) => Ok(spec),
+    if input.one_liner.is_none() && !input.lens_refs.is_empty() {
+        return Err(MemoryError::bad_request(
+            "lens refs name a one-liner's context; a create without a one-liner names none",
+        ));
+    }
+    match (input.intent_key, input.brief, input.one_liner) {
+        (Some(intent_key), Some(brief), None) => Ok(spec.with_brief(intent_key, brief)),
+        (Some(intent_key), None, Some(one_liner)) => {
+            let lens_refs = input
+                .lens_refs
+                .iter()
+                .map(|reference| crate::memory::resolve_entity_ref(memory.vault(), reference))
+                .collect::<MemoryResult<Vec<_>>>()?;
+            Ok(spec.with_one_liner(intent_key, one_liner, lens_refs))
+        }
+        (None, None, None) => Ok(spec),
+        (_, Some(_), Some(_)) => Err(MemoryError::bad_request(
+            "a create names its brief or a one-liner to compose it from, not both",
+        )),
+        (None, None, Some(_)) => Err(MemoryError::bad_request(
+            "a composed create names its intent key and its one-liner",
+        )),
         _ => Err(MemoryError::bad_request(
             "a briefed create names both its intent key and its brief",
         )),

@@ -356,6 +356,25 @@ impl Memory<'_> {
         self.held_proposal_in(&rtxn, predicate, key)
     }
 
+    /// The brief this actor's earlier post under stored key `key` parked,
+    /// if one is held (L8-07): a composed post's replay posts it again
+    /// instead of composing anew, so its request digest holds.
+    pub(super) fn held_post_brief(&self, key: &str) -> MemoryResult<Option<QueueTaskBrief>> {
+        let rtxn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        let actor = self.actor();
+        Ok(self
+            .vault()
+            .find_claim_for_subject_in_txn(&rtxn, &actor, |_, body| {
+                if body.predicate != TASK_CREATE_PROPOSAL_PREDICATE
+                    || crate::claim::session_claim_producer(body) != Some(actor)
+                {
+                    return None;
+                }
+                let stamp: PostStamp = from_value(map_entry(&body.value, TASK_POST_STAMP_KEY)?)?;
+                (stamp.intent_key == key).then_some(stamp.brief)
+            })?)
+    }
+
     /// [`Self::held_proposal`] in `rtxn`, a snapshot the caller holds: a
     /// writer finds the earlier proposal without opening a read of its own.
     pub(super) fn held_proposal_in(
@@ -388,4 +407,23 @@ impl Memory<'_> {
                 })
             })?)
     }
+}
+
+/// The brief parked post proposal `proposal_ref` carries, its composer
+/// stamp included; `None` when the claim is no parked post. The L8-07 test
+/// door reads a composed brief through it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn parked_post_brief(
+    vault: &Vault,
+    proposal_ref: EntityId,
+) -> Result<Option<QueueTaskBrief>> {
+    let Some(claim) = vault.get_claim(&proposal_ref)? else {
+        return Ok(None);
+    };
+    if claim.predicate != TASK_CREATE_PROPOSAL_PREDICATE {
+        return Ok(None);
+    }
+    Ok(map_entry(&claim.value, TASK_POST_STAMP_KEY)
+        .and_then(from_value::<PostStamp>)
+        .map(|stamp| stamp.brief))
 }
