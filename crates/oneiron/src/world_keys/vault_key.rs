@@ -117,6 +117,16 @@ impl CarriedVaultKey {
         &self.0.commitment
     }
 
+    /// Refuses a key an escrow capsule opened when this header, the signed
+    /// one of the artifact being opened, carries "Nobody but me" (review of
+    /// #7766): the capsule's refusal binds to every artifact the key opens,
+    /// not only to the one it was unlocked from. The data key itself does
+    /// not change at the switch; this is the engine's refusal, not a
+    /// cryptographic revocation of what a capsule holder already has.
+    pub(crate) fn admit_capsule_opened_key(&self) -> Result<()> {
+        admit_presented_capsule(self.0.recovery)
+    }
+
     /// Each carried wrap's public facts: what a host may unlock with.
     pub(crate) fn wrap_infos(&self) -> Vec<VaultKeyWrapInfo> {
         self.0.wrap_infos()
