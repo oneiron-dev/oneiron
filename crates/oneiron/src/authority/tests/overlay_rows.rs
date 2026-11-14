@@ -73,3 +73,42 @@ fn a_slip_minted_with_records_is_stored_sealed_and_reads_back_whole() {
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
     assert_eq!(vault.get_authority_log_entry(&id).unwrap(), Some(entry));
 }
+
+/// T-LAND (census L5-22 1a-iii, RULING PLAN-L5-22-ERASED-ROWS = A): a
+/// sealed row that reaches another install of the vault with its overlay
+/// row, before custody delivers the key that opens it, lands as structure
+/// only. Every row is held there, the history exports byte for byte, the
+/// rows around it count, and the slip it minted grants nothing.
+#[test]
+fn a_sealed_row_whose_key_is_not_here_lands_as_structure_and_grants_nothing() {
+    let home_dir = tempfile::tempdir().unwrap();
+    let home = Vault::open(home_dir.path(), VaultConfig::default()).unwrap();
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let root = home.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims.clone();
+    claims.slip_id = [92; 32];
+    claims.records = BTreeSet::from(["record:b".to_owned()]);
+    let slip = home.mint_capability_slip(&issuer, claims).unwrap();
+    let mint_row = home.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
+    let (history, overlays) = home
+        .export_signed_authority_history_with_overlays()
+        .unwrap();
+    assert!(
+        overlays.contains_key(&mint_row),
+        "the sealed mint row's overlay row travels with it",
+    );
+
+    let other_dir = tempfile::tempdir().unwrap();
+    let other = Vault::open(other_dir.path(), VaultConfig::default()).unwrap();
+    other
+        .import_signed_authority_history(&history, &overlays)
+        .expect("a sealed row whose key is not here lands as structure");
+    assert_eq!(other.export_signed_authority_history().unwrap(), history);
+    let fold = other.authority_fold().unwrap();
+    assert_eq!(fold.vault_id, home.authority_fold().unwrap().vault_id);
+    assert!(fold.slips.mints.contains_key(&root.claims.slip_id));
+    assert!(
+        !fold.slips.mints.contains_key(&slip.claims.slip_id),
+        "a row that does not open here makes nothing",
+    );
+}
