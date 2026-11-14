@@ -561,4 +561,24 @@ impl Memory<'_> {
     pub(crate) fn task_host(&self) -> Option<&crate::task_verb::HostBinding> {
         self.task_host.as_ref()
     }
+
+    /// Binds the leased agent attempt whose run makes this handle's calls
+    /// (census L9-37): each graph_fs mount read it makes then logs that
+    /// attempt on its telemetry run, as a run-row search logs it, so a run's
+    /// mount reads count toward the read shape it woke under. A host takes
+    /// it from the lease it holds, never from caller text. It grants
+    /// nothing.
+    #[must_use]
+    pub fn with_dispatch_attempt(
+        mut self,
+        attempt: Option<crate::attempt_queue::AttemptId>,
+    ) -> Self {
+        self.dispatch_attempt = attempt;
+        self
+    }
+
+    /// The leased agent attempt a host bound, if any.
+    pub(crate) const fn dispatch_attempt(&self) -> Option<crate::attempt_queue::AttemptId> {
+        self.dispatch_attempt
+    }
 }

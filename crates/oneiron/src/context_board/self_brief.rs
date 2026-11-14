@@ -18,6 +18,7 @@ use std::collections::BTreeSet;
 mod ceilings;
 mod class_verdicts;
 mod grants;
+mod read_shape;
 mod working_set;
 pub use ceilings::{
     BriefActPosture, BriefBranchBound, BriefCeiling, BriefCeilingPosture, BriefCeilingTarget,
@@ -30,6 +31,7 @@ pub use class_verdicts::{
     BriefDefaultRule, BriefOutboundScope, BriefPerActCheck,
 };
 pub use grants::{BriefGrant, BriefGrants};
+pub use read_shape::BriefReadShape;
 pub use working_set::{BriefWorkingHandle, BriefWorkingSet};
 
 /// COMM (Engine ruling 21:47): whom the agent may address, as two separate
@@ -72,6 +74,9 @@ pub struct SelfBriefInput<'a> {
     pub class_verdicts: Option<&'a BriefClassVerdicts>,
     pub budget_lease_id: Option<&'a str>,
     pub budget: Option<&'a BudgetRead>,
+    /// The read shape the run's attempt woke under (census L9-37), when its
+    /// host stamped one.
+    pub read_shape: Option<BriefReadShape>,
     pub clock_ms: u64,
     pub skill_index: &'a [EntityId],
     pub read_set: &'a SessionReadSet,
@@ -127,6 +132,10 @@ pub struct SelfBrief {
     pub budget_lease_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub budget: Option<BudgetRead>,
+    /// The read shape the run works through, as its host picked it when the
+    /// run woke (census L9-37).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_shape: Option<BriefReadShape>,
     pub clock_ms: u64,
     pub skills: Vec<BriefSkillRow>,
     #[serde(skip)]
@@ -188,6 +197,7 @@ impl SelfBrief {
             class_verdicts: input.class_verdicts.cloned(),
             budget_lease_id: input.budget_lease_id.map(str::to_owned),
             budget: input.budget.cloned(),
+            read_shape: input.read_shape,
             clock_ms: input.clock_ms,
             skills,
             skill_sources,
@@ -231,6 +241,7 @@ impl SelfBrief {
             (self.class_verdicts.is_none(), "class verdicts"),
             (self.budget_lease_id.is_none(), "budget lease"),
             (self.budget.is_none(), "budget"),
+            (self.read_shape.is_none(), "read shape"),
             (self.working_set.scratchpad.is_none(), "scratchpad note"),
             (self.working_set.pins.is_none(), "admitted pins"),
             (self.working_set.replay.is_none(), "replay result bindings"),
@@ -372,6 +383,9 @@ pub struct SelfBriefState {
     pub class_verdicts: Option<BriefClassVerdicts>,
     pub budget_lease_id: Option<String>,
     pub budget: Option<BudgetRead>,
+    /// The read shape the run's attempt woke under (census L9-37); `None`
+    /// for a caller no host picked one for.
+    pub read_shape: Option<BriefReadShape>,
     pub clock_ms: u64,
     pub skill_index: Vec<EntityId>,
     pub working_set: BriefWorkingSet,
@@ -428,6 +442,7 @@ impl SelfBriefState {
                 class_verdicts: self.class_verdicts.as_ref(),
                 budget_lease_id: self.budget_lease_id.as_deref(),
                 budget: self.budget.as_ref(),
+                read_shape: self.read_shape,
                 clock_ms: self.clock_ms,
                 skill_index: &self.skill_index,
                 read_set,

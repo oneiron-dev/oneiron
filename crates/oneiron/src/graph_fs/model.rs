@@ -106,6 +106,23 @@ pub struct GraphFsResolver<'read, 'vault> {
     /// The mounting handle reads repo bytes masked (FIX 7608 2b-ii, FIX
     /// 8964): a byte-recipient hint, never a scoped-read key or authority.
     pub(super) repo_masked: bool,
+    /// The leased agent attempt whose run mounted this face (census L9-37):
+    /// each coreutils command's telemetry run names it. Context, never a
+    /// scoped-read key or authority.
+    pub(super) dispatch_attempt: Option<crate::attempt_queue::AttemptId>,
+}
+
+impl GraphFsResolver<'_, '_> {
+    /// This mount, its coreutils commands' telemetry runs naming `attempt`,
+    /// the leased run that mounted it.
+    #[must_use]
+    pub(crate) fn with_dispatch_attempt(
+        mut self,
+        attempt: Option<crate::attempt_queue::AttemptId>,
+    ) -> Self {
+        self.dispatch_attempt = attempt;
+        self
+    }
 }
 
 impl<'vault> ScopedRead<'vault> {

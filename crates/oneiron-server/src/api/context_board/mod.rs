@@ -1026,6 +1026,8 @@ pub(crate) async fn describe_self_for_auth(
             let agent = oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Agent);
             let host = BriefHostFacts {
                 run_ceiling: None,
+                // No pumped wake picked a read shape for a credential's call.
+                read_shape: None,
                 replay_run: None,
                 // A Core call arrives on no registered MCP connector.
                 credential_ceiling: auth.verified_slip().map(|proof| {

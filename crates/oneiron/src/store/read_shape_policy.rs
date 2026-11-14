@@ -107,6 +107,12 @@ pub struct ReadShapeStamp {
     /// when the run ended; `None` until then. The token cost term reads it.
     #[serde(default)]
     pub model_units: Option<u64>,
+    /// The model units the attempt's spend scope had settled when this stamp
+    /// was written. A retry spends under the scope of the try it retries, so
+    /// the run's own units are the scope's total less these; zero for a
+    /// first try.
+    #[serde(default)]
+    pub scope_units_at_wake: u64,
 }
 
 /// One owner pin: `model` always reads through `shape`.
@@ -413,11 +419,14 @@ impl Store {
     /// returns the stamp in force: a re-leased attempt keeps the shape its
     /// first wake picked. A stamp for another model than the attempt's
     /// executor stamp, or than its own earlier stamp, is refused.
+    /// `scope_units_at_wake` is what the attempt's spend scope has settled
+    /// so far.
     pub(crate) fn stamp_read_shape(
         &self,
         attempt: AttemptId,
         model: &ModelId,
         pick: ReadShapePick,
+        scope_units_at_wake: u64,
     ) -> Result<ReadShapeStamp> {
         if active_write_txn_depth() > 0 {
             return Err(Error::ConcurrentWrite(
@@ -449,6 +458,7 @@ impl Store {
             shape: pick.shape,
             tier: pick.tier,
             model_units: None,
+            scope_units_at_wake,
         };
         STAMP.put(self, &mut txn, &attempt, &stamp)?;
         txn.commit()?;
@@ -465,17 +475,11 @@ impl Store {
             ));
         }
         let mut txn = self.env.write_txn()?;
-        let mut stamp = STAMP
-            .get(self, &txn, &attempt)?
-            .ok_or_else(|| Error::InvalidConfig("attempt holds no read shape stamp".to_owned()))?;
-        let total = stamp
-            .model_units
-            .map_or(units, |recorded| recorded.max(units));
-        if stamp.model_units == Some(total) {
-            return Ok(());
+        if !record_read_shape_units_in_txn(self, &mut txn, attempt, units)? {
+            return Err(Error::InvalidConfig(
+                "attempt holds no read shape stamp".to_owned(),
+            ));
         }
-        stamp.model_units = Some(total);
-        STAMP.put(self, &mut txn, &attempt, &stamp)?;
         txn.commit()?;
         Ok(())
     }
@@ -485,6 +489,60 @@ impl Store {
         let txn = self.env.read_txn()?;
         STAMP.get(self, &txn, &attempt)
     }
+}
+
+/// Records the model units `attempt`'s run settled, in `txn`. A later,
+/// larger total replaces a recorded one. Answers whether the attempt holds a
+/// stamp; an attempt with none records nothing.
+pub(crate) fn record_read_shape_units_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    units: u64,
+) -> Result<bool> {
+    let Some(stamp) = STAMP.get(store, txn, &attempt)? else {
+        return Ok(false);
+    };
+    raise_model_units_in_txn(store, txn, attempt, stamp, units)?;
+    Ok(true)
+}
+
+/// Records the model units `attempt`'s run spent, from `scope_units`, its
+/// spend scope's total, in `txn` (census L9-37): the scope records them as
+/// the run ends, and again when a child settles into it later. A retry
+/// spends under the scope of the try it retries, so the run's own units are
+/// the total less what the scope held when the run woke. Answers whether the
+/// attempt holds a stamp.
+pub(crate) fn record_read_shape_scope_units_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    scope_units: u64,
+) -> Result<bool> {
+    let Some(stamp) = STAMP.get(store, txn, &attempt)? else {
+        return Ok(false);
+    };
+    let units = scope_units.saturating_sub(stamp.scope_units_at_wake);
+    raise_model_units_in_txn(store, txn, attempt, stamp, units)?;
+    Ok(true)
+}
+
+/// Keeps the larger of `stamp`'s recorded units and `units`.
+fn raise_model_units_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    mut stamp: ReadShapeStamp,
+    units: u64,
+) -> Result<()> {
+    let total = stamp
+        .model_units
+        .map_or(units, |recorded| recorded.max(units));
+    if stamp.model_units != Some(total) {
+        stamp.model_units = Some(total);
+        STAMP.put(store, txn, &attempt, &stamp)?;
+    }
+    Ok(())
 }
 
 fn read_shape_pins_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<ReadShapePins> {

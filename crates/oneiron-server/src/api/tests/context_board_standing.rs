@@ -92,6 +92,7 @@ async fn host_bound_self_brief_opens_updates_tail_and_folds_prefix() {
             on_budget_exhausted: BudgetExhaustionPolicy::Suspend,
             fired_thresholds: vec![],
         }),
+        read_shape: None,
         clock_ms: 123,
         skill_index: vec![],
         working_set: BriefWorkingSet {
@@ -336,6 +337,7 @@ async fn mcp_describe_self_refuses_every_narrowed_ceiling() {
                     on_budget_exhausted: BudgetExhaustionPolicy::Suspend,
                     fired_thresholds: vec![],
                 }),
+                read_shape: None,
                 clock_ms: 1,
                 skill_index: vec![],
                 working_set: BriefWorkingSet {

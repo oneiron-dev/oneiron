@@ -167,6 +167,10 @@ pub struct Memory<'v> {
     /// (FIX 3977, [`Memory::with_read_filter`]): a request, never
     /// authority. Every read lane the handle opens meets it.
     pub(super) read_filter: Option<crate::gate::RetrievalFilter>,
+    /// The leased agent attempt whose run makes this handle's calls, when a
+    /// host bound one ([`Memory::with_dispatch_attempt`], census L9-37):
+    /// telemetry context its graph_fs mount reads log, never authority.
+    pub(super) dispatch_attempt: Option<crate::attempt_queue::AttemptId>,
 }
 
 /// Actual transport metadata from a host's request or socket upgrade.

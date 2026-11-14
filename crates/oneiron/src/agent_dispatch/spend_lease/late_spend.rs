@@ -71,6 +71,24 @@ impl AgentDispatcher<'_> {
                 &scope.unit,
                 scope.spent_units,
             )?;
+            // The run that closed the scope also records the tokens a child
+            // settled after it on its read-shape stamp (census L9-37); a
+            // failed record never stops the revision.
+            if scope.unit == crate::llm::run_admission::LeaseUnit::tokens()
+                && let Err(error) =
+                    crate::store::read_shape_policy::record_read_shape_scope_units_in_txn(
+                        &self.vault.store,
+                        txn,
+                        attempt,
+                        scope.spent_units,
+                    )
+            {
+                tracing::warn!(
+                    ?error,
+                    ?attempt,
+                    "a revised scope's read-shape units were not recorded"
+                );
+            }
         }
         self.revise_spend_calibration_in_txn(txn, &scope)
     }

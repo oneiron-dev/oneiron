@@ -224,6 +224,22 @@ pub(super) fn run_bound(
         super::attribution::stamp_seatless_executor(vault, &status.attempt, &config, &template);
     }
     super::attribution::bind_before_entry(vault, &status.attempt);
+    // Census L9-37 (ARCH-0051 #decision-r9-bench): the shape the run reads
+    // memory through, picked once for the model its settled config runs on
+    // and kept by every later wake of the attempt; its self brief names it.
+    // Both shapes stay reachable (Engine RULING L9-37-SHAPE-REACH = A). A
+    // pick or stamp that fails leaves the run unstamped, logged.
+    let read_shape = vault
+        .stamp_wake_read_shape(status.attempt.id, &config.model)
+        .inspect_err(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                attempt = ?status.attempt.id,
+                "a wake's read shape was not stamped; the run reads unstamped"
+            );
+        })
+        .ok();
+    door.bind_read_shape(read_shape.map(|stamp| stamp.shape));
     // DOOR-111 S4c-5: a planned team's leader runs with the exact pattern
     // pack its launch froze, its SKILL.md before any other skill's body; a
     // continued run's task, its source's fork, already holds it there.
